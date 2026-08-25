@@ -16,7 +16,7 @@ import { TriageListEntriesInputV1Schema } from './listEntriesProtocol.js';
  * count of UTF-8 bytes. A string bound spelled as a length is counted in code
  * points instead, so the same value that a source is refused for sending would
  * be admitted here — and the derived worst-case encoded result, which is what
- * keeps a maximal window inside the host's Action byte gate, would be measured
+ * keeps the current maximum-window shape inventory current, would be measured
  * against a bound three or four times narrower than what the wire admits.
  */
 

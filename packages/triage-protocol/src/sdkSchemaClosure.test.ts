@@ -97,7 +97,7 @@ export interface ProtocolComposableSchema<TInput = ProtocolJsonValue, TOutput = 
 }
 `, 'utf8'),
         writeFile(join(sdkRoot, 'contributions.d.ts'), `
-export type ContributionPointAuthorDefinition<TProtocols extends readonly unknown[] = readonly unknown[]> = Readonly<{
+export type ContributionPointAuthorDefinition<TProtocols extends readonly unknown[]> = Readonly<{
     readonly protocols: readonly unknown[];
     readonly __protocols?: TProtocols;
 }>;

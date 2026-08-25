@@ -1,17 +1,23 @@
 // @vitest-environment jsdom
+import * as React from 'react';
 import { act } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { Button } from '@happier-dev/plugin-ui';
 import {
   TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1,
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
   TriageSourceAdministrationActionInputV1Schema,
+  TriageSourceInstanceDraftV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createTriageSourceSettingsSurface } from './surface.js';
+import {
+  createTriageSourceSettingsSurface,
+  type TriageSourceSettingsDraftEditorPropsV1,
+} from './surface.js';
 
 /**
  * The settings page, mounted the way the host mounts it.
@@ -219,6 +225,55 @@ afterEach(async () => {
 });
 
 describe('the mounted PRs & Issues source settings page', () => {
+  it('lets a source refine a discovered draft before the canonical page submits it', async () => {
+    const original = candidate('acme/api');
+    const configured = candidate('acme/api-configured');
+    const Editor = (props: TriageSourceSettingsDraftEditorPropsV1) => React.createElement(Button, {
+      title: 'Save source-specific configuration',
+      onPress: () => { void props.onSubmit(TriageSourceInstanceDraftV1Schema.parse(configured)); },
+    });
+    const configurableSurface = createTriageSourceSettingsSurface({
+      pluginId: PLUGIN_ID,
+      listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
+      sourceDisplayName: SOURCE_DISPLAY_NAME,
+      DraftEditor: Editor,
+    });
+    const harness = createHarness({
+      discovery: { kind: 'complete', candidates: [original], failures: [] },
+    });
+
+    let page!: PluginUiTestkit;
+    await act(async () => {
+      page = await createPluginUiTestkit({
+        identity: {
+          pluginId: PLUGIN_ID,
+          pluginVersion: '0.0.0',
+          viewId: 'triage-sources',
+          generation: 'triage-sources-configurable-mount',
+        },
+        surface: configurableSurface,
+        surfaceContext: createSurfaceContextFixture(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        handlers: {
+          executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+          confirm: harness.confirmHandler,
+        },
+      });
+    });
+    mounted.push(page);
+
+    await pressControl(page, 'Add acme/api to PRs & Issues');
+    expect(harness.administrations()).toHaveLength(0);
+    await pressControl(page, 'Save source-specific configuration');
+
+    expect(harness.administrations()).toEqual([
+      expect.objectContaining({
+        kind: 'create',
+        draft: expect.objectContaining({ localInstanceKey: 'acme/api-configured' }),
+      }),
+    ]);
+  });
+
   it('asks the exact source it was handed, and the target for the rest', async () => {
     const harness = createHarness({
       discovery: { kind: 'complete', candidates: [candidate('acme/api')], failures: [] },

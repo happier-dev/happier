@@ -67,8 +67,14 @@ export { readTriageResponseHeaderV1 } from './httpHeaders.js';
 export { TriageSourceFailureV1Schema } from './diagnostics.js';
 export type { TriageSourceFailureV1 } from './diagnostics.js';
 
-export { TriageSourceDescriptorV1Schema } from './descriptor.js';
-export type { TriageSourceDescriptorV1 } from './descriptor.js';
+export {
+    admitTriageSourceDescriptorV1,
+    TriageSourceDescriptorV1Schema,
+} from './descriptor.js';
+export type {
+    TriageSourceDescriptorAdmissionV1,
+    TriageSourceDescriptorV1,
+} from './descriptor.js';
 
 export {
     TriageConfiguredSourceInstanceV1JsonSchema,

@@ -66,7 +66,6 @@ describe('E2EE durable disclosure', () => {
             entryTag: await deriveSessionLinkEntryTag(fixture.collections.sessionLinks, entryRef),
             sessionId: 'session-a',
             linkedAtMs: 1_760_000_900_000,
-            cardPublicationId: 'publication-id-a',
             entryRef,
             identityEntryRef: entryRef,
             displayPathAtLink: `${SECRET_SCOPE} #${SECRET_ITEM_NUMBER}`,
@@ -139,7 +138,7 @@ describe('E2EE durable disclosure', () => {
     it('keeps every entry-identifying and display field out of the projection', () => {
         const contentBearing = new Set([
             'entryRef', 'identityEntryRef', 'displayAtMark', 'displayPathAtLink',
-            'cardPublicationId', 'configured',
+            'configured',
         ]);
         for (const definition of CORPUS_ACCOUNT_COLLECTIONS) {
             for (const field of definition.serverReadable) {

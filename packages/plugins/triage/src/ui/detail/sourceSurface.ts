@@ -1,4 +1,10 @@
+import {
+  selectTargetedContribution,
+  selectTargetedContributionOperation,
+  selectTargetedContributionSurface,
+} from '@happier-dev/plugin-sdk/ui';
 import type {
+  PluginUiTargetedContributionSelectorV1,
   PluginUiTargetedContributionSurfaceV1,
   PluginUiTargetedContributionV1,
   PluginUiTargetedContributionsV1,
@@ -9,7 +15,9 @@ import {
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
   TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1,
+  admitTriageSourceDescriptorV1,
   type TriageEntryRefV1,
+  type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
 /**
@@ -38,14 +46,11 @@ const TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1 = 'prepareReviewWorkspace';
  * contributor with that plugin id at any protocol — would mount one source's
  * renderer under another source's entry.
  *
- * **It deliberately decodes nothing.** The snapshot also carries each
- * contributor's `descriptor`, and the semantic projection of that value belongs
- * to the SDK owner, which parses it with this target's own schema during cold
- * admission. The one reader that needs the result — §2.2's common header — gets
- * it typed from `entries/read-detail-v1`, never from a branch on snapshot bytes
- * here. Comparing published identity strings is not that projection: no meaning
- * is decoded, and every value compared is one the host already published as
- * identity.
+ * **The matcher deliberately decodes nothing.** The projections below may use
+ * the published protocol parser after that exact match, but the identity lookup
+ * itself never guesses from descriptor contents. Comparing published identity
+ * strings is not semantic projection: every value compared is one the host
+ * already published as identity.
  */
 
 export type TriageSourceDetailContributionLookupV1 =
@@ -60,29 +65,34 @@ const ABSENT: TriageSourceDetailContributionLookupV1 = Object.freeze({ kind: 'ab
  * than walking the snapshot again: two walks are two chances to disagree about
  * which contribution answers for one entry.
  */
+function triageSourceSelectorV1(
+  source: TriageEntryRefV1['source'],
+): PluginUiTargetedContributionSelectorV1 {
+  return {
+    pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+    protocol: {
+      id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+      version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+    },
+    contributor: { pluginId: source.pluginId, contributionId: source.localId },
+  };
+}
+
 function findTriageSourceContributionV1(
   targetedContributions: PluginUiTargetedContributionsV1,
   source: TriageEntryRefV1['source'],
 ): PluginUiTargetedContributionV1 | undefined {
-  const point = targetedContributions.points.find(
-    (candidate) => candidate.pointId === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-  );
-  const snapshot = point?.protocols.find(
-    (candidate) => candidate.protocol.id === TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1
-      && candidate.protocol.version === TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
-  );
-  return snapshot?.contributions.find(
-    (candidate) => candidate.contributor.pluginId === source.pluginId
-      && candidate.contributor.contributionId === source.localId,
-  );
+  return selectTargetedContribution(targetedContributions, triageSourceSelectorV1(source));
 }
 
 export function resolveTriageSourceDetailContributionV1(
   targetedContributions: PluginUiTargetedContributionsV1,
   source: TriageEntryRefV1['source'],
 ): TriageSourceDetailContributionLookupV1 {
-  const surface = findTriageSourceContributionV1(targetedContributions, source)
-    ?.surfaces.find((candidate) => candidate.role === TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1);
+  const surface = selectTargetedContributionSurface(targetedContributions, {
+    ...triageSourceSelectorV1(source),
+    role: TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1,
+  });
   return surface === undefined ? ABSENT : Object.freeze({ kind: 'admitted', surface });
 }
 
@@ -101,10 +111,27 @@ export function resolveTriageSourcePreparesReviewWorkspaceV1(
   targetedContributions: PluginUiTargetedContributionsV1,
   source: TriageEntryRefV1['source'],
 ): boolean {
-  return findTriageSourceContributionV1(targetedContributions, source)
-    ?.operations.some(
-      (candidate) => candidate.role === TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1,
-    ) === true;
+  return selectTargetedContributionOperation(targetedContributions, {
+    ...triageSourceSelectorV1(source),
+    role: TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1,
+  }) !== undefined;
+}
+
+/**
+ * The exact workflow subject declared by the currently admitted source for one
+ * entry kind. The four-identity contribution match above remains the sole
+ * source lookup; this projection only parses that matched contribution's typed
+ * descriptor and never guesses from a provider id or kind name.
+ */
+export function resolveTriageSourceWorkflowSubjectV1(
+  targetedContributions: PluginUiTargetedContributionsV1,
+  entryRef: TriageEntryRefV1,
+): TriageSourceWorkflowSubjectV1 | null {
+  const contribution = findTriageSourceContributionV1(targetedContributions, entryRef.source);
+  if (contribution === undefined) return null;
+  const admitted = admitTriageSourceDescriptorV1(contribution.descriptor);
+  if (!admitted.ok) return null;
+  return admitted.descriptor.kinds.find((kind) => kind.id === entryRef.kindId)?.workflowSubject ?? null;
 }
 
 /** The same lookup, read from the mount's own host-stamped surface context. */

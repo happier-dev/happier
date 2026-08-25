@@ -1,12 +1,15 @@
 import * as React from 'react';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginUiContextEnrichmentV1, PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import {
   Banner,
   Button,
   EmptyState,
   ErrorState,
   Heading,
+  Item,
+  ItemGroup,
   List,
   LoadingState,
   Row,
@@ -16,19 +19,17 @@ import {
   useListMultiSelectionController,
   usePluginAccessibility,
   usePluginHostApi,
+  usePluginSurfaceActivity,
   usePluginTheme,
   usePluginTranslation,
   useSurfaceContext,
   type LayoutChangeEvent,
 } from '@happier-dev/plugin-ui';
 import { scaleTextStyleMetrics } from '@happier-dev/plugin-ui/presentation';
-import { TriageActionsEditor } from '../actions/ActionsEditor.js';
-import { useTriageActions } from '../actions/useTriageActions.js';
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import type { TriageEntryDetailLaunchInputV1 } from '../../composer/entryDetailLaunchInput.js';
 import type { CorpusSmartPolicyV1 } from '../../corpus/query/smartPolicy.js';
-import type { TriageActionV1 } from '../../settings/actions.js';
 import {
   triageEntryRowKey,
   type TriageListLensV1,
@@ -49,6 +50,7 @@ import {
   type TriageListSectionItemV1,
 } from '../list/sections.js';
 import { TriageBulkActionBar } from '../list/BulkActionBar.js';
+import { useTriageRetainedComposerOriginV1 } from './retainedComposerOrigin.js';
 import {
   projectTriageBulkSelectedEntriesV1,
   type TriageBulkSelectedEntryV1,
@@ -56,20 +58,27 @@ import {
 import { readTriageBulkSelectionScopeKeyV1 } from '../list/bulkSelectionScope.js';
 import type { TriageBulkSessionDestinationV1 } from '../list/bulkSessionPlan.js';
 import { useTriageBulkEntrySessions } from '../list/useBulkEntrySessions.js';
+import { planTriageListContinuationV1, type TriageListContinuationCopyV1 } from '../list/continuation.js';
 import {
   readTriageListSectionItemKey,
   useTriageListRowRenderer,
-  type TriageListContinuationCopyV1,
 } from '../list/rows.js';
-import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
+import {
+  indexTriagePinsByEntry,
+  projectTriageWindowRow,
+  type TriageListDisplayRowV1,
+} from '../marks/pinnedRows.js';
 import { useTriagePinnedEntries } from '../marks/useTriagePinnedEntries.js';
 import {
   hasTriageRouteLensV1,
+  createTriageRouteWriteQueueV1,
   parseTriageRouteSubPathV1,
   preflightTriageRouteLensV1,
   readTriageRouteLensV1,
-  writeTriageRouteLensV1,
 } from '../navigation/location.js';
+import { TriageActionsEditor } from '../actions/ActionsEditor.js';
+import { useTriageActions } from '../actions/useTriageActions.js';
+import { useTriageConfiguredSources } from '../configuration/useTriageConfiguredSources.js';
 import { TriageViewsControl } from '../views/control.js';
 import { readTriageSavedViewLensStatusV1 } from '../views/divergence.js';
 import {
@@ -80,6 +89,7 @@ import {
   triageUpdateSavedViewInputV1,
 } from '../views/savedViewsCommand.js';
 import { useTriageSavedViews } from '../views/useTriageSavedViews.js';
+import type { TriageActionV1 } from '../../settings/actions.js';
 import { resolveTriageActionTargetV1 } from '../state/actionTarget.js';
 import { readTriageLensNarrowingV1 } from '../state/narrowing.js';
 import {
@@ -91,6 +101,7 @@ import {
   type TriageSurfaceStateV1,
 } from '../state/surface.js';
 import { useTriageListWindow } from '../window/useTriageListWindow.js';
+import { useTriageListWindowViewDemand } from '../window/useTriageListWindowViewDemand.js';
 import {
   planTriageConfigureSourceOffersV1,
   type TriageConfigureSourceOfferV1,
@@ -182,6 +193,37 @@ const NO_SAVED_VIEWS: readonly CorpusSavedViewV1[] = Object.freeze([]);
 export const TRIAGE_SHELL_FILL_TEST_ID_V1 = 'triage-shell-fill';
 
 /**
+ * The list region, as automation identity.
+ *
+ * Exported for the same reason the fill region is: the fact under test is that
+ * this box is still MOUNTED while a stacked detail is open, which no semantic
+ * query can observe — a subtree the platform has hidden is correctly absent
+ * from the accessibility tree, and that absence is the point.
+ */
+export const TRIAGE_SHELL_LIST_REGION_TEST_ID_V1 = 'triage-shell-list-region';
+
+/** The single responsive container that owns the mounted source detail. */
+export const TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1 = 'triage-shell-detail-region';
+
+/**
+ * What "mounted but not on screen" is, in one place.
+ *
+ * `display: 'none'` is a real platform contract on both React Native and React
+ * Native Web: the box is not laid out, cannot be hit, takes no tab stop and is
+ * not exposed to assistive technology. Anything weaker — zero opacity, an
+ * off-screen offset — leaves a screen reader walking a list the reader cannot
+ * see and a Tab key landing inside it.
+ */
+const TRIAGE_INACTIVE_REGION_STYLE_V1 = Object.freeze({ display: 'none' as const });
+const TRIAGE_FILL_STYLE_V1 = Object.freeze({
+  flex: 1,
+  minWidth: 0,
+  minHeight: 0,
+  overflow: 'hidden' as const,
+});
+const TRIAGE_LIST_STYLE_V1 = Object.freeze({ flex: 1, minHeight: 0 });
+
+/**
  * The reader's own type size applied to the host's four measured text roles.
  *
  * The scaling itself belongs to `plugin-ui`'s canonical text-scale owner, the
@@ -240,12 +282,23 @@ export function useTriageCurrentUiContextPublication(
 
 export function TriageListShell(props: TriageListShellProps = {}): React.ReactElement {
   const hostApi = usePluginHostApi();
+  const surfaceContext = useSurfaceContext();
+  const surfaceActivity = usePluginSurfaceActivity();
   const text = usePluginTranslation();
   const window = useTriageListWindow();
   const marks = useTriagePinnedEntries();
   const savedViews = useTriageSavedViews();
+  /**
+   * The ONE configured-action read for this page.
+   *
+   * The editor writes it and the detail region's controls are built from it, so
+   * a second read would let the two disagree about the same durable Account
+   * configuration between two settled writes.
+   */
   const configuredActions = useTriageActions();
+  const configuredSources = useTriageConfiguredSources();
   const [editingActions, setEditingActions] = React.useState(false);
+  const [editingSources, setEditingSources] = React.useState(false);
   /**
    * Whether the location this page OPENED at named a lens of its own.
    *
@@ -275,6 +328,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     props.subPath,
     seedFromLocation,
   );
+  const [listFocusRequest, setListFocusRequest] = React.useState<Readonly<{ key: string }> | undefined>();
   const refresh = React.useCallback(() => window.refresh('manual'), [window]);
   /**
    * `core/CORPUS.md` §4.2. The coordinator may already be refusing to read, and
@@ -285,15 +339,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    */
   const refreshState = resolveTriageListRefreshV1(window.snapshot, Date.now());
 
-  // The named view producer (`core/CORPUS.md` §4.1). Mounting *this page* is
-  // what asks for a pass; the window hook itself only reads, so the Composer
-  // picker — which is not a producer — reaches nothing merely by opening
-  // (`REQ-14`). The shared minimum interval still collapses this demand with
-  // every other one from this mount.
-  const demand = window.refresh;
-  React.useEffect(() => {
-    void demand('view');
-  }, [demand]);
+  // The named page-view producers (`core/CORPUS.md` §4.1): mount, then every
+  // host-owned active regain. The window hook itself only reads, so the
+  // Composer picker — which is not a producer — reaches nothing merely by
+  // opening (`REQ-14`). The adapter emits only `view` demand; the mounted store
+  // remains the one owner of coalescing, pacing and provider work.
+  useTriageListWindowViewDemand(surfaceActivity.active, window.refresh);
   const pinHandlers = React.useMemo(() => ({
     busyKey: marks.busyKey,
     unavailableReason: marks.unavailableReason,
@@ -310,21 +361,35 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * virtualizer exists to provide. These two bind only to what a row's content
    * actually depends on.
    */
+  const windowLoadMore = window.snapshot.loadMore;
+  const pinsLoadMore = marks.loadMore;
   const continuationCopy = React.useCallback(
     (sectionKey: string | null): TriageListContinuationCopyV1 => (
       sectionKey === TRIAGE_PINNED_SECTION_KEY
-        ? {
-            title: text('plugins.triage.surface.morePins.title', 'More pinned entries exist'),
-            description: text('plugins.triage.surface.morePins.description', 'This page shows your most recent pins; the rest are still pinned.'),
-          }
-        : {
-            title: text('plugins.triage.surface.moreEntries.title', 'More entries may exist'),
-            description: text('plugins.triage.surface.moreEntries.description', 'This window is bounded; sources that had not finished are still walking.'),
-          }
+        ? planTriageListContinuationV1({ section: 'pins', state: pinsLoadMore, text })
+        : planTriageListContinuationV1({ section: 'entries', state: windowLoadMore, text })
     ),
-    [text],
+    [pinsLoadMore, text, windowLoadMore],
   );
-  const renderRow = useTriageListRowRenderer({ continuationCopy, handlers: pinHandlers });
+  /**
+   * The two continuations are two operations, not one, and the row that closes
+   * a section demands the one that section pages by: the lanes append another
+   * bounded window from the sources, while Pinned walks another bounded page of
+   * the reader's own Collection. Routing both through a single "load more"
+   * would make a press in one section read the other.
+   */
+  const demandContinuation = React.useCallback((sectionKey: string | null) => {
+    if (sectionKey === TRIAGE_PINNED_SECTION_KEY) {
+      marks.loadMorePins();
+      return;
+    }
+    void window.loadMore();
+  }, [marks, window]);
+  const renderRow = useTriageListRowRenderer({
+    continuationCopy,
+    onLoadMore: demandContinuation,
+    handlers: pinHandlers,
+  });
 
   /**
    * The reader's pins are planned even with no window at all
@@ -474,6 +539,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const focusRow = React.useCallback((key: string) => {
     const hit = rowsByKey.get(key);
     if (hit === undefined) return;
+    setListFocusRequest(undefined);
     dispatch({ kind: 'rowFocused', sectionId: hit.sectionId, entryRef: hit.row.entryRef });
   }, [rowsByKey]);
 
@@ -489,18 +555,18 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const changeSmartPolicy = React.useCallback((smartPolicy: CorpusSmartPolicyV1) => {
     applyLensEdit({ kind: 'smartPolicyChanged', smartPolicy }, 'lens');
   }, [applyLensEdit]);
-  /**
-   * The settled query, taken by the same preflighted path as every other lens
-   * edit — a query is routed, so a query too long for the location must be
-   * refused rather than applied to a page whose URL cannot name it.
-   *
-   * The reducer's `searchComposing` arm has no producer here on purpose: the
-   * shared `List` reports settled text, not IME-intermediate composition, so
-   * there is nothing half-typed for this surface to hold back.
-   */
+  /** The settled query follows the same preflighted path as every routed lens edit. */
   const changeSearch = React.useCallback((query: string) => {
     applyLensEdit({ kind: 'searchChanged', query }, 'lens');
   }, [applyLensEdit]);
+  /**
+   * IME draft text is visible in the shared field but reaches neither the
+   * corpus window nor the route. Composition end is followed by the shared
+   * owner's one settled `onValueChange`, which clears this reducer arm.
+   */
+  const changeComposingSearch = React.useCallback((text: string | null) => {
+    if (text !== null) dispatch({ kind: 'searchComposing', text });
+  }, []);
 
   /**
    * The sources currently configured, as the read-side saved-view resolver
@@ -556,8 +622,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   }, [applyLensEdit, configuredSourceIdentities]);
 
   const selectView = React.useCallback((viewId: string | null) => {
+    const expectedRevision = savedViews.revision;
+    if (expectedRevision === null) return;
     void (async () => {
-      const projection = await savedViews.administer(triageSelectSavedViewInputV1(viewId));
+      const projection = await savedViews.administer(
+        triageSelectSavedViewInputV1(viewId, expectedRevision),
+      );
       if (projection === null) return;
       // Choosing "no saved view" detaches the lens from the view; it does not
       // reset it. The reader is still looking at what they were looking at.
@@ -570,22 +640,26 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   }, [applyLensEdit, applyProjectedSelection, savedViews]);
 
   const createView = React.useCallback((label: string) => {
+    const expectedRevision = savedViews.revision;
+    if (expectedRevision === null) return;
     void (async () => {
       const projection = await savedViews.administer(triageCreateSavedViewInputV1(label, {
         filters: surface.filters,
         order: surface.order,
         smartPolicy: surface.smartPolicy,
-      }));
+      }, expectedRevision));
       if (projection !== null) applyProjectedSelection(projection);
     })();
   }, [applyProjectedSelection, savedViews, surface.filters, surface.order, surface.smartPolicy]);
 
   const renameView = React.useCallback((view: CorpusSavedViewV1, label: string) => {
+    if (savedViews.revision === null) return;
     // A rename keeps the stored lens, so nothing on screen changes.
-    void savedViews.administer(triageRenameSavedViewInputV1(view, label));
+    void savedViews.administer(triageRenameSavedViewInputV1(view, label, savedViews.revision));
   }, [savedViews]);
 
   const updateView = React.useCallback((view: CorpusSavedViewV1) => {
+    if (savedViews.revision === null) return;
     // The one explicit write of the lens the reader is looking at. Nothing is
     // dispatched: the lens is already on screen, and it is the stored view that
     // moves to meet it.
@@ -593,12 +667,16 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       filters: surface.filters,
       order: surface.order,
       smartPolicy: surface.smartPolicy,
-    }));
+    }, savedViews.revision));
   }, [savedViews, surface.filters, surface.order, surface.smartPolicy]);
 
   const deleteView = React.useCallback((view: CorpusSavedViewV1) => {
+    const expectedRevision = savedViews.revision;
+    if (expectedRevision === null) return;
     void (async () => {
-      const projection = await savedViews.administer(triageDeleteSavedViewInputV1(view.viewId));
+      const projection = await savedViews.administer(
+        triageDeleteSavedViewInputV1(view.viewId, expectedRevision),
+      );
       if (projection === null) return;
       // The one CAS owner cleared the selection in the same write; the lens the
       // deleted view produced is still what the reader is looking at.
@@ -673,6 +751,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       },
     };
   }, [state, surface.selection]);
+  const pinsByEntry = React.useMemo(() => indexTriagePinsByEntry(marks.pins), [marks.pins]);
   const selectedConnectionLabel = React.useMemo(() => {
     const selection = surface.selection;
     if (selection === null) return null;
@@ -692,8 +771,19 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * which reads as the surface losing the entry and finding it again.
    */
   const [heldRow, setHeldRow] = React.useState<TriageLastKnownRowV1 | null>(null);
+  /** The originating draft this detail may disclose evidence into, held by its own owner. */
+  const detailOriginComposer = useTriageRetainedComposerOriginV1({
+    launch: props.launch,
+    selectedEntryRef: surface.selection?.entryRef ?? null,
+  });
+
   const lastKnown = retainTriageLastKnownRowV1(heldRow, surface.selection, selectedRow);
   if (lastKnown !== heldRow) setHeldRow(lastKnown);
+  const lastKnownPinRow = React.useMemo(() => (
+    selectedRow !== null || lastKnown === null
+      ? null
+      : projectTriageWindowRow(lastKnown.row, pinsByEntry)
+  ), [lastKnown, pinsByEntry, selectedRow]);
   /**
    * §2.2's header for a selection the window has stopped listing.
    *
@@ -715,67 +805,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           connectionLabel: selectedConnectionLabel,
           sourceDescriptor: null,
           linkedSessions: [],
+          linkedSessionsHasMore: false,
         })
   ), [lastKnown, selectedConnectionLabel, selectedRow, state]);
 
-  const visibleOrder = React.useMemo(
-    () => [...rowsByKey.values()].map((hit) => ({
-      sectionId: hit.sectionId,
-      entryRef: hit.row.entryRef,
-    })),
-    [rowsByKey],
-  );
-  const dismissDetail = React.useCallback(() => {
-    readerChangedLens.current = true;
-    dispatch({ kind: 'detailDismissed', visibleOrder });
-  }, [visibleOrder]);
-
-  useTriageWindowLensBinding(window.setLens, readTriageWindowLensV1(surface));
-  useTriageRouteBinding(hostApi, surface, readerChangedLens);
-  useTriageSavedViewBinding({
-    saved: savedViews.saved,
-    routeCarriedLens,
-    readerChangedLens,
-    configuredSources: configuredSourceIdentities,
-    selectedViewId: surface.selectedViewId,
-    applyLensEdit,
-  });
-  useTriageSettledLocation({
-    subPath: props.subPath,
-    launch: props.launch,
-    surface,
-    rowsByKey,
-    // A launch may only be answered "this page does not list that entry" once a
-    // window actually EXISTS to have listed it. `window` and `configureSources`
-    // are the two states assembled from a completed pass
-    // (`windowState.ts` returns `configureSources` for a completed pass over zero
-    // configured sources). `initial`, `sourcesUnreachable` and `unavailable` all
-    // mean NO window was ever assembled — in those, whether this page lists the
-    // entry is UNKNOWN, not false, so the launch must stay pending rather than be
-    // adopted and permanently qualified by its own instance over an empty
-    // `rowsByKey`. Naming only `initial` here did exactly that, and additionally
-    // showed "this entry is no longer in the list" over a page whose sources could
-    // not be reached at all.
-    windowSettled: state.kind === 'window' || state.kind === 'configureSources',
-    applyLensEdit,
-    dispatch,
-    readerChangedLens,
-  });
-
-  /**
-   * The way out of an unconfigured PRs & Issues, or nothing at all.
-   *
-   * The unconfigured screen named the remedy — "connect a source in Settings" —
-   * and could not perform it, so a reader who had installed a source was told to
-   * go and find its page themselves. Every source already ships that page; what
-   * was missing was a way to NAME it, which the V1 descriptor now carries.
-   *
-   * Two independent facts gate the offer, and each one absent means the control
-   * is simply not rendered rather than rendered dead: whether this mount can
-   * navigate at all (`openSurface` is negotiated per mount, exactly as the route
-   * owner reads `replacePageLocation`), and whether a given source named a page.
-   */
-  const surfaceContext = useSurfaceContext();
   /**
    * The bulk set — a THIRD independent cursor.
    *
@@ -854,39 +887,132 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   }), [bulkSelection]);
 
   const bulkSessions = useTriageBulkEntrySessions();
+
+  /**
+   * The ONE answer to "which entry is this selected key", read by both the bar
+   * that offers actions and the press that starts them.
+   *
+   * The CURRENT window answers first, so a press acts on the freshest facts
+   * this mount holds; the retained payload answers only for a row the window no
+   * longer lists. A key neither can answer for is reported, never dropped.
+   */
+  const readSelectedBulkEntries = React.useCallback((keys: readonly string[]): Readonly<{
+    entries: readonly TriageBulkSelectedEntryV1[];
+    unavailableKeys: readonly string[];
+  }> => {
+    const projected = projectTriageBulkSelectedEntriesV1({
+      rows: windowRowsRef.current,
+      keys,
+    });
+    const freshByKey = new Map(projected.entries.map((entry) => [entry.key, entry]));
+    const entries: TriageBulkSelectedEntryV1[] = [];
+    const unavailableKeys: string[] = [];
+    for (const key of keys) {
+      const entry = freshByKey.get(key) ?? retainedBulkEntries.current.get(key);
+      if (entry === undefined) unavailableKeys.push(key);
+      else entries.push(entry);
+    }
+    return { entries, unavailableKeys };
+  }, []);
+
+  /**
+   * The distinct subjects the live selection declares, from the exact admitted
+   * source contribution each row was projected from. The bar narrows what it
+   * offers with this and the press refuses per entry with the same fact, so a
+   * control that is offered is a control at least one selected entry can run.
+   */
+  const selectedBulkWorkflowSubjects = React.useCallback((
+    keys: readonly string[],
+  ): readonly TriageSourceWorkflowSubjectV1[] => {
+    const subjects: TriageSourceWorkflowSubjectV1[] = [];
+    for (const entry of readSelectedBulkEntries(keys).entries) {
+      const subject = resolveTriageSourceWorkflowSubjectV1(
+        surfaceContext.targetedContributions,
+        entry.entryRef,
+      );
+      if (subject !== null && !subjects.includes(subject)) subjects.push(subject);
+    }
+    return subjects;
+  }, [readSelectedBulkEntries, surfaceContext.targetedContributions]);
+
   const runBulkAction = React.useCallback((input: Readonly<{
     action: TriageActionV1;
     destination: TriageBulkSessionDestinationV1;
     keys: readonly string[];
   }>) => {
-    // The CURRENT window answers first, so a press acts on the freshest facts
-    // this mount holds; the retained payload answers only for a row the window
-    // no longer lists. A key neither can answer for is reported, never dropped.
-    const projected = projectTriageBulkSelectedEntriesV1({
-      rows: windowRowsRef.current,
-      keys: input.keys,
-    });
-    const freshByKey = new Map(projected.entries.map((entry) => [entry.key, entry]));
-    const entries: TriageBulkSelectedEntryV1[] = [];
-    const unavailableKeys: string[] = [];
-    for (const key of input.keys) {
-      const entry = freshByKey.get(key) ?? retainedBulkEntries.current.get(key);
-      if (entry === undefined) unavailableKeys.push(key);
-      else entries.push(entry);
-    }
+    const selected = readSelectedBulkEntries(input.keys);
     bulkSessions.run({
       action: input.action,
       destination: input.destination,
-      entries: entries.map((entry) => ({
+      entries: selected.entries.map((entry) => ({
         ...entry,
         workflowSubject: resolveTriageSourceWorkflowSubjectV1(
           surfaceContext.targetedContributions,
           entry.entryRef,
         ),
       })),
-      unavailableKeys,
+      unavailableKeys: selected.unavailableKeys,
     });
-  }, [bulkSessions, surfaceContext.targetedContributions]);
+  }, [bulkSessions, readSelectedBulkEntries, surfaceContext.targetedContributions]);
+
+  const visibleOrder = React.useMemo(
+    () => [...rowsByKey.values()].map((hit) => ({
+      sectionId: hit.sectionId,
+      entryRef: hit.row.entryRef,
+    })),
+    [rowsByKey],
+  );
+  const dismissDetail = React.useCallback(() => {
+    readerChangedLens.current = true;
+    if (selectedKey !== null) setListFocusRequest({ key: selectedKey });
+    dispatch({ kind: 'detailDismissed', visibleOrder });
+  }, [selectedKey, visibleOrder]);
+
+  useTriageWindowLensBinding(window.setLens, readTriageWindowLensV1(surface));
+  useTriageRouteBinding(hostApi, surface, readerChangedLens);
+  useTriageSavedViewBinding({
+    saved: savedViews.saved,
+    routeCarriedLens,
+    readerChangedLens,
+    configuredSources: configuredSourceIdentities,
+    selectedViewId: surface.selectedViewId,
+    applyLensEdit,
+  });
+  useTriageSettledLocation({
+    subPath: props.subPath,
+    launch: props.launch,
+    surface,
+    rowsByKey,
+    // A launch may only be answered "this page does not list that entry" once a
+    // window actually EXISTS to have listed it. `window` and `configureSources`
+    // are the two states assembled from a completed pass
+    // (`windowState.ts` returns `configureSources` for a completed pass over zero
+    // configured sources). `initial`, `sourcesUnreachable` and `unavailable` all
+    // mean NO window was ever assembled — in those, whether this page lists the
+    // entry is UNKNOWN, not false, so the launch must stay pending rather than be
+    // adopted and permanently qualified by its own instance over an empty
+    // `rowsByKey`. Naming only `initial` here did exactly that, and additionally
+    // showed "this entry is no longer in the list" over a page whose sources could
+    // not be reached at all.
+    windowSettled: state.kind === 'window' || state.kind === 'configureSources',
+    applyLensEdit,
+    dispatch,
+    readerChangedLens,
+  });
+
+  /**
+   * The way out of an unconfigured PRs & Issues, or nothing at all.
+   *
+   * The unconfigured screen named the remedy — "connect a source in Settings" —
+   * and could not perform it, so a reader who had installed a source was told to
+   * go and find its page themselves. Every source already ships that page; what
+   * was missing was a way to NAME it, which the V1 descriptor now carries.
+   *
+   * Two independent facts gate the offer, and each one absent means the control
+   * is simply not rendered rather than rendered dead: whether this mount can
+   * navigate at all (`openSurface` is negotiated per mount, exactly as the route
+   * owner reads `replacePageLocation`), and whether a given source named a page.
+   */
   /**
    * `core/SURFACE.md` §2.1. The shell measures its OWN fill region and combines
    * that width with the reader's type size; it never asks the platform how big
@@ -952,6 +1078,19 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       setConfigureRefused(offer.displayName);
     }
   }, [hostApi]);
+
+  const removeConfiguredSource = React.useCallback(async (
+    sourceInstanceId: string,
+    displayLabel: string,
+  ): Promise<void> => {
+    const confirmed = await hostApi.confirm(text(
+      'plugins.triage.surface.sources.remove.confirm',
+      'Remove {name} from PRs & Issues?',
+      { name: displayLabel },
+    ));
+    if (!confirmed) return;
+    if (await configuredSources.remove(sourceInstanceId)) refresh();
+  }, [configuredSources, hostApi, refresh, text]);
 
   if (state.kind === 'initial') {
     return (
@@ -1074,6 +1213,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         // resolving it there would be a second target reader for one concept.
         target={actionTarget}
         actions={configuredActions}
+        originComposer={detailOriginComposer}
+        pin={{ row: projectTriageWindowRow(selectedRow, pinsByEntry), handlers: pinHandlers }}
         onClose={dismissDetail}
       />
     ) : lastKnownHeader !== null ? (
@@ -1086,7 +1227,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
        * WHICH entry had gone, which is the one thing they were reading.
        */
       <Stack gap="small">
-        <TriageDetailHeaderView header={lastKnownHeader} onClose={dismissDetail} lastKnown />
+        <TriageDetailHeaderView
+          header={lastKnownHeader}
+          pin={lastKnownPinRow === null ? undefined : { row: lastKnownPinRow, handlers: pinHandlers }}
+          onClose={dismissDetail}
+          lastKnown
+        />
         <EmptyState
           titleKey="plugins.triage.surface.entryGone.heading"
           title="This entry is no longer in the list"
@@ -1141,23 +1287,47 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * selection REPLACES the list, because §2.1 forbids duplicating it underneath
    * and a starved two-pane split is worse than one readable pane.
    */
-  const splitDetail = detailContent !== null && layout !== null && layout.mode === 'split'
-    ? { content: detailContent, listRatio: layout.listRatio }
+  const splitListRatio = detailContent !== null && layout !== null && layout.mode === 'split'
+    ? layout.listRatio
     : null;
-
-  if (detailContent !== null && splitDetail === null) {
-    return (
-      <Screen safeArea>
-        <Stack gap="small" testID={TRIAGE_SHELL_FILL_TEST_ID_V1} onLayout={onFillRegionLayout}>
-          {detailContent}
-        </Stack>
-      </Screen>
-    );
-  }
+  /**
+   * Stacked: the detail owns the visible region, and the list is INACTIVE
+   * rather than gone.
+   *
+   * Returning a detail-only subtree here was the obvious implementation and it
+   * is what §2.1's "replaces the list" reads like — but "replaced on screen"
+   * and "torn out of the tree" are not the same thing, and only the first is
+   * what the composition asks for. Unmounting the list discards the very state
+   * the split arm's own comment says the reader keeps: the `List` instance, its
+   * virtualizer window, the row their keyboard focus was on, their place in the
+   * search they had typed. Closing the detail then rebuilt a fresh list at the
+   * top, which on a phone — the ONLY composition that stacks — is where the
+   * reader spends all of their time.
+   *
+   * `display: 'none'` is the whole mechanism: React keeps the subtree mounted
+   * and its state alive, while the platform gives it no box, no hit target, no
+   * tab stop and no place in the accessibility tree. §2.1's rule that the list
+   * is not duplicated underneath the detail therefore still holds literally —
+   * there is exactly one list, and while an entry is open it is not on screen.
+   */
+  const stackedDetailOpen = detailContent !== null && splitListRatio === null;
 
   return (
-    <Screen safeArea>
-      <Stack gap="small" testID={TRIAGE_SHELL_FILL_TEST_ID_V1} onLayout={onFillRegionLayout}>
+    <Screen safeArea style={TRIAGE_FILL_STYLE_V1}>
+      <Row
+        gap="small"
+        align="stretch"
+        testID={TRIAGE_SHELL_FILL_TEST_ID_V1}
+        onLayout={onFillRegionLayout}
+        style={TRIAGE_FILL_STYLE_V1}
+      >
+        <Stack
+          gap="small"
+          testID={TRIAGE_SHELL_LIST_REGION_TEST_ID_V1}
+          style={stackedDetailOpen
+            ? TRIAGE_INACTIVE_REGION_STYLE_V1
+            : { ...TRIAGE_FILL_STYLE_V1, flex: splitListRatio ?? 1 }}
+        >
         <Row justify="space-between" align="center">
           <Heading level={1} value={TRIAGE_DISPLAY_NAME} />
           <Button
@@ -1222,7 +1392,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           // reported as naming sources that are gone.
           namesUnavailableSources={state.kind === 'window'
             && (effectiveView?.unavailableSources.length ?? 0) > 0}
-          busy={savedViews.busy}
+          busy={savedViews.busy || savedViews.revision === null}
           unavailableReason={savedViews.unavailableReason}
           unreadable={savedViews.saved?.kind === 'unreadable'}
           notice={savedViews.notice}
@@ -1233,6 +1403,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           onUpdateView={updateView}
           onDeleteView={deleteView}
         />
+
+        {/*
+          The configured actions, edited where they are pressed.
+          `triage.actions` is a hidden Settings field because the declarative
+          Settings form has no repeatable record editor — so this is the editor
+          the declaration points at, and it is the ONLY writer of that key on
+          this page.
+        */}
         {editingActions ? (
           <TriageActionsEditor
             actions={configuredActions}
@@ -1245,6 +1423,89 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               title="Configure actions"
               variant="secondary"
               onPress={() => { setEditingActions(true); }}
+            />
+          </Row>
+        )}
+
+        {editingSources ? (
+          <Stack gap="small">
+            <Row gap="small" align="center" justify="space-between" wrap>
+              <Heading
+                value={text('plugins.triage.surface.sources.title', 'Configured sources')}
+                level={3}
+              />
+              <Button
+                titleKey="plugins.triage.surface.close"
+                title="Close"
+                variant="secondary"
+                onPress={() => { setEditingSources(false); }}
+              />
+            </Row>
+            {configuredSources.unavailableReason === null ? null : (
+              <Banner
+                tone="warning"
+                title={text('plugins.triage.surface.sources.unavailableTitle', 'Account data is unavailable')}
+                description={configuredSources.unavailableReason}
+              />
+            )}
+            {configuredSources.completeness !== 'truncated' ? null : (
+              <Banner
+                tone="info"
+                title={text(
+                  'plugins.triage.surface.sources.truncatedTitle',
+                  'More than 32 sources are configured',
+                )}
+                description={text(
+                  'plugins.triage.surface.sources.truncatedDescription',
+                  'Every configured source is shown here so you can remove it. PRs & Issues reads entries from the first 32 until the set is back within the V1 limit.',
+                )}
+              />
+            )}
+            {configuredSources.notice === null ? null : (
+              <Banner
+                tone="warning"
+                title={text(
+                  'plugins.triage.surface.sources.changedTitle',
+                  'Configured sources changed',
+                )}
+                description={configuredSources.notice.message}
+              />
+            )}
+            {configuredSources.sources.length === 0 ? (
+              <Status
+                tone="muted"
+                label={text('plugins.triage.surface.sources.none', 'No configured sources')}
+              />
+            ) : (
+              <ItemGroup accessibilityLabel={text('plugins.triage.surface.sources.title', 'Configured sources')}>
+                {configuredSources.sources.map((source) => (
+                  <Item
+                    key={source.sourceInstanceId}
+                    title={source.displayLabel}
+                    {...(source.displayPath === undefined ? {} : { subtitle: source.displayPath })}
+                    accessoryWraps
+                    accessory={(
+                      <Button
+                        title={text('plugins.triage.surface.sources.remove', 'Remove')}
+                        variant="secondary"
+                        disabled={configuredSources.unavailableReason !== null}
+                        busy={configuredSources.busySourceInstanceId === source.sourceInstanceId}
+                        onPress={() => {
+                          void removeConfiguredSource(source.sourceInstanceId, source.displayLabel);
+                        }}
+                      />
+                    )}
+                  />
+                ))}
+              </ItemGroup>
+            )}
+          </Stack>
+        ) : (
+          <Row gap="small" align="center">
+            <Button
+              title={text('plugins.triage.surface.sources.manage', 'Manage sources')}
+              variant="secondary"
+              onPress={() => { setEditingSources(true); }}
             />
           </Row>
         )}
@@ -1344,29 +1605,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           <Status tone={marks.notice.tone} label={marks.notice.message} />
         )}
 
-        {/*
-          `core/SURFACE.md` §2.1's two regions, in one stable shape.
-
-          The list pane and this Row are rendered whether or not a detail is
-          open, and the list keeps the SAME position in the tree either way.
-          That is the whole point: React keeps the mounted `List` — with the
-          reader's scroll offset, their focused row and the virtualizer's window
-          — alive across opening and closing an entry. Rendering the list bare
-          when nothing is selected and re-parenting it into a pane when
-          something is would unmount and rebuild it on every open, which is
-          exactly how a reader loses their place — and §2.1 asks for the
-          opposite.
-
-          Both panes carry `minWidth: 0` because a flex child's default minimum
-          is its content, so a long unbroken title would otherwise push the pane
-          past its share and take the detail region off screen.
-        */}
-        <Row gap="small" align="stretch">
-          <Stack
-            gap="none"
-            style={{ flex: splitDetail === null ? 1 : splitDetail.listRatio, minWidth: 0 }}
-          >
-            <List<TriageListSectionItemV1>
+        <List<TriageListSectionItemV1>
+              style={TRIAGE_LIST_STYLE_V1}
               accessibilityLabel={TRIAGE_DISPLAY_NAME}
               density="compact"
               sections={sections}
@@ -1387,6 +1627,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 label: text('plugins.triage.surface.search', 'Search PRs & Issues'),
                 value: surface.search.query,
                 onValueChange: changeSearch,
+                onComposingValueChange: changeComposingSearch,
                 filter: RETAIN_EVERY_ROW,
               }}
               keyForItem={readTriageListSectionItemKey}
@@ -1398,6 +1639,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 selectedKey,
                 onSelectedKeyChange: activateRow,
                 onFocusedKeyChange: focusRow,
+                focusRequest: listFocusRequest,
                 // The bulk set beside the detail cursor, never instead of it.
                 multiple: {
                   store: bulkSelection,
@@ -1417,6 +1659,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               footer={(
                 <TriageBulkActionBar
                   actions={configuredActions.actions}
+                  selectedWorkflowSubjects={selectedBulkWorkflowSubjects}
                   phase={bulkSessions.phase}
                   onRun={runBulkAction}
                   onCancel={bulkSessions.cancel}
@@ -1435,14 +1678,17 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 />
               )}
             />
-          </Stack>
-          {splitDetail === null ? null : (
-            <Stack gap="none" style={{ flex: 1 - splitDetail.listRatio, minWidth: 0 }}>
-              {splitDetail.content}
-            </Stack>
-          )}
-        </Row>
-      </Stack>
+        </Stack>
+        <Stack
+          gap="none"
+          testID={TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}
+          style={detailContent === null
+            ? TRIAGE_INACTIVE_REGION_STYLE_V1
+            : { ...TRIAGE_FILL_STYLE_V1, flex: splitListRatio === null ? 1 : 1 - splitListRatio }}
+        >
+          {detailContent}
+        </Stack>
+      </Row>
     </Screen>
   );
 }
@@ -1743,6 +1989,7 @@ function useTriageRouteBinding(
   surface: TriageSurfaceStateV1,
   readerChangedLens: React.RefObject<boolean>,
 ): void {
+  const queue = React.useMemo(() => createTriageRouteWriteQueueV1(hostApi), [hostApi]);
   const lens = readTriageRouteLensV1(surface);
   const grouping = lens.grouping;
   const order = lens.order;
@@ -1754,24 +2001,20 @@ function useTriageRouteBinding(
 
   React.useEffect(() => {
     if (!readerChangedLens.current) return undefined;
-    const controller = new AbortController();
-    void writeTriageRouteLensV1(
-      hostApi,
-      { grouping, order, smartPolicy, filters, query, selectedViewId, selection },
-      { signal: controller.signal },
-    );
-    return () => { controller.abort(); };
+    queue.write({ grouping, order, smartPolicy, filters, query, selectedViewId, selection });
+    return undefined;
   }, [
     filters,
     grouping,
-    hostApi,
     order,
+    queue,
     query,
     readerChangedLens,
     selectedViewId,
     selection,
     smartPolicy,
   ]);
+  React.useEffect(() => () => { queue.dispose(); }, [queue]);
 }
 
 /**

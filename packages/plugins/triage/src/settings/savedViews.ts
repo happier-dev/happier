@@ -53,12 +53,8 @@ import { readExactKeys } from './storedValue.js';
 /** The one versioned Account Settings key this document owns. */
 export const TRIAGE_SAVED_VIEWS_SETTING_ID_V1 = 'triage.savedViews';
 
-/** At most this many views: this is one Settings value, not one Settings field per view. */
-export const MAX_TRIAGE_SAVED_VIEWS_V1 = 32;
 /** Label bound, measured in UTF-8 bytes after trimming, not in characters. */
 export const MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1 = 128;
-/** Values in each of the five filter facets. */
-export const MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 = 16;
 /**
  * The whole serialized `triage.savedViews` value.
  *
@@ -110,8 +106,6 @@ export type CorpusSavedViewsReadV1 = Readonly<{
 
 export type CorpusSavedViewsRejectionV1 =
     | 'label'
-    | 'viewLimit'
-    | 'facetLimit'
     | 'duplicateFacetValue'
     | 'filterValue'
     | 'order'
@@ -119,12 +113,21 @@ export type CorpusSavedViewsRejectionV1 =
     | 'valueTooLarge';
 
 export type CorpusSavedViewsMutationResultV1 =
-    | Readonly<{ status: 'applied'; viewId: string | null; value: CorpusSavedViewsSettingV1 }>
+    | Readonly<{
+        status: 'applied';
+        viewId: string | null;
+        value: CorpusSavedViewsSettingV1;
+        revision: string;
+    }>
     /** Another writer won; the caller re-reads rather than forcing its value. */
     | Readonly<{ status: 'conflict' }>
     | Readonly<{ status: 'unknownView' }>
     | Readonly<{ status: 'unreadable' }>
     | Readonly<{ status: 'rejected'; reason: CorpusSavedViewsRejectionV1 }>;
+
+type CorpusSavedViewsAppliedPlanV1 =
+    | Readonly<{ status: 'applied'; viewId: string | null; value: CorpusSavedViewsSettingV1 }>
+    | Exclude<CorpusSavedViewsMutationResultV1, Readonly<{ status: 'applied' }>>;
 
 export type CorpusSavedViewDraftV1 = Readonly<{
     label: string;
@@ -133,11 +136,14 @@ export type CorpusSavedViewDraftV1 = Readonly<{
     smartPolicy: CorpusSmartPolicyV1;
 }>;
 
-export type CorpusSavedViewCommandV1 =
+type CorpusSavedViewCommandBaseV1 = Readonly<{ expectedRevision: string }>;
+
+export type CorpusSavedViewCommandV1 = CorpusSavedViewCommandBaseV1 & (
     | (CorpusSavedViewDraftV1 & Readonly<{ kind: 'create'; select?: boolean }>)
     | (CorpusSavedViewDraftV1 & Readonly<{ kind: 'update'; viewId: string }>)
     | Readonly<{ kind: 'delete'; viewId: string }>
-    | Readonly<{ kind: 'select'; viewId: string | null }>;
+    | Readonly<{ kind: 'select'; viewId: string | null }>
+);
 
 export type CorpusSavedViewsDepsV1 = Readonly<{
     settings: Pick<ScopedSettingsService, 'snapshot' | 'set'>;
@@ -228,7 +234,6 @@ function readFacet<TValue>(
     read: (value: unknown) => TValue | null,
 ): FacetOutcome<TValue> {
     if (!Array.isArray(raw)) return { ok: false, reason: 'filterValue' };
-    if (raw.length > MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1) return { ok: false, reason: 'facetLimit' };
     const values: TValue[] = [];
     const seen = new Set<string>();
     for (const member of raw) {
@@ -319,18 +324,14 @@ const VIEW_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 export function parseTriageSavedViews(raw: unknown): CorpusSavedViewsReadV1 {
     if (raw === undefined || raw === null) return { kind: 'absent', value: CORPUS_EMPTY_SAVED_VIEWS_V1 };
     const unreadable: CorpusSavedViewsReadV1 = { kind: 'unreadable', value: CORPUS_EMPTY_SAVED_VIEWS_V1 };
-    // The whole-value byte bound is read back as well as written. A reader that
-    // accepted what its own writer refuses is what would let a stored value this
-    // build never produced return an Action result past the host's 1 MiB gate —
-    // and that gate rejects the result whole, so the user would lose the saved
-    // views entirely instead of seeing the honest `unreadable` answer.
+    // The local whole-value bound is read back as well as written so the reader
+    // and writer agree about which Settings documents this implementation owns.
     if (typeof raw !== 'object') return unreadable;
     if (utf8ByteLength(JSON.stringify(raw)) > MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1) {
         return unreadable;
     }
     const candidate = readExactKeys(raw, ['v', 'views', 'selectedViewId']);
     if (!candidate || candidate.v !== 1 || !Array.isArray(candidate.views)) return unreadable;
-    if (candidate.views.length > MAX_TRIAGE_SAVED_VIEWS_V1) return unreadable;
     if (candidate.selectedViewId !== null && typeof candidate.selectedViewId !== 'string') return unreadable;
 
     const views: CorpusSavedViewV1[] = [];
@@ -402,7 +403,7 @@ function applyCommand(
     current: CorpusSavedViewsSettingV1,
     command: CorpusSavedViewCommandV1,
     mintViewId: () => string,
-): CorpusSavedViewsMutationResultV1 {
+): CorpusSavedViewsAppliedPlanV1 {
     if (command.kind === 'select') {
         if (command.viewId !== null && !current.views.some((view) => view.viewId === command.viewId)) {
             return { status: 'unknownView' };
@@ -440,7 +441,6 @@ function applyCommand(
         return { status: 'applied', viewId: command.viewId, value: { ...current, views } };
     }
 
-    if (current.views.length >= MAX_TRIAGE_SAVED_VIEWS_V1) return { status: 'rejected', reason: 'viewLimit' };
     const viewId = mintViewId();
     const parsed = readView(viewId, command);
     if (!parsed.ok) return { status: 'rejected', reason: parsed.reason };
@@ -476,6 +476,10 @@ export async function mutateTriageSavedViews(
 ): Promise<CorpusSavedViewsMutationResultV1> {
     const options = deps.signal ? { signal: deps.signal } : undefined;
     const snapshot = await deps.settings.snapshot(options);
+    // The caller names the document it edited. Comparing before applying the
+    // full draft closes the window the final Settings CAS cannot see: a change
+    // that landed after the editor read but before this function's own snapshot.
+    if (snapshot.revision !== command.expectedRevision) return { status: 'conflict' };
     const read = parseTriageSavedViews(snapshot.values[TRIAGE_SAVED_VIEWS_SETTING_ID_V1]);
     // Refusing here is what keeps a newer client's views alive: this build
     // cannot merge into a value it cannot read, so it declines rather than
@@ -491,17 +495,17 @@ export async function mutateTriageSavedViews(
     }
 
     try {
-        await deps.settings.set(TRIAGE_SAVED_VIEWS_SETTING_ID_V1, stored, {
+        const mutation = await deps.settings.set(TRIAGE_SAVED_VIEWS_SETTING_ID_V1, stored, {
             expectedRevision: snapshot.revision,
             ...(deps.signal ? { signal: deps.signal } : {}),
         });
+        return { ...applied, revision: mutation.revision };
     } catch (error) {
         if (isPluginError(error) && error.code === 'plugin_settings_revision_conflict') {
             return { status: 'conflict' };
         }
         throw error;
     }
-    return applied;
 }
 
 /** The retained default policy behind an unsaved lens. */

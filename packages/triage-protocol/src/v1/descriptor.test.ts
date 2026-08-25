@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { TriageSourceDescriptorV1Schema } from './descriptor.js';
+import {
+    admitTriageSourceDescriptorV1,
+    TriageSourceDescriptorV1Schema,
+} from './descriptor.js';
 
 /**
  * The one declaration a source makes about itself, and the one thing that was
@@ -58,5 +61,17 @@ describe('the V1 source descriptor', () => {
             ...MINIMAL,
             settingsPageId: '',
         }).success).toBe(false);
+    });
+
+    it('rejects duplicate kind ids at the production target admission boundary', () => {
+        const admitted = admitTriageSourceDescriptorV1({
+            ...MINIMAL,
+            kinds: [
+                MINIMAL.kinds[0],
+                { ...MINIMAL.kinds[0], workflowSubject: 'issue', displayName: 'Issue' },
+            ],
+        });
+
+        expect(admitted).toEqual({ ok: false, reason: 'duplicateKindId' });
     });
 });

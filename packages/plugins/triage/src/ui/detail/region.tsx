@@ -8,8 +8,6 @@ import {
   EmptyState,
   ErrorState,
   Heading,
-  Item,
-  ItemGroup,
   Label,
   Link,
   LoadingState,
@@ -18,18 +16,30 @@ import {
   Stack,
   Status,
   TargetedSurface,
+  usePluginHostApi,
   usePluginTranslation,
   useSurfaceContext,
+  type ComposerRefV1,
   type MetadataEntry,
 } from '@happier-dev/plugin-ui';
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  TriageEvidenceDisclosureProvider,
+  TriagePostMutationCompletionProvider,
+} from '@happier-dev/triage-sources/ui';
 
 import {
   type TriageListLaneV1,
   type TriageListRowV1,
 } from '../../projection/listWindow.js';
 import { buildTriageEntryAttachmentPresentation } from '../../composer/mutationPlan.js';
+import { useTriageTierBEvidenceInsertion } from '../../composer/tierBEvidenceInsertion.js';
 import type { TriageMountedActionsV1 } from '../actions/useTriageActions.js';
+import {
+  readTriagePinActionLabelV1,
+  type TriageRowPinHandlersV1,
+} from '../list/rows.js';
+import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
 import {
   TriageEntryActionControls,
   type TriageEntryActionRequestV1,
@@ -44,6 +54,8 @@ import {
   readTriageSourcePreparesReviewWorkspaceV1,
 } from './sourceSurface.js';
 import { useTriageEntryDetail } from './useTriageEntryDetail.js';
+import { reobserveTriagePostMutationRow } from './postMutationReobservation.js';
+import { TriageLinkedSessions } from './linkedSessions.js';
 
 /**
  * The mounted detail region: the aggregate's common header, and beneath it the
@@ -82,17 +94,30 @@ export type TriageDetailRegionProps = Readonly<{
    * different entry than the surface's published context claims.
    */
   target: TriageActionTargetV1;
-  /** Clears the selection; the stacked composition returns to the list. */
-  onClose: () => void;
   /**
-   * The configured action catalog, read once by the shell.
+   * The CONFIGURED action catalog, read once by the shell.
    *
    * It arrives as a prop for the same reason `target` does: one mount, one
    * read. A hook here would give the detail region its own copy of durable
-   * Account configuration, so the editor and pressed controls could show
+   * Account configuration, so the editor and the pressed controls could show
    * different sets of the same actions between two settled writes.
    */
   actions: TriageMountedActionsV1;
+  /**
+   * The Composer this detail was opened FROM, or `null` for an app-origin open.
+   *
+   * It is the exact address the shell retained from its own closed launch input
+   * and never a lookup: `core/COMPOSER.md` §2.1 makes the originating draft a
+   * fact of the open, not of whichever Composer happens to be mounted. It stops
+   * here — the mounted source is handed a disclosure callback, never this value
+   * — because a source that held the address would become a second Composer
+   * writer with its own read, token and revision rules.
+   */
+  originComposer: ComposerRefV1 | null;
+  /** The already-projected row and the sole mounted mark handlers. */
+  pin: TriageDetailPinActionV1;
+  /** Clears the selection; the stacked composition returns to the list. */
+  onClose: () => void;
 }>;
 
 function headerEntries(
@@ -125,29 +150,6 @@ const PRESENCE_COPY = Object.freeze({
   unresolved: 'This entry could not be read from the source.',
 });
 
-function LinkedSessions(props: Readonly<{
-  sessions: readonly TriageLinkedSessionProjectionV1[];
-}>): React.ReactElement | null {
-  const text = usePluginTranslation();
-  if (props.sessions.length === 0) return null;
-  return (
-    <Stack gap="small">
-      <Label value={text('plugins.triage.surface.detail.sessions', 'Sessions')} />
-      <ItemGroup accessibilityLabel={text('plugins.triage.surface.detail.sessions', 'Sessions')}>
-        {props.sessions.map((session) => (
-          <Item
-            key={session.sessionId}
-            // A retained link whose Session the host cannot answer for keeps
-            // its row: dropping it would say the entry was never worked on.
-            title={session.displayTitle ?? text('plugins.triage.surface.detail.session', 'Session')}
-            accessibilityLabel={session.displayTitle ?? text('plugins.triage.surface.detail.session', 'Session')}
-          />
-        ))}
-      </ItemGroup>
-    </Stack>
-  );
-}
-
 export type TriageDetailHeaderViewProps = Readonly<{
   header: TriageDetailHeaderV1;
   /** Clears the selection; the stacked composition returns to the list. */
@@ -165,6 +167,13 @@ export type TriageDetailHeaderViewProps = Readonly<{
    * admitted contribution would have named are simply absent.
    */
   lastKnown?: boolean;
+  /** Visible direct Pin/Unpin for the selected entry. */
+  pin?: TriageDetailPinActionV1;
+}>;
+
+export type TriageDetailPinActionV1 = Readonly<{
+  row: TriageListDisplayRowV1;
+  handlers: TriageRowPinHandlersV1;
 }>;
 
 /**
@@ -183,12 +192,30 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
     : header.presence === 'absent'
       ? text('plugins.triage.surface.detail.entryAbsent', PRESENCE_COPY.absent ?? '')
       : text('plugins.triage.surface.detail.entryUnresolved', PRESENCE_COPY.unresolved ?? '');
+  const pinLabel = props.pin === undefined
+    ? null
+    : readTriagePinActionLabelV1(props.pin.row, text);
+  const pinBusy = props.pin !== undefined && props.pin.handlers.busyKey === props.pin.row.key;
+  const onSetPinned = React.useCallback(() => {
+    if (props.pin !== undefined) props.pin.handlers.onSetPinned(props.pin.row);
+  }, [props.pin]);
 
   return (
     <>
       <Row justify="space-between" align="center">
         <Heading level={2} value={header.title} />
-        <Button titleKey="plugins.triage.surface.close" title="Close" variant="secondary" onPress={props.onClose} />
+        <Row gap="small" align="center">
+          {props.pin === undefined || pinLabel === null ? null : (
+            <Button
+              title={pinLabel}
+              variant="secondary"
+              busy={pinBusy}
+              disabled={props.pin.handlers.unavailableReason !== null}
+              onPress={onSetPinned}
+            />
+          )}
+          <Button titleKey="plugins.triage.surface.close" title="Close" variant="secondary" onPress={props.onClose} />
+        </Row>
       </Row>
 
       {props.lastKnown === true ? (
@@ -226,39 +253,67 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
         />
       )}
 
-      <LinkedSessions sessions={header.linkedSessions} />
+      <TriageLinkedSessions sessions={header.linkedSessions} hasMore={header.linkedSessionsHasMore} />
     </>
   );
 }
 
 export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactElement {
   const context = useSurfaceContext();
+  const hostApi = usePluginHostApi();
   const text = usePluginTranslation();
-  const lookup = readTriageSourceDetailContributionV1(context, props.row.entryRef.source);
+  // The ONE Triage consumer of a source disclosure, mounted for exactly as long
+  // as this detail is: it binds the retained origin address and owns the single
+  // revision-checked transaction the disclosed candidate becomes.
+  const evidenceDisclosure = useTriageTierBEvidenceInsertion(props.originComposer);
+  const [postMutationRow, setPostMutationRow] = React.useState<TriageListRowV1 | null>(null);
+  React.useEffect(() => { setPostMutationRow(null); }, [props.row]);
+  const row = postMutationRow ?? props.row;
+  const lookup = readTriageSourceDetailContributionV1(context, row.entryRef.source);
 
+  // Which connection this row is showing, and the observation made through it,
+  // read from the ONE owner both this region and a bulk selection's per-entry
+  // payload consult (`ui/window/selectedObservation.ts`). A second reader here
+  // is how a detail opens — or a bulk action attaches — an entry under a
+  // connection the row is not showing.
   const selected = React.useMemo(
-    () => readTriageSelectedObservationV1(props.row),
-    [props.row],
+    () => readTriageSelectedObservationV1(row),
+    [row],
   );
   const selection = React.useMemo(() => (
     selected === null
       ? null
-      : { entryRef: props.row.entryRef, sourceInstanceId: selected.sourceInstanceId }
-  ), [props.row, selected]);
+      : { entryRef: row.entryRef, sourceInstanceId: selected.sourceInstanceId }
+  ), [row.entryRef, selected]);
   const observation = selected?.observation ?? null;
 
   const detail = useTriageEntryDetail(
     selection === null || observation === null ? null : { selection, observation },
   );
   const linkedSessions = detail?.kind === 'ready' ? detail.input.linkedSessions : EMPTY_SESSIONS;
+  const linkedSessionsHasMore = detail?.kind === 'ready'
+    ? detail.input.linkedSessionsHasMore === true
+    : false;
   const sourceDescriptor = detail?.kind === 'ready' ? detail.sourceDescriptor : null;
   const header = React.useMemo(() => projectTriageDetailHeaderV1({
-    row: props.row,
+    row,
     lanes: props.lanes,
     connectionLabel: props.connectionLabel,
     sourceDescriptor,
     linkedSessions,
-  }), [linkedSessions, props.connectionLabel, props.lanes, props.row, sourceDescriptor]);
+    linkedSessionsHasMore,
+  }), [linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, row, sourceDescriptor]);
+
+  const completePostMutation = React.useCallback(async (): Promise<void> => {
+    if (selected === null) return;
+    const next = await reobserveTriagePostMutationRow(
+      hostApi,
+      row,
+      props.lanes,
+      selected.sourceInstanceId,
+    );
+    if (next !== null) setPostMutationRow(next);
+  }, [hostApi, props.lanes, row, selected]);
 
   /**
    * The header's action controls, and the one press path they lead to.
@@ -278,29 +333,42 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const controller = useTriageEntrySessionStart();
   const preparesReviewWorkspace = readTriageSourcePreparesReviewWorkspaceV1(
     context,
-    props.row.entryRef.source,
+    row.entryRef.source,
   );
   const display = React.useMemo(() => (
     observation === null
       ? null
       : { locator: observation.locator, scopeLabel: observation.snapshot.scopeLabel }
   ), [observation]);
+  const workflowSubject = header.workflowSubject;
   const repository = selected?.repository;
   const snapshot = observation?.snapshot;
   const locator = observation?.locator;
-  const workflowSubject = header.workflowSubject;
   const onAction = React.useCallback((request: TriageEntryActionRequestV1) => {
+    // The pressed action travels WHOLE: its mode, its profile, its prompt, its
+    // delivery and its arm are all read by the one controller below. This is
+    // the last place a press could have re-decided any of them, and it does
+    // not — it only adds the facts this screen holds and the record cannot.
     if (display === null || snapshot === undefined) return;
     controller.start({
       action: request.action,
       entryRef: request.entryRef,
       display,
+      // The entry attachment's two halves. Identity is the connection this
+      // entry was read through; the presentation is the bounded immutable
+      // fallback the host freezes, built by the one composer-side owner so an
+      // entry a delivery attaches and an entry the picker attaches are the
+      // same record.
       sourceInstance: { source: request.entryRef.source, sourceInstanceId: request.sourceInstanceId },
       presentation: buildTriageEntryAttachmentPresentation({
         title: snapshot.title,
         scopeLabel: snapshot.scopeLabel,
       }),
       ...(locator === undefined ? {} : { lastKnownLocator: locator }),
+      // The entry's own forge repository, exactly as its source declared it.
+      // It travels from the observation the reader is looking at, so launch
+      // placement joins on the same answer the screen is showing rather than
+      // re-reading the entry.
       ...(repository === undefined ? {} : { repository }),
     });
   }, [controller, display, locator, repository, snapshot]);
@@ -308,7 +376,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
 
   return (
     <Stack gap="small">
-      <TriageDetailHeaderView header={header} onClose={props.onClose} />
+      <TriageDetailHeaderView header={header} pin={props.pin} onClose={props.onClose} />
 
       {workflowSubject === null || display === null ? null : (
         <Stack gap="small">
@@ -362,31 +430,35 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           description="The source that owns this entry does not currently contribute a detail surface."
         />
       ) : (
-        <TargetedSurface
-          surface={lookup.surface}
-          input={detail.input}
-          // Remounts on entry and on connection, and on nothing else: a refresh
-          // that re-reads the same selection must not throw away the tab, scroll
-          // and parser state the source body is holding.
-          //
-          // The entry half is the CANONICAL reference, through the one encoder
-          // the fold and the pinned-row join already share. `entryId` alone is
-          // not the entry: GitLab issue #5 and merge request !5 in one project
-          // differ only by `kindId`, and two sources can answer for the same
-          // number in different scopes. A key that named only the number folded
-          // those into one mount identity, and spelling the join here a second
-          // time would be a second encoder for one key.
-          instanceKey={deriveTriageDetailMountInstanceKey(props.row.entryRef, detail.input.instance.instance.sourceInstanceId)}
-          fallback={(
-            <EmptyState
-              // §2.3: the host's mount lifecycle is not source-domain status.
-              titleKey="plugins.triage.surface.detail.mountError.title"
-              title="This source's detail view is unavailable"
-              descriptionKey="plugins.triage.surface.detail.mountError.description"
-              description="Happier could not mount the source's own view of this entry. The facts above are what the aggregate already knows."
+        <TriagePostMutationCompletionProvider onComplete={completePostMutation}>
+          <TriageEvidenceDisclosureProvider disclosure={evidenceDisclosure}>
+            <TargetedSurface
+              surface={lookup.surface}
+              input={detail.input}
+            // Remounts on entry and on connection, and on nothing else: a refresh
+            // that re-reads the same selection must not throw away the tab, scroll
+            // and parser state the source body is holding.
+            //
+            // The entry half is the CANONICAL reference, through the one encoder
+            // the fold and the pinned-row join already share. `entryId` alone is
+            // not the entry: GitLab issue #5 and merge request !5 in one project
+            // differ only by `kindId`, and two sources can answer for the same
+            // number in different scopes. A key that named only the number folded
+            // those into one mount identity, and spelling the join here a second
+            // time would be a second encoder for one key.
+              instanceKey={deriveTriageDetailMountInstanceKey(row.entryRef, detail.input.instance.instance.sourceInstanceId)}
+              fallback={(
+                <EmptyState
+                // §2.3: the host's mount lifecycle is not source-domain status.
+                titleKey="plugins.triage.surface.detail.mountError.title"
+                title="This source's detail view is unavailable"
+                descriptionKey="plugins.triage.surface.detail.mountError.description"
+                description="Happier could not mount the source's own view of this entry. The facts above are what the aggregate already knows."
+                />
+              )}
             />
-          )}
-        />
+          </TriageEvidenceDisclosureProvider>
+        </TriagePostMutationCompletionProvider>
       )}
     </Stack>
   );

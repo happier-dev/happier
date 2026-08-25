@@ -9,13 +9,11 @@ import type { TriageListRowV1, TriageListWindowV1 } from './listWindow.js';
 /**
  * The one projection between the assembled window and the list Action's wire.
  *
- * Both directions live here because they are one contract. The window the fold
- * produces holds every connection's complete answer; the wire cannot, because
- * every Action result crosses a hard 1 MiB host gate that rejects the whole
- * value rather than truncating it, and a maximal window already spends four
- * fifths of that gate on one snapshot per row. So the wire carries the rendered
- * connection's answer in full, every other connection's answer in one line, and
- * the count that keeps a wider set honest.
+ * Both directions live here because they are one contract. The wire carries
+ * the rendered connection's answer in full, every other connection's answer in
+ * one line, and the count that keeps a wider set honest; complete per-connection
+ * detail remains available from its owning detail read rather than being
+ * duplicated into every list row.
  *
  * Keeping the inverse beside it is what makes the mounted store's rehydration
  * checkable against the same rule instead of guessing at it.

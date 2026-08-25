@@ -11,6 +11,7 @@ import {
   TriageReadEntryDetailResultV1Schema,
 } from '../../actions/entryDetailProtocol.js';
 import type { TriageSurfaceSelectionV1 } from '../state/surface.js';
+import { sameTriageEntryRefV1 } from '../state/surface.js';
 import { buildTriageDetailSurfaceInputV1 } from './input.js';
 
 /**
@@ -102,6 +103,7 @@ export async function readTriageEntryDetailState(
     instance: result.instance,
     observation: source.observation,
     linkedSessions: result.linkedSessions,
+    linkedSessionsHasMore: result.linkedSessionsHasMore,
   });
   return built.kind === 'admitted'
     ? Object.freeze({
@@ -140,7 +142,13 @@ export function useTriageEntryDetail(
     generation.current += 1;
     const current = generation.current;
     const controller = new AbortController();
-    setState(READING);
+    setState((currentState) => (
+      currentState?.kind === 'ready'
+      && sameTriageEntryRefV1(currentState.input.observation.entryRef, entryRef)
+      && currentState.input.instance.instance.sourceInstanceId === sourceInstanceId
+        ? currentState
+        : READING
+    ));
     void (async () => {
       const next = await readTriageEntryDetailState(
         hostApi,

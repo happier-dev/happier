@@ -22,7 +22,7 @@ import {
 } from '../../corpus/testkit/observations.test-support.js';
 import { renderSurface as renderShellSurface } from '../surface.js';
 import { refreshTriageListWindow } from '../window/mountedWindow.js';
-import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from './root.js';
+import { TRIAGE_SHELL_FILL_TEST_ID_V1, TRIAGE_SHELL_LIST_REGION_TEST_ID_V1 } from './root.js';
 
 /**
  * `core/SURFACE.md` §2.1's split composition, driven by the shell's own
@@ -121,10 +121,10 @@ async function executeAction(action: string): Promise<JsonValue> {
         return listResult() as unknown as JsonValue;
     }
     if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
-        return { v: 1, pins: [], more: false };
+        return { v: 1, pins: [] };
     }
     if (action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
-        return { v: 1, availability: 'absent', views: [], selectedViewId: null };
+        return { v: 1, availability: 'absent', views: [], selectedViewId: null, revision: 'revision-1' };
     }
     if (action === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
         return { kind: 'unavailable' };
@@ -199,11 +199,65 @@ async function openTheRow(shell: PluginUiTestkit): Promise<void> {
     await act(async () => { await Promise.resolve(); });
 }
 
+/**
+ * The list region's own box, read from the DOM rather than through a semantic
+ * query — because while a stacked entry is open the whole point is that the
+ * region is correctly ABSENT from the accessibility tree, and an assertion that
+ * could see it there would be asserting the defect.
+ */
+function listRegionNode(): HTMLElement {
+    const node = document.querySelector(`[data-testid="${TRIAGE_SHELL_LIST_REGION_TEST_ID_V1}"]`);
+    if (node === null) throw new Error('The Triage shell rendered no list region.');
+    return node as HTMLElement;
+}
+
+function fillRegionNode(): HTMLElement {
+    const node = document.querySelector(`[data-testid="${TRIAGE_SHELL_FILL_TEST_ID_V1}"]`);
+    if (node === null) throw new Error('The Triage shell rendered no fill region.');
+    return node as HTMLElement;
+}
+
+/** The virtualized collection's own host element — the thing a remount replaces. */
+function collectionNode(): Element | null {
+    return document.querySelector('[role="listbox"]');
+}
+
+async function closeTheDetail(shell: PluginUiTestkit): Promise<void> {
+    await act(async () => {
+        await shell.press(await shell.getByRole('button', { name: 'Close' }));
+    });
+    await act(async () => { await Promise.resolve(); });
+}
+
 afterEach(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
 describe('the Triage shell composition under its own measurement', () => {
+    it('gives the native virtualizer a bounded flex viewport through the shell fill chain', async () => {
+        await mountShell();
+
+        const fill = fillRegionNode();
+        const listRegion = listRegionNode();
+        const collectionBox = collectionNode()?.parentElement as HTMLElement | undefined;
+        expect(collectionBox, 'the virtualized collection must have its shared List box').toBeDefined();
+
+        // These are the shrink boundaries that make the SectionList own a real
+        // viewport instead of growing the page to its content height.
+        expect(fill.style.flexGrow).toBe('1');
+        expect(fill.style.minHeight).toBe('0px');
+        expect(fill.style.overflowX).toBe('hidden');
+        expect(fill.style.overflowY).toBe('hidden');
+        expect(listRegion.style.flexGrow).toBe('1');
+        expect(listRegion.style.minHeight).toBe('0px');
+        expect(listRegion.style.overflowX).toBe('hidden');
+        expect(listRegion.style.overflowY).toBe('hidden');
+        expect(collectionBox?.style.flexGrow).toBe('1');
+        expect(collectionBox?.style.minHeight).toBe('0px');
+        expect(collectionBox?.style.overflowX).toBe('hidden');
+        expect(collectionBox?.style.overflowY).toBe('hidden');
+    });
+
     it('keeps the list beside the detail once the measured region can honour both pane minima', async () => {
         const shell = await mountShell();
         await measureFillRegion(SPLIT_WIDTH);
@@ -253,6 +307,33 @@ describe('the Triage shell composition under its own measurement', () => {
 
         await expect(shell.getByRole('button', { name: 'Close' })).resolves.toBeDefined();
         await expect(shell.queryByRole('option', { name: ENTRY_TITLE })).resolves.toBeUndefined();
+    });
+
+    it('keeps the stacked list MOUNTED rather than tearing it out of the tree', async () => {
+        const shell = await mountShell();
+        await measureFillRegion(STACK_WIDTH);
+        const collection = collectionNode();
+        expect(collection, 'the shell must mount a virtualized collection').not.toBeNull();
+
+        await openTheRow(shell);
+
+        // §2.1's stacked rule is about the SCREEN: the entry owns the region and
+        // the list is not duplicated underneath it. It is not a rule about the
+        // React tree, and answering it by unmounting throws away the very state
+        // the split arm keeps — the collection instance, its virtualizer window,
+        // the row the reader's keyboard was on, their place in the queue. On a
+        // phone, the only composition that ever stacks, that is every reader.
+        expect(listRegionNode().style.display).toBe('none');
+        expect(collectionNode()).toBe(collection);
+        // Hidden is hidden: no announcement, no tab stop, nothing to press.
+        await expect(shell.queryByRole('option', { name: ENTRY_TITLE })).resolves.toBeUndefined();
+
+        await closeTheDetail(shell);
+
+        // The reader comes back to the list they left, not a rebuilt one.
+        expect(collectionNode()).toBe(collection);
+        expect(listRegionNode().style.display).toBe('');
+        await expect(shell.getByRole('option', { name: ENTRY_TITLE })).resolves.toBeDefined();
     });
 
     it('brings the list back beside an already-open entry when the region grows', async () => {

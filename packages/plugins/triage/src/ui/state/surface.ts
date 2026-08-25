@@ -15,7 +15,6 @@ import {
   type SurfaceFilterSelectionV1,
   type TriageListOrderV1,
 } from '../../projection/listWindow.js';
-import { MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 } from '../../settings/savedViews.js';
 import { hasSelectedTriageFacetV1 } from './narrowing.js';
 
 /**
@@ -304,7 +303,6 @@ function toggleFilterValue(
     { facet, value: candidate } as TriageFilterFacetValueV1,
     selection,
   ));
-  if (index < 0 && current.length >= MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1) return filters;
   const next = index >= 0
     ? [...current.slice(0, index), ...current.slice(index + 1)]
     : [...current, selection.value];

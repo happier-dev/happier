@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 
 import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../../corpus/query/smartPolicy.js';
 import { TRIAGE_LIST_NO_FILTERS_V1 } from '../../projection/listWindow.js';
-import { MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 } from '../../settings/savedViews.js';
 import {
   TRIAGE_SURFACE_INITIAL_STATE_V1,
   reduceTriageSurfaceV1,
@@ -433,33 +432,21 @@ describe('Triage surface reducer — the five filter facets compose', () => {
     ]);
   });
 
-  it('refuses a value beyond the one facet bound instead of dropping a selected one', () => {
+  it('retains more than sixteen distinct facet values', () => {
     let state = TRIAGE_SURFACE_INITIAL_STATE_V1;
-    for (let index = 0; index < MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1; index += 1) {
+    for (let index = 0; index < 17; index += 1) {
       state = reduceTriageSurfaceV1(state, {
         kind: 'filterValueToggled',
         facet: 'scopes',
         value: { source: SOURCE, collisionScope: `scope-${index}` },
       });
     }
-    expect(state.filters.scopes).toHaveLength(MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1);
-
-    const refused = reduceTriageSurfaceV1(state, {
-      kind: 'filterValueToggled',
-      facet: 'scopes',
-      value: { source: SOURCE, collisionScope: 'one-too-many' },
-    });
-
-    // The bound is the wire's: a wider facet is a lens the list Action refuses
-    // whole, so the honest answer is to keep the sixteen the reader chose
-    // rather than silently evict the oldest.
-    expect(refused).toBe(state);
-    // Removing a value at the bound still works, so the reader is never stuck.
+    expect(state.filters.scopes).toHaveLength(17);
     expect(reduceTriageSurfaceV1(state, {
       kind: 'filterValueToggled',
       facet: 'scopes',
       value: { source: SOURCE, collisionScope: 'scope-0' },
-    }).filters.scopes).toHaveLength(MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 - 1);
+    }).filters.scopes).toHaveLength(16);
   });
 
   it('clears every facet at once and returns the same state when nothing is selected', () => {

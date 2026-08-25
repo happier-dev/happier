@@ -6,6 +6,7 @@ import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStor
 import type { TriageRefreshTriggerV1 } from '../../refresh/refreshEligibility.js';
 import {
   acquireTriageListWindow,
+  loadMoreTriageListWindow,
   readTriageListWindowSnapshot,
   refreshTriageListWindow,
   setTriageListWindowLens,
@@ -40,6 +41,13 @@ export type TriageMountedListWindowV1 = Readonly<{
   snapshot: TriageListWindowSnapshotV1;
   /** Explicit user demand; the shell's **Refresh** control passes `manual`. */
   refresh(trigger: TriageRefreshTriggerV1): Promise<void>;
+  /**
+   * Explicit user demand for the entries after this mount's last window — the
+   * reader pressed a section's continuation row. What pressing it would do is
+   * published as `snapshot.loadMore`, so a surface never has to guess whether
+   * the press it is offering would do anything.
+   */
+  loadMore(): Promise<void>;
   /** Order/query/filter changes rebuild this window from its retained rows. */
   setLens(lens: TriageListLensV1): void;
 }>;
@@ -64,6 +72,7 @@ export function useTriageListWindow(): TriageMountedListWindowV1 {
     (trigger: TriageRefreshTriggerV1) => refreshTriageListWindow(trigger, hostApi),
     [hostApi],
   );
+  const loadMore = useCallback(() => loadMoreTriageListWindow(hostApi), [hostApi]);
   const setLens = useCallback(
     (lens: TriageListLensV1) => { setTriageListWindowLens(lens, hostApi); },
     [hostApi],
@@ -74,6 +83,7 @@ export function useTriageListWindow(): TriageMountedListWindowV1 {
   return useMemo(() => Object.freeze({
     snapshot,
     refresh,
+    loadMore,
     setLens,
-  }), [snapshot, refresh, setLens]);
+  }), [snapshot, refresh, loadMore, setLens]);
 }

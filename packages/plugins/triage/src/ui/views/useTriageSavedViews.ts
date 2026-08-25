@@ -3,10 +3,12 @@ import { usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
 
 import type { TriageAdministerSavedViewInputV1 } from '../../actions/savedViewsProtocol.js';
 import type { CorpusSavedViewsReadV1 } from '../../settings/savedViews.js';
+import { useTriageDurableAccount } from '../durable/accountDurableState.js';
 import {
-  administerTriageSavedViewFromSurface,
-  readTriageSavedViewsFromSurface,
+  createActionTriageSavedViewsTransport,
+  createDirectTriageSavedViewsTransport,
   readTriageSavedViewsProjectionV1,
+  type TriageSavedViewsTransportV1,
 } from './savedViewsCommand.js';
 
 /**
@@ -38,6 +40,8 @@ export type TriageSavedViewsNoticeV1 = Readonly<{
 export type TriageMountedSavedViewsV1 = Readonly<{
   /** The authoritative durable set, or `null` while the first read is in flight. */
   saved: CorpusSavedViewsReadV1 | null;
+  /** The Settings document revision behind `saved`, or `null` before the first read. */
+  revision: string | null;
   /** A write this mount asked for has not settled. */
   busy: boolean;
   /** One restrained settlement message for the last write. */
@@ -58,8 +62,19 @@ const UNAVAILABLE_REASON = 'Happier cannot reach your account right now, so save
 
 export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
   const hostApi = usePluginHostApi();
+  const durable = useTriageDurableAccount();
   const text = usePluginTranslation();
+  // One owner, two transports. Direct Account Settings when this mount can
+  // reach the Account — which is what keeps saved views readable and writable
+  // while no daemon is — and the published Actions otherwise.
+  const transport = useMemo<TriageSavedViewsTransportV1>(
+    () => durable.settings
+      ? createDirectTriageSavedViewsTransport(durable.settings)
+      : createActionTriageSavedViewsTransport(hostApi),
+    [durable.settings, hostApi],
+  );
   const [saved, setSaved] = useState<CorpusSavedViewsReadV1 | null>(null);
+  const [revision, setRevision] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<TriageSavedViewsNoticeV1 | null>(null);
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
@@ -70,9 +85,10 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
     generation.current += 1;
     const current = generation.current;
     try {
-      const projection = await readTriageSavedViewsFromSurface(hostApi, { signal });
+      const projection = await transport.read({ signal });
       if (signal.aborted || current !== generation.current) return;
       setSaved(readTriageSavedViewsProjectionV1(projection));
+      setRevision(projection.revision);
       setUnavailableReason(null);
     } catch {
       if (signal.aborted || current !== generation.current) return;
@@ -80,7 +96,7 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
       // actually said, and blanking it would read as "you saved no views".
       setUnavailableReason(text('plugins.triage.surface.views.unavailable', UNAVAILABLE_REASON));
     }
-  }, [hostApi, text]);
+  }, [text, transport]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -91,14 +107,12 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
   const administer = useCallback(async (
     input: TriageAdministerSavedViewInputV1,
   ): Promise<CorpusSavedViewsReadV1 | null> => {
-    if (busy || unavailableReason !== null) return null;
+    if (busy || unavailableReason !== null || revision === null) return null;
     const controller = new AbortController();
     setBusy(true);
     setNotice(null);
     try {
-      const result = await administerTriageSavedViewFromSurface(hostApi, input, {
-        signal: controller.signal,
-      });
+      const result = await transport.administer(input, { signal: controller.signal });
       if (result.status === 'applied') {
         const projection = readTriageSavedViewsProjectionV1({
           availability: 'parsed',
@@ -106,6 +120,7 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
           selectedViewId: result.selectedViewId ?? null,
         });
         setSaved(projection);
+        if (result.revision !== undefined) setRevision(result.revision);
         setNotice({
           tone: 'success',
           message: text('plugins.triage.surface.views.settled', 'Saved views updated'),
@@ -128,15 +143,16 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
     } finally {
       setBusy(false);
     }
-  }, [busy, hostApi, read, text, unavailableReason]);
+  }, [busy, read, revision, text, transport, unavailableReason]);
 
   return useMemo(() => Object.freeze({
     saved,
+    revision,
     busy,
     notice,
     unavailableReason,
     administer,
-  }), [administer, busy, notice, saved, unavailableReason]);
+  }), [administer, busy, notice, revision, saved, unavailableReason]);
 }
 
 /**
@@ -172,12 +188,6 @@ function refusalMessage(
   }
   if (result.reason === 'label') {
     return text('plugins.triage.surface.views.rejected.label', 'That name is empty or too long.');
-  }
-  if (result.reason === 'viewLimit') {
-    return text(
-      'plugins.triage.surface.views.rejected.viewLimit',
-      'You already have as many saved views as Happier keeps. Delete one to save another.',
-    );
   }
   if (result.reason === 'valueTooLarge') {
     return text(

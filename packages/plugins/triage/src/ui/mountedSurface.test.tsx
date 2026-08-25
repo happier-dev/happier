@@ -7,6 +7,7 @@ import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { PluginUiContextEnrichmentV1, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
+    TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TriageConfiguredSourceInstanceV1Schema,
@@ -26,6 +27,13 @@ import {
     TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
     TriageListEntriesInputV1Schema,
 } from '../actions/listEntriesProtocol.js';
+import { readTriageActionsForSurface } from '../actions/actionsCatalog.js';
+import {
+    TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1,
+    TriageReadActionsInputV1Schema,
+} from '../actions/actionsCatalogProtocol.js';
+import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../actions/entryDetailProtocol.js';
+import { TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 } from '../actions/entrySessionProtocol.js';
 import { readTriageSavedViewsForSurface } from '../actions/savedViews.js';
 import {
     TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1,
@@ -223,6 +231,7 @@ function createHarness() {
     };
 
     const actionCalls: string[] = [];
+    const unroutedActions: string[] = [];
     const publishedContexts: (PluginUiContextEnrichmentV1 | null)[] = [];
     const accountSettings = createTestkitAccountSettings();
 
@@ -249,6 +258,22 @@ function createHarness() {
                 { settings: accountSettings.settings, mintViewId: () => 'unused' },
             );
         }
+        // The shell also reads the reader's configured action catalogue. It is
+        // Account Settings, and it reaches no source either.
+        if (String(request.action) === TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1) {
+            return await readTriageActionsForSurface(
+                TriageReadActionsInputV1Schema.parse(request.input),
+                { settings: accountSettings.settings },
+            );
+        }
+        if (String(request.action) !== TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) {
+            // An unrouted Action used to fall through into the list handler and
+            // be parsed as a list input, so a surprise read was answered with
+            // somebody else's result instead of being seen. It is recorded here
+            // and asserted on below.
+            unroutedActions.push(String(request.action));
+            throw new Error(`unrouted Action: ${String(request.action)}`);
+        }
         const parsed = TriageListEntriesInputV1Schema.parse(request.input);
         return await listTriageEntries(parsed, {
             sourceInstances: collections.sourceInstances,
@@ -258,7 +283,7 @@ function createHarness() {
         });
     }
 
-    return { actionCalls, executeAction, publishedContexts, scanCalls, state };
+    return { actionCalls, executeAction, publishedContexts, scanCalls, state, unroutedActions };
 }
 
 const mounted: PluginUiTestkit[] = [];
@@ -341,6 +366,19 @@ afterEach(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
+/**
+ * The Triage Actions that reach a configured source.
+ *
+ * `entries/list-v1` is the window's own and is filtered out separately; these
+ * are the ones a MOUNT must never invoke on its own, because each one spends a
+ * provider read the reader did not ask for.
+ */
+const SOURCE_REACHING_ACTIONS: ReadonlySet<string> = new Set([
+    TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1,
+    TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
+    TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
+]);
+
 describe('the mounted PRs & Issues surface', () => {
     it('resolves its executable chrome from the plugin translation bundle', async () => {
         const harness = createHarness();
@@ -373,14 +411,23 @@ describe('the mounted PRs & Issues surface', () => {
         expect(harness.scanCalls.count).toBe(3);
         expect(harness.actionCalls).toContain(TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1);
         // Everything else the mount asked for is durable reader state — the
-        // pins and the saved views — and neither touches a source. A surprise
-        // Action would fail here.
+        // pins, the saved views, the configured actions — and none of them
+        // touches a source.
+        //
+        // The property is asserted rather than a fixed set: enumerating the
+        // exact ids made this fail every time the product legitimately gained a
+        // reader-state read, which trains a lane to bump the list instead of
+        // reading it. A surprise Action is still caught, and now by name — the
+        // harness routes every Action it knows and records anything else — while
+        // a SOURCE-reaching Action on mount fails on the contract that actually
+        // matters here.
+        expect(harness.unroutedActions).toEqual([]);
         const beyondTheWindow = harness.actionCalls
             .filter((action) => action !== TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1);
-        expect(new Set(beyondTheWindow)).toEqual(new Set([
-            TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1,
-            TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1,
-        ]));
+        expect(beyondTheWindow.filter((action) => SOURCE_REACHING_ACTIONS.has(action)))
+            .toEqual([]);
+        expect(beyondTheWindow).toContain(TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1);
+        expect(beyondTheWindow).toContain(TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1);
     });
 
     it('opens the Composer picker without walking a single source', async () => {

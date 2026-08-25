@@ -46,6 +46,29 @@ function presentObservation(kindId: string, entryId: string) {
     } as const;
 }
 
+/**
+ * A lane whose pages are chosen from the continuation the pass submitted, so a
+ * test can script a source that either ADVANCES its position or hands the same
+ * one back. The distinction is the whole subject of the non-progress guard, and
+ * a fixture that ignores its input cannot express it.
+ */
+function positionalLane(input: Readonly<{
+    sourceInstanceId: string;
+    declaredKindIds: readonly string[];
+    /** Keyed by the submitted continuation token; `null` is the initial page. */
+    pageFor: (token: string | null) => TriageScanResultV1;
+}>): TriageScanLaneV1 {
+    return {
+        sourceInstanceId: input.sourceInstanceId,
+        source: SOURCE,
+        declaredKindIds: input.declaredKindIds,
+        configured: configured(input.sourceInstanceId),
+        scan: async (scanInput) => input.pageFor(
+            scanInput.page.kind === 'continuation' ? scanInput.page.continuation.token : null,
+        ),
+    };
+}
+
 function lane(input: Readonly<{
     sourceInstanceId: string;
     declaredKindIds: readonly string[];
@@ -143,7 +166,7 @@ describe('one materialization pass', () => {
         expect(pass.lanes[0]?.exhausted).toBe(false);
     });
 
-    it('ends a walk that consumes nothing and asks to be called again', async () => {
+    it('ends a walk that advances forever without ever delivering a row', async () => {
         // A page that qualifies no observation AND charges no provider row has
         // made no progress of any kind, yet offers a continuation. Before this
         // was refused the pass simply asked again — forever, and entirely inside
@@ -183,7 +206,12 @@ describe('one materialization pass', () => {
         expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['17']);
         expect(pass.lanes[0]?.health).toMatchObject({
             kind: 'failed',
-            failure: { class: 'transient', code: 'triage/stalledWalk' },
+            // The page count is what bounds it now, not the first empty page: a
+            // page that delivers nothing still costs the pass one round trip,
+            // and a source that keeps ADVANCING its position while delivering
+            // nothing is the same non-converging shape as one that keeps
+            // charging rows. It is settled by the same derived ceiling.
+            failure: { class: 'transient', code: 'triage/nonProgressingWalk' },
         });
         expect(pass.lanes[0]?.exhausted).toBe(false);
     });
@@ -396,7 +424,7 @@ describe('one materialization pass', () => {
      * pass's rows, and why the `order` that read names decides which of them
      * the mount retains.
      */
-    it('lets a lane that pages short overrun the budget by up to one page', async () => {
+    it('leaves a page behind its frontier when the remaining budget cannot carry it whole', async () => {
         const shortPage = (page: number): TriageScanResultV1 => ({
             kind: 'page',
             evidence: { kind: 'partial', reason: 'pageLimit' },
@@ -417,11 +445,12 @@ describe('one materialization pass', () => {
             nowMs: () => 1_000,
         });
 
-        // Two pages of three: the second was asked while the pass held three
-        // observations against a budget of four. A budget that capped the pass
-        // would have returned four.
-        expect(pass.observations).toHaveLength(6);
+        // The first page is admitted whole. The second is not fetched because
+        // only one row of budget remains and advancing past a three-row provider
+        // page would strand its other two rows behind the returned frontier.
+        expect(pass.observations).toHaveLength(3);
         expect(pass.lanes[0]?.exhausted).toBe(false);
+        expect(pass.stopped).toHaveLength(1);
     });
 
     it('drops a failed lane from the rotation without ending the page', async () => {
@@ -711,5 +740,134 @@ describe('one materialization pass', () => {
 
         expect(pass.observations).toHaveLength(1);
         expect(pass.lanes[0]?.exhausted).toBe(false);
+    });
+
+    /**
+     * Truthful exhaustion and a resumable stop are two different questions, and
+     * settling the first is what exposed the second.
+     *
+     * `complete` means the source stopped paging: there is no next page, whatever
+     * the evidence says about how much of the set the walk reached. The stop list
+     * keys off the page the lane would ask for NEXT, and the only continuation
+     * this lane ever held is the one that produced the settling page — so a lane
+     * that is now honestly unexhausted would offer it back, and
+     * `actions/listEntries.ts` hands it to the mounted store as the window's
+     * continuation. Load-more would then re-request the page it just read, get
+     * `complete` again, and offer the same continuation forever.
+     */
+    it('offers no continuation for a walk the source stopped paging, however its evidence settled', async () => {
+        const pass = await runTriageScanPass({
+            lanes: [lane({
+                sourceInstanceId: INSTANCE_ID,
+                declaredKindIds: ['pull-request'],
+                pages: [
+                    {
+                        kind: 'page',
+                        evidence: WALK_FINISHED,
+                        observations: [presentObservation('pull-request', '17')],
+                        continuation: { v: 1, token: 'next' },
+                    } as unknown as TriageScanResultV1,
+                    {
+                        kind: 'complete',
+                        evidence: { kind: 'partial', reason: 'result-ceiling' },
+                        observations: [presentObservation('pull-request', '18')],
+                    } as unknown as TriageScanResultV1,
+                ],
+            })],
+            pageLimit: 16,
+            observationBudget: 64,
+            nowMs: () => 1_000,
+        });
+
+        expect(pass.observations.map((observation) => observation.entryRef.entryId))
+            .toEqual(['17', '18']);
+        expect(pass.lanes[0]?.exhausted).toBe(false);
+        expect(pass.stopped).toEqual([]);
+    });
+
+    it('ends a walk that hands back the position it was given', async () => {
+        // The provable infinite loop, and the only one that IS provable from a
+        // page alone: nothing qualified, no provider row charged, and the very
+        // continuation the pass submitted offered back. Asking again cannot
+        // return anything else, so it is refused on the first such page rather
+        // than after the pass has spent its whole page ceiling on it.
+        const pass = await runTriageScanPass({
+            lanes: [positionalLane({
+                sourceInstanceId: INSTANCE_ID,
+                declaredKindIds: ['pull-request'],
+                pageFor: (token) => (token === null
+                    ? {
+                        kind: 'page',
+                        evidence: { kind: 'moving', reason: 'live-order' },
+                        observations: [presentObservation('pull-request', '17')],
+                        continuation: { v: 1, token: 'stuck' },
+                    } as unknown as TriageScanResultV1
+                    : {
+                        kind: 'page',
+                        evidence: { kind: 'partial', reason: 'undecodable-items', omittedItemCount: 0 },
+                        observations: [],
+                        continuation: { v: 1, token: 'stuck' },
+                    } as unknown as TriageScanResultV1),
+            })],
+            pageLimit: 16,
+            observationBudget: 64,
+            nowMs: () => 1_000,
+        });
+
+        expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['17']);
+        expect(pass.lanes[0]?.health).toMatchObject({
+            kind: 'failed',
+            failure: { class: 'transient', code: 'triage/stalledWalk' },
+        });
+        expect(pass.lanes[0]?.exhausted).toBe(false);
+        // A stalled lane is never offered back as a page to continue from.
+        expect(pass.stopped).toEqual([]);
+    });
+
+    it('reaches a row waiting behind pages that traverse containers and deliver nothing', async () => {
+        /*
+         * The starvation this guard caused, stated in the terms of the source
+         * that hit it: a forge whose review involvement is repository-scoped
+         * walks CONTAINERS, and a repository with no open pull request answers
+         * zero rows. Such a page qualifies nothing and charges nothing, yet it
+         * moved: its continuation names a position strictly past the one it was
+         * given, and the very next page can deliver.
+         *
+         * Refusing it as non-progress killed the lane on its first empty
+         * container. The lane was then excluded from `stopped`, so no
+         * continuation came back, so the next refresh restarted at the same
+         * empty containers — for ever. The row behind them was not merely
+         * delayed; it was unreachable.
+         */
+        const emptyContainers = 6;
+        const pass = await runTriageScanPass({
+            lanes: [positionalLane({
+                sourceInstanceId: INSTANCE_ID,
+                declaredKindIds: ['pull-request'],
+                pageFor: (token) => {
+                    const walked = token === null ? 0 : Number(token);
+                    return walked < emptyContainers
+                        ? {
+                            kind: 'page',
+                            evidence: { kind: 'partial', reason: 'container-budget' },
+                            observations: [],
+                            continuation: { v: 1, token: String(walked + 1) },
+                        } as unknown as TriageScanResultV1
+                        : {
+                            kind: 'complete',
+                            evidence: { kind: 'walkFinished' },
+                            observations: [presentObservation('pull-request', 'waiting-review')],
+                        } as unknown as TriageScanResultV1;
+                },
+            })],
+            pageLimit: 16,
+            observationBudget: 64,
+            nowMs: () => 1_000,
+        });
+
+        expect(pass.observations.map((observation) => observation.entryRef.entryId))
+            .toEqual(['waiting-review']);
+        expect(pass.lanes[0]?.health).toEqual({ kind: 'walkFinished' });
+        expect(pass.lanes[0]?.exhausted).toBe(true);
     });
 });

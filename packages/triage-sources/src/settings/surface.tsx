@@ -81,6 +81,7 @@ import {
   TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1,
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
   type TriageSourceAdministrationActionInputV1,
+  type TriageSourceInstanceDraftV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -115,10 +116,34 @@ export type TriageSourceSettingsSurfaceIdentityV1 = Readonly<{
   listInstancesLocalActionId: string;
   /** The source's display name, exactly as its own descriptor spells it. */
   sourceDisplayName: string;
+  /**
+   * Optional source-native editor for facts the opaque draft alone cannot expose.
+   * Lifecycle and submission remain here; the editor may only refine one freshly
+   * discovered draft and hand the replacement back.
+   */
+  DraftEditor?: React.ComponentType<TriageSourceSettingsDraftEditorPropsV1>;
+}>;
+
+export type TriageSourceSettingsDraftEditorPropsV1 = Readonly<{
+  draft: TriageSourceInstanceDraftV1;
+  busy: boolean;
+  onSubmit: (draft: TriageSourceInstanceDraftV1) => Promise<void>;
+  onCancel: () => void;
 }>;
 
 type ConfigurationOutcomes = Readonly<Record<string, TriageSourceSettingsConfigurationV1>>;
 type RowLifecycles = Readonly<Record<string, TriageSourceSettingsRowLifecycleV1>>;
+type DraftEdit = Readonly<{
+  row: TriageSourceSettingsRowV1;
+  control: Exclude<TriageSourceSettingsRowControlV1['id'], 'remove'>;
+}>;
+
+function isSettledConfigurationSuccess(outcome: TriageSourceSettingsConfigurationV1): boolean {
+  return outcome.kind === 'configured'
+    || outcome.kind === 'alreadyConfigured'
+    || outcome.kind === 'reconfigured'
+    || outcome.kind === 'restored';
+}
 
 /**
  * The settings surface entry a source's UI artifact exports.
@@ -131,6 +156,7 @@ export function createTriageSourceSettingsSurface(
   identity: TriageSourceSettingsSurfaceIdentityV1,
 ): RenderSurface {
   const { sourceDisplayName } = identity;
+  const DraftEditor = identity.DraftEditor;
   const listInstances = Object.freeze({
     pluginId: identity.pluginId,
     localId: identity.listInstancesLocalActionId,
@@ -149,6 +175,7 @@ export function createTriageSourceSettingsSurface(
     const [outcomes, setOutcomes] = React.useState<ConfigurationOutcomes>({});
     const [learned, setLearned] = React.useState<RowLifecycles>({});
     const [submitting, setSubmitting] = React.useState<string | null>(null);
+    const [draftEdit, setDraftEdit] = React.useState<DraftEdit | null>(null);
 
     const runDiscovery = discovery.execute;
     const runConfiguredRead = configuredRead.execute;
@@ -182,7 +209,7 @@ export function createTriageSourceSettingsSurface(
     const submit = React.useCallback(async (
       key: string,
       input: TriageSourceAdministrationActionInputV1,
-    ) => {
+    ): Promise<TriageSourceSettingsConfigurationV1> => {
       setSubmitting(key);
       const settled = await administerExecute(input);
       setSubmitting(null);
@@ -195,7 +222,26 @@ export function createTriageSourceSettingsSurface(
         // it here would shadow what the target's own read says about this row.
         return next === current ? previous : { ...previous, [key]: next };
       });
+      return outcome;
     }, [administerExecute]);
+
+    const submitDraft = React.useCallback(async (
+      edit: DraftEdit,
+      draft: TriageSourceInstanceDraftV1,
+    ): Promise<void> => {
+      const { row, control } = edit;
+      let input: TriageSourceAdministrationActionInputV1;
+      if (control === 'add') {
+        input = { v: 1, kind: 'create', draft };
+      } else {
+        if (row.sourceInstanceId === null) return;
+        input = control === 'restore'
+          ? { v: 1, kind: 'reactivate', sourceInstanceId: row.sourceInstanceId, draft }
+          : { v: 1, kind: 'reconfigure', sourceInstanceId: row.sourceInstanceId, draft };
+      }
+      const outcome = await submit(row.key, input);
+      if (isSettledConfigurationSuccess(outcome)) setDraftEdit(null);
+    }, [submit]);
 
     /**
      * Remove, asked first.
@@ -252,6 +298,10 @@ export function createTriageSourceSettingsSurface(
       // also name the exact row the target minted. A control is not offered without
       // what it needs; this is the guard for the impossible press, not the policy.
       if (row.draft === null) return;
+      if (DraftEditor !== undefined) {
+        setDraftEdit({ row, control });
+        return;
+      }
       if (control === 'add') {
         void submit(row.key, { v: 1, kind: 'create', draft: row.draft });
         return;
@@ -272,7 +322,7 @@ export function createTriageSourceSettingsSurface(
         sourceInstanceId: row.sourceInstanceId,
         draft: row.draft,
       });
-    }, [requestRemoval, submit]);
+    }, [DraftEditor, requestRemoval, submit]);
 
     const state = readTriageSourceDiscovery(discovery.execution);
     const configured = readTriageSourceConfiguredInstances(configuredRead.execution);
@@ -339,6 +389,20 @@ export function createTriageSourceSettingsSurface(
             )}
 
             <Stack gap="medium">
+              {DraftEditor === undefined || draftEdit === null || draftEdit.row.draft === null
+                ? null
+                : (
+                    <DraftEditor
+                      draft={draftEdit.row.draft}
+                      busy={submitting === draftEdit.row.key}
+                      onSubmit={async (draft) => {
+                        await submitDraft(draftEdit, draft);
+                      }}
+                      onCancel={() => {
+                        if (submitting === null) setDraftEdit(null);
+                      }}
+                    />
+                  )}
               {state.kind === 'listed' && !state.complete ? (
                 <Banner
                   tone="warning"

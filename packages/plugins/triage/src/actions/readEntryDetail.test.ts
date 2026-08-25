@@ -1,6 +1,10 @@
 import type { PluginInvocationCaller, PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import {
+    PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+    type PluginAccountCollectionDefinition,
+} from '@happier-dev/plugin-sdk/collections';
+import {
+    MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageConfiguredSourceInstanceV1Schema,
     TriageDetailSurfaceInputV1Schema,
@@ -207,6 +211,33 @@ async function seedTwoConnections(): Promise<Readonly<{ collections: CorpusColle
 }
 
 describe('the entry detail read', () => {
+    it('reports when the bounded linked-Session page has more rows', async () => {
+        const { collections } = await seedTwoConnections();
+        expect(MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1)
+            .toBe(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1);
+        for (let index = 0; index < MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1; index += 1) {
+            await linkEntryToSession({
+                collections,
+                entryRef: ENTRY_REF,
+                display: { locator: { v: 1, displayPath: 'example/repository#17' }, scopeLabel: 'example/repository' },
+                sessionId: `session-${index}`,
+                nowMs: 2_000 + index,
+            });
+        }
+
+        const result = TriageReadEntryDetailResultV1Schema.parse(
+            await createTriageReadEntryDetailActionHandler()(
+                detailInput(INSTANCE_A),
+                createContext({ collections }),
+            ),
+        );
+
+        expect(result.kind).toBe('read');
+        if (result.kind !== 'read') return;
+        expect(result.linkedSessions).toHaveLength(MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1);
+        expect(result.linkedSessionsHasMore).toBe(true);
+    });
+
     it('returns the exact selected connection when several observe one entry', async () => {
         const { collections } = await seedTwoConnections();
 
@@ -267,6 +298,7 @@ describe('the entry detail read', () => {
                 viewer: testkitViewer(),
             },
             linkedSessions: result.linkedSessions,
+            linkedSessionsHasMore: result.linkedSessionsHasMore,
         })).not.toThrow();
     });
 

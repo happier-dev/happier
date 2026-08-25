@@ -1,5 +1,6 @@
 import {
     TriageConfiguredSourceInstanceV1Schema,
+    TriageSourceDescriptorV1Schema,
     type TriageConfiguredSourceInstanceV1,
     type TriageGetInputV1,
     type TriageGetResultV1,
@@ -120,7 +121,16 @@ function createHarness(options: Readonly<{
             // The descriptor the source actually publishes. The merge path
             // qualifies the named successor against exactly these declared
             // kinds, so a harness without one would qualify nothing.
-            descriptor: { v: 1, kinds: [{ id: LOCAL_REF.kindId }] },
+            descriptor: TriageSourceDescriptorV1Schema.parse({
+                v: 1,
+                purpose: 'triage-source',
+                displayName: 'Example forge',
+                kinds: [{
+                    id: LOCAL_REF.kindId,
+                    workflowSubject: 'pullRequest',
+                    displayName: 'Pull request',
+                }],
+            }),
             operations: { listInstances: {}, scan: {}, get: handle },
         } as unknown as TriageAdmittedSourceV1;
     }
@@ -395,6 +405,9 @@ describe('resolving an attached Triage entry for dispatch', () => {
         const outcome = result.attachments[0];
         const message = outcome && outcome.status !== 'ready' ? outcome.message ?? '' : '';
         expect(message).not.toContain('A different repository entirely');
+        // A stale route is repaired by reading the list again, so the refusal
+        // names that remedy instead of stopping at "no".
+        expect(message).toContain('Refresh');
     });
 
     it('refuses a value whose instance belongs to another source', async () => {
@@ -481,7 +494,6 @@ describe('resolving an attached Triage entry for dispatch', () => {
             display: TESTKIT_LINK_DISPLAY,
             sessionId: 'session-a',
             nowMs: 1_760_000_900_000,
-            mintCardPublicationId: () => 'publication-a',
         });
         if (linked.status !== 'linked') throw new Error('the link fixture did not commit');
         await setPinned({
@@ -516,11 +528,10 @@ describe('resolving an attached Triage entry for dispatch', () => {
         expect(await rowsOn(ENTRY_REF)).toEqual([]);
         const moved = await rowsOn(successorEntryRef);
         expect(moved).toHaveLength(1);
-        // In place: same row, same relationship, same published card. Only the
-        // current entry ref and its projected index tag moved.
+        // In place: same row, same relationship. Only the current entry ref
+        // and its projected index tag moved.
         expect(moved[0]?.linkTag).toBe(linked.linkTag);
         expect(moved[0]?.sessionId).toBe('session-a');
-        expect(moved[0]?.cardPublicationId).toBe('publication-a');
         expect(moved[0]?.linkedAtMs).toBe(1_760_000_900_000);
         expect(moved[0]?.entryRef).toEqual(successorEntryRef);
         expect(moved[0]?.identityEntryRef).toEqual(ENTRY_REF);

@@ -3,6 +3,11 @@ import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import type {
+    ComposerAttachmentViewV1,
+    ComposerSnapshotV1,
+    ComposerTransactionV1,
+} from '@happier-dev/plugin-ui';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
@@ -139,14 +144,82 @@ function createHarness(options: Readonly<{ scanFailure?: TriageSourceFailureV1 }
     const applyCalls: ApplyCall[] = [];
     const openCalls: OpenCall[] = [];
     const readCalls: unknown[] = [];
-    const attachments: unknown[] = [];
+    let attachments: ComposerAttachmentViewV1[] = [];
     let revision = 4;
+    let nextAttachmentInstanceId = 1;
+
+    const snapshot = (ref: unknown): ComposerSnapshotV1 => ({
+        revision,
+        ref,
+        text: 'please look at this',
+        references: [],
+        attachments,
+        layout: 'wrap',
+        capabilities: { text: true, references: true, attachments: true, submit: true },
+        state: {
+            focused: false,
+            editable: true,
+            submittable: true,
+            submitting: false,
+            running: false,
+        },
+    }) as ComposerSnapshotV1;
+
+    const applyCanonicalTransaction = (
+        transaction: ComposerTransactionV1,
+    ): Readonly<{ status: 'applied'; attachmentInstanceIds: readonly string[] }>
+        | Readonly<{ status: 'conflict' }> => {
+        if (transaction.expectedRevision !== revision) return { status: 'conflict' };
+        const attachmentInstanceIds: string[] = [];
+        for (const operation of transaction.operations) {
+            if (operation.kind === 'attachment.add') {
+                const existing = attachments.find((attachment) => (
+                    attachment.attachment.pluginId === 'happier.triage'
+                    && attachment.attachment.localId === operation.attachmentLocalId
+                    && attachment.key === operation.value.key
+                ));
+                const instanceId = existing?.instanceId ?? `triage-entry-${nextAttachmentInstanceId++}`;
+                const next: ComposerAttachmentViewV1 = {
+                    v: 1,
+                    instanceId,
+                    attachment: {
+                        pluginId: 'happier.triage',
+                        localId: operation.attachmentLocalId,
+                    },
+                    key: operation.value.key,
+                    value: operation.value.value,
+                    presentation: operation.value.presentation,
+                    availability: { status: 'ready' },
+                } as ComposerAttachmentViewV1;
+                attachments = existing === undefined
+                    ? [...attachments, next]
+                    : attachments.map((attachment) => attachment === existing ? next : attachment);
+                attachmentInstanceIds.push(instanceId);
+            } else if (operation.kind === 'attachment.remove') {
+                attachments = attachments.filter((attachment) => attachment.instanceId !== operation.instanceId);
+            }
+        }
+        revision += 1;
+        return { status: 'applied', attachmentInstanceIds };
+    };
+
+    const watchSignals: AbortSignal[] = [];
+    const watchDisposals: number[] = [];
 
     return {
         applyCalls,
         openCalls,
         readCalls,
-        attachments,
+        snapshot,
+        replaceCanonicalAttachments(next: readonly ComposerAttachmentViewV1[]) {
+            attachments = [...next];
+            revision += 1;
+        },
+        get attachments() {
+            return attachments as readonly ComposerAttachmentViewV1[];
+        },
+        watchSignals,
+        watchDisposals,
         scanCalls,
         listActionCalls,
         handlers: {
@@ -163,29 +236,22 @@ function createHarness(options: Readonly<{ scanFailure?: TriageSourceFailureV1 }
                 readCalls.push(ref);
                 return {
                     status: 'ready',
-                    snapshot: {
-                        revision,
-                        ref,
-                        text: 'please look at this',
-                        references: [],
-                        attachments,
-                        layout: 'wrap',
-                        capabilities: { text: true, references: true, attachments: true, submit: true },
-                        state: {
-                            focused: false,
-                            editable: true,
-                            submittable: true,
-                            submitting: false,
-                            running: false,
-                        },
-                    },
+                    snapshot: snapshot(ref),
                 } as never;
             },
-            watchComposer: () => undefined,
+            watchComposer: ({ signal }: Readonly<{ signal: AbortSignal }>) => {
+                watchSignals.push(signal);
+                const watchNumber = watchSignals.length;
+                return {
+                    dispose: () => { watchDisposals.push(watchNumber); },
+                };
+            },
             applyComposer: ({ ref, transaction }: Readonly<{ ref: unknown; transaction: unknown }>) => {
                 applyCalls.push({ ref, transaction });
-                revision += 1;
-                return { status: 'applied', revision } as never;
+                const outcome = applyCanonicalTransaction(transaction as ComposerTransactionV1);
+                return outcome.status === 'conflict'
+                    ? { status: 'conflict', currentRevision: revision } as never
+                    : { status: 'applied', revision, attachmentInstanceIds: outcome.attachmentInstanceIds } as never;
             },
             openSurface: ({ view, input }: Readonly<{ view: unknown; input?: unknown }>) => {
                 openCalls.push({ view, input });
@@ -205,6 +271,8 @@ async function openPicker(
     harness: ReturnType<typeof createHarness>,
     composer: unknown,
     viewId: string,
+    /** The reader's own environment, when the case is about that environment. */
+    environment: Readonly<{ direction?: 'ltr' | 'rtl'; textScale?: number }> = {},
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -216,7 +284,7 @@ async function openPicker(
                 generation: `${viewId}-mount`,
             },
             surface: renderPickerSurface,
-            surfaceContext: createSurfaceContextFixture(),
+            surfaceContext: createSurfaceContextFixture(environment),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             launchInput: {
                 v: 1,
@@ -238,8 +306,9 @@ async function mountPicker(
     harness: ReturnType<typeof createHarness>,
     composer: unknown,
     viewId: string,
+    environment: Readonly<{ direction?: 'ltr' | 'rtl'; textScale?: number }> = {},
 ): Promise<PluginUiTestkit> {
-    const fixture = await openPicker(harness, composer, viewId);
+    const fixture = await openPicker(harness, composer, viewId, environment);
     await act(async () => { await refreshTriageListWindow('view'); });
     await act(async () => { await Promise.resolve(); });
     return fixture;
@@ -250,6 +319,79 @@ afterEach(async () => {
 });
 
 describe('the mounted Composer entry picker', () => {
+    it('derives multi-selection and later row state only from the canonical Composer snapshot', async () => {
+        const harness = createHarness();
+        const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-canonical-selection');
+
+        await picker.press(await picker.getByRole('button', {
+            name: 'Attach Replace the duplicated normalizer',
+        }));
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => {
+            picker.emitComposerSnapshot(COMPOSER_A, harness.snapshot(COMPOSER_A));
+            await Promise.resolve();
+        });
+        await expect(picker.findByRole('button', {
+            name: 'Remove Replace the duplicated normalizer',
+        })).resolves.toBeDefined();
+        await picker.press(await picker.getByRole('button', { name: 'Attach Older change' }));
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => {
+            picker.emitComposerSnapshot(COMPOSER_A, harness.snapshot(COMPOSER_A));
+            await Promise.resolve();
+        });
+
+        expect(harness.attachments).toHaveLength(2);
+        expect(harness.attachments.map((attachment) => (
+            (attachment.value as Readonly<{ entryRef: Readonly<{ entryId: string }> }>).entryRef.entryId
+        ))).toEqual(['42', '43']);
+        await expect(picker.findByRole('button', {
+            name: 'Remove Replace the duplicated normalizer',
+        })).resolves.toBeDefined();
+        await expect(picker.findByRole('button', { name: 'Remove Older change' }))
+            .resolves.toBeDefined();
+
+        // A host badge removal or undo bypasses this picker completely. The
+        // next canonical observation is therefore the discriminating proof
+        // that there is no remembered picker selection to survive it.
+        const attachment42 = harness.attachments[0]!;
+        const attachment43 = harness.attachments[1]!;
+        harness.replaceCanonicalAttachments([attachment43]);
+        await act(async () => {
+            picker.emitComposerSnapshot(COMPOSER_A, harness.snapshot(COMPOSER_A));
+            await Promise.resolve();
+        });
+        await expect(picker.findByRole('button', {
+            name: 'Attach Replace the duplicated normalizer',
+        })).resolves.toBeDefined();
+        await expect(picker.findByRole('button', { name: 'Remove Older change' }))
+            .resolves.toBeDefined();
+
+        // A canonical keyed update is equally authoritative: moving the one
+        // surviving attachment to the other entry changes both rows without a
+        // picker-side write or remount.
+        harness.replaceCanonicalAttachments([{
+            ...attachment42,
+            instanceId: attachment43.instanceId,
+        }]);
+        await act(async () => {
+            picker.emitComposerSnapshot(COMPOSER_A, harness.snapshot(COMPOSER_A));
+            await Promise.resolve();
+        });
+        await expect(picker.findByRole('button', {
+            name: 'Remove Replace the duplicated normalizer',
+        })).resolves.toBeDefined();
+        await expect(picker.findByRole('button', { name: 'Attach Older change' }))
+            .resolves.toBeDefined();
+
+        expect(harness.watchSignals.length).toBeGreaterThan(0);
+        expect(harness.watchSignals.at(-1)?.aborted).toBe(false);
+        mounted.splice(mounted.indexOf(picker), 1);
+        await picker.dispose();
+        expect(harness.watchSignals.every((signal) => signal.aborted)).toBe(true);
+        expect(harness.watchDisposals).toEqual(harness.watchSignals.map((_, index) => index + 1));
+    });
+
     it('reaches no provider merely by opening', async () => {
         const harness = createHarness();
         await openPicker(harness, COMPOSER_A, 'triage-picker-cold');
@@ -392,6 +534,47 @@ describe('the mounted Composer entry picker', () => {
         // And the wait is stated, in the source's own reason.
         await expect(picker.getByText('A source asked us to wait before reading it again.'))
             .resolves.toEqual({ content: 'A source asked us to wait before reading it again.' });
+    });
+
+    it('keeps both controls, in one order, at the largest text and under RTL', async () => {
+        const harness = createHarness();
+        // The two environments the row layout is actually asked to survive: the
+        // reader's largest supported type size, which grows every control, and a
+        // right-to-left locale, which mirrors where things sit.
+        const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-rtl', {
+            direction: 'rtl',
+            textScale: 2,
+        });
+
+        const names = (await picker.getAllByRole('button')).map((button) => button.name);
+        // Nothing is dropped, hidden behind an overflow, or collapsed into a
+        // single combined control when the row runs out of width.
+        expect(names).toContain('Attach Replace the duplicated normalizer');
+        expect(names).toContain('View details Replace the duplicated normalizer');
+        // `core/COMPOSER.md` §6: RTL mirrors PLACEMENT only. Render, keyboard
+        // and screen-reader order stay Attach/Remove then View details, because
+        // a mirrored order makes the same row announce its actions backwards.
+        expect(names.indexOf('Attach Replace the duplicated normalizer'))
+            .toBeLessThan(names.indexOf('View details Replace the duplicated normalizer'));
+        // And the row is still a named group rather than a run-together label.
+        await expect(picker.getByRole('listitem', { name: 'Replace the duplicated normalizer' }))
+            .resolves.toBeDefined();
+    });
+
+    it('names each row as a group instead of running its own text together', async () => {
+        const harness = createHarness();
+        const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-group');
+
+        // `core/COMPOSER.md` §2: the row is a labelled GROUP. A row with no name
+        // of its own leaves the platform to compose one from its text
+        // descendants, and the reader hears the title, the scope and the status
+        // run together with no separator — the same announcement the shell list
+        // already had to fix once.
+        await expect(picker.getByRole('listitem', { name: 'Replace the duplicated normalizer' }))
+            .resolves.toBeDefined();
+        await expect(picker.queryByRole('listitem', {
+            name: 'Replace the duplicated normalizerexample/repository',
+        })).resolves.toBeUndefined();
     });
 
     it('offers both row actions for every row, in order, without a row-wide press target', async () => {

@@ -17,7 +17,12 @@ import {
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import type { TriageSessionLinkedEntryRowV1 } from './linkedEntryRows.js';
-import { submitTriageUnlinkLinkedEntry } from './unlinkLinkedEntry.js';
+import { useTriageDurableAccount } from '../../ui/durable/accountDurableState.js';
+import {
+    createActionTriageUnlinkTransport,
+    createDirectTriageUnlinkTransport,
+    type TriageUnlinkTransportV1,
+} from './unlinkLinkedEntry.js';
 import { useTriageSessionLinkedEntries } from './useSessionLinkedEntries.js';
 
 /**
@@ -86,6 +91,16 @@ function LinkedEntryRow(props: Readonly<{
     const { row, sessionId, onUnlinked } = props;
     const text = usePluginTranslation();
     const host = usePluginHostApi();
+    const durable = useTriageDurableAccount();
+    // One owner, two transports. Direct `session-links` when this mount can
+    // reach the Account — which is what keeps Unlink working while no daemon
+    // is — and the published Action otherwise.
+    const transport = React.useMemo<TriageUnlinkTransportV1>(
+        () => durable.collections
+            ? createDirectTriageUnlinkTransport(durable.collections)
+            : createActionTriageUnlinkTransport(host),
+        [durable.collections, host],
+    );
     const [phase, setPhase] = React.useState<'idle' | 'removing' | 'failed'>('idle');
     const presentation = row.presentation;
     const entryRef = presentation.kind === 'linked' ? presentation.entryRef : null;
@@ -95,7 +110,7 @@ function LinkedEntryRow(props: Readonly<{
         setPhase('removing');
         void (async () => {
             try {
-                const result = await submitTriageUnlinkLinkedEntry(host, { sessionId, entryRef });
+                const result = await transport.unlink({ sessionId, entryRef });
                 // `conflict` means another writer moved the row, so the honest
                 // next step is the same one a removal takes: re-read.
                 if (result.status === 'failed') {
@@ -105,12 +120,13 @@ function LinkedEntryRow(props: Readonly<{
                 setPhase('idle');
                 onUnlinked();
             } catch {
-                // A mount with no Action transport, or a refused dispatch. The
-                // row says so instead of pretending the link is gone.
+                // A mount with no reachable transport at all, or a refused
+                // dispatch. The row says so instead of pretending the link is
+                // gone.
                 setPhase('failed');
             }
         })();
-    }, [entryRef, host, onUnlinked, sessionId]);
+    }, [entryRef, onUnlinked, sessionId, transport]);
 
     return (
         <List.Item
@@ -235,7 +251,7 @@ function TriageSessionLinkedEntriesPanel(
                         )}
                         description={text(
                             'plugins.triage.sessionLinks.more.description',
-                            'This panel shows the most recently linked; the rest are still linked.',
+                            'Recent links from this page are shown; the rest are still linked.',
                         )}
                     />
                 ) : null}

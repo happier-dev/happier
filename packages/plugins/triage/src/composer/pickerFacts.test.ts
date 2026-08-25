@@ -84,7 +84,7 @@ describe('projectTriagePickerCorpusFacts', () => {
         expect(facts.coverage).toBe('progressive');
     });
 
-    it('carries the window\'s own rows, titles and instance decision', () => {
+    it('carries the window\'s own rows, titles, locator and instance decision', () => {
         const facts = projectTriagePickerCorpusFacts({
             snapshot: snapshot({ window: window() }),
             nowMs: 1,
@@ -99,8 +99,25 @@ describe('projectTriagePickerCorpusFacts', () => {
             // Projected by the one search owner rather than folded again here, so
             // the picker answers a query exactly as the list does.
             search: projectTriageEntrySearchText(row().observations),
+            // The locator of the SAME observation the title came from. It is the
+            // routing hint an attach carries into the draft, and it is the only
+            // thing that can name the provider scope of an entry an
+            // account-wide connection discovered.
+            locator: testkitLocator(),
             instance: { kind: 'selected', sourceInstanceId: INSTANCE, reason: 'onlyPresent' },
         }]);
+    });
+
+    it('reports no locator for a row no connection currently reports', () => {
+        // An absent locator must stay absent rather than becoming an empty one:
+        // a hint nobody observed is not routing evidence, and the picker refuses
+        // to invent one.
+        const facts = projectTriagePickerCorpusFacts({
+            snapshot: snapshot({ window: window({ rows: [{ ...row(), content: null }] }) }),
+            nowMs: 1,
+        });
+
+        expect(facts.rows[0]?.locator).toBeNull();
     });
 
     it('takes staleness as a decided fact instead of judging it locally', () => {

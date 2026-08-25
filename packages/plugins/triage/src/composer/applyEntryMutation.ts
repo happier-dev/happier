@@ -59,6 +59,8 @@ export type TriageEntryMutationRequestV1 = Readonly<{
 const REFUSAL_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
     attachmentsUnsupported: 'This composer cannot carry attachments.',
     invalidValue: 'This entry cannot be attached under that connection.',
+    referencesUnsupported: 'This composer cannot carry references.',
+    invalidCandidate: 'This evidence reference cannot be inserted.',
     composerUnavailable: 'The composer is no longer open.',
     notEditable: 'The composer cannot be edited right now.',
     conflict: 'The draft changed while this was applied. Try again.',
@@ -74,42 +76,84 @@ function refused(reason: string): TriageEntryMutationOutcomeV1 {
     return { kind: 'refused', reason: REFUSAL_MESSAGES[reason] ?? 'The change could not be applied.' };
 }
 
+type TriageRevisionCheckedPlanV1 =
+    | Readonly<{ status: 'transaction'; transaction: import('@happier-dev/plugin-sdk/ui').ComposerTransactionV1 }>
+    | Readonly<{ status: 'alreadySettled'; reason: string }>
+    | Readonly<{ status: 'refused'; reason: string }>;
+
+export type TriageRevisionCheckedMutationOutcomeV1 =
+    | TriageEntryMutationOutcomeV1
+    | Readonly<{ kind: 'conflict' }>
+    | Readonly<{ kind: 'inert' }>;
+
+/**
+ * The one Triage-owned Composer mutation trip.
+ *
+ * Attachment changes and selected-evidence references differ only in their
+ * planner and conflict policy; both read the exact bound handle, plan from that
+ * snapshot, and apply against its revision here. `isCurrent` is checked after
+ * every awaited boundary and immediately before apply, making a late source
+ * result/read inert without inventing another Composer owner.
+ */
+export async function applyTriageRevisionCheckedMutation(input: Readonly<{
+    handle: ComposerHandle;
+    plan: (snapshot: import('@happier-dev/plugin-sdk/ui').ComposerSnapshotV1) => TriageRevisionCheckedPlanV1;
+    options?: ComposerRequestOptions;
+    isCurrent?: () => boolean;
+}>): Promise<TriageRevisionCheckedMutationOutcomeV1> {
+    const isCurrent = input.isCurrent ?? (() => true);
+    try {
+        const read = await input.handle.read(input.options);
+        if (!isCurrent()) return { kind: 'inert' };
+        if (read.status !== 'ready') return refused('unavailable');
+
+        const plan = input.plan(read.snapshot);
+        if (plan.status === 'alreadySettled') return { kind: 'settled' };
+        if (plan.status === 'refused') return refused(plan.reason);
+        if (!isCurrent()) return { kind: 'inert' };
+
+        const applied = await input.handle.apply(plan.transaction, input.options);
+        if (!isCurrent()) return { kind: 'inert' };
+        switch (applied.status) {
+            case 'applied':
+                return { kind: 'applied' };
+            case 'conflict':
+                return { kind: 'conflict' };
+            case 'composerUnavailable':
+            case 'notEditable':
+                return refused(applied.status);
+            default:
+                return { kind: 'refused', reason: 'The change could not be applied.' };
+        }
+    } catch (error) {
+        if (!isCurrent()) return { kind: 'inert' };
+        if (isHostCancellation(error, input.options?.signal)) throw error;
+        return refused('unreachable');
+    }
+}
+
 async function attempt(
     request: TriageEntryMutationRequestV1,
 ): Promise<TriageEntryMutationOutcomeV1 | Readonly<{ kind: 'conflict' }>> {
-    const read = await request.handle.read(request.options);
-    if (read.status !== 'ready') return refused('unavailable');
-
-    const plan = planTriageEntryAttachmentMutation(request.intent === 'remove'
-        ? { intent: 'remove', snapshot: read.snapshot, entryRef: request.entryRef }
-        : {
-            intent: 'attach',
-            snapshot: read.snapshot,
-            entryRef: request.entryRef,
-            sourceInstance: request.sourceInstance,
-            presentation: request.presentation,
-            ...(request.lastKnownLocator === undefined
-                ? {}
-                : { lastKnownLocator: request.lastKnownLocator }),
-        });
-    if (plan.status === 'alreadySettled') return { kind: 'settled' };
-    if (plan.status === 'refused') return refused(plan.reason);
-
-    const applied = await request.handle.apply(plan.transaction, request.options);
-    switch (applied.status) {
-        case 'applied':
-            return { kind: 'applied' };
-        case 'conflict':
-            return { kind: 'conflict' };
-        case 'composerUnavailable':
-        case 'notEditable':
-            return refused(applied.status);
-        default:
-            // `invalidOperation` and `limitExceeded` are host verdicts about
-            // this exact transaction; they carry their own detail, and retrying
-            // them unchanged would fail identically.
-            return { kind: 'refused', reason: 'The change could not be applied.' };
-    }
+    const outcome = await applyTriageRevisionCheckedMutation({
+        handle: request.handle,
+        ...(request.options === undefined ? {} : { options: request.options }),
+        plan: (snapshot) => planTriageEntryAttachmentMutation(request.intent === 'remove'
+            ? { intent: 'remove', snapshot, entryRef: request.entryRef }
+            : {
+                intent: 'attach',
+                snapshot,
+                entryRef: request.entryRef,
+                sourceInstance: request.sourceInstance,
+                presentation: request.presentation,
+                ...(request.lastKnownLocator === undefined
+                    ? {}
+                    : { lastKnownLocator: request.lastKnownLocator }),
+            }),
+    });
+    // Attachment callers have no lifecycle currentness predicate, so `inert`
+    // is unreachable here. Keep the public attachment outcome unchanged.
+    return outcome.kind === 'inert' ? refused('unavailable') : outcome;
 }
 
 export async function applyTriageEntryMutation(

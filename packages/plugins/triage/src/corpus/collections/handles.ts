@@ -11,7 +11,16 @@ import type { PluginAccountCollection } from '@happier-dev/plugin-sdk/collection
  */
 export type CorpusStoredValueV1 = Readonly<Record<string, JsonValue>>;
 
-export type CorpusCollectionHandleV1 = PluginAccountCollection<CorpusStoredValueV1>;
+/**
+ * `watch` is deliberately outside this handle.
+ *
+ * No corpus owner watches — freshness is decided by the surface's own pass and
+ * by the Data-owned UI-query pager, not by a per-collection change feed — and
+ * omitting it is what lets one domain writer run over either the daemon's
+ * Account storage scope or a mounted surface's Account Data client. Adding a
+ * watcher here would silently make every writer daemon-only again.
+ */
+export type CorpusCollectionHandleV1 = Omit<PluginAccountCollection<CorpusStoredValueV1>, 'watch'>;
 
 /**
  * The narrowest handle an identity derivation needs. Deriving a tag requires

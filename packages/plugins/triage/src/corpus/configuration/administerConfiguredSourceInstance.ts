@@ -49,11 +49,8 @@ type InstanceCollections = Pick<CorpusCollectionsV1, 'sourceInstances'>;
  * This is a product bound with one owner, and it is checked here because this
  * is the only writer that can add one.
  *
- * Its value is the count the read side can actually carry. The aggregate list
- * Action returns every configured instance in one result, and that result
- * crosses the host's Action byte gate, so the durable set and the wire array
- * are one budget — `actions/maximumEncodedActionValue.test.ts` is where it is
- * paid for. Raising it means raising both.
+ * Its value is a picked product count shared with the read-side wire array; no
+ * transport, storage, or provider boundary currently derives thirty-two.
  *
  * Only active rows count. A retired row holds the history an explicit
  * reactivation needs and reaches no provider, so counting it would let a user
@@ -413,7 +410,7 @@ async function reactivateInstance(
 
 /** `remove` — retire as `userRemoved`. Automatic discovery can never reverse it. */
 async function removeInstance(
-    input: CorpusAdministerConfiguredSourceInstanceInputV1,
+    collections: InstanceCollections,
     current: CorpusRowV1<CorpusSourceInstanceRowV1>,
     options?: PluginCancellationOptions,
 ): Promise<CorpusSourceInstanceAdministrationResultV1> {
@@ -427,12 +424,33 @@ async function removeInstance(
             : CONFLICT;
     }
     const written = await putRow(
-        input.collections.sourceInstances,
+        collections.sourceInstances,
         retiredRow(current.value, 'userRemoved'),
         current.revision,
         options,
     );
     return written ? { kind: 'removed', sourceInstanceId } : CONFLICT;
+}
+
+/**
+ * Retire one Triage-owned configured source through the same lifecycle writer.
+ *
+ * Mounted Triage UI is the owner of this Collection, so it does not impersonate
+ * an admitted source contribution merely to remove its own row. The row lookup,
+ * lifecycle transition and CAS remain exactly the daemon Action's domain path.
+ */
+export async function removeConfiguredSourceInstance(input: Readonly<{
+    collections: InstanceCollections;
+    sourceInstanceId: string;
+    signal?: AbortSignal;
+}>): Promise<CorpusSourceInstanceAdministrationResultV1> {
+    const options = input.signal ? { signal: input.signal } : undefined;
+    const current = await findConfiguredSourceInstanceRow(
+        input.collections.sourceInstances,
+        input.sourceInstanceId,
+        options,
+    );
+    return current ? await removeInstance(input.collections, current, options) : INVALID_CALLER;
 }
 
 export async function administerConfiguredSourceInstance(
@@ -466,7 +484,7 @@ export async function administerConfiguredSourceInstance(
     // storage conflict: the caller named something it does not own.
     if (!current || !configuredSourceInstanceIsOwnedBy(current.value, input.source)) return INVALID_CALLER;
 
-    if (request.kind === 'remove') return await removeInstance(input, current, options);
+    if (request.kind === 'remove') return await removeInstance(input.collections, current, options);
 
     const draftInstanceTag = await deriveConfiguredSourceInstanceTag(input.collections.sourceInstances, {
         source: input.source,

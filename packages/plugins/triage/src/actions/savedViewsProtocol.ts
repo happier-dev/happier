@@ -12,9 +12,9 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import {
-    MAX_TRIAGE_SAVED_VIEWS_V1,
     MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1,
 } from '../settings/savedViews.js';
+import { TriageSettingsRevisionV1Schema } from '../settings/actions.js';
 import {
     TriageListFilterSelectionV1Schema,
     TriageSmartPolicyV1Schema,
@@ -82,8 +82,9 @@ const TriageSavedViewsAvailabilityV1Schema = defineProtocolUnion([
 export const TriageReadSavedViewsResultV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     availability: TriageSavedViewsAvailabilityV1Schema,
-    views: defineProtocolArray(TriageSavedViewV1Schema, { maxItems: MAX_TRIAGE_SAVED_VIEWS_V1 }),
+    views: defineProtocolArray(TriageSavedViewV1Schema),
     selectedViewId: defineProtocolUnion([triageViewId, defineProtocolLiteral(null)]),
+    revision: TriageSettingsRevisionV1Schema,
 }, { policy: 'closed' });
 export type TriageReadSavedViewsResultV1 = ReturnType<typeof TriageReadSavedViewsResultV1Schema.parse>;
 export const TriageReadSavedViewsResultV1JsonSchema: PluginJsonSchema =
@@ -108,6 +109,7 @@ export const TriageAdministerSavedViewInputV1Schema = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('create'),
+        expectedRevision: TriageSettingsRevisionV1Schema,
         ...TriageSavedViewDraftV1Schema,
         select: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
     }, { policy: 'closed' }),
@@ -115,17 +117,20 @@ export const TriageAdministerSavedViewInputV1Schema = defineProtocolUnion([
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('update'),
         viewId: triageViewId,
+        expectedRevision: TriageSettingsRevisionV1Schema,
         ...TriageSavedViewDraftV1Schema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('delete'),
         viewId: triageViewId,
+        expectedRevision: TriageSettingsRevisionV1Schema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('select'),
         viewId: defineProtocolUnion([triageViewId, defineProtocolLiteral(null)]),
+        expectedRevision: TriageSettingsRevisionV1Schema,
     }, { policy: 'closed' }),
 ]);
 export type TriageAdministerSavedViewInputV1 =
@@ -150,8 +155,6 @@ export const TriageAdministerSavedViewResultV1Schema = defineProtocolObject({
     ]),
     reason: defineProtocolUnion([
         defineProtocolLiteral('label'),
-        defineProtocolLiteral('viewLimit'),
-        defineProtocolLiteral('facetLimit'),
         defineProtocolLiteral('duplicateFacetValue'),
         defineProtocolLiteral('filterValue'),
         defineProtocolLiteral('order'),
@@ -159,10 +162,9 @@ export const TriageAdministerSavedViewResultV1Schema = defineProtocolObject({
         defineProtocolLiteral('valueTooLarge'),
     ]).optional(),
     /** The authoritative set after an applied write; omitted otherwise. */
-    views: defineProtocolArray(TriageSavedViewV1Schema, {
-        maxItems: MAX_TRIAGE_SAVED_VIEWS_V1,
-    }).optional(),
+    views: defineProtocolArray(TriageSavedViewV1Schema).optional(),
     selectedViewId: defineProtocolUnion([triageViewId, defineProtocolLiteral(null)]).optional(),
+    revision: TriageSettingsRevisionV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageAdministerSavedViewResultV1 =
     ReturnType<typeof TriageAdministerSavedViewResultV1Schema.parse>;

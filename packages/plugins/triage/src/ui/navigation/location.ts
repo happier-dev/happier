@@ -12,7 +12,6 @@ import {
   type CorpusStateFilterValueV1,
   type SurfaceFilterSelectionV1,
 } from '../../projection/listWindow.js';
-import { MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 } from '../../settings/savedViews.js';
 import { sameTriageFilterValueV1, type TriageSurfaceStateV1 } from '../state/surface.js';
 
 /**
@@ -136,12 +135,7 @@ type FacetDraft = {
 };
 
 /**
- * Admit one value into its facet, unless it is already there or the facet is
- * full.
- *
- * The bound is the one the list Action's wire enforces: a wider facet is a lens
- * every read would refuse whole, so a hand-edited route loses its excess values
- * rather than the reader losing the whole list.
+ * Admit one value into its facet unless it is already there.
  */
 function admitFacetValue(
   draft: FacetDraft,
@@ -149,7 +143,6 @@ function admitFacetValue(
   value: FacetDraft[keyof FacetDraft][number],
 ): void {
   const current = draft[facet] as FacetDraft[keyof FacetDraft][number][];
-  if (current.length >= MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1) return;
   const selection = { facet, value } as Parameters<typeof sameTriageFilterValueV1>[0];
   if (current.some((candidate) => sameTriageFilterValueV1(
     { facet, value: candidate } as Parameters<typeof sameTriageFilterValueV1>[0],
@@ -434,4 +427,76 @@ export async function writeTriageRouteLensV1(
   } catch {
     return { kind: 'refused', reason: 'rejected' };
   }
+}
+
+export type TriageRouteWriteQueueV1 = Readonly<{
+  /** Replace any not-yet-started intent with this newest complete lens. */
+  write: (lens: TriageRouteLensV1) => void;
+  /** Test/coordination seam: resolves once the in-flight write and latest queued intent settle. */
+  whenSettled: () => Promise<void>;
+  dispose: () => void;
+}>;
+
+/**
+ * One mounted page's single-flight latest-intent route writer.
+ *
+ * The host owns the current location, so an in-flight replacement is allowed
+ * to settle. While it does, this owner retains exactly one successor and each
+ * newer lens overwrites it. That is sufficient to prevent out-of-order host
+ * writes and avoidable intermediate calls; no timer, generation, route mirror
+ * or second state machine is involved.
+ */
+export function createTriageRouteWriteQueueV1(
+  hostApi: PluginUiHostApi,
+): TriageRouteWriteQueueV1 {
+  let pending: TriageRouteLensV1 | null = null;
+  let running = false;
+  let disposed = false;
+  let activeController: AbortController | null = null;
+  let settlers: Array<() => void> = [];
+
+  const settleWaiters = () => {
+    if (running || pending !== null) return;
+    const current = settlers;
+    settlers = [];
+    for (const settle of current) settle();
+  };
+
+  const drain = async (): Promise<void> => {
+    if (running || disposed) return;
+    running = true;
+    try {
+      while (!disposed && pending !== null) {
+        const lens = pending;
+        pending = null;
+        const controller = new AbortController();
+        activeController = controller;
+        await writeTriageRouteLensV1(hostApi, lens, { signal: controller.signal });
+        if (activeController === controller) activeController = null;
+      }
+    } finally {
+      activeController = null;
+      running = false;
+      settleWaiters();
+    }
+  };
+
+  return Object.freeze({
+    write(lens) {
+      if (disposed) return;
+      pending = lens;
+      void drain();
+    },
+    whenSettled() {
+      if (!running && pending === null) return Promise.resolve();
+      return new Promise<void>((resolve) => { settlers.push(resolve); });
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      pending = null;
+      activeController?.abort();
+      settleWaiters();
+    },
+  });
 }

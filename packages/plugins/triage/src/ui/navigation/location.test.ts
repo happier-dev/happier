@@ -10,13 +10,13 @@ import {
   parseTriageRouteSubPathV1,
   preflightTriageRouteLensV1,
   readTriageRouteLensV1,
+  createTriageRouteWriteQueueV1,
   writeTriageRouteLensV1,
   type TriageRouteLensV1,
 } from './location.js';
 import { TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../state/surface.js';
 import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../../corpus/query/smartPolicy.js';
 import { TRIAGE_LIST_NO_FILTERS_V1 } from '../../projection/listWindow.js';
-import { MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 } from '../../settings/savedViews.js';
 
 const SOURCE = { pluginId: 'acme.scm', localId: 'github' } as const;
 
@@ -69,6 +69,29 @@ function hostApiWith(input: Readonly<{
 }
 
 describe('PRs & Issues route owner', () => {
+  it('serializes host replacement and keeps only the newest queued intent', async () => {
+    let settleFirst!: (value: { subPath: string }) => void;
+    const first = new Promise<{ subPath: string }>((resolve) => { settleFirst = resolve; });
+    const replace = vi.fn<PluginUiHostApi['replacePageLocation']>(async (subPath) => {
+      if (subPath === 'q,first') return await first;
+      return { subPath };
+    });
+    const queue = createTriageRouteWriteQueueV1(
+      hostApiWith({ methods: ['replacePageLocation'], replace }),
+    );
+
+    queue.write(lens({ query: 'first' }));
+    queue.write(lens({ query: 'second' }));
+    queue.write(lens({ query: 'newest' }));
+    await Promise.resolve();
+    expect(replace.mock.calls.map(([subPath]) => subPath)).toEqual(['q,first']);
+
+    settleFirst({ subPath: 'q,first' });
+    await queue.whenSettled();
+    expect(replace.mock.calls.map(([subPath]) => subPath)).toEqual(['q,first', 'q,newest']);
+    queue.dispose();
+  });
+
   it('round-trips a complete lens through one canonical location', () => {
     const value = lens({
       grouping: 'scope',
@@ -242,19 +265,17 @@ describe('PRs & Issues route owner', () => {
     expect(parsed.query).toBe('keep me');
   });
 
-  it('never admits more facet values than the one lens the list read can carry', () => {
+  it('preserves more than sixteen valid facet values when the complete route fits', () => {
     const scopes = Array.from(
-      { length: MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 + 1 },
+      { length: 17 },
       (_unused, index) => `fp,${encodeURIComponent(SOURCE.pluginId)},${encodeURIComponent(SOURCE.localId)},scope-${index}`,
     );
     const parsed = parseTriageRouteSubPathV1([...scopes, 'q,keep'].join('/'));
 
-    // A hand-edited route wider than the wire bound would make every list read
-    // fail whole, which shows the reader no list at all.
-    expect(parsed.filters.scopes).toHaveLength(MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1);
+    expect(parsed.filters.scopes).toHaveLength(17);
     expect(parsed.filters.scopes.at(-1)).toEqual({
       source: SOURCE,
-      collisionScope: `scope-${MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 - 1}`,
+      collisionScope: 'scope-16',
     });
     expect(parsed.query).toBe('keep');
   });
@@ -284,12 +305,11 @@ describe('PRs & Issues route owner', () => {
     const filtered = lens({
       filters: {
         ...TRIAGE_LIST_NO_FILTERS_V1,
-        scopes: Array.from({ length: MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 }, (_u, i) => scopeValue(i)),
+        scopes: Array.from({ length: 16 }, (_u, i) => scopeValue(i)),
       },
     });
 
-    // The reader chose sixteen scopes the facet bound allows, and the resulting
-    // location does not fit. §3.2's refusal is therefore reachable from an
+    // The complete resulting location does not fit. §3.2's refusal is therefore reachable from an
     // ordinary filter edit, not only from a hand-edited URL.
     expect(routeBytes(filtered)).toBeGreaterThan(PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1);
     expect(preflightTriageRouteLensV1(filtered)).toEqual({ kind: 'refused' });

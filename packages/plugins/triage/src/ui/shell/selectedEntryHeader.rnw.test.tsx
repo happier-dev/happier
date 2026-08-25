@@ -118,10 +118,10 @@ async function executeAction(action: string): Promise<JsonValue> {
         return listResult(listsTheEntry) as unknown as JsonValue;
     }
     if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
-        return { v: 1, pins: [], more: false };
+        return { v: 1, pins: [] };
     }
     if (action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
-        return { v: 1, availability: 'absent', views: [], selectedViewId: null };
+        return { v: 1, availability: 'absent', views: [], selectedViewId: null, revision: 'revision-1' };
     }
     if (action === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
         // No configured connection answers this read in this fixture. The

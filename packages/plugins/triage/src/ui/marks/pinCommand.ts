@@ -2,6 +2,10 @@ import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-s
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
+  listTriagePinnedEntries,
+  setTriageEntryPinned,
+} from '../../actions/userMarks.js';
+import {
   TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1,
   TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1,
   TriageListPinnedEntriesResultV1Schema,
@@ -9,16 +13,25 @@ import {
   type TriageListPinnedEntriesResultV1,
   type TriageSetEntryPinnedResultV1,
 } from '../../actions/userMarksProtocol.js';
+import type { CorpusCollectionsV1 } from '../../corpus/collections/bindCorpusCollections.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../../projection/listWindow.js';
 
 /**
- * The surface's one path to the canonical `user-marks` owner.
+ * The surface's path to the canonical `user-marks` owner.
  *
- * A mounted surface holds a Host API, not a Collection, so every Pin, Unpin and
- * pinned-section read leaves through here. The module owns no state: there is
- * no local pinned set, no optimistic commitment and no queue, because a pin is
- * durable user intent with no upstream owner to reconstruct it from — the only
- * honest thing to show is what the Account says.
+ * There are two transports and one owner. A mount that can reach the reader's
+ * Account directly drives `actions/userMarks.ts` over its own Account
+ * Collection handle, so Pin, Unpin and the pinned section keep working with no
+ * daemon reachable at all — a pin is Account state, not provider data. A mount
+ * that cannot reach the Account directly invokes the same two published
+ * Actions, which reach the same owner through a daemon. Neither transport
+ * decides anything: `setPinned` still owns idempotency, the derived address,
+ * the conditional resurrection and the conflict verdict.
+ *
+ * The module owns no state: there is no local pinned set, no optimistic
+ * commitment and no queue, because a pin is durable user intent with no
+ * upstream owner to reconstruct it from — the only honest thing to show is what
+ * the Account says.
  *
  * The entry reference is passed through exactly as the projection produced it.
  * Nothing here rebuilds, normalizes, sorts or re-encodes it: the mark's address
@@ -59,6 +72,65 @@ export type TriagePinIntentV1 =
 /** One bounded page, sized to the same row ceiling the list window uses. */
 export const TRIAGE_PINNED_PAGE_LIMIT_V1 = MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
 
+/**
+ * The two mark operations a mounted surface performs, independent of how they
+ * reach the owner. The hook holds one of these and never branches on transport.
+ */
+export type TriageMarksTransportV1 = Readonly<{
+  read(
+    cursor: string | undefined,
+    options?: PluginCancellationOptions,
+  ): Promise<TriageListPinnedEntriesResultV1>;
+  write(
+    intent: TriagePinIntentV1,
+    options?: PluginCancellationOptions,
+  ): Promise<TriageSetEntryPinnedResultV1>;
+}>;
+
+/**
+ * The direct transport: this mount's own Account Collection handle, handed to
+ * the same Action-layer projection the daemon handler calls. No daemon is in
+ * the path, and no identity derivation, codec or CAS rule is restated here.
+ */
+export function createDirectTriageMarksTransport(
+  collections: Pick<CorpusCollectionsV1, 'userMarks'>,
+  nowMs: () => number = () => Date.now(),
+): TriageMarksTransportV1 {
+  return Object.freeze({
+    async read(cursor, options) {
+      return await listTriagePinnedEntries({
+        v: 1,
+        limit: TRIAGE_PINNED_PAGE_LIMIT_V1,
+        ...(cursor === undefined ? {} : { cursor }),
+      }, {
+        collections,
+        nowMs,
+        ...(options?.signal ? { signal: options.signal } : {}),
+      });
+    },
+    async write(intent, options) {
+      return await setTriageEntryPinned(
+        intent.pinned
+          ? { v: 1, pinned: true, entryRef: intent.entryRef, displayAtMark: intent.displayAtMark }
+          : { v: 1, pinned: false, entryRef: intent.entryRef },
+        {
+          collections,
+          nowMs,
+          ...(options?.signal ? { signal: options.signal } : {}),
+        },
+      );
+    },
+  });
+}
+
+/** The daemon transport: the same owner, reached through the published Actions. */
+export function createActionTriageMarksTransport(host: TriageMarkHostV1): TriageMarksTransportV1 {
+  return Object.freeze({
+    read: async (cursor, options) => await readTriagePinnedEntries(host, cursor, options),
+    write: async (intent, options) => await submitTriagePin(host, intent, options),
+  });
+}
+
 export async function submitTriagePin(
   host: TriageMarkHostV1,
   intent: TriagePinIntentV1,
@@ -77,13 +149,26 @@ export async function submitTriagePin(
   return TriageSetEntryPinnedResultV1Schema.parse(result);
 }
 
+/**
+ * One bounded page of the reader's pins, newest first.
+ *
+ * `cursor` is the previous page's `nextCursor`, passed back untouched. It is a
+ * process-local argument and nothing more: this module keeps no page, no cursor
+ * and no accumulated set, so a lost mount starts at the newest page with
+ * nothing to resume.
+ */
 export async function readTriagePinnedEntries(
   host: TriageMarkHostV1,
+  cursor?: string,
   options?: PluginCancellationOptions,
 ): Promise<TriageListPinnedEntriesResultV1> {
   const result = await host.executeAction(
     TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1,
-    { v: 1, limit: TRIAGE_PINNED_PAGE_LIMIT_V1 },
+    {
+      v: 1,
+      limit: TRIAGE_PINNED_PAGE_LIMIT_V1,
+      ...(cursor === undefined ? {} : { cursor }),
+    },
     options,
   );
   return TriageListPinnedEntriesResultV1Schema.parse(result);

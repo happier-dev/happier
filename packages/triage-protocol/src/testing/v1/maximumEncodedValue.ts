@@ -50,7 +50,7 @@ export function utf8ByteLength(value: string): number {
     return utf8Encoder.encode(value).length;
 }
 
-/** Serialized UTF-8 JSON bytes of a value, which is what the host gate measures. */
+/** Serialized UTF-8 JSON bytes of a value for deterministic shape inventories. */
 export function encodedJsonBytes(value: unknown): number {
     return utf8ByteLength(JSON.stringify(value));
 }

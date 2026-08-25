@@ -47,7 +47,7 @@ import {
 
 /** What one pass is given. Deliberately not a checkpoint, cursor, or resume token. */
 export type TriageRefreshPassInputV1 = Readonly<{
-    sourceInstanceId: string;
+    sourceInstanceIds: readonly string[];
     /** Canonical cancellation for retirement, reconfiguration, or shutdown. */
     signal: AbortSignal;
 }>;
@@ -87,12 +87,16 @@ export type TriageRefreshRequestResultV1 = Readonly<{
      * into an `interrupted` outcome rather than rejecting this promise.
      */
     settled: Promise<void>;
-    blocked?: TriageRefreshBlockedV1;
+    startedSourceInstanceIds: readonly string[];
+    blocked: readonly Readonly<{
+        sourceInstanceId: string;
+        reason: TriageRefreshBlockedV1;
+    }>[];
 }>;
 
 export type TriageRefreshCoordinatorV1 = Readonly<{
     request(input: Readonly<{
-        sourceInstanceId: string;
+        sourceInstanceIds: readonly string[];
         trigger: TriageRefreshTriggerV1;
     }>): TriageRefreshRequestResultV1;
     /**
@@ -125,11 +129,14 @@ type RefreshSlot = {
 
 export function createTriageRefreshCoordinator(deps: Readonly<{
     /**
-     * Runs one live source materialization for one configured instance. It
-     * owns paging, mapping, and its own deadlines; it must resolve with an
-     * outcome rather than reject.
+     * Runs one live materialization for the eligible configured-source set. It
+     * owns paging, mapping, and its own deadlines, and returns one outcome per
+     * source rather than rejecting.
      */
-    runPass: (input: TriageRefreshPassInputV1) => Promise<TriageRefreshPassOutcomeV1>;
+    runPass: (input: TriageRefreshPassInputV1) => Promise<readonly Readonly<{
+        sourceInstanceId: string;
+        outcome: TriageRefreshPassOutcomeV1;
+    }>[] >;
     nowMs: () => number;
     random?: () => number;
     /**
@@ -142,38 +149,50 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
     const slots = new Map<string, RefreshSlot>();
     let disposed = false;
 
-    async function executePass(slot: RefreshSlot): Promise<void> {
+    async function executePass(activeSlots: readonly RefreshSlot[]): Promise<void> {
         const controller = new AbortController();
-        slot.abortController = controller;
-        // Measured from the read start, so a slow pass cannot turn the minimum
-        // interval into "one pass duration plus one interval".
-        slot.lastReadStartedAtMs = deps.nowMs();
-        let outcome: TriageRefreshPassOutcomeV1;
+        const startedAtMs = deps.nowMs();
+        for (const slot of activeSlots) {
+            slot.abortController = controller;
+            // Measured from the read start, so a slow pass cannot turn the minimum
+            // interval into "one pass duration plus one interval".
+            slot.lastReadStartedAtMs = startedAtMs;
+        }
+        let outcomes: readonly Readonly<{
+            sourceInstanceId: string;
+            outcome: TriageRefreshPassOutcomeV1;
+        }>[];
         try {
-            outcome = await deps.runPass({
-                sourceInstanceId: slot.sourceInstanceId,
+            outcomes = await deps.runPass({
+                sourceInstanceIds: activeSlots.map((slot) => slot.sourceInstanceId),
                 signal: controller.signal,
             });
         } catch (error) {
             deps.onUnexpectedError?.(error);
-            outcome = { kind: 'interrupted' };
+            outcomes = [];
         } finally {
-            if (slot.abortController === controller) slot.abortController = null;
+            for (const slot of activeSlots) {
+                if (slot.abortController === controller) slot.abortController = null;
+            }
         }
-        // A retired instance's late result cannot write pacing state for an
-        // instance that no longer exists.
-        if (slot.retired) return;
-        if (outcome.kind === 'completed') {
-            slot.backoff = TRIAGE_REFRESH_BACKOFF_IDLE_V1;
-            return;
-        }
-        if (outcome.kind === 'failed') {
-            slot.backoff = recordRefreshFailure({
-                backoff: slot.backoff,
-                failure: outcome.failure,
-                nowMs: deps.nowMs(),
-                random,
-            });
+        const bySource = new Map(outcomes.map((entry) => [entry.sourceInstanceId, entry.outcome]));
+        for (const slot of activeSlots) {
+            // A retired instance's late result cannot write pacing state for an
+            // instance that no longer exists.
+            if (slot.retired) continue;
+            const outcome = bySource.get(slot.sourceInstanceId) ?? { kind: 'interrupted' as const };
+            if (outcome.kind === 'completed') {
+                slot.backoff = TRIAGE_REFRESH_BACKOFF_IDLE_V1;
+                continue;
+            }
+            if (outcome.kind === 'failed') {
+                slot.backoff = recordRefreshFailure({
+                    backoff: slot.backoff,
+                    failure: outcome.failure,
+                    nowMs: deps.nowMs(),
+                    random,
+                });
+            }
         }
     }
 
@@ -204,27 +223,45 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
                 return {
                     disposition: 'blocked',
                     settled: Promise.resolve(),
-                    blocked: { reason: 'retired' },
+                    startedSourceInstanceIds: [],
+                    blocked: input.sourceInstanceIds.map((sourceInstanceId) => ({
+                        sourceInstanceId,
+                        reason: { reason: 'retired' },
+                    })),
                 };
             }
-            const existing = slots.get(input.sourceInstanceId);
-            const eligibility = evaluateRefreshEligibility({
-                trigger: input.trigger,
-                nowMs: deps.nowMs(),
-                lastReadStartedAtMs: existing?.lastReadStartedAtMs ?? null,
-                backoff: existing?.backoff ?? TRIAGE_REFRESH_BACKOFF_IDLE_V1,
-            });
-            if (eligibility.kind === 'blocked') {
-                return {
-                    disposition: 'blocked',
-                    settled: Promise.resolve(),
-                    blocked: {
-                        reason: eligibility.reason,
-                        nextEligibleAtMs: eligibility.nextEligibleAtMs,
-                    },
-                };
+            const activeSlots: RefreshSlot[] = [];
+            const blocked: Array<{
+                sourceInstanceId: string;
+                reason: TriageRefreshBlockedV1;
+            }> = [];
+            for (const sourceInstanceId of input.sourceInstanceIds) {
+                const existing = slots.get(sourceInstanceId);
+                const eligibility = evaluateRefreshEligibility({
+                    trigger: input.trigger,
+                    nowMs: deps.nowMs(),
+                    lastReadStartedAtMs: existing?.lastReadStartedAtMs ?? null,
+                    backoff: existing?.backoff ?? TRIAGE_REFRESH_BACKOFF_IDLE_V1,
+                });
+                if (eligibility.kind === 'blocked') {
+                    blocked.push({
+                        sourceInstanceId,
+                        reason: {
+                            reason: eligibility.reason,
+                            nextEligibleAtMs: eligibility.nextEligibleAtMs,
+                        },
+                    });
+                } else {
+                    activeSlots.push(openSlot(sourceInstanceId));
+                }
             }
-            return { disposition: 'started', settled: executePass(openSlot(input.sourceInstanceId)) };
+            const startedSourceInstanceIds = activeSlots.map((slot) => slot.sourceInstanceId);
+            return {
+                disposition: activeSlots.length === 0 ? 'blocked' : 'started',
+                settled: activeSlots.length === 0 ? Promise.resolve() : executePass(activeSlots),
+                startedSourceInstanceIds,
+                blocked,
+            };
         },
         pacingBlock(input): TriageRefreshPacingBlockV1 | null {
             if (disposed) return null;

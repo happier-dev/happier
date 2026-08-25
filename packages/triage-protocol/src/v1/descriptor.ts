@@ -65,3 +65,25 @@ export const TriageSourceDescriptorV1Schema = defineProtocolObject({
     settingsPageId: TriageIdentifierV1ProtocolSchema.optional(),
 }, { policy: 'additive-open/drop' });
 export type TriageSourceDescriptorV1 = ReturnType<typeof TriageSourceDescriptorV1Schema.parse>;
+
+export type TriageSourceDescriptorAdmissionV1 =
+    | Readonly<{ ok: true; descriptor: TriageSourceDescriptorV1 }>
+    | Readonly<{ ok: false; reason: 'invalid' | 'duplicateKindId' }>;
+
+/**
+ * The target-owned semantic admission for one source descriptor.
+ *
+ * The public protocol algebra owns structural parsing and JSON Schema
+ * projection, but has no keyed-array uniqueness primitive. Triage owns this
+ * one keyed invariant directly: consumers receive either one unambiguous kind
+ * vocabulary or no admitted descriptor, never first-match behavior.
+ */
+export function admitTriageSourceDescriptorV1(input: unknown): TriageSourceDescriptorAdmissionV1 {
+    const parsed = TriageSourceDescriptorV1Schema.safeParse(input);
+    if (!parsed.success) return Object.freeze({ ok: false, reason: 'invalid' });
+    const kindIds = parsed.data.kinds.map((kind) => kind.id);
+    if (new Set(kindIds).size !== kindIds.length) {
+        return Object.freeze({ ok: false, reason: 'duplicateKindId' });
+    }
+    return Object.freeze({ ok: true, descriptor: parsed.data });
+}

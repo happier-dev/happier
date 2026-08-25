@@ -111,20 +111,20 @@ function createHarness() {
         surfaces: { detail: {} },
     } as unknown as TriageAdmittedSourceV1];
 
+    const state = { marksUnreachable: false, includeEntry: true };
+
     const executeScan: TriageAdmittedOperationExecutorV1 = async () => ({
         kind: 'complete',
-        observations: [{
+        observations: state.includeEntry ? [{
             kind: 'present',
             localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
             locator: testkitLocator(),
             snapshot: testkitSnapshot({ title: 'Replace the duplicated normalizer' }),
             viewer: testkitViewer(),
             sourceUpdatedAtMs: 3_000,
-        }],
+        }] : [],
         evidence: { kind: 'walkFinished' },
     } satisfies TriageScanResultV1);
-
-    const state = { marksUnreachable: false };
 
     async function executeAction(request: Readonly<{ action: unknown; input: unknown }>) {
         const action = String(request.action);
@@ -287,6 +287,52 @@ describe('the mounted Pin/Unpin affordance', () => {
         // section shows exactly one row for it.
         await expect(shell.queryByText('Replace the duplicated normalizer (updated)'))
             .resolves.toBeUndefined();
+    });
+
+    it('pins and unpins the selected materialized entry from its visible detail header', async () => {
+        const harness = createHarness();
+        const shell = await mountShell(harness);
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('option', {
+                name: 'Replace the duplicated normalizer',
+            }));
+        });
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', {
+                name: 'Pin Replace the duplicated normalizer',
+            }));
+        });
+        expect(await liveMarkCount(harness)).toBe(1);
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', {
+                name: 'Unpin Replace the duplicated normalizer',
+            }));
+        });
+        expect(await liveMarkCount(harness)).toBe(0);
+    });
+
+    it('keeps direct Pin available when the selected entry leaves the current window', async () => {
+        const harness = createHarness();
+        const shell = await mountShell(harness);
+        await act(async () => {
+            await shell.press(await shell.getByRole('option', {
+                name: 'Replace the duplicated normalizer',
+            }));
+        });
+
+        harness.state.includeEntry = false;
+        await act(async () => { await refreshTriageListWindow('manual'); });
+        await expect(shell.getByText('This entry is no longer in the list')).resolves.toBeDefined();
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', {
+                name: 'Pin Replace the duplicated normalizer',
+            }));
+        });
+        expect(await liveMarkCount(harness)).toBe(1);
     });
 
     it('says pins are unavailable rather than showing a control that does nothing', async () => {

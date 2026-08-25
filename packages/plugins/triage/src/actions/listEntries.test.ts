@@ -1,14 +1,17 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import {
+    MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TriageConfiguredSourceInstanceV1Schema,
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
-import { describe, expect, it } from 'vitest';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol';
+import { describe, expect, it, vi } from 'vitest';
 
 import { MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
@@ -21,6 +24,10 @@ import {
     type TriageAdmittedOperationExecutorV1,
     type TriageAdmittedSourceV1,
 } from './listEntries.js';
+import type {
+    TriageListEntriesInputV1,
+    TriageListEntriesResultV1,
+} from './listEntriesProtocol.js';
 
 /**
  * The registered Action handler reaches the composed vertical through the exact
@@ -220,19 +227,25 @@ describe('the aggregate list pass persists nothing provider-derived', () => {
             },
         } as unknown as PluginInvocationContext;
 
-        const result = await createTriageListEntriesActionHandler()({
+        const first = await createTriageListEntriesActionHandler()({
             v: 1,
             sources: { kind: 'allConfigured' },
             limit: 10,
             order: 'newest',
         }, context);
+        const result = await createTriageListEntriesActionHandler()({
+            v: 1,
+            sources: { kind: 'allConfigured' },
+            limit: 10,
+            order: 'newest',
+            resume: first.window.continuations,
+        }, context);
 
         // The walk really happened; a pass that never ran would pass this test
         // for the wrong reason.
         expect(page).toBe(2);
-        // Both pages reached the window. Ordering is owned and proved elsewhere,
-        // so this compares the set rather than restating that contract.
-        expect([...result.window.rows.map((row) => row.entryRef.entryId)].sort()).toEqual(['1', '2']);
+        expect(first.window.rows.map((row) => row.entryRef.entryId)).toEqual(['1']);
+        expect(result.window.rows.map((row) => row.entryRef.entryId)).toEqual(['2']);
         expect(result.window.coverage).toBe('complete');
     });
 });
@@ -321,6 +334,42 @@ const finishedWalk: TriageAdmittedOperationExecutorV1 = async () => ({
 });
 
 describe('the aggregate list coverage claim', () => {
+    it('does not invoke a source whose admitted descriptor has duplicate kind ids', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag('a'),
+            sourceInstanceId: INSTANCE_ID,
+            configuredAtMs: 1,
+        })));
+        const duplicateDescriptor = {
+            ...ADMITTED_SOURCE,
+            descriptor: {
+                ...ADMITTED_SOURCE.descriptor,
+                kinds: [
+                    ADMITTED_SOURCE.descriptor.kinds[0],
+                    { ...ADMITTED_SOURCE.descriptor.kinds[0], displayName: 'Duplicate' },
+                ],
+            },
+        } as unknown as TriageAdmittedSourceV1;
+        const executeScan = vi.fn(finishedWalk);
+
+        const result = await listTriageEntries({
+            v: 1,
+            sources: { kind: 'allConfigured' },
+            limit: 10,
+            order: 'newest',
+        }, {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => [duplicateDescriptor],
+            executeScan,
+            nowMs: () => 1_760_000_000_000,
+        });
+
+        expect(executeScan).not.toHaveBeenCalled();
+        expect(result.configuredSources).toEqual([expect.objectContaining({ available: false })]);
+        expect(result.window.coverage).toBe('partial');
+    });
+
     it('counts a configured source with no admitted contribution as an unfinished lane', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
@@ -391,4 +440,242 @@ describe('the aggregate list coverage claim', () => {
         expect(result.window.lanes.every((lane) => lane.exhausted)).toBe(true);
         expect(result.window.coverage).toBe('partial');
     });
+});
+
+/**
+ * Paging a mixed multi-source window.
+ *
+ * `PLAN.md` §0a A9: the list pages exactly the way its first page loaded —
+ * every walked lane resuming its own frontier through the same rotation. The
+ * predecessor admitted one continuation, and only for a request that selected
+ * one instance, on the arithmetic that thirty-two maximal tokens overflow the
+ * host byte gate. The set is bounded against that gate directly instead, and
+ * the result is never refused whole over a paging token.
+ */
+
+/** A page that fills the submitted limit and asks to be called again. */
+function pagingScan(input: Readonly<{
+    /** Tokens by lane, so a resumed lane can be told apart from a restarted one. */
+    tokenFor: (sourceInstanceId: string) => string;
+    seen?: Map<string, unknown>;
+    limit: number;
+}>): TriageAdmittedOperationExecutorV1 {
+    const geometry = new Map<string, number>();
+    return async (_operation, scanInput): Promise<TriageScanResultV1> => {
+        const sourceInstanceId = scanInput.instance.instance.sourceInstanceId;
+        if (!input.seen?.has(sourceInstanceId)) input.seen?.set(sourceInstanceId, scanInput.page);
+        if (scanInput.page.kind === 'initial') geometry.set(sourceInstanceId, scanInput.page.limit);
+        const limit = Math.min(input.limit, geometry.get(sourceInstanceId) ?? input.limit);
+        return {
+            kind: 'page',
+            observations: Array.from({ length: limit }, (_unused, index) => ({
+                kind: 'present',
+                localRef: {
+                    kindId: 'pull-request',
+                    collisionScope: 'example/repository',
+                    entryId: `${sourceInstanceId}-${index}`,
+                },
+                locator: testkitLocator(),
+                snapshot: testkitSnapshot(),
+                viewer: testkitViewer(),
+            })),
+            evidence: { kind: 'partial', reason: 'more-pages' },
+            continuation: { v: 1, token: input.tokenFor(sourceInstanceId) },
+        };
+    };
+}
+
+function seedInstances(
+    control: ReturnType<typeof createTestkitCorpusCollections>['control'],
+    count: number,
+): readonly string[] {
+    const ids: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+        const sourceInstanceId = numberedInstanceId(index);
+        ids.push(sourceInstanceId);
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag(`s${String(index).padStart(3, '0')}`),
+            sourceInstanceId,
+            configuredAtMs: index + 1,
+        })));
+    }
+    return ids;
+}
+
+describe('the aggregate list continuation set', () => {
+    it('reports one frontier per walked connection rather than one for the whole request', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const [first, second] = seedInstances(control, 2);
+
+        const result = await listTriageEntries({
+            v: 1,
+            sources: { kind: 'allConfigured' },
+            limit: 10,
+            order: 'newest',
+        }, {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            executeScan: pagingScan({ tokenFor: (id) => `next:${id}`, limit: 10 }),
+            nowMs: () => 1_760_000_000_000,
+        });
+
+        // Both lanes stopped with more to give, and each names itself. A window
+        // that carried one of them is a window whose other connection restarts
+        // its walk on every press.
+        expect(result.window.continuations).toEqual([
+            { sourceInstanceId: first, continuation: { v: 1, token: `next:${first}` } },
+            { sourceInstanceId: second, continuation: { v: 1, token: `next:${second}` } },
+        ]);
+        expect(result.window.coverage).toBe('partial');
+    });
+
+    it('resumes each named lane at its own frontier and starts the rest at the first page', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const [first, second, third] = seedInstances(control, 3);
+        const seen = new Map<string, unknown>();
+
+        await listTriageEntries({
+            v: 1,
+            sources: { kind: 'allConfigured' },
+            limit: 10,
+            order: 'newest',
+            resume: [
+                { sourceInstanceId: second, continuation: { v: 1, token: 'frontier-of-second' } },
+                // A frontier for a connection this request does not walk. It is
+                // ignored rather than refused: refusing would cost the caller
+                // the whole list over a stale token.
+                { sourceInstanceId: SECOND_INSTANCE_ID, continuation: { v: 1, token: 'stale' } },
+            ],
+        }, {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            executeScan: pagingScan({ tokenFor: (id) => `next:${id}`, seen, limit: 10 }),
+            nowMs: () => 1_760_000_000_000,
+        });
+
+        expect(seen.get(second)).toEqual({
+            kind: 'continuation',
+            continuation: { v: 1, token: 'frontier-of-second' },
+        });
+        expect(seen.get(first)).toEqual({ kind: 'initial', limit: 3 });
+        expect(seen.get(third)).toEqual({ kind: 'initial', limit: 3 });
+    });
+
+    /**
+     * The deciding case for `PLAN.md` §0a A9a.
+     *
+     * The predecessor packed the frontier set against a fixed byte budget and
+     * dropped the lowest-priority tail, calling a restarted lane "a rounding
+     * error the user never sees". It is not. A dropped lane restarts at page
+     * one, the rows it replays are deduped away while still spending its share
+     * of the row budget, the set overflows the same way on the next page, and
+     * its token is dropped again — for the same lanes every time, because the
+     * drop order is the stable rotation order. Unique older rows in the tail
+     * lanes become PERMANENTLY unreachable, which is the silent-failure class
+     * this surface exists to refuse.
+     *
+     * So the set is never cut. The row budget is derived from what the gate
+     * leaves after the frontiers the walked lanes may spend, so the whole set
+     * always fits and no lane is ever asked to restart.
+     */
+    it('reaches a deeper lane\'s older rows instead of starving the tail of the rotation', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const ids = seedInstances(control, MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1);
+        const tail = ids[ids.length - 1] ?? '';
+        const pages = new Map<string, number>();
+        // Every lane spends its whole published frontier on every page — the
+        // pathological set, at the maximum admitted source count. `"` doubles
+        // under JSON escaping, so this is the costliest admitted fill.
+        const maximalToken = (page: number): string => {
+            const marker = `p${page}:`;
+            return `${marker}${'"'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 - marker.length)}`;
+        };
+        // The page geometry a source is told once, on the initial ask, and keeps
+        // inside its own frontier: the continuation arm carries no limit, so a
+        // resumed page that returned a different size would be a source-contract
+        // failure rather than a page.
+        const geometry = new Map<string, number>();
+        let fetchedThisPress = new Set<string>();
+        let fetchedCount = 0;
+        const executeScan: TriageAdmittedOperationExecutorV1 = async (_operation, scanInput) => {
+            const sourceInstanceId = scanInput.instance.instance.sourceInstanceId;
+            const page = scanInput.page.kind === 'initial'
+                ? 0
+                : Number(/^p(\d+):/u.exec(scanInput.page.continuation.token)?.[1] ?? '0');
+            pages.set(sourceInstanceId, page);
+            if (scanInput.page.kind === 'initial') geometry.set(sourceInstanceId, scanInput.page.limit);
+            const limit = geometry.get(sourceInstanceId) ?? 1;
+            const observations = Array.from({ length: limit }, (_unused, index) => ({
+                kind: 'present' as const,
+                localRef: {
+                    kindId: 'pull-request',
+                    collisionScope: 'example/repository',
+                    entryId: `${sourceInstanceId}-p${page}-${index}`,
+                },
+                locator: testkitLocator(),
+                snapshot: testkitSnapshot(),
+                viewer: testkitViewer(),
+                // Each page reads older than the one before it, so a lane
+                // that never advances can only ever contribute its newest
+                // rows.
+                sourceUpdatedAtMs: 1_000_000 - page * 1_000 - index,
+            }));
+            for (const observation of observations) fetchedThisPress.add(observation.localRef.entryId);
+            fetchedCount += observations.length;
+            return {
+                kind: 'page',
+                observations,
+                evidence: { kind: 'partial', reason: 'more-pages' },
+                continuation: { v: 1, token: maximalToken(page + 1) },
+            };
+        };
+
+        let resume: TriageListEntriesInputV1['resume'];
+        const seen = new Set<string>();
+        // Four presses of the reader's own continuation row. One is enough for
+        // a lane that keeps its frontier; a starved lane never gets there.
+        for (let press = 0; press < 4; press += 1) {
+            fetchedThisPress = new Set<string>();
+            const result: TriageListEntriesResultV1 = await listTriageEntries({
+                v: 1,
+                sources: { kind: 'allConfigured' },
+                limit: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
+                order: 'newest',
+                ...(resume === undefined ? {} : { resume }),
+            }, {
+                sourceInstances: collections.sourceInstances,
+                readAdmittedSources: async () => [ADMITTED_SOURCE],
+                executeScan,
+                nowMs: () => 1_760_000_000_000,
+            });
+
+            // The result is never refused whole over a paging token, and it is
+            // strict host JSON admission that answers.
+            expect(AgentRuntimeJsonValueV1Schema.safeParse(result).success).toBe(true);
+            // Nothing is dropped: every lane that stopped with more to give
+            // carries its own frontier, all thirty-two of them.
+            expect(result.window.continuations ?? []).toHaveLength(
+                MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+            );
+            const returnedThisPress = new Set(result.window.rows.map((row) => row.entryRef.entryId));
+            const lostThisPress = [...fetchedThisPress].filter((entryId) => !returnedThisPress.has(entryId));
+            expect({
+                fetched: fetchedThisPress.size,
+                seen: returnedThisPress.size,
+                lost: lostThisPress.length,
+            }).toEqual({
+                fetched: fetchedThisPress.size,
+                seen: fetchedThisPress.size,
+                lost: 0,
+            });
+            for (const entryId of returnedThisPress) seen.add(entryId);
+            resume = result.window.continuations;
+        }
+
+        // The tail of the rotation advanced its walk rather than restarting it,
+        // and its unique older rows are reachable.
+        expect(pages.get(tail)).toBeGreaterThan(0);
+        expect([...seen].some((entryId) => entryId.startsWith(`${tail}-p1-`))).toBe(true);
+        expect(fetchedCount).toBe(seen.size);
+    }, 60_000);
 });

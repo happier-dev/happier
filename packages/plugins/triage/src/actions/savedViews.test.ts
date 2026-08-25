@@ -15,6 +15,7 @@ function deps(fixture: ReturnType<typeof createTestkitAccountSettings>) {
 const createInput: TriageAdministerSavedViewInputV1 = {
     v: 1,
     kind: 'create',
+    expectedRevision: 'revision-1',
     label: 'Needs my review',
     filters: TRIAGE_LIST_NO_FILTERS_V1,
     order: 'smart',
@@ -60,6 +61,7 @@ describe('the saved-view Actions', () => {
             v: 1,
             kind: 'select',
             viewId: '00000002-0000-4000-8000-000000000000',
+            expectedRevision: fixture.revision(),
         }, deps(fixture))).toEqual({ v: 1, status: 'unknownView' });
         expect(fixture.setCallCount()).toBe(writesBefore);
     });
@@ -73,7 +75,13 @@ describe('the saved-view Actions', () => {
 
         // `absent` here would invite the surface to offer a create that
         // destroys a newer client's views.
-        expect(read).toEqual({ v: 1, availability: 'unavailable', views: [], selectedViewId: null });
+        expect(read).toEqual({
+            v: 1,
+            availability: 'unavailable',
+            views: [],
+            selectedViewId: null,
+            revision: fixture.revision(),
+        });
         expect(await administerTriageSavedView(createInput, deps(fixture)))
             .toEqual({ v: 1, status: 'unreadable' });
     });
@@ -96,5 +104,33 @@ describe('the saved-view Actions', () => {
         ]);
         expect(read.views[0]?.order).toBe('smart');
         expect(read.views[0]?.smartPolicy).toEqual({ v: 1, precedence: ['attention', 'activity'] });
+    });
+
+    it('refuses a stale surface draft and returns the current revision after an applied write', async () => {
+        const fixture = createTestkitAccountSettings();
+        const created = await administerTriageSavedView(createInput, deps(fixture));
+        if (created.status !== 'applied' || created.revision === undefined) throw new Error('setup failed');
+
+        const renamed = await administerTriageSavedView({
+            ...createInput,
+            kind: 'update',
+            viewId: MINTED,
+            label: 'Renamed by A',
+            expectedRevision: created.revision,
+        }, deps(fixture));
+        expect(renamed.status).toBe('applied');
+
+        const stale = await administerTriageSavedView({
+            ...createInput,
+            kind: 'update',
+            viewId: MINTED,
+            label: 'Needs my review',
+            order: 'oldest',
+            expectedRevision: created.revision,
+        }, deps(fixture));
+
+        expect(stale).toEqual({ v: 1, status: 'conflict' });
+        expect((await readTriageSavedViewsForSurface({ v: 1 }, deps(fixture))).views[0])
+            .toMatchObject({ label: 'Renamed by A', order: 'smart' });
     });
 });

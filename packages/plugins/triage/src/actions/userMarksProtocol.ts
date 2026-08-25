@@ -88,6 +88,24 @@ export type TriageSetEntryPinnedResultV1 = ReturnType<typeof TriageSetEntryPinne
 export const TriageSetEntryPinnedResultV1JsonSchema: PluginJsonSchema =
     TriageSetEntryPinnedResultV1Schema.jsonSchema;
 
+/**
+ * Where the previous bounded page of pins stopped.
+ *
+ * The value is the Account Collection's own opaque cursor, passed back through
+ * untouched: nothing here decodes it, orders by it, or derives anything from
+ * it. The bound mirrors the host's published opaque-cursor contract
+ * (`PluginCollectionOpaqueCursorV1Schema`) rather than inventing a narrower
+ * one, because a cursor this schema refused would be a cursor the reader's own
+ * pins could not be reached past — and it must be spelled here rather than
+ * imported, since an Action's wire shape is declared through the
+ * validator-neutral authoring surface.
+ */
+const triagePinCursor = defineProtocolString({
+    minLength: 1,
+    maxLength: 4096,
+    pattern: '^[A-Za-z0-9_-]+$',
+});
+
 export const TriageListPinnedEntriesInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     limit: defineProtocolNumber({
@@ -95,6 +113,8 @@ export const TriageListPinnedEntriesInputV1Schema = defineProtocolObject({
         minimum: 1,
         maximum: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     }),
+    /** Absent asks for the newest page; present asks for the one after it. */
+    cursor: triagePinCursor.optional(),
 }, { policy: 'closed' });
 export type TriageListPinnedEntriesInputV1 = ReturnType<typeof TriageListPinnedEntriesInputV1Schema.parse>;
 export const TriageListPinnedEntriesInputV1JsonSchema: PluginJsonSchema =
@@ -113,11 +133,20 @@ export const TriageListPinnedEntriesResultV1Schema = defineProtocolObject({
         displayAtMark: TriageUserMarkDisplayV1Schema,
     }, { policy: 'closed' }), { maxItems: MAX_TRIAGE_LIST_WINDOW_ROWS_V1 }),
     /**
-     * Whether the reader has more pins than this bounded page returned. It is
-     * reported rather than hidden: silently dropping a pin would lose durable
-     * user intent that has no upstream owner to recover it from.
+     * Where this bounded page stopped, when the reader has pins after it.
+     *
+     * It carries the marks query's own cursor rather than the `more: boolean`
+     * it used to be reduced to. That reduction was the whole defect: the
+     * Collection knew how to reach the next page, the Action threw the answer
+     * away, and a reader past the page bound could neither see their older pins
+     * nor remove them — durable user intent with no upstream owner to recover
+     * it from, stranded by a projection.
+     *
+     * Absent means the query returned no cursor: every pin has been carried.
+     * "Is there more" is derived from that absence rather than reported beside
+     * it, so the page bound and the offer to pass it cannot disagree.
      */
-    more: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]),
+    nextCursor: triagePinCursor.optional(),
 }, { policy: 'closed' });
 export type TriageListPinnedEntriesResultV1 = ReturnType<typeof TriageListPinnedEntriesResultV1Schema.parse>;
 export const TriageListPinnedEntriesResultV1JsonSchema: PluginJsonSchema =

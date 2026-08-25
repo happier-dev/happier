@@ -8,7 +8,7 @@ import {
     type TriageSourceFailureV1,
     type TriageSourceScanObservationV1,
 } from '@happier-dev/triage-protocol/v1';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     listTriageEntries,
@@ -27,7 +27,10 @@ import {
 } from '../corpus/testkit/observations.test-support.js';
 import { TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS } from '../refresh/refreshEligibility.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1, TRIAGE_LIST_DEFAULT_LENS_V1 } from './listWindow.js';
-import { createTriageListWindowStore } from './listWindowStore.js';
+import {
+    MAX_TRIAGE_MOUNTED_WINDOWS_V1,
+    createTriageListWindowStore,
+} from './listWindowStore.js';
 
 /**
  * The composed PRs & Issues vertical, driven end to end.
@@ -97,6 +100,30 @@ function presentObservation(input: Readonly<{
     };
 }
 
+/**
+ * The two page bodies the endless source alternates between, built once.
+ *
+ * The mount ceiling case makes hundreds of bounded invocations, so rebuilding a
+ * full page of observations for each of them measured the fixture rather than
+ * the store.
+ */
+const ENDLESS_PAGES: readonly (readonly TriageSourceScanObservationV1[])[] = Object.freeze([0, 1]
+    .map((parity) => Object.freeze(Array.from(
+        { length: MAX_TRIAGE_LIST_WINDOW_ROWS_V1 },
+        (unused, index) => presentObservation({
+            entryId: `p${parity}-${index}`,
+            title: `Change ${parity}.${index}`,
+            // The first page reads newest, so the newest-first order puts each
+            // appended window after the rows already on screen.
+            sourceUpdatedAtMs: 1_000_000
+                - ((parity === 1 ? 0 : 1) * MAX_TRIAGE_LIST_WINDOW_ROWS_V1 + index),
+        }),
+    ))));
+
+function endlessPage(parity: number): readonly TriageSourceScanObservationV1[] {
+    return ENDLESS_PAGES[parity] ?? [];
+}
+
 function createHarness(options: Readonly<{
     admitSourceB?: boolean;
     /** Seeded by default; a single-connection mount is its own configured set. */
@@ -114,6 +141,7 @@ function createHarness(options: Readonly<{
 
     const scans = new Map<object, ScanFn>();
     const scanCalls = { count: 0 };
+    const actionInputs: TriageListEntriesInputV1[] = [];
 
     function admittedSource(
         source: Readonly<{ pluginId: string; localId: string }>,
@@ -172,12 +200,48 @@ function createHarness(options: Readonly<{
          * reached.
          */
         sourceAGeneration: 1,
+        /**
+         * Source A fills the Action's whole observation budget on every page and
+         * always offers another — the shape that makes ONE invocation return a
+         * bounded window plus a continuation, which is what a mount appends.
+         *
+         * Its entry ids alternate between two page sets rather than growing with
+         * the depth. The first append still reaches entries past the transport
+         * bound, which is the product fact; deeper ones re-name entries the
+         * merge already holds, which keeps the ceiling case from folding two
+         * thousand rows thirty-six times to prove one bound.
+         */
+        sourceANeverFinishes: false,
+        /** Both lanes advance one row at a time so a mixed transport page returns two frontiers. */
+        mixedSourcesNeverFinish: false,
     };
 
     const scanA: ScanFn = async (input) => {
         scanCalls.count += 1;
+        if (state.mixedSourcesNeverFinish) {
+            const page = input.page.kind === 'initial' ? 1 : Number(input.page.continuation.token);
+            return {
+                kind: 'page',
+                observations: [presentObservation({
+                    entryId: `a-${page}`,
+                    title: `Source A change ${page}`,
+                    sourceUpdatedAtMs: 10_000 - page,
+                })],
+                evidence: { kind: 'partial', reason: 'more-pages' },
+                continuation: { v: 1, token: `${page + 1}` },
+            };
+        }
         if (state.sourceAFailure !== null) {
             return { kind: 'failed', failure: state.sourceAFailure };
+        }
+        if (state.sourceANeverFinishes) {
+            const page = input.page.kind === 'initial' ? 1 : Number(input.page.continuation.token);
+            return {
+                kind: 'page',
+                observations: endlessPage(page % 2),
+                evidence: { kind: 'partial', reason: 'more-pages' },
+                continuation: { v: 1, token: `${page + 1}` },
+            };
         }
         if (state.sourceAOverDelivers) {
             const first = input.page.kind === 'initial';
@@ -222,12 +286,25 @@ function createHarness(options: Readonly<{
         };
     };
 
-    const scanB: ScanFn = async () => {
+    const scanB: ScanFn = async (input) => {
         scanCalls.count += 1;
-        if (state.holdSourceB !== null) await state.holdSourceB;
         if (state.sourceBFails) {
             return { kind: 'failed', failure: { class: 'transient', code: 'provider-busy' } };
         }
+        if (state.mixedSourcesNeverFinish) {
+            const page = input.page.kind === 'initial' ? 1 : Number(input.page.continuation.token);
+            return {
+                kind: 'page',
+                observations: [presentObservation({
+                    entryId: `b-${page}`,
+                    title: `Source B change ${page}`,
+                    sourceUpdatedAtMs: 20_000 - page,
+                })],
+                evidence: { kind: 'partial', reason: 'more-pages' },
+                continuation: { v: 1, token: `${page + 1}` },
+            };
+        }
+        if (state.holdSourceB !== null) await state.holdSourceB;
         return {
             kind: 'complete',
             observations: [presentObservation({ entryId: '3', title: 'Middle change', sourceUpdatedAtMs: 2_000 })],
@@ -246,6 +323,7 @@ function createHarness(options: Readonly<{
 
     const clock = { nowMs: 1_760_000_000_000 };
     const readEntries = async (input: TriageListEntriesInputV1) => {
+        actionInputs.push(input);
         // The aggregate read itself is refused: no machine is reachable, so even
         // enumerating the configured instances fails. This is the path a daemon
         // that goes away after a first successful pass takes.
@@ -274,7 +352,7 @@ function createHarness(options: Readonly<{
         nowMs: () => clock.nowMs,
     });
 
-    return { clock, readEntries, scanCalls, state };
+    return { actionInputs, clock, readEntries, scanCalls, state };
 }
 
 describe('the mounted PRs & Issues window store', () => {
@@ -304,6 +382,14 @@ describe('the mounted PRs & Issues window store', () => {
             kind: 'selected',
             sourceInstanceId: INSTANCE_A,
             reason: 'attention',
+        });
+        const transportPages = harness.actionInputs.filter((input) => (
+            input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0
+        ));
+        expect(transportPages).toHaveLength(1);
+        expect(transportPages[0]?.sources).toEqual({
+            kind: 'selected',
+            sourceInstanceIds: [INSTANCE_A, INSTANCE_B],
         });
         store.dispose();
     });
@@ -339,6 +425,43 @@ describe('the mounted PRs & Issues window store', () => {
         expect(outcome?.kind === 'present' ? outcome.snapshot.title : null)
             .toBe('Consolidate the two normalizers');
         store.dispose();
+    });
+
+    it('publishes the fresh-to-stale transition when its deadline passes', async () => {
+        const realSetTimeout = globalThis.setTimeout;
+        let freshnessWake: (() => void) | null = null;
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler, delay, ...args) => {
+            if (delay === TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS && typeof handler === 'function') {
+                freshnessWake = () => { handler(...args); };
+                return 1 as unknown as ReturnType<typeof setTimeout>;
+            }
+            return realSetTimeout(handler, delay, ...args);
+        }) as typeof setTimeout);
+        try {
+            const harness = createHarness();
+            const store = createTriageListWindowStore({
+                readEntries: harness.readEntries,
+                nowMs: () => harness.clock.nowMs,
+            });
+            const observedFreshness: string[] = [];
+            const unsubscribe = store.subscribe(() => {
+                observedFreshness.push(store.getSnapshot().freshness);
+            });
+
+            await store.refresh('view');
+            expect(store.getSnapshot().freshness).toBe('fresh');
+            observedFreshness.length = 0;
+
+            harness.clock.nowMs += TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS;
+            expect(freshnessWake).not.toBeNull();
+            freshnessWake?.();
+
+            expect(observedFreshness).toEqual(['stale']);
+            unsubscribe();
+            store.dispose();
+        } finally {
+            setTimeoutSpy.mockRestore();
+        }
     });
 
     it('names the connections it could not reach rather than calling the list unreadable', async () => {
@@ -571,14 +694,14 @@ describe('the mounted PRs & Issues window store', () => {
         store.dispose();
     });
 
-    it('attributes a refused invocation to its connection instead of the aggregate list read', async () => {
+    it('preserves each source health inside one mixed Action result', async () => {
         const harness = createHarness();
         const store = createTriageListWindowStore({
             readEntries: harness.readEntries,
             nowMs: () => harness.clock.nowMs,
         });
 
-        harness.state.sourceBInvocationRejected = true;
+        harness.state.sourceBFails = true;
         await store.refresh('view');
         const snapshot = store.getSnapshot();
 
@@ -587,14 +710,33 @@ describe('the mounted PRs & Issues window store', () => {
         // is what let the shell tell a reader "the list could not be read" while
         // the list was on screen in front of them.
         expect(snapshot.error).toBeUndefined();
-        expect(snapshot.unreadableSources).toEqual([{
+        expect(snapshot.unreadableSources).toBeUndefined();
+        expect(snapshot.window?.lanes).toContainEqual({
             sourceInstanceId: INSTANCE_B,
-            message: 'The other forge action was refused.',
-        }]);
+            source: SOURCE_B,
+            health: {
+                kind: 'failed',
+                failure: { class: 'transient', code: 'provider-busy' },
+            },
+            exhausted: false,
+        });
         // The rows the other connection did admit stay, and the window stops
         // claiming currentness it does not have.
         expect(snapshot.window?.rows.map((row) => row.entryRef.entryId)).toEqual(['1', '2']);
         expect(snapshot.freshness).toBe('stale');
+
+        await store.refresh('manual');
+        const transportPages = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        );
+        // The failing lane keeps its own backoff while the healthy lane remains
+        // eligible, so the next mixed request carries only the lane pacing
+        // admits. A mixed result must not turn one source's health into an
+        // aggregate cooldown.
+        expect(transportPages.at(-1)?.sources).toEqual({
+            kind: 'selected',
+            sourceInstanceIds: [INSTANCE_A],
+        });
         store.dispose();
     });
 
@@ -652,6 +794,38 @@ describe('the mounted PRs & Issues window store', () => {
         store.dispose();
     });
 
+    it('notifies subscribers when the published refresh deadline expires', async () => {
+        vi.useFakeTimers();
+        try {
+            const harness = createHarness({ admitSourceB: false });
+            const store = createTriageListWindowStore({
+                readEntries: harness.readEntries,
+                nowMs: () => harness.clock.nowMs,
+            });
+            const deadlineMs = harness.clock.nowMs + 45_000;
+            harness.state.sourceAFailure = {
+                class: 'rateLimit',
+                code: 'secondary-limit',
+                retryNotBeforeMs: deadlineMs,
+            };
+            await store.refresh('view');
+
+            const published: unknown[] = [];
+            const unsubscribe = store.subscribe(() => {
+                published.push(store.getSnapshot().refreshBlocked);
+            });
+            harness.clock.nowMs = deadlineMs;
+            await vi.advanceTimersByTimeAsync(45_000);
+
+            expect(published).toHaveLength(1);
+            expect(published.at(-1)).toBeUndefined();
+            unsubscribe();
+            store.dispose();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('does not age a window from a cycle that read nothing', async () => {
         const harness = createHarness();
         const store = createTriageListWindowStore({
@@ -673,6 +847,54 @@ describe('the mounted PRs & Issues window store', () => {
 
         harness.clock.nowMs = readAtMs + TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS + 1;
         expect(store.getSnapshot().freshness).toBe('stale');
+        store.dispose();
+    });
+
+    /**
+     * `pendingTrigger` is the intent of ONE cycle, and a cycle that ran it has
+     * spent it.
+     *
+     * Manual **Refresh** is the one trigger the shared minimum interval does not
+     * refuse. It was raised for the press and never lowered, so every later view
+     * demand — a remount, a focus, a visibility change — inherited the press and
+     * read the provider at interaction speed, which is the pacing the interval
+     * exists to impose. The intent is consumed at the start of the cycle that
+     * carries it, so a manual press queued WHILE a cycle is running still
+     * reaches the next one.
+     */
+    it('stops treating later view demand as the manual press a finished cycle already spent', async () => {
+        // This regression needs one valid resumable frontier. The endless-page
+        // fixture returns a full transport page, so keep it on the single-source
+        // geometry it models rather than submitting that page to a smaller
+        // mixed-lane share and testing the page-limit rejection path instead.
+        const harness = createHarness({ configureSourceB: false });
+        harness.state.sourceANeverFinishes = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+        const readAtMs = harness.clock.nowMs;
+
+        await store.refresh('view');
+        // The reader presses Refresh. That intent belongs to the cycle it drives.
+        await store.refresh('manual');
+        const afterManualPress = harness.scanCalls.count;
+        expect(afterManualPress).toBeGreaterThan(0);
+
+        // View demand inside the minimum interval must read nothing at all.
+        harness.clock.nowMs = readAtMs + 10_000;
+        await store.refresh('view');
+
+        expect(harness.scanCalls.count).toBe(afterManualPress);
+        // A paced-away refresh did not happen, so it cannot consume the valid
+        // frontier the last successful acquisition returned. The mounted
+        // continuation row must remain actionable and resume that frontier.
+        expect(store.getSnapshot().loadMore).toEqual({ kind: 'available' });
+        await store.loadMore();
+        const lastProviderInput = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        ).at(-1);
+        expect(lastProviderInput?.resume).toHaveLength(1);
         store.dispose();
     });
 
@@ -733,7 +955,7 @@ describe('the mounted PRs & Issues window store', () => {
         // past it never arrived and no later read of the retained page can
         // produce them. Reporting `complete` here tells the reader every
         // configured source answered in full, over a list that is missing rows.
-        expect(snapshot.window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
+        expect(snapshot.window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 - 6);
         expect(snapshot.window?.coverage).toBe('partial');
         store.dispose();
     });
@@ -768,6 +990,109 @@ describe('the mounted PRs & Issues window store', () => {
         store.dispose();
     });
 
+    it('reacquires once when order or Smart policy changes, while query stays local', async () => {
+        const harness = createHarness({ configureSourceB: false });
+        harness.state.sourceAOverDelivers = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        const providerReads = () => harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        );
+        const afterInitial = providerReads().length;
+
+        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'older' });
+        expect(providerReads()).toHaveLength(afterInitial);
+
+        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, order: 'oldest' });
+        await vi.waitFor(() => {
+            expect(providerReads()).toHaveLength(afterInitial + 1);
+        });
+        expect(providerReads().at(-1)?.order).toBe('oldest');
+        expect(store.getSnapshot().window?.rows[0]?.entryRef.entryId).toBe('first-0');
+
+        store.setLens({
+            ...TRIAGE_LIST_DEFAULT_LENS_V1,
+            order: 'oldest',
+            smartPolicy: { v: 1, precedence: ['activity', 'attention'] },
+        });
+        await vi.waitFor(() => {
+            expect(providerReads()).toHaveLength(afterInitial + 2);
+        });
+        expect(providerReads().at(-1)?.smartPolicy).toEqual({
+            v: 1,
+            precedence: ['activity', 'attention'],
+        });
+
+        store.dispose();
+    });
+
+    it('replaces the old paging generation when order changes', async () => {
+        const harness = createHarness({ configureSourceB: false });
+        harness.state.sourceANeverFinishes = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        await store.loadMore();
+        expect(store.getSnapshot().window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 * 2);
+
+        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, order: 'oldest' });
+        const providerReads = () => harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        );
+        await vi.waitFor(() => {
+            expect(providerReads()).toHaveLength(3);
+        });
+
+        const reacquisition = providerReads().at(-1);
+        expect(reacquisition?.resume).toBeUndefined();
+        expect(reacquisition?.order).toBe('oldest');
+        const reacquiredIds = store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId) ?? [];
+        expect(reacquiredIds).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
+        expect(reacquiredIds.every((entryId) => entryId.startsWith('p1-'))).toBe(true);
+
+        store.dispose();
+    });
+
+    it('keeps the new-order generation pending until a failed reacquisition recovers', async () => {
+        const harness = createHarness({ configureSourceB: false });
+        harness.state.sourceANeverFinishes = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        await store.loadMore();
+        harness.state.sourceANeverFinishes = false;
+        harness.state.sourceAFailure = { class: 'transient', code: 'provider-busy' };
+
+        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, order: 'oldest' });
+        await vi.waitFor(() => {
+            expect(store.getSnapshot().pending).toBe('idle');
+            expect(store.getSnapshot().window?.lanes[0]?.health.kind).toBe('failed');
+        });
+
+        harness.state.sourceAFailure = null;
+        harness.state.sourceANeverFinishes = true;
+        const retryAtMs = store.getSnapshot().refreshBlocked?.nextEligibleAtMs;
+        if (retryAtMs === undefined) throw new Error('failed lane did not publish its retry deadline');
+        harness.clock.nowMs = retryAtMs;
+        await store.refresh('manual');
+
+        const recoveredIds = store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId) ?? [];
+        expect(recoveredIds).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
+        expect(recoveredIds.every((entryId) => entryId.startsWith('p1-'))).toBe(true);
+
+        store.dispose();
+    });
+
     it('does not call a window stale because the reader changed the lens', async () => {
         const harness = createHarness();
         const store = createTriageListWindowStore({
@@ -787,7 +1112,7 @@ describe('the mounted PRs & Issues window store', () => {
         store.dispose();
     });
 
-    it('publishes each connection as its own pass settles, not when the slowest does', async () => {
+    it('publishes one mixed Action result after every included connection settles', async () => {
         const harness = createHarness();
         let release = (): void => {};
         harness.state.holdSourceB = new Promise<void>((resolve) => { release = resolve; });
@@ -806,12 +1131,12 @@ describe('the mounted PRs & Issues window store', () => {
 
         const cycle = store.refresh('view');
         try {
-            // One connection has not answered at all and may never. The rows the
-            // other one already admitted are not held hostage to it.
+            // A mixed Action has one result boundary, so it cannot publish a
+            // per-source half-result before the included connections settle.
             for (let turn = 0; turn < 100 && published.length === 0; turn += 1) {
                 await new Promise((resolve) => { setTimeout(resolve, 0); });
             }
-            expect(published).toContainEqual(['1', '2']);
+            expect(published).toEqual([]);
         } finally {
             release();
         }
@@ -823,4 +1148,278 @@ describe('the mounted PRs & Issues window store', () => {
         expect(store.getSnapshot().pending).toBe('idle');
         store.dispose();
     });
+});
+
+/**
+ * The 56-row Action response bound is a transport limit and stays one. What is
+ * proved here is that it stopped being a PRODUCT limit: entry 57 is reachable,
+ * the rows already on screen survive a page that fails, and nothing durable is
+ * created to make either true.
+ */
+describe('appending another bounded window to one mount', () => {
+    /** A mount of the endless source alone, already holding its first window. */
+    async function mountedAtFirstWindow() {
+        const harness = createHarness({ configureSourceB: false });
+        harness.state.sourceANeverFinishes = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+        await store.refresh('view');
+        return { harness, store };
+    }
+
+    it('offers nothing to append before a window exists', async () => {
+        const harness = createHarness();
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        // Not `available`: pressing it is refused, because there is nothing to
+        // append to yet. A published `available` here was an offer the store had
+        // already decided to do nothing about.
+        expect(store.getSnapshot().loadMore).toBeUndefined();
+        await store.loadMore();
+        expect(harness.scanCalls.count).toBe(0);
+
+        store.dispose();
+    });
+
+    it('reaches the entries after the transport bound and keeps the ones already on screen', async () => {
+        const { harness, store } = await mountedAtFirstWindow();
+
+        const first = store.getSnapshot();
+        expect(first.window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
+        expect(first.window?.coverage).toBe('partial');
+        expect(first.loadMore).toEqual({ kind: 'available' });
+
+        await store.loadMore();
+
+        const appended = store.getSnapshot();
+        // Twice the transport bound in one mount, from two bounded invocations —
+        // the per-invocation page contract is untouched.
+        expect(appended.window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 * 2);
+        const ids = appended.window?.rows.map((row) => row.entryRef.entryId) ?? [];
+        // Every row of the first window is still there, in front of the new ones.
+        expect(ids.slice(0, MAX_TRIAGE_LIST_WINDOW_ROWS_V1))
+            .toEqual(first.window?.rows.map((row) => row.entryRef.entryId));
+        expect(ids).toContain('p0-0');
+        expect(appended.loadMore).toEqual({ kind: 'available' });
+
+        store.dispose();
+    });
+
+    it('carries every active lane frontier through one mixed invocation per transport page', async () => {
+        const harness = createHarness();
+        harness.state.mixedSourcesNeverFinish = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        const scanInputsAfterRefresh = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        );
+        expect(scanInputsAfterRefresh).toHaveLength(1);
+        expect(scanInputsAfterRefresh[0]?.sources).toEqual({
+            kind: 'selected',
+            sourceInstanceIds: [INSTANCE_A, INSTANCE_B],
+        });
+
+        await store.loadMore();
+
+        // Load More resumes both still-active lanes together exactly once. It
+        // neither replays page one nor fans the frontier out into one Action per
+        // source.
+        const scanInputsAfterLoadMore = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        );
+        expect(scanInputsAfterLoadMore).toHaveLength(2);
+        expect(scanInputsAfterLoadMore[1]?.sources).toEqual(
+            { kind: 'selected', sourceInstanceIds: [INSTANCE_A, INSTANCE_B] },
+        );
+        expect(scanInputsAfterLoadMore[1]?.resume?.map((entry) => entry.sourceInstanceId))
+            .toEqual([INSTANCE_A, INSTANCE_B]);
+        const resumedPages = scanInputsAfterLoadMore[1]?.resume?.map(
+            (entry) => Number(entry.continuation.token),
+        ) ?? [];
+        expect(resumedPages).toHaveLength(2);
+        expect(resumedPages.every((page) => page > 1)).toBe(true);
+
+        await store.loadMore();
+        const afterSecondAppend = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        );
+        expect(afterSecondAppend).toHaveLength(3);
+        const secondResumedPages = afterSecondAppend[2]?.resume?.map(
+            (entry) => Number(entry.continuation.token),
+        ) ?? [];
+        expect(secondResumedPages).toHaveLength(2);
+        expect(secondResumedPages.every((page, index) => page > (resumedPages[index] ?? 0))).toBe(true);
+
+        store.dispose();
+    });
+
+    it('keeps paging healthy frontiers when one lane fails', async () => {
+        const harness = createHarness();
+        harness.state.mixedSourcesNeverFinish = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        const initialFrontiers = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        ).at(-1)?.resume;
+        harness.state.sourceBFails = true;
+        await store.loadMore();
+
+        const afterFailure = store.getSnapshot();
+        expect(afterFailure.loadMore).toEqual({ kind: 'available' });
+        expect(afterFailure.window?.rows.map((row) => row.entryRef.entryId))
+            .toEqual(expect.arrayContaining(['a-1', 'a-2', 'b-1']));
+        expect(afterFailure.window?.lanes).toContainEqual({
+            sourceInstanceId: INSTANCE_B,
+            source: SOURCE_B,
+            health: {
+                kind: 'failed',
+                failure: { class: 'transient', code: 'provider-busy' },
+            },
+            exhausted: false,
+        });
+
+        await store.loadMore();
+        const transportPages = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        );
+        expect(transportPages.at(-1)?.sources).toEqual({
+            kind: 'selected',
+            sourceInstanceIds: [INSTANCE_A],
+        });
+        expect(transportPages.at(-1)?.resume).toHaveLength(1);
+        expect(Number(transportPages.at(-1)?.resume?.[0]?.continuation.token))
+            .toBeGreaterThan(Number(initialFrontiers?.[0]?.continuation.token ?? 0));
+        expect(store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId))
+            .toEqual(expect.arrayContaining(['a-3', 'b-1']));
+
+        store.dispose();
+    });
+
+    it('keeps every retained row when the append fails, and retries at the same depth', async () => {
+        const { harness, store } = await mountedAtFirstWindow();
+        const retained = store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId);
+
+        // The aggregate read is refused outright: no machine is reachable. The
+        // append the reader pressed for never arrives.
+        harness.state.enumerationRejected = true;
+        await store.loadMore();
+
+        const failed = store.getSnapshot();
+        expect(failed.loadMore).toEqual({ kind: 'failed' });
+        // The rows are untouched, and the sentence "the list could not be read"
+        // is not published beside them.
+        expect(failed.window?.rows.map((row) => row.entryRef.entryId)).toEqual(retained);
+        expect(failed.error).toBeUndefined();
+
+        harness.state.enumerationRejected = false;
+        await store.loadMore();
+
+        // A retry, not a second increment: the depth asked for is the one that
+        // failed, so exactly two windows come back rather than three.
+        expect(store.getSnapshot().window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 * 2);
+        expect(store.getSnapshot().loadMore).toEqual({ kind: 'available' });
+
+        store.dispose();
+    });
+
+    it('refresh discards retained frontiers and restarts once from page one', async () => {
+        const { harness, store } = await mountedAtFirstWindow();
+        await store.loadMore();
+        const callsAtDepthTwo = harness.scanCalls.count;
+
+        harness.clock.nowMs += TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS + 1;
+        await store.refresh('manual');
+
+        expect(harness.scanCalls.count).toBe(callsAtDepthTwo + 1);
+        expect(store.getSnapshot().window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
+        const lastProviderInput = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        ).at(-1);
+        expect(lastProviderInput?.resume).toBeUndefined();
+
+        store.dispose();
+    });
+
+    it('offers nothing further once every connection finished its walk', async () => {
+        const harness = createHarness();
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        expect(store.getSnapshot().window?.coverage).toBe('complete');
+        expect(store.getSnapshot().loadMore).toEqual({ kind: 'exhausted' });
+
+        const calls = harness.scanCalls.count;
+        await store.loadMore();
+        expect(harness.scanCalls.count).toBe(calls);
+
+        store.dispose();
+    });
+
+    /**
+     * An incomplete result and a resumable frontier are two different facts, and
+     * only the second one is a place to continue from.
+     *
+     * A configured connection with no admitted contribution leaves the window
+     * `partial` forever: nothing walked it, so nothing exhausted it. Reading the
+     * coverage claim as the offer published `available`, and every press then
+     * deepened the mount by one and re-read page one of the connections that DID
+     * answer — the same rows again, deduped away, until the mount ceiling. The
+     * reader is told the list is incomplete and pointed at **Refresh** instead.
+     */
+    it('does not offer a deeper window when no connection left a frontier to resume', async () => {
+        const harness = createHarness({ admitSourceB: false, configureSourceA: false });
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        // The configured source could not be asked at all. The window is
+        // honestly incomplete and there is nothing to page.
+        expect(store.getSnapshot().window?.coverage).toBe('partial');
+        expect(store.getSnapshot().loadMore).toEqual({ kind: 'unresumable' });
+
+        const calls = harness.scanCalls.count;
+        await store.loadMore();
+        // The published arm and the gate read the same fact, so the press the
+        // row does not offer is also the press this store refuses.
+        expect(harness.scanCalls.count).toBe(calls);
+        store.dispose();
+    });
+
+    it('stops offering a deeper window at the mount ceiling instead of growing without end', async () => {
+        const { harness, store } = await mountedAtFirstWindow();
+
+        for (let depth = 1; depth < MAX_TRIAGE_MOUNTED_WINDOWS_V1; depth += 1) {
+            expect(store.getSnapshot().loadMore, `depth ${depth}`).toEqual({ kind: 'available' });
+            await store.loadMore();
+        }
+
+        // The source still offers another page, so this is OUR bound and it says
+        // so: `atCeiling`, not `exhausted`.
+        expect(store.getSnapshot().window?.coverage).toBe('partial');
+        expect(store.getSnapshot().loadMore).toEqual({ kind: 'atCeiling' });
+
+        const calls = harness.scanCalls.count;
+        await store.loadMore();
+        expect(harness.scanCalls.count).toBe(calls);
+
+        store.dispose();
+    }, 60_000);
 });

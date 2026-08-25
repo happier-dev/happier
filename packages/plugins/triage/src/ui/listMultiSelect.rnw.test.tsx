@@ -12,6 +12,7 @@ import {
     type TriageConfiguredSourceInstanceV1,
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -39,6 +40,7 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
+import { TRIAGE_ACTIONS_SETTING_ID_V1 } from '../settings/actions.js';
 import { createTestkitAccountSettings } from '../settings/testkit/accountSettings.test-support.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { renderSurface as renderShellSurface } from './surface.js';
@@ -93,6 +95,10 @@ const SOURCE_TARGETED_CONTRIBUTIONS = {
                         id: 'pull-request',
                         workflowSubject: 'pullRequest',
                         displayName: 'Pull request',
+                    }, {
+                        id: 'issue',
+                        workflowSubject: 'issue',
+                        displayName: 'Issue',
                     }],
                 },
                 operations: [],
@@ -126,9 +132,18 @@ function instanceRow(): CorpusSourceInstanceRowV1 {
     };
 }
 
-function createHarness(options: Readonly<{ scanFails?: boolean }> = {}) {
+function createHarness(options: Readonly<{
+    scanFails?: boolean;
+    kindId?: string;
+    /** A stored `triage.actions` catalog replacing the shipped seed. */
+    actions?: JsonValue;
+}> = {}) {
+    const kindId = options.kindId ?? 'pull-request';
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
-    const accountSettings = createTestkitAccountSettings();
+    const accountSettings = createTestkitAccountSettings(
+        options.actions === undefined ? {} : { [TRIAGE_ACTIONS_SETTING_ID_V1]: options.actions },
+    );
+    const referenceReads: string[] = [];
     const newSessionSeeds: unknown[] = [];
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
 
@@ -146,7 +161,10 @@ function createHarness(options: Readonly<{ scanFails?: boolean }> = {}) {
             v: 1,
             purpose: 'triage-source',
             displayName: 'Example forge',
-            kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }],
+            kinds: [
+                { id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' },
+                { id: 'issue', workflowSubject: 'issue', displayName: 'Issue' },
+            ],
         },
         operations: { listInstances: {}, scan: { role: 'scan' }, get: {} },
         surfaces: { detail: {} },
@@ -170,21 +188,21 @@ function createHarness(options: Readonly<{ scanFails?: boolean }> = {}) {
             kind: 'complete',
             observations: [{
                 kind: 'present',
-                localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
+                localRef: { kindId, collisionScope: 'example/repository', entryId: '17' },
                 locator: testkitLocator(),
                 snapshot: testkitSnapshot({ title: 'Replace the duplicated normalizer' }),
                 viewer: testkitViewer(),
                 sourceUpdatedAtMs: 3_000,
             }, {
                 kind: 'present',
-                localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '18' },
+                localRef: { kindId, collisionScope: 'example/repository', entryId: '18' },
                 locator: testkitLocator(),
                 snapshot: testkitSnapshot({ title: 'Extract the selection reducer' }),
                 viewer: testkitViewer(),
                 sourceUpdatedAtMs: 2_000,
             }, {
                 kind: 'present',
-                localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '19' },
+                localRef: { kindId, collisionScope: 'example/repository', entryId: '19' },
                 locator: testkitLocator(),
                 snapshot: testkitSnapshot({ title: 'Migrate the sessions list' }),
                 viewer: testkitViewer(),
@@ -207,6 +225,15 @@ function createHarness(options: Readonly<{ scanFails?: boolean }> = {}) {
             );
         }
         if (String(request.action) === 'projects.list') return { items: [], truncated: false };
+        if (String(request.action) === 'sessions.spawn.profiles.list') {
+            referenceReads.push('sessions.spawn.profiles.list');
+            return { items: [], truncated: false };
+        }
+        if (String(request.action) === 'prompts.invocations.list'
+            || String(request.action) === 'prompts.invocation.resolve') {
+            referenceReads.push(String(request.action));
+            return { items: [], truncated: false };
+        }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
             readAdmittedSources: async () => admitted,
@@ -215,14 +242,17 @@ function createHarness(options: Readonly<{ scanFails?: boolean }> = {}) {
         });
     }
 
-    return { collections, executeAction, newSessionSeeds };
+    return { collections, executeAction, newSessionSeeds, referenceReads };
 }
 
 type Harness = ReturnType<typeof createHarness>;
 
 const mounted: PluginUiTestkit[] = [];
 
-async function mountShell(harness: Harness): Promise<Readonly<{
+async function mountShell(
+    harness: Harness,
+    options: Readonly<{ sourceContributions?: 'admitted' | 'absent' }> = {},
+): Promise<Readonly<{
     shell: PluginUiTestkit;
     locations: readonly string[];
 }>> {
@@ -237,9 +267,11 @@ async function mountShell(harness: Harness): Promise<Readonly<{
                 generation: 'triage-list-mount',
             },
             surface: renderShellSurface,
-            surfaceContext: createSurfaceContextFixture({
-                targetedContributions: SOURCE_TARGETED_CONTRIBUTIONS,
-            }),
+            surfaceContext: createSurfaceContextFixture(
+                options.sourceContributions === 'absent'
+                    ? {}
+                    : { targetedContributions: SOURCE_TARGETED_CONTRIBUTIONS },
+            ),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             handlers: {
                 publishCurrentUiContext: () => undefined,
@@ -287,6 +319,19 @@ async function pressRow(
     await act(async () => {
         option?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...modifiers }));
     });
+}
+
+/**
+ * The bulk bar's own action picker, read from the shared `Form.Select`'s
+ * radiogroup rather than from every radio on the page: the saved-view and sort
+ * controls are radios too, and a page-wide query would report their options as
+ * bulk actions.
+ */
+function offeredBulkActionLabels(): readonly string[] {
+    const group = document.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Action"]');
+    if (group === null) return [];
+    return Array.from(group.querySelectorAll<HTMLElement>('[role="radio"]'))
+        .map((option) => option.getAttribute('aria-label') ?? '');
 }
 
 async function settle(): Promise<void> {
@@ -378,6 +423,94 @@ describe('selecting several PRs & Issues rows', () => {
         // Building a set never opened a detail, so the bar cannot have arrived
         // by replacing the list.
         expect(locations.slice(before)).toEqual([]);
+    });
+
+    it('offers only the configured actions the selected subjects are offered', async () => {
+        // `appliesTo` answers WHICH SUBJECTS an action is offered on
+        // (`PLAN.md` §0a). The seeded `Review` action is pull-request-only, so
+        // an issue-only set must not be offered it: a control whose every
+        // reachable outcome is `actionInapplicable` is a dead end the offer
+        // owner already knows about.
+        await mountShell(createHarness({ kindId: 'issue' }));
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+
+        const offered = offeredBulkActionLabels();
+        expect(offered).toEqual(['Ask', 'Fix']);
+    });
+
+    it('still offers a pull-request-only action to a pull-request set', async () => {
+        // The positive twin: the filter above must narrow by subject, not
+        // simply stop offering the third action.
+        await mountShell(createHarness());
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+
+        const offered = offeredBulkActionLabels();
+        expect(offered).toEqual(['Ask', 'Fix', 'Review']);
+    });
+
+    it('keeps the count and the clear control when nothing configured applies', async () => {
+        // Narrowing the offer must not be able to take the shared bar away: a
+        // reader who has selected rows still has to see how many and be able to
+        // let them go, and the reason nothing is offered is said rather than
+        // left as an empty footer.
+        const harness = createHarness({
+            actions: {
+                v: 1,
+                actions: [{
+                    actionId: 'triage-errors',
+                    label: 'Triage errors',
+                    enabled: true,
+                    appliesTo: ['errorIssue'],
+                    profileId: null,
+                    workspaceMode: 'reference_only',
+                    target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
+                }],
+            },
+        });
+        await mountShell(harness);
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+
+        expect(document.querySelector('[data-testid="triage-bulk-action-bar"]')).not.toBeNull();
+        expect(document.querySelector('[data-testid="triage-bulk-oneSessionForAllEntries"]')).toBeNull();
+        expect(document.body.textContent).toContain('1 selected');
+        expect(document.body.textContent).toContain('None of your configured actions');
+    });
+
+    it('settles applicability before it spends a host read on the action\u2019s references', async () => {
+        // The reachable ordering case: the rows were retained from a source
+        // contribution the host no longer admits, so no selected entry resolves
+        // a workflow subject. Resolving the action's launch profile first spends
+        // a host read on a press that can start nothing and then reports the
+        // profile as the reason, which sends the reader to Configure actions to
+        // fix something that is not what stopped them.
+        const harness = createHarness({
+            actions: {
+                v: 1,
+                actions: [{
+                    actionId: 'ask',
+                    label: 'Ask',
+                    enabled: true,
+                    appliesTo: ['issue', 'pullRequest', 'errorIssue', 'other'],
+                    profileId: 'profile-that-is-gone',
+                    workspaceMode: 'reference_only',
+                    target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
+                }],
+            },
+        });
+        const { shell } = await mountShell(harness, { sourceContributions: 'absent' });
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'One session for all' }));
+        });
+        await settle();
+
+        expect(harness.referenceReads).toEqual([]);
+        expect(document.body.textContent).toContain('1 could not be used');
+        expect(document.body.textContent).not.toContain('launch profile no longer exists');
     });
 
     it('hands every selected entry to the host-owned New Session seed', async () => {

@@ -368,6 +368,35 @@ export function useTriageBulkEntrySessions(
             setPhase(unavailable('noEntriesAvailable'));
             return;
         }
+        // The fan-out, planned before ANY host read and before the reader is
+        // asked anything. Its first job is the applicability partition, and
+        // that partition has to settle first: resolving this action's profile
+        // and prompt for a selection none of whose entries it is offered on
+        // spends two host reads on a press that can start nothing, and then
+        // reports whichever of those references happens to be broken instead of
+        // the truthful per-entry refusal. Only a plan that actually carries
+        // units spends a creation key.
+        const plan = planTriageBulkEntrySessions({
+            action,
+            selection: request.entries,
+            destination: request.destination,
+            mintCreationKey,
+        });
+        if (plan.status === 'refused') {
+            if (plan.reason === 'noApplicableEntries') {
+                setPhase(Object.freeze({
+                    kind: 'settled',
+                    results: Object.freeze([]),
+                    unavailableKeys: request.unavailableKeys ?? [],
+                    refusals: plan.refusals ?? Object.freeze([]),
+                }));
+                return;
+            }
+            setPhase(unavailable(plan.reason === 'emptySelection'
+                ? 'noEntriesAvailable'
+                : 'dispatch'));
+            return;
+        }
         inFlight.current = true;
         const controller = new AbortController();
         abort.current = controller;
@@ -388,31 +417,6 @@ export function useTriageBulkEntrySessions(
                 }
                 const preferences = references.profile?.preferences;
                 const promptText = references.prompt?.text ?? null;
-
-                // 3. The fan-out. It is planned BEFORE the reader is asked
-                //    anything, so an empty or colliding plan never opens a
-                //    surface.
-                const plan = planTriageBulkEntrySessions({
-                    action,
-                    selection: request.entries,
-                    destination: request.destination,
-                    mintCreationKey,
-                });
-                if (plan.status === 'refused') {
-                    if (plan.reason === 'noApplicableEntries') {
-                        setPhase(Object.freeze({
-                            kind: 'settled',
-                            results: Object.freeze([]),
-                            unavailableKeys: request.unavailableKeys ?? [],
-                            refusals: plan.refusals ?? Object.freeze([]),
-                        }));
-                        return;
-                    }
-                    setPhase(unavailable(plan.reason === 'emptySelection'
-                        ? 'noEntriesAvailable'
-                        : 'dispatch'));
-                    return;
-                }
 
                 const applicableEntries = plan.status === 'seedNewSession'
                     ? plan.entries

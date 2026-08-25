@@ -49,6 +49,7 @@ import {
     TRIAGE_ROUTE_DEFAULT_LENS_V1,
     buildTriageRouteSubPathV1,
 } from './navigation/location.js';
+import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from './shell/root.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 
@@ -326,6 +327,9 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
     const readDetailInstanceIds: string[] = [];
     /** Flipped to make the next pass observe nothing, so the row leaves. */
     const observes = { current: true };
+    /** Makes one same-entry pass publish a genuinely newer observation. */
+    const observationRevision = { current: 3_000 };
+    let blockedDetailRead: Readonly<{ promise: Promise<void>; release: () => void }> | null = null;
 
     const admitted = [{
         contributor: CONTRIBUTOR,
@@ -343,7 +347,7 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
             locator: testkitLocator(),
             snapshot: testkitSnapshot({ title: 'Replace the duplicated normalizer' }),
             viewer: testkitViewer(),
-            sourceUpdatedAtMs: 3_000,
+            sourceUpdatedAtMs: observationRevision.current,
         }, {
             kind: 'present',
             localRef: {
@@ -378,6 +382,9 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
             // context's caller stamp is the host's to supply.
             const detailInput = TriageReadEntryDetailInputV1Schema.parse(request.input);
             readDetailInstanceIds.push(detailInput.sourceInstanceId);
+            const blocked = blockedDetailRead;
+            blockedDetailRead = null;
+            if (blocked !== null) await blocked.promise;
             return await readTriageEntryDetail(
                 detailInput,
                 {
@@ -396,7 +403,21 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
         });
     }
 
-    return { collections, executeAction, observes, readDetailInstanceIds };
+    return {
+        collections,
+        executeAction,
+        observes,
+        readDetailInstanceIds,
+        publishNewerObservation(): void {
+            observationRevision.current += 1;
+        },
+        blockNextDetailRead(): () => void {
+            let release!: () => void;
+            const promise = new Promise<void>((resolve) => { release = resolve; });
+            blockedDetailRead = { promise, release };
+            return release;
+        },
+    };
 }
 
 const mounted: PluginUiTestkit[] = [];
@@ -473,6 +494,34 @@ async function openTheRow(shell: PluginUiTestkit): Promise<void> {
     await act(async () => { await Promise.resolve(); });
 }
 
+type LayoutHandler = (event: Readonly<{
+    nativeEvent: Readonly<{ layout: Readonly<{ x: number; y: number; width: number; height: number }> }>;
+}>) => void;
+
+async function measureFillRegion(width: number): Promise<void> {
+    const node = document.querySelector(`[data-testid="${TRIAGE_SHELL_FILL_TEST_ID_V1}"]`);
+    if (node === null) throw new Error('The Triage shell rendered no measured fill region.');
+    const handler = (node as unknown as Record<string, unknown>).__reactLayoutHandler;
+    if (typeof handler !== 'function') throw new Error('The Triage shell installed no layout observer.');
+    await act(async () => {
+        (handler as LayoutHandler)({
+            nativeEvent: { layout: { x: 0, y: 0, width, height: 800 } },
+        });
+    });
+}
+
+function queryDetailBodyNode(): Element | null {
+    return Array.from(document.querySelectorAll('*')).find(
+        (candidate) => candidate.children.length === 0 && candidate.textContent === DETAIL_BODY_TEXT,
+    ) ?? null;
+}
+
+function detailBodyNode(): Element {
+    const node = queryDetailBodyNode();
+    if (node === null) throw new Error('The admitted source detail body is not mounted.');
+    return node;
+}
+
 afterEach(async () => {
     currentHarness = null;
     for (const fixture of mounted.splice(0)) await fixture.dispose();
@@ -491,6 +540,69 @@ describe('opening a row into the source detail', () => {
             .resolves.toEqual({ content: DETAIL_BODY_TEXT });
         // And not the other admitted source's, which is sorted ahead of it.
         await expect(shell.queryByText(OTHER_DETAIL_BODY_TEXT)).resolves.toBeUndefined();
+    });
+
+    it('keeps the ready source detail mounted while the same entry rereads', async () => {
+        const shell = await mountShell();
+        await openTheRow(shell);
+        const mountedBody = detailBodyNode();
+        const harness = currentHarness;
+        if (harness === null) throw new Error('the shell was not mounted');
+        const releaseDetailRead = harness.blockNextDetailRead();
+        harness.publishNewerObservation();
+
+        await act(async () => { await refreshTriageListWindow('manual'); });
+        await act(async () => { await Promise.resolve(); });
+
+        // A background reread may update the mounted input when it settles, but
+        // it must not replace useful detail with a loading screen in between.
+        const bodyWhilePending = queryDetailBodyNode();
+        const loadingWhilePending = document.body.textContent?.includes('Reading this entry') === true;
+
+        releaseDetailRead();
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+        expect(bodyWhilePending).toBe(mountedBody);
+        expect(loadingWhilePending).toBe(false);
+        expect(detailBodyNode()).toBe(mountedBody);
+    });
+
+    it('replaces the ready source detail while a different entry is being read', async () => {
+        const shell = await mountShell();
+        await measureFillRegion(900);
+        await openTheRow(shell);
+        const harness = currentHarness;
+        if (harness === null) throw new Error('the shell was not mounted');
+        const releaseDetailRead = harness.blockNextDetailRead();
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('option', { name: LONG_REF_ROW_TITLE }));
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        // Ready detail is useful only for the exact entry and source instance
+        // that produced it. Retaining it here would show the old provider body
+        // beneath the newly selected entry's aggregate header.
+        expect(queryDetailBodyNode()).toBeNull();
+        await expect(shell.getByText('Reading this entry')).resolves.toBeDefined();
+
+        releaseDetailRead();
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+    });
+
+    it('keeps one source detail mount while the open shell crosses split and stacked layouts', async () => {
+        const shell = await mountShell();
+        await measureFillRegion(900);
+        await openTheRow(shell);
+        const mountedBody = detailBodyNode();
+
+        await measureFillRegion(420);
+
+        // Responsive composition changes the detail container's layout, not
+        // the detail's parent identity. Tabs, scroll and parser state therefore
+        // remain owned by the same mounted source subtree.
+        expect(detailBodyNode()).toBe(mountedBody);
     });
 
     it('renders the aggregate-owned header beside it', async () => {
@@ -685,7 +797,7 @@ describe('opening a row into the source detail', () => {
         })).resolves.toBeDefined();
     });
 
-    it('opens the launched connection, not the one the window qualified the row under', async () => {
+    it('never substitutes the window connection for a launched connection whose full observation is absent', async () => {
         // The authority half of the same rule `openEntryDetails` enforces on the
         // way out: a launch names ONE exact connection, and the page that
         // receives it must act under that one. The window makes its own
@@ -707,18 +819,21 @@ describe('opening a row into the source detail', () => {
                 sourceInstance: { source: SOURCE, sourceInstanceId: SECOND_INSTANCE },
             }) as unknown as JsonValue,
         });
+        await act(async () => { await refreshTriageListWindow('manual'); });
         await act(async () => { await Promise.resolve(); });
         await act(async () => { await Promise.resolve(); });
 
         const harness = currentHarness;
         if (harness === null) throw new Error('the shell was not mounted');
-        // What the detail actually RAN under, read at the one Action every
-        // detail read goes through — not at the label beside it.
-        expect(harness.readDetailInstanceIds.length).toBeGreaterThan(0);
-        expect([...new Set(harness.readDetailInstanceIds)]).toEqual([SECOND_INSTANCE]);
-        // And the header names the same one, so a page cannot say one account
-        // while reading through another.
+        // The mixed-list wire carries the rendered connection's full
+        // observation and only compact facts for its peers. This page can name
+        // the launched connection, but it must not hand the first connection's
+        // observation to the second connection's detail renderer.
         await expect(shell.getByText('Second account')).resolves.toBeDefined();
+        await expect(shell.getByText('No connection to open this through')).resolves.toBeDefined();
+        expect(harness.readDetailInstanceIds).toEqual([]);
+        // The header and refusal both stay on the launched connection; neither
+        // silently falls through to the window's qualified account.
         await expect(shell.queryByText('Example account')).resolves.toBeUndefined();
     });
 

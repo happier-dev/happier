@@ -23,15 +23,17 @@ const EDITED_LENS = {
     order: 'newest' as const,
     smartPolicy: { v: 1, precedence: ['attention', 'activity'] } as const,
 };
+const REVISION = 'revision-7';
 
 describe('the surface’s saved-view commands', () => {
     it('renames without carrying the lens the reader is looking at into the view', () => {
         // Both intents reach one `update` command, so the difference between
         // them is the whole contract here: a rename that took the live lens
         // would overwrite the saved view under the guise of a name change.
-        expect(triageRenameSavedViewInputV1(STORED, 'Mine to review')).toEqual({
+        expect(triageRenameSavedViewInputV1(STORED, 'Mine to review', REVISION)).toEqual({
             v: 1,
             kind: 'update',
+            expectedRevision: REVISION,
             viewId: STORED.viewId,
             label: 'Mine to review',
             filters: STORED.filters,
@@ -41,9 +43,10 @@ describe('the surface’s saved-view commands', () => {
     });
 
     it('updates the lens without renaming the view', () => {
-        expect(triageUpdateSavedViewInputV1(STORED, EDITED_LENS)).toEqual({
+        expect(triageUpdateSavedViewInputV1(STORED, EDITED_LENS, REVISION)).toEqual({
             v: 1,
             kind: 'update',
+            expectedRevision: REVISION,
             viewId: STORED.viewId,
             label: STORED.label,
             filters: EDITED_LENS.filters,
@@ -63,6 +66,7 @@ describe('the surface’s saved-view commands', () => {
                 smartPolicy: { v: 1, precedence: ['activity', 'attention'] },
             }],
             selectedViewId: STORED.viewId,
+            revision: REVISION,
         });
 
         expect(read.kind).toBe('parsed');
@@ -85,6 +89,7 @@ describe('the surface’s saved-view commands', () => {
                 smartPolicy: { v: 1, precedence: ['attention', 'attention'] },
             }],
             selectedViewId: STORED.viewId,
+            revision: REVISION,
         });
 
         expect(read.kind).toBe('unreadable');
@@ -98,6 +103,7 @@ describe('the surface’s saved-view commands', () => {
             availability: 'unavailable',
             views: [],
             selectedViewId: null,
+            revision: REVISION,
         }).kind).toBe('unreadable');
         expect(readTriageSavedViewsProjectionV1({
             availability: 'absent',

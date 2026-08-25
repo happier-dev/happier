@@ -10,7 +10,6 @@ import {
   TriageReadConfiguredSourceInstancesResultV1Schema,
   TriageSourceAdministrationActionInputV1Schema,
   TriageSourceAdministrationActionResultV1Schema,
-  TriageSourcesContributionPointV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { createTriageAdministerSourceInstanceActionHandler } from './actions/administerSourceInstanceAction.js';
@@ -28,6 +27,12 @@ import {
 } from './actions/listEntriesProtocol.js';
 import { createTriageReadConfiguredSourceInstancesActionHandler } from './actions/readConfiguredSourceInstances.js';
 import { createTriageReadEntryDetailActionHandler } from './actions/readEntryDetail.js';
+import { createTriageReobserveEntryActionHandler } from './actions/reobserveEntry.js';
+import {
+  TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1,
+  TriageReobserveEntryInputV1Schema,
+  TriageReobserveEntryResultV1Schema,
+} from './actions/reobserveEntryProtocol.js';
 import {
   createTriageListPinnedEntriesActionHandler,
   createTriageSetEntryPinnedActionHandler,
@@ -115,6 +120,7 @@ import {
   TRIAGE_SESSION_ENTRIES_VIEW_ID_V1,
 } from './ui/contributions.js';
 import { TRIAGE_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS } from './targetedContributions.js';
 
 export { TRIAGE_DISPLAY_NAME };
 
@@ -150,9 +156,7 @@ function createTriagePlugin() {
       }],
       optional: [],
     },
-    contributionPoints: {
-      [TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1]: TriageSourcesContributionPointV1,
-    },
+    contributionPoints: PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS,
     accountCollections: {
       [CORPUS_SOURCE_INSTANCES_COLLECTION_ID]: CORPUS_SOURCE_INSTANCES_COLLECTION,
       [CORPUS_SESSION_LINKS_COLLECTION_ID]: CORPUS_SESSION_LINKS_COLLECTION,
@@ -327,6 +331,18 @@ function createTriagePlugin() {
         // `source-instances` and `session-links`, both read-only.
         hostAccess: ['account-storage'],
         run: createTriageReadEntryDetailActionHandler(),
+      },
+      [TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1]: {
+        title: 'Re-read an entry after a provider change',
+        description: 'Reads the exact selected entry through its configured source after a provider Action settles.',
+        scopes: ['global'],
+        surfaces: ['plugin'],
+        dangerLevel: 'safe',
+        execution: { target: 'daemon' },
+        inputSchema: TriageReobserveEntryInputV1Schema,
+        resultSchema: TriageReobserveEntryResultV1Schema,
+        hostAccess: ['account-storage'],
+        run: createTriageReobserveEntryActionHandler(),
       },
       [TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1]: {
         title: 'Read the saved views',

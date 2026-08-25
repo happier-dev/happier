@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createTriageSourceV1Fixture } from '../testing/v1/fixtures.js';
+import { TriageEntryRefV1Schema } from './identity.js';
 import {
     TriageEntryRepositoryRefV1Schema,
     TriageRowFactV1Schema,
@@ -16,6 +17,18 @@ const present = fixture.getResult;
 const localRef = { kindId: 'pull-request', collisionScope: 'example:41231', entryId: '17' };
 
 describe('Triage entry repository identity', () => {
+    it('keeps forge identity out of the closed canonical entry ref', () => {
+        expect(TriageEntryRefV1Schema.safeParse({
+            source: { pluginId: 'happier.scm.forge.github', localId: 'github' },
+            ...localRef,
+            repository: {
+                kind: 'github',
+                deployment: 'https://github.com',
+                repository: 'acme/app',
+            },
+        }).success).toBe(false);
+    });
+
     it('admits the longest repository path each shipped forge can produce', () => {
         const longestByForge = {
             github: `${'o'.repeat(39)}/${'r'.repeat(100)}`,

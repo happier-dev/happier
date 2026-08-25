@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Button, Row, Select, Stack, Status, TextField } from '@happier-dev/plugin-ui';
 
 import {
-  MAX_TRIAGE_SAVED_VIEWS_V1,
   type CorpusSavedViewV1,
 } from '../../settings/savedViews.js';
 import type { TriageTextResolverV1 } from '../shell/windowState.js';
@@ -153,7 +152,7 @@ export function TriageViewsControl(props: TriageViewsControlPropsV1): React.Reac
           <Button
             title={text('plugins.triage.surface.views.save', 'Save as new view')}
             variant="plain"
-            disabled={!writable || views.length >= MAX_TRIAGE_SAVED_VIEWS_V1}
+            disabled={!writable}
             onPress={startCreate}
           />
         )}

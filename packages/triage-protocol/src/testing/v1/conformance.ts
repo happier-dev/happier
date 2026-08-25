@@ -9,7 +9,10 @@ import {
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
 } from '../../v1/bounds.js';
 import { TriageSourcesContributionProtocolV1 } from '../../v1/contribution.js';
-import { TriageSourceDescriptorV1Schema } from '../../v1/descriptor.js';
+import {
+    admitTriageSourceDescriptorV1,
+    TriageSourceDescriptorV1Schema,
+} from '../../v1/descriptor.js';
 
 /** The non-runtime result of checking one source manifest against Triage sources V1. */
 export type TriageSourceConformanceResultV1 =
@@ -44,9 +47,10 @@ function collectDescriptorErrors(descriptor: unknown, errors: string[]): void {
             .join('; ')}.`);
         return;
     }
-    const kindIds = parsed.data.kinds.map((kind) => kind.id);
-    if (new Set(kindIds).size !== kindIds.length) {
+    const admitted = admitTriageSourceDescriptorV1(parsed.data);
+    if (!admitted.ok) {
         errors.push('Triage source descriptor kind ids must be unique.');
+        return;
     }
 }
 
@@ -83,9 +87,8 @@ function collectSurfaceErrors(declared: unknown, errors: string[]): void {
  * The canonical SDK parser owns manifest structure. This helper only composes
  * that parsed declaration with the public Triage sources V1 role contract;
  * host installation, generation currentness, and runtime admission remain
- * host-owned, and descriptor kind-id uniqueness is checked here because the
- * public composition algebra has no keyed-uniqueness constructor
- * (`CONTRACT.md` §2.4, §9).
+ * host-owned. Descriptor semantics delegate to the same target-owned admission
+ * function production uses (`CONTRACT.md` §2.4, §9).
  */
 export function checkTriageSourceContributionV1(
     manifestInput: unknown,

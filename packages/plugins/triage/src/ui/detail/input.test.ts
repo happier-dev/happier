@@ -1,4 +1,7 @@
-import { TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
+import {
+  MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
+  TriageDetailSurfaceInputV1Schema,
+} from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -21,6 +24,7 @@ function build(overrides: Partial<Parameters<typeof buildTriageDetailSurfaceInpu
     instance: INSTANCE,
     observation: OBSERVATION,
     linkedSessions: FIXTURE.detailInput.linkedSessions,
+    linkedSessionsHasMore: false,
     ...overrides,
   });
 }
@@ -36,7 +40,7 @@ describe('Triage detail surface input', () => {
     expect(built.kind === 'admitted' && TriageDetailSurfaceInputV1Schema.parse(built.input))
       .toEqual(built.kind === 'admitted' ? built.input : null);
     expect(built.kind === 'admitted' && Object.keys(built.input).sort())
-      .toEqual(['instance', 'linkedSessions', 'observation', 'v']);
+      .toEqual(['instance', 'linkedSessions', 'linkedSessionsHasMore', 'observation', 'v']);
   });
 
   it('refuses an observation for a different entry than the one the user selected', () => {
@@ -47,6 +51,26 @@ describe('Triage detail surface input', () => {
     expect(build({ observation: otherEntry })).toEqual({
       kind: 'refused',
       reason: 'entryMismatch',
+    });
+  });
+
+  it('refuses source-only repository data inside the closed mounted observation', () => {
+    const observationWithRepository = {
+      ...OBSERVATION,
+      repository: {
+        kind: 'github',
+        deployment: 'https://example.test',
+        repository: 'example/repository',
+      },
+    } as typeof OBSERVATION;
+
+    // Repository identity is launch input owned by the aggregate host. A source
+    // detail receives the published closed observation and no extra host facts;
+    // nesting this sibling here is the mounted-read rejection this regression
+    // guards.
+    expect(build({ observation: observationWithRepository })).toEqual({
+      kind: 'refused',
+      reason: 'invalidContractValue',
     });
   });
 
@@ -83,7 +107,10 @@ describe('Triage detail surface input', () => {
   });
 
   it('refuses rather than truncating a linked-Session projection the contract cannot carry', () => {
-    const tooMany = Array.from({ length: 64 }, (_unused, index) => ({
+    // Derived from the published bound, never retyped: the count that is
+    // over-bound moves whenever the projection is re-derived, and a literal here
+    // silently stops testing anything the day the bound is raised past it.
+    const tooMany = Array.from({ length: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1 }, (_unused, index) => ({
       sessionId: `session-${index}`,
     }));
 

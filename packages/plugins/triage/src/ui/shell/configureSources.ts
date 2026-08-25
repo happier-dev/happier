@@ -3,7 +3,7 @@ import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
-  TriageSourceDescriptorV1Schema,
+  admitTriageSourceDescriptorV1,
 } from '@happier-dev/triage-protocol/v1';
 
 /**
@@ -58,16 +58,16 @@ export function planTriageConfigureSourceOffersV1(
   if (snapshot === undefined) return NONE;
   const offers: TriageConfigureSourceOfferV1[] = [];
   for (const contribution of snapshot.contributions) {
-    const parsed = TriageSourceDescriptorV1Schema.safeParse(contribution.descriptor);
-    if (!parsed.success) continue;
-    const settingsPageId = parsed.data.settingsPageId;
+    const admitted = admitTriageSourceDescriptorV1(contribution.descriptor);
+    if (!admitted.ok) continue;
+    const settingsPageId = admitted.descriptor.settingsPageId;
     if (settingsPageId === undefined) continue;
     offers.push(Object.freeze({
       destination: Object.freeze({
         pluginId: contribution.contributor.pluginId,
         localId: settingsPageId,
       }),
-      displayName: parsed.data.displayName,
+      displayName: admitted.descriptor.displayName,
     }));
   }
   return Object.freeze(offers);

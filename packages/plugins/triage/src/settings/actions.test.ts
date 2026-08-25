@@ -17,7 +17,6 @@ import {
 const ASK = TRIAGE_DEFAULT_ACTIONS_V1[0]!;
 const FIX = TRIAGE_DEFAULT_ACTIONS_V1[1]!;
 const REVIEW = TRIAGE_DEFAULT_ACTIONS_V1[2]!;
-const CODE_REVIEW = TRIAGE_DEFAULT_ACTIONS_V1[3]!;
 
 function storedFrom(actions: readonly TriageActionV1[]): unknown {
     return {
@@ -41,7 +40,7 @@ function storedFrom(actions: readonly TriageActionV1[]): unknown {
 }
 
 describe('the Triage action record', () => {
-    it('seeds Ask, Fix, Review and Run code review when nothing has ever been written', () => {
+    it('seeds only actions the current product can run when nothing has ever been written', () => {
         const read = parseTriageActions(undefined);
 
         expect(read.kind).toBe('absent');
@@ -49,7 +48,7 @@ describe('the Triage action record', () => {
         // The seed is what a reader sees, not what the record holds: an absent
         // value must not need a write before the headline controls exist.
         expect(read.value.actions.map((action) => action.label))
-            .toEqual(['Ask', 'Fix', 'Review', 'Run code review']);
+            .toEqual(['Ask', 'Fix', 'Review']);
     });
 
     it('keeps an explicitly emptied catalog empty rather than restoring the seed', () => {
@@ -63,18 +62,15 @@ describe('the Triage action record', () => {
         expect(ASK.workspaceMode).toBe('reference_only');
         expect(FIX.workspaceMode).toBe('repository');
         expect(REVIEW.workspaceMode).toBe('repository');
-        expect(CODE_REVIEW.workspaceMode).toBe('pull_request');
 
         // Neither Review is inferred from its label: the arm is a member, and
         // the two arms are two different user actions that ship side by side.
         expect(REVIEW.target)
             .toEqual({ kind: 'agent', promptInvocationId: null, delivery: 'compose' });
-        expect(CODE_REVIEW.target).toEqual({ kind: 'reviewStart', promptInvocationId: null });
         expect(ASK.target).toEqual({ kind: 'agent', promptInvocationId: null, delivery: 'compose' });
 
         // Only a pull request reaches either review action.
         expect(REVIEW.appliesTo).toEqual(['pullRequest']);
-        expect(CODE_REVIEW.appliesTo).toEqual(['pullRequest']);
         expect(ASK.appliesTo).toEqual(['pullRequest', 'issue', 'errorIssue', 'other']);
 
         // Neither agent nor model is a member; a Launch Profile owns them.
@@ -149,10 +145,9 @@ describe('the Triage action record', () => {
             'Ask',
             'Fix',
             'Review',
-            'Run code review',
             'Explain',
         ]);
-        expect(created.value.actions[4]).toEqual({
+        expect(created.value.actions[3]).toEqual({
             actionId: 'minted-1',
             label: 'Explain',
             enabled: true,
@@ -186,7 +181,7 @@ describe('the Triage action record', () => {
         const reordered = await mutateTriageAction(deps, {
             kind: 'reorder',
             expectedRevision: testkit.revision(),
-            actionIds: [REVIEW.actionId, FIX.actionId, ASK.actionId, CODE_REVIEW.actionId],
+            actionIds: [REVIEW.actionId, FIX.actionId, ASK.actionId],
         });
         expect(reordered.status).toBe('applied');
         if (reordered.status !== 'applied') return;
@@ -194,7 +189,6 @@ describe('the Triage action record', () => {
             REVIEW.actionId,
             FIX.actionId,
             ASK.actionId,
-            CODE_REVIEW.actionId,
         ]);
 
         const deleted = await mutateTriageAction(deps, { kind: 'delete', actionId: FIX.actionId, expectedRevision: testkit.revision() });
@@ -203,7 +197,6 @@ describe('the Triage action record', () => {
         expect(deleted.value.actions.map((action) => action.actionId)).toEqual([
             REVIEW.actionId,
             ASK.actionId,
-            CODE_REVIEW.actionId,
         ]);
     });
 
@@ -385,7 +378,7 @@ describe('the caller-observed revision', () => {
         // Nothing was written, and the other device's action is still there.
         const now = parseTriageActions(testkit.read(TRIAGE_ACTIONS_SETTING_ID_V1));
         expect(now.value.actions.map((action) => action.label))
-            .toEqual(['Ask', 'Fix', 'Review', 'Run code review', 'Triage']);
+            .toEqual(['Ask', 'Fix', 'Review', 'Triage']);
     });
 
     it('returns the revision an applied write landed on, so a second edit can name it', async () => {

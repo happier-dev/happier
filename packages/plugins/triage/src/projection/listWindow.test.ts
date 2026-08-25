@@ -14,6 +14,7 @@ import {
     TRIAGE_LIST_DEFAULT_LENS_V1,
     TRIAGE_LIST_NO_FILTERS_V1,
     foldTriageListWindow,
+    foldTriagePostMutationObservation,
     triageEntryRowKey,
     type SurfaceFilterSelectionV1,
     type TriageListLaneV1,
@@ -111,6 +112,70 @@ function fold(input: Readonly<{
 }
 
 describe('the content winner of one folded entry', () => {
+    it('replaces one connection answer through the canonical fold after a mutation', () => {
+        const before = fold({
+            observations: [present({
+                sourceInstanceId: INSTANCE[0] ?? '',
+                observedAtMs: 1_000,
+                title: 'Open before the press',
+                presentation: 'active',
+            })],
+        }).rows[0];
+        if (before === undefined) throw new Error('fixture row missing');
+
+        const after = foldTriagePostMutationObservation({
+            row: before,
+            observation: present({
+                sourceInstanceId: INSTANCE[0] ?? '',
+                observedAtMs: 2_000,
+                title: 'Closed after the press',
+                presentation: 'closed',
+            }),
+            lanes: [lane(INSTANCE[0] ?? '')],
+            assembledAtMs: 2_000,
+        });
+
+        expect(after?.observations).toHaveLength(1);
+        expect(after?.content?.outcome.snapshot.title).toBe('Closed after the press');
+        expect(after?.lane).toBe('2-done');
+    });
+
+    it('keeps every active observing connection eligible when post-mutation attention changes', () => {
+        const before = fold({
+            observations: [
+                present({ sourceInstanceId: INSTANCE[0] ?? '', title: 'Primary account' }),
+                present({
+                    sourceInstanceId: INSTANCE[1] ?? '',
+                    title: 'Review account',
+                    involvement: ['reviewRequested'],
+                }),
+            ],
+        }).rows[0];
+        if (before === undefined) throw new Error('fixture row missing');
+        expect(before.selected).toMatchObject({
+            kind: 'selected',
+            sourceInstanceId: INSTANCE[1],
+            reason: 'attention',
+        });
+
+        const after = foldTriagePostMutationObservation({
+            row: before,
+            observation: present({
+                sourceInstanceId: INSTANCE[1] ?? '',
+                observedAtMs: 2_000,
+                title: 'Review completed',
+            }),
+            lanes: INSTANCE.slice(0, 2).map((sourceInstanceId) => lane(sourceInstanceId)),
+            assembledAtMs: 2_000,
+        });
+
+        expect(after?.selected).toEqual({
+            kind: 'selected',
+            sourceInstanceId: INSTANCE[0],
+            reason: 'deterministicTieBreak',
+        });
+    });
+
     /**
      * `core/CORPUS.md` §3.2 and §3.7. Two connections observe one entry and
      * disagree; the alphabetically later one answered later *and* carries the

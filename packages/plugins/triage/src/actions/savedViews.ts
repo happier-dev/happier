@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 
 import { parseCorpusSmartPolicy } from '../corpus/query/smartPolicy.js';
+import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import {
     mutateTriageSavedViews,
     readTriageSavedViews,
@@ -61,12 +61,14 @@ export async function readTriageSavedViewsForSurface(
         availability: read.kind === 'unreadable' ? 'unavailable' : read.kind,
         views: projectViews(read.value.views),
         selectedViewId: read.value.selectedViewId,
+        revision: read.revision,
     };
 }
 
 function commandFrom(input: TriageAdministerSavedViewInputV1): CorpusSavedViewCommandV1 | null {
-    if (input.kind === 'delete') return { kind: 'delete', viewId: input.viewId };
-    if (input.kind === 'select') return { kind: 'select', viewId: input.viewId };
+    const expectedRevision = input.expectedRevision;
+    if (input.kind === 'delete') return { kind: 'delete', viewId: input.viewId, expectedRevision };
+    if (input.kind === 'select') return { kind: 'select', viewId: input.viewId, expectedRevision };
     // The wire bounds the policy's shape; the one canonical owner closes its
     // vocabulary, so a repeated predicate is refused here rather than ranked.
     const smartPolicy = parseCorpusSmartPolicy(input.smartPolicy);
@@ -78,8 +80,13 @@ function commandFrom(input: TriageAdministerSavedViewInputV1): CorpusSavedViewCo
         smartPolicy,
     };
     return input.kind === 'create'
-        ? { kind: 'create', ...draft, ...(input.select === undefined ? {} : { select: input.select }) }
-        : { kind: 'update', viewId: input.viewId, ...draft };
+        ? {
+            kind: 'create',
+            expectedRevision,
+            ...draft,
+            ...(input.select === undefined ? {} : { select: input.select }),
+        }
+        : { kind: 'update', viewId: input.viewId, expectedRevision, ...draft };
 }
 
 export async function administerTriageSavedView(
@@ -105,6 +112,7 @@ export async function administerTriageSavedView(
         status: 'applied',
         views: projectViews(result.value.views),
         selectedViewId: result.value.selectedViewId,
+        revision: result.revision,
     };
 }
 
@@ -114,7 +122,7 @@ export function createTriageReadSavedViewsActionHandler(): ActionHandler<
 > {
     return async (input, context: PluginInvocationContext) => await readTriageSavedViewsForSurface(input, {
         settings: context.services.settings.forScope({ kind: 'account' }),
-        mintViewId: () => randomUUID(),
+        mintViewId: () => mintTriageOpaqueIdV1(),
         signal: context.signal,
     });
 }
@@ -127,7 +135,7 @@ export function createTriageAdministerSavedViewActionHandler(): ActionHandler<
         settings: context.services.settings.forScope({ kind: 'account' }),
         // Minted at the writer, never by a caller: a client-chosen id would let
         // two devices claim one view.
-        mintViewId: () => randomUUID(),
+        mintViewId: () => mintTriageOpaqueIdV1(),
         signal: context.signal,
     });
 }

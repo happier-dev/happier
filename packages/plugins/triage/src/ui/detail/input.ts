@@ -42,6 +42,8 @@ export type TriageDetailSurfaceInputBuildInputV1 = Readonly<{
   observation: TriageDetailSurfaceInputV1['observation'];
   /** `[]` means no links; it is never an "unknown" placeholder. */
   linkedSessions: TriageDetailSurfaceInputV1['linkedSessions'];
+  /** Whether the Collection has another page beyond this bounded projection. */
+  linkedSessionsHasMore: boolean;
 }>;
 
 export function buildTriageDetailSurfaceInputV1(
@@ -64,6 +66,7 @@ export function buildTriageDetailSurfaceInputV1(
         instance: input.instance,
         observation: input.observation,
         linkedSessions: input.linkedSessions,
+        linkedSessionsHasMore: input.linkedSessionsHasMore,
       }),
     });
   } catch {

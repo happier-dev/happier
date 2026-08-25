@@ -27,11 +27,9 @@ import { laneObservationsFromWire, toTriageListWireRows } from './listWindowWire
  * `REQ-03` on a wire that has a hard ceiling.
  *
  * One entry observed through two configured connections is one entry with two
- * observations, and the list has to say so. What it cannot do is carry both
- * connections' content: every Action result crosses a 1 MiB host gate that
- * rejects the whole value rather than truncating it, so a row repeating its
- * snapshot per connection turns a normal two-account setup into a list that
- * fails to load at all.
+ * observations, and the list has to say so. The compact row carries one full
+ * rendered answer and names the other connections without duplicating their
+ * complete detail payloads into the list.
  *
  * The falsifiers this file exists for are therefore both directions: a wire
  * that quietly drops the second connection, and a wire that quietly carries its

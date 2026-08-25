@@ -303,6 +303,35 @@ describe('the PRs & Issues saved-view lens', () => {
         expect(storedValue(settings).views[0]?.label).toBe(VIEW_LABEL);
     });
 
+    it('refuses a stale full-view update, re-reads, and shows the conflict', async () => {
+        const { shell, settings } = await mountShell({ selectedViewId: VIEW_ID });
+        const openFacet = await shell.getByRole('checkbox', { name: 'Open' });
+        await act(async () => { await shell.press(openFacet); });
+
+        // Another device renames the view after this mount read it. The local
+        // Update still carries the old full draft, including the old label.
+        settings.seed(TRIAGE_SAVED_VIEWS_SETTING_ID_V1, {
+            ...storedSetting(VIEW_ID),
+            views: [{ ...storedSetting(VIEW_ID).views[0], label: 'Renamed elsewhere' }],
+        });
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Update this view' }));
+        });
+        for (let settle = 0; settle < 3; settle += 1) {
+            await act(async () => { await Promise.resolve(); });
+        }
+
+        await expect(shell.getByText(
+            'Your saved views changed somewhere else, so nothing was changed here. Try again.',
+        )).resolves.toBeTruthy();
+        expect(storedValue(settings).views[0]).toMatchObject({
+            label: 'Renamed elsewhere',
+            filters: { states: ['done'] },
+        });
+        await expect(shell.getByRole('radio', { name: 'Renamed elsewhere' })).resolves.toBeTruthy();
+    });
+
     it('clears the selected view id when the view is deleted', async () => {
         const { shell, settings, locations } = await mountShell({ selectedViewId: VIEW_ID });
 

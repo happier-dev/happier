@@ -18,6 +18,7 @@ import {
 import { deriveUserMarkTag } from '../../corpus/identity/tags.js';
 import { testkitEntryRef } from '../../corpus/testkit/observations.test-support.js';
 import {
+    TRIAGE_PINNED_PAGE_LIMIT_V1,
     readTriagePinnedEntries,
     submitTriagePin,
     type TriageMarkHostV1,
@@ -85,7 +86,8 @@ describe('the surface Pin/Unpin command', () => {
         const page = await readTriagePinnedEntries(host);
         expect(page).toEqual({
             v: 1,
-            more: false,
+            // No cursor at all: every pin was carried, so there is nothing after
+            // this page to reach.
             pins: [{ entryRef, markedAtMs: 1_760_000_900_000, displayAtMark: DISPLAY }],
         });
         // The mark's storage tag is server-plaintext metadata; nothing a surface
@@ -175,6 +177,44 @@ describe('the surface Pin/Unpin command', () => {
         // no hydration read. A per-row read here would be a provider-shaped cost
         // on durable state that has no provider.
         expect(fixture.control.userMarks.getCallCount()).toBe(before);
+    });
+
+    it('reaches — and removes — a pin past the bounded page, on the query cursor', async () => {
+        // The defect this closes: the marks query returned a cursor, the Action
+        // reduced it to `more: boolean`, and the pin behind it was therefore
+        // both invisible and unremovable. Unpin is only offered on a row, so a
+        // pin that cannot be listed is durable user intent with no way out.
+        const fixture = createTestkitCorpusCollections();
+        let clock = 1_000;
+        const host = createMarkHost(fixture, () => clock);
+        const total = TRIAGE_PINNED_PAGE_LIMIT_V1 + 1;
+        for (let index = 0; index < total; index += 1) {
+            clock = 1_000 + index;
+            await submitTriagePin(host, {
+                pinned: true,
+                entryRef: testkitEntryRef({ entryId: `${index}` }),
+                displayAtMark: DISPLAY,
+            });
+        }
+
+        const first = await readTriagePinnedEntries(host);
+        expect(first.pins).toHaveLength(TRIAGE_PINNED_PAGE_LIMIT_V1);
+        expect(first.nextCursor).toBeDefined();
+        // The oldest pin is the one the bound leaves out, so it is the one that
+        // has to be reachable.
+        expect(first.pins.map((pin) => pin.entryRef.entryId)).not.toContain('0');
+
+        const second = await readTriagePinnedEntries(host, first.nextCursor);
+        expect(second.pins.map((pin) => pin.entryRef.entryId)).toEqual(['0']);
+        expect(second.nextCursor).toBeUndefined();
+
+        // Reachable is only half of it: the row it renders has to be able to
+        // remove the mark it names.
+        expect(await submitTriagePin(host, { pinned: false, entryRef: testkitEntryRef({ entryId: '0' }) }))
+            .toEqual({ v: 1, status: 'unpinned' });
+        const afterUnpin = await readTriagePinnedEntries(host);
+        expect(afterUnpin.pins).toHaveLength(TRIAGE_PINNED_PAGE_LIMIT_V1);
+        expect(afterUnpin.nextCursor).toBeUndefined();
     });
 
     it('rejects an Unpin that tries to carry a rendering before any writer sees it', async () => {

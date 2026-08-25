@@ -5,10 +5,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
+import type { TriageListContinuationCopyV1 } from './continuation.js';
 import {
   readTriageListSectionItemKey,
   useTriageListRowRenderer,
-  type TriageListContinuationCopyV1,
   type TriageRowPinHandlersV1,
 } from './rows.js';
 
@@ -43,6 +43,8 @@ function pinHandlers(overrides: Partial<TriageRowPinHandlersV1> = {}): TriageRow
 const CONTINUATION_COPY: TriageListContinuationCopyV1 = {
   title: 'More entries may exist',
   description: 'This window is bounded.',
+  tone: 'neutral',
+  busy: false,
 };
 
 let root: Root | null = null;
@@ -63,9 +65,14 @@ function renderRendererProbe(): Readonly<{
 }> {
   const observed: unknown[] = [];
   const continuationCopy = () => CONTINUATION_COPY;
+  const onLoadMore = (): void => undefined;
 
   function Probe(props: Readonly<{ handlers: TriageRowPinHandlersV1 }>): null {
-    observed.push(useTriageListRowRenderer({ continuationCopy, handlers: props.handlers }));
+    observed.push(useTriageListRowRenderer({
+      continuationCopy,
+      onLoadMore,
+      handlers: props.handlers,
+    }));
     return null;
   }
 

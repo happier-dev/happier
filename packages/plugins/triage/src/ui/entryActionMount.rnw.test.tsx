@@ -37,7 +37,6 @@ import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
-import { TRIAGE_DEFAULT_ACTIONS_V1 } from '../settings/actions.js';
 import {
     testkitLocator,
     testkitSnapshot,
@@ -298,19 +297,6 @@ function createHarness(): Harness {
     };
 }
 
-/**
- * The seeded `pull_request` arm, read from the shipped record rather than
- * retyped: this test is about the DECLARED workspace mode, so taking the label
- * from the seed is what keeps it pointed at the right control if the seed is
- * relabelled.
- */
-const RUN_CODE_REVIEW_LABEL = (() => {
-    const action = TRIAGE_DEFAULT_ACTIONS_V1
-        .find((candidate) => candidate.workspaceMode === 'pull_request');
-    if (action === undefined) throw new Error('the shipped seed declares no pull_request action');
-    return action.label;
-})();
-
 const mounted: PluginUiTestkit[] = [];
 
 /** How many times this mount opened the host's New Session surface. */
@@ -392,14 +378,12 @@ describe('the entry action controls on the mounted detail header', () => {
         await openTheRow(shell);
 
         // The seeded catalogue, filtered by the source's own declared subject.
-        // Both review arms are offered on a pull request and neither is inferred
-        // from its label: `Review` is the agent arm, `Run code review` targets
-        // the incumbent `review.start` contract.
+        // The seed contains only actions whose complete start paths are
+        // reachable in current bytes. The formal `reviewStart` arm remains a
+        // valid configured shape, but is not offered until its producers land.
         await expect(shell.getByRole('button', { name: 'Ask' })).resolves.toBeDefined();
         await expect(shell.getByRole('button', { name: 'Fix' })).resolves.toBeDefined();
         await expect(shell.getByRole('button', { name: 'Review' })).resolves.toBeDefined();
-        await expect(shell.getByRole('button', { name: RUN_CODE_REVIEW_LABEL }))
-            .resolves.toBeDefined();
     }, 60_000);
 
     it('opens compose in New Session authoring with the selected entry and creates nothing', async () => {
@@ -586,15 +570,21 @@ describe('the entry action controls on the mounted detail header', () => {
 
     it('blocks the pull-request action when the source cannot prepare a review workspace', async () => {
         const harness = createHarness();
+        harness.setActions([{
+            actionId: 'pull-request-agent',
+            label: 'Repair pull request',
+            enabled: true,
+            appliesTo: ['pullRequest'],
+            profileId: null,
+            workspaceMode: 'pull_request',
+            target: { kind: 'agent', promptInvocationId: null, delivery: 'send' },
+        }]);
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
-        // The blocked arm is the one whose DECLARED mode is `pull_request` —
-        // `Run code review`, not whichever control carries the word "review".
-        // `Review` is an ordinary agent action in `repository` mode and stays
-        // pressable, which is exactly what §0a A1 means by the label deciding
-        // nothing.
-        const blocked = await shell.getByRole('button', { name: RUN_CODE_REVIEW_LABEL });
+        // The blocked arm is the one whose DECLARED mode is `pull_request`,
+        // independent of its label or target arm.
+        const blocked = await shell.findByRole('button', { name: 'Repair pull request' });
 
         // This fixture admits no preparation operation, so this action would
         // resolve the workspace refusal every time. It is refused BEFORE the
@@ -872,13 +862,12 @@ describe('the entry action controls on the mounted detail header', () => {
         await expect(shell.getByRole('button', { name: 'Configured catalogue loaded' }))
             .resolves.toBeDefined();
 
-        // The `reviewStart` arm is refused BEFORE anything is created: no
-        // creation key is spent, the host's New Session surface is never
-        // opened, and no start request leaves. `review.start` scopes to the
-        // exact commits of a pull request in a source-prepared worktree, and
-        // this wire cannot request one, so the alternative to refusing is
-        // starting something else and calling it a review.
-        await pressAction(shell, 'Fix');
+        // The `reviewStart` arm is unavailable BEFORE anything is created: no
+        // control is offered, no creation key is spent, and the host's New
+        // Session surface is never opened. `review.start` scopes to exact
+        // commits in a source-prepared worktree, and those producers are not
+        // complete in current bytes.
+        await expect(shell.queryByRole('button', { name: 'Fix' })).resolves.toBeUndefined();
         expect(harness.startRequests).toEqual([]);
         expect(draftsOpened).toBe(0);
         expect(triageActionImmediateRefusalV1({

@@ -187,8 +187,7 @@ const ALL_SUBJECTS: readonly TriageSourceWorkflowSubjectV1[] =
  * An action record is expressed in exactly one place and then PROJECTED to
  * everywhere a boundary needs to state it: the declared Account Settings field
  * (`settings/actionsContribution.ts`), the two catalog Actions' wire contracts
- * (`actions/actionsCatalogProtocol.ts`), and the maximum-encoded-value
- * derivation that proves both fit the host's Action byte gate.
+ * (`actions/actionsCatalogProtocol.ts`), and the schema-derived size inventory.
  *
  * It exists because the alternative was tried and failed. The declaration used
  * to be a hand-written JSON Schema that spelled the same members a second time,
@@ -344,23 +343,18 @@ export function triageActionsSettingFieldJsonSchemaV1(): PluginJsonSchema {
 /**
  * The shipped seed.
  *
- * Four actions, because the user asked for four things and two of them are
- * genuinely different user actions that happen to share the word "review":
+ * Three actions whose complete start paths are reachable in current bytes:
  *
  *  - **Ask** — read the entry, change nothing, every subject.
  *  - **Fix** — repair it in the project the reader selected, every subject.
  *  - **Review** — an ordinary AGENT action on a pull request: it starts a
  *    Session with the reader's own profile and prompt and asks that agent to
  *    review the change. This is the arm that works today.
- *  - **Run code review** — the incumbent `review.start` contract with its own
- *    engines and scope, which no agent action can stand in for.
  *
- * Seeding only the `review.start` arm would have shipped a control that is
- * disabled in every packaged configuration, because `review.start` needs a
- * prepared review workspace no shipped source declares — while the arm that
- * WOULD run was left for the reader to compose. Their labels are what tells
- * them apart in the header; nothing infers the arm from the label
- * (`PLAN.md` §0a A1), and `target.kind` states it on both.
+ * `reviewStart` remains a declared record arm for the producer work tracked by
+ * `U-SCM-AGENT-REVIEW-UI` and `U-SCM-AGENT-REVIEW-SCOPE`, but it is not seeded
+ * while those units are partial: a default action is a product offer, and an
+ * offer whose only reachable result is a refusal is false availability.
  */
 export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freeze([
     Object.freeze({
@@ -393,16 +387,30 @@ export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freez
         workspaceMode: 'repository',
         target: Object.freeze({ kind: 'agent', promptInvocationId: null, delivery: 'compose' }),
     }),
-    Object.freeze({
-        actionId: 'code-review',
-        label: 'Run code review',
-        enabled: true,
-        appliesTo: Object.freeze(['pullRequest'] as const),
-        profileId: null,
-        workspaceMode: 'pull_request',
-        target: Object.freeze({ kind: 'reviewStart', promptInvocationId: null }),
-    }),
 ] as readonly TriageActionV1[]);
+
+/**
+ * The one current target-availability decision.
+ *
+ * `reviewStart` is a valid declared configuration shape, but its two required
+ * producers are not landed end to end. Keeping schema admission separate from
+ * current offerability lets stored/future records remain readable without
+ * presenting a control whose only runtime outcome is refusal.
+ */
+export function isTriageActionTargetOfferableV1(
+    kind: TriageActionTargetV1['kind'],
+): boolean {
+    return kind === 'agent';
+}
+
+/** The catalog projection shared by surfaces that do not know one subject. */
+export function planTriageOfferableActionsV1(
+    actions: readonly TriageActionV1[],
+): readonly TriageActionV1[] {
+    return actions.filter(
+        (action) => action.enabled && isTriageActionTargetOfferableV1(action.target.kind),
+    );
+}
 
 /**
  * The ONE offered-action decision.
@@ -422,8 +430,8 @@ export function planTriageOfferedActionsV1(
     actions: readonly TriageActionV1[],
     workflowSubject: TriageSourceWorkflowSubjectV1,
 ): readonly TriageActionV1[] {
-    return actions.filter(
-        (action) => action.enabled && action.appliesTo.includes(workflowSubject),
+    return planTriageOfferableActionsV1(actions).filter(
+        (action) => action.appliesTo.includes(workflowSubject),
     );
 }
 
@@ -688,9 +696,8 @@ export function parseTriageActions(raw: unknown): TriageActionsReadV1 {
     // value is exactly how a newer client's catalogue gets overwritten.
     const unreadable: TriageActionsReadV1 = { kind: 'unreadable', value: { v: 1, actions: [] } };
     if (typeof raw !== 'object') return unreadable;
-    // The whole-value byte bound is read back as well as written: a reader that
-    // accepted what its own writer refuses would let a stored value this build
-    // never produced push an Action result past the host's own result gate.
+    // The local whole-value bound is read back as well as written so the reader
+    // and writer agree about which Settings documents this implementation owns.
     if (utf8ByteLength(JSON.stringify(raw)) > MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1) {
         return unreadable;
     }

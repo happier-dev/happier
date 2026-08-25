@@ -274,6 +274,16 @@ export async function runTriageScanPass(input: Readonly<{
                 state.active = false;
                 continue;
             }
+            if (input.observationBudget - observations.length < pageLimit) {
+                // A provider page is atomic: its continuation advances past every
+                // row it returns. Asking for a page the caller cannot carry and
+                // truncating after the fact would strand the discarded suffix
+                // behind an already-advanced frontier. Stop before fetching it;
+                // the lane's current continuation remains the next reachable
+                // page for a later transport window.
+                state.active = false;
+                continue;
+            }
 
             // One controller per invocation: it carries our deadline, and it
             // composes with the caller's canonical signal so retirement,
@@ -388,6 +398,15 @@ export async function runTriageScanPass(input: Readonly<{
                  * every retained row the truncated page did not name.
                  */
                 state.exhausted = result.evidence.kind === 'walkFinished';
+                // Unexhausted is not resumable. The only continuation this lane
+                // holds is the one that PRODUCED this settling page, and
+                // `complete` says there is no page after it — so offering it
+                // back would hand `actions/listEntries.ts` a window
+                // continuation whose next read returns this same page and this
+                // same stop, forever. Incomplete coverage is reported by
+                // `exhausted: false`; a stop is a page to ask for, and there is
+                // none.
+                state.continuation = null;
                 state.active = false;
                 continue;
             }
@@ -402,12 +421,25 @@ export async function runTriageScanPass(input: Readonly<{
              * Two exits, both derived from what the page already reports rather
              * than from a new budget:
              *
-             *  - A page that qualifies nothing AND charges no provider row has
-             *    consumed nothing at all, yet asks to be called again. That is
-             *    non-progress by construction, whatever the provider holds.
+             *  - A page that qualifies nothing, charges no provider row AND
+             *    hands back the very continuation it was given has consumed
+             *    nothing at all and cannot answer differently next time. That
+             *    is non-progress by construction, whatever the provider holds.
+             *    The position is the discriminator, and it has to be: a source
+             *    whose subject set is CONTAINERS — a forge whose review
+             *    involvement is repository-scoped — returns an empty, unbilled
+             *    page for every container with nothing in it, while advancing
+             *    strictly past it. Condemning that page killed the lane on its
+             *    first empty container, and a killed lane is offered no
+             *    continuation, so the next refresh restarted at the same empty
+             *    containers: the rows behind them were unreachable, not slow.
              *  - Otherwise the walk is bounded by what it could ever need: a
              *    source cannot require more rows than the observation budget it
              *    is filling plus one final page. Past that it is not converging.
+             *    A page that delivered nothing still cost this pass one round
+             *    trip, so it is charged as one — that is what keeps the same
+             *    derived ceiling binding on a lane that only traverses, without
+             *    inventing a second budget to bound it with.
              *
              * Neither is a broken published invariant, so neither is a contract
              * failure: every such page stayed inside the limit it was submitted,
@@ -418,8 +450,13 @@ export async function runTriageScanPass(input: Readonly<{
              * does. Discarding the lane's valid pages here punished a conforming
              * source for a budget it was never told about.
              */
-            state.charged += charged;
-            if (page.length === 0 && charged === 0) {
+            state.charged += Math.max(charged, 1);
+            if (
+                page.length === 0
+                && charged === 0
+                && state.continuation !== null
+                && state.continuation.token === result.continuation.token
+            ) {
                 state.health = nonConvergingFailure('stalledWalk');
                 state.exhausted = false;
                 state.active = false;

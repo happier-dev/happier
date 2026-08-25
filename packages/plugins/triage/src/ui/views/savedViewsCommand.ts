@@ -1,6 +1,10 @@
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 
 import {
+  administerTriageSavedView,
+  readTriageSavedViewsForSurface,
+} from '../../actions/savedViews.js';
+import {
   TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1,
   TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1,
   TriageAdministerSavedViewResultV1Schema,
@@ -11,22 +15,28 @@ import {
 } from '../../actions/savedViewsProtocol.js';
 import { parseCorpusSmartPolicy, type CorpusSmartPolicyV1 } from '../../corpus/query/smartPolicy.js';
 import type { SurfaceFilterSelectionV1, TriageListOrderV1 } from '../../projection/listWindow.js';
+import { mintTriageOpaqueIdV1 } from '../../opaqueId.js';
 import {
   CORPUS_EMPTY_SAVED_VIEWS_V1,
   type CorpusSavedViewV1,
   type CorpusSavedViewsReadV1,
 } from '../../settings/savedViews.js';
+import type { TriageAccountSettingsV1 } from '../durable/accountDurableState.js';
 
 /**
- * The surface's one path to the `triage.savedViews` CAS owner.
+ * The surface's path to the `triage.savedViews` CAS owner.
  *
- * A mounted surface holds a Host API with actions and no Settings member, so
- * every read, create, rename, update, delete and select leaves through here.
- * The module owns no state and makes no decision: `settings/savedViews.ts`
- * still mints the view id, validates every bound, decides the conflict verdict
- * and clears a deleted view's selection atomically. This is transport plus the
- * one thing a caller must not spell twice — what **Rename** and **Update** mean
- * in terms of the single `update` command.
+ * Two transports, one owner. A mount that can reach the reader's Account
+ * directly drives `actions/savedViews.ts` over its own Account Settings scope,
+ * so saved views keep working with no daemon reachable — a saved view is
+ * Account state, not provider data. A mount that cannot reach the Account
+ * directly invokes the same two published Actions through a daemon.
+ *
+ * Neither transport owns a decision: `settings/savedViews.ts` still mints the
+ * view id, validates every bound, decides the conflict verdict and clears a
+ * deleted view's selection atomically. This module is transport plus the one
+ * thing a caller must not spell twice — what **Rename** and **Update** mean in
+ * terms of the single `update` command.
  *
  * The lens carried here is the exact source-neutral facet vocabulary the list
  * Action queries with, passed through unreshaped. Nothing rebuilds, sorts or
@@ -52,6 +62,54 @@ export type TriageSavedViewLensV1 = Readonly<{
   order: TriageListOrderV1;
   smartPolicy: CorpusSmartPolicyV1;
 }>;
+
+/**
+ * The two saved-view operations a mounted surface performs, independent of how
+ * they reach the owner. The hook holds one of these and never branches on
+ * transport.
+ */
+export type TriageSavedViewsTransportV1 = Readonly<{
+  read(options?: PluginCancellationOptions): Promise<TriageReadSavedViewsResultV1>;
+  administer(
+    input: TriageAdministerSavedViewInputV1,
+    options?: PluginCancellationOptions,
+  ): Promise<TriageAdministerSavedViewResultV1>;
+}>;
+
+/**
+ * The direct transport: this mount's own Account Settings scope, handed to the
+ * same projection the daemon handler calls. It restates no bound, no CAS rule
+ * and no id-minting decision.
+ */
+export function createDirectTriageSavedViewsTransport(
+  settings: TriageAccountSettingsV1,
+): TriageSavedViewsTransportV1 {
+  return Object.freeze({
+    read: async (options) => await readTriageSavedViewsForSurface({ v: 1 }, {
+      settings,
+      mintViewId: mintTriageOpaqueIdV1,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    }),
+    administer: async (input, options) => await administerTriageSavedView(input, {
+      settings,
+      // Minted at the writer, which for this transport is this mount.
+      mintViewId: mintTriageOpaqueIdV1,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    }),
+  });
+}
+
+/** The daemon transport: the same owner, reached through the published Actions. */
+export function createActionTriageSavedViewsTransport(
+  host: TriageSavedViewsHostV1,
+): TriageSavedViewsTransportV1 {
+  return Object.freeze({
+    read: async (options) => await readTriageSavedViewsFromSurface(host, options),
+    administer: async (input, options) => (
+      await administerTriageSavedViewFromSurface(host, input, options)
+    ),
+  });
+}
 
 export async function readTriageSavedViewsFromSurface(
   host: TriageSavedViewsHostV1,
@@ -124,10 +182,12 @@ export function readTriageSavedViewsProjectionV1(projection: Readonly<{
 export function triageCreateSavedViewInputV1(
   label: string,
   lens: TriageSavedViewLensV1,
+  expectedRevision: string,
 ): TriageAdministerSavedViewInputV1 {
   return {
     v: 1,
     kind: 'create',
+    expectedRevision,
     label,
     filters: lens.filters,
     order: lens.order,
@@ -148,10 +208,12 @@ export function triageCreateSavedViewInputV1(
 export function triageRenameSavedViewInputV1(
   view: CorpusSavedViewV1,
   label: string,
+  expectedRevision: string,
 ): TriageAdministerSavedViewInputV1 {
   return {
     v: 1,
     kind: 'update',
+    expectedRevision,
     viewId: view.viewId,
     label,
     filters: view.filters,
@@ -164,10 +226,12 @@ export function triageRenameSavedViewInputV1(
 export function triageUpdateSavedViewInputV1(
   view: CorpusSavedViewV1,
   lens: TriageSavedViewLensV1,
+  expectedRevision: string,
 ): TriageAdministerSavedViewInputV1 {
   return {
     v: 1,
     kind: 'update',
+    expectedRevision,
     viewId: view.viewId,
     label: view.label,
     filters: lens.filters,
@@ -176,12 +240,16 @@ export function triageUpdateSavedViewInputV1(
   };
 }
 
-export function triageDeleteSavedViewInputV1(viewId: string): TriageAdministerSavedViewInputV1 {
-  return { v: 1, kind: 'delete', viewId };
+export function triageDeleteSavedViewInputV1(
+  viewId: string,
+  expectedRevision: string,
+): TriageAdministerSavedViewInputV1 {
+  return { v: 1, kind: 'delete', viewId, expectedRevision };
 }
 
 export function triageSelectSavedViewInputV1(
   viewId: string | null,
+  expectedRevision: string,
 ): TriageAdministerSavedViewInputV1 {
-  return { v: 1, kind: 'select', viewId };
+  return { v: 1, kind: 'select', viewId, expectedRevision };
 }

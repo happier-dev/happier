@@ -174,15 +174,45 @@ function TriagePickerRow(props: Readonly<{
         ? state.attachment.reason
         : state.viewDetails.kind === 'failed' ? state.viewDetails.reason : null;
 
+    const status = failure === null
+        ? attachedNow ? text('plugins.triage.picker.attached', 'Attached') : null
+        : failure;
+
     return (
         <List.Item
             title={row.title}
             subtitle={row.scopeLabel}
-            {...(failure === null
-                ? attachedNow ? { detail: text('plugins.triage.picker.attached', 'Attached') } : {}
-                : { detail: failure, tone: 'danger' as const })}
+            {...(status === null
+                ? {}
+                : failure === null
+                    ? { detail: status }
+                    : { detail: status, tone: 'danger' as const })}
+            // `core/COMPOSER.md` §2: the row is a labelled GROUP, so it names
+            // the entry once and describes the rest. Without a name of its own
+            // the platform composes one from the row's text descendants, and a
+            // reader hears "Fix the parser crashacme/webAttached" — the same
+            // run-together announcement the shell list already had to fix. The
+            // status is part of the description rather than the name because it
+            // changes while the reader is on the row, and a name that changes
+            // is a name nothing can be pointed at.
+            accessibilityLabel={row.title}
+            accessibilityHint={status === null
+                ? row.scopeLabel
+                : `${row.scopeLabel}, ${status}`}
+            // The picker's own list is virtualized too, and its rows are the
+            // same measured-average estimate the shell's are.
+            titleNumberOfLines={2}
+            subtitleNumberOfLines={1}
+            detailNumberOfLines={2}
+            // Two real controls, not a trailing affordance. At 320 pt, at the
+            // reader's largest type size, or with a long localization they take
+            // their own line under the title rather than squeezing it out, and
+            // stack one per line when even that will not hold both. Order is
+            // always Attach/Remove then View details; RTL mirrors where the
+            // line sits and nothing else.
+            accessoryWraps
             accessory={(
-                <Row gap="small" align="center">
+                <Row gap="small" align="center" wrap>
                     <Button
                         title={attachmentLabel}
                         variant="plain"

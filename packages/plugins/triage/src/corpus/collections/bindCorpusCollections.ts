@@ -1,3 +1,4 @@
+import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 
 import {
@@ -24,10 +25,27 @@ export type CorpusCollectionsV1 = Readonly<{
     userMarks: CorpusCollectionHandleV1;
 }>;
 
-export function bindCorpusCollections(account: PluginAccountStorageScope): CorpusCollectionsV1 {
+/**
+ * How one declared Collection becomes a bound handle.
+ *
+ * There are two realms that can supply one — the daemon's Account storage scope
+ * and a mounted surface's Account Data client — and exactly one place that
+ * knows WHICH three Collections exist. Keeping the definition list here is what
+ * lets the same domain writers run over either transport without a second copy
+ * of the corpus, a second identity derivation, or a second codec.
+ */
+export type CorpusCollectionBinderV1 = <TDefinition extends PluginAccountCollectionDefinition>(
+    definition: TDefinition,
+) => CorpusCollectionHandleV1;
+
+export function bindCorpusCollectionsWith(bind: CorpusCollectionBinderV1): CorpusCollectionsV1 {
     return Object.freeze({
-        sourceInstances: account.collection(CORPUS_SOURCE_INSTANCES_COLLECTION),
-        sessionLinks: account.collection(CORPUS_SESSION_LINKS_COLLECTION),
-        userMarks: account.collection(CORPUS_USER_MARKS_COLLECTION),
+        sourceInstances: bind(CORPUS_SOURCE_INSTANCES_COLLECTION),
+        sessionLinks: bind(CORPUS_SESSION_LINKS_COLLECTION),
+        userMarks: bind(CORPUS_USER_MARKS_COLLECTION),
     });
+}
+
+export function bindCorpusCollections(account: PluginAccountStorageScope): CorpusCollectionsV1 {
+    return bindCorpusCollectionsWith((definition) => account.collection(definition));
 }

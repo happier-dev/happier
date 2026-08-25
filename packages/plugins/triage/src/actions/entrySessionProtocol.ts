@@ -15,10 +15,6 @@ import {
     TriageEntryRefV1Schema,
     TriageSourceInstanceIdV1Schema,
 } from '@happier-dev/triage-protocol/v1';
-import {
-    TRIAGE_ACTION_VALUE_GATE_UTF8_BYTES_V1,
-    TRIAGE_ACTION_VALUE_MARGIN_UTF8_BYTES_V1,
-} from './actionValueBudget.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 
 /**
@@ -230,47 +226,12 @@ const TriageStartEntrySessionWorkspaceModeV1Schema = defineProtocolUnion([
 ]);
 
 /**
- * The canonical per-string ceiling inside one runtime JSON value.
- *
- * The whole-value gate above is not the boundary a single member answers to:
- * Encoded bytes consumed by every member of a maximal start input except the
- * prompt body. The aggregate maximum test re-measures this frame from the real
- * schema, so widening any sibling member invalidates the derivation here.
+ * The resolved prompt body has no Triage-owned size quota. The canonical
+ * Session-input seam and Prompt Library invocation set no smaller contract,
+ * and strict Action JSON admission has no aggregate byte ceiling.
  */
-const TRIAGE_START_ENTRY_SESSION_FIXED_FRAME_UTF8_BYTES_V1 = 457_269;
-
-/**
- * JSON's worst encoded cost for one string character.
- *
- * The Action gate counts the bytes of `JSON.stringify(value)`, not the raw
- * UTF-8 bytes of the string alone. A character requiring a `\uXXXX` escape
- * therefore costs six bytes. The maximal-value derivation exercises that case.
- */
-const WORST_CASE_ENCODED_JSON_BYTES_PER_CHARACTER_V1 = 6;
-
-/**
- * The resolved prompt body's ceiling, derived from the Action's real whole-
- * value transport rather than from an unrelated per-string runtime limit.
- *
- * Nothing smaller stands behind it: the canonical Session-input seam this text
- * is delivered through sets no length of its own
- * (`packages/protocol/src/sessions/messages/sessionInputAdmission.ts`), and the
- * Prompt Library invocation it comes from sets none either. So the boundary is
- * the one the Action transport enforces on this complete input. The fixed
- * frame and retained Action margin are paid first; every remaining worst-case
- * UTF-8 byte belongs to the user's prompt.
- */
-export const MAX_TRIAGE_START_ENTRY_SESSION_PROMPT_CHARACTERS_V1 =
-    Math.floor(
-        (TRIAGE_ACTION_VALUE_GATE_UTF8_BYTES_V1
-            - TRIAGE_ACTION_VALUE_MARGIN_UTF8_BYTES_V1
-            - TRIAGE_START_ENTRY_SESSION_FIXED_FRAME_UTF8_BYTES_V1)
-        / WORST_CASE_ENCODED_JSON_BYTES_PER_CHARACTER_V1,
-    );
-
 const triagePromptBody = defineProtocolString({
     minLength: 1,
-    maxLength: MAX_TRIAGE_START_ENTRY_SESSION_PROMPT_CHARACTERS_V1,
 });
 
 /**

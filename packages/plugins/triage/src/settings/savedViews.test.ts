@@ -8,9 +8,7 @@ import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../corpus/query/smartPolicy.js';
 import {
     CORPUS_EMPTY_SAVED_VIEWS_V1,
     MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1,
-    MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1,
     MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1,
-    MAX_TRIAGE_SAVED_VIEWS_V1,
     TRIAGE_SAVED_VIEWS_SETTING_ID_V1,
     mutateTriageSavedViews,
     parseTriageSavedViews,
@@ -22,6 +20,13 @@ const SOURCE = Object.freeze({ pluginId: 'happier.example.source', localId: 'exa
 
 function filters(overrides: Partial<SurfaceFilterSelectionV1> = {}): SurfaceFilterSelectionV1 {
     return { ...TRIAGE_LIST_NO_FILTERS_V1, ...overrides };
+}
+
+function scopeValues(count: number) {
+    return Array.from({ length: count }, (_unused, index) => ({
+        source: SOURCE,
+        collisionScope: `example/${'r'.repeat(120)}-${index}`,
+    }));
 }
 
 function mintIds(): () => string {
@@ -45,6 +50,7 @@ async function create(
     void fixture;
     return await mutateTriageSavedViews(deps, {
         kind: 'create',
+        expectedRevision: fixture.revision(),
         label,
         filters: overrides.filters ?? filters(),
         order: overrides.order ?? 'newest',
@@ -72,8 +78,7 @@ describe('parseTriageSavedViews', () => {
      * The reader meets the same whole-value bound the writer enforces.
      *
      * A reader that accepted what its own writer refuses is how a stored value
-     * this build never produced returns an Action result past the host's 1 MiB
-     * gate — and that gate rejects the result whole, so the user would lose
+     * this build never produced does not silently enter the readable set, so the user would lose
      * every saved view instead of getting the honest `unreadable` answer.
      */
     it('refuses a stored value larger than the bound its own writer enforces', () => {
@@ -97,6 +102,36 @@ describe('parseTriageSavedViews', () => {
 });
 
 describe('mutateTriageSavedViews', () => {
+    it('refuses a stale full-view draft instead of overwriting a newer rename', async () => {
+        const fixture = createTestkitAccountSettings();
+        const deps = createDeps(fixture);
+        const created = await create(fixture, deps, 'Original name');
+        if (created.status !== 'applied') throw new Error('setup failed');
+
+        // Both editors opened the same durable document revision. A renames the
+        // view, then B submits the stale full draft it formed before that rename.
+        const shared = await readTriageSavedViews({ settings: fixture.settings });
+        const original = shared.value.views[0];
+        if (original === undefined) throw new Error('setup failed');
+        const command = (label: string, order: 'newest' | 'oldest') => ({
+            kind: 'update' as const,
+            viewId: original.viewId,
+            label,
+            filters: original.filters,
+            order,
+            smartPolicy: original.smartPolicy,
+            expectedRevision: shared.revision,
+        });
+
+        expect(await mutateTriageSavedViews(deps, command('Renamed by A', 'newest')))
+            .toMatchObject({ status: 'applied' });
+        expect(await mutateTriageSavedViews(deps, command('Original name', 'oldest')))
+            .toEqual({ status: 'conflict' });
+
+        const after = await readTriageSavedViews({ settings: fixture.settings });
+        expect(after.value.views[0]).toMatchObject({ label: 'Renamed by A', order: 'newest' });
+    });
+
     it('restores the selected saved view exactly after restart and clears selection when it is deleted', async () => {
         const fixture = createTestkitAccountSettings();
         const deps = createDeps(fixture);
@@ -126,7 +161,9 @@ describe('mutateTriageSavedViews', () => {
         });
 
         // Deleting the selected view clears the selection in the same write.
-        const deleted = await mutateTriageSavedViews(deps, { kind: 'delete', viewId: second.viewId });
+        const deleted = await mutateTriageSavedViews(deps, {
+            kind: 'delete', viewId: second.viewId, expectedRevision: fixture.revision(),
+        });
         expect(deleted.status).toBe('applied');
         const afterDelete = await readTriageSavedViews({ settings: fixture.settings });
         expect(afterDelete.value.selectedViewId).toBeNull();
@@ -139,11 +176,17 @@ describe('mutateTriageSavedViews', () => {
             .toMatchObject({ selectedViewId: null });
 
         // Deleting an unselected view leaves the selection alone.
-        await mutateTriageSavedViews(deps, { kind: 'select', viewId: first.viewId });
+        await mutateTriageSavedViews(deps, {
+            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(),
+        });
         const third = await create(fixture, deps, 'Third');
         if (third.status !== 'applied') return;
-        await mutateTriageSavedViews(deps, { kind: 'select', viewId: first.viewId });
-        await mutateTriageSavedViews(deps, { kind: 'delete', viewId: third.viewId });
+        await mutateTriageSavedViews(deps, {
+            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(),
+        });
+        await mutateTriageSavedViews(deps, {
+            kind: 'delete', viewId: third.viewId, expectedRevision: fixture.revision(),
+        });
         expect((await readTriageSavedViews({ settings: fixture.settings })).value.selectedViewId)
             .toBe(first.viewId);
     });
@@ -156,20 +199,28 @@ describe('mutateTriageSavedViews', () => {
         if (first.status !== 'applied' || second.status !== 'applied') return;
         expect(first.viewId).not.toBe(second.viewId);
 
-        await mutateTriageSavedViews(deps, { kind: 'select', viewId: second.viewId });
-        await mutateTriageSavedViews(deps, { kind: 'delete', viewId: first.viewId });
+        await mutateTriageSavedViews(deps, {
+            kind: 'select', viewId: second.viewId, expectedRevision: fixture.revision(),
+        });
+        await mutateTriageSavedViews(deps, {
+            kind: 'delete', viewId: first.viewId, expectedRevision: fixture.revision(),
+        });
 
         // An index- or label-keyed selection would now name the wrong view.
         const after = await readTriageSavedViews({ settings: fixture.settings });
         expect(after.value.selectedViewId).toBe(second.viewId);
         expect(after.value.views).toHaveLength(1);
-        expect(await mutateTriageSavedViews(deps, { kind: 'select', viewId: first.viewId }))
+        expect(await mutateTriageSavedViews(deps, {
+            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(),
+        }))
             .toEqual({ status: 'unknownView' });
-        expect(await mutateTriageSavedViews(deps, { kind: 'delete', viewId: first.viewId }))
+        expect(await mutateTriageSavedViews(deps, {
+            kind: 'delete', viewId: first.viewId, expectedRevision: fixture.revision(),
+        }))
             .toEqual({ status: 'unknownView' });
     });
 
-    it('enforces label, view count, facet cardinality and whole-value bounds before CAS', async () => {
+    it('enforces label, duplicate identity and whole-value bounds before CAS', async () => {
         const fixture = createTestkitAccountSettings();
         const deps = createDeps(fixture);
 
@@ -196,20 +247,15 @@ describe('mutateTriageSavedViews', () => {
             .toEqual({ status: 'rejected', reason: 'label' });
         expect(await create(fixture, deps, '本'.repeat(42))).toMatchObject({ status: 'applied' });
 
-        // Facet cardinality: 16 accepted, 17 rejected, duplicates rejected by
-        // canonical identity rather than by object reference.
-        const scopeValues = (count: number) => Array.from({ length: count }, (_unused, index) => ({
-            source: SOURCE,
-            // Padded so the whole-value bound is reached by a set of
-            // individually valid views rather than by one oversized member.
-            collisionScope: `example/${'r'.repeat(120)}-${index}`,
-        }));
+        // Facet cardinality is governed by the complete serialized value, not
+        // an independent member count. Duplicates still reject by canonical
+        // identity rather than by object reference.
         expect(await create(fixture, deps, 'Sixteen scopes', {
-            filters: filters({ scopes: scopeValues(MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1) }),
+            filters: filters({ scopes: scopeValues(16) }),
         })).toMatchObject({ status: 'applied' });
         expect(await create(fixture, deps, 'Seventeen scopes', {
-            filters: filters({ scopes: scopeValues(MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 + 1) }),
-        })).toEqual({ status: 'rejected', reason: 'facetLimit' });
+            filters: filters({ scopes: scopeValues(17) }),
+        })).toMatchObject({ status: 'applied' });
         expect(await create(fixture, deps, 'Duplicate scopes', {
             filters: filters({
                 scopes: [
@@ -223,18 +269,19 @@ describe('mutateTriageSavedViews', () => {
         })).toEqual({ status: 'rejected', reason: 'duplicateFacetValue' });
 
         // Nothing above reached the Settings record.
-        expect(fixture.setCallCount()).toBe(writesBeforeRejections + 2);
+        expect(fixture.setCallCount()).toBe(writesBeforeRejections + 3);
 
         // The whole serialized value is bounded, not each member: a set of
         // individually valid views that together overflow is rejected.
         const wide = createTestkitAccountSettings();
         const wideDeps = createDeps(wide);
         let overflowed: string | null = null;
-        for (let index = 0; index < MAX_TRIAGE_SAVED_VIEWS_V1; index += 1) {
+        for (let index = 0; index < 1_000; index += 1) {
             const result = await mutateTriageSavedViews(wideDeps, {
                 kind: 'create',
+                expectedRevision: wide.revision(),
                 label: `view ${index}`,
-                filters: filters({ scopes: scopeValues(MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1) }),
+                filters: filters({ scopes: scopeValues(17) }),
                 order: 'newest',
                 smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1,
             });
@@ -249,16 +296,25 @@ describe('mutateTriageSavedViews', () => {
             .toBeLessThanOrEqual(MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1);
     });
 
-    it('rejects the thirty-third view rather than trimming the set', async () => {
+    it('admits a thirty-third view when the serialized Settings value still fits', async () => {
         const fixture = createTestkitAccountSettings();
         const deps = createDeps(fixture);
-        for (let index = 0; index < MAX_TRIAGE_SAVED_VIEWS_V1; index += 1) {
+        for (let index = 0; index < 33; index += 1) {
             expect(await create(fixture, deps, `view ${index}`)).toMatchObject({ status: 'applied' });
         }
-        expect(await create(fixture, deps, 'one too many'))
-            .toEqual({ status: 'rejected', reason: 'viewLimit' });
         expect((await readTriageSavedViews({ settings: fixture.settings })).value.views)
-            .toHaveLength(MAX_TRIAGE_SAVED_VIEWS_V1);
+            .toHaveLength(33);
+    });
+
+    it('admits more than sixteen values in a facet while the complete saved value fits', async () => {
+        const fixture = createTestkitAccountSettings();
+        const deps = createDeps(fixture);
+
+        expect(await create(fixture, deps, 'Broad scope', {
+            filters: filters({ scopes: scopeValues(17) }),
+        })).toMatchObject({ status: 'applied' });
+        expect((await readTriageSavedViews({ settings: fixture.settings })).value.views[0]?.filters.scopes)
+            .toHaveLength(17);
     });
 
     it('rejects an order or Smart policy outside the closed vocabulary', async () => {
@@ -266,6 +322,7 @@ describe('mutateTriageSavedViews', () => {
         const deps = createDeps(fixture);
         expect(await mutateTriageSavedViews(deps, {
             kind: 'create',
+            expectedRevision: fixture.revision(),
             label: 'Bad order',
             filters: filters(),
             order: 'attention' as unknown as 'newest',
@@ -273,6 +330,7 @@ describe('mutateTriageSavedViews', () => {
         })).toEqual({ status: 'rejected', reason: 'order' });
         expect(await mutateTriageSavedViews(deps, {
             kind: 'create',
+            expectedRevision: fixture.revision(),
             label: 'Bad policy',
             filters: filters(),
             order: 'smart',
@@ -285,6 +343,7 @@ describe('mutateTriageSavedViews', () => {
         const deps = createDeps(fixture);
         const created = await mutateTriageSavedViews(deps, {
             kind: 'create',
+            expectedRevision: fixture.revision(),
             label: 'Activity first',
             filters: filters(),
             order: 'smart',
@@ -294,6 +353,7 @@ describe('mutateTriageSavedViews', () => {
 
         const updated = await mutateTriageSavedViews(deps, {
             kind: 'update',
+            expectedRevision: fixture.revision(),
             viewId: created.viewId,
             label: 'Activity first',
             filters: filters(),
@@ -323,6 +383,7 @@ describe('mutateTriageSavedViews', () => {
         });
         const result = await mutateTriageSavedViews(deps, {
             kind: 'create',
+            expectedRevision: fixture.revision(),
             label: 'Ours',
             filters: filters(),
             order: 'newest',
@@ -370,6 +431,7 @@ describe('mutateTriageSavedViews', () => {
 
             await expect(mutateTriageSavedViews(deps, {
                 kind: 'create',
+                expectedRevision: fixture.revision(),
                 label: 'Mine',
                 filters: filters(),
                 order: 'newest',

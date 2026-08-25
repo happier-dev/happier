@@ -19,7 +19,6 @@ import {
 } from '../testing/v1/maximumEncodedValue.js';
 import {
     MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
-    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 } from './bounds.js';
 import { TriageReadConfiguredSourceInstancesResultV1Schema } from './configuredInstances.js';
@@ -65,63 +64,14 @@ import {
  */
 
 /**
- * The canonical ceiling every contributed Action input and result crosses,
- * owned by `packages/protocol/src/runtime/agentSessionLimitsV1.ts`
- * (`p0MeasuredCandidates.jsonValueMaxJsonBytes`) and enforced by
- * `AgentRuntimeJsonValueV1Schema` in
- * `packages/protocol/src/runtime/agentSessionV1.ts`, which
- * `packages/protocol/src/plugins/actions/invocation.ts` parses every plugin
- * Action input and result through before the manifest `resultSchema` is
- * consulted. It rejects an oversized value rather than truncating it. It is
- * referenced by value because `@happier-dev/protocol` is deliberately outside
- * this package's feature-protocol import allowlist; the Triage target's
- * `actions/maximumEncodedActionValue.test.ts` measures the same values through
- * that schema itself, so a relocation of the ceiling is caught there.
- *
- * It measures serialized UTF-8 JSON bytes, which is exactly what
- * `JSON.stringify` produces here.
- */
-const ACTION_JSON_BYTE_GATE = 1_024 * 1_024;
-
-/**
- * The framing the host adds around a derived value on the way to that gate —
- * measured, not reserved.
- *
- * Three facts fix it at zero:
- *
- * - the gate owner measures exactly the one value handed to it. Its serializer
- *   emits `JSON.stringify` for every scalar and plain `{}[]",:` for structure,
- *   so the totals below are the host's own measurement of the same value
- *   rather than an approximation of it, and it throws instead of truncating;
- * - the value handed to it is the operation value itself. `contribution.ts`
- *   declares each operation's `input.schema` as the whole Action input and its
- *   `resultSchema` as the whole Action result; the test below pins that, so a
- *   later envelope with sibling members fails here rather than eating headroom
- *   nobody budgeted;
- * - nothing may be added to one. Every measured value is a closed object, and
- *   `deriveMaximumEncodedBytes` throws when an unknown property survives
- *   parsing — so a host member added beside the declared ones is rejected by
- *   the source, never carried into a result this derivation measured short.
- *
- * The predecessor of this constant reserved half the gate for framing that was
- * never measured, and that reserve — not the gate — was what held
- * `MAX_TRIAGE_TEXT_UTF8_BYTES_V1` at a width no non-Latin title fits. What
- * keeps a later additive field from quietly spending the difference is the pin
- * on every total below: it fails on the byte rather than on a fraction, and it
- * fails whether the value is near the gate or far from it.
- */
-const MEASURED_HOST_FRAMING_BYTES = 0;
-const ADMITTED_ENCODED_BYTES = ACTION_JSON_BYTE_GATE - MEASURED_HOST_FRAMING_BYTES;
-
-/**
  * The effective private-envelope ceiling of one persisted row, owned by
  * `packages/protocol/src/plugins/data/collectionLimitsV1.ts`
  * (`maximumPrivateEnvelopeEncodedBytes`).
  *
  * Only genuine user state is persisted at an Account: the canonical entry
  * reference a pin or Session link names, and the configured source instance.
- * Provider-derived observations are not a persisted corpus, so they are
- * measured against the Action gate above and never against this ceiling.
+ * Provider-derived observations are not a persisted corpus and never meet
+ * this ceiling.
  */
 const PRIVATE_ENVELOPE_CEILING_BYTES = 512 * 1024;
 
@@ -195,7 +145,7 @@ describe('worst-case JSON escaping', () => {
         //
         // `instanceId` LEFT this set with the Composer-origin `originComposer`
         // address, which now lives only in Triage's own closed private launch
-        // input (PEP `03d1` §17.8) and never crosses this Action gate. The
+        // input (PEP `03d1` §17.8). The
         // remaining `sessionId` is the linked-Session projection's own.
         expect(sixfold).toEqual([
             'accountId',
@@ -320,72 +270,20 @@ describe('the derivation follows the schema', () => {
 });
 
 describe('maximum encoded value derivation', () => {
-    it('derives the exact maximum encoded bytes of every value that crosses the gate', () => {
+    it('derives the exact maximum encoded bytes of every finite operation shape', () => {
         // Pinned so that any bound, count, field, or grammar change reruns the
         // derivation instead of silently consuming the remaining headroom.
         expect(derivedMaxima).toEqual({
-            presentObservation: 11_219,
-            scanPage: 726_672,
+            presentObservation: 12_054,
+            scanPage: 780_112,
             getInput: 11_496,
             listInstancesResult: 360_213,
-            detailInput: 91_691,
+            detailInput: 467_537,
             descriptor: 77_955,
             prepareReviewWorkspaceInput: 11_993,
             administrationInput: 7_775,
             readConfiguredInstancesResult: 266_066,
         });
-    });
-
-    it('keeps every derived maximum below the gate the host actually enforces', () => {
-        for (const [label, bytes] of Object.entries(derivedMaxima)) {
-            expect(
-                bytes,
-                `${label} must stay below the Action gate once host framing is counted`,
-            ).toBeLessThan(ADMITTED_ENCODED_BYTES);
-        }
-    });
-
-    /**
-     * The assertion above is only worth its line if a real breach reaches it.
-     * Raising the page count — the one bound that multiplies every per-entry
-     * byte — is the cheapest true breach, and it has to fail without any help
-     * from a pinned total.
-     */
-    it('fails on a real breach rather than only on a changed pin', () => {
-        const page = TriageScanResultV1Schema.jsonSchema.anyOf?.[0];
-        const observations = page?.properties?.observations;
-        if (page === undefined || observations?.maxItems === undefined) {
-            throw new Error('the scan page no longer carries a bounded observations array');
-        }
-        const breached = buildMaximalSchemaValue({
-            ...page,
-            properties: {
-                ...page.properties,
-                observations: { ...observations, maxItems: observations.maxItems * 3 },
-            },
-        }, 'breachedScanPage');
-
-        expect(encodedJsonBytes(breached)).toBeGreaterThan(ADMITTED_ENCODED_BYTES);
-    });
-
-    /**
-     * Headroom is only meaningful in the unit that would spend it. The one
-     * thing that consumes it at scale is another display string on every
-     * entry: a single-line string expands at most twofold
-     * (`TRIAGE_SINGLE_LINE_STRING_PATTERN_V1` is what buys that), so one costs
-     * the page count times the display bound times two. Stating the margin
-     * this way is what makes it re-decidable — a V1 that wants a seventh or an
-     * eighth row string beside today's six can see here whether it still has
-     * the room, instead of discovering the gate at runtime.
-     */
-    it('leaves the binding value room for several more per-entry display strings', () => {
-        const perEntryDisplayString = MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1
-            * MAX_TRIAGE_TEXT_UTF8_BYTES_V1
-            * 2;
-
-        expect(Math.floor(
-            (ADMITTED_ENCODED_BYTES - derivedMaxima.scanPage) / perEntryDisplayString,
-        )).toBeGreaterThanOrEqual(4);
     });
 
     it('keeps a full scan page the largest value, so the page count is the binding bound', () => {

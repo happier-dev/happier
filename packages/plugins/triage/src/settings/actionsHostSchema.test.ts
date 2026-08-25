@@ -82,13 +82,13 @@ describe('the declared triage.actions field and its one owner', () => {
         }, {
             kind: 'update',
             expectedRevision: account.revision(),
-            actionId: 'code-review',
-            label: 'Run code review',
+            actionId: 'review',
+            label: 'Review',
             enabled: true,
             appliesTo: ['pullRequest'],
             profileId: null,
-            workspaceMode: 'pull_request',
-            target: { kind: 'reviewStart', promptInvocationId: null },
+            workspaceMode: 'repository',
+            target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
         });
 
         expect(result.status).toBe('applied');

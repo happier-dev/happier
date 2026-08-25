@@ -45,26 +45,10 @@ import {
 /**
  * How many rows one assembled window carries.
  *
- * It is the aggregate's own budget, derived from the aggregate's own gate — not
- * the source scan page's count. Aliasing the two was arithmetic coincidence
- * rather than a derivation: a scan page carries one snapshot per entry, while a
- * list row carries that snapshot plus the locator, the viewer facts the mounted
- * store re-derives attention from, the cross-connection roll-up and the other
- * connections' answers. A window of N rows is therefore strictly larger than a
- * scan page of N entries, so one count cannot answer for both — and when
- * `MAX_TRIAGE_TEXT_UTF8_BYTES_V1` widened to fit non-Latin titles, the scan
- * page still fit its gate while the list result no longer fit this one.
- *
- * The list result is rejected **whole** at 1 MiB, before the manifest result
- * schema is ever consulted (`packages/protocol/src/plugins/actions/invocation.ts`
- * parses through `AgentRuntimeJsonValueV1Schema` first), so a window one byte
- * over shows the user no list at all rather than a shorter one. This count is
- * therefore chosen to keep the derived maximum inside the gate with the same
- * proportion of headroom the aggregate carried before the display bound moved,
- * rather than spending the gate to its last byte: the next additive field would
- * otherwise fail at a user's transport boundary instead of in the derivation.
- * `actions/maximumEncodedActionValue.test.ts` is where that arithmetic is paid
- * for, and it fails loudly the moment any bound beneath it moves again.
+ * This is the explicit V1 page-size contract retained by `PLAN.md` §0a A9.
+ * It bounds one provider-work/result page; cross-invocation paging appends more
+ * pages into the mounted projection. It is independent of strict JSON Action
+ * admission, which has no aggregate byte quota.
  */
 export const MAX_TRIAGE_LIST_WINDOW_ROWS_V1 = 56;
 
@@ -526,4 +510,35 @@ export function foldTriageListWindow(input: Readonly<{
         coverage: complete ? 'complete' : 'partial',
         assembledAtMs: input.assembledAtMs,
     });
+}
+
+/**
+ * Rejoin one exact post-mutation observation through the ordinary aggregate fold.
+ *
+ * The targeted `get` replaces only its connection's older answer. Content selection, presence,
+ * attention, lane and source selection are recomputed by the same owner as a list pass; this
+ * function deliberately contains none of those decisions itself.
+ */
+export function foldTriagePostMutationObservation(input: Readonly<{
+    row: TriageListRowV1;
+    observation: CorpusQualifiedObservationV1;
+    /** Current configured-source lanes; observations outside this set are retained but retired. */
+    lanes: readonly TriageListLaneV1[];
+    assembledAtMs: number;
+}>): TriageListRowV1 | null {
+    if (triageEntryRowKey(input.row.entryRef) !== triageEntryRowKey(input.observation.entryRef)) {
+        return null;
+    }
+    const retained: CorpusQualifiedObservationV1[] = input.row.observations
+        .filter((observation) => observation.sourceInstanceId !== input.observation.sourceInstanceId)
+        .map((observation) => ({ ...observation, entryRef: input.row.entryRef }));
+    const folded = foldTriageListWindow({
+        observations: [...retained, input.observation],
+        lanes: input.lanes,
+        configuredSourcesStatus: 'complete',
+        activeSourceInstanceIds: input.lanes.map((lane) => lane.sourceInstanceId),
+        lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1, limit: 1 },
+        assembledAtMs: input.assembledAtMs,
+    });
+    return folded.rows[0] ?? null;
 }

@@ -14,6 +14,10 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
+    "./targeted-contributions": {
+      "types": "./dist/targetedContributions.d.ts",
+      "default": "./dist/targetedContributions.js"
+    },
     "./happier-plugin-ui/*": "./dist/happier-plugin-ui/*"
   },
   "files": [
@@ -35,10 +39,11 @@
   "dependencies": {
     "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/plugin-ui": "0.0.0",
-    "@happier-dev/triage-protocol": "0.0.0"
+    "@happier-dev/protocol": "0.0.0",
+    "@happier-dev/triage-protocol": "0.0.0",
+    "@happier-dev/triage-sources": "0.0.0"
   },
   "devDependencies": {
-    "@happier-dev/protocol": "0.0.0",
     "@callstack/repack": "5.2.5",
     "@react-native-community/cli": "20.1.2",
     "@react-native/metro-config": "0.83.5",

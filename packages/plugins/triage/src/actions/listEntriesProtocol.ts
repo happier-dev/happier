@@ -27,7 +27,6 @@ import {
 
 import { MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
-import { MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 } from '../settings/savedViews.js';
 
 /**
  * The strict input and result contract of the one aggregate PRs & Issues list
@@ -71,14 +70,13 @@ const triageText = defineProtocolUtf8String({
 /**
  * One filter facet on the wire.
  *
- * It is bounded by the saved-view owner's own facet maximum rather than by a
- * second number: `savedViews.ts` rejects a view whose facet exceeds it, so a
- * wider wire array could only ever carry a lens that could not be saved — and a
- * facet the list would query with but the user could never keep is two
- * spellings of one vocabulary.
+ * It has no independent member-count ceiling. The saved-view form remains
+ * bounded by its local 64 KiB serialized Settings value. Adding another count here
+ * would make a valid lens behave differently depending on whether it was live,
+ * routed, or saved.
  */
 const facetArray = <TSchema extends Parameters<typeof defineProtocolArray>[0]>(schema: TSchema) => (
-    defineProtocolArray(schema, { maxItems: MAX_TRIAGE_SAVED_VIEW_FACET_VALUES_V1 })
+    defineProtocolArray(schema)
 );
 
 /**
@@ -149,6 +147,32 @@ const TriageListSourceSelectionV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
 ]);
 
+/**
+ * One lane's frontier, named by the lane it belongs to.
+ *
+ * The pairing is the whole point: a bare continuation cannot say whose walk it
+ * continues, which is why the predecessor could only carry one and only for a
+ * request that named one connection. Naming the lane is what lets a mixed
+ * multi-source window page through the same rotation that loaded it.
+ *
+ * A token is opaque here and stays opaque: nothing in this target decodes it,
+ * orders by it, or derives anything from it.
+ */
+const TriageLaneContinuationV1Schema = defineProtocolObject({
+    sourceInstanceId: TriageSourceInstanceIdV1Schema,
+    continuation: TriageScanContinuationV1Schema,
+}, { policy: 'closed' });
+
+/**
+ * The explicit page-size contract, independent of how many lane continuations
+ * accompany the result. Strict Action JSON admission has no aggregate byte
+ * quota, so shrinking a page to pay for continuation bytes would manufacture a
+ * second, unsupported limit beneath `MAX_TRIAGE_LIST_WINDOW_ROWS_V1`.
+ */
+export function triageListRowBudgetV1(_laneCount: number): number {
+    return MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
+}
+
 export const TriageListEntriesInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     sources: TriageListSourceSelectionV1Schema,
@@ -170,31 +194,40 @@ export const TriageListEntriesInputV1Schema = defineProtocolObject({
      */
     smartPolicy: TriageSmartPolicyV1Schema.optional(),
     /**
-     * Resume ONE connection's walk where a previous bounded invocation stopped.
+     * Resume each named connection's walk where a previous bounded invocation
+     * stopped.
      *
-     * It is the source's own `TriageScanContinuationV1` and nothing else: no
-     * second cursor type is minted here, no epoch or delivered-id set rides
-     * along, and nothing durable is created. `INV-03` is about *persistence and
-     * custody* — a continuation may not outlive the process or be checkpointed —
-     * and this member does not create either: the caller that sends one is a
-     * mounted surface holding it in memory for the length of one mount, and a
-     * lost process simply starts at the first page again.
+     * Every member is the source's own `TriageScanContinuationV1` and nothing
+     * else: no second cursor type is minted here, no epoch or delivered-id set
+     * rides along, and nothing durable is created. `INV-03` is about
+     * *persistence and custody* — a continuation may not outlive the process or
+     * be checkpointed — and this member creates neither: the caller that sends
+     * one is a mounted surface holding it in memory for the length of one
+     * mount, and a lost process simply starts at the first page again.
      *
-     * It names no connection because it cannot address more than one. A
-     * continuation belongs to a single source's walk, so this member is admitted
-     * only for a request that selects exactly one source instance; a request
-     * that carries one alongside a wider selection is refused rather than
-     * silently applied to whichever lane happened to sort first. That is also
-     * what keeps this Action's result inside the host byte gate: one
-     * continuation costs about eight kilobytes encoded, and one per configured
-     * connection would put a maximal result a quarter of a megabyte OVER the
-     * 1 MiB ceiling that rejects it whole.
+     * It is a MAP rather than one token, and each entry names its own lane, so a
+     * mixed multi-source request pages exactly the way its first page loaded —
+     * through the same `scanPass` rotation, with every lane resuming its own
+     * frontier. The predecessor admitted a single token only for a request that
+     * selected exactly one instance, on the arithmetic that thirty-two maximal
+     * tokens would exceed the host byte gate. That derivation was circular:
+     * `MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1` is generous precisely because it
+     * is "never multiplied", and multiplying it to manufacture a product
+     * restriction is what the ruling in `PLAN.md` §0a A9 withdrew. The whole
+     * set is paid for against the one real boundary instead, before the walk —
+     * see `triageListRowBudgetV1`.
+     *
+     * A token naming a connection this request does not walk is ignored rather
+     * than refused. It is a stale frontier, not a malformed request, and
+     * refusing the invocation over one would cost the caller the whole list.
      *
      * The row bound is unchanged and deliberately not the paging mechanism: a
      * deeper window is successive bounded invocations appended by the caller,
      * never a larger `limit`.
      */
-    resume: TriageScanContinuationV1Schema.optional(),
+    resume: defineProtocolArray(TriageLaneContinuationV1Schema, {
+        maxItems: MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+    }).optional(),
     /** The settled search text. */
     query: triageText.optional(),
     filters: TriageListFilterSelectionV1Schema.optional(),
@@ -217,7 +250,7 @@ const TriageObservationKindV1Schema = defineProtocolUnion([
  * shape at exactly `{ kind, localRef }` and makes the operation the basis,
  * because only an authoritative `get` may answer `absent` at all.
  */
-const TriageProjectedObservationV1Schema = defineProtocolObject({
+export const TriageProjectedObservationV1Schema = defineProtocolObject({
     sourceInstanceId: TriageSourceInstanceIdV1Schema,
     observedAtMs: defineProtocolNumber({ integer: true, minimum: 0 }),
     outcome: defineProtocolUnion([
@@ -248,6 +281,9 @@ const TriageProjectedObservationV1Schema = defineProtocolObject({
         }, { policy: 'closed' }),
     ]),
 }, { policy: 'closed' });
+export type TriageProjectedObservationV1 = ReturnType<
+    typeof TriageProjectedObservationV1Schema.parse
+>;
 
 /**
  * How many *other* connections one row reports individually.
@@ -256,22 +292,15 @@ const TriageProjectedObservationV1Schema = defineProtocolObject({
  * two configured connections is one entry with two observations, and a row that
  * named only one of them would erase the second connection from the product.
  *
- * The bound exists because the row's content does not fit twice. Every Action
- * result crosses a hard 1 MiB host gate that rejects the whole value rather
- * than truncating it, and a maximal window already spends four fifths of that
- * gate on one snapshot per row. Carrying a second full snapshot for each of
- * `MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1` connections would exceed the gate
- * more than twentyfold, so every list a user with several connections opened
- * would fail outright. What the row carries instead is the rendered
+ * The compact projection avoids multiplying full provider content into every
+ * row. What the row carries instead is the rendered
  * connection's answer in full and every other connection's answer in one line;
  * the full per-connection content is a detail read, under the exact connection
  * chosen, which is where the account authority to make it lives anyway.
  *
- * Four is the count that keeps the maximal window inside the gate with room
- * left over, and `observedByCount` is what keeps a wider set honest rather than
- * silent: a row observed through more connections than this still says how
- * many. `actions/maximumEncodedActionValue.test.ts` is where that arithmetic is
- * checked against the owner that actually enforces it.
+ * Four is a picked presentation count, and `observedByCount` is what keeps a
+ * wider set honest rather than silent: a row observed through more connections
+ * than this still says how many.
  */
 export const MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1 = 4;
 
@@ -428,25 +457,26 @@ export const TriageListEntriesResultV1Schema = defineProtocolObject({
             defineProtocolLiteral('partial'),
         ]),
         /**
-         * Where the selected connection's walk stopped, when it stopped with
+         * Where each walked connection stopped, for every lane that stopped with
          * more to give and nothing wrong.
          *
-         * Present exactly when the request selected one source instance, that
-         * lane's own row bound ended its rotation, and the lane neither
-         * exhausted nor failed. A failed or deadline-stopped lane offers none:
-         * resuming a walk that broke is not paging, and the next cycle asks it
-         * again from the first page.
+         * One entry per such lane, so a mixed multi-source window is paged the
+         * same way it was loaded rather than one connection at a time. A lane
+         * that exhausted, failed, timed out or broke the page contract offers
+         * none: resuming a walk that broke is not paging, and the next cycle
+         * asks it again from the first page.
          *
-         * It is a single member rather than one per lane, and the reason is
-         * measurable rather than stylistic. A maximal continuation encodes to
-         * about 8,210 bytes; one per configured connection is about 263 KB,
-         * which puts the maximal result of this Action roughly 88 KB OVER the
-         * 1 MiB gate that rejects it whole — so a user with many connections
-         * would get no list at all. One continuation costs the gate about eight
-         * kilobytes and leaves the headroom
-         * `actions/maximumEncodedActionValue.test.ts` pins intact.
+         * The array is bounded by the lane count, which is the most frontiers
+         * that can exist, and NOTHING cuts it: `triageListRowBudgetV1` reserved
+         * the bytes for every one of them before the walk, so the whole set
+         * always fits beside the window it belongs to. A set that lost its tail
+         * would starve exactly the lanes that lost it, on every page, forever
+         * (`PLAN.md` §0a A9a). The result is never rejected whole over a paging
+         * token either: whole-result rejection is the other harm.
          */
-        continuation: TriageScanContinuationV1Schema.optional(),
+        continuations: defineProtocolArray(TriageLaneContinuationV1Schema, {
+            maxItems: MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+        }).optional(),
         assembledAtMs: defineProtocolNumber({ integer: true, minimum: 0 }),
     }, { policy: 'closed' }),
 }, { policy: 'closed' });

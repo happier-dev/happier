@@ -1,7 +1,7 @@
 import type { PluginCancellationOptions, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import {
-    MAX_TRIAGE_LINKED_SESSIONS_V1,
+    MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     type TriageEntryRefV1,
     type TriageLinkedSessionProjectionV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -91,21 +91,24 @@ export type TriageReadEntryDetailDepsV1 = Readonly<{
 /**
  * One bounded page of this entry's links, over the declared `by-entry` index.
  *
- * The bound is the published projection maximum, and the walk stops there: the
- * detail input cannot carry more, and asking for further pages would spend
- * Session reads on rows no renderer will ever see.
+ * The bound is one generic Collection page. The Collection cursor is projected
+ * as `hasMore`, so the detail remains explicit when additional links exist
+ * without silently truncating the result.
  */
 async function readLinkedSessions(
     entryRef: TriageEntryRefV1,
     deps: TriageReadEntryDetailDepsV1,
     options?: PluginCancellationOptions,
-): Promise<readonly TriageLinkedSessionProjectionV1[]> {
+): Promise<Readonly<{
+    sessions: readonly TriageLinkedSessionProjectionV1[];
+    hasMore: boolean;
+}>> {
     const entryTag = await deriveSessionLinkEntryTag(deps.sessionLinks, entryRef, options);
     const page = await deps.sessionLinks.query({
         index: CORPUS_SESSION_LINKS_INDEX_ID.byEntry,
         prefix: [entryTag],
         order: 'asc',
-        limit: MAX_TRIAGE_LINKED_SESSIONS_V1,
+        limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     }, options);
 
     const projections: TriageLinkedSessionProjectionV1[] = [];
@@ -125,7 +128,10 @@ async function readLinkedSessions(
             ...(summary?.updatedAtMs === undefined ? {} : { updatedAtMs: summary.updatedAtMs }),
         }));
     }
-    return Object.freeze(projections);
+    return Object.freeze({
+        sessions: Object.freeze(projections),
+        hasMore: page.nextCursor !== undefined,
+    });
 }
 
 export async function readTriageEntryDetail(
@@ -155,7 +161,7 @@ export async function readTriageEntryDetail(
         return UNAVAILABLE;
     }
 
-    const [linkedSessions, admitted] = await Promise.all([
+    const [linkedSessionPage, admitted] = await Promise.all([
         readLinkedSessions(input.entryRef, deps, options),
         deps.readAdmittedSources(options),
     ]);
@@ -169,7 +175,8 @@ export async function readTriageEntryDetail(
     return Object.freeze({
         kind: 'read',
         instance: configured,
-        linkedSessions,
+        linkedSessions: linkedSessionPage.sessions,
+        linkedSessionsHasMore: linkedSessionPage.hasMore,
         // A source with no currently admitted contribution loses the two names
         // rather than gaining an invented one.
         ...(contribution?.descriptor === undefined

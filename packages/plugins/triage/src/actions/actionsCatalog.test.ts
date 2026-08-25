@@ -34,16 +34,14 @@ describe('the configured-action Actions', () => {
         // both: absent is showing the seed and the first write stores it.
         expect(result.availability).toBe('absent');
         expect(result.actions.map((action) => action.label))
-            .toEqual(['Ask', 'Fix', 'Review', 'Run code review']);
-        // The arm is on the wire, so nothing downstream infers it from a label
-        // — and the two Review actions carry DIFFERENT arms under similar names.
+            .toEqual(['Ask', 'Fix', 'Review']);
+        // The runnable Review arm is explicit on the wire, so nothing
+        // downstream infers it from a label.
         expect(result.actions[2]?.target)
             .toEqual({ kind: 'agent', promptInvocationId: null, delivery: 'compose' });
-        expect(result.actions[3]?.target)
-            .toEqual({ kind: 'reviewStart', promptInvocationId: null });
     });
 
-    it('creates against the seed, so a first action does not delete the shipped four', async () => {
+    it('creates against the seed, so a first action does not delete the shipped three', async () => {
         const testkit = createTestkitAccountSettings();
 
         const input = TriageAdministerActionInputV1Schema.parse({
@@ -64,7 +62,7 @@ describe('the configured-action Actions', () => {
 
         expect(applied.status).toBe('applied');
         expect(applied.actions?.map((action) => action.label))
-            .toEqual(['Ask', 'Fix', 'Review', 'Run code review', 'Explain']);
+            .toEqual(['Ask', 'Fix', 'Review', 'Explain']);
 
         // The seed became stored bytes on that first write, which is also the
         // moment the person first expressed an opinion about it.
@@ -93,12 +91,12 @@ describe('the configured-action Actions', () => {
                 v: 1,
                 kind: 'reorder',
                 expectedRevision: testkit.revision(),
-                actionIds: ['review', 'ask', 'fix', 'code-review'],
+                actionIds: ['review', 'ask', 'fix'],
             }),
             deps,
         ));
         expect(reordered.actions?.map((action) => action.actionId))
-            .toEqual(['review', 'ask', 'fix', 'code-review']);
+            .toEqual(['review', 'ask', 'fix']);
 
         // A shorter list would delete an action under the guise of reordering.
         const dropped = TriageAdministerActionResultV1Schema.parse(await administerTriageAction(
@@ -106,7 +104,7 @@ describe('the configured-action Actions', () => {
                 v: 1,
                 kind: 'reorder',
                 expectedRevision: testkit.revision(),
-                actionIds: ['review', 'ask', 'fix'],
+                actionIds: ['review', 'ask'],
             }),
             deps,
         ));

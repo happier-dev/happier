@@ -6,7 +6,7 @@ import {
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
-    MAX_TRIAGE_LINKED_SESSIONS_V1,
+    MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     TriageConfiguredSourceInstanceV1Schema,
     TriageEntryRefV1Schema,
     TriageLinkedSessionProjectionV1Schema,
@@ -67,10 +67,9 @@ export const TriageReadEntryDetailInputV1JsonSchema: PluginJsonSchema =
  * as the target parsed it from the admitted snapshot — the same typed value the
  * aggregate list Action reads its declared kind vocabulary from. It is carried
  * here rather than on the aggregate list result because it is bounded per
- * *entry* here and per *configured connection* there: `descriptor` measures
- * 77_679 encoded bytes at its structural maximum, and thirty-two of them do not
- * fit under the one Action byte gate the list result already spends 871_886 of
- * (`actions/maximumEncodedActionValue.test.ts`).
+ * *entry* here and per *configured connection* there. Keeping the descriptor on
+ * detail avoids repeating a large source vocabulary in every aggregate list
+ * result without taking that vocabulary away from the reader.
  *
  * It is optional and absent means "no admitted V1 contribution from that source
  * right now" — never a placeholder, and never a claim that the source declared
@@ -82,8 +81,12 @@ export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
         kind: defineProtocolLiteral('read'),
         instance: TriageConfiguredSourceInstanceV1Schema,
         linkedSessions: defineProtocolArray(TriageLinkedSessionProjectionV1Schema, {
-            maxItems: MAX_TRIAGE_LINKED_SESSIONS_V1,
+            maxItems: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
         }),
+        linkedSessionsHasMore: defineProtocolUnion([
+            defineProtocolLiteral(true),
+            defineProtocolLiteral(false),
+        ]),
         sourceDescriptor: TriageSourceDescriptorV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({

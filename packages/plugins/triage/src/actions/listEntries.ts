@@ -4,20 +4,17 @@ import type {
     AdmittedTargetedOperationExecutionHandle,
 } from '@happier-dev/plugin-sdk/actions';
 import {
+    admitTriageSourceDescriptorV1,
     MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
+    type TriageScanContinuationV1,
     type TriageScanInputV1,
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
 import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
-import {
-    CORPUS_SOURCE_INSTANCES_INDEX_ID,
-    CORPUS_SOURCE_INSTANCE_LIFECYCLE,
-} from '../corpus/collections/ids.js';
-import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import {
@@ -25,7 +22,6 @@ import {
     parseCorpusSmartPolicy,
 } from '../corpus/query/smartPolicy.js';
 import {
-    MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     TRIAGE_LIST_NO_FILTERS_V1,
     foldTriageListWindow,
     triageListCoverageLanes,
@@ -34,11 +30,15 @@ import {
     type TriageListWindowV1,
 } from '../projection/listWindow.js';
 import { toTriageListWireRows } from '../projection/listWindowWire.js';
-import { runTriageScanPass, type TriageScanLaneV1 } from '../projection/scanPass.js';
+import {
+    runTriageScanPass,
+    type TriageScanLaneV1,
+} from '../projection/scanPass.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
-import type {
-    TriageListEntriesInputV1,
-    TriageListEntriesResultV1,
+import {
+    triageListRowBudgetV1,
+    type TriageListEntriesInputV1,
+    type TriageListEntriesResultV1,
 } from './listEntriesProtocol.js';
 
 /**
@@ -78,6 +78,7 @@ export function indexTriageAdmittedSourcesV1(
 ): ReadonlyMap<string, TriageAdmittedSourceV1> {
     const byQualifiedId = new Map<string, TriageAdmittedSourceV1>();
     for (const contribution of admitted) {
+        if (!admitTriageSourceDescriptorV1(contribution.descriptor).ok) continue;
         byQualifiedId.set(renderSourceQualifiedId({
             pluginId: contribution.contributor.pluginId,
             localId: contribution.contributor.contributionId,
@@ -102,7 +103,11 @@ export type TriageListEntriesDepsV1 = Readonly<{
     signal?: AbortSignal;
 }>;
 
-function lensFrom(input: TriageListEntriesInputV1): TriageListLensV1 {
+function lensFrom(
+    input: TriageListEntriesInputV1,
+    /** The lanes this request will actually walk, and so the frontiers it may return. */
+    laneCount: number,
+): TriageListLensV1 {
     return {
         order: input.order,
         // The one closed policy owner decides. An omitted or unrecognized
@@ -111,12 +116,12 @@ function lensFrom(input: TriageListEntriesInputV1): TriageListLensV1 {
         smartPolicy: parseCorpusSmartPolicy(input.smartPolicy) ?? CORPUS_DEFAULT_SMART_POLICY_V1,
         query: input.query ?? '',
         filters: input.filters ?? TRIAGE_LIST_NO_FILTERS_V1,
-        // The row bound of one RESULT, applied by the owner that pays for it.
+        // The explicit row bound of one result, applied by its owner.
         // The projection bounds by the lens it is given — a mounted store folds
         // its whole accumulated page through the same owner and crosses no wire
-        // — so the transport ceiling is enforced here, beside the array whose
-        // `maxItems` would otherwise be the only thing that noticed.
-        limit: Math.max(0, Math.min(input.limit, MAX_TRIAGE_LIST_WINDOW_ROWS_V1)),
+        // — so the per-invocation contract is enforced here, beside the array
+        // whose `maxItems` would otherwise be the only thing that noticed.
+        limit: Math.max(0, Math.min(input.limit, triageListRowBudgetV1(laneCount))),
     };
 }
 
@@ -138,24 +143,23 @@ function selectionAdmits(input: TriageListEntriesInputV1, sourceInstanceId: stri
  * instead of silently dropping a configured source no reader could ever ask
  * about.
  */
-async function readActiveConfiguredRows(
-    deps: TriageListEntriesDepsV1,
-): Promise<Readonly<{
-    rows: readonly CorpusSourceInstanceRowV1[];
-    status: 'complete' | 'truncated';
-}>> {
-    const options: PluginCancellationOptions | undefined = deps.signal ? { signal: deps.signal } : undefined;
-    const page = await deps.sourceInstances.query({
-        index: CORPUS_SOURCE_INSTANCES_INDEX_ID.byLifecycle,
-        prefix: [CORPUS_SOURCE_INSTANCE_LIFECYCLE.active],
-        order: 'asc',
-        limit: MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 + 1,
-    }, options);
-    const rows = page.rows.map((row) => fromCorpusStoredRow<CorpusSourceInstanceRowV1>(row).value);
-    return {
-        rows: rows.slice(0, MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1),
-        status: rows.length > MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 ? 'truncated' : 'complete',
-    };
+/**
+ * The lane frontiers this request carries in, keyed the one way a lane is
+ * addressed.
+ *
+ * A token naming a connection this request does not walk is simply never looked
+ * up. That is deliberate: a stale frontier is not a malformed request, and
+ * refusing the invocation over one would cost the caller their whole list —
+ * the whole-result rejection `PLAN.md` §0a A9 names as the harm.
+ */
+function resumeByInstanceId(
+    input: TriageListEntriesInputV1,
+): ReadonlyMap<string, TriageScanContinuationV1> {
+    const byInstance = new Map<string, TriageScanContinuationV1>();
+    for (const entry of input.resume ?? []) {
+        byInstance.set(entry.sourceInstanceId, entry.continuation);
+    }
+    return byInstance;
 }
 
 export async function listTriageEntries(
@@ -163,8 +167,12 @@ export async function listTriageEntries(
     deps: TriageListEntriesDepsV1,
 ): Promise<TriageListEntriesResultV1> {
     const options: PluginCancellationOptions | undefined = deps.signal ? { signal: deps.signal } : undefined;
+    const resumeByInstance = resumeByInstanceId(input);
     const [configured, admitted] = await Promise.all([
-        readActiveConfiguredRows(deps),
+        readActiveConfiguredSourceRows(
+            deps.sourceInstances,
+            deps.signal ? { signal: deps.signal } : undefined,
+        ),
         deps.readAdmittedSources(options),
     ]);
 
@@ -200,12 +208,13 @@ export async function listTriageEntries(
         // absence, which is what keeps the coverage claim about what was asked.
         intended.push({ sourceInstanceId: row.configured.instance.sourceInstanceId, source });
         if (!available || contribution === undefined) continue;
+        const resume = resumeByInstance.get(row.configured.instance.sourceInstanceId);
         lanes.push({
             sourceInstanceId: row.configured.instance.sourceInstanceId,
             source,
             declaredKindIds,
             configured: row.configured,
-            ...(input.resume === undefined ? {} : { resume: input.resume }),
+            ...(resume === undefined ? {} : { resume }),
             scan: (scanInput, scanOptions) => deps.executeScan(
                 contribution.operations.scan,
                 scanInput,
@@ -214,23 +223,20 @@ export async function listTriageEntries(
         });
     }
 
-    // A continuation belongs to one source's walk, so it can only be sent into a
-    // request that names one. Refusing is what keeps it from being applied to
-    // whichever lane happened to sort first, which would silently hand one
-    // source's paging token to another.
-    if (input.resume !== undefined && lanes.length !== 1) {
-        throw new Error(
-            'A Triage list continuation may only be resumed for a request that selects exactly one invocable source instance.',
-        );
-    }
-
-    const lens = lensFrom(input);
+    const lens = lensFrom(input, lanes.length);
+    // One transport page walks every admitted lane fairly without fetching rows
+    // the result cannot carry. The shared per-lane geometry is the largest whole
+    // share whose first round fits the result row budget; a short lane may yield
+    // unused capacity, but no later fold is allowed to advance a provider cursor
+    // past rows the wire drops.
+    const pageLimit = Math.max(
+        1,
+        Math.floor(lens.limit / Math.max(lanes.length, 1)),
+    );
     const pass = await runTriageScanPass({
         lanes,
-        pageLimit: Math.min(Math.max(lens.limit, 1), MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1),
-        // Each lane may legitimately supply a whole window's worth of rows, and
-        // two instances observing one entry produce two observations of it.
-        observationBudget: Math.max(lens.limit, 1) * Math.max(lanes.length, 1),
+        pageLimit: Math.min(pageLimit, MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1),
+        observationBudget: lens.limit,
         nowMs: deps.nowMs,
         ...(deps.signal ? { signal: deps.signal } : {}),
     });
@@ -246,11 +252,12 @@ export async function listTriageEntries(
         assembledAtMs: deps.nowMs(),
     });
 
-    // One lane's stop, and only when this request named one lane. A wider
-    // request cannot carry a continuation back — the result has room for one,
-    // and a continuation that did not say whose it is would be unusable anyway
-    // — so a multi-connection caller keeps today's single bounded answer.
-    const continuation = lanes.length === 1 ? pass.stopped[0]?.continuation : undefined;
+    // Every lane that stopped with more to give, in the rotation's own order.
+    // All of them: the row budget above already reserved the bytes for one
+    // frontier per walked lane, so there is nothing here to cut — and cutting
+    // is what starved the tail of the rotation on every page (`PLAN.md` §0a
+    // A9a).
+    const continuations = pass.stopped;
 
     return {
         v: 1,
@@ -261,7 +268,7 @@ export async function listTriageEntries(
             rows: toTriageListWireRows(window),
             lanes: window.lanes,
             coverage: window.coverage,
-            ...(continuation === undefined ? {} : { continuation }),
+            ...(continuations.length === 0 ? {} : { continuations }),
             assembledAtMs: window.assembledAtMs,
         },
     };

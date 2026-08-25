@@ -18,7 +18,7 @@ import { createUnavailablePluginUiAccountSettings } from '../../../../../plugin-
 import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../../corpus/collections/rows.js';
-import { TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1 } from '../../actions/entrySessionProtocol.js';
+import { sessionLinkTagComponents } from '../../corpus/identity/components.js';
 import { TRIAGE_SESSION_LINKED_ENTRIES_UI_QUERY_ID_V1 } from './linkedEntriesQuery.js';
 import { renderSurface as renderSessionLinkedEntriesSurface } from './sessionLinkedEntriesSurface.js';
 
@@ -47,7 +47,6 @@ function linkRow(overrides: Partial<CorpusSessionLinkRowV1> = {}): CorpusSession
         entryTag: 'b'.repeat(43),
         sessionId: SESSION_ID,
         linkedAtMs: 1_000,
-        cardPublicationId: 'publication-1',
         entryRef: {
             source: { pluginId: 'happier.example.source', localId: 'example-forge' },
             kindId: 'pull-request',
@@ -110,6 +109,8 @@ type DataHarness = Readonly<{
     client: PluginUiDataClient;
     opened: PluginUiCollectionQueryInput[];
     gets: string[];
+    identityRequests: Array<Readonly<{ field: string; components: readonly string[] }>>;
+    deletes: Array<Readonly<{ rowId: string; expectedRevision: number }>>;
     control: PagerControl;
 }>;
 
@@ -117,25 +118,41 @@ function createDataHarness(input: Readonly<{
     snapshot: PluginUiCollectionQuerySnapshot;
     rowsById?: ReadonlyMap<string, CorpusSessionLinkRowV1>;
     failingRowIds?: ReadonlySet<string>;
+    deleteFails?: boolean;
 }>): DataHarness {
     const opened: PluginUiCollectionQueryInput[] = [];
     const gets: string[] = [];
+    const identityRequests: Array<Readonly<{ field: string; components: readonly string[] }>> = [];
+    const deletes: Array<Readonly<{ rowId: string; expectedRevision: number }>> = [];
     const control = createPagerControl(input.snapshot);
     const rowsById = input.rowsById ?? new Map<string, CorpusSessionLinkRowV1>();
     const failingRowIds = input.failingRowIds ?? new Set<string>();
 
     const client: PluginUiDataClient = {
         collection: () => ({
+            async identityTag(request: Readonly<{ field: string; components: readonly string[] }>) {
+                identityRequests.push(request);
+                return `identity:${JSON.stringify([request.field, ...request.components])}`;
+            },
             async get(rowId: string) {
                 gets.push(rowId);
                 if (failingRowIds.has(rowId)) throw new Error('The Account Collection refused this read.');
-                const row = rowsById.get(rowId);
+                const row = rowsById.get(rowId) ?? [...rowsById.values()].find((candidate) => (
+                    rowId === `identity:${JSON.stringify([
+                        CORPUS_SESSION_LINKS_FIELD.linkTag,
+                        ...sessionLinkTagComponents(candidate.identityEntryRef, candidate.sessionId),
+                    ])}`
+                ));
                 return row === undefined
                     ? null
                     : { rowId, revision: 1, value: toCorpusStoredValue(row) };
             },
             put: async () => { throw new Error('The cockpit never writes Account data.'); },
-            delete: async () => { throw new Error('The cockpit never deletes Account data.'); },
+            async delete(rowId: string, options: Readonly<{ expectedRevision: number }>) {
+                if (input.deleteFails === true) throw new Error('The Account Collection refused this delete.');
+                deletes.push({ rowId, expectedRevision: options.expectedRevision });
+                return { rowId, revision: options.expectedRevision + 1 };
+            },
             query: async () => { throw new Error('The cockpit never opens a direct index query.'); },
             batch: async () => { throw new Error('The cockpit never batches Account data.'); },
         }) as ReturnType<PluginUiDataClient['collection']>,
@@ -147,7 +164,7 @@ function createDataHarness(input: Readonly<{
         accountSettings: createUnavailablePluginUiAccountSettings(),
     };
 
-    return { client, opened, gets, control };
+    return { client, opened, gets, identityRequests, deletes, control };
 }
 
 /** Mirrors the host's post-render private Data binding without widening author context. */
@@ -227,6 +244,26 @@ afterEach(async () => {
 });
 
 describe('the mounted Session cockpit', () => {
+    it('describes a bounded query page without claiming its client-side sort is globally recent', async () => {
+        const harness = createDataHarness({
+            snapshot: {
+                rows: [queryRow('link-a', 1_000)],
+                hasMore: true,
+                status: 'ready',
+            },
+            rowsById: new Map([['link-a', linkRow()]]),
+        });
+
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
+
+        await expect(fixture.getByText('Recent links from this page are shown; the rest are still linked.'))
+            .resolves.toEqual({
+                content: 'Recent links from this page are shown; the rest are still linked.',
+            });
+        await expect(fixture.queryByText('This panel shows the most recently linked; the rest are still linked.'))
+            .resolves.toBeUndefined();
+    });
+
     it('opens exactly one declared query for the exact mounted Session and hydrates each row once', async () => {
         const rows = [queryRow('link-a', 2_000), queryRow('link-b', 1_000)];
         const harness = createDataHarness({
@@ -423,14 +460,18 @@ describe('undoing a link from the mounted cockpit', () => {
         });
         await act(async () => { await Promise.resolve(); });
 
-        // The exact mounted Session and the exact reference the private row
-        // held. A rebuilt reference would address a row the reader never
-        // linked, which for a removal means deleting nothing and saying it
-        // worked.
-        expect(actionCalls).toEqual([{
-            action: TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
-            input: { v: 1, sessionId: SESSION_ID, entryRef: wrongEntry.entryRef },
-        }]);
+        // The mounted surface can reach Account Collections directly, so it
+        // removes through that canonical transport rather than needlessly
+        // routing the user's own durable state through a daemon Action. The
+        // identity derivation still receives the exact mounted Session and the
+        // exact immutable reference the private row held.
+        expect(harness.identityRequests).toContainEqual({
+            field: CORPUS_SESSION_LINKS_FIELD.linkTag,
+            components: sessionLinkTagComponents(wrongEntry.identityEntryRef, SESSION_ID),
+        });
+        expect(harness.deletes).toHaveLength(1);
+        expect(harness.deletes[0]?.expectedRevision).toBe(1);
+        expect(actionCalls).toEqual([]);
     });
 
     it('says a refused removal failed instead of showing the link as gone', async () => {
@@ -438,6 +479,7 @@ describe('undoing a link from the mounted cockpit', () => {
         const harness = createDataHarness({
             snapshot: { rows, hasMore: false, status: 'ready' },
             rowsById: new Map([['link-a', linkRow({ displayPathAtLink: 'example/repository#42' })]]),
+            deleteFails: true,
         });
 
         const fixture = await mountCockpit(

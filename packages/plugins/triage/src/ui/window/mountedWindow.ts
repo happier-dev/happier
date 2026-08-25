@@ -172,6 +172,22 @@ export function refreshTriageListWindow(
   ).then(() => undefined);
 }
 
+/**
+ * Append one more bounded window to a named surface's mount, or retry the
+ * append that failed.
+ *
+ * It names a host for the same reason `refresh` does — the read leaves through
+ * that mount's own Host API — but unlike `refresh` it has no all-mounts arm.
+ * Depth is what one reader asked *this* surface for by pressing its own
+ * continuation row; deepening every mounted window because one of them was
+ * pressed would make another surface pay for a page nobody asked it for.
+ */
+export function loadMoreTriageListWindow(
+  host: TriageListWindowHostV1,
+): Promise<void> {
+  return mountedByHost.get(host)?.store.loadMore() ?? Promise.resolve();
+}
+
 export function setTriageListWindowLens(
   lens: TriageListLensV1,
   host: TriageListWindowHostV1,

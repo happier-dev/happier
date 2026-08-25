@@ -151,13 +151,22 @@ export const MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1 = 192;
  */
 export const MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 = 1024;
 /**
- * Invocation-local scan continuation token; exactly one per scan page, so it is
- * the one token that is never multiplied.
+ * Invocation-local scan continuation token: one per source scan page.
  *
  * It stays generous because a fair multi-lane traversal encodes one frontier
  * entry per open lane — a workspace repository, a project, or an involvement
  * lane — plus each lane's provider-issued next URL, and a source that cannot
- * fit its frontier has to abandon the walk rather than resume it.
+ * fit its frontier has to abandon the walk rather than resume it. That is not a
+ * hypothetical margin: `scm-github` mints a five-lane frontier carrying one
+ * full search next-URL per lane, which measures 1,218 UTF-8 bytes for an
+ * account-wide connection and 1,968 for one scoped to a maximal `owner/name`
+ * repository.
+ *
+ * An aggregate list result may carry one frontier per walked lane. Strict JSON
+ * Action admission has no aggregate byte quota, so this picked 4 KiB ceiling is
+ * not a transport derivation. When it fires the source cannot encode a resume
+ * point and must report an incomplete, continuation-unavailable walk rather
+ * than truncate the opaque token or claim completion.
  */
 export const MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 = 4 * 1024;
 /** Bounded non-secret failure detail. */
@@ -170,26 +179,17 @@ export const MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1 = 64;
 /** Projected fact count; excess facts set `projectionTruncated`. */
 export const MAX_TRIAGE_ROW_FACTS_V1 = 4;
 /**
- * Entries in one scan page.
- *
- * This is the count that decides whether a scan result fits the Action byte
- * gate, because it multiplies every per-entry byte — including the six display
- * strings `MAX_TRIAGE_TEXT_UTF8_BYTES_V1` bounds. The two are one budget, and
- * lowering this count is the other way to pay for a wider display bound.
- *
- * It stays at 64 because it is not only a byte lever. A source sizes its own
+ * Entries in one scan page. A source sizes its own
  * provider paging against it — Azure DevOps fits exactly two 30-row native
  * pages inside 64, Bitbucket carries the pair as `scanLimit`/`nativePageSize`
  * in its continuation — so changing it changes four first-party walk
- * geometries, not just an arithmetic term. The display bound was widened out
- * of the gate headroom instead, which is where the headroom was going unspent
- * (`maximumEncodedResult.test.ts`).
+ * geometries. No transport, storage, or provider boundary currently derives
+ * the global count of sixty-four.
  */
 export const MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1 = 64;
 /**
- * Bounded discovery result. It multiplies the account binding, locator, and
- * configuration token of one draft, so it is the count that decides whether a
- * `listInstances` result fits the Action byte gate.
+ * Bounded discovery result. Thirty-two is a picked global count; excess valid
+ * drafts make the result schema reject the whole result.
  */
 export const MAX_TRIAGE_INSTANCE_DRAFTS_V1 = 32;
 /** Bounded discovery failure result. */
@@ -198,8 +198,8 @@ export const MAX_TRIAGE_INSTANCE_FAILURES_V1 = 32;
  * Configured instances one caller-scoped read can carry.
  *
  * It bounds the same per-instance payload `MAX_TRIAGE_INSTANCE_DRAFTS_V1`
- * bounds — one account binding, one locator, one configuration token — so the
- * two counts have the same byte consequence and are deliberately equal.
+ * bounds — one account binding, one locator, one configuration token — and is
+ * currently the same picked count.
  *
  * It is NOT the target's active-set maximum, which is an Account-wide product
  * bound owned by the configured-instance writer and is never larger than this
@@ -209,10 +209,24 @@ export const MAX_TRIAGE_INSTANCE_FAILURES_V1 = 32;
  * the whole set.
  */
 export const MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1 = 32;
-/** Bounded descriptor kind vocabulary. */
+/**
+ * Bounded descriptor kind vocabulary.
+ *
+ * This is a picked global descriptor count. A source declaring more makes its
+ * descriptor fail schema admission whole; no transport, storage, or provider
+ * boundary currently derives thirty-two.
+ */
 export const MAX_TRIAGE_KINDS_V1 = 32;
-/** Bounded detail projection of the canonical entry-to-Session link relation. */
-export const MAX_TRIAGE_LINKED_SESSIONS_V1 = 32;
+/**
+ * One page of the canonical entry-to-Session relation.
+ *
+ * This is the generic Collection query boundary, not a Triage product count:
+ * `PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1` is 200 at the Collection owner and the
+ * aggregate test pins this projection to it. A detail read reports `hasMore`
+ * from the Collection cursor, so the page never claims to be the whole durable
+ * relation and linking itself remains uncapped.
+ */
+export const MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 = 200;
 
 /**
  * The source-neutral workflow subject of one declared entry kind.

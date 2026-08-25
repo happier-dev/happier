@@ -95,9 +95,9 @@ async function executeAction(action: string): Promise<JsonValue> {
     if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) {
         return emptyListResult() as unknown as JsonValue;
     }
-    if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) return { v: 1, pins: [], more: false };
+    if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) return { v: 1, pins: [] };
     if (action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
-        return { v: 1, availability: 'absent', views: [], selectedViewId: null };
+        return { v: 1, availability: 'absent', views: [], selectedViewId: null, revision: 'revision-1' };
     }
     throw new Error(`unexpected action ${action}`);
 }

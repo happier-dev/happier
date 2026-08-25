@@ -65,6 +65,7 @@ function header(
         connectionLabel: 'acme/widgets',
         sourceDescriptor,
         linkedSessions: [],
+        linkedSessionsHasMore: false,
     });
 }
 

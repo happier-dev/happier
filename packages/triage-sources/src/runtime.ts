@@ -21,4 +21,14 @@ export {
   type TriageSourceAuthorizationV1,
 } from './authorization/triageSourceAuthorization.js';
 export { admitForgeRequestUrl } from './http/forgeRequestUrl.js';
+export {
+  createBoundedInvocation,
+  isBoundedInvocationDeadline,
+  type BoundedInvocation,
+} from './invocation/deadline.js';
+export {
+  settleAtMostOnceProviderWrite,
+  type AtMostOnceProviderWriteSettlement,
+  type ProviderWriteConfirmation,
+} from './invocation/writeSettlement.js';
 export { parseForgeLinkHeader, readForgeLinkHeaderValue } from './http/linkHeader.js';

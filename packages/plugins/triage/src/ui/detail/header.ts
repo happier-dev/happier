@@ -77,6 +77,7 @@ export type TriageDetailHeaderV1 = Readonly<{
   sourceReadFailed: boolean;
   webUrl: string | null;
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];
+  linkedSessionsHasMore: boolean;
 }>;
 
 function selectedObservation(row: TriageListRowV1): ProjectedObservationV1 | null {
@@ -112,6 +113,7 @@ export type TriageDetailHeaderInputV1 = Readonly<{
    */
   sourceDescriptor: TriageSourceDescriptorV1 | null;
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];
+  linkedSessionsHasMore: boolean;
 }>;
 
 export function projectTriageDetailHeaderV1(
@@ -150,5 +152,6 @@ export function projectTriageDetailHeaderV1(
     sourceReadFailed: readTriageLaneFailure(lane) !== null,
     webUrl: present?.locator.webUrl ?? null,
     linkedSessions: input.linkedSessions,
+    linkedSessionsHasMore: input.linkedSessionsHasMore,
   });
 }

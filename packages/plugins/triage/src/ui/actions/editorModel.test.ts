@@ -12,6 +12,7 @@ import {
     type TriageActionEditorDraftV1,
 } from './actionsCommand.js';
 import {
+    TRIAGE_EDITOR_TARGET_KINDS_V1,
     newTriageActionDraftV1,
     triageActionDraftBlockerV1,
     triageActionDraftV1,
@@ -30,11 +31,23 @@ const REVIEW = TRIAGE_DEFAULT_ACTIONS_V1[2]!;
 describe('which actions an entry is offered', () => {
     it('offers an action on the subjects it declares, in the configured order', () => {
         expect(planTriageOfferedActionsV1(TRIAGE_DEFAULT_ACTIONS_V1, 'pullRequest')
-            .map((action) => action.actionId)).toEqual(['ask', 'fix', 'review', 'code-review']);
-        // Review reaches the incumbent `review.start` contract and is declared
-        // on pull requests alone, so an error group is offered the other two.
+            .map((action) => action.actionId)).toEqual(['ask', 'fix', 'review']);
+        // The ordinary agent Review is declared on pull requests alone, so an
+        // error group is offered the other two.
         expect(planTriageOfferedActionsV1(TRIAGE_DEFAULT_ACTIONS_V1, 'errorIssue')
             .map((action) => action.actionId)).toEqual(['ask', 'fix']);
+    });
+
+    it('never offers the declared reviewStart arm while its required producers are absent', () => {
+        const reviewStart: TriageActionV1 = {
+            ...REVIEW,
+            actionId: 'configured-review-start',
+            target: { kind: 'reviewStart', promptInvocationId: null },
+        };
+
+        expect(planTriageOfferedActionsV1([ASK, reviewStart, FIX], 'pullRequest')
+            .map((action) => action.actionId)).toEqual(['ask', 'fix']);
+        expect(TRIAGE_EDITOR_TARGET_KINDS_V1).toEqual(['agent']);
     });
 
     it('offers a disabled action nowhere while keeping it configured', () => {
@@ -71,14 +84,14 @@ describe('the words on a configured control', () => {
 describe('moving one action inside the set', () => {
     it('produces an exact permutation the writer will accept', () => {
         expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'fix', 'up'))
-            .toEqual(['fix', 'ask', 'review', 'code-review']);
+            .toEqual(['fix', 'ask', 'review']);
         expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'fix', 'down'))
-            .toEqual(['ask', 'review', 'fix', 'code-review']);
+            .toEqual(['ask', 'review', 'fix']);
     });
 
     it('refuses a move off either end rather than wrapping or writing a no-op', () => {
         expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'ask', 'up')).toBeNull();
-        expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'code-review', 'down')).toBeNull();
+        expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'review', 'down')).toBeNull();
         expect(triageMovedActionOrderV1(TRIAGE_DEFAULT_ACTIONS_V1, 'not-a-stored-action', 'up'))
             .toBeNull();
     });

@@ -60,6 +60,7 @@ export async function listTriagePinnedEntries(
     const page = await readPinnedSection({
         collections: deps.collections,
         limit: input.limit,
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
         ...(deps.signal ? { signal: deps.signal } : {}),
     });
     return {
@@ -69,7 +70,10 @@ export async function listTriagePinnedEntries(
             markedAtMs: mark.markedAtMs,
             displayAtMark: mark.displayAtMark,
         })),
-        more: page.nextCursor !== undefined,
+        // Passed through exactly as the marks query produced it. Reducing it to
+        // "there is more" is what left every pin after the first page
+        // unreachable and, because Unpin is only offered on a row, unremovable.
+        ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
     };
 }
 

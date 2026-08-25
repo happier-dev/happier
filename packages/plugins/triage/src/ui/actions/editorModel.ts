@@ -1,4 +1,7 @@
-import type { TriageActionV1 } from '../../settings/actions.js';
+import {
+  isTriageActionTargetOfferableV1,
+  type TriageActionV1,
+} from '../../settings/actions.js';
 import { TRIAGE_WORKSPACE_MODES_V1 } from '../../sessions/entrySessionWorkspace.js';
 import { TRIAGE_ACTION_DELIVERIES_V1 } from '../../settings/actions.js';
 import { TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1 } from '@happier-dev/triage-protocol/v1';
@@ -20,7 +23,8 @@ export const TRIAGE_EDITOR_SUBJECTS_V1: readonly TriageSourceWorkflowSubjectV1[]
   Object.freeze([...TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1]);
 export const TRIAGE_EDITOR_WORKSPACE_MODES_V1 = TRIAGE_WORKSPACE_MODES_V1;
 export const TRIAGE_EDITOR_DELIVERIES_V1 = TRIAGE_ACTION_DELIVERIES_V1;
-export const TRIAGE_EDITOR_TARGET_KINDS_V1 = ['agent', 'reviewStart'] as const;
+export const TRIAGE_EDITOR_TARGET_KINDS_V1 = (['agent', 'reviewStart'] as const)
+  .filter(isTriageActionTargetOfferableV1);
 export type TriageEditorTargetKindV1 = (typeof TRIAGE_EDITOR_TARGET_KINDS_V1)[number];
 
 export type TriagePromptInvocationEditorOptionV1 = Readonly<{

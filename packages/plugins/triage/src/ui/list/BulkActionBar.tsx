@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import {
   Button,
   Form,
@@ -10,7 +11,12 @@ import {
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 
-import { readTriageActionTitleKeyV1, type TriageActionV1 } from '../../settings/actions.js';
+import {
+  planTriageOfferableActionsV1,
+  planTriageOfferedActionsV1,
+  readTriageActionTitleKeyV1,
+  type TriageActionV1,
+} from '../../settings/actions.js';
 import type { TriageBulkSessionDestinationV1 } from './bulkSessionPlan.js';
 import { isTriageBulkEntryOutcomeIncompleteV1 } from './bulkSessionOutcome.js';
 import type {
@@ -32,18 +38,30 @@ import type {
  * selection is live, through the public `List.SelectionActionBar`, so the count
  * on screen and the keys a press acts on are one fact rather than two.
  *
- * **The offered actions are not filtered by workflow subject here, and that is
- * deliberate.** `appliesTo` is answered against an entry's declared kind, whose
- * only producer is that entry's own source descriptor — a fact the list surface
- * does not hold and a bulk selection may span several of. Offering the reader
- * their own configured actions and reporting per-unit refusals truthfully is
- * better than hiding actions behind a guess; the single-entry controls, which
- * DO know the subject, keep filtering.
+ * **The offered actions ARE filtered by workflow subject**, through the same
+ * `planTriageOfferedActionsV1` owner the single-entry controls use. `appliesTo`
+ * answers which subjects an action is offered on, and a bulk selection may span
+ * several of them, so the bar offers an action when AT LEAST ONE selected entry
+ * is offered it and keeps the configured order. It resolves no subject itself:
+ * the shell owns the exact admitted source descriptor each selected row was
+ * projected from and answers `selectedWorkflowSubjects` from it, so this bar and
+ * the press it starts read one fact rather than two.
+ *
+ * A selection whose subjects cannot be resolved at all — a row retained from a
+ * source contribution that is no longer admitted — narrows nothing, because
+ * hiding every action behind an absent fact is a guess in the other direction.
+ * The press then reports the per-entry `workflowSubjectUnavailable` refusal.
  */
 
 export type TriageBulkActionBarPropsV1 = Readonly<{
   /** The configured catalog, in stored order. Disabled actions are never offered. */
   actions: readonly TriageActionV1[];
+  /**
+   * The DISTINCT workflow subjects the shell resolved for the live selection,
+   * from the exact admitted source contribution each selected row carries. An
+   * empty answer means no selected row currently resolves one.
+   */
+  selectedWorkflowSubjects: (keys: readonly string[]) => readonly TriageSourceWorkflowSubjectV1[];
   phase: TriageBulkSessionsPhaseV1;
   onRun: (input: Readonly<{
     action: TriageActionV1;
@@ -80,13 +98,33 @@ function destinationOf(actionId: string): TriageBulkSessionDestinationV1 | null 
   return found?.destination ?? null;
 }
 
+/** No control exists to press, so no press can arrive. */
+const NO_DESTINATIONS: readonly [] = Object.freeze([]);
+const IGNORE_PRESS = (): void => undefined;
+
 export function TriageBulkActionBar(props: TriageBulkActionBarPropsV1): React.ReactElement | null {
   const text = usePluginTranslation();
   const snapshot = useListMultiSelectionSnapshot();
-  const offered = React.useMemo(
-    () => props.actions.filter((action) => action.enabled),
-    [props.actions],
+  const selectedWorkflowSubjects = props.selectedWorkflowSubjects;
+  // The set's own identity is the dependency: the shared store replaces it only
+  // when the selection actually changed, so this resolves once per change
+  // rather than on every render of the list around it.
+  const subjects = React.useMemo(
+    () => selectedWorkflowSubjects([...snapshot.selectedKeys]),
+    [selectedWorkflowSubjects, snapshot.selectedKeys],
   );
+  const offered = React.useMemo(() => {
+    const offerable = planTriageOfferableActionsV1(props.actions);
+    if (subjects.length === 0) return offerable;
+    // The union across the selected subjects, decided by the ONE offer owner
+    // and then read back in configured catalog order — the order is a person's
+    // configuration, not something this bar reapplies.
+    const applicable = new Set<TriageActionV1>();
+    for (const subject of subjects) {
+      for (const action of planTriageOfferedActionsV1(props.actions, subject)) applicable.add(action);
+    }
+    return offerable.filter((candidate) => applicable.has(candidate));
+  }, [props.actions, subjects]);
   const [selectedActionId, setSelectedActionId] = React.useState<string | null>(null);
   // The reader's own pick when they made one and it still exists; otherwise the
   // first offered action. Reading it this way rather than syncing state in an
@@ -94,10 +132,32 @@ export function TriageBulkActionBar(props: TriageBulkActionBarPropsV1): React.Re
   // pointing at an action that is gone.
   const action = offered.find((candidate) => candidate.actionId === selectedActionId) ?? offered[0];
 
-  if (!snapshot.isSelectionMode || action === undefined) return null;
+  if (!snapshot.isSelectionMode) return null;
   const busy = props.phase.kind === 'resolving'
     || props.phase.kind === 'choosing'
     || props.phase.kind === 'starting';
+
+  if (action === undefined) {
+    // The count and the Clear control belong to the shared bar and stay: a
+    // reader who has selected rows must always be able to see how many and let
+    // them go, and disappearing on them is how the previous unfiltered offer
+    // would have had to hide a dead end.
+    return (
+      <Stack gap="small">
+        <List.SelectionActionBar
+          accessibilityLabel={text('plugins.triage.surface.bulk.label', 'Bulk actions')}
+          testID="triage-bulk-action-bar"
+          actions={NO_DESTINATIONS}
+          onAction={IGNORE_PRESS}
+        />
+        <Status
+          tone="warning"
+          labelKey="plugins.triage.surface.bulk.noApplicableActions"
+          label="None of your configured actions can run on the entries you selected."
+        />
+      </Stack>
+    );
+  }
 
   return (
     <Stack gap="small">

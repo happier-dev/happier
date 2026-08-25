@@ -101,6 +101,21 @@ describe('the way out of an unconfigured PRs & Issues', () => {
     ]))).toEqual([]);
   });
 
+  it('offers nothing for a descriptor whose kind ids are ambiguous', () => {
+    const github = descriptor({ displayName: 'GitHub', settingsPageId: 'triage-sources' });
+
+    expect(planTriageConfigureSourceOffersV1(snapshot([
+      contribution({
+        pluginId: 'happier.scm-github',
+        contributionId: 'github',
+        descriptor: {
+          ...github,
+          kinds: [github.kinds[0], { ...github.kinds[0], displayName: 'Duplicate' }],
+        },
+      }),
+    ]))).toEqual([]);
+  });
+
   it('keeps every admitted source that named one, in the order the host published them', () => {
     const offers = planTriageConfigureSourceOffersV1(snapshot([
       contribution({

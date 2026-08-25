@@ -5,10 +5,11 @@ import {
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
+    defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
 
-import { MAX_TRIAGE_LINKED_SESSIONS_V1 } from './bounds.js';
+import { MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 } from './bounds.js';
 import {
     TriageEntryLocatorV1Schema,
     TriageEntryRefV1Schema,
@@ -74,8 +75,12 @@ export const TriageDetailSurfaceInputV1Schema = defineProtocolObject({
         nativeRevision: TriageIdentifierV1ProtocolSchema.optional(),
     }, { policy: 'closed' }),
     linkedSessions: defineProtocolArray(TriageLinkedSessionProjectionV1Schema, {
-        maxItems: MAX_TRIAGE_LINKED_SESSIONS_V1,
+        maxItems: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     }),
+    linkedSessionsHasMore: defineProtocolUnion([
+        defineProtocolLiteral(true),
+        defineProtocolLiteral(false),
+    ]).optional(),
 }, { policy: 'additive-open/drop' });
 export type TriageDetailSurfaceInputV1 = ReturnType<
     typeof TriageDetailSurfaceInputV1Schema.parse
