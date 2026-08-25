@@ -436,7 +436,7 @@ describe("Event Automations persistence contract", () => {
             ["sources/app/retention/rules/automationRunRetentionRule.ts", 1],
             // Cross-machine acknowledgement-loss and failed-input cancellation
             // retain the canonical produced Session identity through the incumbent Run owner.
-            ["sources/app/automations/automationRunService.ts", 12],
+            ["sources/app/automations/automationRunService.ts", 15],
         ]);
         const expectedMutationEvidence = new Map([
             [
