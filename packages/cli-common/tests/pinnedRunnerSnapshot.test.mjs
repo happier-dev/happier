@@ -8,10 +8,16 @@ import test from 'node:test';
 import cliDistBuildManifest from '../cliDistBuildManifest.cjs';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from '../cliRuntimeSidecars.mjs';
 import {
+  PINNED_RUNNER_LAYOUT_VERSION,
   resolveNewestReadyPinnedRunnerSnapshot,
 } from '../pinnedRunnerSnapshot.mjs';
 
-async function writeReadySnapshot({ cliDir, workspaceRuntimeIdentity, mtimeMs }) {
+async function writeReadySnapshot({
+  cliDir,
+  workspaceRuntimeIdentity,
+  mtimeMs,
+  layoutVersion = PINNED_RUNNER_LAYOUT_VERSION,
+}) {
   const stagingRoot = join(cliDir, '.runner-snapshots', '.staging');
   const stagingEntrypoint = join(stagingRoot, 'package-dist', 'index.mjs');
   await mkdir(dirname(stagingEntrypoint), { recursive: true });
@@ -52,7 +58,7 @@ async function writeReadySnapshot({ cliDir, workspaceRuntimeIdentity, mtimeMs })
     .digest('hex');
   assert.equal(runtimeAsset.sha256, runtimeAssetIdentity);
   const fingerprint = writtenManifest.manifest.fingerprint;
-  const snapshotIdentity = `${fingerprint}-${runtimeAssetIdentity}-${workspaceRuntimeIdentity}-package-dist-v4`;
+  const snapshotIdentity = `${fingerprint}-${runtimeAssetIdentity}-${workspaceRuntimeIdentity}-${layoutVersion}`;
   const snapshotRoot = join(cliDir, '.runner-snapshots', snapshotIdentity);
   await rename(stagingRoot, snapshotRoot);
   const snapshotEntrypoint = join(snapshotRoot, 'package-dist', 'index.mjs');
@@ -74,6 +80,23 @@ async function writeBundledPlugin(snapshotRoot, {
   })}\n`, 'utf8');
   return packageRoot;
 }
+
+test('does not reuse a v4 runner snapshot after its dependency closure layout changes', async (t) => {
+  const cliDir = await mkdtemp(join(tmpdir(), 'happier-pinned-runner-legacy-layout-'));
+  t.after(async () => rm(cliDir, { recursive: true, force: true }));
+  const mutableEntrypoint = join(cliDir, 'dist', 'index.mjs');
+  await mkdir(dirname(mutableEntrypoint), { recursive: true });
+  await writeFile(mutableEntrypoint, 'export {};\n', 'utf8');
+
+  await writeReadySnapshot({
+    cliDir,
+    workspaceRuntimeIdentity: 'b'.repeat(64),
+    mtimeMs: 1_000,
+    layoutVersion: 'package-dist-v4',
+  });
+
+  assert.equal(resolveNewestReadyPinnedRunnerSnapshot(mutableEntrypoint), null);
+});
 
 test('selects the newest structurally ready immutable runner and ignores a newer partial publication', async (t) => {
   const cliDir = await mkdtemp(join(tmpdir(), 'happier-pinned-runner-selection-'));

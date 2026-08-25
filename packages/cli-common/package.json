@@ -22,6 +22,11 @@
       "require": "./cliDistBuildManifest.cjs",
       "default": "./cliDistBuildManifest.cjs"
     },
+    "./bundledPluginResources": {
+      "types": "./bundledPluginResources.d.mts",
+      "import": "./bundledPluginResources.mjs",
+      "default": "./bundledPluginResources.mjs"
+    },
     "./pinnedRunnerSnapshot": {
       "types": "./pinnedRunnerSnapshot.d.mts",
       "import": "./pinnedRunnerSnapshot.mjs",

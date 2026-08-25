@@ -25,6 +25,7 @@ import {
 import { copyDirectoryTreePreservingSymlinks } from './copyDirectoryTreePreservingSymlinks.js';
 import { resolveNonCollidingRelayPort } from './resolveNonCollidingRelayPort.js';
 import { computeUiDeploymentDigest, resolveUiDeploymentIdentity } from './uiDeploymentIdentity.js';
+import { isPidPresent } from '../process/processLiveness.js';
 
 const RELAY_RUNTIME_PERSISTENT_ROOT_ENTRIES = new Set([
     'config',
@@ -423,15 +424,6 @@ async function writeJsonFile(path: string, value: unknown): Promise<void> {
     await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-function isProcessAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error) {
-        return Boolean(error && typeof error === 'object' && (error as { code?: unknown }).code === 'EPERM');
-    }
-}
-
 async function waitForRelayRuntimeStartupReceipt(params: Readonly<{
     path: string;
     nonce: string;
@@ -445,7 +437,7 @@ async function waitForRelayRuntimeStartupReceipt(params: Readonly<{
         const pid = typeof receipt?.pid === 'number' && Number.isSafeInteger(receipt.pid)
             ? receipt.pid
             : 0;
-        if (nonce === params.nonce && pid > 0 && isProcessAlive(pid)) {
+        if (nonce === params.nonce && pid > 0 && isPidPresent(pid)) {
             return { nonce, pid };
         }
         await new Promise<void>((resolve) => setTimeout(resolve, RELAY_RUNTIME_STARTUP_RECEIPT_POLL_MS));

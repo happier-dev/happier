@@ -1,8 +1,12 @@
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { cp } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, join, relative } from 'node:path';
 
+import {
+  copyDirDereferenceContainedSync,
+  resolveInstalledRuntimePackage,
+} from '../../workspaceRuntimeDependencies.mjs';
 import {
   bundleWorkspacePackage,
   bundleWorkspacePackageWithRuntimeDependencies,
@@ -46,10 +50,18 @@ function resolveInstalledCliNodeRuntimeWorkspaceBundles(
   repoRoot: string,
   hostPackageDir = join(repoRoot, 'apps', 'cli'),
 ): ReadonlyArray<CliNodeRuntimeWorkspaceBundle> {
-  return resolveCliNodeRuntimeWorkspaceBundles(repoRoot, hostPackageDir).map((bundle) => ({
-    ...bundle,
-    srcDir: join(hostPackageDir, 'node_modules', ...bundle.packageName.split('/')),
-  }));
+  const resolveFromPackageJsonPath = join(hostPackageDir, 'package.json');
+  return resolveCliNodeRuntimeWorkspaceBundles(repoRoot, hostPackageDir).map((bundle) => {
+    const installedPackage = resolveInstalledRuntimePackage({
+      packageName: bundle.packageName,
+      resolveFromPackageJsonPath,
+      dereferenceRootDir: repoRoot,
+    });
+    return {
+      ...bundle,
+      srcDir: installedPackage.packageDir,
+    };
+  });
 }
 
 function hashPhysicalTree(
@@ -133,7 +145,7 @@ function resolveRuntimeRootCliNodeWorkspaceBundles(
     packageName,
     srcDir: join(runtimeRoot, 'node_modules', ...packageName.split('/')),
     destDir: join(payloadDir, 'node_modules', ...packageName.split('/')),
-    dereferenceRootDir: runtimeRoot,
+    dereferenceRootDir: join(runtimeRoot, 'node_modules'),
   }));
 }
 
@@ -175,8 +187,17 @@ function stageCliNodeRuntimeWorkspaceBundles(
 
 function stageAdmittedCliNodeRuntimeWorkspaceBundles(
   workspaceBundles: ReadonlyArray<CliNodeRuntimeWorkspaceBundle>,
+  options: Readonly<{ includeRuntimeDependencies: boolean }>,
 ): void {
-  for (const { srcDir, destDir } of workspaceBundles) {
+  for (const { srcDir, destDir, dereferenceRootDir } of workspaceBundles) {
+    if (options.includeRuntimeDependencies) {
+      copyDirDereferenceContainedSync({
+        sourceDir: srcDir,
+        destDir,
+        dereferenceRootDir,
+      });
+      continue;
+    }
     cpSync(srcDir, destDir, {
       recursive: true,
       force: true,
@@ -190,6 +211,9 @@ function stageAdmittedCliNodeRuntimeWorkspaceBundles(
 function copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
   workspaceBundles: ReadonlyArray<CliNodeRuntimeWorkspaceBundle>,
   expectedWorkspaceRuntimeIdentity: string,
+  options: Readonly<{ includeRuntimeDependencies: boolean }> = {
+    includeRuntimeDependencies: false,
+  },
 ): CliNodeWorkspaceRuntimeIdentity {
   const before = readCliNodeWorkspaceRuntimeIdentityFromBundles(workspaceBundles);
   if (before.fingerprint !== expectedWorkspaceRuntimeIdentity) {
@@ -198,7 +222,7 @@ function copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
       + `(expected ${expectedWorkspaceRuntimeIdentity}, found ${before.fingerprint})`,
     );
   }
-  stageAdmittedCliNodeRuntimeWorkspaceBundles(workspaceBundles);
+  stageAdmittedCliNodeRuntimeWorkspaceBundles(workspaceBundles, options);
   const staged = readCliNodeWorkspaceRuntimeIdentityFromBundles(
     workspaceBundles.map((bundle) => ({
       ...bundle,
@@ -212,6 +236,25 @@ function copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
     );
   }
   return before;
+}
+
+function stageAdmittedCliNodeRuntimeHostPackageDependencies(
+  runtimeRoot: string,
+  payloadDir: string,
+): void {
+  const sourceNodeModulesDir = join(runtimeRoot, 'node_modules');
+  if (!existsSync(sourceNodeModulesDir)) {
+    throw new Error(`Missing admitted CLI runtime dependency closure: ${sourceNodeModulesDir}`);
+  }
+  copyDirDereferenceContainedSync({
+    sourceDir: sourceNodeModulesDir,
+    destDir: join(payloadDir, 'node_modules'),
+    dereferenceRootDir: sourceNodeModulesDir,
+    shouldCopyPath: (sourcePath) => {
+      const [topLevelEntry] = relative(sourceNodeModulesDir, sourcePath).split(/[\\/]/u);
+      return topLevelEntry !== '@happier-dev';
+    },
+  });
 }
 
 function stageInstalledCliNodeRuntimeWorkspaceBundles(
@@ -306,10 +349,17 @@ export function copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
   // publication. Preserve that tree instead of applying source-package
   // publication rules a second time: its sanitized package.json intentionally
   // no longer carries the source `files` list used to select static resources.
-  return copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
+  const stagedWorkspaceRuntime = copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
     sourceBundles,
     expectedWorkspaceRuntimeIdentity,
+    { includeRuntimeDependencies: true },
   );
+  // The support artifact stages the host package's external closure at its
+  // node_modules root. A pinned runner executes the package-dist outside that
+  // support artifact, so preserve that admitted closure alongside the copied
+  // workspace packages instead of resolving against a mutable checkout.
+  stageAdmittedCliNodeRuntimeHostPackageDependencies(runtimeRoot, payloadDir);
+  return stagedWorkspaceRuntime;
 }
 
 export async function copyCliNodeRuntimePayload({

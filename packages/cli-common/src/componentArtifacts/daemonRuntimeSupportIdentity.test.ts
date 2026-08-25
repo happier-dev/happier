@@ -166,6 +166,34 @@ describe('daemon runtime support identity', () => {
     expect(changedSidecar.workspaceRuntimeIdentity).toBe(initial.workspaceRuntimeIdentity);
   });
 
+  it('uses a root-hoisted workspace package when the CLI-local copy is absent', async () => {
+    const root = await makeTempRepo();
+    await createSupportIdentityFixture(root);
+    await rm(join(root, 'apps', 'cli', 'node_modules', '@happier-dev', 'cli-common'), {
+      recursive: true,
+      force: true,
+    });
+    await writeFixtureFile(join(root, 'node_modules', '@happier-dev', 'cli-common', 'package.json'), JSON.stringify({
+      name: '@happier-dev/cli-common',
+      version: '1.0.0',
+      main: './dist/index.js',
+    }));
+    await writeFixtureFile(
+      join(root, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js'),
+      'export const packageLocation = "hoisted";\n',
+    );
+
+    const identity = readCliBinaryArtifactSupportIdentity({
+      repoRoot: root,
+      target: targetForHost(),
+      goVersion: 'go version go1.fixture',
+    });
+
+    expect(identity.workspaceRuntimeIdentity).toBe(
+      readCliNodeWorkspaceRuntimeIdentity({ repoRoot: root }).fingerprint,
+    );
+  });
+
   it('stages only daemon support entries and verifies the same owner-local identity', async () => {
     const root = await makeTempRepo();
     await createSupportIdentityFixture(root);
@@ -220,6 +248,7 @@ describe('daemon runtime support identity', () => {
     }));
 
     let commandObservedWhileCliDistLocked = false;
+    let commandObservedWhileSharedDepsLocked = false;
     let markCommandStarted!: () => void;
     const commandStarted = new Promise<void>((resolvePromise) => {
       markCommandStarted = resolvePromise;
@@ -231,6 +260,9 @@ describe('daemon runtime support identity', () => {
       commandProbe: (command) => command === 'yarn',
       runCommand: async (_command, args) => {
         commandObservedWhileCliDistLocked = existsSync(cliDistLockPath);
+        commandObservedWhileSharedDepsLocked = existsSync(
+          join(root, '.project', 'tmp', 'cli-shared-deps.lock'),
+        );
         const outputIndex = args.indexOf('--output');
         const outputPath = args[outputIndex + 1];
         if (outputIndex < 0 || !outputPath) throw new Error('fixture managed-runtime output path missing');
@@ -248,6 +280,7 @@ describe('daemon runtime support identity', () => {
 
     expect(startedBeforeRelease).toBe(true);
     expect(commandObservedWhileCliDistLocked).toBe(true);
+    expect(commandObservedWhileSharedDepsLocked).toBe(true);
   });
 
   it('builds daemon code without recopying its stable runtime support closure', async () => {

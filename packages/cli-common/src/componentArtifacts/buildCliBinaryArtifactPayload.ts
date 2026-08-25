@@ -329,13 +329,16 @@ export function readCliBinaryArtifactSupportIdentity({
   const workspaceRuntime = readCliNodeWorkspaceRuntimeIdentity({ repoRoot, hostPackageDir: cliDir });
   hash.update(`workspace-runtime\0${workspaceRuntime.fingerprint}\0`);
   for (const packageName of workspaceRuntime.packageNames) {
-    const packageDir = join(cliDir, 'node_modules', ...packageName.split('/'));
-    const packageJsonPath = join(packageDir, 'package.json');
+    const installedWorkspacePackage = resolveInstalledRuntimePackage({
+      packageName,
+      resolveFromPackageJsonPath: join(cliDir, 'package.json'),
+      dereferenceRootDir: repoRoot,
+    });
     hash.update(`workspace-package\0${packageName}\0`);
     hashRuntimeDependencyTree({
       hash,
       repoRoot,
-      packageJsonPath,
+      packageJsonPath: installedWorkspacePackage.packageJsonPath,
       destinationNodeModulesPath: join('node_modules', ...packageName.split('/'), 'node_modules'),
     });
   }
@@ -841,7 +844,7 @@ export async function buildCliBinaryArtifactSupportPayload({
   workspaceRuntimeIdentity: string;
   runtimeAssetRelativePath: string;
 }>> {
-  return await stageCliBinaryArtifactSupportPayload({
+  return await withWorkspaceBundleLock(async () => await stageCliBinaryArtifactSupportPayload({
     repoRoot,
     payloadDir,
     target,
@@ -852,6 +855,11 @@ export async function buildCliBinaryArtifactSupportPayload({
     supportArtifactFingerprint,
     goVersion,
     preserveCompilePayloadAssets,
+  }), {
+    // The support identity is computed from the installed CLI workspace
+    // publication. Keep that existing publication stable until every byte has
+    // been copied and the identity has been rechecked.
+    lockPath: resolveCliSharedDepsBuildLockPath(repoRoot),
   });
 }
 
@@ -896,22 +904,19 @@ export async function buildCliBinaryArtifactPayload({
     ensureWorkspacePackagesBuiltByName,
     requiredCliDistInputFingerprint,
   });
-  const support = await withCliDistBuildLock(
-    async () => await buildCliBinaryArtifactSupportPayload({
-      repoRoot,
-      payloadDir,
-      target,
-      runCommand,
-      commandProbe,
-      cliProxyApiManagedRuntimeExecutablePath,
-      expectedWorkspaceRuntimeIdentity: code.workspaceRuntimeIdentity,
-      // The release payload preserves legitimate assets emitted alongside the
-      // Bun executable (for example its managed JS runtime). New immutable
-      // daemon support artifacts stage into an empty payload instead.
-      preserveCompilePayloadAssets: true,
-    }),
-    { lockPath: join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock') },
-  );
+  const support = await buildCliBinaryArtifactSupportPayload({
+    repoRoot,
+    payloadDir,
+    target,
+    runCommand,
+    commandProbe,
+    cliProxyApiManagedRuntimeExecutablePath,
+    expectedWorkspaceRuntimeIdentity: code.workspaceRuntimeIdentity,
+    // The release payload preserves legitimate assets emitted alongside the
+    // Bun executable (for example its managed JS runtime). New immutable
+    // daemon support artifacts stage into an empty payload instead.
+    preserveCompilePayloadAssets: true,
+  });
   writeCliBinaryArtifactRuntimeAssetBuildManifest({
     payloadDir,
     relativePath: support.runtimeAssetRelativePath,

@@ -6,6 +6,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime';
 import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
+import { isPidPresent } from '../process/processLiveness.js';
 import { resolveWindowsCommandOnPath } from '../process/index.js';
 import { createManagedToolScratchDir } from './createManagedToolScratchDir.js';
 import { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
@@ -91,15 +92,6 @@ function resolveCommandOnPath(command: string, processEnv: NodeJS.ProcessEnv): s
  * Acquire an exclusive lock for pnpm bootstrap to prevent concurrent installs from corrupting shared state.
  * Returns a FileHandle that must be closed to release the lock.
  */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
 async function shouldRecoverStalePnpmBootstrapLock(lockPath: string): Promise<boolean> {
   const lockStats = await stat(lockPath);
   const ageMs = Date.now() - lockStats.mtimeMs;
@@ -108,7 +100,7 @@ async function shouldRecoverStalePnpmBootstrapLock(lockPath: string): Promise<bo
   try {
     const parsed = JSON.parse(rawContents) as { pid?: unknown };
     if (typeof parsed.pid === 'number' && Number.isInteger(parsed.pid) && parsed.pid > 0) {
-      return !isProcessAlive(parsed.pid);
+      return !isPidPresent(parsed.pid);
     }
   } catch {
     // Fall back to age-based recovery for legacy or malformed locks.

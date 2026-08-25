@@ -968,7 +968,13 @@ describe('configured external-session source materializer', () => {
         resolveProviderOps: async () => ops,
       });
 
-      await expect(adapter.authorService.list()).resolves.toMatchObject({
+      const firstPreparation = await adapter.authorService.list();
+      expect(firstPreparation.items).toEqual([]);
+      expect(firstPreparation.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
+      const secondPreparation = await adapter.authorService.list({ cursor: firstPreparation.nextCursor! });
+      expect(secondPreparation.items).toEqual([]);
+      expect(secondPreparation.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
+      await expect(adapter.authorService.list({ cursor: secondPreparation.nextCursor! })).resolves.toMatchObject({
         items: [
           { ref: { remoteSessionId: 'newest' }, title: 'Private title' },
           { ref: { remoteSessionId: 'oldest' }, title: 'Private title' },
@@ -1000,8 +1006,8 @@ describe('configured external-session source materializer', () => {
         activeServerDir,
         resolveProviderOps: async () => ops,
       });
-      // The cold composition above drove the whole build inside one list() call.
-      // The successor reuses the retained index instead of rebuilding it.
+      // The cold composition advanced the build through its public cursors. The
+      // successor reuses the retained index instead of rebuilding it.
       await expect(successor.authorService.list()).resolves.toMatchObject({
         items: [
           { ref: { remoteSessionId: 'newest' }, title: 'Private title' },
@@ -2994,19 +3000,34 @@ describe('configured external-session source materializer', () => {
         activeServerDir,
         resolveProviderOps: async () => ops,
       });
+      const listPreparedSource = async (sourceId: string) => {
+        const firstPreparation = await firstLifecycle.authorService.list({ sourceId });
+        expect(firstPreparation.items).toEqual([]);
+        expect(firstPreparation.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
+        const secondPreparation = await firstLifecycle.authorService.list({
+          sourceId,
+          cursor: firstPreparation.nextCursor!,
+        });
+        expect(secondPreparation.items).toEqual([]);
+        expect(secondPreparation.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
+        return await firstLifecycle.authorService.list({
+          sourceId,
+          cursor: secondPreparation.nextCursor!,
+        });
+      };
       let retainedSourceIndexes: string[] = [];
       try {
         expect(firstLifecycle.candidateIndexIdentities).toHaveLength(2);
-        await expect(firstLifecycle.authorService.list({ sourceId: 'codexHome:user:::' })).resolves.toMatchObject({
+        const userPage = await listPreparedSource('codexHome:user:::');
+        expect(userPage).toMatchObject({
           items: [{ ref: { remoteSessionId: 'user-newest' } }, { ref: { remoteSessionId: 'user-oldest' } }],
         });
         // Captured before the second source builds, so the retained index is
         // identified by the file the retained source actually created.
         retainedSourceIndexes = await listCandidateIndexFiles(activeServerDir);
         expect(retainedSourceIndexes).toHaveLength(1);
-        await expect(firstLifecycle.authorService.list({
-          sourceId: 'codexHome:connectedService:openai-codex:work:',
-        })).resolves.toMatchObject({
+        const workPage = await listPreparedSource('codexHome:connectedService:openai-codex:work:');
+        expect(workPage).toMatchObject({
           items: [{ ref: { remoteSessionId: 'work-newest' } }, { ref: { remoteSessionId: 'work-oldest' } }],
         });
         const builtIndexes = await listCandidateIndexFiles(activeServerDir);

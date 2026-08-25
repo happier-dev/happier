@@ -1,5 +1,6 @@
 import { execFile, spawnSync } from 'node:child_process';
-import { win32 } from 'node:path';
+
+import { requireWindowsSystemToolPath } from '../process/windows/windowsSystemToolPath.js';
 
 export type WindowsProtectedPathKind = 'directory' | 'file';
 
@@ -8,6 +9,9 @@ export type WindowsProtectedAclCommandResult = Readonly<{
   stdout: string;
   stderr: string;
 }>;
+
+/** The System32 tools this boundary runs; resolved by the shared Windows system-tool owner. */
+type WindowsProtectedAclToolName = 'whoami.exe' | 'icacls.exe' | 'powershell.exe';
 
 export type WindowsProtectedAclCommandRunner = (
   command: string,
@@ -44,11 +48,6 @@ type WindowsAclSnapshot = Readonly<{
 const LOCAL_SYSTEM_SID = 'S-1-5-18';
 const WINDOWS_SID_PATTERN = /^S-\d(?:-\d+)+$/u;
 const WINDOWS_ACL_STDERR_LIMIT = 512;
-const WINDOWS_ACL_COMMAND_PATHS = Object.freeze({
-  'whoami.exe': ['whoami.exe'],
-  'icacls.exe': ['icacls.exe'],
-  'powershell.exe': ['WindowsPowerShell', 'v1.0', 'powershell.exe'],
-} satisfies Readonly<Record<string, readonly string[]>>);
 const WINDOWS_ACL_INSPECTION_SCRIPT = [
   '& {',
   'param([string]$Path)',
@@ -71,29 +70,6 @@ const WINDOWS_ACL_INSPECTION_SCRIPT = [
   '} ',
 ].join('\n');
 
-function readEnvironmentValueCaseInsensitive(env: NodeJS.ProcessEnv, name: string): string | null {
-  const expected = name.toLowerCase();
-  for (const [key, value] of Object.entries(env)) {
-    if (key.toLowerCase() === expected && typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-  return null;
-}
-
-function resolveWindowsProtectedAclCommand(command: string, env: NodeJS.ProcessEnv = process.env): string {
-  const windowsRoot = readEnvironmentValueCaseInsensitive(env, 'SystemRoot')
-    ?? readEnvironmentValueCaseInsensitive(env, 'WINDIR');
-  if (!windowsRoot) {
-    throw new Error(`Cannot run Windows protected ACL command ${command}: SystemRoot and WINDIR are unavailable`);
-  }
-  const relativePath = WINDOWS_ACL_COMMAND_PATHS[command as keyof typeof WINDOWS_ACL_COMMAND_PATHS];
-  if (!relativePath) {
-    throw new Error(`Unsupported Windows protected ACL command: ${command}`);
-  }
-  return win32.join(windowsRoot, 'System32', ...relativePath);
-}
-
 function summarizeCommandStderr(stderr: string): string {
   const normalized = stderr.trim().replace(/\s+/gu, ' ');
   if (!normalized) return '<empty>';
@@ -108,7 +84,7 @@ function commandFailure(command: string, result: WindowsProtectedAclCommandResul
 }
 
 function defaultRunCommand(command: string, args: readonly string[]): Promise<WindowsProtectedAclCommandResult> {
-  const nativeCommand = resolveWindowsProtectedAclCommand(command);
+  const nativeCommand = requireWindowsSystemToolPath(command as WindowsProtectedAclToolName);
   return new Promise((resolve, reject) => {
     execFile(nativeCommand, [...args], {
       encoding: 'utf8',
@@ -129,7 +105,7 @@ function defaultRunCommand(command: string, args: readonly string[]): Promise<Wi
 }
 
 function defaultRunCommandSync(command: string, args: readonly string[]): WindowsProtectedAclCommandResult {
-  const nativeCommand = resolveWindowsProtectedAclCommand(command);
+  const nativeCommand = requireWindowsSystemToolPath(command as WindowsProtectedAclToolName);
   const result = spawnSync(nativeCommand, [...args], {
     encoding: 'utf8',
     windowsHide: true,

@@ -85,7 +85,6 @@ type ListSourceSnapshot = {
   offset: number;
   exhausted: boolean;
   pagesRead: number;
-  consecutiveEmptyPages: number;
   diagnosticCode?: string;
   seenCursors: Set<string>;
   /**
@@ -101,7 +100,6 @@ type RetainedListSnapshot = Readonly<{ snapshot: ListSnapshot; retainedBytes: nu
 const CURSOR_PREFIX = 'plugin_external_sessions_v1_';
 const MAX_CURSOR_SNAPSHOTS = 128;
 const MAX_PROVIDER_PAGES_PER_SOURCE = 100;
-const MAX_EMPTY_PROVIDER_PAGES_PER_SOURCE = 8;
 const MAX_CONCURRENT_LIST_HEAD_ACQUISITIONS = 8;
 const LIST_HEAD_ACQUISITION_TIMEOUT_MS = 3_000;
 const MAX_SNAPSHOT_ITEMS = 10_000;
@@ -886,7 +884,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
               offset: 0,
               exhausted: false,
               pagesRead: 0,
-              consecutiveEmptyPages: 0,
               seenCursors: new Set<string>(),
               emittedPublicRefKeys: new Set<string>(),
             }))),
@@ -933,6 +930,20 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           publishSourceDiagnostic(sourceState, PUBLIC_REF_COLLISION_DIAGNOSTIC);
         }
       }
+      const retainProviderContinuation = (
+        sourceState: ListSourceSnapshot,
+        requestedCursor: string | undefined,
+        nextCursor: string,
+      ): void => {
+        if (
+          nextCursor === requestedCursor
+          || sourceState.seenCursors.has(nextCursor)
+        ) {
+          fail('plugin_external_inventory_capacity_exceeded');
+        }
+        sourceState.seenCursors.add(nextCursor);
+        sourceState.providerCursor = nextCursor;
+      };
 
       const readNextProviderPage = async (
         sourceState: ListSourceSnapshot,
@@ -970,16 +981,19 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           fail('plugin_external_candidate_index_owner_unavailable');
         }
         /**
-         * A preparation response is candidate-index build progress, not a page. It
-         * carries no continuation, its rows are a prefix the next build chunk may
-         * still reorder, and it proves neither a head nor exhaustion — so it is not
-         * a provider page read and must not consume this source's pagination budget.
-         * Head acquisition keeps driving the build inside its own source budget until
-         * the index answers with a real page; if the build cannot finish inside that
-         * budget the source resolves as its own local timeout diagnostic, leaving
-         * every ready source publishable.
+         * Preparation is an incomplete source head, not a publishable page: its
+         * candidate order may still change. It nevertheless consumed this public
+         * list call's one leaf attempt, so preserve any continuation it supplies
+         * (or the requested one when it supplies none) and let the next public
+         * cursor attempt the source again.
          */
-        if (page.preparation) return;
+        if (page.preparation) {
+          const nextCursor = page.nextCursor ?? undefined;
+          if (nextCursor) {
+            retainProviderContinuation(sourceState, requestedCursor, nextCursor);
+          }
+          return;
+        }
         if (page.candidates.length > limit) {
           throw new MalformedExternalSessionCandidatePageError();
         }
@@ -992,24 +1006,8 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         const nextCursor = page.nextCursor ?? undefined;
         sourceState.pagesRead += 1;
         const emptyContinuation = page.candidates.length === 0 && nextCursor !== undefined;
-        sourceState.consecutiveEmptyPages = emptyContinuation && requestedCursor !== undefined
-          ? sourceState.consecutiveEmptyPages + 1
-          : 0;
-        const emptyCapacityExceeded = emptyContinuation
-          && sourceState.consecutiveEmptyPages > MAX_EMPTY_PROVIDER_PAGES_PER_SOURCE;
-        if (emptyCapacityExceeded) {
-          sourceState.providerCursor = undefined;
-          sourceState.exhausted = true;
-          setSourceDiagnostic(sourceState, 'plugin_external_inventory_capacity_exceeded');
-        } else if (nextCursor) {
-          if (
-            nextCursor === requestedCursor
-            || sourceState.seenCursors.has(nextCursor)
-          ) {
-            fail('plugin_external_inventory_capacity_exceeded');
-          }
-          sourceState.seenCursors.add(nextCursor);
-          sourceState.providerCursor = nextCursor;
+        if (nextCursor) {
+          retainProviderContinuation(sourceState, requestedCursor, nextCursor);
           if (emptyContinuation) {
             setSourceDiagnostic(sourceState, 'plugin_external_source_page_empty');
           } else {
@@ -1096,7 +1094,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         }
         return 'plugin_external_source_failed';
       };
-      const acquireCompleteHead = async (sourceState: ListSourceSnapshot): Promise<void> => {
+      const attemptMissingHead = async (sourceState: ListSourceSnapshot): Promise<void> => {
         if (sourceState.exhausted || sourceState.offset < sourceState.items.length) return;
         const deadline = new AbortController();
         const timeout = setTimeout(
@@ -1112,14 +1110,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
               return;
             }
             sourceSignal.addEventListener('abort', onAbort, { once: true });
-            void (async () => {
-              while (
-                !sourceState.exhausted
-                && sourceState.offset >= sourceState.items.length
-              ) {
-                await readNextProviderPage(sourceState, sourceSignal);
-              }
-            })().then(resolve, reject).finally(() => {
+            void readNextProviderPage(sourceState, sourceSignal).then(resolve, reject).finally(() => {
               sourceSignal.removeEventListener('abort', onAbort);
             });
           });
@@ -1164,7 +1155,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           while (nextIndex < pending.length) {
             const sourceState = pending[nextIndex];
             nextIndex += 1;
-            if (sourceState) await acquireCompleteHead(sourceState);
+            if (sourceState) await attemptMissingHead(sourceState);
           }
         };
         const outcomes = await Promise.allSettled(
@@ -1179,9 +1170,17 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         if (failure) throw failure.reason;
       };
 
+      // A public list call may probe each missing source head once. Any source
+      // still missing a head remains incomplete in this existing snapshot for
+      // the next opaque cursor rather than being drained in this call.
       await fillMissingHeads();
       const items: HostExternalSessionCandidate[] = [];
       while (items.length < limit) {
+        const hasMissingHead = snapshot.sources.some(
+          (sourceState) => !sourceState.exhausted
+            && sourceState.offset >= sourceState.items.length,
+        );
+        if (hasMissingHead) break;
         let selected: ListSourceSnapshot | null = null;
         for (const sourceState of snapshot.sources) {
           const candidate = sourceState.items[sourceState.offset];
@@ -1192,13 +1191,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           }
         }
         if (!selected) {
-          const hasMissingHead = snapshot.sources.some(
-            (sourceState) => !sourceState.exhausted
-              && sourceState.offset >= sourceState.items.length,
-          );
-          if (!hasMissingHead) break;
-          await fillMissingHeads();
-          continue;
+          break;
         }
         const selectedCandidate = selected.items[selected.offset]!;
         selected.offset += 1;

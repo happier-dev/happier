@@ -1,9 +1,9 @@
 import { constants, createWriteStream } from 'node:fs';
 import type { EventEmitter } from 'node:events';
-import { lstat, mkdir, mkdtemp, open, readdir, rename, rm, rmdir } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readdir, rename, rm, rmdir, symlink } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { Readable, Transform } from 'node:stream';
+import { Readable, Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { createInflateRaw } from 'node:zlib';
@@ -15,6 +15,13 @@ import * as yauzl from 'yauzl';
 const WINDOWS_INVALID_PATH_CHARACTER = /[\u0000-\u001f<>:"|?*]/u;
 const WINDOWS_RESERVED_PATH_SEGMENT = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu;
 const MAX_TAR_METADATA_ENTRY_BYTES = 1024 * 1024;
+// A symlink target is a path, and the longest path any supported platform accepts is PATH_MAX
+// (4096 on Linux, 1024 on macOS). The target is read fully into memory before the link is created,
+// so this is the bound that keeps that read proportionate to what a real target can be.
+const MAX_SYMLINK_TARGET_BYTES = 4096;
+// Resolution follows links declared by the SAME archive, so a cycle (`a -> b`, `b -> a`) would
+// otherwise never terminate. Matches the SYMLOOP_MAX that kernels apply for the same reason.
+const MAX_SYMLINK_RESOLUTION_HOPS = 40;
 
 export type ArchiveExtractionLimits = Readonly<{
   maxArchiveBytes: number;
@@ -37,6 +44,16 @@ export const DEFAULT_ARCHIVE_EXTRACTION_LIMITS: ArchiveExtractionLimits = Object
 });
 
 type ArchiveEntryKind = 'directory' | 'file';
+/**
+ * Kinds the entry-path validator understands. `symlink` is a ZIP-only kind: a macOS `.app` bundle
+ * cannot exist without `Versions/Current` and the aliases that point through it, so the managed
+ * Chrome-for-Testing archive is unextractable without it. It is deliberately NOT part of the
+ * exported `InspectedTarArchiveEntry.kind` union — the tar paths still reject or skip links.
+ *
+ * For every ownership rule below (prefix conflicts, duplicate paths) a symlink behaves as a
+ * NON-DIRECTORY: nothing in the archive may be declared beneath one.
+ */
+type ArchiveEntryPathKind = ArchiveEntryKind | 'symlink';
 type ArchiveBudgetEntryKind = ArchiveEntryKind | 'metadata';
 
 function mergeArchiveExtractionLimits(
@@ -194,7 +211,7 @@ export type InspectedTarArchiveEntry = Readonly<{
   gid: number | null;
 }>;
 
-function normalizeArchiveEntryPath(rawPath: string, kind: ArchiveEntryKind): string | null {
+function normalizeArchiveEntryPath(rawPath: string, kind: ArchiveEntryPathKind): string | null {
   if (String(rawPath).includes('\\')) {
     throw new Error(`[release-runtime] archive entry has a non-portable separator: ${rawPath}`);
   }
@@ -237,10 +254,10 @@ function normalizeArchiveEntryPath(rawPath: string, kind: ArchiveEntryKind): str
 
 function createArchiveEntryValidator(
   allowedEntryRoots?: readonly string[],
-): (rawPath: string, kind: ArchiveEntryKind) => string | null {
+): (rawPath: string, kind: ArchiveEntryPathKind) => string | null {
   const canonicalPrefixesByPortablePath = new Map<string, string>();
   const explicitEntryPaths = new Set<string>();
-  const explicitEntryKindsByPortablePath = new Map<string, ArchiveEntryKind>();
+  const explicitEntryKindsByPortablePath = new Map<string, ArchiveEntryPathKind>();
   const implicitDirectoryPaths = new Set<string>();
   const normalizedAllowedEntryRoots = allowedEntryRoots?.map((root) => {
     const normalizedRoot = normalizeArchiveEntryPath(root, 'directory');
@@ -284,23 +301,113 @@ function createArchiveEntryValidator(
       }
       canonicalPrefixesByPortablePath.set(portablePrefix, canonicalPrefix);
       if (index < portableSegments.length - 1) {
-        if (explicitEntryKindsByPortablePath.get(portablePrefix) === 'file') {
+        // This is also the ordering/TOCTOU answer for symlinks: an entry may never be declared
+        // beneath a path the archive already declared as a file OR a symlink, so no write can be
+        // redirected through a link this extraction created. The decision is made from archive
+        // METADATA before any filesystem work, so there is no window to race.
+        const prefixKind = explicitEntryKindsByPortablePath.get(portablePrefix);
+        if (prefixKind === 'file' || prefixKind === 'symlink') {
           throw new Error(
-            `[release-runtime] archive entry has a file/directory prefix conflict: ${rawPath} descends from ${canonicalPrefix}`,
+            `[release-runtime] archive entry has a ${prefixKind}/directory prefix conflict: ${rawPath} descends from ${canonicalPrefix}`,
           );
         }
         implicitDirectoryPaths.add(portablePrefix);
       }
     }
-    if (kind === 'file' && implicitDirectoryPaths.has(collisionKey)) {
+    if (kind !== 'directory' && implicitDirectoryPaths.has(collisionKey)) {
       throw new Error(
-        `[release-runtime] archive entry has a file/directory prefix conflict: ${rawPath} was already used as a directory`,
+        `[release-runtime] archive entry has a ${kind}/directory prefix conflict: ${rawPath} was already used as a directory`,
       );
     }
     explicitEntryPaths.add(collisionKey);
     explicitEntryKindsByPortablePath.set(collisionKey, kind);
     return portablePath;
   };
+}
+
+function splitPortableSymlinkTarget(rawTarget: string, linkPath: string): readonly string[] {
+  if (rawTarget.length === 0) {
+    throw new Error(`[release-runtime] archive symlink has an empty target: ${linkPath}`);
+  }
+  if (rawTarget.includes('\u0000')) {
+    throw new Error(`[release-runtime] archive symlink target contains a NUL byte: ${linkPath}`);
+  }
+  if (rawTarget.includes('\\')) {
+    throw new Error(
+      `[release-runtime] archive symlink target has a non-portable separator: ${linkPath} -> ${rawTarget}`,
+    );
+  }
+  if (rawTarget.startsWith('/') || /^[a-z]:/iu.test(rawTarget)) {
+    throw new Error(
+      `[release-runtime] archive symlink target is absolute: ${linkPath} -> ${rawTarget}`,
+    );
+  }
+  return rawTarget.split('/');
+}
+
+/**
+ * Containment rule for one symlink target, resolved the way the kernel resolves a path.
+ *
+ * Lexical containment of each link IN ISOLATION is not sufficient: `a/b/hop -> ../..` lands exactly
+ * on the root, and `a/b/escape -> hop/../../x` is lexically contained too, yet following `hop`
+ * first and only then applying `..` lands ABOVE the root. So `..` is resolved against the
+ * accumulated stack and any component that the same archive declares as a symlink is FOLLOWED,
+ * bounded by `MAX_SYMLINK_RESOLUTION_HOPS`. If the stack is ever popped past empty, the target
+ * escapes and the archive is rejected.
+ *
+ * Lookups are case-folded to match the case-insensitive collision key the path validator already
+ * enforces, so a target written in a different case cannot dodge the link graph on a
+ * case-insensitive filesystem.
+ */
+function assertArchiveSymlinkTargetIsContained(params: Readonly<{
+  linkPath: string;
+  rawTarget: string;
+  targetsByFoldedPath: ReadonlyMap<string, string>;
+}>): void {
+  const resolvedSegments = params.linkPath.split('/');
+  resolvedSegments.pop();
+  let pendingSegments: string[] = [...splitPortableSymlinkTarget(params.rawTarget, params.linkPath)];
+  let followedLinks = 0;
+
+  while (pendingSegments.length > 0) {
+    const segment = pendingSegments.shift()!;
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') {
+      if (resolvedSegments.length === 0) {
+        throw new Error(
+          `[release-runtime] archive symlink target leaves the extraction root: ${params.linkPath} -> ${params.rawTarget}`,
+        );
+      }
+      resolvedSegments.pop();
+      continue;
+    }
+    resolvedSegments.push(segment);
+    const nestedTarget = params.targetsByFoldedPath.get(resolvedSegments.join('/').toLowerCase());
+    if (nestedTarget === undefined) continue;
+    followedLinks += 1;
+    if (followedLinks > MAX_SYMLINK_RESOLUTION_HOPS) {
+      throw new Error(
+        `[release-runtime] archive symlink target does not resolve: ${params.linkPath} -> ${params.rawTarget}`,
+      );
+    }
+    resolvedSegments.pop();
+    pendingSegments = [
+      ...splitPortableSymlinkTarget(nestedTarget, params.linkPath),
+      ...pendingSegments,
+    ];
+  }
+}
+
+function assertArchiveSymlinkTargetsAreContained(
+  targetsByPortablePath: ReadonlyMap<string, string>,
+): void {
+  const targetsByFoldedPath = new Map<string, string>();
+  for (const [portablePath, rawTarget] of targetsByPortablePath) {
+    targetsByFoldedPath.set(portablePath.toLowerCase(), rawTarget);
+  }
+  for (const [linkPath, rawTarget] of targetsByPortablePath) {
+    assertArchiveSymlinkTargetIsContained({ linkPath, rawTarget, targetsByFoldedPath });
+  }
 }
 
 type TarArchiveEntry = Readonly<{
@@ -448,7 +555,7 @@ type ZipArchiveEntry = Readonly<{
 }>;
 
 type ValidatedZipArchiveEntry = ZipArchiveEntry & Readonly<{
-  kind: ArchiveEntryKind;
+  kind: ArchiveEntryPathKind;
   mode: number;
   path: string | null;
 }>;
@@ -613,8 +720,38 @@ function createZipEntryValidator(params: Readonly<{
     const isDirectory = entry.fileName.endsWith('/')
       || unixFileType === 0o040000
       || (madeBy === 0 && entry.externalFileAttributes === 16);
+    if (unixFileType === 0o120000) {
+      if (isDirectory) {
+        throw new Error(
+          `[release-runtime] archive symlink entry also declares a directory (${entry.fileName})`,
+        );
+      }
+      if (process.platform === 'win32') {
+        // Windows symlink creation needs SeCreateSymbolicLinkPrivilege or Developer Mode, so it is
+        // privilege-dependent rather than reliable, and the created link's file/directory type has
+        // to be chosen up front. Refuse loudly instead of silently producing a bundle whose links
+        // are missing — a half-built `.app` is exactly the failure-without-saying-so shape.
+        throw new Error(
+          `[release-runtime] archive symlink entries are not supported on Windows (${entry.fileName})`,
+        );
+      }
+      if (entry.uncompressedSize > MAX_SYMLINK_TARGET_BYTES) {
+        throw new Error(
+          `[release-runtime] archive symlink target exceeds its length limit (${entry.fileName})`,
+        );
+      }
+      // A symlink takes a name and an inode exactly like a file, and its target string is its
+      // expanded payload, so it is accounted as one rather than as a free directory.
+      params.budget.account('file', entry.uncompressedSize);
+      return {
+        ...entry,
+        kind: 'symlink',
+        mode: unixMode & 0o777,
+        path: validatePath(entry.fileName, 'symlink'),
+      };
+    }
     if (unixFileType !== 0 && unixFileType !== 0o040000 && unixFileType !== 0o100000) {
-      throw new Error(`[release-runtime] archive entry type is not supported: link or special file (${entry.fileName})`);
+      throw new Error(`[release-runtime] archive entry type is not supported: special file, device, FIFO or socket (${entry.fileName})`);
     }
     const kind = isDirectory ? 'directory' : 'file';
     params.budget.account(kind, isDirectory ? 0 : entry.uncompressedSize);
@@ -1266,11 +1403,81 @@ function createZipPayloadVerifier(params: Readonly<{
   });
 }
 
+type OffsetValidatedZipArchiveEntry = ValidatedZipArchiveEntry & Readonly<{ dataOffset: number }>;
+
+async function pipeValidatedZipEntryPayload(params: Readonly<{
+  abortContext: ArchiveAbortContext;
+  archiveFile: FileHandle;
+  entry: OffsetValidatedZipArchiveEntry;
+  sink: Writable;
+}>): Promise<void> {
+  const payloadSource = params.entry.compressedSize === 0
+    ? Readable.from([])
+    : createOpenArchiveRangeStream(
+        params.archiveFile,
+        params.entry.dataOffset,
+        params.entry.dataOffset + params.entry.compressedSize,
+      );
+  const verifier = createZipPayloadVerifier(params);
+  if (params.entry.compressionMethod === 8) {
+    const inflater = createInflateRaw();
+    await pipeline(
+      payloadSource,
+      inflater,
+      verifier,
+      params.sink,
+      { signal: params.abortContext.signal },
+    );
+    if (inflater.bytesWritten !== params.entry.compressedSize) {
+      throw new Error(
+        `[release-runtime] ZIP deflate stream did not consume its declared compressed span (${params.entry.fileName})`,
+      );
+    }
+    return;
+  }
+  await pipeline(
+    payloadSource,
+    verifier,
+    params.sink,
+    { signal: params.abortContext.signal },
+  );
+}
+
+/**
+ * A ZIP stores a symlink's target as the entry's PAYLOAD, so it is only knowable after the entry
+ * offsets are, and it goes through the same size/CRC verifier as any other payload.
+ */
+async function readValidatedZipSymlinkTarget(params: Readonly<{
+  abortContext: ArchiveAbortContext;
+  archiveFile: FileHandle;
+  entry: OffsetValidatedZipArchiveEntry;
+}>): Promise<string> {
+  const chunks: Buffer[] = [];
+  await pipeValidatedZipEntryPayload({
+    ...params,
+    sink: new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(Buffer.from(chunk));
+        callback();
+      },
+    }),
+  });
+  params.abortContext.throwIfAborted();
+  try {
+    return UTF8_DECODER.decode(Buffer.concat(chunks));
+  } catch {
+    throw new Error(
+      `[release-runtime] archive symlink target is not valid UTF-8 (${params.entry.fileName})`,
+    );
+  }
+}
+
 async function extractValidatedZipEntry(params: Readonly<{
   abortContext: ArchiveAbortContext;
   archiveFile: FileHandle;
-  entry: ValidatedZipArchiveEntry & Readonly<{ dataOffset: number }>;
+  entry: OffsetValidatedZipArchiveEntry;
   extractDir: string;
+  symlinkTargetsByPath: ReadonlyMap<string, string>;
 }>): Promise<void> {
   params.abortContext.throwIfAborted();
   if (params.entry.path === null) return;
@@ -1284,40 +1491,26 @@ async function extractValidatedZipEntry(params: Readonly<{
   }
 
   await mkdir(dirname(outputPath), { recursive: true });
-  const payloadSource = params.entry.compressedSize === 0
-    ? Readable.from([])
-    : createOpenArchiveRangeStream(
-        params.archiveFile,
-        params.entry.dataOffset,
-        params.entry.dataOffset + params.entry.compressedSize,
+  if (params.entry.kind === 'symlink') {
+    const target = params.symlinkTargetsByPath.get(params.entry.path);
+    if (target === undefined) {
+      throw new Error(
+        `[release-runtime] archive symlink target was not resolved (${params.entry.fileName})`,
       );
-  const verifier = createZipPayloadVerifier(params);
+    }
+    // `symlink(2)` is inherently exclusive — it fails with EEXIST rather than following whatever is
+    // already at the path — and no entry may be declared beneath a symlink, so `mkdir` above cannot
+    // have walked through one either.
+    await symlink(target, outputPath);
+    return;
+  }
+
   const output = createWriteStream(outputPath, {
+    // O_CREAT|O_EXCL: refuses to follow a symlink sitting at the final component.
     flags: 'wx',
     mode: params.entry.mode || 0o644,
   });
-  if (params.entry.compressionMethod === 8) {
-    const inflater = createInflateRaw();
-    await pipeline(
-      payloadSource,
-      inflater,
-      verifier,
-      output,
-      { signal: params.abortContext.signal },
-    );
-    if (inflater.bytesWritten !== params.entry.compressedSize) {
-      throw new Error(
-        `[release-runtime] ZIP deflate stream did not consume its declared compressed span (${params.entry.fileName})`,
-      );
-    }
-  } else {
-    await pipeline(
-      payloadSource,
-      verifier,
-      output,
-      { signal: params.abortContext.signal },
-    );
-  }
+  await pipeValidatedZipEntryPayload({ ...params, sink: output });
   params.abortContext.throwIfAborted();
 }
 
@@ -1349,7 +1542,7 @@ async function extractZipArchiveToDirectory(params: Readonly<{
       archiveBytes: params.archiveBytes,
       archiveFile: params.archiveFile,
     });
-    const entriesWithOffsets: Array<ValidatedZipArchiveEntry & Readonly<{ dataOffset: number }>> = [];
+    const entriesWithOffsets: OffsetValidatedZipArchiveEntry[] = [];
     const ranges: Array<ValidatedZipEntryRange & Readonly<{ fileName: string }>> = [];
     for (const entry of entries) {
       params.abortContext.throwIfAborted();
@@ -1376,12 +1569,26 @@ async function extractZipArchiveToDirectory(params: Readonly<{
         );
       }
     }
+  // Every link target is read and the whole link graph is proven contained BEFORE anything is
+  // created, so a rejected archive never leaves a single link behind for a consumer to follow.
+  const symlinkTargetsByPath = new Map<string, string>();
+  for (const entry of entriesWithOffsets) {
+    if (entry.kind !== 'symlink' || entry.path === null) continue;
+    symlinkTargetsByPath.set(entry.path, await readValidatedZipSymlinkTarget({
+      abortContext: params.abortContext,
+      archiveFile: params.archiveFile,
+      entry,
+    }));
+  }
+  assertArchiveSymlinkTargetsAreContained(symlinkTargetsByPath);
+
   for (const entry of entriesWithOffsets) {
     await extractValidatedZipEntry({
       abortContext: params.abortContext,
       archiveFile: params.archiveFile,
       entry,
       extractDir: params.extractDir,
+      symlinkTargetsByPath,
     });
   }
 }

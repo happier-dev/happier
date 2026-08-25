@@ -2,19 +2,9 @@ import { existsSync, readdirSync } from 'node:fs';
 import { cp, mkdtemp, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const CLI_DIST_SNAPSHOT_PREFIX = '.dist.hstack-snapshot-';
+import { isPidPresent } from '../process/processLiveness.js';
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error && typeof error === 'object' && Reflect.get(error, 'code') === 'EPERM') {
-      return true;
-    }
-    return false;
-  }
-}
+const CLI_DIST_SNAPSHOT_PREFIX = '.dist.hstack-snapshot-';
 
 async function reclaimAbandonedCliDistSnapshots(
   cliDir: string,
@@ -74,7 +64,7 @@ export async function resolveCliDistSnapshotDir({
   distBackupDir,
   distEntrypointPath,
   reuseExistingDistSnapshot = false,
-  isProcessAliveImpl = isProcessAlive,
+  isProcessAliveImpl = isPidPresent,
   buildDist,
 }: Readonly<{
   cliDir: string;

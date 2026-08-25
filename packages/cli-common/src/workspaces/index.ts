@@ -25,6 +25,10 @@ import {
   resolveInstalledRuntimePackage,
   vendorRuntimeDependencyTree as vendorRuntimeDependencyTreeCanonical,
 } from '../../workspaceRuntimeDependencies.mjs';
+import {
+  findUnservableBundledPluginPackageResources,
+  readBundledPluginPackageResourceRelativePaths,
+} from '../../bundledPluginResources.mjs';
 
 const PLUGINS_PACKAGE_PREFIX = '@happier-dev/plugins-';
 const INTERNAL_PACKAGE_PREFIX = '@happier-dev/';
@@ -649,7 +653,7 @@ function copyBundledWorkspacePackageContents(params: Readonly<{
   // A bundled plugin's manifest is runtime input, not source-only package metadata. Preserve the
   // reserved manifest directory even when this package is being copied from an already-sanitized
   // workspace runtime whose package.json no longer carries the original `files` declaration.
-  copyIfExists(
+  const bundledPluginManifestCopied = copyIfExists(
     resolve(params.srcDir, '.happier-plugin'),
     resolve(params.tempDir, '.happier-plugin'),
   );
@@ -680,6 +684,34 @@ function copyBundledWorkspacePackageContents(params: Readonly<{
     if (!copyIfExists(resolve(params.srcDir, relativePath), resolve(params.tempDir, relativePath))) {
       throw new Error(`Bundled workspace package declared file is missing: '${relativePath}'`);
     }
+  }
+
+  if (bundledPluginManifestCopied) {
+    copyBundledPluginManifestResources(params.srcDir, params.tempDir);
+  }
+}
+
+/**
+ * The resources a plugin manifest declares are runtime input for the same reason the manifest
+ * itself is, and the `files` selection above cannot carry them across a second generation:
+ * `sanitizeBundledPackageJson` strips `files` from every package tree this bundler writes, so
+ * re-bundling an already-published tree — which is exactly how the daemon artifact payload is
+ * produced — selects nothing. Shipping the manifest without its declared bytes produces an
+ * artifact the runtime correctly refuses to start from.
+ */
+function copyBundledPluginManifestResources(srcDir: string, destDir: string): void {
+  for (const relativePath of readBundledPluginPackageResourceRelativePaths(srcDir)) {
+    copyIfExists(resolve(srcDir, relativePath), resolve(destDir, relativePath));
+  }
+
+  // Fail here rather than at first daemon start: this is the only point that knows both the
+  // manifest's declarations and the bytes the package will actually ship.
+  const unservableResources = findUnservableBundledPluginPackageResources(destDir);
+  if (unservableResources.length > 0) {
+    throw new Error([
+      'Bundled plugin package cannot serve resources its own manifest declares:',
+      ...unservableResources.map((problem) => `- ${problem}`),
+    ].join('\n'));
   }
 }
 

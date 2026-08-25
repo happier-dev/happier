@@ -1271,7 +1271,10 @@ describe('createPluginExternalSessionsAdapter', () => {
       }),
     });
 
-    await expect(adapter.authorService.list({ limit: 50 })).rejects.toMatchObject({
+    const first = await adapter.authorService.list({ limit: 50 });
+    expect(first.items).toEqual([]);
+    const firstCursor = requireListCursor(first);
+    await expect(adapter.authorService.list({ cursor: firstCursor, limit: 50 })).rejects.toMatchObject({
       code: 'plugin_external_inventory_capacity_exceeded',
     });
   });
@@ -1598,9 +1601,9 @@ describe('createPluginExternalSessionsAdapter', () => {
     expect(directListCandidates).not.toHaveBeenCalled();
   });
 
-  it('publishes ready sources and one source-local diagnostic when an index cannot finish preparing', async () => {
-    vi.useFakeTimers();
-    let preparationRequests = 0;
+  it('returns an incomplete cursor after one candidate-index preparation attempt', async () => {
+    let indexedAttempts = 0;
+    let nativeAttempts = 0;
     const adapter = createPluginExternalSessionsAdapter({
       isCurrent: () => true,
       sources: [
@@ -1612,44 +1615,34 @@ describe('createPluginExternalSessionsAdapter', () => {
         listCandidates: async () => ({ candidates: [], nextCursor: null }),
         pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
       }),
-      queryCandidates: async ({ entry, signal }) => {
+      queryCandidates: async ({ entry }) => {
         if (entry.sourceId !== 'indexed') {
-          return { candidates: [{ remoteSessionId: 'native', updatedAtMs: 1 }], nextCursor: null };
+          nativeAttempts += 1;
+          return { candidates: [{ remoteSessionId: 'native-older', updatedAtMs: 1 }], nextCursor: null };
         }
-        preparationRequests += 1;
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(resolve, 500);
-          signal?.addEventListener('abort', () => {
-            clearTimeout(timer);
-            reject(new DOMException('source acquisition aborted', 'AbortError'));
-          }, { once: true });
-        });
-        return {
-          candidates: [],
-          nextCursor: null,
-          preparation: { kind: 'building_candidate_index', scanned: preparationRequests * 50 },
-        };
+        indexedAttempts += 1;
+        return indexedAttempts === 1
+          ? {
+              candidates: [],
+              nextCursor: null,
+              preparation: { kind: 'building_candidate_index', scanned: 50 },
+            }
+          : {
+              candidates: [{ remoteSessionId: 'indexed-newer', updatedAtMs: 2 }],
+              nextCursor: null,
+            };
       },
     });
 
-    try {
-      const pending = adapter.authorService.list();
-      let settled = false;
-      void pending.then(() => { settled = true; }, () => { settled = true; });
-      await vi.advanceTimersByTimeAsync(2_999);
-      expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      await expect(pending).resolves.toEqual({
-        items: [expect.objectContaining({ ref: expect.objectContaining({ remoteSessionId: 'native' }) })],
-        diagnostics: [expect.objectContaining({
-          code: 'plugin_external_source_timeout',
-          details: { agentId: 'codex', sourceId: 'indexed' },
-        })],
-      });
-      expect(preparationRequests).toBeGreaterThan(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    const first = await adapter.authorService.list({ limit: 1 });
+    expect(first.items).toEqual([]);
+    expect(indexedAttempts).toBe(1);
+    expect(nativeAttempts).toBe(1);
+
+    const second = await adapter.authorService.list({ cursor: requireListCursor(first), limit: 1 });
+    expect(second.items.map((item) => item.ref.remoteSessionId)).toEqual(['indexed-newer']);
+    expect(indexedAttempts).toBe(2);
+    expect(nativeAttempts).toBe(1);
   });
 
   it('keeps empty source continuations live across public cursors without misordering ready heads', async () => {
@@ -1702,17 +1695,15 @@ describe('createPluginExternalSessionsAdapter', () => {
     expect(calls.filter((call) => call.startsWith('ready:'))).toHaveLength(1);
   });
 
-  it('admits eight empty continuation pages and rejects the ninth', async () => {
-    const createAdapter = (emptyContinuations: number) => {
-      let providerPage = 0;
-      const listCandidates = vi.fn(async () => {
-        providerPage += 1;
-        if (providerPage > emptyContinuations + 1) {
-          return { candidates: [{ remoteSessionId: 'after-empty-pages', updatedAtMs: 1 }], nextCursor: null };
-        }
-        return { candidates: [], nextCursor: `empty-${providerPage}` };
-      });
-      return { listCandidates, adapter: createPluginExternalSessionsAdapter({
+  it('preserves empty continuation pages beyond the former source-local cap', async () => {
+    const emptyContinuationPages = 10;
+    const listCandidates = vi.fn(async ({ cursor }: Readonly<{ cursor?: string }>) => {
+      const page = cursor === undefined ? 0 : Number(cursor.slice('empty-'.length));
+      return page < emptyContinuationPages
+        ? { candidates: [], nextCursor: `empty-${String(page + 1)}` }
+        : { candidates: [{ remoteSessionId: 'after-empty-pages', updatedAtMs: 1 }], nextCursor: null };
+    });
+    const adapter = createPluginExternalSessionsAdapter({
       isCurrent: () => true,
       sources: [{ agentId: 'codex', sourceId: 'source-1', source: { kind: 'codexHome', home: 'user' } }],
       resolveProviderOps: async () => ({
@@ -1720,50 +1711,17 @@ describe('createPluginExternalSessionsAdapter', () => {
         listCandidates,
         pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
       }),
-      }) };
-    };
-
-    const boundary = createAdapter(8);
-    await expect(boundary.adapter.authorService.list({ limit: 50 })).resolves.toMatchObject({
-      items: [expect.objectContaining({ ref: expect.objectContaining({ remoteSessionId: 'after-empty-pages' }) })],
-    });
-    expect(boundary.listCandidates).toHaveBeenCalledTimes(10);
-
-    const overBoundary = createAdapter(9);
-    await expect(overBoundary.adapter.authorService.list({ limit: 50 })).resolves.toMatchObject({
-      items: [],
-      diagnostics: [expect.objectContaining({
-        code: 'plugin_external_inventory_capacity_exceeded',
-        details: { agentId: 'codex', sourceId: 'source-1' },
-      })],
-    });
-    expect(overBoundary.listCandidates).toHaveBeenCalledTimes(10);
-  });
-
-  it('emits a ready source head while exhausting an over-limit empty continuation source', async () => {
-    const adapter = createPluginExternalSessionsAdapter({
-      isCurrent: () => true,
-      sources: [
-        { agentId: 'codex', sourceId: 'source-ready', source: { kind: 'codexHome', home: 'user' } },
-        { agentId: 'codex', sourceId: 'source-empty', source: { kind: 'codexHome', home: 'connectedService' } },
-      ],
-      resolveProviderOps: async () => ({
-        validateSource: async ({ source }: Readonly<{ source: ExternalSessionsSource }>) => ({ ok: true as const, source }),
-        listCandidates: async ({ cursor, source }) => source.home === 'user'
-          ? { candidates: [{ remoteSessionId: 'ready', updatedAtMs: 1 }], nextCursor: null }
-          : { candidates: [], nextCursor: `empty-${cursor ?? 'first'}` },
-        pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
-      }),
     });
 
-    const result = await adapter.authorService.list({ limit: 1 });
+    let page = await adapter.authorService.list({ limit: 1 });
+    for (let pageIndex = 0; pageIndex < emptyContinuationPages; pageIndex += 1) {
+      expect(page.items).toEqual([]);
+      page = await adapter.authorService.list({ cursor: requireListCursor(page), limit: 1 });
+    }
 
-    expect(result.items.map((item) => item.ref.remoteSessionId)).toEqual(['ready']);
-    expect(result.nextCursor).toBeUndefined();
-    expect(result.diagnostics).toEqual([expect.objectContaining({
-      code: 'plugin_external_inventory_capacity_exceeded',
-      details: { agentId: 'codex', sourceId: 'source-empty' },
-    })]);
+    expect(page.items.map((item) => item.ref.remoteSessionId)).toEqual(['after-empty-pages']);
+    expect(page.nextCursor).toBeUndefined();
+    expect(listCandidates).toHaveBeenCalledTimes(emptyContinuationPages + 1);
   });
 
   it('orders every equal-timestamp tie field by UTF-16 code units instead of ambient locale collation', async () => {
@@ -1803,11 +1761,11 @@ describe('createPluginExternalSessionsAdapter', () => {
     ]);
   });
 
-  it('runs at most eight complete head acquisitions concurrently across empty continuations', async () => {
+  it('runs at most eight one-page source attempts concurrently', async () => {
     vi.useFakeTimers();
-    const activeAcquisitions = new Set<number>();
-    let initialStarts = 0;
-    let maximumActiveAcquisitions = 0;
+    let activeAttempts = 0;
+    let maximumActiveAttempts = 0;
+    const startedSourceIds: string[] = [];
     const sources = Array.from({ length: 9 }, (_, index) => ({
       agentId: 'codex' as const,
       sourceId: `source-${index}`,
@@ -1818,19 +1776,13 @@ describe('createPluginExternalSessionsAdapter', () => {
       sources,
       resolveProviderOps: async () => ({
         validateSource: async ({ source }: Readonly<{ source: ExternalSessionsSource }>) => ({ ok: true as const, source }),
-        listCandidates: async ({ cursor, source }) => {
-          const slot = Number(source.slot);
-          if (!cursor) {
-            initialStarts += 1;
-            activeAcquisitions.add(slot);
-            maximumActiveAcquisitions = Math.max(maximumActiveAcquisitions, activeAcquisitions.size);
-            return { candidates: [], nextCursor: `continue-${slot}` };
-          }
+        listCandidates: async ({ source }) => {
+          startedSourceIds.push(String(source.slot));
+          activeAttempts += 1;
+          maximumActiveAttempts = Math.max(maximumActiveAttempts, activeAttempts);
           await new Promise<void>((resolve) => setTimeout(resolve, 100));
-          activeAcquisitions.delete(slot);
-          return source.slot === 8
-            ? { candidates: [{ remoteSessionId: 'ready-last', updatedAtMs: 1 }], nextCursor: null }
-            : { candidates: [], nextCursor: null };
+          activeAttempts -= 1;
+          return { candidates: [], nextCursor: `continue-${String(source.slot)}` };
         },
         pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
       }),
@@ -1839,22 +1791,24 @@ describe('createPluginExternalSessionsAdapter', () => {
     try {
       const pending = adapter.authorService.list({ limit: 9 });
       await vi.advanceTimersByTimeAsync(0);
-      expect(initialStarts).toBe(8);
-      expect(maximumActiveAcquisitions).toBe(8);
-      await vi.advanceTimersByTimeAsync(1_000);
+      expect(startedSourceIds).toHaveLength(8);
+      expect(maximumActiveAttempts).toBe(8);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(startedSourceIds).toHaveLength(9);
+      await vi.advanceTimersByTimeAsync(100);
       await expect(pending).resolves.toMatchObject({
-        items: [expect.objectContaining({ ref: expect.objectContaining({ remoteSessionId: 'ready-last' }) })],
+        items: [],
+        nextCursor: expect.stringMatching(/^plugin_external_sessions_v1_/),
       });
-      expect(maximumActiveAcquisitions).toBe(8);
+      expect(maximumActiveAttempts).toBe(8);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('applies one 3s source budget across initial and empty-continuation provider pages', async () => {
+  it('returns after an empty first page without starting its continuation in that call', async () => {
     vi.useFakeTimers();
-    const caller = new AbortController();
-    let stalledProviderSignalAborted = false;
+    let continuationCalls = 0;
     const adapter = createPluginExternalSessionsAdapter({
       isCurrent: () => true,
       sources: [
@@ -1863,7 +1817,7 @@ describe('createPluginExternalSessionsAdapter', () => {
       ],
       resolveProviderOps: async () => ({
         validateSource: async ({ source }: Readonly<{ source: ExternalSessionsSource }>) => ({ ok: true as const, source }),
-        listCandidates: async ({ cursor, source, signal }) => {
+        listCandidates: async ({ cursor, source }) => {
           if (source.slot === 'ready') {
             return { candidates: [{ remoteSessionId: 'ready', updatedAtMs: 1 }], nextCursor: null };
           }
@@ -1871,94 +1825,25 @@ describe('createPluginExternalSessionsAdapter', () => {
             await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
             return { candidates: [], nextCursor: 'slow-continuation' };
           }
-          return await new Promise<never>((_resolve, reject) => {
-            if (!signal) throw new Error('Expected a provider source-budget signal');
-            signal.addEventListener('abort', () => {
-              stalledProviderSignalAborted = true;
-              reject(new DOMException('source acquisition aborted', 'AbortError'));
-            }, { once: true });
-          });
+          continuationCalls += 1;
+          return { candidates: [{ remoteSessionId: 'slow-newer', updatedAtMs: 2 }], nextCursor: null };
         },
         pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
       }),
     });
 
     try {
-      const pending = adapter.authorService.list({ limit: 2, signal: caller.signal }).then(
-        (value) => ({ status: 'resolved' as const, value }),
-        (error: unknown) => ({ status: 'rejected' as const, error }),
-      );
+      const pending = adapter.authorService.list({ limit: 1 });
       let settled = false;
       void pending.finally(() => { settled = true; });
-      await vi.advanceTimersByTimeAsync(2_999);
+      await vi.advanceTimersByTimeAsync(1_999);
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(1);
-      const settledAtSourceBudget = settled;
-      const providerAbortedAtSourceBudget = stalledProviderSignalAborted;
-      if (!settledAtSourceBudget) caller.abort();
-      const outcome = await pending;
-      expect(settledAtSourceBudget).toBe(true);
-      expect(providerAbortedAtSourceBudget).toBe(true);
-      expect(outcome).toMatchObject({
-        status: 'resolved',
-        value: {
-          items: [expect.objectContaining({ ref: expect.objectContaining({ remoteSessionId: 'ready' }) })],
-          diagnostics: [expect.objectContaining({ details: { agentId: 'codex', sourceId: 'slow' } })],
-        },
+      await expect(pending).resolves.toMatchObject({
+        items: [],
+        nextCursor: expect.stringMatching(/^plugin_external_sessions_v1_/),
       });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('does not starve a ready source after three full waves of source-local timeouts', async () => {
-    vi.useFakeTimers();
-    const sources = [
-      ...Array.from({ length: 24 }, (_, index) => ({
-        agentId: 'codex' as const,
-        sourceId: `slow-${index}`,
-        source: { kind: 'codexHome' as const, home: 'user' as const, slot: `slow-${index}` },
-      })),
-      {
-        agentId: 'codex' as const,
-        sourceId: 'ready-after-three-waves',
-        source: { kind: 'codexHome' as const, home: 'user' as const, slot: 'ready' },
-      },
-    ];
-    const adapter = createPluginExternalSessionsAdapter({
-      isCurrent: () => true,
-      sources,
-      resolveProviderOps: async () => ({
-        validateSource: async ({ source }: Readonly<{ source: ExternalSessionsSource }>) => ({ ok: true as const, source }),
-        listCandidates: async ({ cursor, source }) => {
-          if (source.slot === 'ready') {
-            return { candidates: [{ remoteSessionId: 'ready', updatedAtMs: 1 }], nextCursor: null };
-          }
-          if (!cursor) return { candidates: [], nextCursor: `continue-${String(source.slot)}` };
-          return await new Promise<never>(() => undefined);
-        },
-        pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
-      }),
-    });
-
-    try {
-      const outcome = adapter.authorService.list({ limit: 25 }).then(
-        (value) => ({ status: 'resolved' as const, value }),
-        (error: unknown) => ({ status: 'rejected' as const, error }),
-      );
-      let settledBeforeGlobalDeadline = false;
-      void outcome.finally(() => { settledBeforeGlobalDeadline = true; });
-      await vi.advanceTimersByTimeAsync(12_000);
-      const didSettleBeforeGlobalDeadline = settledBeforeGlobalDeadline;
-      if (!didSettleBeforeGlobalDeadline) await vi.advanceTimersByTimeAsync(3_000);
-      const settled = await outcome;
-      expect(didSettleBeforeGlobalDeadline).toBe(true);
-      expect(settled.status).toBe('resolved');
-      if (settled.status !== 'resolved') return;
-      expect(settled.value.items).toEqual([
-        expect.objectContaining({ ref: expect.objectContaining({ remoteSessionId: 'ready' }) }),
-      ]);
-      expect(settled.value.diagnostics).toHaveLength(24);
+      expect(continuationCalls).toBe(0);
     } finally {
       vi.useRealTimers();
     }

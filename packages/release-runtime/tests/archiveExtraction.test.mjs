@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateRawSync, gzipSync } from 'node:zlib';
@@ -184,7 +184,7 @@ function createDeflatedZip(entries) {
 
     const centralHeader = Buffer.alloc(46);
     centralHeader.writeUInt32LE(0x02014b50, 0);
-    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(entry.unixMode === undefined ? 20 : (3 << 8) | 20, 4);
     centralHeader.writeUInt16LE(entry.zip64Descriptor ? 45 : 20, 6);
     centralHeader.writeUInt16LE(generalPurposeBitFlag, 8);
     centralHeader.writeUInt16LE(8, 10);
@@ -193,6 +193,9 @@ function createDeflatedZip(entries) {
     centralHeader.writeUInt32LE(contents.length, 24);
     centralHeader.writeUInt16LE(name.length, 28);
     centralHeader.writeUInt16LE(centralExtraField.length, 30);
+    if (entry.unixMode !== undefined) {
+      centralHeader.writeUInt32LE((entry.unixMode << 16) >>> 0, 38);
+    }
     centralHeader.writeUInt32LE(localOffset, 42);
     centralRecords.push(centralHeader, name, centralExtraField);
     localOffset += localHeader.length
@@ -1122,24 +1125,187 @@ test('extractArchivePayloadToDirectory can skip tar links for a verified runtime
   }
 });
 
-test('extractArchivePayloadToDirectory rejects zip symlinks', async () => {
-  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-link-'));
-  try {
-    const archivePath = join(rootDir, 'payload.zip');
-    await writeFile(archivePath, createStoredZip([
-      { name: 'escape', contents: '../outside', unixMode: 0o120777 },
-    ]));
+// A macOS `.app` framework bundle CANNOT be expressed without symlinks, so rejecting ZIP symlinks
+// made the managed Chrome-for-Testing install impossible on macOS by any route (F-BROWSER-1).
+//
+// These names and targets are NOT invented: they are the five symlink entries read out of the
+// central directory of the pinned artifact itself,
+// https://storage.googleapis.com/chrome-for-testing-public/127.0.6533.88/mac-arm64/chrome-mac-arm64.zip
+// (313 entries: 146 directories, 162 files, 5 symlinks, 0 special files; every one madeBy=3 with
+// unix file type 0o120000). Four of them resolve THROUGH `Versions/Current`, which is itself a
+// symlink — so this fixture exercises chained resolution, not a single hop.
+const CFT_FRAMEWORK_DIR = 'chrome-mac-arm64/Google Chrome for Testing.app/Contents/Frameworks/Google Chrome for Testing Framework.framework';
+const CFT_PINNED_VERSION = '127.0.6533.88';
+const CFT_BUNDLE_ENTRIES = [
+  { name: `${CFT_FRAMEWORK_DIR}/Versions/${CFT_PINNED_VERSION}/Resources/version.txt`, contents: CFT_PINNED_VERSION },
+  { name: `${CFT_FRAMEWORK_DIR}/Versions/Current`, contents: CFT_PINNED_VERSION, unixMode: 0o120755 },
+  { name: `${CFT_FRAMEWORK_DIR}/Resources`, contents: 'Versions/Current/Resources', unixMode: 0o120755 },
+  { name: `${CFT_FRAMEWORK_DIR}/Libraries`, contents: 'Versions/Current/Libraries', unixMode: 0o120755 },
+  { name: `${CFT_FRAMEWORK_DIR}/Helpers`, contents: 'Versions/Current/Helpers', unixMode: 0o120755 },
+  {
+    name: `${CFT_FRAMEWORK_DIR}/Google Chrome for Testing Framework`,
+    contents: 'Versions/Current/Google Chrome for Testing Framework',
+    unixMode: 0o120755,
+  },
+];
 
-    await assert.rejects(
-      extractArchivePayloadToDirectory({
-        archiveName: 'payload.zip',
-        archivePath,
-        extractDir: join(rootDir, 'extract'),
-      }),
-      /link/iu,
+test('extractArchivePayloadToDirectory extracts the pinned Chrome-for-Testing symlink graph', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-link-ok-'));
+  const archivePath = join(rootDir, 'chrome-mac-arm64.zip');
+  const extractDir = join(rootDir, 'extract');
+  try {
+    await writeFile(archivePath, createStoredZip(CFT_BUNDLE_ENTRIES));
+
+    if (process.platform === 'win32') {
+      // Documented platform contract: Windows symlink creation is privilege-gated, so the extractor
+      // refuses loudly there rather than publishing a half-built bundle.
+      await assert.rejects(
+        extractArchivePayloadToDirectory({ archiveName: 'chrome-mac-arm64.zip', archivePath, extractDir }),
+        /symlink/iu,
+      );
+      return;
+    }
+
+    await extractArchivePayloadToDirectory({ archiveName: 'chrome-mac-arm64.zip', archivePath, extractDir });
+
+    const frameworkDir = join(extractDir, ...CFT_FRAMEWORK_DIR.split('/'));
+    assert.equal((await lstat(join(frameworkDir, 'Versions', 'Current'))).isSymbolicLink(), true);
+    assert.equal(await readlink(join(frameworkDir, 'Versions', 'Current')), CFT_PINNED_VERSION);
+    assert.equal(await readlink(join(frameworkDir, 'Resources')), 'Versions/Current/Resources');
+    assert.equal(
+      await readlink(join(frameworkDir, 'Google Chrome for Testing Framework')),
+      'Versions/Current/Google Chrome for Testing Framework',
+    );
+    // Reading THROUGH both hops proves the bundle actually resolves, not merely that links exist.
+    assert.equal(await readFile(join(frameworkDir, 'Resources', 'version.txt'), 'utf8'), CFT_PINNED_VERSION);
+    // A target that points at a path the archive never declares is a legal dangling link, not an escape.
+    assert.equal(await readlink(join(frameworkDir, 'Helpers')), 'Versions/Current/Helpers');
+
+    // The shipped archive DEFLATES its entries, so the target must also survive inflate + CRC.
+    const deflatedArchivePath = join(rootDir, 'deflated.zip');
+    const deflatedExtractDir = join(rootDir, 'extract-deflated');
+    await writeFile(deflatedArchivePath, createDeflatedZip(CFT_BUNDLE_ENTRIES));
+    await extractArchivePayloadToDirectory({
+      archiveName: 'deflated.zip',
+      archivePath: deflatedArchivePath,
+      extractDir: deflatedExtractDir,
+    });
+    assert.equal(
+      await readFile(join(deflatedExtractDir, ...CFT_FRAMEWORK_DIR.split('/'), 'Resources', 'version.txt'), 'utf8'),
+      CFT_PINNED_VERSION,
     );
   } finally {
     await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory rejects zip symlinks that leave the extraction root', async () => {
+  const cases = [
+    {
+      label: 'absolute-posix-target',
+      entries: [{ name: 'payload/link', contents: '/etc/passwd', unixMode: 0o120777 }],
+    },
+    {
+      label: 'absolute-windows-target',
+      entries: [{ name: 'payload/link', contents: 'C:/Windows/System32', unixMode: 0o120777 }],
+    },
+    {
+      label: 'parent-traversal',
+      entries: [{ name: 'escape', contents: '../outside', unixMode: 0o120777 }],
+    },
+    {
+      label: 'deep-parent-traversal',
+      entries: [{ name: 'payload/nested/link', contents: '../../../outside', unixMode: 0o120777 }],
+    },
+    {
+      // Each link is contained when read on its own; only resolving `escape` THROUGH `hop`
+      // reveals that it lands above the extraction root.
+      label: 'chained-traversal',
+      entries: [
+        { name: 'a/b/hop', contents: '../..', unixMode: 0o120777 },
+        { name: 'a/b/escape', contents: 'hop/../../outside', unixMode: 0o120777 },
+      ],
+    },
+    {
+      label: 'resolution-loop',
+      entries: [
+        { name: 'a/left', contents: 'right', unixMode: 0o120777 },
+        { name: 'a/right', contents: 'left', unixMode: 0o120777 },
+      ],
+    },
+    {
+      label: 'backslash-target',
+      entries: [{ name: 'payload/link', contents: '..\\outside', unixMode: 0o120777 }],
+    },
+    {
+      label: 'empty-target',
+      entries: [{ name: 'payload/link', contents: '', unixMode: 0o120777 }],
+    },
+  ];
+
+  for (const testCase of cases) {
+    const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-link-escape-'));
+    const archivePath = join(rootDir, 'payload.zip');
+    const extractDir = join(rootDir, 'extract');
+    try {
+      await writeFile(archivePath, createStoredZip(testCase.entries));
+      await assert.rejects(
+        extractArchivePayloadToDirectory({ archiveName: 'payload.zip', archivePath, extractDir }),
+        /symlink/iu,
+        testCase.label,
+      );
+      // Nothing may be published when any link in the archive is unsafe.
+      await assert.rejects(stat(extractDir), { code: 'ENOENT' }, testCase.label);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('extractArchivePayloadToDirectory rejects a zip entry whose path descends through a symlink', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-link-traverse-'));
+  const archivePath = join(rootDir, 'payload.zip');
+  const extractDir = join(rootDir, 'extract');
+  try {
+    await writeFile(archivePath, createStoredZip([
+      { name: 'a/link', contents: 'b', unixMode: 0o120777 },
+      { name: 'a/link/planted', contents: 'pwned' },
+    ]));
+    await assert.rejects(
+      extractArchivePayloadToDirectory({ archiveName: 'payload.zip', archivePath, extractDir }),
+      /conflict|symlink/iu,
+    );
+    await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory still rejects zip device, FIFO and socket entries', async () => {
+  for (const [label, unixMode] of [
+    ['character-device', 0o020666],
+    ['block-device', 0o060666],
+    ['fifo', 0o010666],
+    ['socket', 0o140666],
+  ]) {
+    const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-zip-special-'));
+    const archivePath = join(rootDir, 'payload.zip');
+    try {
+      await writeFile(archivePath, createStoredZip([
+        { name: 'payload/special', contents: '', unixMode },
+      ]));
+      await assert.rejects(
+        extractArchivePayloadToDirectory({
+          archiveName: 'payload.zip',
+          archivePath,
+          extractDir: join(rootDir, 'extract'),
+        }),
+        /special/iu,
+        label,
+      );
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
   }
 });
 

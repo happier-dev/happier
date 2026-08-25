@@ -1221,7 +1221,6 @@ describe('unified Voice speech machine RPC', () => {
     };
     const manifest = speechManifest({
       requirement: { kind: 'optional' },
-      rawGrantPhases: ['settings'],
       settingsActions: [settingsAction],
     });
     const declaredContribution = manifest.contributes.voiceProviders?.[0];
@@ -1291,6 +1290,11 @@ describe('unified Voice speech machine RPC', () => {
       settingsActions: Object.freeze({ execute }),
     });
     const current = () => true;
+    const currentInstallReviewPrincipal = Object.freeze({
+      digest: PluginInstallReviewPrincipalDigestSchema.parse('d'.repeat(64)),
+      presentation: null,
+    });
+    const connectedMaterialize = vi.fn();
     runtimeLeaseMocks.acquire.mockResolvedValueOnce({
       registry: {
         activateContributionsOnDemand: runtimeLeaseMocks.activateContributionsOnDemand,
@@ -1313,6 +1317,9 @@ describe('unified Voice speech machine RPC', () => {
           isCurrent: current,
           retirementSignal: new AbortController().signal,
         }),
+        resolveConnectedAccountPurposeBindingOwner: () => ({
+          materialize: connectedMaterialize,
+        }),
       },
       release: runtimeLeaseMocks.release,
     });
@@ -1320,6 +1327,9 @@ describe('unified Voice speech machine RPC', () => {
       rpcHandlerManager: registrar as never,
       machineId: 'machine-a',
       resolveRawCredentialDependencies: async () => ({
+        currentInstallReviewPrincipal: { readCurrent: async () => currentInstallReviewPrincipal },
+        readCurrentGrantAuthoritySource: async () => daemonGrantAuthority,
+        grants: { list: async () => ({ grants: [], pendingRequests: [] }) },
         getAccountSettingsSnapshot: () => snapshot,
       }),
     });
@@ -1328,11 +1338,12 @@ describe('unified Voice speech machine RPC', () => {
     );
     if (!executeSettingsAction) throw new Error('speech settings action RPC must be registered');
 
-    await expect(executeSettingsAction({ target, actionId: settingsAction.id })).resolves.toEqual({
+    const response = await executeSettingsAction({ target, actionId: settingsAction.id });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(response).toEqual({
       ok: false,
       errorCode: 'provider_unavailable',
     });
-    expect(execute).toHaveBeenCalledTimes(1);
     await registration.dispose();
   });
 

@@ -1,5 +1,11 @@
 export type { CommandInvocation } from './windows/resolveWindowsCommandInvocation.js';
+export { closeStdioWhenCommandExits } from './closeStdioWhenCommandExits.js';
 export { commandExistsOnPath } from './commandExists.js';
+export {
+  execFileWithDeadline,
+  type ExecFileWithDeadlineOptions,
+  type ExecFileWithDeadlineResult,
+} from './execFileWithDeadline.js';
 export {
   isPidPresent,
   isPidProvablyAbsent,
@@ -15,3 +21,9 @@ export {
   resolveWindowsCommandOnPath,
   resolveWindowsCommandPath,
 } from './windows/resolveWindowsCommandInvocation.js';
+export {
+  requireWindowsSystemToolPath,
+  resolveWindowsSystemToolPath,
+  windowsSystemToolCommand,
+  type WindowsSystemToolName,
+} from './windows/windowsSystemToolPath.js';

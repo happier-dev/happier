@@ -119,6 +119,57 @@ describe('installOrUpdateRelayRuntimeLocal', () => {
     }
   });
 
+  it('preserves operator-owned web app URLs when reinstalling without explicit overrides', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-'));
+    try {
+      const payloadRoot = join(homeDir, 'payload');
+      const migrationsSourceDir = join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init');
+      await mkdir(migrationsSourceDir, { recursive: true });
+      await writeFile(join(migrationsSourceDir, 'migration.sql'), '-- init\n', 'utf8');
+
+      const serverBinaryPath = join(payloadRoot, 'happier-server');
+      await writeFile(serverBinaryPath, '#!/bin/sh\necho ok\n', 'utf8');
+
+      await installOrUpdateRelayRuntimeLocal({
+        serverBinaryPath,
+        channel: 'preview',
+        mode: 'user',
+        platform: 'linux',
+        arch: 'arm64',
+        homeDir,
+        env: {
+          HAPPIER_WEBAPP_URL: 'https://web.example.test',
+          HAPPY_WEBAPP_URL: 'https://legacy-web.example.test',
+        },
+        runServiceCommands: false,
+        skipHealthCheck: true,
+      });
+
+      await installOrUpdateRelayRuntimeLocal({
+        serverBinaryPath,
+        channel: 'preview',
+        mode: 'user',
+        platform: 'linux',
+        arch: 'arm64',
+        homeDir,
+        runServiceCommands: false,
+        skipHealthCheck: true,
+      });
+
+      const defaults = resolveRelayRuntimeDefaults({
+        platform: 'linux',
+        mode: 'user',
+        channel: 'preview',
+        homeDir,
+      });
+      const envText = await readFileText(join(defaults.configDir, 'server.env'));
+      expect(envText).toContain('HAPPIER_WEBAPP_URL=https://web.example.test');
+      expect(envText).toContain('HAPPY_WEBAPP_URL=https://legacy-web.example.test');
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it('auto-selects a non-colliding port when a sibling relay already uses the default port', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-port-collision-'));
     try {

@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 
-import { resolveWindowsCommandOnPath } from '../process/index.js';
+import { execFileWithDeadline, resolveWindowsCommandOnPath } from '../process/index.js';
 import {
   resolveRelayAccessCommandTimeoutMs,
 } from '../relayAccess/deadline.js';
@@ -201,46 +200,43 @@ const runCommand: TailscaleCommandRunner = async (request) => {
   const command = String(request.command ?? '').trim();
   const args = Array.isArray(request.args) ? request.args.map((value) => String(value)) : [];
 
-  return await new Promise<TailscaleCommandResult>((resolve, reject) => {
-    execFile(
+  // The budget goes through `execFileWithDeadline`, not `child_process`'s own `timeout`. Every
+  // caller here reads this command's OUTPUT as the answer, and the default budget is 750 ms on a
+  // loop that stalls for seconds: a `timeout` kill destroys a completed `tailscale`'s buffered
+  // output and still calls back with `code 0`, so `serve status` came back empty and
+  // `resolveTailscaleTransferListenerState` published `configured: false` for a tailnet that was
+  // in fact serving. Cutting the command short now rejects, which that caller already renders as
+  // unavailable rather than as a negative answer.
+  try {
+    const { stdout, stderr } = await execFileWithDeadline(command, args, {
+      env,
+      timeout: timeoutMs,
+      ...(request.signal ? { signal: request.signal } : {}),
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    });
+    return {
       command,
       args,
+      exitCode: 0,
+      stdout: String(stdout ?? ''),
+      stderr: String(stderr ?? ''),
+    };
+  } catch (error) {
+    const exitCode = typeof (error as NodeJS.ErrnoException & { code?: number }).code === 'number'
+      ? Number((error as NodeJS.ErrnoException & { code?: number }).code)
+      : (error as NodeJS.ErrnoException & { status?: number }).status ?? 1;
+    throw new TailscaleCommandError(
+      error instanceof Error ? error.message : `tailscale command failed: ${String(error)}`,
       {
-        env,
-        timeout: timeoutMs,
-        ...(request.signal ? { signal: request.signal } : {}),
-        windowsHide: true,
-        maxBuffer: 1024 * 1024,
-      },
-      (error, stdout, stderr) => {
-        const result: TailscaleCommandResult = {
-          command,
-          args,
-          exitCode: typeof (error as NodeJS.ErrnoException | null)?.code === 'number' ? Number((error as NodeJS.ErrnoException).code) : 0,
-          stdout: String(stdout ?? ''),
-          stderr: String(stderr ?? ''),
-        };
-
-        if (error) {
-          const exitCode = typeof (error as NodeJS.ErrnoException & { code?: number }).code === 'number'
-            ? Number((error as NodeJS.ErrnoException & { code?: number }).code)
-            : (error as NodeJS.ErrnoException & { status?: number }).status ?? 1;
-          reject(
-            new TailscaleCommandError(
-              error instanceof Error ? error.message : `tailscale command failed: ${String(error)}`,
-              {
-                ...result,
-                exitCode,
-              },
-            ),
-          );
-          return;
-        }
-
-        resolve(result);
+        command,
+        args,
+        exitCode,
+        stdout: String((error as { stdout?: unknown } | null)?.stdout ?? ''),
+        stderr: String((error as { stderr?: unknown } | null)?.stderr ?? ''),
       },
     );
-  });
+  }
 };
 
 function collectOutput(result: Readonly<{ stdout?: string; stderr?: string }>): string {
