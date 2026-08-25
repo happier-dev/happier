@@ -583,6 +583,7 @@ export const MachineMetadataSchema = z.object({
     windowsRemoteSessionLaunchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
     windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
     daemonTerminalSessionAttachSupported: z.boolean().optional(),
+    daemonSessionGoalControlsSupported: z.boolean().optional(),
     // Daemon status fields
     daemonLastKnownStatus: z.enum(['running', 'shutting-down']).optional(),
     daemonLastKnownPid: z.number().optional(),

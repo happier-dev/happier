@@ -13,6 +13,7 @@ import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { t } from '@/text';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { resumeSession } from './sessions';
+import { resolveSessionGoalExecutionCapabilities } from '@/sync/domains/session/control/sessionGoalExecutionCapabilities';
 
 export type SessionGoalMutationRequest = Readonly<{
     objective?: string;
@@ -28,6 +29,7 @@ export type SessionGoalOperationResult =
 const SESSION_GOAL_SET_METHOD = SESSION_RPC_METHODS.SESSION_GOAL_SET;
 const SESSION_GOAL_CLEAR_METHOD = SESSION_RPC_METHODS.SESSION_GOAL_CLEAR;
 const SESSION_GOAL_CONTROL_MACHINE_UNAVAILABLE = 'session_goal_control_machine_unavailable';
+const SESSION_GOAL_CONTROL_UNSUPPORTED = 'session_goal_control_unsupported';
 
 type SessionMessagesSeqState = Readonly<{
     messageIdsOldestFirst?: readonly string[];
@@ -114,6 +116,41 @@ async function runSessionGoalRpc(
 function isInactiveSession(sessionId: string): boolean {
     const session = storage.getState().sessions?.[sessionId];
     return session?.active === false;
+}
+
+function unsupportedGoalControlResult(): SessionGoalOperationResult {
+    return {
+        ok: false,
+        error: SESSION_GOAL_CONTROL_UNSUPPORTED,
+        errorCode: SESSION_GOAL_CONTROL_UNSUPPORTED,
+    };
+}
+
+function readGoalExecutionAvailability(sessionId: string): Readonly<{
+    canSet: boolean;
+    canClear: boolean;
+    machineAvailable: boolean;
+}> {
+    const state = storage.getState();
+    const session = state.sessions?.[sessionId];
+    if (session?.active === true) {
+        return {
+            ...resolveSessionGoalExecutionCapabilities({ session }),
+            machineAvailable: true,
+        };
+    }
+
+    const target = readMachineControlTargetForSession(sessionId);
+    if (!target) {
+        return { canSet: false, canClear: false, machineAvailable: false };
+    }
+    const machine = state.machines?.[target.machineId]
+        ?? state.machineDisplayById?.[target.machineId]
+        ?? null;
+    return {
+        ...resolveSessionGoalExecutionCapabilities({ session: session ?? { active: false }, machine }),
+        machineAvailable: true,
+    };
 }
 
 async function runMachineGoalRpc(
@@ -216,6 +253,15 @@ export function sessionGoalSet(
     opts?: Readonly<{ serverId?: string | null }>,
 ): Promise<SessionGoalOperationResult> {
     return (async () => {
+        const availability = readGoalExecutionAvailability(sessionId);
+        if (!availability.machineAvailable) {
+            return {
+                ok: false,
+                error: SESSION_GOAL_CONTROL_MACHINE_UNAVAILABLE,
+                errorCode: SESSION_GOAL_CONTROL_MACHINE_UNAVAILABLE,
+            };
+        }
+        if (!availability.canSet) return unsupportedGoalControlResult();
         const resumed = await resumeInactiveSessionWithInitialGoal(sessionId, request, opts);
         if (resumed) return resumed;
         if (isInactiveSession(sessionId)) {
@@ -229,6 +275,15 @@ export function sessionGoalClear(
     sessionId: string,
     opts?: Readonly<{ serverId?: string | null }>,
 ): Promise<SessionGoalOperationResult> {
+    const availability = readGoalExecutionAvailability(sessionId);
+    if (!availability.machineAvailable) {
+        return Promise.resolve({
+            ok: false,
+            error: SESSION_GOAL_CONTROL_MACHINE_UNAVAILABLE,
+            errorCode: SESSION_GOAL_CONTROL_MACHINE_UNAVAILABLE,
+        });
+    }
+    if (!availability.canClear) return Promise.resolve(unsupportedGoalControlResult());
     if (isInactiveSession(sessionId)) {
         return runMachineGoalRpc(sessionId, RPC_METHODS.DAEMON_SESSION_GOAL_CLEAR, {}, opts);
     }

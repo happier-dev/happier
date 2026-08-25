@@ -685,7 +685,7 @@ describe('useCreateNewSession permission seeding', () => {
         }));
     });
 
-    it('sets a created session goal from a /goal initial prompt without sending the objective text', async () => {
+    it('preserves a /goal initial prompt until the created session publishes callable goal controls', async () => {
         const {
             useCreateNewSession,
             followUpSpawnedSessionWithServerScopeSpy,
@@ -749,15 +749,17 @@ describe('useCreateNewSession permission seeding', () => {
 
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenNthCalledWith(1, expect.objectContaining({
             sessionId: 'sess_goal',
-            initialMessageText: '',
+            initialMessageText: '/goal Ship slash support',
         }));
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledTimes(1);
-        expect(syncSendMessageSpy).not.toHaveBeenCalled();
-        expect(sessionGoalSetSpy).toHaveBeenCalledWith(
+        expect(syncSendMessageSpy).toHaveBeenCalledWith(
             'sess_goal',
-            { objective: 'Ship slash support' },
-            { serverId: 'server-a' },
+            '/goal Ship slash support',
+            undefined,
+            undefined,
+            undefined,
         );
+        expect(sessionGoalSetSpy).not.toHaveBeenCalled();
     });
 
     it('passes connectedServices bindings into machineSpawnNewSession when provided', async () => {

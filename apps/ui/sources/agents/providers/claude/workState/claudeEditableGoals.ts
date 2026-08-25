@@ -20,12 +20,6 @@ function readClaudeGoalWorkStateItem(metadata: unknown): Record<string, unknown>
 type ClaudeGoalSession = Readonly<{
     active?: boolean;
     metadata?: unknown;
-    agentState?: Readonly<{
-        capabilities?: Readonly<{
-            sessionGoalSetSupported?: boolean | null;
-            sessionGoalClearSupported?: boolean | null;
-        }> | null;
-    }> | null;
 }>;
 
 /**
@@ -70,9 +64,8 @@ export function claudeSupportsEditableGoals(ctx: Readonly<{
 
 /**
  * Claude's effective goal-action profile (edit + clear only; no pause/resume/complete, no token
- * budget). Provider work-state and `/goal` metadata own semantic support; active runner controls own
- * execution reachability. Keeping both signals in this provider profile lets the generic goal UI
- * intersect them without learning Claude modes or treating persisted metadata as a live RPC promise.
+ * budget). This provider-owned profile describes Claude semantics only. The generic registry
+ * intersects it with the execution capabilities published by the active runner or target daemon.
  */
 export function claudeGoalActionCapabilityProfile(ctx: Readonly<{
     agentId: string;
@@ -89,22 +82,10 @@ export function claudeGoalActionCapabilityProfile(ctx: Readonly<{
     const semanticCanClear = itemCanClear || commandSupported;
     if (!semanticCanEdit && !semanticCanClear) return null;
 
-    // Inactive-session mutations are handled by the existing resume/metadata adapter. Active
-    // sessions must also prove that the attached runner currently registered each live control;
-    // provider `/goal` support alone is not an execution-reachability guarantee.
-    if (ctx.session.active !== true) {
-        return {
-            canEdit: semanticCanEdit,
-            canStop: false,
-            canClear: semanticCanClear,
-            canConfigureBudget: false,
-        };
-    }
-    const runtimeCapabilities = ctx.session.agentState?.capabilities;
     return {
-        canEdit: semanticCanEdit && runtimeCapabilities?.sessionGoalSetSupported === true,
+        canEdit: semanticCanEdit,
         canStop: false,
-        canClear: semanticCanClear && runtimeCapabilities?.sessionGoalClearSupported === true,
+        canClear: semanticCanClear,
         canConfigureBudget: false,
     };
 }

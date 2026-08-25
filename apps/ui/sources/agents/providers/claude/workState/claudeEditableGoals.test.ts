@@ -35,18 +35,17 @@ describe('claudeSupportsEditableGoals', () => {
             session: {
                 active: true,
                 metadata: metadataWithGoal(true),
-                agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: true } },
             },
         })).toBe(true);
     });
 
-    it('fails closed for an active session when provider goal metadata outlives its runtime controls', () => {
+    it('reports provider goal semantics independently from runtime reachability', () => {
         const session = { active: true, metadata: metadataWithGoal(true) };
-        expect(claudeSupportsEditableGoals({ agentId: 'claude', session })).toBe(false);
+        expect(claudeSupportsEditableGoals({ agentId: 'claude', session })).toBe(true);
         expect(claudeGoalActionCapabilityProfile({ agentId: 'claude', session })).toEqual({
-            canEdit: false,
+            canEdit: true,
             canStop: false,
-            canClear: false,
+            canClear: true,
             canConfigureBudget: false,
         });
     });
@@ -103,7 +102,6 @@ describe('claudeSupportsEditableGoals', () => {
             session: {
                 active: true,
                 metadata: metadataWithSlashCommands(['goal', 'help']),
-                agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: true } },
             },
         })).toBe(true);
     });
@@ -116,7 +114,6 @@ describe('claudeSupportsEditableGoals', () => {
             session: {
                 active: true,
                 metadata: metadataWithSlashCommands(['/goal']),
-                agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: true } },
             },
         })).toBe(true);
         expect(claudeSupportsEditableGoals({
@@ -124,29 +121,19 @@ describe('claudeSupportsEditableGoals', () => {
             session: {
                 active: true,
                 metadata: metadataWithSlashCommands(['  /Goal ']),
-                agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: true } },
             },
         })).toBe(true);
     });
 
-    it('publishes set and clear independently from the controls registered by the active runtime', () => {
+    it('returns the semantic profile before the generic registry applies runtime reachability', () => {
         const metadata = metadataWithSlashCommands(['/goal']);
         expect(claudeGoalActionCapabilityProfile({
             agentId: 'claude',
             session: {
                 active: true,
                 metadata,
-                agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: false } },
             },
-        })).toEqual({ canEdit: true, canStop: false, canClear: false, canConfigureBudget: false });
-        expect(claudeGoalActionCapabilityProfile({
-            agentId: 'claude',
-            session: {
-                active: true,
-                metadata,
-                agentState: { capabilities: { sessionGoalSetSupported: false, sessionGoalClearSupported: true } },
-            },
-        })).toEqual({ canEdit: false, canStop: false, canClear: true, canConfigureBudget: false });
+        })).toEqual({ canEdit: true, canStop: false, canClear: true, canConfigureBudget: false });
     });
 
     it('requires an active session for the slash-command capability (inactive without a goal item is not editable)', () => {
