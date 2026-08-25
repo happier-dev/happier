@@ -189,6 +189,7 @@ export async function cancelQueuedAutomationRunsTx(params: {
             replyHandoffState: "blocked",
             replyHandoffDueAt: null,
             replyHandoffReceiptEnvelope: null,
+            revision: { increment: 1 },
             updatedAt: now,
         },
     });
@@ -429,6 +430,7 @@ async function blockAwaitingReplyHandoffForTerminalRunTx(params: {
             replyHandoffState: "blocked",
             replyHandoffDueAt: null,
             replyHandoffReceiptEnvelope: null,
+            revision: { increment: 1 },
             updatedAt: params.now,
         },
     });
