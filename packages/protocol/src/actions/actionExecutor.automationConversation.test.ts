@@ -145,7 +145,12 @@ describe('createActionExecutor (Automation conversation admission)', () => {
   it('routes the bounded target selector through the same host-stamped caller boundary', async () => {
     const input = { limit: 2, cursor: 'automation-0' } as const;
     const automationConversationAction = vi.fn(async () => ({
-      items: [{ automationId: 'automation-1', templateVersion: 3, label: 'Conversation target' }],
+      items: [{
+        automationId: 'automation-1',
+        templateVersion: 3,
+        label: 'Conversation target',
+        execution: { targetType: 'execution_run' as const, enabled: true },
+      }],
       nextCursor: null,
     }));
     const executor = createActionExecutor({
@@ -164,7 +169,12 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     })).resolves.toEqual({
       ok: true,
       result: {
-        items: [{ automationId: 'automation-1', templateVersion: 3, label: 'Conversation target' }],
+        items: [{
+          automationId: 'automation-1',
+          templateVersion: 3,
+          label: 'Conversation target',
+          execution: { targetType: 'execution_run', enabled: true },
+        }],
         nextCursor: null,
       },
     });
@@ -264,7 +274,12 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     } as const;
     const results: Record<string, unknown> = {
       'automation.conversation.targets.list': {
-        items: [{ automationId: 'automation-1', templateVersion: 3, label: 'Conversation target' }],
+        items: [{
+          automationId: 'automation-1',
+          templateVersion: 3,
+          label: 'Conversation target',
+          execution: { targetType: 'execution_run' as const, enabled: true },
+        }],
         nextCursor: null,
       },
       'automation.conversation.target.verify': { kind: 'verified', templateVersion: 3 },

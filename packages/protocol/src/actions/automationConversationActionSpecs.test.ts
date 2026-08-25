@@ -72,7 +72,12 @@ describe('Automation conversation admission ActionSpec', () => {
       expect(spec.inputSchema.safeParse(invalidInput).success).toBe(false);
     }
 
-    const item = { automationId: 'automation-1', templateVersion: 3, label: 'Conversation target' };
+    const item = {
+      automationId: 'automation-1',
+      templateVersion: 3,
+      label: 'Conversation target',
+      execution: { targetType: 'execution_run', enabled: true },
+    };
     expect(spec.outputSchema.parse({ items: [item], nextCursor: null })).toEqual({
       items: [item],
       nextCursor: null,
@@ -84,6 +89,14 @@ describe('Automation conversation admission ActionSpec', () => {
     }).success).toBe(false);
     expect(spec.outputSchema.safeParse({
       items: [{ ...item, description: 'private' }],
+      nextCursor: null,
+    }).success).toBe(false);
+    expect(spec.outputSchema.safeParse({
+      items: [{
+        automationId: item.automationId,
+        templateVersion: item.templateVersion,
+        label: item.label,
+      }],
       nextCursor: null,
     }).success).toBe(false);
     expect(spec.outputSchema.safeParse({
@@ -107,6 +120,7 @@ describe('Automation conversation admission ActionSpec', () => {
         automationId: `automation-${index}`,
         templateVersion: index,
         label: `Target ${index}`,
+        execution: { targetType: 'execution_run', enabled: true },
       })),
       nextCursor: null,
     }).success).toBe(false);
