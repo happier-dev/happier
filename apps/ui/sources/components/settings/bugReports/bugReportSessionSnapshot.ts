@@ -1,3 +1,5 @@
+import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
+
 type SessionLike = {
     id: string;
     createdAt?: number;
@@ -6,6 +8,11 @@ type SessionLike = {
     machineId?: string;
     permissionMode?: string | null;
     modelMode?: string | null;
+    metadata?: unknown;
+    metadataLayoutVersion?: number;
+    ownerMetadataView?: unknown;
+    accessLevel?: unknown;
+    metadataUnavailable?: boolean;
 };
 
 type SessionMessageLike = {
@@ -61,7 +68,7 @@ export function buildLatestSessionSnapshot(input: {
     }>;
     sessionPending: Record<string, SessionPendingLike>;
 }): LatestSessionSnapshot | null {
-    const sessions = Object.values(input.sessions);
+    const sessions = Object.values(input.sessions).filter(isUserFacingSession);
     if (sessions.length === 0) return null;
     const latestSession = sessions
         .slice()

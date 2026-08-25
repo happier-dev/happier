@@ -24,6 +24,7 @@ import {
     PluginDetailInvocationLogsUnavailableSection,
 } from './PluginDetailInvocationLogsSection';
 import { PluginDetailSummaryGrid } from './PluginDetailSummaryGrid';
+import { PluginMachineMatrixSection } from '../machines/PluginMachineMatrixSection';
 import {
     usePluginSettingsScreenState,
     type PluginSettingsScreenState,
@@ -80,6 +81,15 @@ function PluginDetailCurrentContent(props: Readonly<{
                 selection={selection}
                 testIDPrefix="settings.plugins.detail.executionOrigin"
             />
+            {/*
+              * Read-only Account-wide truth for this one plugin: where it is
+              * installed and where it is missing or broken. It selects nothing
+              * — the two selectors above remain the only target authorities.
+              */}
+            <PluginMachineMatrixSection
+                pluginId={props.pluginId}
+                testIDPrefix="settings.plugins.detail.machineMatrix"
+            />
             {props.installed ? (
                 <>
                     <PluginDetailHeader installed={props.installed} projection={props.projection} />
@@ -121,6 +131,7 @@ function PluginDetailCurrentContent(props: Readonly<{
                 serverId={props.state.executionServerId}
                 accountServerIdentityId={props.state.accountServerIdentityId}
                 daemonServerIdentityId={props.state.executionServerIdentityId}
+                perActiveServerIdentityId={props.state.selectedServerIdentityId}
                 daemonOperationsAvailable={props.state.daemonOperationsAvailable}
                 isDaemonTargetCurrent={props.state.isDaemonSettingsTargetCurrent}
             />
@@ -203,6 +214,17 @@ export const PluginDetailScreen = React.memo(function PluginDetailScreen(props: 
                 testID={`settings.plugins.detail.${recoveryPluginId}.accountRecovery`}
                 reason="accountRecovery"
             />
+            {/*
+              * This route is reached precisely because the selected machine has
+              * no installation for a plugin the Account still holds elsewhere,
+              * so "which machine actually has it?" is the reader's whole
+              * question here. Same read-only Account-wide section as the
+              * installed route; it still selects and mutates nothing.
+              */}
+            <PluginMachineMatrixSection
+                pluginId={recoveryPluginId}
+                testIDPrefix="settings.plugins.detail.machineMatrix"
+            />
             {accountSettingsDeclaration ? (
                 <PluginDetailGenericSettingsSection
                     pluginId={recoveryPluginId}
@@ -212,6 +234,7 @@ export const PluginDetailScreen = React.memo(function PluginDetailScreen(props: 
                     serverId={null}
                     accountServerIdentityId={state.accountServerIdentityId}
                     daemonServerIdentityId={null}
+                    perActiveServerIdentityId={state.selectedServerIdentityId}
                     daemonOperationsAvailable={false}
                 />
             ) : null}

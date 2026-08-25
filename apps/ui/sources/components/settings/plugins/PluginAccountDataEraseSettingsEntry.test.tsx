@@ -117,6 +117,7 @@ function createState() {
         activeView: 'installed',
         administrationTargetSelection: {},
         accountServerIdentityId: null,
+        selectedServerIdentityId: null,
         executionServerIdentityId: null,
         executionServerId: null,
         executionMachineId: null,
@@ -295,6 +296,10 @@ function createAccountAvailabilityReader(input: Pick<
             kind: 'unavailable',
             code: 'account_availability_not_loaded',
         }),
+        readCurrentHostedPublicationTarget: () => ({
+            kind: 'unavailable',
+            code: 'account_availability_not_loaded',
+        }),
         readCurrentPackageAsset: () => ({
             kind: 'unavailable',
             code: 'account_availability_not_loaded',
@@ -399,6 +404,7 @@ describe('Account plugin data erase Settings entries', () => {
                 kind: 'available',
                 availabilityCursor: 42,
                 materializations: [{ ...EXAMPLE_MATERIALIZATION, enabled: false }],
+                snapshots: [],
             }),
             readCurrentSettingsDeclaration: () => ({
                 kind: 'available',
@@ -438,6 +444,7 @@ describe('Account plugin data erase Settings entries', () => {
                 kind: 'available',
                 availabilityCursor: 42,
                 materializations: [{ ...EXAMPLE_MATERIALIZATION, enabled: false }],
+                snapshots: [],
             }),
             readCurrentSettingsDeclaration,
         });
@@ -475,6 +482,7 @@ describe('Account plugin data erase Settings entries', () => {
                 kind: 'available',
                 availabilityCursor: 42,
                 materializations: [EXAMPLE_MATERIALIZATION],
+                snapshots: [],
             }),
             readCurrentSettingsDeclaration,
         });
@@ -504,6 +512,7 @@ describe('Account plugin data erase Settings entries', () => {
                 kind: 'available',
                 availabilityCursor: 42,
                 materializations: [EXAMPLE_MATERIALIZATION],
+                snapshots: [],
             }),
             readCurrentSettingsDeclaration: () => ({
                 kind: 'unavailable',
@@ -529,6 +538,7 @@ describe('Account plugin data erase Settings entries', () => {
                 kind: 'available',
                 availabilityCursor: 42,
                 materializations: [EXAMPLE_MATERIALIZATION],
+                snapshots: [],
             }),
             readCurrentSettingsDeclaration: () => ({
                 kind: 'unavailable',

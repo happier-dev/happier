@@ -4,10 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
 import { createPluginAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
-import {
-    projectPluginSettingsContributionV2,
-    readManagedServiceEndpointUrl,
-} from '@happier-dev/protocol';
+import { readManagedServiceEndpointUrl } from '@happier-dev/protocol';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
 import type {
@@ -15,7 +12,6 @@ import type {
     PluginProjectionEditableSettingsGroup,
     PluginProjectionEntry,
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-import { mapV2EditableSettingsGroup } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SavedSecretPickerModal } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -26,6 +22,7 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { projectAccountDeclaredPluginSettingsGroups } from '@/sync/domains/plugins/settings/accountDeclaredPluginSettings';
 import {
     resolveScopedPluginSettingsTarget,
     type ScopedPluginSettingsAccountTarget,
@@ -121,7 +118,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-const EMPTY_EDITABLE_SETTINGS_GROUPS: readonly PluginProjectionEditableSettingsGroup[] = Object.freeze([]);
 const ACCOUNT_PLUGIN_SETTINGS_SCOPE: ScopedPluginSettingsScope = Object.freeze({ kind: 'account' });
 const DAEMON_PLUGIN_SETTINGS_SCOPE: ScopedPluginSettingsScope = Object.freeze({ kind: 'daemon' });
 
@@ -153,43 +149,6 @@ function isAccountSavedSecretField(field: PluginProjectionEditableSettingField):
 
 function isDaemonCustodiedSecretField(field: PluginProjectionEditableSettingField): boolean {
     return field.secretCustody === 'daemon';
-}
-
-/**
- * The daemon projection remains the primary Settings source. When it is
- * unavailable, Account Availability may admit the current normalized manifest
- * only for Account-scoped recovery. Reuse the Protocol normalizer and the
- * existing UI projection mapper rather than recreating a Settings parser here.
- */
-function projectAccountRecoverySettingsGroups(params: Readonly<{
-    pluginId: string;
-    declaration: PluginPortableReleaseManifestV1 | null | undefined;
-}>): readonly PluginProjectionEditableSettingsGroup[] {
-    const declaration = params.declaration;
-    if (!declaration || declaration.id !== params.pluginId) return EMPTY_EDITABLE_SETTINGS_GROUPS;
-
-    const groups: PluginProjectionEditableSettingsGroup[] = [];
-    for (const definition of declaration.contributes.settings ?? []) {
-        if (definition.scope !== 'account' || definition.target.kind !== 'plugin') continue;
-        try {
-            const projected = projectPluginSettingsContributionV2({
-                pluginId: params.pluginId,
-                definition,
-            });
-            const group = mapV2EditableSettingsGroup(projected);
-            // Cold Account recovery has no selected daemon target. Keep only
-            // fields whose projected custody is available through Account;
-            // never reinterpret a daemon secret as an Account SavedSecret.
-            const fields = group.fields.filter((field) => field.secretCustody !== 'daemon');
-            if (fields.length > 0) {
-                groups.push(Object.freeze({ ...group, fields: Object.freeze(fields) }));
-            }
-        } catch {
-            // The release is syntactically current but semantically unsuitable
-            // for editable Settings. Recovery fails closed for that declaration.
-        }
-    }
-    return groups.length > 0 ? Object.freeze(groups) : EMPTY_EDITABLE_SETTINGS_GROUPS;
 }
 
 /**
@@ -956,6 +915,8 @@ type PluginDetailGenericSettingsSectionProps = Readonly<{
     accountServerIdentityId?: string | null;
     /** Exact daemon identity selected by the administration target owner. */
     daemonServerIdentityId?: string | null;
+    /** Portable selected-server identity retained while its daemon is offline. */
+    perActiveServerIdentityId?: string | null;
     daemonOperationsAvailable: boolean;
     /**
      * Optional owner-local freshness fence for a daemon target. Callers that
@@ -968,7 +929,7 @@ type PluginDetailGenericSettingsSectionProps = Readonly<{
 export function PluginDetailGenericSettingsSection(props: PluginDetailGenericSettingsSectionProps) {
     const groups = React.useMemo(() => (
         props.projection?.editableSettingsGroups
-        ?? projectAccountRecoverySettingsGroups({
+        ?? projectAccountDeclaredPluginSettingsGroups({
             pluginId: props.pluginId,
             declaration: props.accountSettingsDeclaration,
         })
@@ -1081,7 +1042,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
         fields: adapterFields,
         declaredFields: ordinaryFields,
         sourceLifetimeIdentity: props.sourceLifetimeIdentity,
-        perActiveServerIdentityId: props.daemonServerIdentityId ?? null,
+        perActiveServerIdentityId: props.perActiveServerIdentityId ?? null,
         enabled: scopedOperationsAvailable,
         adapter: scopedPluginSettingsAdapter,
     });
@@ -1138,6 +1099,8 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
         }).then((result) => {
             if (result?.status !== 'ready') return;
             emitPluginSettingChangedEvent({
+                pluginId: props.pluginId,
+                scope: props.scope.kind,
                 previousValue,
                 nextValue: readScopedPluginSettingsDeclaredFieldValue({
                     values: result.snapshot.values,
@@ -1268,7 +1231,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
                                             group={group}
                                             field={field}
                                             values={values}
-                                            perActiveServerIdentityId={props.daemonServerIdentityId ?? null}
+                                            perActiveServerIdentityId={props.perActiveServerIdentityId ?? null}
                                             target={props.daemonSecretTarget}
                                             enabled={policy.enabled && props.daemonOperationsAvailable}
                                             endpointSettingsLoading={loading}
@@ -1370,7 +1333,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
               */}
             {sortedGroups.flatMap((group) => {
                 if (group.target.kind !== 'agent') return [];
-                const agentSettingsRoute = createPluginAgentSettingsRoute(group.target.agent.localId);
+                const agentSettingsRoute = createPluginAgentSettingsRoute(group.target.agent);
                 return group.presentation.subagentSections.map((section) => (
                     <ItemGroup
                         key={`${group.id}/subagents/${section.id}`}

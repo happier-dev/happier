@@ -10,6 +10,7 @@ import type {
     ComposerControlStateV1,
     ComposerOperationV1,
     ComposerScopeKindV1,
+    ComposerTransactionResultV1,
     PluginContributionIdentityV1,
     PluginProjectedComposerControlEntryV1,
 } from '@happier-dev/protocol';
@@ -35,6 +36,7 @@ import {
     AGENT_INPUT_MENU_ICON_SIZE_PX,
 } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import type { FocusReturnRef } from '@/keyboard/focusReturn';
 import { log } from '@/log';
 
 import type {
@@ -42,6 +44,7 @@ import type {
     PluginContributedActionDescriptor,
 } from './pluginContributedActionController';
 import { resolvePluginContributedActionIconName } from './pluginContributedActionPresentation';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
 const COMPOSER_ACTION_CHIP_SIZE = 32;
 const COMPOSER_ACTION_CHIP_HIT_SLOP = Math.ceil(
@@ -168,6 +171,13 @@ export type PluginComposerControlHost = Readonly<{
     scope: ComposerScopeKindV1;
     isCurrent: () => boolean;
     /**
+     * Resolves the control's declared `PluginLocalizedString` labels for the
+     * current locale. The presentation owner supplies the one projection-bound
+     * resolver; reading `.fallback` here pinned every admitted control, choice
+     * and dialog title to the plugin's authored English.
+     */
+    localize: PluginLocalizedTextResolver;
+    /**
      * The presentation owner supplies the one existing contextual Resource
      * lease. This adapter consumes its validated/LKG state together with the
      * canonical Resource observation only at the control's render boundary;
@@ -185,21 +195,47 @@ export type PluginComposerControlHost = Readonly<{
         action: PluginContributionIdentityV1;
         input?: unknown;
     }>) => void;
+    /**
+     * Returns the canonical transaction result so the affordance can retain a
+     * conflict or non-editable outcome instead of presenting it as applied.
+     */
     applyComposer: (input: Readonly<{
         control: PluginProjectedComposerControlEntryV1;
         operations: readonly ComposerOperationV1[];
-    }>) => void;
+    }>) => ComposerTransactionResultV1;
+    /**
+     * Whether the exact current Composer document would accept a mutation
+     * (`ComposerSnapshotV1.state.editable`). A read-only Session or an
+     * `editAndSubmit` lock refuses the transaction, so a `composerApply`
+     * choice must present as disabled instead of silently no-opping. Action,
+     * destination and surface choices are unaffected.
+     */
+    canMutateComposer: () => boolean;
     openDestination: (input: Readonly<{
         control: PluginProjectedComposerControlEntryV1;
         destination: PluginContributionIdentityV1;
     }>) => void;
     renderSurfaceContent: (presentation: PluginComposerControlSurfacePresentation) => React.ReactNode;
-    openSurfaceDialog: (presentation: PluginComposerControlDialogPresentation) => void;
+    /**
+     * The originating trigger is supplied by whichever affordance opened the
+     * dialog — the visible chip or the collapsed action menu — so native
+     * dismissal restores focus to it through the incumbent modal owner.
+     */
+    openSurfaceDialog: (
+        presentation: PluginComposerControlDialogPresentation,
+        options?: Readonly<{ focusReturnRef?: FocusReturnRef }>,
+    ) => void;
 }>;
 
 type ResolvedComposerControlState = Readonly<{
     visible: boolean;
     enabled: boolean;
+    /**
+     * Whether this control has an on/off state at all. A control that never
+     * reports one is an ordinary button, and announcing it as an unpressed
+     * toggle would be a lie; one that does is a toggle in both states.
+     */
+    expressesSelection: boolean;
     label: string;
     icon: PluginProjectedComposerControlEntryV1['definition']['icon'];
     count: number | undefined;
@@ -218,8 +254,12 @@ type ComposerControlUnknownChoiceDiagnosticRecord = {
     reported: boolean;
 };
 
-function resolveLocalizedText(value: string | Readonly<{ fallback: string }>): string {
-    return typeof value === 'string' ? value : value.fallback;
+/** Binds the host's projection-backed resolver to one control's plugin. */
+function controlTextResolver(
+    control: PluginProjectedComposerControlEntryV1,
+    localize: PluginLocalizedTextResolver,
+): (value: unknown) => string {
+    return (value) => localize(control.identity.pluginId, value);
 }
 
 function qualifiesForComposerScope(
@@ -242,12 +282,14 @@ function qualifyContributionReference(
 function resolveComposerControlState(
     control: PluginProjectedComposerControlEntryV1,
     resource: ComposerControlStateV1 | null,
+    localize: PluginLocalizedTextResolver,
 ): ResolvedComposerControlState {
     const definition = control.definition;
+    const localized = controlTextResolver(control, localize);
 
     let visible = true;
     let enabled = true;
-    let label = resolveLocalizedText(definition.label);
+    let label = localized(definition.label);
     let icon = definition.icon;
     let count: number | undefined;
     let selected = false;
@@ -270,6 +312,7 @@ function resolveComposerControlState(
     return {
         visible,
         enabled,
+        expressesSelection: resource?.selected !== undefined,
         label,
         icon,
         count,
@@ -339,6 +382,7 @@ function resolveSelectedChoiceIds(
 function resolveOverflowPresentation(
     control: PluginProjectedComposerControlEntryV1,
     state: ResolvedComposerControlState,
+    localize: PluginLocalizedTextResolver,
 ): Readonly<{
     label: string;
     accessibilityLabel: string;
@@ -346,10 +390,10 @@ function resolveOverflowPresentation(
 }> {
     const overflow = control.definition.overflow;
     return {
-        label: overflow ? resolveLocalizedText(overflow.label) : state.label,
+        label: overflow ? controlTextResolver(control, localize)(overflow.label) : state.label,
         accessibilityLabel: overflow?.accessibilityLabel === undefined
             ? state.accessibilityLabel
-            : resolveLocalizedText(overflow.accessibilityLabel),
+            : controlTextResolver(control, localize)(overflow.accessibilityLabel),
         icon: overflow?.icon ?? state.icon,
     };
 }
@@ -406,31 +450,37 @@ function createChoicePopover(params: Readonly<{
     if (interaction.kind !== 'choices') {
         throw new Error('Composer choice popover requires a choices interaction.');
     }
+    const choiceText = controlTextResolver(params.control, params.host.localize);
     const selectedIds = new Set(params.selectedChoiceIds);
-    const invokeChoice = (choice: typeof interaction.options[number]): void => {
-        if (!params.canInteract() || choice.disabled === true) return;
+    const isChoiceDisabled = (choice: typeof interaction.options[number]): boolean => (
+        choice.disabled === true
+        || (choice.effect.kind === 'composerApply' && !params.host.canMutateComposer())
+    );
+    /** `false` means the choice was refused, so its affordance must stay open. */
+    const invokeChoice = (choice: typeof interaction.options[number]): boolean => {
+        if (!params.canInteract() || isChoiceDisabled(choice)) return false;
         if (choice.effect.kind === 'action') {
             params.host.openAction({
                 control: params.control,
                 action: qualifyContributionReference(params.control, choice.effect.action),
                 ...(choice.effect.input === undefined ? {} : { input: choice.effect.input }),
             });
-            return;
+            return true;
         }
-        params.host.applyComposer({
+        return params.host.applyComposer({
             control: params.control,
             operations: choice.effect.operations,
-        });
+        }).status === 'applied';
     };
     const disabled = !params.canInteract();
 
     if (interaction.selection === 'single') {
         const options: readonly AgentInputChipPickerOption[] = interaction.options.map((choice) => ({
             id: choice.id,
-            label: resolveLocalizedText(choice.label),
-            ...(choice.description === undefined ? {} : { subtitle: resolveLocalizedText(choice.description) }),
+            label: choiceText(choice.label),
+            ...(choice.description === undefined ? {} : { subtitle: choiceText(choice.description) }),
             ...(choice.icon === undefined ? {} : { icon: <Icon name={resolvePluginUiIconName(choice.icon)} size={16} /> }),
-            ...(choice.disabled === true || disabled ? { disabled: true } : {}),
+            ...(isChoiceDisabled(choice) || disabled ? { disabled: true } : {}),
         }));
         return {
             title: params.overflowLabel,
@@ -443,7 +493,7 @@ function createChoicePopover(params: Readonly<{
             options,
             onSelect: (id) => {
                 const choice = interaction.options.find((candidate) => candidate.id === id);
-                if (choice) invokeChoice(choice);
+                return choice ? invokeChoice(choice) : false;
             },
         };
     }
@@ -456,11 +506,11 @@ function createChoicePopover(params: Readonly<{
             id: `${composerControlKey(params.control)}:choices`,
             options: interaction.options.map((choice) => ({
                 id: choice.id,
-                label: resolveLocalizedText(choice.label),
-                ...(choice.description === undefined ? {} : { subtitle: resolveLocalizedText(choice.description) }),
+                label: choiceText(choice.label),
+                ...(choice.description === undefined ? {} : { subtitle: choiceText(choice.description) }),
                 ...(choice.icon === undefined ? {} : { icon: <Icon name={resolvePluginUiIconName(choice.icon)} size={16} /> }),
                 ...(selectedIds.has(choice.id) ? { rightAccessory: <Icon name="check" size={16} /> } : {}),
-                ...(choice.disabled === true || disabled ? { disabled: true } : {}),
+                ...(isChoiceDisabled(choice) || disabled ? { disabled: true } : {}),
                 onSelect: () => invokeChoice(choice),
             })),
         }],
@@ -495,7 +545,7 @@ type ResolvedComposerControlInteraction = Readonly<{
     choicePopover: NonNullable<AgentInputExtraActionChip['collapsedOptionsPopover']> | undefined;
     contentPopover: ComposerControlSurfacePopover | undefined;
     opensCollapsedPopover: boolean;
-    invokeDirectInteraction: () => void;
+    invokeDirectInteraction: (focusReturnRef?: FocusReturnRef) => void;
     compactPresentation: PluginComposerControlSurfacePresentation | null;
 }>;
 
@@ -532,7 +582,7 @@ function resolveComposerControlInteraction(params: Readonly<{
         : state.selectedChoiceIds;
     const selected = state.selected || selectedChoiceIds.length > 0;
     const canInteract = (): boolean => host.isCurrent() && state.enabled;
-    const overflow = resolveOverflowPresentation(control, state);
+    const overflow = resolveOverflowPresentation(control, state, host.localize);
     const surfacePresentation = resolveInteractionSurfacePresentation(
         control,
         state,
@@ -564,7 +614,7 @@ function resolveComposerControlInteraction(params: Readonly<{
             ),
         }
         : undefined;
-    const invokeDirectInteraction = (): void => {
+    const invokeDirectInteraction = (focusReturnRef?: FocusReturnRef): void => {
         if (!canInteract()) return;
         if (interaction.kind === 'action') {
             host.openAction({
@@ -581,7 +631,14 @@ function resolveComposerControlInteraction(params: Readonly<{
             return;
         }
         if (surfacePresentation?.presentation === 'dialog') {
-            host.openSurfaceDialog(surfacePresentation as PluginComposerControlDialogPresentation);
+            host.openSurfaceDialog(
+                surfacePresentation as PluginComposerControlDialogPresentation,
+                // The affordance that invoked this interaction — the visible
+                // chip or the collapsed action menu — is the exact native
+                // focus-return target the host dialog owner restores on
+                // dismissal.
+                focusReturnRef ? { focusReturnRef } : undefined,
+            );
         }
     };
 
@@ -693,17 +750,9 @@ function renderComposerControlChipNode(params: Readonly<{
     const { control, host, resolved, context, diagnosticRecord } = params;
     if (!host.isCurrent() || !resolved.state.visible) return null;
 
+    let compactContent: React.ReactNode = null;
     if (resolved.compactPresentation) {
-        const mounted = host.renderSurfaceContent(resolved.compactPresentation);
-        if (mounted !== null && mounted !== undefined) {
-            return renderWithUnknownChoiceDiagnostic({
-                control,
-                resolved,
-                record: diagnosticRecord,
-                isCurrent: host.isCurrent,
-                content: mounted,
-            });
-        }
+        compactContent = host.renderSurfaceContent(resolved.compactPresentation);
     }
 
     const controlEnabled = resolved.canInteract();
@@ -722,8 +771,20 @@ function renderComposerControlChipNode(params: Readonly<{
                     ? {}
                     : { accessibilityHint: resolved.state.unavailableReason })}
                 accessibilityState={controlEnabled
-                    ? (resolved.selected ? { selected: true } : undefined)
-                    : { disabled: true, ...(resolved.selected ? { selected: true } : {}) }}
+                    ? (resolved.state.expressesSelection && resolved.selected ? { selected: true } : undefined)
+                    : {
+                        disabled: true,
+                        ...(resolved.state.expressesSelection && resolved.selected ? { selected: true } : {}),
+                    }}
+                // React Native Web does not map `accessibilityState.selected`
+                // at all, and `aria-selected` is invalid on `role="button"`, so
+                // the browser accessibility tree saw no difference between a
+                // selected and an unselected control. `aria-pressed` is the
+                // valid toggle-button semantic and is emitted only for a
+                // control that actually reports an on/off state.
+                {...(resolved.state.expressesSelection
+                    ? { 'aria-pressed': resolved.selected }
+                    : {})}
                 disabled={!controlEnabled}
                 onPress={() => {
                     if (!resolved.canInteract()) return;
@@ -731,7 +792,7 @@ function renderComposerControlChipNode(params: Readonly<{
                         context.toggleCollapsedPopover?.(composerControlKey(control));
                         return;
                     }
-                    resolved.invokeDirectInteraction();
+                    resolved.invokeDirectInteraction(context.chipAnchorRef);
                 }}
                 hitSlop={{
                     top: COMPOSER_ACTION_CHIP_HIT_SLOP,
@@ -741,20 +802,24 @@ function renderComposerControlChipNode(params: Readonly<{
                 }}
                 style={({ pressed }) => context.chipStyle(pressed)}
             >
-                <Icon
-                    name={resolvePluginUiIconName(resolved.state.icon)}
-                    size={AGENT_INPUT_CHIP_ICON_SIZE_PX}
-                    color={context.iconColor}
-                    style={AGENT_INPUT_CHIP_ICON_STYLE}
-                />
-                {context.showLabel ? (
-                    <AgentInputChipLabel
-                        label={resolved.state.label}
-                        count={resolved.state.count}
-                        textStyle={context.textStyle}
-                        countTextStyle={context.countTextStyle}
-                    />
-                ) : null}
+                {compactContent ?? (
+                    <>
+                        <Icon
+                            name={resolvePluginUiIconName(resolved.state.icon)}
+                            size={AGENT_INPUT_CHIP_ICON_SIZE_PX}
+                            color={context.iconColor}
+                            style={AGENT_INPUT_CHIP_ICON_STYLE}
+                        />
+                        {context.showLabel ? (
+                            <AgentInputChipLabel
+                                label={resolved.state.label}
+                                count={resolved.state.count}
+                                textStyle={context.textStyle}
+                                countTextStyle={context.countTextStyle}
+                            />
+                        ) : null}
+                    </>
+                )}
             </Pressable>
         ),
     });
@@ -783,7 +848,7 @@ function createCollapsedComposerControlAction(params: Readonly<{
                 return;
             }
             context.dismiss();
-            resolved.invokeDirectInteraction();
+            resolved.invokeDirectInteraction(context.focusReturnRef);
         },
     };
 }
@@ -951,7 +1016,10 @@ function renderComposerControlCollapsedPopover(params: Readonly<{
                     railWidth={popover.railWidth}
                     railMaxWidth={popover.railMaxWidth}
                     onSelect={(selectedId) => {
-                        popover.onSelect(selectedId);
+                        // A refused Composer transaction is not a successful
+                        // selection: keep the picker open so the user can retry
+                        // instead of dismissing it as if the choice applied.
+                        if (popover.onSelect(selectedId) === false) return;
                         context.onRequestClose();
                     }}
                     onRequestClose={context.onRequestClose}
@@ -994,13 +1062,13 @@ function createComposerControlChip(params: Readonly<{
     const fallbackResolved = resolveComposerControlInteraction({
         control,
         host,
-        state: resolveComposerControlState(control, null),
+        state: resolveComposerControlState(control, null, host.localize),
     });
     const resolveResourceInteraction = (resourceState: ComposerControlStateV1 | null) => (
         resolveComposerControlInteraction({
             control,
             host,
-            state: resolveComposerControlState(control, resourceState),
+            state: resolveComposerControlState(control, resourceState, host.localize),
         })
     );
     const unknownChoiceDiagnosticRecord: ComposerControlUnknownChoiceDiagnosticRecord = { reported: false };

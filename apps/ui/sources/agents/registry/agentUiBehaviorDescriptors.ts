@@ -8,7 +8,6 @@ import type { Metadata } from '@/sync/domains/state/storageTypes';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { tLoose, type TranslationKey } from '@/text';
 import {
-    isSupportedRuntimeDescriptorProviderId,
     LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
     readMetadataAliasValue,
     resolveAgentConfiguredRuntimeKind,
@@ -25,7 +24,7 @@ import type {
     AgentTranscriptStorageMode,
     AgentUiBehavior,
 } from './registryUiBehavior';
-import { resolveFirstPartyUiComponent } from './componentAllowlist';
+import type { PermissionPromptProtocol } from './registryCore';
 import { createBooleanOptionActionChip } from './agentUiBehavior/booleanOptionActionChip';
 import {
     createUiProjectionDiagnostic,
@@ -34,7 +33,10 @@ import {
     readStringArray,
     type UiProjectionDiagnostic,
 } from './uiDescriptorDiagnostics';
-import { createDescriptorAdapterBehavior } from './agentUiBehaviorDescriptorAdapters';
+import {
+    createDescriptorAdapterBehavior,
+    readRuntimeDescriptorAgentPayload,
+} from './agentUiBehaviorDescriptorAdapters';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveSessionGoalExecutionCapabilities } from '@/sync/domains/session/control/sessionGoalExecutionCapabilities';
 
@@ -90,7 +92,7 @@ type BooleanOptionChipDescriptor = Readonly<{
 type ComponentSlotDescriptor = Readonly<{
     id: string;
     slot: string;
-    componentId?: string;
+    surfaceId?: string;
     /**
      * The declared half of a composer action chip. The host owns the control,
      * so an Agent declares what it edits and what it is called rather than
@@ -177,10 +179,12 @@ export type PluginUiBehaviorDescriptor = Readonly<{
     guidance?: Readonly<{
         includeInSessionGettingStartedCliExamples?: boolean;
     }>;
-    mcpServers?: Readonly<{
-        supportsDetectedConfigScan?: boolean;
-    }>;
     permissions?: Readonly<{
+        /**
+         * Which permission-prompt conversation this Agent speaks. It selects the
+         * footer's action model, not only its wording.
+         */
+        promptProtocol?: PermissionPromptProtocol;
         footer?: Partial<AgentPermissionFooterBehavior>;
     }>;
     workState?: Readonly<{
@@ -280,6 +284,12 @@ type SessionExtrasDescriptor = Readonly<{
     providerId: string;
     outputKey: string;
     values: readonly string[];
+    /** Account setting holding this Agent's configured mode. */
+    settingKey?: string;
+    /** Retired spellings the setting can still hold. */
+    aliases?: Readonly<Record<string, string>>;
+    /** Mode used when the setting is unset or unreadable. */
+    defaultValue?: string;
 }>;
 
 type EditableGoalsDescriptor = Readonly<{
@@ -394,26 +404,43 @@ function evaluateDescriptorCondition(
 
 function readSessionExtrasDescriptor(
     value: unknown,
+    agentId: string,
     diagnostics: UiProjectionDiagnostic[],
 ): SessionExtrasDescriptor | null {
     if (!isRecord(value)) return null;
-    const providerId = readString(value.providerId);
+    const providerId = agentId;
     const outputKey = readString(value.outputKey);
     const values = readStringArray(value.values);
     if (!providerId || !outputKey || values.length === 0) {
         diagnostics.push(createUiProjectionDiagnostic(
             'A16X1_MALFORMED_DESCRIPTOR',
             'payload.sessionExtras',
-            'Session extras descriptors require provider id, output key, and allowed values.',
+            'Session extras descriptors require an output key and allowed values.',
         ));
         return null;
     }
 
+    const settingKey = readString(value.settingKey);
+    const aliases = readDescriptorStringRecord(value.aliases);
+    const defaultValue = readString(value.defaultValue);
     return {
         providerId,
         outputKey,
         values,
+        ...(settingKey ? { settingKey } : {}),
+        ...(aliases ? { aliases } : {}),
+        ...(defaultValue ? { defaultValue } : {}),
     };
+}
+
+function readDescriptorStringRecord(value: unknown): Readonly<Record<string, string>> | undefined {
+    if (!isRecord(value)) return undefined;
+    const entries = Object.entries(value).flatMap(([key, entry]) => {
+        const normalizedKey = readString(key);
+        const normalizedValue = readString(entry);
+        return normalizedKey && normalizedValue ? [[normalizedKey, normalizedValue] as const] : [];
+    });
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function readValueAtPath(root: unknown, path: readonly string[]): unknown {
@@ -433,6 +460,34 @@ function normalizeSessionExtraMode(
     return normalized && descriptor.values.includes(normalized) ? normalized : null;
 }
 
+/**
+ * The Agent's mode as ITS OWN declaration describes it.
+ *
+ * Both readers are keyed by the declaration's Agent id and bounded by its
+ * declared value set, so they answer identically for a bundled and an installed
+ * Agent. Neither consults a build-time roster: the canonical
+ * `runtimeDescriptorV1` envelope already carries the owning `agentId`, and the
+ * account setting is named by the declaration.
+ */
+function readDeclaredSettingsMode(
+    descriptor: SessionExtrasDescriptor,
+    settings: Readonly<Record<string, unknown>>,
+): string | null {
+    if (!descriptor.settingKey) return null;
+    const declared = normalizeDescriptorValue(settings[descriptor.settingKey], descriptor.aliases);
+    return normalizeSessionExtraMode(descriptor, declared)
+        ?? normalizeSessionExtraMode(descriptor, descriptor.defaultValue);
+}
+
+function readDeclaredPersistedMode(
+    providerId: string,
+    values: readonly string[],
+    metadata: unknown,
+): string | null {
+    const mode = readString(readRuntimeDescriptorAgentPayload(metadata, providerId)?.backendMode);
+    return mode && values.includes(mode) ? mode : null;
+}
+
 function createSessionExtrasPayloadBehavior(
     descriptor: SessionExtrasDescriptor,
 ): NonNullable<AgentUiBehavior['payload']> {
@@ -440,21 +495,25 @@ function createSessionExtrasPayloadBehavior(
         mode ? { [descriptor.outputKey]: mode } : {}
     );
     const resolveSettingsMode = (settings: Readonly<Record<string, unknown>>) => (
-        isSupportedRuntimeDescriptorProviderId(descriptor.providerId)
-            ? normalizeSessionExtraMode(descriptor, resolveAgentConfiguredRuntimeKind({
-                agentId: descriptor.providerId,
-                accountSettings: settings as Record<string, unknown>,
-            }))
-            : null
+        readDeclaredSettingsMode(descriptor, settings)
+        // Only a BUNDLED Agent has released account-setting shapes older than
+        // this declaration; an installed Agent reaches the same outcome above.
+        ?? normalizeSessionExtraMode(descriptor, resolveAgentConfiguredRuntimeKind({
+            agentId: descriptor.providerId,
+            accountSettings: settings as Record<string, unknown>,
+        }))
     );
-    const resolveSessionMode = (session: { metadata?: Record<string, unknown> | null } | null | undefined) => (
-        isSupportedRuntimeDescriptorProviderId(descriptor.providerId)
-            ? normalizeSessionExtraMode(descriptor, resolvePersistedProviderSessionBackendMode({
+    const resolveSessionMode = (session: { metadata?: Record<string, unknown> | null } | null | undefined) => {
+        const metadata = readOwnerMetadataFromSessionLike(session);
+        return readDeclaredPersistedMode(descriptor.providerId, descriptor.values, metadata)
+            // Same rule for persisted shapes: the canonical envelope above is
+            // the one an installed Agent can occupy; the reader below knows a
+            // bundled Agent's released pre-envelope metadata and nothing else.
+            ?? normalizeSessionExtraMode(descriptor, resolvePersistedProviderSessionBackendMode({
                 agentId: descriptor.providerId,
-                metadata: readOwnerMetadataFromSessionLike(session),
-            }))
-            : null
-    );
+                metadata,
+            }));
+    };
 
     return {
         buildSpawnSessionExtras: ({ agentId, settings, sessionConfigOptionOverrides, updatedAt }) => {
@@ -485,10 +544,11 @@ function createSessionExtrasPayloadBehavior(
 
 function readEditableGoalsDescriptor(
     value: unknown,
+    agentId: string,
     diagnostics: UiProjectionDiagnostic[],
 ): EditableGoalsDescriptor | null {
     if (!isRecord(value)) return null;
-    const providerId = readString(value.providerId);
+    const providerId = agentId;
     const modeValues = readStringArray(value.modeValues);
     const activeModeValues = readStringArray(value.activeModeValues);
     const persistedGoalSnapshot = isRecord(value.persistedGoalSnapshot)
@@ -511,14 +571,14 @@ function readEditableGoalsDescriptor(
 
     const capabilityDriven = value.capabilityDriven === true;
     // Capability-driven gating reads the persisted goal item's `goalCapabilities` instead of the
-    // session backend mode, so it requires a provider id + a persisted-goal snapshot but no mode
+    // session backend mode, so it requires a persisted-goal snapshot but no mode
     // candidates. Mode-driven gating (the original Codex shape) still requires the full mode model.
     if (capabilityDriven) {
         if (!providerId || !validPersistedGoalSnapshot) {
             diagnostics.push(createUiProjectionDiagnostic(
                 'A16X1_MALFORMED_DESCRIPTOR',
                 'workState.editableGoals',
-                'Capability-driven editable-goals descriptors require provider id and a persisted-goal snapshot.',
+                'Capability-driven editable-goals descriptors require a persisted-goal snapshot.',
             ));
             return null;
         }
@@ -536,7 +596,7 @@ function readEditableGoalsDescriptor(
         diagnostics.push(createUiProjectionDiagnostic(
             'A16X1_MALFORMED_DESCRIPTOR',
             'workState.editableGoals',
-            'Editable-goals descriptors require provider id, mode values, and active mode values.',
+            'Editable-goals descriptors require mode values and active mode values.',
         ));
         return null;
     }
@@ -612,9 +672,10 @@ function readLiveGoalActionCapabilityProfile(
 
 function createWorkStateBehavior(
     descriptor: PluginUiBehaviorDescriptor,
+    agentId: string,
     diagnostics: UiProjectionDiagnostic[],
 ): AgentUiBehavior['workState'] | undefined {
-    const editableGoals = readEditableGoalsDescriptor(descriptor.workState?.editableGoals, diagnostics);
+    const editableGoals = readEditableGoalsDescriptor(descriptor.workState?.editableGoals, agentId, diagnostics);
     if (!editableGoals) return undefined;
     const supportsEditableGoals = (ctx: { agentId: string; session: EditableGoalsSession }): boolean => {
         if (ctx.agentId !== editableGoals.providerId) return false;
@@ -627,12 +688,14 @@ function createWorkStateBehavior(
             if (session.active === true) return readLiveGoalActionCapabilityProfile(session) !== null;
             return hasEditableGoalCapability(metadata, editableGoals);
         }
-        const mode = isSupportedRuntimeDescriptorProviderId(editableGoals.providerId)
-            ? resolvePersistedProviderSessionBackendMode({
+        const mode = readDeclaredPersistedMode(editableGoals.providerId, editableGoals.modeValues, metadata)
+            // The canonical envelope above is what an installed Agent occupies;
+            // the reader below knows a bundled Agent's released pre-envelope
+            // metadata shapes and answers for nothing else.
+            ?? resolvePersistedProviderSessionBackendMode({
                 agentId: editableGoals.providerId,
                 metadata,
-            })
-            : null;
+            });
         if (mode) return editableGoals.activeModeValues.includes(mode);
         if (editableGoals.activeWhenNoPersistedMode && session.active === true) return true;
         return hasPersistedGoalWorkState(metadata, editableGoals);
@@ -759,6 +822,7 @@ function createAgentOptionsPayloadBehavior(
 
 function createPayloadBehavior(
     descriptor: PluginUiBehaviorDescriptor,
+    agentId: string,
     diagnostics: UiProjectionDiagnostic[],
     agentOptions: readonly AgentOptionDescriptor[],
 ): AgentUiBehavior['payload'] | undefined {
@@ -779,7 +843,7 @@ function createPayloadBehavior(
             buildSpawnSessionExtras: () => ({ ...spawnSessionExtras.value }),
         } satisfies AgentUiBehavior['payload'];
     })();
-    const sessionExtrasDescriptor = readSessionExtrasDescriptor(descriptor.payload?.sessionExtras, diagnostics);
+    const sessionExtrasDescriptor = readSessionExtrasDescriptor(descriptor.payload?.sessionExtras, agentId, diagnostics);
     const sessionExtrasPayload = sessionExtrasDescriptor
         ? createSessionExtrasPayloadBehavior(sessionExtrasDescriptor)
         : undefined;
@@ -1034,7 +1098,6 @@ function hasNoExecuteBehaviorFields(value: Readonly<Record<string, unknown>>): b
     return value.guidance != null
         || value.attachedSessionTerminal != null
         || value.pendingDelivery != null
-        || value.mcpServers != null
         || value.permissions != null
         || value.workState != null
         || value.resume != null
@@ -1062,7 +1125,6 @@ function mergeDescriptorBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentU
         ...(a.pendingDelivery || b.pendingDelivery
             ? { pendingDelivery: { ...(a.pendingDelivery ?? {}), ...(b.pendingDelivery ?? {}) } }
             : {}),
-        ...(a.mcpServers || b.mcpServers ? { mcpServers: { ...(a.mcpServers ?? {}), ...(b.mcpServers ?? {}) } } : {}),
         ...(a.permissions || b.permissions
             ? {
                 permissions: {
@@ -1124,11 +1186,16 @@ function collectSubagentGroupKeys(
 function createTeammateLauncherDetailsTab(
     descriptor: ComponentSlotDescriptor,
     teamId: string,
+    pluginId: string,
+    agentId: string,
+    machineId: string | null,
 ): DetailsTab | null {
     const resourceKind = readString(descriptor.resourceKind);
     const keyPrefix = readString(descriptor.tab?.keyPrefix);
     const titleKey = readString(descriptor.tab?.titleKey);
     if (!resourceKind || !keyPrefix || !titleKey) return null;
+    const surfaceId = readString(descriptor.surfaceId);
+    if (!surfaceId) return null;
 
     const normalizedTeamId = readString(teamId);
     return {
@@ -1139,23 +1206,23 @@ function createTeammateLauncherDetailsTab(
         resource: {
             kind: resourceKind,
             mode: 'member',
+            pluginInlineSurface: {
+                pluginId,
+                agentId,
+                surfaceId,
+                iconName: readString(descriptor.iconName),
+                machineId,
+            },
             ...(normalizedTeamId ? { initialTeamId: normalizedTeamId } : {}),
         },
     };
 }
 
-function isDetailsTabResourceForSlot(tab: DetailsTab, descriptor: ComponentSlotDescriptor): boolean {
-    const resourceKind = readString(descriptor.resourceKind);
-    return Boolean(
-        resourceKind
-        && isRecord(tab.resource)
-        && tab.resource.kind === resourceKind,
-    );
-}
-
 function createSessionSubagentsBehaviorFromComponents(
     components: ComponentSlotsDescriptor | undefined,
     diagnostics: UiProjectionDiagnostic[],
+    pluginId: string,
+    agentId: string,
 ): AgentUiBehavior['sessionSubagents'] | undefined {
     const slots = readComponentSlots(components);
     const launchCardSlots = slots.filter((slot) => slot.slot === 'sessionSubagents.launchCards');
@@ -1165,16 +1232,20 @@ function createSessionSubagentsBehaviorFromComponents(
     return {
         ...(launchCardSlots.length > 0
             ? {
-                renderLaunchCards: ({ sessionId, scopeId, subagents }) => {
+                renderLaunchCards: ({ sessionId, session, subagents, renderInlineSurface }) => {
                     const rendered: ReactNode[] = [];
                     for (const slot of launchCardSlots) {
-                        const resolution = resolveFirstPartyUiComponent(slot.componentId);
-                        if (resolution.diagnostic) diagnostics.push(resolution.diagnostic);
-                        if (!resolution.render) continue;
-                        rendered.push(resolution.render({
+                        const surfaceId = readString(slot.surfaceId);
+                        if (!surfaceId) continue;
+                        const metadata = readOwnerMetadataFromSessionLike(session);
+                        rendered.push(renderInlineSurface({
+                            slotId: slot.id,
+                            pluginId,
+                            surfaceId,
                             sessionId,
-                            scopeId,
-                            teamIds: collectSubagentGroupKeys(subagents, slot),
+                            machineId: readString(metadata?.machineId),
+                            agentId,
+                            launchInput: { teamIds: collectSubagentGroupKeys(subagents, slot) },
                         }));
                     }
                     return rendered;
@@ -1183,32 +1254,17 @@ function createSessionSubagentsBehaviorFromComponents(
             : {}),
         ...(detailsTabSlots.length > 0
             ? {
-                createTeammateLauncherDetailsTab: ({ teamId }) => {
+                createTeammateLauncherDetailsTab: ({ teamId, session }) => {
+                    const metadata = readOwnerMetadataFromSessionLike(session);
                     for (const slot of detailsTabSlots) {
-                        const tab = createTeammateLauncherDetailsTab(slot, teamId);
+                        const tab = createTeammateLauncherDetailsTab(
+                            slot,
+                            teamId,
+                            pluginId,
+                            agentId,
+                            readString(metadata?.machineId),
+                        );
                         if (tab) return tab;
-                    }
-                    return null;
-                },
-                renderDetailsTab: ({ sessionId, scopeId, tab }) => {
-                    for (const slot of detailsTabSlots) {
-                        if (!isDetailsTabResourceForSlot(tab, slot)) continue;
-                        const resolution = resolveFirstPartyUiComponent(slot.componentId);
-                        if (resolution.diagnostic) diagnostics.push(resolution.diagnostic);
-                        if (!resolution.render || !isRecord(tab.resource)) continue;
-                        return resolution.render({
-                            sessionId,
-                            scopeId,
-                            mode: readString(tab.resource.mode),
-                            initialTeamId: readString(tab.resource.initialTeamId),
-                        });
-                    }
-                    return null;
-                },
-                getDetailsTabIconName: ({ tab }) => {
-                    for (const slot of detailsTabSlots) {
-                        if (!isDetailsTabResourceForSlot(tab, slot)) continue;
-                        return readString(slot.iconName);
                     }
                     return null;
                 },
@@ -1304,8 +1360,42 @@ function createPendingDeliveryBehavior(
     return Object.keys(behavior).length > 0 ? behavior : null;
 }
 
+const PERMISSION_PROMPT_PROTOCOLS = ['claude', 'codexDecision'] as const satisfies readonly PermissionPromptProtocol[];
+
+/**
+ * The declared half of permission-prompt handling.
+ *
+ * `promptProtocol` selects which conversation the footer runs — button set,
+ * handlers and terminal-decision reading — so an unreadable value is refused
+ * fail-closed and the neutral default applies, rather than an Agent silently
+ * impersonating another Agent family's action model.
+ */
+function createPermissionsBehavior(
+    descriptor: PluginUiBehaviorDescriptor,
+    diagnostics: UiProjectionDiagnostic[],
+): AgentUiBehavior['permissions'] | undefined {
+    const declared = descriptor.permissions;
+    if (!declared) return undefined;
+    const rawProtocol = declared.promptProtocol;
+    const promptProtocol = PERMISSION_PROMPT_PROTOCOLS.find((entry) => entry === rawProtocol) ?? null;
+    if (rawProtocol !== undefined && !promptProtocol) {
+        diagnostics.push(createUiProjectionDiagnostic(
+            'A16X1_MALFORMED_DESCRIPTOR',
+            'permissions.promptProtocol',
+            `Unsupported permission prompt protocol '${String(rawProtocol)}'.`,
+        ));
+    }
+    const { promptProtocol: _declaredProtocol, ...rest } = declared;
+    return {
+        ...rest,
+        ...(promptProtocol ? { promptProtocol } : {}),
+    };
+}
+
 function createAgentUiBehaviorFromBehaviorDescriptor(
     descriptor: PluginUiBehaviorDescriptor,
+    agentId: string,
+    pluginId: string,
     diagnostics: UiProjectionDiagnostic[],
 ): AgentUiBehavior {
     const relevantInstallableDepKeys = readStringArray(descriptor.newSession?.relevantInstallableDepKeys);
@@ -1316,9 +1406,15 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
         });
     const transcriptStorageModes = new Set(descriptor.newSession?.transcriptStorageModes ?? []);
     const agentOptions = readAgentOptionDescriptors(descriptor.newSession?.agentOptions, diagnostics);
-    const payload = createPayloadBehavior(descriptor, diagnostics, agentOptions);
-    const workState = createWorkStateBehavior(descriptor, diagnostics);
-    const sessionSubagents = createSessionSubagentsBehaviorFromComponents(descriptor.components, diagnostics);
+    const payload = createPayloadBehavior(descriptor, agentId, diagnostics, agentOptions);
+    const permissions = createPermissionsBehavior(descriptor, diagnostics);
+    const workState = createWorkStateBehavior(descriptor, agentId, diagnostics);
+    const sessionSubagents = createSessionSubagentsBehaviorFromComponents(
+        descriptor.components,
+        diagnostics,
+        pluginId,
+        agentId,
+    );
     const newSessionActionChips = createNewSessionActionChipsBehaviorFromComponents(descriptor.components, diagnostics);
     const sessionComposer = createSessionComposerBehavior(descriptor);
     const contextWindow = createContextWindowBehaviorFromDescriptor(descriptor.contextWindow);
@@ -1372,8 +1468,7 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
             : {}),
         ...(pendingDelivery ? { pendingDelivery } : {}),
         ...(descriptor.guidance ? { guidance: { ...descriptor.guidance } } : {}),
-        ...(descriptor.mcpServers ? { mcpServers: { ...descriptor.mcpServers } } : {}),
-        ...(descriptor.permissions ? { permissions: { ...descriptor.permissions } } : {}),
+        ...(permissions ? { permissions } : {}),
         ...(workState ? { workState } : {}),
         ...(experimentSwitches.length > 0
             ? {
@@ -1398,6 +1493,7 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
         ...(sessionSubagents ? { sessionSubagents } : {}),
     };
     const adapterBehavior = createDescriptorAdapterBehavior({
+        agentId,
         descriptor: descriptor as Readonly<Record<string, unknown>>,
         diagnostics,
     });
@@ -1405,12 +1501,21 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
     return mergeDescriptorBehavior(baseBehavior, adapterBehavior);
 }
 
-export function createAgentUiBehaviorFromDescriptor(value: unknown): AgentUiBehaviorDescriptorResult {
+export function createAgentUiBehaviorFromDescriptor(
+    value: unknown,
+    enclosingAgentId?: string,
+): AgentUiBehaviorDescriptorResult {
     const diagnostics: UiProjectionDiagnostic[] = [];
+    const normalizedEnclosingAgentId = readString(enclosingAgentId);
     if (isRecord(value) && value.kind == null) {
         if (hasNoExecuteBehaviorFields(value)) {
             return {
-                behavior: createAgentUiBehaviorFromBehaviorDescriptor(value as PluginUiBehaviorDescriptor, diagnostics),
+                behavior: createAgentUiBehaviorFromBehaviorDescriptor(
+                    value as PluginUiBehaviorDescriptor,
+                    normalizedEnclosingAgentId ?? '',
+                    normalizedEnclosingAgentId ?? '',
+                    diagnostics,
+                ),
                 diagnostics,
             };
         }
@@ -1430,6 +1535,17 @@ export function createAgentUiBehaviorFromDescriptor(value: unknown): AgentUiBeha
     }
 
     const pluginDescriptor = value as PluginUiDescriptor;
+    const agentId = normalizedEnclosingAgentId ?? readString(pluginDescriptor.agentId);
+    if (!agentId) {
+        return {
+            behavior: {},
+            diagnostics: [createUiProjectionDiagnostic(
+                'A16X1_MALFORMED_DESCRIPTOR',
+                'agentId',
+                'Plugin UI descriptors require an Agent id.',
+            )],
+        };
+    }
     const descriptor: PluginUiBehaviorDescriptor = {
         ...(pluginDescriptor.behavior ?? {}),
         ...(pluginDescriptor.message ? { message: pluginDescriptor.message } : {}),
@@ -1437,7 +1553,12 @@ export function createAgentUiBehaviorFromDescriptor(value: unknown): AgentUiBeha
     };
 
     return {
-        behavior: createAgentUiBehaviorFromBehaviorDescriptor(descriptor, diagnostics),
+        behavior: createAgentUiBehaviorFromBehaviorDescriptor(
+            descriptor,
+            agentId,
+            readString(pluginDescriptor.pluginId) ?? agentId,
+            diagnostics,
+        ),
         diagnostics,
     };
 }

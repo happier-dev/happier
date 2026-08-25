@@ -24,6 +24,7 @@ import {
     PendingPluginChangesSection,
     PluginDiagnosticsSnapshotSection,
 } from './PluginMarketplaceSections';
+import { PluginMachineMatrixSection } from './machines/PluginMachineMatrixSection';
 import { buildPluginDetailRoute } from './model/pluginDetailRoute';
 import { createPluginSettingsViews } from './model/pluginMarketplaceModel';
 import { usePluginSettingsScreenState } from './model/usePluginSettingsScreenState';
@@ -210,14 +211,25 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
             </View>
 
             {state.activeView === 'installed' ? (
-                <InstalledPluginsSection
-                    installedPlugins={state.installedPlugins}
-                    catalog={state.catalog}
-                    canRunActions={state.canRefreshInstalledPlugins}
-                    isPluginActionInFlight={state.isPluginActionInFlight}
-                    onNavigateToPlugin={(pluginId) => router.push(buildPluginDetailRoute(pluginId))}
-                    onRunAction={state.runInstalledPluginAction}
-                />
+                <>
+                    <InstalledPluginsSection
+                        installedPlugins={state.installedPlugins}
+                        catalog={state.catalog}
+                        canRunActions={state.canRefreshInstalledPlugins}
+                        isPluginActionInFlight={state.isPluginActionInFlight}
+                        onNavigateToPlugin={(pluginId) => router.push(buildPluginDetailRoute(pluginId))}
+                        onRunAction={state.runInstalledPluginAction}
+                    />
+                    {/*
+                      * The list above is the selected machine's truth. This
+                      * matrix is the Account-wide one: where the plugin is
+                      * installed, and where it is missing or broken, without
+                      * walking each machine's settings screen. It is read-only
+                      * on purpose — every action still targets the machine
+                      * selected above.
+                      */}
+                    <PluginMachineMatrixSection />
+                </>
             ) : null}
 
             {state.activeView === 'discover' ? (

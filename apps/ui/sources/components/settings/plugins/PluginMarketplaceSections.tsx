@@ -324,6 +324,9 @@ export function CatalogEntriesSection(props: Readonly<{
             );
         }
 
+        // The listing is how the user learns a newer version exists. What
+        // "update" then does belongs to the installed record at its canonical
+        // owner, so no catalog source travels with the request.
         const updateAvailable = catalogEntry.updateable
             && catalogEntry.version !== null
             && catalogEntry.version !== installed.version;
@@ -341,7 +344,6 @@ export function CatalogEntriesSection(props: Readonly<{
                     onPress={() => props.onAction({
                         method: 'update',
                         pluginId: catalogEntry.id,
-                        sourceId: catalogEntry.sourceId,
                     })}
                     disabled={!props.canRunCatalogActions || props.isPluginActionInFlight(catalogEntry.id) || props.loadingCatalog}
                     showChevron={false}

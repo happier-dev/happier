@@ -74,7 +74,11 @@ export function BugReportDiagnosticsSection(props: Readonly<{
                         <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.diagnostics.includeTitle')}</Text>
                         <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.diagnostics.includeSubtitle')}</Text>
                     </View>
-                    <Switch value={props.includeDiagnostics} onValueChange={props.onIncludeDiagnosticsChange} />
+                    <Switch
+                        accessibilityLabel={t('bugReports.composer.diagnostics.includeTitle')}
+                        value={props.includeDiagnostics}
+                        onValueChange={props.onIncludeDiagnosticsChange}
+                    />
                 </View>
 
                 {props.includeDiagnostics && (
@@ -92,6 +96,7 @@ export function BugReportDiagnosticsSection(props: Readonly<{
                                         </Text>
                                     </View>
                                     <Switch
+                                        accessibilityLabel={t(option.titleKey)}
                                         value={selected && allowed}
                                         onValueChange={(value) => toggleKind(option.kind, value)}
                                         disabled={!allowed}
@@ -434,7 +439,16 @@ export function BugReportConsentSection(props: Readonly<{
                         <Text style={bugReportComposerStyles.label}>{t('bugReports.composer.consent.understandTitle')}</Text>
                         <Text style={bugReportComposerStyles.helperText}>{t('bugReports.composer.consent.understandSubtitle')}</Text>
                     </View>
-                    <Switch value={props.acceptedPrivacyNotice} onValueChange={props.onAcceptedPrivacyNoticeChange} />
+                    {/* A consent control that announces as a bare "switch" asks for agreement it
+                        never stated the terms of, so this one is named even though it sits beside
+                        its label. These card rows are not `Item` rows: their helper text wraps
+                        unbounded and the switch aligns to the first line, which the list primitive
+                        clamps and centres. */}
+                    <Switch
+                        accessibilityLabel={t('bugReports.composer.consent.understandTitle')}
+                        value={props.acceptedPrivacyNotice}
+                        onValueChange={props.onAcceptedPrivacyNoticeChange}
+                    />
                 </View>
                 {props.errorText ? (
                     <Text style={bugReportComposerStyles.errorText}>{props.errorText}</Text>

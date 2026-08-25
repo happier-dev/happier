@@ -10,7 +10,10 @@ import {
     usePluginSurfaceDestinationNavigationBindingForScope,
     useRegisterPluginSurfaceDestinationNavigationOwner,
 } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
-import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import {
+    usePluginSurfaceCurrentUiContextEligibility,
+    usePluginSurfaceFocusEligibility,
+} from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
     type PluginUiProjectionModel,
@@ -235,6 +238,13 @@ describe('PluginSettingsPageScreen', () => {
         );
 
         expect(screen.root.findByType('PluginSettingsPageHostMock' as never).props.focusEligible).toBe(true);
+        // Presentation focus is not semantic currentness. The Settings route is
+        // the one owner that can elect its mounted surface as the current UI
+        // context, so a focused route must publish that fact too — otherwise the
+        // mount's Host API `publishCurrentUiContext` stays permanently fenced.
+        expect(
+            screen.root.findByType('PluginSettingsPageHostMock' as never).props.currentUiContextEligible,
+        ).toBe(true);
 
         routeFocusState.value = false;
         await screen.update(
@@ -245,6 +255,9 @@ describe('PluginSettingsPageScreen', () => {
             />,
         );
         expect(screen.root.findByType('PluginSettingsPageHostMock' as never).props.focusEligible).toBe(false);
+        expect(
+            screen.root.findByType('PluginSettingsPageHostMock' as never).props.currentUiContextEligible,
+        ).toBe(false);
     });
 
     it('resolves one admitted qualified Settings page into the shared host, without route-local renderer selection', async () => {
@@ -397,6 +410,23 @@ describe('PluginSettingsPageScreen', () => {
             serverId: 'settings-server',
         })).toBe(true);
 
+        // Same machine, same server, RESTARTED daemon. The generation alone has
+        // to break currentness: a Settings or Secrets write staged against the
+        // pre-restart authority would otherwise be dispatched to a different one
+        // under an identity that still looks correct. Every other field is held
+        // constant so this asserts the generation term and nothing else.
+        daemonTargetSelectionState.value = {
+            target: { serverIdentityId: 'settings-server-identity', machineId: 'settings-machine' },
+            machine: { id: 'settings-machine', daemonStateVersion: 4 },
+            serverId: 'settings-server',
+        };
+        expect(hostProps.isDaemonSettingsTargetCurrent?.({
+            kind: 'daemon',
+            serverIdentityId: 'settings-server-identity',
+            machineId: 'settings-machine',
+            serverId: 'settings-server',
+        })).toBe(false);
+
         daemonTargetSelectionState.value = {
             target: { serverIdentityId: 'next-server-identity', machineId: 'next-machine' },
             machine: { id: 'next-machine', daemonStateVersion: 4 },
@@ -448,6 +478,7 @@ describe('PluginSettingsPageScreen', () => {
 
         expect(latestHostProps()).toEqual(expect.objectContaining({
             daemonSettingsTarget: null,
+            perActiveServerIdentityId: 'settings-server-identity',
             settingsScopesEnabled: { account: true, daemon: false },
         }));
     });
@@ -518,6 +549,7 @@ function PluginSettingsPageHostFocusProbe(props: Readonly<{ props: unknown }>): 
     return React.createElement('PluginSettingsPageHostMock', {
         props: props.props,
         focusEligible: usePluginSurfaceFocusEligibility(),
+        currentUiContextEligible: usePluginSurfaceCurrentUiContextEligibility(),
     });
 }
 

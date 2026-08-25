@@ -8,7 +8,10 @@ import type {
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
-import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import {
+  useProjectedConnectedServicesRegistry,
+  useProjectedPluginLocalizedTextResolver,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { getConnectedAccountAuthenticationMode } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
@@ -39,6 +42,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const settings = useSettings();
   const pathname = usePathname();
   const registry = useProjectedConnectedServicesRegistry();
+  const localizePluginText = useProjectedPluginLocalizedTextResolver();
   const serverFeatures = useServerFeaturesRuntimeSnapshot({ enabled: true });
   const accountTransport = resolveConnectedAccountUiNegotiation(serverFeatures);
   const [open, setOpen] = React.useState(false);
@@ -54,8 +58,9 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
       registry,
       props.declaration.service,
       t,
+      localizePluginText,
     );
-  }, [props.declaration.service, registry.entries]);
+  }, [localizePluginText, props.declaration.service, registry.entries]);
   const choices = React.useMemo(() => buildConnectedAccountPurposeTargetChoices({
     declaration: props.declaration,
     selectedTarget: props.value,

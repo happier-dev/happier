@@ -2,6 +2,7 @@ import {
     PLUGIN_UI_ICON_TOKENS_V1,
     type PluginUiIconTokenV1,
 } from '@happier-dev/protocol/plugins/ui';
+import { I18nManager } from 'react-native';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 
@@ -44,6 +45,8 @@ export const PLUGIN_UI_ICON_FALLBACK: IconName = 'puzzle-piece';
 
 const PLUGIN_UI_ICON_TOKEN_SET: ReadonlySet<string> = new Set(PLUGIN_UI_ICON_TOKENS_V1);
 
+export type PluginUiIconDirection = 'ltr' | 'rtl';
+
 function normalizeIconToken(token: string | null | undefined): PluginUiIconTokenV1 | null {
     if (typeof token !== 'string') {
         return null;
@@ -53,7 +56,14 @@ function normalizeIconToken(token: string | null | undefined): PluginUiIconToken
 }
 
 /** Resolve a semantic plugin icon to the app's generated private renderer catalog. */
-export function resolvePluginUiIconName(token: string | null | undefined): IconName {
+export function resolvePluginUiIconName(
+    token: string | null | undefined,
+    direction: PluginUiIconDirection = I18nManager.isRTL ? 'rtl' : 'ltr',
+): IconName {
     const normalized = normalizeIconToken(token);
+    if (direction === 'rtl') {
+        if (normalized === 'back') return 'arrow-right';
+        if (normalized === 'forward') return 'arrow-left';
+    }
     return normalized ? PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME[normalized] : PLUGIN_UI_ICON_FALLBACK;
 }

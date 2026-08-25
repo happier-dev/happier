@@ -208,10 +208,13 @@ async function seedDefaultNewSession(
             scope: params.scope,
             ...(params.signal ? { signal: params.signal } : {}),
             isCurrent: params.isCurrent,
-            navigateToNewSession: (dataId) => {
+            navigateToNewSession: ({ dataId, draftId }) => {
                 router.push({
                     pathname: '/new',
-                    params: dataId === null ? {} : { dataId },
+                    params: {
+                        draftId,
+                        ...(dataId === null ? {} : { dataId }),
+                    },
                 });
             },
         });
@@ -233,10 +236,9 @@ async function composeDefaultSessionServerStartDraft(params: Parameters<PluginSe
             signal: params.signal,
             isCurrent: params.isCurrent,
             target: params.target,
-            present: ({ seed }) => presentSessionServerStartDraftComposer({
-                seed,
-                target: params.target,
-            }),
+            // The machine the composition is FOR, which the seed may have
+            // named — not the one this surface is mounted on.
+            present: ({ seed, target }) => presentSessionServerStartDraftComposer({ seed, target }),
         });
     } catch {
         return { kind: 'unavailable', reason: 'presentation_unavailable' };

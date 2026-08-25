@@ -33,6 +33,7 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
     const [agentInputActionBarLayout, setAgentInputActionBarLayout] = useSettingMutable('agentInputActionBarLayout');
     const [agentInputChipDensity, setAgentInputChipDensity] = useSettingMutable('agentInputChipDensity');
     const [newSessionPresentationMode, setNewSessionPresentationMode] = useSettingMutable('newSessionPresentationModeV1');
+    const [newSessionDraftEntryMode, setNewSessionDraftEntryMode] = useSettingMutable('newSessionDraftEntryMode');
     const [composerSurfaceStyle, setComposerSurfaceStyle] = useSettingMutable('composerSurfaceStyle');
     const [rememberBannerVisibility, setRememberBannerVisibility] = useSettingMutable('sessionComposerRememberBannerVisibility');
     const [collapsedBannerKinds, setCollapsedBannerKinds] = useLocalSettingMutable('sessionComposerCollapsedBannerKinds');
@@ -164,6 +165,33 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
 
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
+            <ItemGroup
+                title={t('settingsSession.newSessionDraftEntry.title')}
+                footer={t('settingsSession.newSessionDraftEntry.footer')}
+            >
+                <Item
+                    testID="settings-new-session-draft-entry-resume"
+                    title={t('settingsSession.newSessionDraftEntry.resumeTitle')}
+                    subtitle={t('settingsSession.newSessionDraftEntry.resumeSubtitle')}
+                    icon={<Icon name="clock-counter-clockwise" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={newSessionDraftEntryMode === 'resumePrevious'
+                        ? <Icon name="check" size={20} color={theme.colors.accent.blue} />
+                        : null}
+                    onPress={() => setNewSessionDraftEntryMode('resumePrevious')}
+                    showChevron={false}
+                />
+                <Item
+                    testID="settings-new-session-draft-entry-fresh"
+                    title={t('settingsSession.newSessionDraftEntry.freshTitle')}
+                    subtitle={t('settingsSession.newSessionDraftEntry.freshSubtitle')}
+                    icon={<Icon name="plus" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={newSessionDraftEntryMode === 'alwaysFresh'
+                        ? <Icon name="check" size={20} color={theme.colors.accent.blue} />
+                        : null}
+                    onPress={() => setNewSessionDraftEntryMode('alwaysFresh')}
+                    showChevron={false}
+                />
+            </ItemGroup>
             <ItemGroup title={t('settingsSession.inputBehavior.title')} footer={t('settingsSession.inputBehavior.footer')}>
                 <Item
                     title={t('settingsFeatures.enterToSend')}

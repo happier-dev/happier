@@ -80,6 +80,7 @@ function isValidFieldValue(field: ManualAuthenticationField, value: string): boo
 
 export const ConnectedAccountManualForm = React.memo(function ConnectedAccountManualForm(props: Readonly<{
     title: string;
+    localize?: (value: Parameters<typeof resolveProjectedLocalizedText>[0]) => string;
     fields: readonly ManualAuthenticationField[];
     submitting: boolean;
     onSubmit(input: Readonly<{
@@ -116,8 +117,8 @@ export const ConnectedAccountManualForm = React.memo(function ConnectedAccountMa
             footer={validationFailed ? t('common.error') : undefined}
         >
             {fields.map((field) => {
-                const title = resolveProjectedLocalizedText(field.title);
-                const description = resolveProjectedLocalizedText(field.description);
+                const title = resolveProjectedLocalizedText(field.title, props.localize);
+                const description = resolveProjectedLocalizedText(field.description, props.localize);
                 const multiline = field.presentation?.control === 'textarea';
                 return (
                     <View key={field.id} style={styles.field}>
@@ -136,7 +137,7 @@ export const ConnectedAccountManualForm = React.memo(function ConnectedAccountMa
                             multiline={multiline}
                             autoCapitalize="none"
                             autoCorrect={false}
-                            placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder)}
+                            placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder, props.localize)}
                             placeholderTextColor={theme.colors.input.placeholder}
                             style={[
                                 styles.input,

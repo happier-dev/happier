@@ -479,6 +479,292 @@ describe('externalSessionsIntegrationController', () => {
         await hook.unmount();
     });
 
+    it('keeps row order and lets a mutation on row B coexist with an in-flight Check Again on row A', async () => {
+        const agentB = { pluginId: 'com.example.external-agent', localId: 'assistant-b' } as const;
+        const recheckA = createDeferred<
+            Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>
+        >();
+        const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [
+                    { agent, status: { state: 'installed_enabled', installationId: 'installation-a' } },
+                    { agent: agentB, status: { state: 'installed_enabled', installationId: 'installation-b' } },
+                ],
+                nextCursor: null,
+                diagnostics: [],
+            })
+            .mockImplementationOnce(async () => await recheckA.promise);
+        const disable = vi.fn<ExternalSessionsHookManagementTransport['disable']>()
+            .mockResolvedValueOnce({
+                ok: true,
+                status: { state: 'installed_disabled', installationId: 'installation-b' },
+            });
+        const transport = {
+            status,
+            install: vi.fn(),
+            disable,
+            enable: vi.fn(),
+            uninstall: vi.fn(),
+        };
+        const hook = await renderHook(
+            () => useExternalSessionsIntegrationController({
+                machineId: 'machine-1',
+                projectionGeneration: 1,
+                knownAgents: [
+                    { agent, agentTitle: 'Assistant A' },
+                    { agent: agentB, agentTitle: 'Assistant B' },
+                ],
+                transport,
+            }),
+        );
+        const rowA = hook.getCurrent().integrations![0]!;
+        const rowB = hook.getCurrent().integrations![1]!;
+
+        let pendingA!: Promise<void>;
+        act(() => {
+            pendingA = hook.getCurrent().operations!.checkAgain(rowA);
+        });
+        await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+
+        // A mutation on another row is independently current and must not retire A's
+        // pending recheck or move either row in the visible inventory.
+        await act(async () => {
+            await hook.getCurrent().operations!.disable(rowB);
+        });
+
+        recheckA.resolve({
+            ok: true,
+            rows: [{ agent, status: { state: 'installed_disabled', installationId: 'installation-a' } }],
+            nextCursor: null,
+            diagnostics: [],
+        });
+        await act(async () => await pendingA);
+        await flushHookEffects();
+
+        expect(hook.getCurrent().integrations?.map((integration) => ({
+            localId: integration.agent.localId,
+            state: integration.state,
+        }))).toEqual([
+            { localId: 'assistant', state: 'installed_disabled' },
+            { localId: 'assistant-b', state: 'installed_disabled' },
+        ]);
+        await hook.unmount();
+    });
+
+    it('keeps a same-row mutation authoritative over an older Check Again result', async () => {
+        const staleRecheck = createDeferred<
+            Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>
+        >();
+        const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [{ agent, status: { state: 'installed_enabled', installationId: 'installation-a' } }],
+                nextCursor: null,
+                diagnostics: [],
+            })
+            .mockImplementationOnce(async () => await staleRecheck.promise);
+        const disable = vi.fn<ExternalSessionsHookManagementTransport['disable']>()
+            .mockResolvedValueOnce({
+                ok: true,
+                status: { state: 'installed_disabled', installationId: 'installation-a' },
+            });
+        const transport = {
+            status,
+            install: vi.fn(),
+            disable,
+            enable: vi.fn(),
+            uninstall: vi.fn(),
+        };
+        const hook = await renderHook(
+            () => useExternalSessionsIntegrationController({
+                machineId: 'machine-1',
+                projectionGeneration: 1,
+                knownAgents: [{ agent, agentTitle: 'Assistant A' }],
+                transport,
+            }),
+        );
+        const row = hook.getCurrent().integrations![0]!;
+
+        let pendingRecheck!: Promise<void>;
+        act(() => {
+            pendingRecheck = hook.getCurrent().operations!.checkAgain(row);
+        });
+        await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+        await act(async () => {
+            await hook.getCurrent().operations!.disable(row);
+        });
+
+        staleRecheck.resolve({
+            ok: true,
+            rows: [{ agent, status: { state: 'installed_enabled', installationId: 'installation-a' } }],
+            nextCursor: null,
+            diagnostics: [],
+        });
+        await act(async () => await pendingRecheck);
+        await flushHookEffects();
+
+        expect(hook.getCurrent().integrations?.[0]?.state).toBe('installed_disabled');
+        await hook.unmount();
+    });
+
+    it('keeps a newer Retry Inventory result authoritative over an older same-scope Check Again', async () => {
+        const agentB = { pluginId: 'com.example.external-agent', localId: 'assistant-b' } as const;
+        const staleRecheck = createDeferred<
+            Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>
+        >();
+        const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [
+                    { agent, status: { state: 'installed_enabled', installationId: 'installation-a' } },
+                    { agent: agentB, status: { state: 'installed_enabled', installationId: 'installation-b' } },
+                ],
+                nextCursor: null,
+                diagnostics: [{ code: 'installation_record_read_failed', retryable: true }],
+            })
+            .mockImplementationOnce(async () => await staleRecheck.promise)
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [
+                    { agent, status: { state: 'installed_enabled', installationId: 'installation-a' } },
+                    { agent: agentB, status: { state: 'installed_enabled', installationId: 'installation-b' } },
+                ],
+                nextCursor: null,
+                diagnostics: [],
+            });
+        const transport = {
+            status,
+            install: vi.fn(),
+            disable: vi.fn(),
+            enable: vi.fn(),
+            uninstall: vi.fn(),
+        };
+        const hook = await renderHook(
+            () => useExternalSessionsIntegrationController({
+                machineId: 'machine-1',
+                projectionGeneration: 1,
+                knownAgents: [
+                    { agent, agentTitle: 'Assistant A' },
+                    { agent: agentB, agentTitle: 'Assistant B' },
+                ],
+                transport,
+            }),
+        );
+        expect(hook.getCurrent().inventoryState.status).toBe('partial');
+        const rowA = hook.getCurrent().integrations![0]!;
+
+        let pendingA!: Promise<void>;
+        act(() => {
+            pendingA = hook.getCurrent().operations!.checkAgain(rowA);
+        });
+        await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+
+        await act(async () => {
+            await hook.getCurrent().retryInventory();
+        });
+        expect(hook.getCurrent().inventoryState.status).toBe('ready');
+
+        staleRecheck.resolve({
+            ok: true,
+            rows: [{ agent, status: { state: 'installed_disabled', installationId: 'installation-a' } }],
+            nextCursor: null,
+            diagnostics: [],
+        });
+        await act(async () => await pendingA);
+        await flushHookEffects();
+
+        expect(hook.getCurrent().integrations?.map((integration) => ({
+            localId: integration.agent.localId,
+            state: integration.state,
+        }))).toEqual([
+            { localId: 'assistant', state: 'installed_enabled' },
+            { localId: 'assistant-b', state: 'installed_enabled' },
+        ]);
+        await hook.unmount();
+    });
+
+    it('applies both concurrent row rechecks because a row recheck opens no root generation', async () => {
+        const agentB = { pluginId: 'com.example.external-agent', localId: 'assistant-b' } as const;
+        const recheckA = createDeferred<
+            Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>
+        >();
+        const recheckB = createDeferred<
+            Awaited<ReturnType<ExternalSessionsHookManagementTransport['status']>>
+        >();
+        const status = vi.fn<ExternalSessionsHookManagementTransport['status']>()
+            .mockResolvedValueOnce({
+                ok: true,
+                rows: [
+                    { agent, status: { state: 'installed_enabled', installationId: 'installation-a' } },
+                    { agent: agentB, status: { state: 'installed_enabled', installationId: 'installation-b' } },
+                ],
+                nextCursor: null,
+                diagnostics: [],
+            })
+            .mockImplementationOnce(async () => await recheckA.promise)
+            .mockImplementationOnce(async () => await recheckB.promise);
+        const transport = {
+            status,
+            install: vi.fn(),
+            disable: vi.fn(),
+            enable: vi.fn(),
+            uninstall: vi.fn(),
+        };
+        const hook = await renderHook(
+            () => useExternalSessionsIntegrationController({
+                machineId: 'machine-1',
+                projectionGeneration: 1,
+                knownAgents: [
+                    { agent, agentTitle: 'Assistant A' },
+                    { agent: agentB, agentTitle: 'Assistant B' },
+                ],
+                transport,
+            }),
+        );
+        const rowA = hook.getCurrent().integrations![0]!;
+        const rowB = hook.getCurrent().integrations![1]!;
+
+        let pendingA!: Promise<void>;
+        act(() => {
+            pendingA = hook.getCurrent().operations!.checkAgain(rowA);
+        });
+        await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+        let pendingB!: Promise<void>;
+        act(() => {
+            pendingB = hook.getCurrent().operations!.checkAgain(rowB);
+        });
+        await vi.waitFor(() => expect(status).toHaveBeenCalledTimes(3));
+
+        recheckA.resolve({
+            ok: true,
+            rows: [{ agent, status: { state: 'installed_disabled', installationId: 'installation-a' } }],
+            nextCursor: null,
+            diagnostics: [],
+        });
+        await act(async () => await pendingA);
+        recheckB.resolve({
+            ok: true,
+            rows: [{ agent: agentB, status: { state: 'installed_disabled', installationId: 'installation-b' } }],
+            nextCursor: null,
+            diagnostics: [],
+        });
+        await act(async () => await pendingB);
+        await flushHookEffects();
+
+        // Row-local rechecks are fenced only by their OWN row revision. Starting row B's
+        // recheck must not retire row A's in-flight one, which is what would happen if a
+        // targeted request opened an inventory-wide generation the way a root listing does.
+        expect(hook.getCurrent().integrations?.map((integration) => ({
+            localId: integration.agent.localId,
+            state: integration.state,
+        }))).toEqual([
+            { localId: 'assistant', state: 'installed_disabled' },
+            { localId: 'assistant-b', state: 'installed_disabled' },
+        ]);
+        await hook.unmount();
+    });
+
     it('does not let one row\'s Review and Install invalidate another row\'s in-flight preview', async () => {
         const agentB = { pluginId: 'com.example.external-agent', localId: 'assistant-b' } as const;
         const previewA = createDeferred<

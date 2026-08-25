@@ -22,7 +22,9 @@ installSettingsViewCommonModuleMocks({
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({ translate: (key) => key });
+        return createTextModuleMock({
+            translate: (key, params) => (params ? `${key}:${JSON.stringify(params)}` : key),
+        });
     },
 });
 
@@ -36,6 +38,7 @@ describe('PluginInstallationReviewDialog', () => {
         const screen = await renderScreen(
             <PluginInstallationReviewDialog
                 body="Review the plugin before installation."
+                target={{ machine: 'Laptop', server: 'Server A' }}
                 optionalHostAccess={[]}
                 onResolve={vi.fn()}
                 onClose={vi.fn()}
@@ -64,6 +67,7 @@ describe('PluginInstallationReviewDialog', () => {
             const screen = await renderScreen(
                 <PluginInstallationReviewDialog
                     body="Review the plugin before installation."
+                    target={{ machine: 'Laptop', server: 'Server A' }}
                     optionalHostAccess={[{
                         id: 'workspace',
                         capability: 'Workspace files',
@@ -92,5 +96,26 @@ describe('PluginInstallationReviewDialog', () => {
         } finally {
             platformEnvironment.platform = 'web';
         }
+    });
+
+    it('names the exact machine and server the install-and-trust decision lands on', async () => {
+        const { PluginInstallationReviewDialog } = await import('./PluginInstallationReviewDialog');
+        const screen = await renderScreen(
+            <PluginInstallationReviewDialog
+                body="Review the plugin before installation."
+                target={{ machine: 'Build box', server: 'Server B' }}
+                optionalHostAccess={[]}
+                onResolve={vi.fn()}
+                onClose={vi.fn()}
+            />,
+        );
+
+        // Trust is granted on ONE machine reached through ONE server, so the
+        // review must carry that target and not just the package review body.
+        expect(screen.findByTestId('settings.plugins.installReview.target')?.props.children)
+            .toBe(`settingsPlugins.pluginChangeConfirmTarget:${JSON.stringify({
+                machine: 'Build box',
+                server: 'Server B',
+            })}`);
     });
 });

@@ -5,8 +5,12 @@ import {
     preparePluginJsonSchema,
 } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui';
-import type { PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1 } from '@happier-dev/protocol';
+import {
+    MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
+    type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
+} from '@happier-dev/protocol';
 
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
     PluginUiHostApi,
     ResourceContent,
@@ -257,7 +261,21 @@ function createDocumentHost(input: Readonly<{
         replacePageLocation: async () => unexpectedHostApiCall('replacePageLocation'),
         notify: async () => unexpectedHostApiCall('notify'),
         confirm: async () => unexpectedHostApiCall('confirm'),
-        watchResource: input.watchResource ?? (async () => unexpectedHostApiCall('watchResource')),
+        // Both real transports refuse an unadvertised host method locally with
+        // the typed `unsupported_method` failure rather than a generic throw,
+        // and the Resource store reads exactly that code to decide `unsupported`
+        // instead of a retryable reconnect. A fake that threw an untyped Error
+        // could never reach the unsupported branch these mounts assert.
+        watchResource: input.watchResource ?? (async () => {
+            if ((input.methods ?? []).includes('watchResource')) {
+                return unexpectedHostApiCall('watchResource');
+            }
+            throw new PluginError({
+                code: 'unsupported_method',
+                message: 'watchResource is not installed for this mount',
+                retryable: false,
+            });
+        }),
         diagnostic: () => unexpectedHostApiCall('diagnostic'),
         readClipboard: async () => unexpectedHostApiCall('readClipboard'),
         writeClipboard: async () => unexpectedHostApiCall('writeClipboard'),
@@ -920,6 +938,44 @@ describe('useDeclarativeDocumentSource', () => {
 
         expect(readResource).toHaveBeenCalledWith('live-dashboard', expect.anything());
         expect(tree.root.findByType('output').props.value).toBe('Static dashboard');
+    });
+
+    it('refuses an over-ceiling document before decoding it and retains static LKG', async () => {
+        // The document is decoded, parsed and normalized synchronously on the UI
+        // thread, so the declared per-read ceiling must be checked on the raw
+        // byte length rather than after a full decode.
+        const decodeSpy = vi.spyOn(TextDecoder.prototype, 'decode');
+        // A document whose envelope and node tree are otherwise valid and which
+        // fails ONLY the ceiling: the padding lives inside the root text node,
+        // which carries no length bound of its own. Padding the envelope with an
+        // extra top-level key instead would be rejected by the strict envelope
+        // anyway, leaving the retained-LKG and invalid-document assertions below
+        // unable to fail when the ceiling is removed.
+        const oversized = resourceRead({
+            version: 1,
+            root: {
+                kind: 'text',
+                text: `Oversized dashboard${'x'.repeat(MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1)}`,
+            },
+        }, { digest: resourceDigest(`sha256:${'2'.repeat(64)}`) });
+        expect(oversized.bytes.byteLength)
+            .toBeGreaterThan(MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1);
+        const readResource = vi.fn(async () => oversized);
+        const hostApi = createDocumentHost({ readResource });
+        let tree!: ReturnType<typeof create>;
+
+        try {
+            await act(async () => {
+                tree = create(renderProbe(hostApi));
+                await flushMicrotasks();
+            });
+
+            expect(tree.root.findByType('output').props.value).toBe('Static dashboard');
+            expect(tree.root.findByType('output').props.invalidDocument).toBe(true);
+            expect(decodeSpy).not.toHaveBeenCalled();
+        } finally {
+            decodeSpy.mockRestore();
+        }
     });
 
     it('retries an invalid Resource document through the mounted store and atomically adopts its replacement', async () => {

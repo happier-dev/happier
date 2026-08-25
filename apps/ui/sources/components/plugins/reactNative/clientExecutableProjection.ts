@@ -23,7 +23,10 @@ import {
 import {
     readPluginUiReactNativeBundleCacheIdentity,
 } from '@/sync/domains/plugins/ui/artifactAdoption';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import {
+    isPluginProjectedActionExecutable,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
 import {
     readPluginUiContributionOrigin,
     readPluginUiProjectionEntryExecutionOrigin,
@@ -275,7 +278,7 @@ function readActionCandidate(input: Readonly<{
     platform: PluginContributionClientPlatform;
 }>): ResolvedProjectedClientExecutableContribution | null {
     const { action } = input;
-    if (action.available !== true || action.execution.target !== 'client') return null;
+    if (!isPluginProjectedActionExecutable(action) || action.execution.target !== 'client') return null;
     if (!action.execution.platforms.includes(input.platform)) return null;
 
     const origin = readCurrentProjectedExecutableOrigin({ entry: action, source: input.source });

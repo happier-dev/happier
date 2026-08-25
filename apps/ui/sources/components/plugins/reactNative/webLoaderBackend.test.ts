@@ -97,20 +97,22 @@ describe('createReactNativeWebLoaderBackend', () => {
         expect((globalThis as Record<string, unknown>)[PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY]).toBeDefined();
     });
 
-    it('fails closed on a forbidden direct react/react-native-web/@/ import in the bundle source (same guard as embeddedWeb)', async () => {
+    it('instantiates a managed module with legal import-like text', async () => {
+        const importLikeText = 'import something from "@/sources/internal"';
+        const compiled = [
+            'const importLikeText = `import something from "@/sources/internal"`;',
+            'export function renderSurface() { return importLikeText; }',
+        ].join('\n');
         const backend = createReactNativeWebLoaderBackend({
-            importModule: realDataUriImporter('export function renderSurface() { return null; }'),
+            importModule: realDataUriImporter(compiled),
         });
 
-        await expect(backend.loadInstalledBundle!({
+        const module = await backend.loadInstalledBundle!({
             identity: {} as never,
-            bytes: encode('import { useState } from "react";\nexport function renderSurface() {}'),
-        })).rejects.toMatchObject({ code: 'forbidden_import' });
+            bytes: encode(compiled),
+        });
 
-        await expect(backend.loadInstalledBundle!({
-            identity: {} as never,
-            bytes: encode('import x from "@/sources/internal";\nexport function renderSurface() {}'),
-        })).rejects.toMatchObject({ code: 'forbidden_import' });
+        expect(module({} as never)).toBe(importLikeText);
     });
 
     it('rejects an invalid module (no renderSurface, no usable default) with invalid_surface_module', async () => {

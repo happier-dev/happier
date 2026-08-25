@@ -9,7 +9,7 @@ import type {
     DaemonProviderConnectionMutationRequestV1,
     DaemonProviderConnectionViewV1,
 } from '@happier-dev/protocol/rpc';
-import { useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
@@ -24,7 +24,10 @@ import { MachineAdministrationTargetSelector } from '@/components/settings/machi
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { ProviderExternalLinkItem } from '@/components/settings/providers/ProviderExternalLinkItem';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
-import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import {
+    useProjectedConnectedServicesRegistry,
+    useProjectedPluginLocalizedTextResolver,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
@@ -39,14 +42,21 @@ import {
     providerSettingsMachineRowKey,
     useProviderSettingsTarget,
 } from '@/providers/hooks/targetMachine';
+import {
+    useRetireProviderStateOnAccountChange,
+} from '@/providers/hooks/accountLifetimeRetirement';
 import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
 import { useProviderConnectionMachineViews } from '@/providers/hooks/useProviderConnectionMachineViews';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
 import { probeProviderConnection, providerErrorFromRpcFailure } from '@/providers/rpc/client';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useProfile, useSettings } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
+import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
+import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
+import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import {
     buildConnectedAccountPurposeTargetChoices,
     connectedAccountPurposeTargetChoiceId,
@@ -78,6 +88,7 @@ type ManagedPurposeDraft = Readonly<{
     machineId: string;
     connectionId: string;
     revision: number;
+    initialTargetsKey: string;
     targets: Readonly<Record<string, QualifiedConnectedAccountPurposeBindingTargetV1 | null>>;
 }>;
 
@@ -85,10 +96,12 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     props: Readonly<{ connectionId: string }>,
 ) {
     const router = useRouter();
+    const navigation = useNavigation();
     const { theme } = useUnistyles();
     const profile = useProfile();
     const settings = useSettings();
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
+    const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
     const providerTarget = useProviderSettingsTarget();
     const { machineId, machineRows, resolveCurrentTarget, serverId } = providerTarget;
@@ -111,7 +124,11 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         targets: readableMachineRows,
     });
     const refreshConnectionDetail = React.useCallback(async () => {
-        await Promise.all([query.refresh(), machineViews.refresh()]);
+        await query.refresh();
+        // The selected connection is authoritative for mutation completion.
+        // Peer rows are supporting presentation and must not hold the write's
+        // critical path or replace a successful selected-machine refresh.
+        void machineViews.refresh().catch(() => undefined);
     }, [machineViews.refresh, query.refresh]);
     const mutation = useProviderConnectionMutation({
         resolveTarget: resolveCurrentTarget,
@@ -122,6 +139,15 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const [probeState, setProbeState] = React.useState<'idle' | 'probing' | 'success' | 'notSupported'>('idle');
     const [probeError, setProbeError] = React.useState<ProviderErrorV1 | null>(null);
     const [managedPurposeDraft, setManagedPurposeDraft] = React.useState<ManagedPurposeDraft | null>(null);
+    // A purpose draft names Account-scoped Connected Account targets, so it is
+    // retired with the Account that authored it rather than surviving into the
+    // next Account on the same machine and connection.
+    const discardManagedPurposeDraft = React.useCallback(() => {
+        setManagedPurposeDraft(null);
+    }, []);
+    useRetireProviderStateOnAccountChange(discardManagedPurposeDraft);
+    const managedPurposeDraftDirtyRef = React.useRef(false);
+    const ignoreManagedPurposeGuardRef = React.useRef(false);
     const probeGenerationRef = React.useRef(0);
     const connection = query.data?.connections.find((item) => item.connectionId === props.connectionId) ?? null;
     const managedDeployment = connection?.deployment.kind === 'managedLocal'
@@ -135,14 +161,16 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     // all read from the ACTIVE server's Account. A Provider target on another
     // server profile belongs to a different Account, so its bindings must not
     // be labelled from — or written with — this Account's references.
-    // Both ids are device-local server-profile ids from the same registry: the
-    // Administration resolver returns `profile.id`, and so does the active
-    // snapshot. Comparing them directly needs no alias resolution.
+    // The two ids are different forms of the same fact: the Administration
+    // resolver returns the device-local `profile.id`, while the active snapshot
+    // reports the profile's scope id (`serverIdentityId ?? id`). Comparing the
+    // raw strings would report every identity-bearing active server as foreign,
+    // so the shared profile-registry comparator decides equivalence.
     const activeServer = useActiveServerSnapshot();
     const activeServerId = String(activeServer.serverId ?? '').trim();
     const connectedAccountScopeMatchesTarget = serverId !== null
         && activeServerId.length > 0
-        && serverId.trim() === activeServerId;
+        && areServerProfileIdentifiersEquivalent(serverId, activeServerId);
     const probeObservationIdentity = connection?.probeObservationIdentity ?? null;
     // A null identity cannot establish semantic equivalence. Treat the connection
     // snapshot as an opaque fail-closed sentinel instead of reconstructing daemon facts.
@@ -338,6 +366,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             machineId,
             connectionId: connection.connectionId,
             revision: connection.revision,
+            initialTargetsKey: JSON.stringify(targets),
             targets,
         });
     }, [
@@ -354,24 +383,39 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             : current);
     }, []);
 
+    managedPurposeDraftDirtyRef.current = managedPurposeDraft !== null
+        && JSON.stringify(managedPurposeDraft.targets) !== managedPurposeDraft.initialTargetsKey;
+    const requestManagedPurposeDraftDecision = React.useCallback(() => promptUnsavedChangesAlert(
+        (title, message, buttons) => Modal.alert(title, message, buttons),
+        {
+            title: t('common.discardChanges'),
+            message: t('common.unsavedChangesWarning'),
+            discardText: t('common.discard'),
+            saveText: t('common.save'),
+            keepEditingText: t('common.keepEditing'),
+        },
+    ), []);
+    const continueManagedPurposeNavigation = React.useCallback((action: unknown) => {
+        if (action) (navigation as { dispatch?: (value: unknown) => void } | null)?.dispatch?.(action);
+    }, [navigation]);
+
     const reloadManagedPurposeTargets = React.useCallback(async () => {
         await Promise.all([sync.refreshProfile(), refreshConnectionDetail()]);
     }, [refreshConnectionDetail]);
 
-    const saveManagedPurposeConfiguration = React.useCallback(async () => {
-        if (!machineId || !connection || !managedLocalOption || !managedPurposeDraft) return;
+    const saveManagedPurposeConfiguration = React.useCallback(async (): Promise<boolean> => {
+        if (!machineId || !connection || !managedLocalOption || !managedPurposeDraft) return false;
         if (
             managedPurposeDraft.machineId !== machineId
             || managedPurposeDraft.connectionId !== connection.connectionId
             || managedPurposeDraft.revision !== connection.revision
             || !connectedAccountScopeMatchesTarget
         ) {
-            // A connection refresh replaced the CAS basis, or the target moved
-            // to another server's Account, while the editor was open. Drop the
-            // draft rather than applying its targets to a newer deployment
-            // snapshot or a foreign Account.
-            setManagedPurposeDraft(null);
-            return;
+            await Modal.alert(
+                t('settingsProviders.errors.connectionChangedTitle'),
+                t('settingsProviders.errors.connectionChangedDescription'),
+            );
+            return false;
         }
         const purposeBindingDefaults: ManagedDeploymentUpdate['purposeBindingDefaults'] = {};
         for (const declaration of managedLocalOption.connectedAccountPurposes) {
@@ -381,7 +425,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     t('settingsProviders.local.invalidPurposeTargetTitle'),
                     t('settingsProviders.local.invalidPurposeTargetDescription'),
                 );
-                return;
+                return false;
             }
             if (target) {
                 // Re-validate against the Account as it stands now: a refresh
@@ -394,7 +438,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     groups: profile.connectedAccountGroupsV4 ?? [],
                     labelsByKey: settings.connectedServicesProfileLabelByKey,
                     serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(
-                        connectedServicesRegistry, declaration.service, t,
+                        connectedServicesRegistry, declaration.service, t, localizePluginText,
                     ),
                     resolveAuthenticationMode: (account) => getConnectedAccountAuthenticationMode(
                         account.ref.service,
@@ -407,7 +451,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                         t('settingsProviders.local.invalidPurposeTargetTitle'),
                         t('settingsProviders.local.invalidPurposeTargetDescription'),
                     );
-                    return;
+                    return false;
                 }
                 purposeBindingDefaults[declaration.purpose] = target;
             }
@@ -426,12 +470,15 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             },
             'deployment:managedLocal',
         );
-        if (result?.status === 'success') setManagedPurposeDraft(null);
+        if (result?.status !== 'success') return false;
+        setManagedPurposeDraft(null);
+        return true;
     }, [
         connectedAccountScopeMatchesTarget,
         connectedServicesRegistry,
         connection,
         invalidateProbe,
+        localizePluginText,
         machineId,
         managedLocalOption,
         managedPurposeDraft,
@@ -442,23 +489,29 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         settings.connectedServicesProfileLabelByKey,
     ]);
 
-    React.useEffect(() => {
-        if (!managedPurposeDraft) return;
-        if (
-            managedPurposeDraft.machineId !== machineId
-            || managedPurposeDraft.connectionId !== connection?.connectionId
-            || managedPurposeDraft.revision !== connection?.revision
-            || !connectedAccountScopeMatchesTarget
-        ) {
-            setManagedPurposeDraft(null);
-        }
-    }, [
-        connectedAccountScopeMatchesTarget,
-        connection?.connectionId,
-        connection?.revision,
-        machineId,
-        managedPurposeDraft,
-    ]);
+    useUnsavedChangesBeforeRemoveGuard({
+        ignoreRef: ignoreManagedPurposeGuardRef,
+        isDirty: managedPurposeDraftDirtyRef.current,
+        isDirtyRef: managedPurposeDraftDirtyRef,
+        requestDecision: requestManagedPurposeDraftDecision,
+        onDiscard: () => setManagedPurposeDraft(null),
+        onSave: saveManagedPurposeConfiguration,
+        continueOnSave: true,
+        onContinue: continueManagedPurposeNavigation,
+        tag: 'ProviderConnectionDetailScreen.managedPurpose.beforeRemove',
+    });
+    useActiveUnsavedChangesGuard({
+        navigation,
+        guard: React.useMemo(() => ({
+            isDirtyRef: managedPurposeDraftDirtyRef,
+            ignoreRef: ignoreManagedPurposeGuardRef,
+            requestDecision: requestManagedPurposeDraftDecision,
+            onDiscard: () => setManagedPurposeDraft(null),
+            onSave: saveManagedPurposeConfiguration,
+            continueOnSave: true,
+            tag: 'ProviderConnectionDetailScreen.managedPurpose.shellGuard',
+        }), [requestManagedPurposeDraftDecision, saveManagedPurposeConfiguration]),
+    });
 
     const useExternalDeployment = React.useCallback(async () => {
         if (!machineId || !connection || !managedDeployment) return;
@@ -610,7 +663,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                     testID={`provider-connection-managed-purpose:${purpose.purpose}`}
                                     mode="info"
                                     title={purpose.title ?? resolveQualifiedConnectedServiceRegistryDisplayName(
-                                        connectedServicesRegistry, purpose.service, t,
+                                        connectedServicesRegistry, purpose.service, t, localizePluginText,
                                     )}
                                     subtitle={connectedAccountScopeMatchesTarget
                                         ? resolveConnectedAccountPurposeTargetDisplay({
@@ -622,6 +675,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                                 connectedServicesRegistry,
                                                 purpose.service,
                                                 t,
+                                                localizePluginText,
                                             ),
                                         })
                                         // The binding belongs to another server's Account; this

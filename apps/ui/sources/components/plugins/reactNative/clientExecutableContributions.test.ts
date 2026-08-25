@@ -182,10 +182,6 @@ function projectedClientAction(): PluginProjectedActionV2 {
 
 function withCurrentAuthorization(action: PluginProjectedActionV2): PluginProjectedActionV2 {
     const authorization: NonNullable<PluginProjectedActionV2['authorization']> = {
-        packageTrust: {
-            packageIdentity: 'package:acme.preview:generation-12',
-            reviewedPackageIdentity: 'package:acme.preview:generation-12',
-        },
         generation: {
             targetGeneration: '12',
             desiredGeneration: '12',

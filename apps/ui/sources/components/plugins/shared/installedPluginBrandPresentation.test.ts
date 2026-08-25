@@ -13,7 +13,8 @@ import {
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook } from '@/dev/testkit';
+import { createValidPluginBrandPngFixture, renderHook } from '@/dev/testkit';
+import { HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS } from '@happier-dev/plugin-ui/advanced';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { MachinePluginUiResourceReadResult } from '@/sync/ops/machineContributionRegistryProjection';
 import type {
@@ -46,31 +47,11 @@ const PLUGIN_ID = 'acme.brand';
 const BRAND_RESOURCE = Object.freeze({ pluginId: PLUGIN_ID, localId: 'assets/brand' });
 const BRAND_DIGEST = PluginUiArtifactDigestV1Schema.parse(`sha256:${'b'.repeat(64)}`);
 
-
-/**
- * A minimal admissible packaged mark: PNG signature plus a real IHDR.
- *
- * The shared renderable-image owner reads the declared canvas out of IHDR to
- * bound decode memory before it will produce a platform source, so three
- * arbitrary bytes are not a mark any host can render. `seed` distinguishes one
- * target's bytes from another's without changing what makes them admissible.
- */
-function brandPngFixture(seed: number): Uint8Array {
-    const bytes = new Uint8Array(48);
-    bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
-    bytes.set([0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52], 8);
-    const view = new DataView(bytes.buffer);
-    view.setUint32(16, 16);
-    view.setUint32(20, 16);
-    for (let index = 24; index < bytes.length; index += 1) bytes[index] = (index * seed) % 251;
-    return bytes;
-}
-
 function portablePackageAssets(input: Readonly<{
     bytes?: Uint8Array;
     resourceId?: string;
 }> = {}) {
-    const bytes = input.bytes ?? brandPngFixture(1);
+    const bytes = input.bytes ?? createValidPluginBrandPngFixture();
     const archive = createPackageAssetArchiveV1({
         manifest: {
             schemaVersion: 2,
@@ -189,7 +170,7 @@ function brandReadResult(input: Readonly<{
             kind: 'asset',
             contentType: input.contentType ?? 'image/png',
             digest: input.digest ?? BRAND_DIGEST,
-            bytesBase64: Buffer.from(input.bytes ?? brandPngFixture(1)).toString('base64'),
+            bytesBase64: Buffer.from(input.bytes ?? createValidPluginBrandPngFixture()).toString('base64'),
         },
     };
 }
@@ -227,7 +208,7 @@ describe('installed package brand presentation', () => {
 
         await expect(readInstalledPluginBrandPresentation(readInput())).resolves.toEqual({
             displayName: 'Acme Brand',
-            bytes: brandPngFixture(1),
+            bytes: createValidPluginBrandPngFixture(),
         });
         expect(rpc.read).toHaveBeenCalledWith('machine-a', expect.objectContaining({
             serverId: 'server-a',
@@ -247,7 +228,7 @@ describe('installed package brand presentation', () => {
             installedPackage: installedPackage({ brand: availableBrand({ digest: portable.digest }) }),
         }))).resolves.toEqual({
             displayName: 'Acme Brand',
-            bytes: brandPngFixture(1),
+            bytes: createValidPluginBrandPngFixture(),
         });
         expect(portable.source.readArchive).toHaveBeenCalledTimes(1);
         expect(rpc.read).not.toHaveBeenCalled();
@@ -300,6 +281,21 @@ describe('installed package brand presentation', () => {
 
         rpc.read.mockResolvedValue(brandReadResult({ contentType: 'image/svg+xml' }));
         await expect(readInstalledPluginBrandPresentation(readInput())).resolves.toEqual({ displayName: 'Acme Brand' });
+    });
+
+    it('keeps the neutral text identity when the shared image owner refuses the mark', async () => {
+        // A canvas past the decode ceiling in a payload the byte ceiling admits.
+        // The canonical brand Resource owner already enforces stricter bounds,
+        // so this states the host's own outcome: never a broken or converted
+        // render, always the package's projection-owned name.
+        const side = Math.ceil(Math.sqrt(HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS)) + 1;
+        const oversized = createValidPluginBrandPngFixture();
+        new DataView(oversized.buffer).setUint32(16, side);
+        new DataView(oversized.buffer).setUint32(20, side);
+        rpc.read.mockResolvedValue(brandReadResult({ bytes: oversized }));
+
+        await expect(readInstalledPluginBrandPresentation(readInput()))
+            .resolves.toEqual({ displayName: 'Acme Brand' });
     });
 
     it('uses the neutral fallback for an absent brand or a daemon-stale generation', async () => {
@@ -376,7 +372,7 @@ describe('installed package brand presentation', () => {
         const hook = await renderHook(() => useInstalledPluginBrandPresentation(input));
         expect(hook.getCurrent()).toEqual({
             displayName: 'Acme Brand',
-            bytes: brandPngFixture(1),
+            bytes: createValidPluginBrandPngFixture(),
         });
         expect(rpc.read).toHaveBeenCalledTimes(1);
 
@@ -395,7 +391,7 @@ describe('installed package brand presentation', () => {
         const hook = await renderHook(() => useInstalledPluginBrandPresentation(input));
         expect(hook.getCurrent()).toEqual({
             displayName: 'Acme Brand',
-            bytes: brandPngFixture(1),
+            bytes: createValidPluginBrandPngFixture(),
         });
 
         await act(async () => {
@@ -468,13 +464,13 @@ describe('installed package brand presentation', () => {
         await act(async () => {
             resolveSecond(brandReadResult({
                 resource: targetResource,
-                bytes: brandPngFixture(2),
+                bytes: createValidPluginBrandPngFixture(),
             }));
             await Promise.resolve();
         });
         expect(hook.getCurrent()).toEqual({
             displayName: 'Next Brand',
-            bytes: brandPngFixture(2),
+            bytes: createValidPluginBrandPngFixture(),
         });
         await hook.unmount();
     });

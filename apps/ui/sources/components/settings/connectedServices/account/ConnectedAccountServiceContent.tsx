@@ -133,6 +133,7 @@ function FocusedScreenNotice(props: Readonly<{
  * `ItemList`; the unfocused service detail renders into the route's list.
  */
 export const ConnectedAccountServiceContent = React.memo(function ConnectedAccountServiceContent(props: Readonly<{
+    localize?: (value: Parameters<typeof resolveProjectedLocalizedText>[0]) => string;
     title: string;
     service: QualifiedConnectedAccountRef['service'];
     legacyServiceId?: ConnectedServiceId | null;
@@ -210,8 +211,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
     // is registered fail-closed, so a missing or malformed bit disables the
     // controls rather than offering a switch the server will not honor.
     const accountFallbackEnabled = useFeatureEnabled('connectedServices.accountFallback');
-    const legacyQuotaSupported = groups.source?.protocol === 'legacy-v3'
-        && props.legacyServiceId
+    const legacyQuotaSupported = props.legacyServiceId
         && props.legacyPeerClass
         ? isQualifiedConnectedAccountLegacyOperationSupported({
             service: props.service,
@@ -491,12 +491,11 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
     }
 
     /**
-     * Legacy service id to bind account blocks to, when this service's accounts
-     * are still served by the legacy-v3 quota surface. `null` selects the
-     * qualified (v4) block instead.
+     * Quota compatibility is independent of the V4-only pool client: released
+     * V2/V3 quota peers retain their own account-block read surface, while
+     * groups themselves are only ever selected through V4.
      */
-    const legacyBlockServiceId = groups.source?.protocol !== 'v4'
-        && legacyQuotaSupported
+    const legacyBlockServiceId = legacyQuotaSupported
         && props.legacyServiceId
         ? props.legacyServiceId
         : null;
@@ -600,10 +599,9 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                         poolLabels: poolLabelsByAccountId[account.ref.accountId],
                         actions,
                     } as const;
-                    // Quota binding follows the account source's protocol, exactly
-                    // as the superseded quota ROWS did: v4 accounts read the
-                    // qualified snapshot, legacy-v3 accounts the legacy one. Two
-                    // containers (not a conditional hook) around ONE shared view.
+                    // Quota compatibility remains independent of the V4-only
+                    // pool source: released legacy quota peers use their legacy
+                    // block while every group operation is qualified V4.
                     return legacyBlockServiceId ? (
                         <AccountBlock
                             key={account.ref.accountId}
@@ -634,7 +632,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                     <Item
                         key={mode.id}
                         testID={`connected-account-mode:${mode.id}`}
-                        title={resolveProjectedLocalizedText(mode.title) || mode.id}
+                        title={resolveProjectedLocalizedText(mode.title, props.localize) || mode.id}
                         icon={<Icon
                             name="plus-circle"
                             size={20}
@@ -656,7 +654,7 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
                             testID={`connected-service-configuration-settings:${mode.id}`}
                             title={t('connectedServices.account.configurationTitle')}
                             detail={[
-                                resolveProjectedLocalizedText(mode.title) || mode.id,
+                                resolveProjectedLocalizedText(mode.title, props.localize) || mode.id,
                                 isConnectedAccountServiceConfigurationBlocked(
                                     props.serviceConfigurationStatusByModeId,
                                     mode.id,

@@ -225,6 +225,66 @@ describe('buildResumeSessionExtrasFromUiState', () => {
         });
     });
 
+    /**
+     * The canonical `runtimeDescriptorV1` envelope is what the current writer
+     * produces, so it is the authority for a bundled Agent's affinity too. The
+     * flat metadata keys beside it are the released pre-envelope shape and only
+     * answer when the envelope carries nothing for this Agent.
+     */
+    it('prefers the canonical runtime-descriptor envelope over disagreeing legacy OpenCode metadata keys', () => {
+        expect(buildResumeSessionExtrasFromUiState({
+            agentId: 'opencode',
+            settings: makeSettings({}),
+            session: {
+                metadata: {
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'opencode',
+                        agent: {
+                            backendMode: 'acp',
+                            serverBaseUrl: 'http://127.0.0.1:4096/',
+                            serverBaseUrlExplicit: true,
+                        },
+                    },
+                    opencodeBackendMode: 'server',
+                    opencodeServerBaseUrl: 'http://127.0.0.1:4999/',
+                    opencodeServerBaseUrlExplicit: true,
+                },
+            } as any,
+        })).toEqual({
+            environmentVariables: {
+                HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
+                HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
+                HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
+            },
+        });
+    });
+
+    it('still reads the legacy OpenCode metadata keys when the envelope names another Agent', () => {
+        expect(buildResumeSessionExtrasFromUiState({
+            agentId: 'opencode',
+            settings: makeSettings({}),
+            session: {
+                metadata: {
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'codex',
+                        agent: { backendMode: 'acp' },
+                    },
+                    opencodeBackendMode: 'server',
+                    opencodeServerBaseUrl: 'http://127.0.0.1:4999/',
+                    opencodeServerBaseUrlExplicit: true,
+                },
+            } as any,
+        })).toEqual({
+            environmentVariables: {
+                HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+                HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4999/',
+                HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
+            },
+        });
+    });
+
 });
 
 describe('buildWakeResumeExtras', () => {

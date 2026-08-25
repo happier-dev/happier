@@ -143,7 +143,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                 const target = group.target;
                 if (target.kind !== 'agent') return [];
                 return group.presentation.subagentSections.map((section) => ({
-                    agentId: target.agent.localId,
+                    agent: target.agent,
                     section,
                 }));
             })
@@ -362,19 +362,19 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                 </ItemGroup>
             )}
 
-            {agentSubagentSections.map(({ agentId, section }) => (
+            {agentSubagentSections.map(({ agent, section }) => (
                 <ItemGroup
-                    key={`${agentId}:${section.id}`}
+                    key={`${agent.pluginId}:${agent.localId}:${section.id}`}
                     title={resolveText(section.title) ?? ''}
                     footer={resolveText(section.description)}
                 >
                     {section.items.map((item) => (
                         <Item
-                            key={`${agentId}:${section.id}:${item.id}`}
+                            key={`${agent.pluginId}:${agent.localId}:${section.id}:${item.id}`}
                             title={resolveText(item.title) ?? ''}
                             subtitle={resolveText(item.description)}
                             icon={<Icon name={(item.iconIonName as any) ?? 'sliders-horizontal'} size={29} color={theme.colors.accent.orange} />}
-                            onPress={() => router.push(createPluginAgentSettingsRoute(agentId) as never)}
+                            onPress={() => router.push(createPluginAgentSettingsRoute(agent) as never)}
                         />
                     ))}
                 </ItemGroup>

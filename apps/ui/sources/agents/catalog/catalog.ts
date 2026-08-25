@@ -109,8 +109,8 @@ export function getAgentCliGlyph(agentId: string): ReturnType<RegistryUiModule['
     return registryUi().getAgentCliGlyph(agentId);
 }
 
-export function getAgentBehavior(id: AgentId): AgentUiBehavior {
-    return resolveAgentUiBehavior(id);
+export function getAgentBehavior(id: AgentId, machineId?: string | null): AgentUiBehavior {
+    return resolveAgentUiBehavior(id, machineId);
 }
 
 export function getAgent(id: BundledAgentId): AgentCatalogEntry {

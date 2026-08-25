@@ -764,6 +764,46 @@ describe('PluginHostedWebPane', () => {
         }
     });
 
+    it('rotates bridge authority when a renewed Artifact capability replaces the guest URL', async () => {
+        const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
+        const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+        const randomUUID = vi.fn()
+            .mockReturnValueOnce('capability-one')
+            .mockReturnValueOnce('capability-two');
+        Object.defineProperty(globalThis, 'crypto', {
+            configurable: true,
+            value: { randomUUID },
+        });
+        const element = (capability: string) => (
+            <PluginHostedWebPane
+                contributionId="hostedWeb:acme.preview:preview-web"
+                surfaceContext={surfaceContext}
+                pluginUiProjection={projection}
+                endpointUrl={`https://artifacts.happier.test/browser/${capability}/`}
+                platform="web"
+                onBridgeMessage={() => undefined}
+            />
+        );
+
+        try {
+            const screen = await renderScreen(element('first'));
+            expect(findHostedWebIframe(screen).props.src)
+                .toContain('happierBridgeNonce=capability-one');
+
+            await screen.update(element('second'));
+
+            expect(findHostedWebIframe(screen).props.src)
+                .toContain('happierBridgeNonce=capability-two');
+            expect(randomUUID).toHaveBeenCalledTimes(2);
+        } finally {
+            if (previousCrypto) {
+                Object.defineProperty(globalThis, 'crypto', previousCrypto);
+            } else {
+                delete (globalThis as { crypto?: unknown }).crypto;
+            }
+        }
+    });
+
     it('rotates bridge authority when the canonical Account lifetime is replaced', async () => {
         const { PluginHostedWebPane } = await import('./PluginHostedWebPane');
         const previousCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
@@ -1495,6 +1535,7 @@ describe('PluginHostedWebPane', () => {
                     bridgeNonce="nonce-1"
                     hostApi={{ platform: 'web', channel: 'internal', handleRequest: async () => null }}
                     canonicalHostApi={canonicalHostApi}
+                    focusEligible
                 />,
                 {
                     createNodeMock: (element) => (
@@ -1575,6 +1616,7 @@ describe('PluginHostedWebPane', () => {
                         ...canonicalHostApi,
                         translations: { 'preview.title': 'Aper\u00e7u' },
                     }}
+                    focusEligible={false}
                 />,
             );
 
@@ -1589,7 +1631,10 @@ describe('PluginHostedWebPane', () => {
                 payload: {
                     kind: 'subscription',
                     subscriptionId: 'subscription-1',
-                    event: { translations: { 'preview.title': 'Aper\u00e7u' } },
+                    event: {
+                        surface: { translations: { 'preview.title': 'Aper\u00e7u' } },
+                        activity: { active: false },
+                    },
                 },
             });
             // Exact origin, never a wildcard: a wildcard would hand host facts

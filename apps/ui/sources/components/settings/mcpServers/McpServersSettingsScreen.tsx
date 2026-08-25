@@ -38,8 +38,9 @@ import {
     useMachineAdministrationTargetSelection,
     type FreshMachineAdministrationExecutionTargetV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { t } from '@/text';
-import { getPreferredMcpPreviewAgentId, listDetectedMcpProviderIds, listMcpPreviewAgentIds } from './mcpServerScreenHelpers';
+import { getPreferredMcpPreviewAgentId, listMcpPreviewAgentIds } from './mcpServerScreenHelpers';
 import { Icon } from '@/components/ui/icons/Icon';
 
 export const McpServersSettingsScreen = React.memo(function McpServersSettingsScreen() {
@@ -71,12 +72,13 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
         requestedSelection: string,
         executionTarget: FreshMachineAdministrationExecutionTargetV1,
     ): boolean => {
-        if (selectionKeyRef.current !== requestedSelection) return false;
-        const current = resolveExactExecutionTarget(executionTarget.target);
-        return current !== null
-            && current.serverId === executionTarget.serverId
-            && current.machine.id === executionTarget.machine.id;
-    }, [resolveExactExecutionTarget]);
+        return isMachineAdministrationExecutionTargetCurrent({
+            expectedTarget: executionTarget,
+            resolveCurrentTarget: resolveExecutionTargetRef.current,
+            expectedSelectionKey: requestedSelection,
+            currentSelectionKey: selectionKeyRef.current,
+        });
+    }, []);
 
     const [mcpSettingsRaw, setMcpSettings] = useSettingMutable('mcpServersSettingsV1');
     const mcpSettings: McpServersSettingsV1 = React.useMemo(() => normalizeMcpServersSettingsV1(mcpSettingsRaw), [mcpSettingsRaw]);
@@ -178,8 +180,12 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
         const requestedSelection = selectionKey;
         const executionTarget = resolveExactExecutionTarget(selectedTarget);
         if (!executionTarget) return;
+        // No `providers` filter: the daemon on this exact machine owns the
+        // current MCP discovery-source registry, including the sources an
+        // installed Agent contributes. Sending this app binary's bundled Agent
+        // list instead would drop every installed Agent's source before
+        // detection even runs.
         const response = await machineMcpServersDetect(executionTarget.machine.id, {
-            providers: listDetectedMcpProviderIds(),
             directory: directory.trim() || undefined,
         }, { serverId: executionTarget.serverId });
         if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;

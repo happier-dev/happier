@@ -1,5 +1,5 @@
 import type { TranslationKey } from '@/text';
-import { getAgentCore, type AgentId } from '@/agents/registry/registryCore';
+import type { PermissionPromptProtocol } from '@/agents/registry/registryCore';
 
 export type PermissionFooterCopy =
     | Readonly<{
@@ -16,19 +16,21 @@ export type PermissionFooterCopy =
     }>;
 
 /**
- * Footer copy for whichever Agent owns a permission request.
+ * Footer copy for whichever permission-prompt protocol the owning Agent speaks.
  *
- * This is total on purpose. A pending request is unanswerable without a footer,
- * so every Agent resolves to copy: the declared protocol when this build ships a
- * core for it, and the neutral Claude-shaped default otherwise. An externally
- * installed Agent ships no bundled core and therefore lands on exactly the same
- * default as a bundled Agent whose protocol this build does not recognise.
+ * The protocol arrives as a fact of the Agent's UI behavior — built from a
+ * bundled Agent's core, declared by an installed Agent in the same public
+ * `permissions` block — so the copy owner never has to know whether this build
+ * ships that Agent. It stays total on purpose: a pending request is
+ * unanswerable without a footer, so an Agent that declares no protocol (or one
+ * this build does not recognise) lands on the neutral Claude-shaped default.
  */
-export function getPermissionFooterCopy(agentId: AgentId): PermissionFooterCopy {
-    const protocol = getAgentCore(agentId)?.permissions.promptProtocol;
-    if (protocol === 'codexDecision') {
+export function getPermissionFooterCopy(
+    promptProtocol: PermissionPromptProtocol | null | undefined,
+): PermissionFooterCopy {
+    if (promptProtocol === 'codexDecision') {
         return {
-            protocol,
+            protocol: promptProtocol,
             yesAlwaysAllowCommandKey: 'codex.permissions.yesAlwaysAllowCommand',
             yesForSessionKey: 'codex.permissions.yesForSession',
             stopKey: 'codex.permissions.stop',

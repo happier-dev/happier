@@ -1,8 +1,3 @@
-import {
-    normalizePluginUiMountedContributedActionReferenceV1,
-    PluginUiQualifiedActionReferenceV1Schema,
-} from '@happier-dev/protocol/plugins/ui';
-
 import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 import type { ActionOperationReentryOrigin } from '@/components/inbox/actionOperations/actionOperationPresentationCoordinator';
 import { randomUUID } from '@/platform/randomUUID';
@@ -20,35 +15,30 @@ export type LaunchPluginSurfaceActionInput = DispatchPluginSurfaceActionInput & 
     operationOrigin?: ActionOperationReentryOrigin;
 }>;
 
-function resolveRequestedAction(input: DispatchPluginSurfaceActionInput) {
-    if (input.callerPluginId !== undefined) {
-        return normalizePluginUiMountedContributedActionReferenceV1({
-            callerPluginId: input.callerPluginId,
-            action: input.action,
-        });
-    }
-    const exact = PluginUiQualifiedActionReferenceV1Schema.safeParse(input.action);
-    return exact.success ? exact.data : null;
-}
-
+/**
+ * The thin presentation adapter over the canonical Action dispatcher.
+ *
+ * It allocates the host request identity — allocation alone creates no lasting
+ * state — and lets the dispatcher decide, at its single admission moment, that
+ * a daemon operation really is about to exist. Registering before that decision
+ * left presentation custody behind for every locally refused launch, and the
+ * coordinator has no per-registration removal to undo it.
+ */
 export async function launchPluginSurfaceAction(
     input: LaunchPluginSurfaceActionInput,
 ): Promise<PluginSurfaceActionLaunchOutcome> {
     const { operationOrigin, ...dispatchInput } = input;
-    const identity = resolveRequestedAction(dispatchInput);
-    const projected = identity ? dispatchInput.resolveContributedAction?.(identity) ?? null : null;
-    const operation = projected?.execution.target === 'daemon' ? projected.operation : undefined;
-    const requestId = operation ? randomUUID() : undefined;
-    if (requestId && operation) {
-        actionOperationPresentationCoordinator.register({
-            requestId,
-            onStart: operation.presentation.onStart,
-            ...(operationOrigin ? { origin: operationOrigin } : {}),
-        });
-    }
+    const requestId = dispatchInput.actionRequestId ?? randomUUID();
     const outcome = await dispatchPluginSurfaceAction({
         ...dispatchInput,
-        ...(requestId ? { actionRequestId: requestId } : {}),
+        actionRequestId: requestId,
+        onDaemonActionOperationAdmitted: (operation) => {
+            actionOperationPresentationCoordinator.register({
+                requestId,
+                onStart: operation.presentation.onStart,
+                ...(operationOrigin ? { origin: operationOrigin } : {}),
+            });
+        },
     });
     return { kind: 'settled', outcome };
 }

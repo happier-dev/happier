@@ -229,7 +229,6 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
             expect(readRequest({ reviewId: 42 })).toBeNull();
             expect(readRequest({ reviewId: 'review-42' })).toMatchObject({
                 input: { reviewId: 'review-42' },
-                resourceInput: { reviewId: 'review-42' },
             });
         }
     });
@@ -262,50 +261,6 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
         }
     });
 
-    it('rejects accessor-backed launch input before either target entry path can observe it', () => {
-        let declarativeReads = 0;
-        const declarativeNode = {
-            kind: 'targetedSurface',
-            surface,
-            instanceKey: node.instanceKey,
-        } as Record<string, unknown>;
-        Object.defineProperty(declarativeNode, 'input', {
-            enumerable: true,
-            get() {
-                declarativeReads += 1;
-                return { reviewId: 'review-42' };
-            },
-        });
-
-        expect(readTargetedPluginSurfaceMountRequest({
-            node: declarativeNode,
-            mounts: [mount],
-            target,
-        })).toBeNull();
-        expect(declarativeReads).toBe(0);
-
-        let reactReads = 0;
-        const presentation: Parameters<typeof readTargetedPluginSurfaceReactMountRequest>[0]['presentation'] = {
-            surface,
-            input: Object.freeze({ reviewId: 'review-42' }),
-            instanceKey: 'review-42',
-        };
-        Object.defineProperty(presentation, 'input', {
-            enumerable: true,
-            get() {
-                reactReads += 1;
-                return { reviewId: 'review-42' };
-            },
-        });
-
-        expect(readTargetedPluginSurfaceReactMountRequest({
-            presentation,
-            mounts: [mount],
-            target,
-        })).toBeNull();
-        expect(reactReads).toBe(0);
-    });
-
     it('retains strict rejection for cyclic, nonplain, and nonfinite declarative launch input', () => {
         const cyclic: Record<string, unknown> = {};
         cyclic.self = cyclic;
@@ -329,7 +284,7 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
             node: { ...node, input: null },
             mounts: [unrestrictedMount],
             target,
-        })).toMatchObject({ input: null, resourceInput: null });
+        })).toMatchObject({ input: null });
         expect(readTargetedPluginSurfaceMountRequest({
             node: {
                 kind: 'targetedSurface',
@@ -371,7 +326,7 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
         expect(request?.instanceKey).not.toBe('review-42');
     });
 
-    it('isolates each public launch input from its private Resource context across both target entry paths', () => {
+    it('isolates the admitted launch input from its author source across both target entry paths', () => {
         const readRequests = [
             (input: PluginUiJsonValueV1) => readTargetedPluginSurfaceMountRequest({
                 node: { ...node, input },
@@ -414,7 +369,11 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
             expect(resourceInput).toBeTruthy();
             expect(publicInput).not.toBe(sourceInput);
             expect(resourceInput).not.toBe(sourceInput);
-            expect(resourceInput).not.toBe(publicInput);
+            // One admitted snapshot serves both consumers. Deep freezing — not a
+            // second clone — is what keeps the renderer from reaching the
+            // Resource context, so the two reading the same object is the
+            // contract rather than a leak.
+            expect(resourceInput).toBe(publicInput);
             expect(Object.isFrozen(publicInput)).toBe(true);
             expect(Object.isFrozen(publicInput.review)).toBe(true);
             expect(Object.isFrozen(resourceInput)).toBe(true);

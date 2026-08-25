@@ -1,11 +1,41 @@
 import * as React from 'react';
 
-import { AGENT_IDS } from '@/agents/registry/registryCore';
-import { resolveAgentUiBehavior, resolveAgentUiBehaviorFromSessionMetadata } from '@/agents/registry/registryUiBehavior';
+import { resolveAgentUiBehaviorFromSessionMetadata } from '@/agents/registry/registryUiBehavior';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { AgentInlineSurface } from './agentUiBehavior/AgentInlineSurface';
+
+function readInlineDetailsResource(tab: DetailsTab): Readonly<{
+    pluginId: string;
+    agentId: string;
+    surfaceId: string;
+    machineId: string | null;
+    iconName: string | null;
+    mode: string | null;
+    initialTeamId: string | null;
+}> | null {
+    const resource = tab.resource;
+    if (!resource || typeof resource !== 'object' || Array.isArray(resource)) return null;
+    const marker = (resource as Record<string, unknown>).pluginInlineSurface;
+    if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return null;
+    const value = marker as Record<string, unknown>;
+    const read = (entry: unknown) => typeof entry === 'string' && entry.trim() ? entry.trim() : null;
+    const pluginId = read(value.pluginId);
+    const agentId = read(value.agentId);
+    const surfaceId = read(value.surfaceId);
+    if (!pluginId || !agentId || !surfaceId) return null;
+    return {
+        pluginId,
+        agentId,
+        surfaceId,
+        machineId: read(value.machineId),
+        iconName: read(value.iconName),
+        mode: read((resource as Record<string, unknown>).mode),
+        initialTeamId: read((resource as Record<string, unknown>).initialTeamId),
+    };
+}
 
 function resolveAgentUiBehaviorFromSession(session: Session) {
     return resolveAgentUiBehaviorFromSessionMetadata(readSessionOwnerMetadataView(session));
@@ -26,6 +56,18 @@ export function getSessionSubagentLaunchCards(params: Readonly<{
         scopeId: params.scopeId,
         session: params.session,
         subagents: params.subagents,
+        renderInlineSurface: (surface) => (
+            <AgentInlineSurface
+                key={surface.slotId}
+                pluginId={surface.pluginId}
+                surfaceId={surface.surfaceId}
+                sessionId={surface.sessionId}
+                machineId={surface.machineId}
+                agentId={surface.agentId}
+                inlineMount={{ role: 'sessionSubagentLaunch', presentation: 'content' }}
+                launchInput={surface.launchInput}
+            />
+        ),
     });
 }
 
@@ -60,21 +102,25 @@ export function renderProviderSessionDetailsTab(params: Readonly<{
     scopeId: string;
     tab: DetailsTab;
 }>): React.ReactNode | null {
-    for (const agentId of AGENT_IDS) {
-        const renderDetailsTab = resolveAgentUiBehavior(agentId).sessionSubagents?.renderDetailsTab;
-        if (!renderDetailsTab) continue;
-        const rendered = renderDetailsTab(params);
-        if (rendered) return rendered;
+    const inline = readInlineDetailsResource(params.tab);
+    if (inline) {
+        return (
+            <AgentInlineSurface
+                pluginId={inline.pluginId}
+                surfaceId={inline.surfaceId}
+                sessionId={params.sessionId}
+                machineId={inline.machineId}
+                agentId={inline.agentId}
+                inlineMount={{ role: 'sessionSubagentDetails', presentation: 'fill' }}
+                launchInput={{ mode: inline.mode, initialTeamId: inline.initialTeamId }}
+            />
+        );
     }
     return null;
 }
 
 export function resolveProviderSessionDetailsTabIconName(tab: DetailsTab): string | null {
-    for (const agentId of AGENT_IDS) {
-        const getIconName = resolveAgentUiBehavior(agentId).sessionSubagents?.getDetailsTabIconName;
-        if (!getIconName) continue;
-        const iconName = getIconName({ tab });
-        if (iconName) return iconName;
-    }
+    const inline = readInlineDetailsResource(tab);
+    if (inline) return inline.iconName;
     return null;
 }

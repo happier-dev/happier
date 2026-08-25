@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
-import type { ResolvedSettingsPageNode } from '@/components/settings/catalog/types';
+import type { ResolvedSettingsPageNode, SettingsPageId } from '@/components/settings/catalog/types';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
@@ -22,6 +22,15 @@ type SettingsCatalogOverviewGroupProps = Readonly<{
         page: ResolvedSettingsPageNode,
         defaultSubtitle: React.ReactNode | undefined,
     ) => React.ReactNode | undefined;
+}>;
+
+type SettingsCatalogPageChildrenProps = Readonly<{
+    /** The catalog page whose admitted direct children become destination rows. */
+    parentPageId: SettingsPageId;
+    router: ReturnType<typeof useRouter>;
+    theme: ReturnType<typeof useUnistyles>['theme'];
+    /** Preserves host-owned navigation details such as blur-on-web behavior. */
+    onNavigate?: (route: string) => void | Promise<void>;
 }>;
 
 const LEGACY_ROW_TEST_IDS: Readonly<Partial<Record<string, string>>> = Object.freeze({
@@ -43,9 +52,7 @@ function readSubtitle(node: ResolvedSettingsPageNode): string | undefined {
 
 /**
  * Resolve exactly one top-level Settings group from the host-owned catalog.
- * Overview presentation consumes its direct destination rows; nested route
- * detail remains reachable through the same catalog/search/route owner rather
- * than becoming a second overview list.
+ * Overview presentation consumes its direct destination rows.
  */
 export function resolveSettingsCatalogOverviewGroup(
     tree: readonly ResolvedSettingsPageNode[],
@@ -55,9 +62,73 @@ export function resolveSettingsCatalogOverviewGroup(
     return root?.children?.find((node) => node.id === groupId) ?? null;
 }
 
+/** Find one admitted catalog page without re-declaring its route or children. */
+function resolveSettingsCatalogPage(
+    tree: readonly ResolvedSettingsPageNode[],
+    pageId: SettingsPageId,
+): ResolvedSettingsPageNode | null {
+    const visit = (nodes: readonly ResolvedSettingsPageNode[]): ResolvedSettingsPageNode | null => {
+        for (const node of nodes) {
+            if (node.id === pageId) return node;
+            if (node.children) {
+                const result = visit(node.children);
+                if (result) return result;
+            }
+        }
+        return null;
+    };
+
+    return visit(tree);
+}
+
 function testIdForPage(page: ResolvedSettingsPageNode): string {
     if (page.pluginSettingsPage) return `settings-plugin-page-item.${page.id}`;
     return LEGACY_ROW_TEST_IDS[page.id] ?? `settings-catalog-page-item.${page.id}`;
+}
+
+function SettingsCatalogDestinationRows({
+    onNavigate,
+    pages,
+    resolveSubtitle,
+    router,
+    theme,
+}: Readonly<{
+    onNavigate?: (route: string) => void | Promise<void>;
+    pages: readonly ResolvedSettingsPageNode[];
+    resolveSubtitle?: (
+        page: ResolvedSettingsPageNode,
+        defaultSubtitle: React.ReactNode | undefined,
+    ) => React.ReactNode | undefined;
+    router: ReturnType<typeof useRouter>;
+    theme: ReturnType<typeof useUnistyles>['theme'];
+}>) {
+    return (
+        <>
+            {pages.map((page) => {
+                const defaultSubtitle = readSubtitle(page);
+                const subtitle = resolveSubtitle
+                    ? resolveSubtitle(page, defaultSubtitle)
+                    : defaultSubtitle;
+                const route = page.route!;
+                return (
+                    <Item
+                        key={page.id}
+                        testID={testIdForPage(page)}
+                        title={readTitle(page)}
+                        subtitle={subtitle}
+                        icon={page.icon?.({ theme })}
+                        onPress={() => {
+                            if (onNavigate) {
+                                void onNavigate(route);
+                                return;
+                            }
+                            router.push(route as never);
+                        }}
+                    />
+                );
+            })}
+        </>
+    );
 }
 
 /**
@@ -87,32 +158,49 @@ export const SettingsCatalogOverviewGroup = React.memo(function SettingsCatalogO
 
     return (
         <ItemGroup title={readTitle(group)}>
-            {pages.map((page) => {
-                const defaultSubtitle = readSubtitle(page);
-                const subtitle = resolveSubtitle
-                    ? resolveSubtitle(page, defaultSubtitle)
-                    : defaultSubtitle;
-                const route = page.route!;
-                return (
-                    <Item
-                        key={page.id}
-                        testID={testIdForPage(page)}
-                        title={readTitle(page)}
-                        subtitle={subtitle}
-                        icon={page.icon?.({ theme })}
-                        onPress={() => {
-                            if (onNavigate) {
-                                void onNavigate(route);
-                                return;
-                            }
-                            router.push(route as never);
-                        }}
-                    />
-                );
-            })}
+            <SettingsCatalogDestinationRows
+                onNavigate={onNavigate}
+                pages={pages}
+                resolveSubtitle={resolveSubtitle}
+                router={router}
+                theme={theme}
+            />
             {append}
         </ItemGroup>
     );
 });
 
-export const __testables = { resolveSettingsCatalogOverviewGroup };
+/**
+ * A page-detail navigation section consumes direct child pages from the same
+ * resolved catalog as the overview. It never declares a route or menu entry.
+ */
+export const SettingsCatalogPageChildren = React.memo(function SettingsCatalogPageChildren({
+    onNavigate,
+    parentPageId,
+    router,
+    theme,
+}: SettingsCatalogPageChildrenProps) {
+    const catalog = useResolvedSettingsPageCatalog();
+    const pages = React.useMemo(
+        () => (resolveSettingsCatalogPage(catalog.tree, parentPageId)?.children ?? [])
+            .filter((page) => typeof page.route === 'string' && page.route.length > 0),
+        [catalog.tree, parentPageId],
+    );
+
+    if (pages.length === 0) return null;
+
+    return (
+        <ItemGroup>
+            <SettingsCatalogDestinationRows
+                onNavigate={onNavigate}
+                pages={pages}
+                router={router}
+                theme={theme}
+            />
+        </ItemGroup>
+    );
+});
+
+export const __testables = {
+    resolveSettingsCatalogOverviewGroup,
+};

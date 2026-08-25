@@ -106,8 +106,6 @@ describe('Auggie UI behavior projection', () => {
                     {
                         id: 'auggie-allow-indexing',
                         slot: 'newSession.agentInputExtraActionChips',
-                        componentId: 'firstParty.auggie.allowIndexingChip',
-                        props: { optionStateKey: 'allowIndexing' },
                     },
                 ],
             },

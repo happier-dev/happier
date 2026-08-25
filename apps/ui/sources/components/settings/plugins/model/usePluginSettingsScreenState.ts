@@ -11,6 +11,9 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import {
     MACHINE_ADMINISTRATION_SELECTION_KEYS_V1,
 } from '@/sync/domains/machines/administration/selectionPreferences';
+import {
+    resolveMachineAdministrationTargetLabel,
+} from '@/sync/domains/machines/administration/targetSelection';
 import type {
     FreshMachineAdministrationExecutionTargetV1,
     MachineAdministrationTargetSelectionV1,
@@ -88,6 +91,7 @@ export type PluginSettingsScreenState = Readonly<{
     administrationTargetSelection: MachineAdministrationTargetSelectionV1;
     currentDiagnostics: readonly { code: string; message: string }[];
     accountServerIdentityId: string | null;
+    selectedServerIdentityId: string | null;
     executionServerIdentityId: string | null;
     executionServerId: string | null;
     executionMachineId: string | null;
@@ -154,6 +158,7 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
         [activeServer.serverId],
     );
     const executionTarget = administration.executionTarget;
+    const selectedServerIdentityId = administration.selectedServerIdentityId;
     const executionMachineId = executionTarget?.machine.id ?? null;
     const executionServerId = executionTarget?.serverId ?? null;
     const executionServerIdentityId = executionTarget?.target.serverIdentityId ?? null;
@@ -266,6 +271,25 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
     );
     const installedPluginByIdRef = React.useRef(installedPluginById);
     installedPluginByIdRef.current = installedPluginById;
+    /**
+     * The exact machine and server a plugin change would land on. A plugin is
+     * installed on ONE machine reached through ONE server, so a confirmation
+     * that omits them describes a different action than the one it performs.
+     * Naming stays with the Administration selection owner.
+     */
+    const selectedAdministrationTargetLabel = React.useMemo(() => (
+        resolveMachineAdministrationTargetLabel({
+            target: administrationTargetSelection.selectedTarget,
+            candidates: administrationTargetSelection.candidates,
+        })
+    ), [administrationTargetSelection.candidates, administrationTargetSelection.selectedTarget]);
+    const selectedAdministrationTargetLabelRef = React.useRef(selectedAdministrationTargetLabel);
+    selectedAdministrationTargetLabelRef.current = selectedAdministrationTargetLabel;
+    // An asynchronous decision names the EXACT target it routes to, which is
+    // the resolved execution target rather than whatever is selected when the
+    // daemon finally asks. The inventory still owns the naming.
+    const administrationCandidatesRef = React.useRef(administrationTargetSelection.candidates);
+    administrationCandidatesRef.current = administrationTargetSelection.candidates;
     const currentDevelopmentPlugins = React.useMemo(
         () => readDevelopmentPlugins(machineCapabilities.state, installedPlugins),
         [installedPlugins, machineCapabilities.state],
@@ -555,6 +579,13 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                         version: params.installationReview.review.version,
                     }),
                     body: formatPluginInstallationReviewBody(params.installationReview.review),
+                    target: resolveMachineAdministrationTargetLabel({
+                        target: params.target.target,
+                        candidates: administrationCandidatesRef.current,
+                    }) ?? {
+                        machine: params.target.machine.id,
+                        server: params.target.serverId,
+                    },
                     optionalHostAccess: params.installationReview.review.optionalHostAccess,
                 });
                 return resolution.approved ? resolution.optionalSelections : null;
@@ -567,7 +598,10 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
      *
      * The locator is the entire security payload of this decision — the daemon
      * has not been allowed to read that folder yet, so there is no package
-     * identity to show — and it is therefore echoed verbatim.
+     * identity to show — and it is therefore echoed verbatim. A locator is a
+     * location on ONE machine reached through ONE server, so it is named beside
+     * the target the same Administration owner supplies to every other
+     * machine-scoped confirmation on this screen.
      */
     const decidePluginSourceRootTrustAsPresentUser = React.useCallback(async (params: Readonly<{
         target: FreshMachineAdministrationExecutionTargetV1;
@@ -584,6 +618,13 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                 t('settingsPlugins.developmentTrustSourceRootTitle'),
                 t('settingsPlugins.developmentTrustSourceRootBody', {
                     path: params.sourceRootReview.review.source.locator,
+                    ...(resolveMachineAdministrationTargetLabel({
+                        target: params.target.target,
+                        candidates: administrationCandidatesRef.current,
+                    }) ?? {
+                        machine: params.target.machine.id,
+                        server: params.target.serverId,
+                    }),
                 }),
                 {
                     confirmText: t('settingsPlugins.developmentTrustSourceRootConfirm'),
@@ -672,7 +713,10 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
             return;
         }
         const installedBefore = installedPluginByIdRef.current.get(params.pluginId) ?? null;
-        const catalogEntry = params.method === 'install' || params.method === 'update'
+        // Only an exact catalog install is answerable from a listing. An update is
+        // answered by the installed record at its canonical owner, so the catalog
+        // never becomes that action's authority or its success target.
+        const exactInstallEntry = params.method === 'install'
             ? catalog?.entries.find((entry) => (
                 entry.id === params.pluginId && entry.sourceId === params.sourceId
             )) ?? null
@@ -683,16 +727,17 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
         ) {
             return;
         }
-        if (params.method === 'install' || params.method === 'update') {
-            const actionAvailable = params.method === 'install'
-                ? catalogEntry?.installable === true && installedBefore === null
-                : catalogEntry?.updateable === true
-                    && installedBefore !== null
-                    && catalogEntry.version !== null
-                    && catalogEntry.version !== installedBefore.version;
-            if (catalogAuthorityKey !== mutationAuthorityKey || !actionAvailable) {
+        if (params.method === 'install') {
+            if (
+                catalogAuthorityKey !== mutationAuthorityKey
+                || exactInstallEntry?.installable !== true
+                || installedBefore !== null
+            ) {
                 return;
             }
+        }
+        if (params.method === 'update' && installedBefore === null) {
+            return;
         }
 
         void (async () => {
@@ -794,13 +839,13 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
 
                 if (!('response' in response)) {
                     if (commitAction && response.reason === 'error') {
-                        await reconcileAmbiguousMutation(catalogEntry?.version ?? null);
+                        await reconcileAmbiguousMutation(exactInstallEntry?.version ?? null);
                     }
                     return;
                 }
                 if (!response.response.ok) {
                     if (commitAction && response.response.error.code === 'outcomeUnknown') {
-                        await reconcileAmbiguousMutation(catalogEntry?.version ?? null);
+                        await reconcileAmbiguousMutation(exactInstallEntry?.version ?? null);
                     }
                     return;
                 }
@@ -845,7 +890,7 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
                     const changeKind = readPluginChangeKind(response.response.result, params.method, params.pluginId);
                     if (changeKind !== 'committed') {
                         if (changeKind === 'outcomeUnknown') {
-                            await reconcileAmbiguousMutation(catalogEntry?.version ?? null);
+                            await reconcileAmbiguousMutation(exactInstallEntry?.version ?? null);
                         } else {
                             showMutationFailure(changeKind ?? 'invalid-response');
                         }
@@ -885,12 +930,16 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
             return;
         }
         const actionLabel = resolvePluginChangeActionLabel(action);
+        const target = selectedAdministrationTargetLabelRef.current;
+        if (!target) return;
         void (async () => {
             const confirmed = await Modal.confirm(
                 actionLabel,
                 t('settingsPlugins.pluginChangeConfirmBody', {
                     action: actionLabel,
                     name: installed.title,
+                    machine: target.machine,
+                    server: target.server,
                 }),
                 {
                     confirmText: actionLabel,
@@ -1266,6 +1315,7 @@ export function usePluginSettingsScreenState(): PluginSettingsScreenState {
         administrationTargetSelection,
         currentDiagnostics,
         accountServerIdentityId,
+        selectedServerIdentityId,
         executionServerIdentityId,
         executionServerId,
         executionMachineId,

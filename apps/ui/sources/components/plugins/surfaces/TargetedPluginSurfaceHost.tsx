@@ -32,13 +32,6 @@ import {
     type PluginSurfaceTargetedMountBinding,
 } from './pluginSurfaceMountBinding';
 
-type NormalizedTargetedSurfaceLeaf = Readonly<{
-    kind: 'targetedSurface';
-    surface: unknown;
-    input: unknown;
-    instanceKey: unknown;
-}>;
-
 /**
  * The one thin declarative adapter input. It deliberately accepts only the
  * protocol-normalized leaf: raw symbolic references have no contributor
@@ -47,16 +40,12 @@ type NormalizedTargetedSurfaceLeaf = Readonly<{
 export type TargetedPluginSurfaceMountRequest = Readonly<{
     mount: PluginSurfaceTargetedMountBinding<PreparedDaemonPluginUiTargetedSurfaceMountV1>;
     /**
-     * Deep-frozen bounded snapshot supplied to the selected child renderer.
-     * It must not alias the private Resource envelope below.
+     * The one deep-frozen bounded snapshot the child renderer and the
+     * host-owned Resource context both read. It never aliases the author's
+     * source value, and freezing is what keeps either consumer from reaching
+     * the other's view — a second clone would only duplicate that guarantee.
      */
     input: PluginUiJsonValueV1;
-    /**
-     * Deep-frozen bounded snapshot retained only for the host-owned Resource
-     * context. Keeping it separate prevents a public renderer from mutating
-     * the context used by a later Resource request.
-     */
-    resourceInput: PluginUiJsonValueV1;
     /**
      * Protocol's already-namespaced mount identity. Declarative leaves carry
      * it directly; the React presentation bridge derives it through Protocol
@@ -78,7 +67,6 @@ export type TargetedPluginSurfacePhysicalMountFacts = Readonly<{
     surfaceId: string;
     mountInstanceKey: PluginUiInstanceKeyV1;
     launchInput: PluginUiJsonValueV1;
-    resourceLaunchInput: PluginUiJsonValueV1;
     executionOrigin: PluginMachineExecutionOriginV1;
     resourceCapability: PluginUiResourceBindingCapabilityV1;
     targetedContributions: DaemonPluginUiTargetedSurfaceMountV1['contributorTargetedContributions'];
@@ -86,67 +74,35 @@ export type TargetedPluginSurfacePhysicalMountFacts = Readonly<{
 
 const EMPTY_TARGETED_SURFACE_RESOURCE_SCOPE: readonly PluginUiSurfaceContextV1['resourceScope'][number][] = Object.freeze([]);
 
-function readNormalizedTargetedSurfaceLeaf(value: unknown): NormalizedTargetedSurfaceLeaf | null {
-    let cloned: unknown;
-    try {
-        cloned = cloneStrictPluginJsonValue(value, 'targetedSurface.node');
-    } catch {
-        return null;
-    }
-    if (!cloned || typeof cloned !== 'object' || Array.isArray(cloned)) return null;
-    const record = cloned as Readonly<Record<string, unknown>>;
-    return record.kind === 'targetedSurface'
-        ? {
-            kind: 'targetedSurface',
-            surface: record.surface,
-            input: record.input,
-            instanceKey: record.instanceKey,
-        }
-        : null;
+/**
+ * Protocol normalizes and stamps this leaf before the daemon projects it, and
+ * the response reaches the UI as decoded JSON. Read its declared fields
+ * directly and let the schemas below decide what is admissible; the launch
+ * input alone still gets the one bounded strict-JSON snapshot, because that is
+ * the value both the child renderer and the host Resource context retain.
+ */
+function readNormalizedTargetedSurfaceLeaf(
+    value: unknown,
+): Readonly<Record<string, unknown>> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Readonly<Record<string, unknown>>;
+    return record.kind === 'targetedSurface' ? record : null;
 }
-
-type TargetedSurfaceInputSnapshots = Readonly<{
-    input: PluginUiJsonValueV1;
-    resourceInput: PluginUiJsonValueV1;
-}>;
 
 /**
- * Presentation fallback can be a React node, so this boundary cannot clone
- * the complete presentation object. Read only its data properties before the
- * canonical JSON snapshot owner sees launch input; accessors never run.
+ * The admitted snapshot is wrapped rather than returned bare because `null` is
+ * itself a valid launch input: an unwrapped `null` would make a legitimately
+ * empty input indistinguishable from a refusal.
  */
-function readPresentationDataProperty(
-    presentation: unknown,
-    key: string,
-): Readonly<{ present: boolean; value?: unknown }> | null {
-    if (!presentation || typeof presentation !== 'object' || Array.isArray(presentation)) return null;
-    try {
-        const descriptor = Object.getOwnPropertyDescriptor(presentation, key);
-        if (descriptor === undefined) return Object.freeze({ present: false });
-        if (!('value' in descriptor) || descriptor.enumerable !== true) return null;
-        return Object.freeze({ present: true, value: descriptor.value });
-    } catch {
-        return null;
-    }
-}
-
-function readTargetedSurfaceInputSnapshots(value: unknown): TargetedSurfaceInputSnapshots | null {
+function readTargetedSurfaceInputSnapshot(
+    value: unknown,
+): Readonly<{ input: PluginUiJsonValueV1 }> | null {
     try {
         const input = cloneStrictPluginJsonValue(value, 'targetedSurface.input') as PluginUiJsonValueV1;
-        if (!PluginUiLaunchInputV1Schema.safeParse(input).success) return null;
-        return Object.freeze({
-            input,
-            // Clone the already-admitted snapshot so an untrusted input is
-            // reflected exactly once while the renderer and Resource owner
-            // still receive non-aliasing immutable values.
-            resourceInput: cloneStrictPluginJsonValue(
-                input,
-                'targetedSurface.resourceInput',
-            ) as PluginUiJsonValueV1,
-        });
+        return PluginUiLaunchInputV1Schema.safeParse(input).success ? Object.freeze({ input }) : null;
     } catch {
-        // The shared Protocol owner rejects hostile values before either child
-        // consumer receives a snapshot.
+        // The shared Protocol owner rejects malformed values before either
+        // child consumer receives a snapshot.
         return null;
     }
 }
@@ -184,7 +140,7 @@ export function readTargetedPluginSurfaceMountRequest(input: Readonly<{
     const node = readNormalizedTargetedSurfaceLeaf(input.node);
     if (!node) return null;
     const surface = PluginUiTargetedContributionSurfaceV1Schema.safeParse(node.surface);
-    const launchInput = readTargetedSurfaceInputSnapshots(node.input);
+    const launchInput = readTargetedSurfaceInputSnapshot(node.input);
     const instanceKey = PluginUiInstanceKeyV1Schema.safeParse(node.instanceKey);
     if (!surface.success || !launchInput || !instanceKey.success) return null;
 
@@ -197,7 +153,6 @@ export function readTargetedPluginSurfaceMountRequest(input: Readonly<{
     return Object.freeze({
         mount,
         input: launchInput.input,
-        resourceInput: launchInput.resourceInput,
         instanceKey: instanceKey.data,
     });
 }
@@ -213,21 +168,15 @@ export function readTargetedPluginSurfaceReactMountRequest(input: Readonly<{
     /** Exact mounted target requested from the cold Registry projection. */
     target: DaemonPluginUiTargetedSurfaceMountV1['target'];
 }>): TargetedPluginSurfaceMountRequest | null {
-    const surfaceValue = readPresentationDataProperty(input.presentation, 'surface');
-    const launchInputValue = readPresentationDataProperty(input.presentation, 'input');
-    const rawInstanceKeyValue = readPresentationDataProperty(input.presentation, 'instanceKey');
-    if (
-        !surfaceValue
-        || !surfaceValue.present
-        || !launchInputValue
-        || !launchInputValue.present
-        || rawInstanceKeyValue === null
-    ) return null;
-    const surface = PluginUiTargetedContributionSurfaceV1Schema.safeParse(surfaceValue.value);
-    const launchInput = readTargetedSurfaceInputSnapshots(launchInputValue.value);
-    const rawInstanceKey = rawInstanceKeyValue.present === false
+    const presentation = input.presentation;
+    const surface = PluginUiTargetedContributionSurfaceV1Schema.safeParse(presentation.surface);
+    // An omitted launch input is not an empty one: the snapshot owner refuses
+    // `undefined` while admitting an explicit `null`, so no presence probe is
+    // needed to keep those two apart.
+    const launchInput = readTargetedSurfaceInputSnapshot(presentation.input);
+    const rawInstanceKey = presentation.instanceKey === undefined
         ? undefined
-        : PluginUiInstanceKeyV1Schema.safeParse(rawInstanceKeyValue.value);
+        : PluginUiInstanceKeyV1Schema.safeParse(presentation.instanceKey);
     if (!surface.success || !launchInput || (rawInstanceKey !== undefined && !rawInstanceKey.success)) {
         return null;
     }
@@ -240,7 +189,6 @@ export function readTargetedPluginSurfaceReactMountRequest(input: Readonly<{
     return Object.freeze({
         mount,
         input: launchInput.input,
-        resourceInput: launchInput.resourceInput,
         instanceKey: derivePluginUiTargetedSurfaceMountInstanceKeyV1({
             targetPluginId: mount.mount.target.pluginId,
             surface: surface.data,
@@ -264,7 +212,6 @@ export function projectTargetedPluginSurfacePhysicalMountFacts(
         surfaceId: `targeted:${request.instanceKey}`,
         mountInstanceKey: request.instanceKey,
         launchInput: request.input,
-        resourceLaunchInput: request.resourceInput,
         executionOrigin: mount.executionOrigin,
         resourceCapability: mount.resourceCapability,
         targetedContributions: mount.contributorTargetedContributions,
@@ -317,7 +264,7 @@ export function createTargetedPluginSurfaceBoundFacts(input: Readonly<{
         resourceContext: Object.freeze({
             kind: 'surface' as const,
             mountInstanceKey: physical.mountInstanceKey,
-            launchInput: physical.resourceLaunchInput,
+            launchInput: physical.launchInput,
         }),
         pluginProjectionById: input.pluginProjectionById,
         pluginUiProjection: input.pluginUiProjection,
@@ -358,13 +305,13 @@ export function TargetedPluginSurfaceHost(props: Readonly<{
             mounts: props.mounts,
             target: props.target,
         });
-    const presentationFallback = props.presentation === undefined
-        ? null
-        : readPresentationDataProperty(props.presentation, 'fallback');
     // An own presentation fallback is renderer-owned, including an explicit
-    // `null`. Only an omitted property delegates to the caller fallback.
-    const fallback = presentationFallback?.present === true
-        ? presentationFallback.value as React.ReactNode
+    // `null`. Only an omitted property delegates to the caller fallback, so
+    // presence — not value — is the fact this reads.
+    const presentation = props.presentation;
+    const fallback = presentation !== undefined
+        && Object.prototype.hasOwnProperty.call(presentation, 'fallback')
+        ? presentation.fallback
         : props.fallback;
     if (!request) return <>{fallback}</>;
     const mountedRequest = fallback === undefined

@@ -1,6 +1,4 @@
 import {
-    decodeWebModuleSource,
-    hasForbiddenWebModuleImport,
     importWebModuleFromBytesViaBlobUrl,
     type PluginWebModuleNamespace,
 } from '../shared/webModuleLoader';
@@ -25,7 +23,7 @@ import { resolvePluginReactNativeExecutableExport } from './moduleNamespace';
  * `loadDevServerBundle` -> `PluginReactNativeSurfaceModule`), different
  * mechanism: in-process `import()` of a Vite + react-native-web-built module
  * (`reactNativeWebBuild.ts`'s preset), reusing the shared web-module
- * guard/instantiate machinery.
+ * instantiation machinery.
  *
  * Isolation note: same-realm, in-process JS — no iframe/WebView sandbox
  * boundary. This mode retains fail-closed feature and integrity checks.
@@ -59,10 +57,6 @@ async function instantiateReactNativeWebModule(
     importModule: (url: string) => Promise<PluginWebModuleNamespace>,
 ): Promise<PluginReactNativeExecutableExport> {
     installPluginUiHostRuntimeExternalsGlobal();
-
-    if (hasForbiddenWebModuleImport(decodeWebModuleSource(bytes))) {
-        throw loaderError('forbidden_import', ['app_internal_or_host_external_import_denied']);
-    }
 
     let namespace: PluginWebModuleNamespace;
     try {

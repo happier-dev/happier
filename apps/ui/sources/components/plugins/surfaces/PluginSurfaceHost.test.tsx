@@ -25,6 +25,7 @@ import {
     normalizePluginUiDestinationBindingV1,
     normalizePluginUiSettingsPageBindingV1,
     PluginUiArtifactDigestV1Schema,
+    PluginUiTargetedContributionsV1Schema,
     type PluginUiDestinationBindingInputV1,
     type PluginUiDestinationBindingV1,
     type PluginUiHostMethodV1,
@@ -42,7 +43,6 @@ import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 import { completePresentationPluginUiDataClient } from '@/dev/testkit/pluginUiDataClient';
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import {
-    HappierUiEnvironmentProvider,
     type HappierUiEnvironment,
 } from '@happier-dev/plugin-ui/environment';
 import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
@@ -1419,6 +1419,7 @@ function prepareGeneratedHostedWebArtifactFrame(): void {
         snapshot: {
             availabilityCursor: 11,
             materializations: [],
+            snapshots: [],
             intentReads: [{
                 pluginId,
                 response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
@@ -2430,8 +2431,8 @@ describe('PluginSurfacePlacementHost', () => {
         });
         const { DeclarativePluginSurface } = await import('./DeclarativePluginSurface');
         const renderCollectionSurface = (actionAvailable = true) => (
-            <HappierUiEnvironmentProvider environment={directDeclarativeTestEnvironment}>
-                <DeclarativePluginSurface
+            <DeclarativePluginSurface
+                    environment={directDeclarativeTestEnvironment}
                     pluginId={pluginId}
                     model={{
                     identity: {
@@ -2482,7 +2483,6 @@ describe('PluginSurfacePlacementHost', () => {
                 }}
                     dataClient={dataClient}
                 />
-            </HappierUiEnvironmentProvider>
         );
         const screen = await renderScreen(renderCollectionSurface());
 
@@ -3044,7 +3044,9 @@ describe('PluginSurfacePlacementHost', () => {
         expect(declarativeActionExecuteMock).toHaveBeenCalledTimes(dispatchesBeforeDeniedPress);
         // Tone is never colour-only.
         expect(denied?.props.accessibilityLabel).toContain('common.error');
-        expect(screen.findByTestId('plugin-declarative-item:root.c0.c0.c2')?.props.onPress).toBeUndefined();
+        const unavailable = screen.findByTestId('plugin-declarative-item:root.c0.c0.c2');
+        expect(unavailable?.props.onPress).toEqual(expect.any(Function));
+        expect(unavailable?.props.accessibilityState?.disabled).toBe(true);
 
         // Metadata reads as label/value pairs, with tone spoken rather than painted.
         expect(screen.findByTestId('plugin-declarative-metadata-entry:root.c1:0')?.props.accessibilityLabel)
@@ -3259,6 +3261,7 @@ describe('PluginSurfacePlacementHost', () => {
             snapshot: {
                 availabilityCursor: 1,
                 materializations: [],
+                snapshots: [],
                 intentReads: [{
                     pluginId: 'acme.forms',
                     response: {
@@ -4830,6 +4833,7 @@ describe('PluginSurfacePlacementHost', () => {
             snapshot: {
                 availabilityCursor: 1,
                 materializations: [],
+                snapshots: [],
                 intentReads: [{
                     pluginId: 'acme.browser',
                     response: {
@@ -5008,7 +5012,7 @@ describe('PluginSurfacePlacementHost', () => {
         ))).toBe(false);
     });
 
-    it('issues one exact browser Artifact capability, expires its opaque frame, and only issues again for a new mount', async () => {
+    it('reissues an exact browser Artifact capability on expiry without remounting the surface', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-08-14T10:00:00.000Z'));
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
@@ -5064,6 +5068,7 @@ describe('PluginSurfacePlacementHost', () => {
             snapshot: {
                 availabilityCursor: 1,
                 materializations: [],
+                snapshots: [],
                 intentReads: [{
                     pluginId: 'acme.docs',
                     response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
@@ -5196,28 +5201,33 @@ describe('PluginSurfacePlacementHost', () => {
             await act(async () => {
                 await vi.advanceTimersByTimeAsync(10_000);
             });
-            await flushHookEffects({ cycles: 6 });
+            await flushHookEffects({ cycles: 12 });
 
-            // A browser capability is bounded to this mount. Expiry must not
-            // silently issue another signed URL: the surface reports the
-            // typed expired state until the user leaves and reopens it.
-            expect(pluginDataTransport.request).toHaveBeenCalledTimes(1);
-            expect(screen.root.findAllByType('iframe')).toHaveLength(0);
-            expect(screen.findByTestId('plugin-hosted-web-unavailable-diagnostic-hosted_web_preview_expired')).toBeTruthy();
-
-            await screen.unmount();
-            const reopened = await renderBrowserArtifactFrame();
-            await vi.waitFor(() => expect(reopened.root.findAllByType('iframe')).toHaveLength(1));
+            // Expiry is a real reissue boundary for the same current mount.
+            // The issuer receives the same exact Artifact coordinate, while
+            // the guest gets a fresh opaque capability and bridge nonce.
             expect(pluginDataTransport.request).toHaveBeenCalledTimes(2);
-            const replacementFrameUrl = new URL(String(reopened.root.findByType('iframe').props.src));
+            expect(screen.root.findAllByType('iframe')).toHaveLength(1);
+            expect(JSON.parse(String(pluginDataTransport.request.mock.calls[1]?.[1]?.body))).toEqual({
+                release: { pluginId: 'acme.docs', version: releaseVersion },
+                contributionId: graph.contributionId,
+                tier: graph.tier,
+                platform: graph.platform,
+                expectedArtifactDigest: graph.digest,
+            });
+            const replacementFrameUrl = new URL(String(screen.root.findByType('iframe').props.src));
             expect(replacementFrameUrl.pathname).toBe(
                 `/v1/plugins/availability/ui-artifacts/browser/${issuedCapabilities[1]}/`,
+            );
+            expect(replacementFrameUrl.searchParams.get('happierHostOrigin')).toBe('https://host.happier.test');
+            expect(replacementFrameUrl.searchParams.get('happierBridgeNonce')).not.toBe(
+                frameUrl.searchParams.get('happierBridgeNonce'),
             );
 
             await act(async () => {
                 pluginSurfaceAccountLifetime.retire();
             });
-            await vi.waitFor(() => expect(reopened.root.findAllByType('iframe')).toHaveLength(0));
+            await vi.waitFor(() => expect(screen.root.findAllByType('iframe')).toHaveLength(0));
         } finally {
             (globalThis as any).window = previousWindow;
             (globalThis as any).location = previousLocation;
@@ -6116,6 +6126,7 @@ describe('PluginSurfacePlacementHost', () => {
             snapshot: {
                 availabilityCursor: 44,
                 materializations: [],
+                snapshots: [],
                 intentReads: [{
                     pluginId: generatedIdentity.pluginId,
                     response: {
@@ -6563,6 +6574,7 @@ describe('PluginSurfacePlacementHost', () => {
             snapshot: {
                 availabilityCursor: 1,
                 materializations: [],
+                snapshots: [],
                 intentReads: [{
                     pluginId: 'acme.browser',
                     response: {
@@ -6736,7 +6748,7 @@ describe('PluginSurfacePlacementHost', () => {
         expect(offlineProps.renderContext?.hostApi.version().methods).toEqual(
             expect.arrayContaining(['context', 'watchContext', 'executeAction']),
         );
-        expect(offlineProps.renderContext?.hostApi.version().methods).not.toContain('readResource');
+        expect(offlineProps.renderContext?.hostApi.version().methods).toContain('readResource');
         await expect(offlineProps.renderContext?.hostApi.executeAction('open', { source: 'offline' }))
             .rejects.toMatchObject({ code: 'unavailable' });
         await expect(offlineProps.renderContext?.hostApi.readResource('snapshot'))
@@ -6794,7 +6806,7 @@ describe('PluginSurfacePlacementHost', () => {
         expect(offlineProps.renderContext?.signal.aborted).toBe(true);
     });
 
-    it('re-renders a cold-offline RN surface with current Host API methods after reconnect without remounting it', async () => {
+    it('keeps structurally admitted RN Host API methods stable across reconnect without remounting it', async () => {
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const renderMethodSets: string[] = [];
@@ -6865,7 +6877,7 @@ describe('PluginSurfacePlacementHost', () => {
         }).renderContext?.hostApi;
         expect(offlineHostApi).toBeDefined();
         expect(screen.findByTestId('plugin-rn-host-api-currentness')?.props.accessibilityLabel)
-            .not.toContain('readResource');
+            .toContain('readResource');
         expect(mountedProbeEffects).toEqual(['mount']);
 
         pluginSurfaceConnectivity.daemonStateVersion += 1;
@@ -7840,6 +7852,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         reactNativeSurfaceProps.length = 0;
         await primeGeneratedArtifact();
         const publishLabels: string[] = [];
+        const observedActivities: boolean[] = [];
         const publicationClear = vi.fn();
         const publicationDispose = vi.fn();
         const publication = Object.freeze({
@@ -7858,6 +7871,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             createMount: vi.fn(() => publication),
         }) satisfies CurrentUiContextMountPublisher;
         const CurrentUiContextProbe = (props: Readonly<{ context: RenderContext }>): React.ReactElement => {
+            observedActivities.push(props.context.activity?.active ?? false);
             React.useLayoutEffect(() => {
                 props.context.hostApi.publishCurrentUiContext({
                     entity: { kind: 'issue', label: 'Issue A' },
@@ -7936,16 +7950,19 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         try {
             screen = await renderScreen(renderPlacement(), { flushOptions: { cycles: 0 } });
             await vi.waitFor(() => expect(publishLabels).toEqual(['Issue A']));
+            expect(typeof observedActivities.at(-1)).toBe('boolean');
             expect(publicationClear).not.toHaveBeenCalled();
 
             currentUiContextMountLifecycle.active = false;
             await screen.update(renderPlacement(false));
             expect(publicationClear).not.toHaveBeenCalled();
             expect(publishLabels).toEqual(['Issue A']);
+            expect(typeof observedActivities.at(-1)).toBe('boolean');
 
             currentUiContextMountLifecycle.active = true;
             await screen.update(renderPlacement(true));
             await vi.waitFor(() => expect(publishLabels).toEqual(['Issue A', 'Issue A']));
+            expect(typeof observedActivities.at(-1)).toBe('boolean');
             expect(publicationClear).not.toHaveBeenCalled();
         } finally {
             await screen?.unmount();
@@ -8034,6 +8051,258 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             mountedTarget,
         }));
         expect(readMountedSurface().targetedContributions).toEqual(targetedContributions);
+    });
+
+    it('mounts a fresh all-daemons-offline process from the last-confirmed targeted admission in device custody', async () => {
+        reactNativeSurfaceProps.length = 0;
+        await primeGeneratedArtifact();
+        const { prepareWarmCacheEncryptionKey } = await import('@/sync/domains/state/warmCacheEncryptionKey');
+        await prepareWarmCacheEncryptionKey();
+        const {
+            forgetPluginUiProjectionAdmissionSnapshots,
+            pluginUiProjectionAdmissionTargetKey,
+            savePluginUiProjectionAdmissionSnapshot,
+        } = await import('@/sync/domains/plugins/ui/projectionWarmCache');
+        const { clearDaemonMergedProjectionCacheForTests } = await import(
+            '@/agents/backendCatalog/loadDaemonMergedProjectionInputs'
+        );
+        const custodyScope = { serverId: 'server-a', accountId: 'account-a' };
+        forgetPluginUiProjectionAdmissionSnapshots(custodyScope);
+
+        const mountedTarget = {
+            pluginId: 'acme.browser',
+            immutableGenerationId: 'browser-cold-custody-generation-77',
+        } as const;
+        // A retained admission must be a positive fact: an empty point list is
+        // valid live data but is never last-known-good offline authority, so
+        // the custody fixture names one admitted point.
+        const targetedContributions = PluginUiTargetedContributionsV1Schema.parse({
+            target: mountedTarget,
+            points: [{
+                pointId: 'review-detail',
+                protocols: [{
+                    protocol: { id: 'review/detail', version: 1 },
+                    contributions: [{
+                        contributor: {
+                            pluginId: 'acme.review',
+                            contributionId: 'detail',
+                            immutableGenerationId: 'review-generation-a',
+                        },
+                        protocol: { id: 'review/detail', version: 1 },
+                        operations: [],
+                        surfaces: [],
+                    }],
+                }],
+            }],
+        });
+        const installedPackage = {
+            id: 'acme.browser',
+            displayName: 'Browser Inspector',
+            version: '3.2.1',
+            enabled: true,
+            source: { kind: 'bundled', locator: 'acme.browser' },
+            immutableGenerationId: mountedTarget.immutableGenerationId,
+            brand: { state: 'missing' },
+        } as const;
+        // The exact daemon projection the machine-wide currentness owner
+        // confirms, so the retained presentation slice is real bytes rather
+        // than a hand-written custody record.
+        const daemonProjection = PluginProjectionV2Schema.parse({
+            v: 2,
+            generation: 77,
+            installedPackagesById: { 'acme.browser': installedPackage },
+            familiesById: {
+                pluginUi: {
+                    family: 'pluginUi',
+                    entriesById: {
+                        'translations:acme.browser': {
+                            id: 'translations:acme.browser',
+                            pluginId: 'acme.browser',
+                            contributionKind: 'translations',
+                            locales: ['en'],
+                            bundles: { en: { title: 'Browser Inspector' } },
+                        },
+                    },
+                },
+            },
+        });
+        savePluginUiProjectionAdmissionSnapshot({
+            scope: custodyScope,
+            targetKey: pluginUiProjectionAdmissionTargetKey({
+                serverId: 'server_1',
+                machineId: 'machine_1',
+            }),
+            machineId: 'machine_1',
+            projection: daemonProjection,
+        });
+
+        const projection = createGeneratedProjection({
+            installedPackagesById: { 'acme.browser': installedPackage },
+        }) as PluginUiProjectionModel;
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const renderPlacement = () => (
+            <PluginSurfacePlacementHost
+                placement={browserReactNativePlacement}
+                resourceBrowserTarget={target}
+                machineId="machine_1"
+                serverId="server_1"
+                pluginUiProjection={projection}
+                platform="web"
+                reactNativeLoaderBackend={{
+                    backendId: 'reactNativeWebModule',
+                    available: true,
+                    loadInstalledBundle: vi.fn(async () => () => null),
+                }}
+            />
+        );
+
+        // Warm process: the one describe that confirms this exact target.
+        contributionProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: daemonProjection,
+            targetedContributions,
+        });
+        const warm = await renderScreen(renderPlacement(), { flushOptions: { cycles: 0 } });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(readMountedSurface().targetedContributions).toEqual(targetedContributions);
+        await warm.unmount();
+
+        // A genuinely fresh process re-parses these bytes with the canonical
+        // entry schema before anything can restore them, so prove the persisted
+        // shape survives that round trip and not only the in-process handoff.
+        const {
+            loadPluginUiProjectionWarmCacheEntries,
+            PluginUiProjectionCacheEntryV1Schema,
+        } = await import('@/sync/domains/state/warmCachePersistence');
+        const persistedEntry = loadPluginUiProjectionWarmCacheEntries('server-a', 'account-a')[
+            pluginUiProjectionAdmissionTargetKey({ serverId: 'server_1', machineId: 'machine_1' })
+        ];
+        const reparsedEntry = PluginUiProjectionCacheEntryV1Schema.safeParse(
+            JSON.parse(JSON.stringify(persistedEntry)),
+        );
+        expect(reparsedEntry.success).toBe(true);
+        expect(reparsedEntry.data?.targetedContributionsByPluginId?.['acme.browser'])
+            .toEqual(targetedContributions);
+
+        // Fresh process, laptop asleep: no in-memory target cache survives and
+        // every daemon is unreachable, so the transport can only fail.
+        clearDaemonMergedProjectionCacheForTests();
+        reactNativeSurfaceProps.length = 0;
+        pluginSurfaceConnectivity.endpointStatus = 'offline';
+        pluginSurfaceConnectivity.machineOnline = false;
+        contributionProjectionDescribeMock.mockReset();
+        contributionProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'error' });
+
+        const cold = await renderScreen(renderPlacement(), { flushOptions: { cycles: 0 } });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        const coldSurface = readMountedSurface();
+        expect(coldSurface.targetedContributions).toEqual(targetedContributions);
+        const coldProps = reactNativeSurfaceProps.at(-1) as { interactionEnabled?: boolean };
+        expect(coldProps.interactionEnabled).toBe(false);
+        await cold.unmount();
+
+        // The moment a daemon answers, its live snapshot supersedes custody.
+        clearDaemonMergedProjectionCacheForTests();
+        reactNativeSurfaceProps.length = 0;
+        pluginSurfaceConnectivity.endpointStatus = 'online';
+        pluginSurfaceConnectivity.machineOnline = true;
+        // Structurally different from the retained admission, so the assertion
+        // below distinguishes live authority from device custody.
+        const liveTargetedContributions = PluginUiTargetedContributionsV1Schema.parse({
+            target: mountedTarget,
+            points: [{
+                pointId: 'review-detail',
+                protocols: [{
+                    protocol: { id: 'review/detail', version: 1 },
+                    contributions: [{
+                        contributor: {
+                            pluginId: 'acme.review',
+                            contributionId: 'detail',
+                            immutableGenerationId: 'review-generation-b',
+                        },
+                        protocol: { id: 'review/detail', version: 1 },
+                        operations: [],
+                        surfaces: [],
+                    }],
+                }],
+            }],
+        });
+        contributionProjectionDescribeMock.mockReset();
+        contributionProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: daemonProjection,
+            targetedContributions: liveTargetedContributions,
+        });
+        const live = await renderScreen(renderPlacement(), { flushOptions: { cycles: 0 } });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(readMountedSurface().targetedContributions).toEqual(liveTargetedContributions);
+        await live.unmount();
+
+        // Falsification: the daemon now admits no points for this exact target.
+        // The presentation slice and its exact generation stay retained, so the
+        // only thing that can fail the following cold mount is refusing to keep
+        // an empty target envelope as offline authority.
+        clearDaemonMergedProjectionCacheForTests();
+        reactNativeSurfaceProps.length = 0;
+        contributionProjectionDescribeMock.mockReset();
+        contributionProjectionDescribeMock.mockResolvedValue({
+            supported: true,
+            projection: daemonProjection,
+            targetedContributions: PluginUiTargetedContributionsV1Schema.parse({
+                target: mountedTarget,
+                points: [],
+            }),
+        });
+        const emptiedWarm = await renderScreen(renderPlacement(), { flushOptions: { cycles: 0 } });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await emptiedWarm.unmount();
+        expect(loadPluginUiProjectionWarmCacheEntries('server-a', 'account-a')[
+            pluginUiProjectionAdmissionTargetKey({ serverId: 'server_1', machineId: 'machine_1' })
+        ]?.targetedContributionsByPluginId?.['acme.browser']).toBeUndefined();
+
+        clearDaemonMergedProjectionCacheForTests();
+        reactNativeSurfaceProps.length = 0;
+        pluginSurfaceConnectivity.endpointStatus = 'offline';
+        pluginSurfaceConnectivity.machineOnline = false;
+        contributionProjectionDescribeMock.mockReset();
+        contributionProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'error' });
+        const emptyTarget = await renderScreen(renderPlacement(), { flushOptions: { cycles: 0 } });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(reactNativeSurfaceProps).toHaveLength(0);
+        expect(emptyTarget.findByTestId(
+            'plugin-surface-unavailable-diagnostic-targeted_contributions_unavailable',
+        )).toBeTruthy();
+        await emptyTarget.unmount();
+
+        // Falsification: empty this Account's custody entirely and the same cold
+        // process must fail closed instead of mounting an unproven target.
+        clearDaemonMergedProjectionCacheForTests();
+        reactNativeSurfaceProps.length = 0;
+        forgetPluginUiProjectionAdmissionSnapshots(custodyScope);
+        const emptied = await renderScreen(renderPlacement(), { flushOptions: { cycles: 0 } });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(reactNativeSurfaceProps).toHaveLength(0);
+        expect(emptied.findByTestId(
+            'plugin-surface-unavailable-diagnostic-targeted_contributions_unavailable',
+        )).toBeTruthy();
     });
 
     it('wires a parent React surface through the private exact B target bridge', async () => {
@@ -8345,6 +8614,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         let child: Awaited<ReturnType<typeof renderScreen>> | undefined;
         let omittedFallbackChild: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        let nullFallbackChild: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
             screen = await renderScreen(
                 <PluginSurfacePlacementHost
@@ -8471,7 +8741,38 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                 ).toBeTruthy();
             });
             expect(omittedFallbackChild.findByTestId('targeted-crash-fallback')).toBeNull();
+
+            // An explicit `null` fallback is the author saying "render nothing
+            // here", which is a different statement from omitting the prop.
+            // The physical host must not collapse it into the generic
+            // unavailable presentation.
+            const renderedWithNullFallback = renderTargetedSurface?.(Object.freeze({
+                surface,
+                input: Object.freeze({ reviewId: 'review-44' }),
+                instanceKey: 'review-44',
+                fallback: null,
+            }));
+            if (!React.isValidElement(renderedWithNullFallback)) {
+                throw new Error('Expected the app-private target bridge to return its physical child.');
+            }
+            nullFallbackChild = await renderScreen(React.createElement(
+                'View',
+                { testID: 'targeted-crash-null-fallback-shell' },
+                renderedWithNullFallback,
+            ));
+            await vi.waitFor(() => {
+                expect(
+                    nullFallbackChild?.findByTestId('targeted-crash-null-fallback-shell'),
+                    JSON.stringify(nullFallbackChild?.tree.toJSON()),
+                ).toBeTruthy();
+            });
+            expect(
+                nullFallbackChild.findByTestId('plugin-rn-ui-unavailable'),
+                JSON.stringify(nullFallbackChild.tree.toJSON()),
+            ).toBeNull();
+            expect(nullFallbackChild.findByTestId('targeted-crash-fallback')).toBeNull();
         } finally {
+            await nullFallbackChild?.unmount();
             await omittedFallbackChild?.unmount();
             await child?.unmount();
             await screen?.unmount();
@@ -8548,7 +8849,6 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                 renderer: preparedBlockedMount.selectedRenderer.renderer,
             }),
             input: Object.freeze({ reviewId: 'review-42' }),
-            resourceInput: Object.freeze({ reviewId: 'review-42' }),
             instanceKey: derivePluginUiTargetedSurfaceMountInstanceKeyV1({
                 targetPluginId: mountedTarget.pluginId,
                 surface,
@@ -8752,6 +9052,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             snapshot: {
                 availabilityCursor: 1,
                 materializations: [],
+                snapshots: [],
                 intentReads: [{
                     pluginId: surface.contributor.pluginId,
                     response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
@@ -9793,6 +10094,115 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         expect(observed).toEqual(cases.map((testCase) => testCase.expected));
     });
 
+    it('projects an admitted inline destination as the public embedded mount context', async () => {
+        reactNativeSurfaceProps.length = 0;
+        await primeGeneratedArtifact();
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const targetedFixture = primeExactTargetedContributions({
+            pluginId: 'acme.browser',
+            immutableGenerationId: 'browser-inline-context-generation-77',
+            projectionGeneration: 77,
+        });
+        const projection = withMountedTargetPackage(createGeneratedProjection(), targetedFixture, {
+            displayName: 'Browser Inspector',
+            version: '3.2.1',
+        });
+        const placement = reactNativeSurfacePlacementFixture({
+            pluginId: 'acme.browser',
+            destinationId: 'session-info-inline',
+            rendererId: 'native-panel',
+            container: 'sessionInfoSection',
+            target: { kind: 'session', sessionIdPath: '/sessionId' },
+        });
+
+        const screen = await renderScreen(
+            <PluginSurfacePlacementHost
+                placement={placement}
+                inlineMount={{ role: 'sessionInfoSection', presentation: 'content' }}
+                sessionId="session-inline-77"
+                machineId="machine_1"
+                serverId="server_1"
+                pluginUiProjection={projection}
+                platform="web"
+                reactNativeLoaderBackend={{
+                    backendId: 'reactNativeWebModule',
+                    available: true,
+                    loadInstalledBundle: vi.fn(async () => () => React.createElement('PluginNativeSurface')),
+                }}
+            />,
+        );
+
+        await vi.waitFor(() => expect(reactNativeSurfaceProps).not.toHaveLength(0));
+        const props = reactNativeSurfaceProps.at(-1) as { renderContext?: RenderContext };
+        expect(props.renderContext?.surface.mount).toEqual({
+            kind: 'embedded',
+            role: 'sessionInfoSection',
+            presentation: 'content',
+        });
+        expect(props.renderContext?.surface.mount).not.toHaveProperty('destination');
+        expect(props.renderContext).not.toHaveProperty('subPath');
+        await screen.unmount();
+    });
+
+    it.each([
+        {
+            name: 'the requested inline role maps to a different container',
+            placement: reactNativeSurfacePlacementFixture({
+                pluginId: 'acme.browser',
+                destinationId: 'session-info-inline-role-mismatch',
+                rendererId: 'native-panel',
+                container: 'sessionInfoSection',
+                target: { kind: 'session', sessionIdPath: '/sessionId' },
+            }),
+            inlineMount: { role: 'sessionSubagentLaunch' as const, presentation: 'content' as const },
+        },
+        {
+            name: 'the requested inline role does not admit its presentation',
+            placement: reactNativeSurfacePlacementFixture({
+                pluginId: 'acme.browser',
+                destinationId: 'session-info-inline-presentation-mismatch',
+                rendererId: 'native-panel',
+                container: 'sessionInfoSection',
+                target: { kind: 'session', sessionIdPath: '/sessionId' },
+            }),
+            inlineMount: { role: 'sessionInfoSection' as const, presentation: 'fill' as const },
+        },
+    ])('refuses an inline destination when $name', async ({ placement, inlineMount }) => {
+        reactNativeSurfaceProps.length = 0;
+        await primeGeneratedArtifact();
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const targetedFixture = primeExactTargetedContributions({
+            pluginId: 'acme.browser',
+            immutableGenerationId: `browser-inline-rejection-${placement.binding.destination.localId}`,
+            projectionGeneration: 77,
+        });
+        const projection = withMountedTargetPackage(createGeneratedProjection(), targetedFixture, {
+            displayName: 'Browser Inspector',
+            version: '3.2.1',
+        });
+
+        const screen = await renderScreen(
+            <PluginSurfacePlacementHost
+                placement={placement}
+                inlineMount={inlineMount}
+                sessionId="session-inline-77"
+                machineId="machine_1"
+                serverId="server_1"
+                pluginUiProjection={projection}
+                platform="web"
+                reactNativeLoaderBackend={{
+                    backendId: 'reactNativeWebModule',
+                    available: true,
+                    loadInstalledBundle: vi.fn(async () => () => React.createElement('PluginNativeSurface')),
+                }}
+            />,
+        );
+
+        expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-inline_surface_binding_unavailable')).toBeTruthy();
+        expect(reactNativeSurfaceProps).toHaveLength(0);
+        await screen.unmount();
+    });
+
     it('fails target resolution closed when a placement cannot supply its required identity (§3.2 r0.9)', async () => {
         // A missing principal identity is the host failing to BIND the declared
         // target. Emitting `{ kind: 'app' }` there would tell the plugin it is
@@ -10668,6 +11078,153 @@ describe('Composer physical surface mount', () => {
         await vi.waitFor(() => expect(pluginSurfaceDiagnosticLog).toHaveBeenCalledWith(
             expect.stringContaining('"code":"unsupported_nested_targeted_surface"'),
         ));
+    });
+
+    it('tells a Composer-embedded React Native mount that a nested targeted Surface is unsupported', async () => {
+        reactNativeSurfaceProps.length = 0;
+        const contribution = Object.freeze({ pluginId: 'acme.browser', localId: 'summary' });
+        const rendererIdentity = Object.freeze({ pluginId: 'acme.browser', localId: 'native-panel' });
+        const composerRef = Object.freeze({ kind: 'session' as const, sessionId: 'session-composer-nested-target' });
+        const physicalTarget = Object.freeze({ kind: 'session' as const, sessionId: composerRef.sessionId });
+        const immutableGenerationId = 'composer-generation-nested-target';
+        const projectionGeneration = 44;
+        const parentLifetime = Object.freeze({
+            isCurrent: () => true,
+            onRetire: () => Object.freeze({ dispose() {} }),
+        });
+        const transactionApplier = Object.freeze({ apply: () => ({ status: 'rejected' as const }) });
+        const snapshot: ComposerSnapshotV1 = Object.freeze({
+            revision: 1,
+            ref: composerRef,
+            text: 'nested target draft',
+            references: Object.freeze([]),
+            attachments: Object.freeze([]),
+            layout: 'wrap' as const,
+            capabilities: Object.freeze({ text: true, references: true, attachments: true, submit: true }),
+            state: Object.freeze({
+                focused: false,
+                editable: true,
+                submittable: true,
+                submitting: false,
+                running: false,
+            }),
+        });
+        const unregister = registerComposerPresentationTarget(composerRef, {
+            readRevision: () => snapshot.revision,
+            replace: () => snapshot.revision,
+            readSnapshot: () => snapshot,
+        });
+        const artifactProjection = generatedReactNativeProjection.reactNativeBundlesById[
+            'reactNativeBundle:acme.browser:native-panel'
+        ];
+        if (!artifactProjection) throw new Error('expected generated Composer RN artifact projection');
+        const artifactRuntime = artifactProjection.runtime;
+        if (!artifactRuntime || typeof artifactRuntime !== 'object') {
+            throw new Error('expected generated Composer RN artifact runtime');
+        }
+        const { ComposerPluginSurface } = await import('@/components/sessions/presentation/ComposerPluginSurface');
+        const catalogEntry = DaemonPluginUiComposerSurfaceCatalogEntryV1Schema.parse({
+            contribution: Object.freeze({ ...contribution }),
+            immutableGenerationId,
+            projectionGeneration,
+            role: 'region',
+            rendererChain: [Object.freeze({ ...rendererIdentity })],
+            selectedRenderer: {
+                identity: Object.freeze({ ...rendererIdentity }),
+                renderer: { kind: 'reactNative', contributionId: rendererIdentity.localId },
+                artifactProjection: {
+                    ...artifactProjection,
+                    runtime: {
+                        ...artifactRuntime,
+                        cacheIdentity: {
+                            ...generatedReactNativeCacheIdentity,
+                            projectionGeneration,
+                        },
+                    },
+                },
+                crashState: {
+                    token: {
+                        mount: {
+                            kind: 'composer',
+                            contribution,
+                            immutableGenerationId,
+                            role: 'region',
+                        },
+                        renderer: rendererIdentity,
+                        artifactDigest: generatedReactNativeCacheIdentity.artifactDigest,
+                        crashStateEpoch: 7,
+                    },
+                    disabled: false,
+                },
+                availability: { state: 'available', reason: 'available', diagnostics: [] },
+            },
+            executionOrigin: mountedExecutionOrigin(
+                contribution.pluginId,
+                'machine-compose',
+                'compose-nested-target-materialization',
+            ),
+            resourceCapability: { readable: true, dynamic: true },
+            contributorTargetedContributions: {
+                target: { pluginId: contribution.pluginId, immutableGenerationId },
+                points: [],
+            },
+        });
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            screen = await renderScreen(
+                <ComposerPluginSurface
+                    request={Object.freeze({
+                        contribution: Object.freeze({ ...contribution }),
+                        immutableGenerationId,
+                        role: 'region' as const,
+                        input: Object.freeze({
+                            v: 1 as const,
+                            role: 'region' as const,
+                            composer: Object.freeze({ ...composerRef }),
+                            regionLocalId: contribution.localId,
+                        }),
+                        instanceKey: `composer-region:${composerRef.sessionId}:summary`,
+                    })}
+                    physicalTarget={physicalTarget}
+                    projectionGeneration={projectionGeneration}
+                    catalogEntries={[catalogEntry]}
+                    pluginProjectionById={{}}
+                    pluginProjectionV2={PluginProjectionV2Schema.parse({
+                        v: 2,
+                        generation: projectionGeneration,
+                        installedPackagesById: {},
+                        agentsById: {},
+                        backendsById: {},
+                        actionsById: {},
+                        toolsById: {},
+                        commandsById: {},
+                        resourcesById: {},
+                        settingsById: {},
+                        familiesById: {},
+                        diagnostics: [],
+                    })}
+                    machineId="machine-compose"
+                    serverId="server-a"
+                    parentLifetime={parentLifetime}
+                    transactionApplier={transactionApplier as never}
+                />,
+                { flushOptions: { cycles: 0 } },
+            );
+            await vi.waitFor(() => expect(reactNativeSurfaceProps).not.toHaveLength(0));
+            const mounted = reactNativeSurfaceProps.at(-1) as {
+                privateHostBindings?: Readonly<{ presentationHost?: PluginUiPrivatePresentationHost }>;
+            };
+            // An embedded Composer mount deliberately receives no B->C bridge.
+            expect(mounted.privateHostBindings?.presentationHost?.renderTargetedSurface).toBeUndefined();
+            // Structurally unsupported must not be silent: the private presentation
+            // host carries the reason `<TargetedSurface>` turns into the author's
+            // diagnostic, exactly as the declarative Composer twin above reports it.
+            expect(mounted.privateHostBindings?.presentationHost?.targetedSurfaceUnavailableReason)
+                .toBe('unsupported_nested_targeted_surface');
+        } finally {
+            await screen?.unmount();
+            unregister();
+        }
     });
 
     it('lends the exact hosted Composer bridge publisher only while its embedded mount is alive', async () => {

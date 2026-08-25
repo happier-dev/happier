@@ -64,6 +64,46 @@ describe('bugReportSessionSnapshot', () => {
         ]);
     });
 
+    it('chooses the latest user-facing session when a newer hidden carrier exists', () => {
+        const snapshot = buildLatestSessionSnapshot({
+            sessions: {
+                visible: {
+                    id: 'visible',
+                    updatedAt: 30,
+                    createdAt: 20,
+                    agent: 'codex',
+                    metadata: {
+                        summary: { text: 'Visible work' },
+                    },
+                },
+                voiceHistory: {
+                    id: 'voiceHistory',
+                    updatedAt: 40,
+                    createdAt: 35,
+                    metadata: {
+                        systemSessionV1: {
+                            v: 1,
+                            key: 'voice_transcript_history',
+                            hidden: true,
+                        },
+                    },
+                },
+            },
+            sessionMessages: {
+                visible: {
+                    messages: [{ id: 'visible-message', kind: 'user-text', createdAt: 29 }],
+                },
+                voiceHistory: {
+                    messages: [{ id: 'hidden-message', kind: 'user-text', createdAt: 39 }],
+                },
+            },
+            sessionPending: {},
+        });
+
+        expect(snapshot?.sessionId).toBe('visible');
+        expect(snapshot?.recentMessages.map((message) => message.id)).toEqual(['visible-message']);
+    });
+
     it('keeps the latest 30 messages by createdAt order', () => {
         const messages = Array.from({ length: 40 }, (_, index) => ({
             id: `message-${index + 1}`,

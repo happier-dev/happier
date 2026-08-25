@@ -27,6 +27,28 @@ import {
     createPluginContributedActionComposerChips,
     type PluginComposerControlHost,
 } from './pluginContributedActionComposerChips';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+
+/**
+ * The admitted translation bundle for `acme.channels`. Its values differ from
+ * every declared fallback, so a fallback-only reader and a projection-backed
+ * reader cannot produce the same string.
+ */
+const channelsProjection = {
+    ...EMPTY_PLUGIN_UI_PROJECTION,
+    translationsByPluginId: {
+        'acme.channels': {
+            pluginId: 'acme.channels',
+            bundles: {
+                en: {
+                    'acme.mode.label': 'Delivery mode',
+                    'acme.mode.fast': 'Fastest',
+                },
+            },
+        },
+    },
+} as never;
 
 function descriptor(input: Readonly<{
     localId: string;
@@ -70,11 +92,13 @@ function composerControl(input: Readonly<{
 function createComposerControlHost(
     overrides: Partial<Pick<
         PluginComposerControlHost,
-        'scope' | 'isCurrent' | 'renderControlResourceState' | 'renderSurfaceContent'
+        'scope' | 'isCurrent' | 'renderControlResourceState' | 'renderSurfaceContent' | 'canMutateComposer'
     >> = {},
 ) {
     const openAction = vi.fn<(input: Parameters<PluginComposerControlHost['openAction']>[0]) => void>();
-    const applyComposer = vi.fn<(input: Parameters<PluginComposerControlHost['applyComposer']>[0]) => void>();
+    const applyComposer = vi.fn<PluginComposerControlHost['applyComposer']>(
+        () => ({ status: 'applied', revision: 1 }),
+    );
     const openDestination = vi.fn<(input: Parameters<PluginComposerControlHost['openDestination']>[0]) => void>();
     const renderSurfaceContent = vi.fn<(
         presentation: Parameters<PluginComposerControlHost['renderSurfaceContent']>[0],
@@ -88,6 +112,8 @@ function createComposerControlHost(
     return {
         scope: 'session',
         isCurrent: () => true,
+        canMutateComposer: () => true,
+        localize: createPluginLocalizedTextResolver({ projection: channelsProjection }),
         renderControlResourceState,
         openAction,
         applyComposer,
@@ -388,6 +414,189 @@ describe('plugin contributed composer Action chips', () => {
         expect(collapsed.disabled).toBe(true);
     });
 
+    it('shows declared Composer control and choice text from the admitted translation bundle', async () => {
+        const control = composerControl({
+            localId: 'mode',
+            definition: {
+                label: { key: 'acme.mode.label', fallback: 'Mode' },
+                icon: 'add',
+                interaction: {
+                    kind: 'choices',
+                    selection: 'single',
+                    options: [
+                        {
+                            id: 'fast',
+                            label: { key: 'acme.mode.fast', fallback: 'Fast' },
+                            effect: { kind: 'action', action: 'refresh' },
+                        },
+                        {
+                            id: 'safe',
+                            // No bundle entry: the author's own words answer it,
+                            // and the raw key is never shown.
+                            label: { key: 'acme.mode.safe', fallback: 'Safe' },
+                            effect: { kind: 'action', action: 'refresh' },
+                        },
+                    ],
+                },
+            },
+        });
+        const chips = createPluginContributedActionComposerChips({
+            controller: {
+                list: vi.fn(() => []),
+                listSlashCommands: () => [],
+                open: vi.fn(),
+                isReferenceAvailable: () => false,
+                isSessionReferenceAvailable: () => false,
+                invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+                openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+            } satisfies PluginContributedActionController,
+            openAction: vi.fn(),
+            composerControls: [control],
+            composerControlHost: createComposerControlHost(),
+        });
+
+        const node = chips[0]?.render({
+            chipStyle: () => ({}),
+            showLabel: true,
+            iconColor: '#fff',
+            textStyle: {},
+            countTextStyle: {},
+            chipAnchorRef: React.createRef(),
+            popoverAnchorRef: React.createRef(),
+        });
+        if (!React.isValidElement<Readonly<{ accessibilityLabel?: string }>>(node)) {
+            throw new Error('expected a Composer control chip');
+        }
+        expect(node.props.accessibilityLabel).toBe('Delivery mode');
+
+        const popover = chips[0]?.collapsedOptionsPopover as unknown as Readonly<{
+            label: string;
+            options: readonly AgentInputChipPickerOption[];
+        }>;
+        expect(popover.label).toBe('Delivery mode');
+        expect(popover.options.map((option) => option.label)).toEqual(['Fastest', 'Safe']);
+    });
+
+    it('exposes a selectable Composer control as a real toggle button on the web', async () => {
+        const selectableControl = composerControl({
+            localId: 'live-toggle',
+            definition: {
+                label: 'Live control',
+                icon: 'add',
+                interaction: { kind: 'action', action: 'refresh' },
+                state: { resource: 'live-toggle-state' },
+            },
+        });
+        const plainControl = composerControl({ localId: 'plain' });
+        const renderContext = {
+            chipStyle: () => ({}),
+            showLabel: true,
+            iconColor: '#fff',
+            textStyle: {},
+            countTextStyle: {},
+            chipAnchorRef: React.createRef(),
+            popoverAnchorRef: React.createRef(),
+        };
+        const controller = {
+            list: vi.fn(() => []),
+            listSlashCommands: () => [],
+            open: vi.fn(),
+            isReferenceAvailable: () => false,
+            isSessionReferenceAvailable: () => false,
+            invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+            openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+        } satisfies PluginContributedActionController;
+
+        const readChip = (selected: boolean) => {
+            const chips = createPluginContributedActionComposerChips({
+                controller,
+                openAction: vi.fn(),
+                composerControls: [selectableControl, plainControl],
+                composerControlHost: createComposerControlHost({
+                    renderControlResourceState: (input) => input.children({ selected }, null),
+                }),
+            });
+            return {
+                selectable: chips[0]?.render(renderContext),
+                plain: chips[1]?.render(renderContext),
+            };
+        };
+
+        const on = readChip(true);
+        if (!React.isValidElement<Readonly<Record<string, unknown>>>(on.selectable)) {
+            throw new Error('expected a selectable Composer control chip');
+        }
+        // Native keeps its own selected state; the web tree gets valid button
+        // semantics instead of nothing at all.
+        expect(on.selectable.props.accessibilityState).toEqual({ selected: true });
+        expect(on.selectable.props['aria-pressed']).toBe(true);
+
+        const off = readChip(false);
+        if (!React.isValidElement<Readonly<Record<string, unknown>>>(off.selectable)) {
+            throw new Error('expected a selectable Composer control chip');
+        }
+        expect(off.selectable.props['aria-pressed']).toBe(false);
+
+        // A control with no on/off state must not be announced as an unpressed
+        // toggle.
+        if (!React.isValidElement<Readonly<Record<string, unknown>>>(off.plain)) {
+            throw new Error('expected a plain Composer control chip');
+        }
+        expect(off.plain.props).not.toHaveProperty('aria-pressed');
+    });
+
+    it('keeps choice selection on the options instead of announcing the opener as selected', () => {
+        const choicesControl = composerControl({
+            localId: 'mode',
+            definition: {
+                label: 'Mode',
+                icon: 'settings',
+                state: { resource: 'mode-state' },
+                interaction: {
+                    kind: 'choices',
+                    selection: 'single',
+                    options: [{
+                        id: 'fast',
+                        label: 'Fast',
+                        effect: { kind: 'action', action: 'refresh' },
+                    }],
+                },
+            },
+        });
+        const chips = createPluginContributedActionComposerChips({
+            controller: {
+                list: vi.fn(() => []),
+                listSlashCommands: () => [],
+                open: vi.fn(),
+                isReferenceAvailable: () => false,
+                isSessionReferenceAvailable: () => false,
+                invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+                openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+            },
+            openAction: vi.fn(),
+            composerControls: [choicesControl],
+            composerControlHost: createComposerControlHost({
+                renderControlResourceState: (input) => input.children({ selectedChoiceIds: ['fast'] }, null),
+            }),
+        });
+        const node = chips[0]?.render({
+            chipStyle: () => ({}),
+            showLabel: true,
+            iconColor: '#fff',
+            textStyle: {},
+            countTextStyle: {},
+            chipAnchorRef: React.createRef(),
+            popoverAnchorRef: React.createRef(),
+        });
+        if (!React.isValidElement<Readonly<Record<string, unknown>>>(node)) {
+            throw new Error('expected a choices Composer control chip');
+        }
+
+        expect(node.props).not.toHaveProperty('aria-pressed');
+        expect(node.props.accessibilityState).toBeUndefined();
+        expect(chips[0]?.collapsedOptionsPopover?.selectedOptionId).toBe('fast');
+    });
+
     it('keeps declared choices selected while recovering unknown Resource selections through one bounded contributor diagnostic', async () => {
         logSpy.mockClear();
         const singleChoiceControl = composerControl({
@@ -493,7 +702,8 @@ describe('plugin contributed composer Action chips', () => {
         });
         expect(renderedChip.props.accessibilityRole).toBe('button');
         expect(renderedChip.props.accessibilityLabel).toBe('Mode');
-        expect(renderedChip.props.accessibilityState).toEqual({ selected: true });
+        expect(renderedChip.props.accessibilityState).toBeUndefined();
+        expect(renderedChip.props).not.toHaveProperty('aria-pressed');
 
         await act(async () => {
             tree?.update(
@@ -543,6 +753,119 @@ describe('plugin contributed composer Action chips', () => {
         });
 
         await act(async () => { tree?.unmount(); });
+    });
+
+    // A read-only Session, a view-only share, or an `editAndSubmit` lock makes
+    // the Composer transaction owner return `notEditable`. Only the choices
+    // whose effect is a Composer mutation may present as disabled there: an
+    // Action choice in the same control is independent of draft editability.
+    it('disables only composerApply choices when the Composer document refuses mutation', () => {
+        const control = composerControl({
+            localId: 'mixed-choice',
+            definition: {
+                label: 'Channels',
+                icon: 'more',
+                interaction: {
+                    kind: 'choices',
+                    selection: 'multiple',
+                    options: [{
+                        id: 'refresh',
+                        label: 'Refresh channels',
+                        effect: { kind: 'action', action: 'refresh' },
+                    }, {
+                        id: 'clear',
+                        label: 'Clear draft',
+                        effect: { kind: 'composerApply', operations: [{ kind: 'text.clear' }] },
+                    }],
+                },
+            },
+        });
+        const composerControlHost = createComposerControlHost({ canMutateComposer: () => false });
+        const controller = {
+            list: vi.fn(() => []),
+            listSlashCommands: () => [],
+            open: vi.fn(),
+            isReferenceAvailable: () => false,
+            isSessionReferenceAvailable: () => false,
+            invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+            openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+        } satisfies PluginContributedActionController;
+
+        const chips = createPluginContributedActionComposerChips({
+            controller,
+            openAction: vi.fn(),
+            composerControls: [control],
+            composerControlHost,
+        });
+
+        const popover = chips[0]?.collapsedOptionsPopover as unknown as Readonly<{
+            rootStep: SelectionListStep;
+        }>;
+        const section = popover.rootStep.sections[0];
+        if (!section || section.kind !== 'static') throw new Error('expected static choice rows');
+        const options = section.options;
+        expect(options.map((option) => [option.id, option.disabled === true])).toEqual([
+            ['refresh', false],
+            ['clear', true],
+        ]);
+
+        options[1]?.onSelect?.();
+        expect(composerControlHost.applyComposer).not.toHaveBeenCalled();
+
+        // Positive twin: the Action choice in the same control still executes.
+        options[0]?.onSelect?.();
+        expect(composerControlHost.openAction).toHaveBeenCalledWith({
+            control,
+            action: { pluginId: 'acme.channels', localId: 'refresh' },
+        });
+    });
+
+    // The canonical transaction owner can still refuse an enabled mutating
+    // choice (a conflicting revision). Reporting that as a successful selection
+    // dismissed the affordance and lost the user's intent silently.
+    it('reports a refused composerApply selection so its affordance is not dismissed as applied', () => {
+        const control = composerControl({
+            localId: 'apply-choice',
+            definition: {
+                label: 'Draft',
+                icon: 'more',
+                interaction: {
+                    kind: 'choices',
+                    selection: 'single',
+                    options: [{
+                        id: 'clear',
+                        label: 'Clear draft',
+                        effect: { kind: 'composerApply', operations: [{ kind: 'text.clear' }] },
+                    }],
+                },
+            },
+        });
+        const composerControlHost = createComposerControlHost();
+        composerControlHost.applyComposer.mockReturnValue({ status: 'conflict', currentRevision: 9 });
+        const controller = {
+            list: vi.fn(() => []),
+            listSlashCommands: () => [],
+            open: vi.fn(),
+            isReferenceAvailable: () => false,
+            isSessionReferenceAvailable: () => false,
+            invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+            openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
+        } satisfies PluginContributedActionController;
+
+        const chips = createPluginContributedActionComposerChips({
+            controller,
+            openAction: vi.fn(),
+            composerControls: [control],
+            composerControlHost,
+        });
+
+        const popover = chips[0]?.collapsedOptionsPopover;
+        if (!popover) throw new Error('expected the choice overflow popover');
+        expect(popover.onSelect('clear')).toBe(false);
+
+        // Positive twin: an applied transaction still reports a closable success.
+        composerControlHost.applyComposer.mockReturnValue({ status: 'applied', revision: 10 });
+        expect(popover.onSelect('clear')).toBe(true);
     });
 
     it('bounds maximum schema-valid unknown Resource choices without losing diagnostic attribution or admission safety', async () => {
@@ -1013,38 +1336,81 @@ describe('plugin contributed composer Action chips', () => {
             throw new Error('expected an attachment picker control chip');
         }
         pickerNode.props.onPress();
-        expect(composerControlHost.openSurfaceDialog).toHaveBeenCalledWith(expect.objectContaining({
-            kind: 'attachmentPicker',
-            role: 'interaction',
-            control: pickerControl,
-            presentation: 'dialog',
-            layout: 'list',
-        }));
+        expect(composerControlHost.openSurfaceDialog).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'attachmentPicker',
+                role: 'interaction',
+                control: pickerControl,
+                presentation: 'dialog',
+                layout: 'list',
+            }),
+            // The visible chip is the exact originating trigger, so native
+            // dismissal restores physical/accessibility focus to it instead of
+            // dropping focus out of the composer.
+            { focusReturnRef: renderContext.chipAnchorRef },
+        );
 
-        const compactNode = chips[3]?.render(renderContext);
-        expect(compactNode).not.toBeNull();
+        const compactControlChip = chips.find(
+            (chip) => chip.key === 'plugin-composer-control:acme.channels/compact',
+        );
+        const compactNode = compactControlChip?.render(renderContext);
+        if (!React.isValidElement<Readonly<{
+            accessibilityRole?: string;
+            accessibilityLabel?: string;
+            hitSlop?: unknown;
+            onPress?: () => void;
+            children?: React.ReactNode;
+        }>>(compactNode)) throw new Error('expected compact host interaction wrapper');
+        const compactChip = compactNode;
+        expect(compactChip.props.accessibilityRole).toBe('button');
+        expect(compactChip.props.accessibilityLabel).toBe('Compact surface');
+        expect(compactChip.props.hitSlop).toEqual({ top: 6, bottom: 6, left: 6, right: 6 });
+        const compactVisual = React.Children.only(compactChip.props.children);
+        if (!React.isValidElement<Readonly<{ children?: React.ReactNode }>>(compactVisual)) {
+            throw new Error('expected compact renderer visual content');
+        }
+        expect(compactVisual.props.children).toBe('surface');
+        compactChip.props.onPress?.();
+        expect(composerControlHost.openSurfaceDialog).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'control',
+                role: 'interaction',
+                control: compactControl,
+                presentation: 'dialog',
+                layout: 'split',
+            }),
+            { focusReturnRef: renderContext.chipAnchorRef },
+        );
         expect(composerControlHost.renderSurfaceContent).toHaveBeenCalledWith(expect.objectContaining({
             kind: 'control',
             role: 'compact',
             control: compactControl,
         }));
         expect(vi.mocked(composerControlHost.renderSurfaceContent).mock.calls[1]?.[0]).not.toHaveProperty('renderer');
-        const compactCollapsed = chips[3]?.collapsedAction?.({
+        // The collapsed overflow item's originating trigger is the action menu
+        // itself, which owns the anchor the host hands down through
+        // `buildCollapsedExtraControlActions`.
+        const actionMenuAnchorRef = React.createRef<never>();
+        const compactCollapsed = compactControlChip?.collapsedAction?.({
             tint: '#fff',
             dismiss: vi.fn(),
             blurInput: vi.fn(),
             openCollapsedPopover: vi.fn(),
+            focusReturnRef: actionMenuAnchorRef,
         });
         if (!compactCollapsed || !('id' in compactCollapsed)) throw new Error('expected compact overflow action');
         expect(compactCollapsed.label).toBe('More compact choices');
         compactCollapsed.onPress?.();
-        expect(composerControlHost.openSurfaceDialog).toHaveBeenLastCalledWith(expect.objectContaining({
-            kind: 'control',
-            role: 'interaction',
-            control: compactControl,
-            presentation: 'dialog',
-            layout: 'split',
-        }));
+        expect(composerControlHost.openSurfaceDialog).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                kind: 'control',
+                role: 'interaction',
+                control: compactControl,
+                presentation: 'dialog',
+                layout: 'split',
+            }),
+            { focusReturnRef: actionMenuAnchorRef },
+        );
     });
 
     it('uses the controller’s exact semantic composer placements, then delegates selection back to the host presenter', () => {

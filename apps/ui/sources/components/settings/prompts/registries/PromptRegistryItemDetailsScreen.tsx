@@ -38,6 +38,7 @@ import {
   useMachineAdministrationTargetSelection,
   type FreshMachineAdministrationExecutionTargetV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { t, type TranslationKey } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
@@ -133,12 +134,13 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
     requestedSelection: string,
     executionTarget: FreshMachineAdministrationExecutionTargetV1,
   ): boolean => {
-    if (selectionKeyRef.current !== requestedSelection) return false;
-    const current = resolveExactExecutionTarget(executionTarget.target);
-    return current !== null
-      && current.serverId === executionTarget.serverId
-      && current.machine.id === executionTarget.machine.id;
-  }, [resolveExactExecutionTarget]);
+    return isMachineAdministrationExecutionTargetCurrent({
+      expectedTarget: executionTarget,
+      resolveCurrentTarget: resolveExecutionTargetRef.current,
+      expectedSelectionKey: requestedSelection,
+      currentSelectionKey: selectionKeyRef.current,
+    });
+  }, []);
   const [promptExternalLinksV1, setPromptExternalLinksV1] = useSettingMutable('promptExternalLinksV1');
   const [item, setItem] = React.useState<PromptRegistryFetchedItemV1 | null>(null);
   const [installTypes, setInstallTypes] = React.useState<PromptAssetTypeDescriptorV1[]>([]);

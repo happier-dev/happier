@@ -765,4 +765,33 @@ describe('ProviderConnectionModelsScreen', () => {
         expect(refresh).toHaveBeenCalledOnce();
         expect(screen.findByType(ProviderModelManager).props.groups[0].rows).toHaveLength(1);
     });
+
+    it('does not publish a manual catalog refresh after the selected target changes', async () => {
+        const deferred = createDeferred<Readonly<{
+            status: 'success'; models: readonly []; requestFingerprint: string;
+        }>>();
+        probeProviderConnection.mockReturnValueOnce(deferred.promise);
+        const { ProviderConnectionModelsScreen } = await import('./ProviderConnectionModelsScreen');
+        const screen = await renderScreen(React.createElement(ProviderConnectionModelsScreen, { connectionId: 'pc_a' }));
+        const refreshButton = screen.findAllByType('Pressable')
+            .find((item) => item.props.accessibilityLabel === 'common.refresh');
+
+        await act(async () => {
+            refreshButton?.props.onPress?.();
+            await Promise.resolve();
+        });
+        administrationTarget.controller.setMachines([
+            { machineId: 'machine-a', displayName: 'Mac' },
+            { machineId: 'machine-b', displayName: 'Linux' },
+        ]);
+        await act(async () => { administrationTarget.controller.select('machine-b', 'srv_test'); });
+        await act(async () => {
+            deferred.resolve({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:old-target' });
+        });
+        await vi.waitFor(() => expect(
+            screen.findByType(ProviderConnectionModelsView).props.refreshingCatalog,
+        ).toBe(false));
+
+        expect(refresh).not.toHaveBeenCalled();
+    });
 });

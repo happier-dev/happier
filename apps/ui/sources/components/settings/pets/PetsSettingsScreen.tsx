@@ -34,7 +34,7 @@ import {
     useMachineAdministrationTargetSelection,
     type FreshMachineAdministrationExecutionTargetV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
-import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { normalizePetCompanionSizeScale } from '@/sync/domains/pets/companionSizeScale';
 import { normalizeLocalPetSourceMetadata } from '@/sync/domains/pets/normalizeLocalPetSources';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -94,11 +94,10 @@ export function PetsSettingsScreen() {
     const isExecutionTargetCurrent = React.useCallback((
         target: FreshMachineAdministrationExecutionTargetV1,
     ) => {
-        const current = administrationTargetSelection.resolveExecutionTarget();
-        return current !== null
-            && current.serverId === target.serverId
-            && current.machine.id === target.machine.id
-            && machineAdministrationTargetsEqual(current.target, target.target);
+        return isMachineAdministrationExecutionTargetCurrent({
+            expectedTarget: target,
+            resolveCurrentTarget: administrationTargetSelection.resolveExecutionTarget,
+        });
     }, [administrationTargetSelection.resolveExecutionTarget]);
     const accountPetsById = storage((state) => state.accountPetsById);
     const localPetSourcesBySourceKey = storage((state) => state.localPetSourcesBySourceKey);

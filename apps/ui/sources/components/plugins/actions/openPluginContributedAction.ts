@@ -92,7 +92,7 @@ export async function openPluginContributedActionSessionReference(params: Readon
 export async function openPluginContributedActionReference(params: Readonly<{
     controller: PluginContributedActionController;
     action: Readonly<{ pluginId: string; localId: string }>;
-    input: unknown;
+    input?: unknown;
     signal?: AbortSignal;
 }>): Promise<void> {
     if (params.signal?.aborted) return;

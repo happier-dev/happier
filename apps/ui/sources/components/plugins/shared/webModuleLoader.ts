@@ -4,19 +4,6 @@ export type PluginWebModuleNamespace = Readonly<{
 
 export type PluginWebModuleImporter = (url: string) => Promise<PluginWebModuleNamespace>;
 
-export function decodeWebModuleSource(bytes: Uint8Array): string {
-    try {
-        return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-    } catch {
-        return '';
-    }
-}
-
-export function hasForbiddenWebModuleImport(source: string): boolean {
-    return /(?:from\s*['"]@\/|import\s*\(\s*['"]@\/|from\s*['"]react(?:\/jsx-runtime|\/jsx-dev-runtime)?['"]|from\s*['"]react-native-web['"]|import\s*\(\s*['"]react(?:\/jsx-runtime|\/jsx-dev-runtime)?['"]|import\s*\(\s*['"]react-native-web['"]|apps\/ui\/sources)/u
-        .test(source);
-}
-
 export async function importWebModuleFromBytesViaBlobUrl(
     bytes: Uint8Array,
     importModule: PluginWebModuleImporter,

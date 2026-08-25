@@ -62,4 +62,15 @@ describe('resolvePluginUiIconToken', () => {
         expect(resolvePluginUiIconName('settings')).toBe('gear');
         expect(resolvePluginUiIconName('refresh')).toBe('arrow-clockwise');
     });
+
+    it('mirrors logical back and forward tokens in right-to-left presentation', () => {
+        const resolvePluginUiIconName = Reflect.get(iconTokenResolver, 'resolvePluginUiIconName');
+        expect(resolvePluginUiIconName).toBeTypeOf('function');
+        if (typeof resolvePluginUiIconName !== 'function') return;
+
+        expect(resolvePluginUiIconName('back', 'rtl')).toBe('arrow-right');
+        expect(resolvePluginUiIconName('forward', 'rtl')).toBe('arrow-left');
+        expect(resolvePluginUiIconName('back', 'ltr')).toBe('arrow-left');
+        expect(resolvePluginUiIconName('forward', 'ltr')).toBe('arrow-right');
+    });
 });

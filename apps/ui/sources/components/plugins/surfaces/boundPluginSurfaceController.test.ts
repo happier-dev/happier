@@ -48,6 +48,11 @@ function resolveDaemonTargetAction(
         surfaces: ['ui'],
         execution: { target: 'daemon' },
         dangerLevel: 'safe',
+        // The canonical daemon writer stamps `available` on every projected
+        // Action (apps/cli/src/plugins/projection/registry/projection/v2.ts),
+        // so an ordinary reachable fixture must carry it too. The deliberate
+        // unavailable case lives in its own negative control below.
+        available: true,
     };
 }
 
@@ -70,7 +75,19 @@ function resolveClientTargetAction(
             platforms: ['web'],
         },
         dangerLevel: 'safe',
+        available: true,
     };
+}
+
+/**
+ * The exact same client target the daemon reports as not currently
+ * registered. This is the negative control for the one fail-closed
+ * executability rule (`isPluginProjectedActionExecutable`).
+ */
+function resolveUnavailableClientTargetAction(
+    identity: PluginContributionIdentityV1,
+): PluginProjectedActionV2 {
+    return { ...resolveClientTargetAction(identity), available: false };
 }
 
 const FACTS = {
@@ -147,6 +164,30 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         }))).resolves.toEqual({
             code: 'unavailable',
             diagnostics: ['plugin_surface_client_action_unavailable'],
+        });
+        expect(executeContributedAction).not.toHaveBeenCalled();
+    });
+
+    it('refuses an Action the daemon projection reports as not currently available', async () => {
+        const executeContributedAction = vi.fn();
+        const controller = createBoundPluginSurfaceController({
+            facts: {
+                ...FACTS,
+                daemonInteractionEnabled: false,
+                resolveContributedAction: resolveUnavailableClientTargetAction,
+            },
+            binding: { executeContributedAction: executeContributedAction as never },
+        });
+
+        // Same identity, same target, same transport state as the positive
+        // twin above — only `available` differs, so this discriminates the
+        // fail-closed executability rule from every other refusal.
+        await expect(controller.hostApi.handleRequest(request('executeAction', {
+            action: 'refresh-index',
+            input: {},
+        }))).resolves.toEqual({
+            code: 'unavailable',
+            diagnostics: ['plugin_surface_action_projection_unavailable'],
         });
         expect(executeContributedAction).not.toHaveBeenCalled();
     });
@@ -1450,7 +1491,7 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         cancelledController.dispose();
     });
 
-    it('fences an in-flight openSurface settlement behind the mount lifetime it owns', async () => {
+    it('preserves a known openSurface success when its mount retires after settlement wins', async () => {
         let settle: ((value: { ok: true }) => void) | undefined;
         const openSurface = vi.fn(() => new Promise<{ ok: true }>((resolve) => {
             settle = resolve;
@@ -1465,16 +1506,31 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         }));
         expect(openSurface).toHaveBeenCalledTimes(1);
 
-        // The user may leave, the contribution can be replaced, or the Account
-        // realm can retire while a destination admission is in flight. A late
-        // success must not be reported to the retired renderer.
-        controller.dispose();
         settle!({ ok: true });
 
-        await expect(pending).resolves.toEqual({
+        await expect(pending).resolves.toBeNull();
+        controller.dispose();
+    });
+
+    it('rejects openSurface before its outward effect is admitted after mount retirement', async () => {
+        const openSurface = vi.fn(async () => ({ ok: true as const }));
+        const controller = createBoundPluginSurfaceController({
+            facts: FACTS,
+            binding: { openSurface },
+        });
+
+        controller.dispose();
+
+        // A retired mount refuses synchronously, so the host result is
+        // normalised the same way every other refusal assertion in this file
+        // is — the contract is the value, not whether it was awaited.
+        await expect(Promise.resolve(controller.hostApi.handleRequest(request('openSurface', {
+            destination: { pluginId: 'acme.browser', localId: 'settings' },
+        })))).resolves.toEqual({
             code: 'stale_surface',
             diagnostics: ['plugin_surface_retired'],
         });
+        expect(openSurface).not.toHaveBeenCalled();
     });
 
     it('preserves a known Action success when its mount retires after settlement wins', async () => {

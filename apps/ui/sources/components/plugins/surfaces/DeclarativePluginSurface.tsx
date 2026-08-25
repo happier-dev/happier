@@ -17,8 +17,10 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 import {
+    HappierUiEnvironmentProvider,
     resolveHappierUiPresentationTheme,
     type HappierUiAccessibility,
+    type HappierUiEnvironment,
 } from '@happier-dev/plugin-ui/environment';
 
 import {
@@ -32,6 +34,7 @@ import {
     type ComposerTransactionV1,
     type PluginJsonValueV2,
 } from '@happier-dev/protocol';
+import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import {
     PluginUiJsonValueV1Schema,
     type PluginUiJsonValueV1,
@@ -40,11 +43,12 @@ import {
 import { PluginSurfaceInteractionBoundary } from '@/components/plugins/shared/PluginSurfaceInteractionBoundary';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import {
+    createDeclarativeTextResolver,
     readDeclarativeRecord as record,
-    readDeclarativeText as localized,
     renderDeclarativeNode,
     type DeclarativeActionAffordance,
     type DeclarativeNodeRenderContext,
+    type DeclarativeTextResolver,
 } from '@/components/plugins/shared/declarativeNodes';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -81,7 +85,8 @@ import {
     resolvePluginSurfaceDestinationLabel,
 } from './pluginSurfaceDestinations';
 import { projectPluginUiTheme } from './pluginUiThemeProjection';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type {
     PluginUiProjectionModel,
@@ -210,6 +215,7 @@ function declarativeControlKind(
 function projectDeclarativeDeclaredField(
     node: RecordValue,
     binding: DeclarativeSettingBinding,
+    localized: DeclarativeTextResolver,
 ): PluginProjectionEditableSettingField | null {
     const control = record(node.control);
     const setting = record(node.setting);
@@ -257,12 +263,15 @@ function projectDeclarativeDeclaredField(
 function collectDeclarativeSettingsFields(
     nodeValue: unknown,
     fields: DeclarativeSettingsFieldBuckets,
+    localized: DeclarativeTextResolver,
 ): void {
     const node = record(nodeValue);
     if (!node) return;
     if (node.kind === 'field') {
         const binding = readDeclarativeSettingBinding(node);
-        const declaredField = binding ? projectDeclarativeDeclaredField(node, binding) : null;
+        const declaredField = binding
+            ? projectDeclarativeDeclaredField(node, binding, localized)
+            : null;
         if (binding && declaredField) {
             const bucket = binding.scope === 'account' && binding.secret
                 ? 'accountSecrets'
@@ -282,11 +291,14 @@ function collectDeclarativeSettingsFields(
         }
     }
     if (Array.isArray(node.children)) {
-        for (const child of node.children) collectDeclarativeSettingsFields(child, fields);
+        for (const child of node.children) collectDeclarativeSettingsFields(child, fields, localized);
     }
 }
 
-function collectDeclarativeSettingsInventory(root: RecordValue | null): DeclarativeSettingsInventory {
+function collectDeclarativeSettingsInventory(
+    root: RecordValue | null,
+    localized: DeclarativeTextResolver,
+): DeclarativeSettingsInventory {
     const fields: DeclarativeSettingsFieldBuckets = {
         account: [],
         accountDeclaredFields: [],
@@ -294,7 +306,7 @@ function collectDeclarativeSettingsInventory(root: RecordValue | null): Declarat
         daemon: [],
         daemonDeclaredFields: [],
     };
-    if (root) collectDeclarativeSettingsFields(root, fields);
+    if (root) collectDeclarativeSettingsFields(root, fields, localized);
     return Object.freeze({
         account: Object.freeze(fields.account),
         accountDeclaredFields: Object.freeze(fields.accountDeclaredFields),
@@ -581,12 +593,16 @@ function readCollectionRowCommandPendingState(input: Readonly<{
 }
 
 export function DeclarativePluginSurface(props: Readonly<{
+    /** Complete mounted environment shared by every declarative root family. */
+    environment?: HappierUiEnvironment;
     pluginId: string;
     model: unknown;
     machineId?: string | null;
     serverId?: string | null;
     /** Settings routes may supply the exact Administration target; null is fail-closed. */
     daemonSettingsTarget?: ScopedPluginSettingsDaemonTarget | null;
+    /** Portable selected-server identity for Account perActiveServer bindings. */
+    perActiveServerIdentityId?: string | null;
     isDaemonSettingsTargetCurrent?: (target: ScopedPluginSettingsDaemonTarget) => boolean;
     /** Settings routes can keep Account and daemon field availability independent. */
     settingsScopesEnabled?: Readonly<{ account: boolean; daemon: boolean }>;
@@ -660,6 +676,21 @@ export function DeclarativePluginSurface(props: Readonly<{
         () => resolveHappierUiPresentationTheme(projectedPresentationTheme, props.contrast ?? 'normal'),
         [projectedPresentationTheme, props.contrast],
     );
+    // A mounted document is live UI, so its declared keys resolve against the
+    // surface environment's admitted bundle for the current locale. The author's
+    // fallback still answers every key that bundle does not define.
+    const localized = React.useMemo(
+        () => createDeclarativeTextResolver(props.environment?.localization.translate),
+        [props.environment],
+    );
+    const pluginLocale = getPreferredLanguage();
+    const localizePluginText = React.useMemo(
+        () => createPluginLocalizedTextResolver({
+            projection: props.pluginUiProjection,
+            locale: pluginLocale,
+        }),
+        [pluginLocale, props.pluginUiProjection],
+    );
     const model = record(props.model);
     const identity = record(model?.identity);
     const root = record(model?.root);
@@ -674,7 +705,10 @@ export function DeclarativePluginSurface(props: Readonly<{
         generation,
     }), [generation, model, props.pluginId]);
     const [pendingActions, setPendingActions] = React.useState<ReadonlySet<string>>(new Set());
-    const settingsInventory = React.useMemo(() => collectDeclarativeSettingsInventory(root), [root]);
+    const settingsInventory = React.useMemo(
+        () => collectDeclarativeSettingsInventory(root, localized),
+        [localized, root],
+    );
     const settingsSourceLifetimeIdentity = `${qualifiedId}:${generation ?? 'unavailable'}:${props.authorityGeneration}`;
     const accountServerIdentityId = React.useMemo(
         () => resolveScopedPluginSettingsServerIdentity(activeServer.serverId),
@@ -702,7 +736,9 @@ export function DeclarativePluginSurface(props: Readonly<{
     // The target selection belongs to Administration/UI. Account record
     // custody remains active-server-only; an Account per-server binding reads
     // this separate portable identity when a declaration supports one.
-    const perActiveServerIdentityId = daemonTarget?.serverIdentityId ?? null;
+    const perActiveServerIdentityId = props.perActiveServerIdentityId === undefined
+        ? daemonTarget?.serverIdentityId ?? null
+        : props.perActiveServerIdentityId;
     const accountSettingsEnabled = props.settingsScopesEnabled?.account ?? props.interactionEnabled;
     const daemonSettingsEnabled = props.settingsScopesEnabled?.daemon ?? props.daemonInteractionEnabled;
     const accountSettings = useScopedPluginSettingsProjection({
@@ -756,7 +792,7 @@ export function DeclarativePluginSurface(props: Readonly<{
     const minimumTouchTarget = resolveMinimumInteractiveTargetSize(Platform.OS);
     const composerScopeKey = props.composerRef === undefined
         ? 'unavailable'
-        : JSON.stringify(props.composerRef);
+        : composerRefV1Key(props.composerRef);
 
     React.useEffect(() => {
         scopeSequenceRef.current += 1;
@@ -928,7 +964,7 @@ export function DeclarativePluginSurface(props: Readonly<{
                     id: `action:${action.qualifiedId}:${commandIndex}`,
                     label: action.title,
                     ...(action.icon ? {
-                        icon: <Icon name={resolvePluginUiIconName(action.icon)} size={ICON_SIZE.sm} />,
+                        icon: <Icon name={resolvePluginUiIconName(action.icon, props.environment?.direction)} size={ICON_SIZE.sm} />,
                     } : {}),
                     disabled,
                     busy,
@@ -947,8 +983,8 @@ export function DeclarativePluginSurface(props: Readonly<{
                 || resolvePluginSurfaceDestinationDisabledReason(placement, props.policyContext) !== null;
             return Object.freeze({
                 id: `destination:${destination.qualifiedId}:${commandIndex}`,
-                label: resolvePluginSurfaceDestinationLabel(placement),
-                icon: <Icon name={resolvePluginSurfaceDestinationIcon(placement)} size={ICON_SIZE.sm} />,
+                label: resolvePluginSurfaceDestinationLabel(placement, localizePluginText),
+                icon: <Icon name={resolvePluginSurfaceDestinationIcon(placement, props.environment?.direction)} size={ICON_SIZE.sm} />,
                 disabled,
                 onPress: () => { void props.openSurface(destination.identity); },
             });
@@ -977,6 +1013,7 @@ export function DeclarativePluginSurface(props: Readonly<{
         props.pluginId,
         props.pluginUiProjection,
         props.policyContext,
+        localizePluginText,
         runAction,
     ]);
     const getCollectionRowCommandState = React.useCallback((
@@ -1227,21 +1264,25 @@ export function DeclarativePluginSurface(props: Readonly<{
 
     const rootCollectionListOwnsScrollViewport = props.embeddedPresentation !== 'content'
         && root?.kind === 'collectionList';
-    const renderCollectionList = (node: RecordValue): React.ReactNode => (
-        <DeclarativeCollectionList
-            key={typeof node.path === 'string' ? node.path : 'root'}
-            pluginId={props.pluginId}
-            modelGeneration={generation ?? ''}
-            node={node}
-            accountLifetime={props.accountLifetime ?? null}
-            dataClient={props.dataClient ?? null}
-            presentationTheme={presentationTheme}
-            minimumTouchTarget={minimumTouchTarget}
-            ownsScrollViewport={rootCollectionListOwnsScrollViewport && node === root}
-            resolveRowCommands={resolveCollectionRowCommands}
-            getRowCommandState={getCollectionRowCommandState}
-        />
-    );
+    const renderCollectionList = (node: RecordValue): React.ReactNode => {
+        const accessibilityLabel = localized(node.label);
+        return (
+            <DeclarativeCollectionList
+                key={typeof node.path === 'string' ? node.path : 'root'}
+                pluginId={props.pluginId}
+                modelGeneration={generation ?? ''}
+                node={node}
+                accountLifetime={props.accountLifetime ?? null}
+                dataClient={props.dataClient ?? null}
+                presentationTheme={presentationTheme}
+                minimumTouchTarget={minimumTouchTarget}
+                {...(accessibilityLabel ? { accessibilityLabel } : {})}
+                ownsScrollViewport={rootCollectionListOwnsScrollViewport && node === root}
+                resolveRowCommands={resolveCollectionRowCommands}
+                getRowCommandState={getCollectionRowCommandState}
+            />
+        );
+    };
 
     let renderContext!: DeclarativeNodeRenderContext;
     const renderTargetedSurface = (node: RecordValue): React.ReactNode => {
@@ -1270,6 +1311,8 @@ export function DeclarativePluginSurface(props: Readonly<{
     renderContext = {
         colors: theme.colors,
         presentationTheme,
+        localize: localized,
+        direction: props.environment?.direction,
         contrast: props.contrast,
         minimumTouchTarget,
         resolveAction,
@@ -1349,7 +1392,7 @@ export function DeclarativePluginSurface(props: Readonly<{
             {renderNode(root)}
         </>
     );
-    return (
+    const renderedSurface = (
         <PluginSurfaceInteractionBoundary
             surfaceId={`declarative:${props.pluginId}:${qualifiedId}`}
             snapshotTitle={localized(root.title) || qualifiedId}
@@ -1378,4 +1421,7 @@ export function DeclarativePluginSurface(props: Readonly<{
             )}
         </PluginSurfaceInteractionBoundary>
     );
+    return props.environment
+        ? <HappierUiEnvironmentProvider environment={props.environment}>{renderedSurface}</HappierUiEnvironmentProvider>
+        : renderedSurface;
 }

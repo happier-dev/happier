@@ -1,7 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { setPreferredLanguageFromSettings } from '@/text';
 
 import {
     resolveConnectedServiceDisplayName,
@@ -58,8 +57,6 @@ describe('resolveQualifiedConnectedServiceRegistryDisplayName', () => {
         // `plugins.sentry.account.title` ships translated in every bundled
         // locale; reading only the developer `fallback` showed English to
         // every non-English user.
-        setPreferredLanguageFromSettings('fr');
-
         expect(resolveQualifiedConnectedServiceRegistryDisplayName({
             entries: [{
                 serviceId: 'sentry',
@@ -71,7 +68,14 @@ describe('resolveQualifiedConnectedServiceRegistryDisplayName', () => {
                     fallback: 'Sentry account',
                 },
             }],
-        }, { pluginId: 'happier.sentry', localId: 'sentry' }, (key) => key))
+        }, { pluginId: 'happier.sentry', localId: 'sentry' }, (key) => key, (pluginId, value) => (
+            pluginId === 'happier.sentry'
+            && typeof value === 'object'
+            && value !== null
+            && 'key' in value
+                ? 'Compte Sentry'
+                : ''
+        )))
             .toBe('Compte Sentry');
     });
 
@@ -97,8 +101,4 @@ describe('resolveQualifiedConnectedServiceRegistryDisplayName', () => {
             localId: 'gateway',
         }, (key) => key)).toBe('connectedServices.fallbackName');
     });
-});
-
-afterEach(() => {
-    setPreferredLanguageFromSettings(null);
 });

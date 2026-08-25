@@ -39,7 +39,7 @@ vi.mock('@/components/settings/SettingsDeveloperSection', () => ({
 }));
 
 describe('SettingsBelowFoldSections catalog order', () => {
-    it('keeps plugin-qualified groups in their resolved root position instead of manually placing them before later built-in groups', async () => {
+    it('keeps catalog groups ordered and delegates every catalog destination to the host navigation owner', async () => {
         catalogState.tree = [{
             id: 'settings',
             title: 'Settings',
@@ -78,6 +78,8 @@ describe('SettingsBelowFoldSections catalog order', () => {
                 }],
             }],
         }];
+        const push = vi.fn();
+        const onNavigate = vi.fn();
         const { SettingsBelowFoldSections } = await import('./SettingsBelowFoldSections');
         const screen = await renderScreen(
             <SettingsBelowFoldSections
@@ -87,7 +89,8 @@ describe('SettingsBelowFoldSections catalog order', () => {
                 handleGitHub={vi.fn()}
                 handleReportIssue={vi.fn()}
                 handleVersionClick={vi.fn()}
-                router={{ push: vi.fn() } as never}
+                onNavigate={onNavigate}
+                router={{ push } as never}
                 showAutomations={false}
                 showChangelog={false}
                 showRateUs={false}
@@ -101,5 +104,17 @@ describe('SettingsBelowFoldSections catalog order', () => {
             .map((group) => group.props.title)
             .filter((title): title is string => ['AI and Agents', 'Sessions', 'Files', 'System', 'Review'].includes(title));
         expect(rootTitles).toEqual(['AI and Agents', 'Sessions', 'Files', 'System', 'Review']);
+
+        for (const [title, route] of [
+            ['Agents', '/settings/agents'],
+            ['Session', '/settings/session'],
+            ['Attachments', '/settings/attachments'],
+            ['Servers', '/settings/servers'],
+            ['Review policy', '/settings/plugins/acme.review/policy'],
+        ] as const) {
+            screen.findAllByProps({ title })[0]?.props.onPress();
+            expect(onNavigate).toHaveBeenCalledWith(route);
+        }
+        expect(push).not.toHaveBeenCalled();
     });
 });

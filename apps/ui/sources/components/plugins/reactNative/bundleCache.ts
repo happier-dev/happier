@@ -1,4 +1,7 @@
 import {
+    deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1 as derivePluginReactNativeBundleCacheKey,
+} from '@happier-dev/protocol';
+import {
     isPluginUiHermesBytecodeArtifactV1,
     verifyPluginUiArtifactBytesIntegrityV1,
     verifyPluginUiArtifactFileSetIntegrityV1,
@@ -6,7 +9,6 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import {
-    derivePluginReactNativeBundleCacheKey,
     type PluginReactNativeBundleCacheIdentity,
 } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import {
@@ -299,7 +301,13 @@ export type CreatePluginReactNativeBundleCacheWithNativeArtifactResourcesOptions
     onPersistentCacheDiagnostic?: (code: string) => void;
 }>;
 
-function adaptPluginUiPersistentArtifactStoreForReactNativeBundleCache(
+/**
+ * Every host tier reaches the React Native bundle cache through this one
+ * adaptation, so a caller that already holds a tier-agnostic
+ * `PluginUiPersistentArtifactStore` narrows it here rather than re-declaring
+ * the RN-only record contract.
+ */
+export function adaptPluginUiPersistentArtifactStoreForReactNativeBundleCache(
     store: PluginUiPersistentArtifactStore,
 ): PluginReactNativePersistentArtifactStore {
     return Object.freeze({
@@ -493,9 +501,12 @@ export function createPluginReactNativeArtifactLeasePersistentScope(input: Reado
         scope: input.lifetime.scope,
     }) && operation.isCurrent();
     const canUseStore = () => operation !== null && operation.isOpen() && isCurrent();
-    // Source acquisition may finish before its revocable Artifact lease does.
-    // Availability withdrawal still needs this cache owner's exact-entry
-    // cleanup while the captured Account lifetime remains current.
+    // Source acquisition may finish before its revocable Artifact lease does. A
+    // lease that proves its retained bytes cannot satisfy the current digest
+    // still needs this cache owner's exact-entry cleanup while the captured
+    // Account lifetime remains current. Availability withdrawal alone does not:
+    // it retires reachability, and deletion of a superseded or withdrawn
+    // identity belongs to the projection writer that holds both snapshots.
     const canRemovePersistentArtifact = () => operation !== null && isCurrent();
     const store: PluginUiPersistentArtifactStore = Object.freeze({
         read: async (identity) => {
@@ -527,6 +538,7 @@ export function createPluginReactNativeArtifactLeasePersistentScope(input: Reado
         scope: input.lifetime.scope,
         store,
         isCurrent,
+        removePersistentArtifact: store.remove,
         release: () => operation?.release(),
     });
 }
@@ -548,9 +560,10 @@ export function createPluginReactNativeBundleCache(
     const quarantinedPersistentArtifactKeys = new Set<string>();
     const pendingPersistentAccountCleanups = new Map<string, Promise<void>>();
     // Exact deletes and later writes for one persistent identity must share
-    // ordering. An Availability A→B revoke can already be inside the storage
-    // adapter when A becomes current again; a fresh A write waits until that
-    // stale delete has drained instead of being erased by it afterward.
+    // ordering. An invalid-record discard for one key can already be inside the
+    // storage adapter when that same exact identity is re-verified and written
+    // again; the fresh write waits until that delete has drained instead of
+    // being erased by it afterward.
     const pendingPersistentArtifactRemovals = new Map<string, Promise<void>>();
     const persistentAccountGenerations = new Map<string, number>();
     const activePersistentAccountOperations = new Map<string, number>();

@@ -15,8 +15,9 @@ import {
     RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import type { CodexBackendMode } from '@happier-dev/protocol';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
-import type { AgentCoreConfig, AgentId, BundledAgentId, CanonicalAgentId } from './registryCore';
+import type { AgentCoreConfig, AgentId, BundledAgentId, CanonicalAgentId, PermissionPromptProtocol } from './registryCore';
 import {
     CANONICAL_AGENT_IDS,
     getAgentCore,
@@ -148,6 +149,21 @@ export type AgentBackendTransportContext = Readonly<{
     providerSessionId?: string;
 }>;
 
+/**
+ * Declarative data for a session-subagent launch surface. The registry owns
+ * which declared surface applies; the session-subagent UI adapter owns its
+ * physical React rendering and mount role.
+ */
+export type AgentSessionSubagentLaunchSurface = Readonly<{
+    slotId: string;
+    pluginId: string;
+    surfaceId: string;
+    sessionId: string;
+    machineId: string | null;
+    agentId: string;
+    launchInput?: PluginUiJsonValueV1;
+}>;
+
 export type AgentUiBehavior = Readonly<{
     /**
      * The bundled Agent that owns this behavior. It is deliberately absent
@@ -188,10 +204,16 @@ export type AgentUiBehavior = Readonly<{
     guidance?: Readonly<{
         includeInSessionGettingStartedCliExamples?: boolean;
     }>;
-    mcpServers?: Readonly<{
-        supportsDetectedConfigScan?: boolean;
-    }>;
     permissions?: Readonly<{
+        /**
+         * Which permission-prompt conversation this Agent speaks. It selects the
+         * footer's whole semantic action model — button set, handlers and
+         * terminal-decision reading — not just its wording, so it is a behavior
+         * fact rather than presentation. A bundled Agent's build-time core
+         * supplies it here; an installed Agent declares it in the same public
+         * block, so the footer has ONE owner for both.
+         */
+        promptProtocol?: PermissionPromptProtocol;
         footer?: Partial<AgentPermissionFooterBehavior>;
     }>;
     resume?: Readonly<{
@@ -285,6 +307,13 @@ export type AgentUiBehavior = Readonly<{
         buildSourceRecoveryResumePatch?: (ctx: {
             agentId: AgentId;
             metadata: Record<string, unknown>;
+            /**
+             * The Agent's own canonical runtime handle for the session being
+             * recovered. `metadata` is the strict Agent-facing handoff view,
+             * whose key list is first-party only, so this is where an installed
+             * Agent's declared runtime fields actually arrive.
+             */
+            runtimeDescriptorV1?: RuntimeDescriptorV1;
         }) => AgentSessionHandoffSourceRecoveryResumePatch;
     }>;
     payload?: Readonly<{
@@ -322,17 +351,12 @@ export type AgentUiBehavior = Readonly<{
             scopeId: string;
             session: Session;
             subagents: readonly SessionSubagent[];
+            renderInlineSurface: (surface: AgentSessionSubagentLaunchSurface) => ReactNode;
         }) => readonly ReactNode[];
         createTeammateLauncherDetailsTab?: (ctx: {
             session: Session;
             teamId: string;
         }) => DetailsTab | null;
-        renderDetailsTab?: (ctx: {
-            sessionId: string;
-            scopeId: string;
-            tab: DetailsTab;
-        }) => ReactNode | null;
-        getDetailsTabIconName?: (ctx: { tab: DetailsTab }) => string | null;
     }>;
 }>;
 
@@ -407,7 +431,6 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
             }
             : {}),
         ...(a.guidance || b.guidance ? { guidance: { ...(a.guidance ?? {}), ...(b.guidance ?? {}) } } : {}),
-        ...(a.mcpServers || b.mcpServers ? { mcpServers: { ...(a.mcpServers ?? {}), ...(b.mcpServers ?? {}) } } : {}),
         ...(a.permissions || b.permissions
             ? {
                 permissions: {
@@ -455,6 +478,7 @@ function buildDefaultAgentUiBehaviorFromCore(core: Pick<AgentCoreConfig, 'permis
 
     return {
         permissions: {
+            promptProtocol,
             footer: {
                 usePermissionUpdates: promptProtocol === 'claude',
                 forceReadOnlyAfterStop: promptProtocol !== 'codexDecision',
@@ -477,7 +501,7 @@ const CANONICAL_AGENTS_UI_BEHAVIOR_OVERRIDES = BUNDLED_CANONICAL_AGENT_UI_BEHAVI
 function resolveGeneratedAgentUiBehavior(agentId: CanonicalAgentId): AgentUiBehavior {
     const generatedDescriptor = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS[agentId]?.descriptor;
     const generatedBehavior = generatedDescriptor
-        ? createAgentUiBehaviorFromDescriptor(generatedDescriptor).behavior
+        ? createAgentUiBehaviorFromDescriptor(generatedDescriptor, agentId).behavior
         : {};
     return generatedBehavior;
 }
@@ -766,8 +790,10 @@ export function getNewSessionPreflightIssues(ctx: NewSessionPreflightContext): r
 export function buildNewSessionOptionsFromUiState(opts: {
     agentId: AgentLookupId;
     agentOptionState?: Record<string, unknown> | null;
+    /** The machine the composer is about to spawn on; see `buildSpawnSessionExtrasFromUiState`. */
+    machineId?: string | null;
 }): Record<string, unknown> | null {
-    const fn = resolveAgentUiBehavior(opts.agentId).newSession?.buildNewSessionOptions;
+    const fn = resolveAgentUiBehavior(opts.agentId, opts.machineId).newSession?.buildNewSessionOptions;
     return fn ? fn(opts) : null;
 }
 
@@ -780,8 +806,10 @@ export function getNewSessionAgentInputExtraActionChips(opts: {
     agentId: AgentLookupId;
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionState: (key: string, value: unknown) => void;
+    /** The machine the composer is about to spawn on; see `buildSpawnSessionExtrasFromUiState`. */
+    machineId?: string | null;
 }): ReadonlyArray<AgentInputExtraActionChip> | undefined {
-    const fn = resolveAgentUiBehavior(opts.agentId).newSession?.getAgentInputExtraActionChips;
+    const fn = resolveAgentUiBehavior(opts.agentId, opts.machineId).newSession?.getAgentInputExtraActionChips;
     return fn ? fn(opts) : undefined;
 }
 
@@ -878,6 +906,8 @@ function resolveAgentIdFromBackendTarget(input: BackendTargetRefV2Input | undefi
 }
 
 export function buildBackendTransportFieldsFromUiState(opts: Readonly<{
+    /** Exact daemon target that will consume the transport fields. */
+    machineId: string | null;
     backendTarget?: BackendTargetRefV2Input;
     providerMode?: unknown;
     legacyExperimentalMode?: boolean;
@@ -888,7 +918,7 @@ export function buildBackendTransportFieldsFromUiState(opts: Readonly<{
     const agentId = resolveAgentIdFromBackendTarget(opts.backendTarget);
     if (!backendTarget || !agentId) return {};
 
-    const fn = resolveAgentUiBehavior(agentId).payload?.buildBackendTransportFields;
+    const fn = resolveAgentUiBehavior(agentId, opts.machineId).payload?.buildBackendTransportFields;
     return fn
         ? fn({
             agentId,
@@ -901,19 +931,26 @@ export function buildBackendTransportFieldsFromUiState(opts: Readonly<{
         : {};
 }
 
+/**
+ * The Agent's own source-recovery patch for a handoff that is being rolled back
+ * onto the machine it came from.
+ *
+ * `machineId` is passed explicitly because the Agent-facing handoff metadata
+ * view deliberately drops host-owned facts such as `machineId`; deriving the
+ * machine from that view answered `null` for every real caller and silently
+ * degraded the read to the machine-blind floor.
+ */
 export function buildSessionHandoffSourceRecoveryResumePatch(opts: {
     agentId: AgentId;
+    machineId: string | null;
     metadata: Record<string, unknown>;
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
 }): AgentSessionHandoffSourceRecoveryResumePatch {
     const fn = resolveAgentUiBehavior(
         opts.agentId,
-        resolveSessionMachineId(opts.metadata),
+        opts.machineId,
     ).sessionHandoff?.buildSourceRecoveryResumePatch;
     return fn ? fn(opts) : {};
-}
-
-export function supportsDetectedMcpConfigScan(agentId: AgentLookupId): boolean {
-    return resolveAgentUiBehavior(agentId).mcpServers?.supportsDetectedConfigScan === true;
 }
 
 export function supportsEditableSessionGoals(ctx: {

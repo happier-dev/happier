@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AccessibilityInfo, Platform, View } from 'react-native';
+import { AccessibilityInfo, Platform, Pressable, View } from 'react-native';
 import type { ViewToken } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -10,6 +10,7 @@ import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { PluginDiagnosticsSection } from '@/components/settings/plugins/diagnostics/PluginDiagnosticsSection';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { restoreFocusToBestTarget } from '@/keyboard/focusReturn';
 import type { PluginDiagnosticDataV1 } from '@happier-dev/protocol';
 import type { PluginSessionHookInstallPreviewV1 } from '@happier-dev/protocol';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -63,6 +64,19 @@ type ExternalSessionsIntegrationVirtualizedRow =
         kind: 'supplemental';
         key: string;
         render: () => React.ReactElement;
+    }>;
+
+type ExternalSessionsPendingFocusReturn =
+    | Readonly<{
+        kind: 'integration';
+        agentIdentity: string;
+        action: ExternalSessionsIntegrationAction;
+        pendingKey: string;
+    }>
+    | Readonly<{
+        kind: 'auto_link';
+        sourceKey: string;
+        pendingKey: string;
     }>;
 
 function autoLinkSourceKey(source: ExternalSessionsAutoLinkSourceDescriptor): string {
@@ -237,11 +251,54 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
      */
     const announcedStateByAgentIdentityRef = React.useRef(new Map<string, ExternalSessionsIntegrationDescriptor['state']>());
     const [pendingKeys, setPendingKeys] = React.useState<ReadonlySet<string>>(() => new Set());
+    const replacementActionRef = React.useRef<React.ComponentRef<typeof Pressable> | null>(null);
+    const sectionFocusFallbackRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
+    const pendingFocusReturnRef = React.useRef<ExternalSessionsPendingFocusReturn | null>(null);
     const operations = props.operations;
     const inventoryActionsDisabled = Boolean(
         props.inventoryState
         && !isExternalSessionsIntegrationInventoryActionable(props.inventoryState.status),
     );
+
+    const armIntegrationFocusReturn = React.useCallback((
+        integration: ExternalSessionsIntegrationDescriptor,
+        action: ExternalSessionsIntegrationAction,
+        pendingKey: string,
+    ) => {
+        replacementActionRef.current = null;
+        pendingFocusReturnRef.current = {
+            kind: 'integration',
+            agentIdentity: integrationAgentIdentity(integration),
+            action,
+            pendingKey,
+        };
+    }, []);
+    const armAutoLinkFocusReturn = React.useCallback((sourceKey: string, pendingKey: string) => {
+        replacementActionRef.current = null;
+        pendingFocusReturnRef.current = {
+            kind: 'auto_link',
+            sourceKey,
+            pendingKey,
+        };
+    }, []);
+    const discardPendingFocusReturn = React.useCallback((pendingKey: string) => {
+        if (pendingFocusReturnRef.current?.pendingKey === pendingKey) {
+            pendingFocusReturnRef.current = null;
+        }
+    }, []);
+    const getReplacementActionRef = React.useCallback((
+        integration: ExternalSessionsIntegrationDescriptor,
+        actions: readonly ExternalSessionsIntegrationAction[],
+        action: ExternalSessionsIntegrationAction,
+    ) => {
+        const pendingFocusReturn = pendingFocusReturnRef.current;
+        return pendingFocusReturn?.kind === 'integration'
+            && pendingFocusReturn.agentIdentity === integrationAgentIdentity(integration)
+            && !actions.includes(pendingFocusReturn.action)
+            && actions[0] === action
+            ? replacementActionRef
+            : undefined;
+    }, []);
 
     const runAction = React.useCallback(async (
         integration: ExternalSessionsIntegrationDescriptor,
@@ -264,15 +321,21 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
             if (action === 'review_install') {
                 await operations.reviewAndInstall(
                     integration,
-                    async (preview) => await Modal.confirm(
-                        t('externalSessions.settingsIntegrationReviewTitle', { agent: integration.agentTitle }),
-                        t('externalSessions.settingsIntegrationReviewBody', {
-                            entries: formatInstallPreview(preview),
-                        }),
-                        {
-                            confirmText: t('externalSessions.settingsIntegrationActionInstall'),
-                        },
-                    ),
+                    async (preview) => {
+                        const confirmed = await Modal.confirm(
+                            t('externalSessions.settingsIntegrationReviewTitle', { agent: integration.agentTitle }),
+                            t('externalSessions.settingsIntegrationReviewBody', {
+                                entries: formatInstallPreview(preview),
+                            }),
+                            {
+                                confirmText: t('externalSessions.settingsIntegrationActionInstall'),
+                            },
+                        );
+                        if (confirmed) {
+                            armIntegrationFocusReturn(integration, action, pendingKey);
+                        }
+                        return confirmed;
+                    },
                 );
                 return;
             }
@@ -287,8 +350,10 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
                 );
                 if (!confirmed) return;
             }
+            armIntegrationFocusReturn(integration, action, pendingKey);
             await resolveActionOperation(action, operations)(integration);
         } catch {
+            discardPendingFocusReturn(pendingKey);
             await Modal.alertAsync(
                 t('common.error'),
                 t('externalSessions.settingsIntegrationActionFailed'),
@@ -302,7 +367,12 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
                 return next;
             });
         }
-    }, [inventoryActionsDisabled, operations]);
+    }, [
+        armIntegrationFocusReturn,
+        discardPendingFocusReturn,
+        inventoryActionsDisabled,
+        operations,
+    ]);
 
     React.useEffect(() => {
         const awaited = announcedStateByAgentIdentityRef.current;
@@ -331,8 +401,10 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
         pendingKeysRef.current.add(sourceKey);
         setPendingKeys((current) => new Set(current).add(pendingKey));
         try {
+            armAutoLinkFocusReturn(sourceKey, pendingKey);
             await source.setEnabled(enabled);
         } catch {
+            discardPendingFocusReturn(pendingKey);
             await Modal.alertAsync(
                 t('common.error'),
                 t('externalSessions.settingsAutoLinkUpdateFailed'),
@@ -346,7 +418,44 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
                 return next;
             });
         }
-    }, []);
+    }, [armAutoLinkFocusReturn, discardPendingFocusReturn]);
+
+    React.useEffect(() => {
+        const pendingFocusReturn = pendingFocusReturnRef.current;
+        if (!pendingFocusReturn || pendingKeys.has(pendingFocusReturn.pendingKey)) return;
+
+        if (pendingFocusReturn.kind === 'integration') {
+            if (integrations === null) return;
+            const integration = integrations.find((candidate) => (
+                integrationAgentIdentity(candidate) === pendingFocusReturn.agentIdentity
+            ));
+            const actions = integration
+                ? resolveExternalSessionsIntegrationActions(integration, operations)
+                : [];
+
+            // A refresh can leave Check Again (or a stale action) in place. It is still the
+            // current control, so moving focus would take it away from the user.
+            if (actions.includes(pendingFocusReturn.action)) {
+                pendingFocusReturnRef.current = null;
+                return;
+            }
+
+            pendingFocusReturnRef.current = null;
+            restoreFocusToBestTarget(replacementActionRef, sectionFocusFallbackRef);
+            return;
+        }
+
+        if (autoLinkSources === null) return;
+        if (autoLinkSources.some((source) => (
+            autoLinkSourceKey(source) === pendingFocusReturn.sourceKey
+        ))) {
+            pendingFocusReturnRef.current = null;
+            return;
+        }
+
+        pendingFocusReturnRef.current = null;
+        restoreFocusToBestTarget(replacementActionRef, sectionFocusFallbackRef);
+    }, [autoLinkSources, integrations, operations, pendingKeys]);
 
     const inventoryStatus = props.inventoryState?.status;
     const inventoryTitle = inventoryStatus === 'loading'
@@ -632,6 +741,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
                             disabled={inventoryActionsDisabled || pendingKeysRef.current.has(integration.key)}
                             destructive={action === 'uninstall'}
                             showChevron={false}
+                            pressableRef={getReplacementActionRef(integration, actions, action)}
                             onPress={() => {
                                 void runAction(integration, action);
                             }}
@@ -643,6 +753,7 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
         );
     }, [
         operations,
+        getReplacementActionRef,
         inventoryActionsDisabled,
         pendingKeys,
         props.agentTitle,
@@ -688,38 +799,49 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
                 </View>
             ) : null;
         return (
-            <VirtualizedList
-                testID="settings-external-sessions-virtualized-list"
-                data={virtualizedRows}
-                keyExtractor={(item) => item.key}
-                renderItem={renderVirtualizedRow}
-                style={{
-                    flex: 1,
-                    backgroundColor: theme.colors.background.canvas,
-                    ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
-                }}
-                contentContainerStyle={{ paddingBottom: Platform.OS === 'ios' ? 34 : 16 }}
-                ListHeaderComponent={(
-                    <>
-                        {props.virtualizedHeader}
-                        {inventoryAnnouncementElement}
-                    </>
-                )}
-                backendPreference="auto"
-                initialNumToRender={6}
-                maxToRenderPerBatch={4}
-                windowSize={7}
-                estimatedItemSize={120}
-                maintainVisibleContentPosition
-                onEndReached={requestMoreInventory}
-                onEndReachedThreshold={0.5}
-                onViewableItemsChanged={handleViewableItemsChanged}
-            />
+            <View
+                ref={sectionFocusFallbackRef}
+                testID="settings-external-sessions-focus-fallback"
+                style={{ flex: 1 }}
+                {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})}
+            >
+                <VirtualizedList
+                    testID="settings-external-sessions-virtualized-list"
+                    data={virtualizedRows}
+                    keyExtractor={(item) => item.key}
+                    renderItem={renderVirtualizedRow}
+                    style={{
+                        flex: 1,
+                        backgroundColor: theme.colors.background.canvas,
+                        ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
+                    }}
+                    contentContainerStyle={{ paddingBottom: Platform.OS === 'ios' ? 34 : 16 }}
+                    ListHeaderComponent={(
+                        <>
+                            {props.virtualizedHeader}
+                            {inventoryAnnouncementElement}
+                        </>
+                    )}
+                    backendPreference="auto"
+                    initialNumToRender={6}
+                    maxToRenderPerBatch={4}
+                    windowSize={7}
+                    estimatedItemSize={120}
+                    maintainVisibleContentPosition
+                    onEndReached={requestMoreInventory}
+                    onEndReachedThreshold={0.5}
+                    onViewableItemsChanged={handleViewableItemsChanged}
+                />
+            </View>
         );
     }
 
     return (
-        <>
+        <View
+            ref={sectionFocusFallbackRef}
+            testID="settings-external-sessions-focus-fallback"
+            {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})}
+        >
             {props.inventoryState
                 && props.inventoryState.status !== 'idle'
                 && props.inventoryState.status !== 'ready' ? (
@@ -811,6 +933,11 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
                                             disabled={inventoryActionsDisabled || pendingKeysRef.current.has(integration.key)}
                                             destructive={action === 'uninstall'}
                                             showChevron={false}
+                                            pressableRef={getReplacementActionRef(
+                                                integration,
+                                                actions,
+                                                action,
+                                            )}
                                             onPress={() => {
                                                 void runAction(integration, action);
                                             }}
@@ -911,6 +1038,6 @@ export const ExternalSessionsIntegrationSection = React.memo(function ExternalSe
                     showChevron={false}
                 />
             </ItemGroup>
-        </>
+        </View>
     );
 });

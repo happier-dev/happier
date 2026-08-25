@@ -70,6 +70,7 @@ import {
     settlePluginSurfaceHostApiRequest,
     type PluginSurfaceHostApiRequestOptions,
 } from '../surfaces/createPluginSurfaceHostApi';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { decodeBase64 } from '@/encryption/base64';
 
 export type PluginReactNativeHostApiRequestHandler = (
@@ -200,6 +201,31 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
         }
     }
 
+    /**
+     * The direct RN/RNW carrier has no cancellation wire. Caller withdrawal
+     * therefore settles this carrier immediately, while the mounted handler
+     * may finish its own work in the background. A response that wins first
+     * stays authoritative; a later response after withdrawal is inert.
+     */
+    function settleWithCallerCancellation<T>(
+        settlement: Promise<T>,
+        signal: AbortSignal | undefined,
+    ): Promise<T> {
+        if (!signal) return settlement;
+        if (signal.aborted) {
+            return Promise.reject(createHostApiError('unavailable', ['aborted']));
+        }
+        let removeAbortListener: (() => void) | undefined;
+        const cancellation = new Promise<never>((_resolve, reject) => {
+            const onAbort = () => reject(createHostApiError('unavailable', ['aborted']));
+            removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+            signal.addEventListener('abort', onAbort, { once: true });
+        });
+        return Promise.race([settlement, cancellation]).finally(() => {
+            removeAbortListener?.();
+        });
+    }
+
     async function request(
         rawMethod: PluginUiHostApiRequestMethodV1,
         payload?: PluginUiJsonValueV1,
@@ -215,6 +241,7 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             return params.requestSurface;
         }
         assertActive();
+        throwIfAborted(options?.signal);
         const envelope = createRequestEnvelope({
             requestId: createRequestId(),
             surface: params.requestSurface,
@@ -222,9 +249,12 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             ...(payload !== undefined ? { payload } : {}),
         });
 
-        const response = await settlePluginSurfaceHostApiRequest(
-            envelope,
-            () => params.handleRequest(envelope, options),
+        const response = await settleWithCallerCancellation(
+            settlePluginSurfaceHostApiRequest(
+                envelope,
+                () => params.handleRequest(envelope, options),
+            ),
+            options?.signal,
         );
         if (response.kind === 'error') {
             throwHostApiError(response.payload.code, response.payload.diagnostics);
@@ -663,16 +693,15 @@ function readCanonicalComposerContentInspection(value: PluginUiJsonValueV1 | und
  *
  * - `context` / `watchContext` settle from mount-owned facts with nothing
  *   awaited, so the entry check IS the whole window;
- * - reads (`readResource`, `statOpenableContent`, `readOpenableContent`,
- *   `readClipboard`) re-check the signal at settlement, so an author who
- *   aborted receives the typed failure rather than data it no longer wants;
+ * - all in-flight request calls pass caller cancellation through the one
+ *   transport seam, which rejects promptly when withdrawal wins and ignores a
+ *   later mounted-handler response;
  * - `confirm` is the only member whose in-flight window is bounded by the USER,
  *   so the signal is forwarded to the mount: aborting dismisses the dialog and
  *   the withdrawal is never reported as a decline;
  * - outward effects (`executeAction`, `notify`, `openSurface`, `writeClipboard`,
- *   `openExternalLink`) deliberately keep the host settlement authoritative
- *   (§2, §3.5). Rejecting one after it applied would tell the author nothing
- *   happened and invite a blind retry of a mutation that already ran.
+ *   `openExternalLink`) preserve a host settlement that wins before caller
+ *   withdrawal; cancellation does not promise to roll back a host effect.
  */
 export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<{
     surface: SurfaceContext;
@@ -713,6 +742,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             params.getAdmissionMethods?.() ?? params.getInstalledMethods?.() ?? params.installedMethods,
         );
     let currentSurface = params.surface;
+    let currentSurfaceSemanticKey = stableJsonStringify(currentSurface);
     // The operation is never serialized in the public executeAction payload.
     // Each admitted operation retains only its latest selected settlement.
     type RetainedSelectedActionInput = Readonly<{
@@ -792,7 +822,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         version: () => Object.freeze({
             apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
             wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
-            methods: resolveNegotiatedMethods(),
+            // This mount's structural contract is stable. Transient daemon
+            // reachability is reported by assertInstalled as typed
+            // `unavailable`, matching the hosted-web negotiation semantics.
+            methods: resolveStructuralMethods(),
         }),
         publishCurrentUiContext: (enrichment) => {
             assertActive();
@@ -954,7 +987,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             assertInstalled('readResource');
             const result = await transport.request('readResource', {
                 resource: canonicalReferencePayload(resource),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
             assertActive(options?.signal);
             return readCanonicalResource(result);
         },
@@ -1159,7 +1192,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 // Protocol schema owns what a legal location is.
                 ...(options?.subPath !== undefined ? { subPath: options.subPath } : {}),
                 ...(options?.instanceKey !== undefined ? { instanceKey: options.instanceKey } : {}),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
         // EU-5b's interaction counterpart: the page's OWN location, replaced in
         // place. It is a separate method from `openSurface` because it is a
@@ -1188,7 +1221,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             await transport.request('notify', {
                 message,
                 ...(options?.severity === undefined ? {} : { severity: options.severity }),
-            });
+            }, options?.signal ? { signal: options.signal } : undefined);
         },
         // The one method whose in-flight window is bounded by the USER rather
         // than by host work, so the author's signal must reach the mount and not
@@ -1224,7 +1257,11 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         readClipboard: async (options) => {
             assertActive(options?.signal);
             assertInstalled('readClipboard');
-            const result = await transport.request('readClipboard');
+            const result = await transport.request(
+                'readClipboard',
+                undefined,
+                options?.signal ? { signal: options.signal } : undefined,
+            );
             assertActive(options?.signal);
             if (typeof result === 'string') return result;
             const record = result && typeof result === 'object' && !Array.isArray(result)
@@ -1236,12 +1273,20 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         writeClipboard: async (value, options) => {
             assertActive(options?.signal);
             assertInstalled('writeClipboard');
-            await transport.request('writeClipboard', { value });
+            await transport.request(
+                'writeClipboard',
+                { value },
+                options?.signal ? { signal: options.signal } : undefined,
+            );
         },
         openExternalLink: async (url, options) => {
             assertActive(options?.signal);
             assertInstalled('openExternalLink');
-            await transport.request('openExternalLink', { url });
+            await transport.request(
+                'openExternalLink',
+                { url },
+                options?.signal ? { signal: options.signal } : undefined,
+            );
         },
     };
     const api = Object.freeze(apiShape);
@@ -1252,7 +1297,10 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         publishComposerSubscriptionEvent: (input) => transport.publishComposerSubscriptionEvent(input),
         pushSurfaceContext: (surface: SurfaceContext) => {
             if (disposed || surface === currentSurface) return;
+            const surfaceSemanticKey = stableJsonStringify(surface);
+            if (surfaceSemanticKey === currentSurfaceSemanticKey) return;
             currentSurface = surface;
+            currentSurfaceSemanticKey = surfaceSemanticKey;
             // Serialized per push and isolated per listener: one author's
             // failure never stops the next subscriber from observing the change.
             for (const watcher of [...contextWatchers]) {

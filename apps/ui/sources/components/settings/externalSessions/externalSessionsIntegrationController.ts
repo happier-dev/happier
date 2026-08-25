@@ -302,13 +302,14 @@ export function createExternalSessionsIntegrationOperations(params: Readonly<{
         ) => Promise<PluginSessionHookToggleResponseV1>,
     ): Promise<void> {
         if (!isCurrentScope()) return;
+        const requestIsCurrent = params.startRequest?.(integration.key) ?? (() => true);
         const result = await operation({
             machineId: integration.machineId,
             serverId: params.serverId,
             agent: integration.agent,
             installationId: requireInstallationId(integration),
         });
-        if (!isCurrentScope()) return;
+        if (!requestIsCurrent() || !isCurrentScope()) return;
         assertMutationSucceeded(result);
         if (result.ok) params.applyStatus(integration, result.status);
     }
@@ -399,13 +400,14 @@ export function createExternalSessionsIntegrationOperations(params: Readonly<{
         },
         uninstall: async (integration) => {
             if (!isCurrentScope()) return;
+            const requestIsCurrent = params.startRequest?.(integration.key) ?? (() => true);
             const result = await transport.uninstall({
                 machineId: integration.machineId,
                 serverId: params.serverId,
                 agent: integration.agent,
                 installationId: requireInstallationId(integration),
             });
-            if (!isCurrentScope()) return;
+            if (!requestIsCurrent() || !isCurrentScope()) return;
             assertMutationSucceeded(result);
             if (result.ok) params.applyStatus(integration, result.status);
         },
@@ -464,7 +466,14 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
     const isExecutionTargetCurrentRef = React.useRef(params.isExecutionTargetCurrent);
     isExecutionTargetCurrentRef.current = params.isExecutionTargetCurrent;
     const requestRevisionRef = React.useRef(0);
-    const previewRevisionByIntegrationKeyRef = React.useRef(new Map<string, number>());
+    /**
+     * How many ROOT inventory listings have opened. A root listing republishes every
+     * row, so it retires every older row read — but `requestRevisionRef` cannot say
+     * that on its own, because a committed mutation bumps it too and a mutation on
+     * one row must never retire another row's in-flight recheck.
+     */
+    const rootRequestRevisionRef = React.useRef(0);
+    const requestRevisionByIntegrationKeyRef = React.useRef(new Map<string, number>());
     const nextCursorRef = React.useRef<string | null>(null);
     const seenCursorsRef = React.useRef(new Set<string>());
     const nonInstallationCountByAgentStateRef = React.useRef(new Map<string, number>());
@@ -487,7 +496,28 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
     ) => {
         const machineId = params.machineId;
         if (!enabled || !machineId || isExecutionTargetCurrentRef.current?.() === false) return;
-        const requestRevision = ++requestRevisionRef.current;
+        // Only a ROOT inventory request opens a new inventory generation. A targeted
+        // recheck is row-local work that merges one row by key, so it reads the current
+        // generation instead of opening one: bumping the shared counter let one row's
+        // recheck silently retire another row's in-flight recheck, and let a recheck
+        // retire an in-flight root refresh, stranding the inventory in `loading` with
+        // every row's actions gone. A targeted result is therefore fenced only by its
+        // own row revision, so a mutation committed on another row cannot retire it;
+        // a newer ROOT listing retires it through `rootRequestRevisionRef`.
+        const requestRevision = integration
+            ? requestRevisionRef.current
+            : ++requestRevisionRef.current;
+        const rootRequestRevision = integration
+            ? rootRequestRevisionRef.current
+            : ++rootRequestRevisionRef.current;
+        const rowRequestIsCurrent = integration
+            ? (() => {
+                const revisions = requestRevisionByIntegrationKeyRef.current;
+                const rowRevision = (revisions.get(integration.key) ?? 0) + 1;
+                revisions.set(integration.key, rowRevision);
+                return () => requestRevisionByIntegrationKeyRef.current.get(integration.key) === rowRevision;
+            })()
+            : () => true;
         const requestScopeSignature = scopeSignatureRef.current;
         if (!integration) {
             nextCursorRef.current = null;
@@ -526,7 +556,10 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
                 : undefined,
         });
         if (
-            requestRevisionRef.current !== requestRevision
+            rootRequestRevisionRef.current !== rootRequestRevision
+            || (integration
+                ? !rowRequestIsCurrent()
+                : requestRevisionRef.current !== requestRevision)
             || scopeSignatureRef.current !== requestScopeSignature
             || isExecutionTargetCurrentRef.current?.() === false
         ) return;
@@ -561,10 +594,14 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
         setLoadedTargetScopeSignature(targetScopeSignature);
         setIntegrations((current) => {
             const refreshedKeys = new Set(refreshed.map((entry) => entry.key));
-            const retained = (current ?? []).filter((entry) => (
-                entry.key !== integration.key && !refreshedKeys.has(entry.key)
+            const rows = current ?? [];
+            const replacementIndex = rows.findIndex((entry) => entry.key === integration.key);
+            const retained = rows.filter((entry, index) => (
+                index !== replacementIndex && !refreshedKeys.has(entry.key)
             ));
-            const next = [...retained, ...refreshed];
+            if (replacementIndex < 0) return [...retained, ...refreshed];
+            const next = [...retained];
+            next.splice(Math.min(replacementIndex, next.length), 0, ...refreshed);
             return next;
         });
         // The refreshed row is merged above; the inventory's own status describes the
@@ -668,6 +705,8 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
         integration: ExternalSessionsIntegrationDescriptor,
         status: PluginSessionHookInstallationStatusV1,
     ) => {
+        // A committed mutation supersedes any older root inventory replacement, but
+        // targeted rechecks use their integration-local revision and remain independent.
         requestRevisionRef.current += 1;
         const next: ExternalSessionsIntegrationDescriptor = {
             key: integrationKey(
@@ -716,18 +755,18 @@ export function useExternalSessionsIntegrationController(params: Readonly<{
     }, []);
 
     const startRequest = React.useCallback((integrationKey: string) => {
-        const revisions = previewRevisionByIntegrationKeyRef.current;
+        const revisions = requestRevisionByIntegrationKeyRef.current;
         const requestRevision = (revisions.get(integrationKey) ?? 0) + 1;
         revisions.set(integrationKey, requestRevision);
         // Scope changes stay fenced by `isCurrentScope`; this only decides which of one
         // integration's own overlapping preview round trips may still act.
-        return () => previewRevisionByIntegrationKeyRef.current.get(integrationKey) === requestRevision;
+        return () => requestRevisionByIntegrationKeyRef.current.get(integrationKey) === requestRevision;
     }, []);
 
     React.useEffect(() => {
         if (!enabled || !params.machineId || isExecutionTargetCurrentRef.current?.() === false) {
             requestRevisionRef.current += 1;
-            previewRevisionByIntegrationKeyRef.current = new Map();
+            requestRevisionByIntegrationKeyRef.current = new Map();
             nextCursorRef.current = null;
             seenCursorsRef.current = new Set();
             nonInstallationCountByAgentStateRef.current = new Map();

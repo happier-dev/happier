@@ -158,10 +158,6 @@ function clientActionIdentity(localId: string): PluginReactNativeBundleCacheIden
     });
 }
 const CLIENT_ACTION_AUTHORIZATION = Object.freeze({
-    packageTrust: Object.freeze({
-        packageIdentity: `${CALLER_PLUGIN_ID}/actions/refresh-index`,
-        reviewedPackageIdentity: `${CALLER_PLUGIN_ID}/actions/refresh-index`,
-    }),
     generation: Object.freeze({
         targetGeneration: String(CLIENT_ACTION_GENERATION),
         desiredGeneration: String(CLIENT_ACTION_GENERATION),
@@ -326,6 +322,7 @@ function resolveDaemonTargetAction(
         surfaces: ['ui'],
         execution: { target: 'daemon' },
         dangerLevel: 'safe',
+        available: true,
     };
 }
 
@@ -989,11 +986,11 @@ describe('plugin-surface action branch selection', () => {
 
     // A host ActionSpec id that is NOT plugin-surfaced must never reach the
     // ActionSpec executor: a wrong implementation validating with `ActionIdSchema`
-    // would admit all 275 rows to the plugin surface — a security-relevant
+    // would admit every ActionSpec row to the plugin surface — a security-relevant
     // widening. It falls through to the contributed branch, where a dotted
     // first-party id is not even a valid contribution local id.
     it('does not admit a non-plugin-surfaced ActionSpec id to the host branch', async () => {
-        const nonPluginActionId = 'session.handoff.status.get';
+        const nonPluginActionId = 'sessions.external.candidates.list';
         expect(PLUGIN_INVOCABLE_ACTION_IDS).not.toContain(nonPluginActionId);
         const execute = vi.fn(async () => ({ ok: true as const, result: {} }));
         const contributed = vi.fn<PluginSurfaceContributedActionTransport>();

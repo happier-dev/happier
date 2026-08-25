@@ -20,7 +20,10 @@ import {
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
-import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
+import {
+    useMachineAdministrationTargetSelection,
+} from '@/sync/domains/machines/administration/useTargetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { useAllMachines, useAllSessions, useSetting, useSettings } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { machineExternalSessionFollowPolicySet } from '@/sync/ops/machineExternalSessions';
@@ -217,9 +220,10 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
     const executionTarget = administrationTargetSelection.resolveExecutionTarget();
     const isExecutionTargetCurrent = React.useCallback(() => {
         if (!executionTarget) return false;
-        const current = administrationTargetSelection.resolveExecutionTarget();
-        return current?.target.serverIdentityId === executionTarget.target.serverIdentityId
-            && current.target.machineId === executionTarget.target.machineId;
+        return isMachineAdministrationExecutionTargetCurrent({
+            expectedTarget: executionTarget,
+            resolveCurrentTarget: administrationTargetSelection.resolveExecutionTarget,
+        });
     }, [administrationTargetSelection.resolveExecutionTarget, executionTarget]);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: executionTarget?.machine.id ?? null,

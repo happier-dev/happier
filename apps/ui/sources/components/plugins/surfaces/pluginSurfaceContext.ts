@@ -349,16 +349,11 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
         };
     }, [cacheRevision, input.accountLifetime, input.credentials]);
 
-    // FALSIFICATION PROBE (temporary): the plausible "avoid a one-render
-    // flicker" regression — retain the last resolved Account mode instead of
-    // withholding it. Restore byte-identically after the run.
-    const stickyProbeRef = React.useRef<SurfaceContext['accountEncryptionMode'] | null>(null);
-    const liveProbeMode = resolved
+    return resolved
+        && resolved.accountLifetime === input.accountLifetime
         && resolved.cacheRevision === cacheRevision
         && input.accountLifetime?.isCurrent() === true
         && isCurrentRef.current()
         ? resolved.mode
         : null;
-    if (liveProbeMode) stickyProbeRef.current = liveProbeMode;
-    return liveProbeMode ?? stickyProbeRef.current;
 }

@@ -20,6 +20,7 @@ import {
     type FreshMachineAdministrationExecutionTargetV1,
     type MachineAdministrationTargetSelectionV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -81,12 +82,13 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
         requestedSelection: string,
         executionTarget: FreshMachineAdministrationExecutionTargetV1,
     ): boolean => {
-        if (selectionKeyRef.current !== requestedSelection) return false;
-        const current = resolveExactExecutionTarget(executionTarget.target);
-        return current !== null
-            && current.serverId === executionTarget.serverId
-            && current.machine.id === executionTarget.machine.id;
-    }, [resolveExactExecutionTarget]);
+        return isMachineAdministrationExecutionTargetCurrent({
+            expectedTarget: executionTarget,
+            resolveCurrentTarget: resolveExecutionTargetRef.current,
+            expectedSelectionKey: requestedSelection,
+            currentSelectionKey: selectionKeyRef.current,
+        });
+    }, []);
 
     const [bindingId, setBindingId] = React.useState<string | null>(null);
     const [openMenu, setOpenMenu] = React.useState<'binding' | null>(null);

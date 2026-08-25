@@ -969,6 +969,11 @@ describe('hosted web plugin host API adapter', () => {
                         surfaces: ['ui'],
                         execution: { target: 'daemon' },
                         dangerLevel: 'safe',
+                        // The canonical projection executability rule
+                        // (`isPluginProjectedActionExecutable`) is `available === true`.
+                        // The dispatcher applies it at its single admission moment, so an
+                        // admitted Action stub has to state the same fact the daemon does.
+                        available: true,
                     }
                     : null;
             },
@@ -1357,7 +1362,10 @@ describe('hosted web plugin host API adapter', () => {
             requestId: 'context-1.0',
             method: 'context',
         }))).resolves.toMatchObject({
-            payload: { kind: 'result', result: targetedSurface },
+            payload: {
+                kind: 'result',
+                result: { surface: targetedSurface, activity: { active: false } },
+            },
         });
 
         await expect(handler(createEnvelope('hostApi', {
@@ -1674,6 +1682,51 @@ describe('hosted web plugin host API adapter', () => {
         handler.pushSurfaceContext(structuredClone(canonicalSurface));
 
         expect(postToFrame).not.toHaveBeenCalled();
+    });
+
+    it('updates Context subscribers when a retained mount becomes inactive', async () => {
+        const postToFrame = vi.fn();
+        const handler = createPluginHostedWebHostApiBridgeHandler({
+            surface,
+            requestIdPrefix: 'hosted-web-context-activity',
+            bridgeNonce: 'nonce-1',
+            canonicalHostApi: {
+                identity: canonicalIdentity,
+                surface: canonicalSurface,
+                methods: ['context', 'watchContext'],
+                activity: { active: true },
+            },
+            postToFrame,
+        });
+        await handler(createEnvelope('ready', { ready: true }));
+        await expect(handler(createEnvelope('hostApi', {
+            wireVersion: 1,
+            kind: 'subscribe',
+            identity: canonicalIdentity,
+            requestId: 'watch-context-activity-request',
+            subscriptionId: 'watch-context-activity-subscription',
+            method: 'watchContext',
+        }))).resolves.toMatchObject({
+            kind: 'result',
+            payload: {
+                kind: 'result',
+                method: 'watchContext',
+            },
+        });
+        postToFrame.mockClear();
+
+        handler.pushSurfaceContext(canonicalSurface, { active: false });
+
+        expect(postToFrame).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({
+                kind: 'subscription',
+                subscriptionId: 'watch-context-activity-subscription',
+                event: {
+                    surface: canonicalSurface,
+                    activity: { active: false },
+                },
+            }),
+        }));
     });
 
     it('cancels the in-flight request at the mount, not only its answer', async () => {

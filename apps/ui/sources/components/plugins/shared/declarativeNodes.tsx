@@ -33,7 +33,10 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
 import { Text } from '@/components/ui/text/Text';
-import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
+import {
+    resolvePluginUiIconName,
+    type PluginUiIconDirection,
+} from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { t } from '@/text';
 
 /**
@@ -51,20 +54,48 @@ import { t } from '@/text';
 
 type RecordValue = Readonly<Record<string, unknown>>;
 type ThemeColors = Theme['colors'];
+const RETAIN_DISABLED_ACTION_STRUCTURE = (): void => {};
 
 export function readDeclarativeRecord(value: unknown): RecordValue | null {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as RecordValue : null;
 }
 
+/** How one consumer turns a declarative `PluginLocalizedString` into display text. */
+export type DeclarativeTextResolver = (value: unknown) => string;
+
 /**
- * Resolve a `PluginLocalizedString` to display text. The projected plugin
- * translation bundle is applied upstream; this keeps the author-declared
- * fallback rather than leaking a raw key.
+ * The immutable-fallback resolver: parse the declared value and keep the
+ * author's own words rather than leaking a raw key.
+ *
+ * This is the correct resolver for a persisted transcript, whose text is a
+ * frozen snapshot and must not be retranslated by whatever plugin bundle
+ * happens to be installed when the message is replayed.
  */
 export function readDeclarativeText(value: unknown): string {
     if (typeof value === 'string') return value;
     const candidate = readDeclarativeRecord(value);
     return typeof candidate?.fallback === 'string' ? candidate.fallback : '';
+}
+
+/**
+ * The live-surface resolver: the same parse, but the declared key is answered
+ * by the mounted surface's admitted translation bundle for the current locale.
+ *
+ * A mounted document is current UI, so it follows the user's language; the
+ * author's fallback still answers every key the bundle does not define, and the
+ * raw key is never shown.
+ */
+export function createDeclarativeTextResolver(
+    translate: ((key: string, fallback?: string) => string) | undefined,
+): DeclarativeTextResolver {
+    if (!translate) return readDeclarativeText;
+    return (value) => {
+        if (typeof value === 'string') return value;
+        const candidate = readDeclarativeRecord(value);
+        const fallback = typeof candidate?.fallback === 'string' ? candidate.fallback : '';
+        const key = typeof candidate?.key === 'string' ? candidate.key : '';
+        return key ? translate(key, fallback) : fallback;
+    };
 }
 
 /**
@@ -184,6 +215,15 @@ export type DeclarativeActionAffordance = Readonly<{
 export type DeclarativeNodeRenderContext = Readonly<{
     colors: ThemeColors;
     presentationTheme: HappierUiTheme;
+    /**
+     * How this consumer resolves declared localized text. A mounted surface
+     * supplies its environment-bound resolver; a persisted transcript supplies
+     * {@link readDeclarativeText} so replay stays immutable. Required, so a new
+     * consumer has to state which of the two it is.
+     */
+    localize: DeclarativeTextResolver;
+    /** Exact direction supplied by the mounted surface when it has one. */
+    direction?: PluginUiIconDirection;
     /** Resolved by the mounted surface environment; transcript rendering has no host preference. */
     contrast?: HappierUiAccessibility['contrast'];
     /** Platform minimum interactive target, resolved by the consumer's mount. */
@@ -241,7 +281,7 @@ function renderActionAffordance(
                 testID={`plugin-declarative-action-label:${affordance.key}`}
                 style={{ color: variantColors.label }}
             >
-                {readDeclarativeText(node.label)}
+                {context.localize(node.label)}
             </Text>
         </HappierPressable>
     );
@@ -280,10 +320,10 @@ const renderDeclarativeContainer: DeclarativeNodeRenderer = (node, context) => (
         direction={node.kind === 'stack' && node.direction === 'horizontal' ? 'horizontal' : 'vertical'}
         wrap
     >
-        {node.kind === 'group' && readDeclarativeText(node.title) ? (
-            <HappierHeading level={3} theme={context.presentationTheme}>{readDeclarativeText(node.title)}</HappierHeading>
+        {node.kind === 'group' && context.localize(node.title) ? (
+            <HappierHeading level={3} theme={context.presentationTheme}>{context.localize(node.title)}</HappierHeading>
         ) : null}
-        {readDeclarativeText(node.description) ? <Text>{readDeclarativeText(node.description)}</Text> : null}
+        {context.localize(node.description) ? <Text>{context.localize(node.description)}</Text> : null}
         {renderDeclarativeChildren(node, context)}
     </HappierStack>
 );
@@ -302,7 +342,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
     stack: renderDeclarativeContainer,
     group: renderDeclarativeContainer,
     list: (node, context) => {
-        const label = readDeclarativeText(node.label);
+        const label = context.localize(node.label);
         const path = readDeclarativePath(node, context.nodePath);
         return (
             <HappierList
@@ -316,11 +356,11 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
         );
     },
     section: (node, context) => {
-        const footer = readDeclarativeText(node.footer);
+        const footer = context.localize(node.footer);
         return (
             <HappierListSection
                 key={readDeclarativePath(node, context.nodePath)}
-                title={readDeclarativeText(node.title)}
+                title={context.localize(node.title)}
             >
                 {renderDeclarativeChildren(node, context)}
                 {footer ? <Text>{footer}</Text> : null}
@@ -328,7 +368,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
         );
     },
     actionPanel: (node, context) => {
-        const title = readDeclarativeText(node.title);
+        const title = context.localize(node.title);
         const path = readDeclarativePath(node, context.nodePath);
         return (
             <HappierActionPanel
@@ -346,9 +386,9 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
         const affordance = node.action === undefined ? null : context.resolveAction(node);
         const toneLabel = resolveToneAccessibilityLabel(node.tone);
         const iconToken = typeof node.icon === 'string' ? node.icon : null;
-        const title = readDeclarativeText(node.title);
-        const subtitle = readDeclarativeText(node.subtitle);
-        const detail = readDeclarativeText(node.detail);
+        const title = context.localize(node.title);
+        const subtitle = context.localize(node.subtitle);
+        const detail = context.localize(node.detail);
         const path = readDeclarativePath(node, context.nodePath);
         return (
             <HappierListItem
@@ -357,7 +397,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                 title={title}
                 subtitle={subtitle || undefined}
                 detail={detail || undefined}
-                icon={iconToken ? <Icon name={resolvePluginUiIconName(iconToken)} size={ICON_SIZE.sm} /> : undefined}
+                icon={iconToken ? <Icon name={resolvePluginUiIconName(iconToken, context.direction)} size={ICON_SIZE.sm} /> : undefined}
                 accessibilityLabel={buildActionRowAccessibilityLabel([toneLabel, title, subtitle, detail])}
                 tone={resolveDeclarativePresentationTone(node.tone)}
                 busy={affordance?.busy === true}
@@ -366,7 +406,12 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                 {...(affordance
                     ? {
                         disabled: affordance.disabled,
-                        onPress: affordance.onPress,
+                        // An admitted Action row keeps one Pressable identity
+                        // while it becomes busy, denied, or temporarily
+                        // unavailable. The disabled owner suppresses this
+                        // fallback, so it cannot dispatch; retaining the host
+                        // node preserves focus and its accessible role.
+                        onPress: affordance.onPress ?? RETAIN_DISABLED_ACTION_STRUCTURE,
                     }
                     : {})}
             />
@@ -374,7 +419,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
     },
     state: (node, context) => {
         const presentation = resolveStatePresentation(node.state);
-        const description = readDeclarativeText(node.description);
+        const description = context.localize(node.description);
         const iconToken = typeof node.icon === 'string' ? node.icon : null;
         const color = resolveDeclarativeToneColor(context.presentationTheme, presentation.tone);
         const path = readDeclarativePath(node, context.nodePath);
@@ -389,8 +434,8 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                 <HappierInfoTile
                     icon={presentation.busy
                         ? <ActivitySpinner />
-                        : (iconToken ? <Icon name={resolvePluginUiIconName(iconToken)} size={ICON_SIZE.lg} color={color} /> : undefined)}
-                    title={<Text style={{ color }}>{readDeclarativeText(node.title)}</Text>}
+                        : (iconToken ? <Icon name={resolvePluginUiIconName(iconToken, context.direction)} size={ICON_SIZE.lg} color={color} /> : undefined)}
+                    title={<Text style={{ color }}>{context.localize(node.title)}</Text>}
                     description={description ? <Text>{description}</Text> : undefined}
                 />
             </HappierInfoState>
@@ -398,7 +443,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
     },
     metadata: (node, context) => {
         const entries = Array.isArray(node.entries) ? node.entries : [];
-        const title = readDeclarativeText(node.title);
+        const title = context.localize(node.title);
         const path = readDeclarativePath(node, context.nodePath);
         return <HappierMetadata
             key={path}
@@ -408,8 +453,8 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
             entries={entries.flatMap((entryValue, index) => {
                 const entry = readDeclarativeRecord(entryValue);
                 if (!entry) return [];
-                const label = readDeclarativeText(entry.label);
-                const value = readDeclarativeText(entry.value);
+                const label = context.localize(entry.label);
+                const value = context.localize(entry.value);
                 return [{
                     label,
                     value,
@@ -424,7 +469,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
     },
     text: (node, context) => {
         const toneLabel = resolveToneAccessibilityLabel(node.tone);
-        const text = readDeclarativeText(node.text);
+        const text = context.localize(node.text);
         return (
             <Text
                 key={readDeclarativePath(node, context.nodePath)}
@@ -441,33 +486,45 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
         <HappierMarkdown
             key={readDeclarativePath(node, context.nodePath)}
             testID={`plugin-declarative-markdown:${readDeclarativePath(node, context.nodePath)}`}
-            value={readDeclarativeText(node.text)}
+            value={context.localize(node.text)}
             selectable
             renderContent={(input) => (
                 <MarkdownView markdown={input.value} selectable={input.selectable} testID={input.testID} />
             )}
         />
     ),
-    status: (node, context) => (
-        <HappierStatus
-            key={readDeclarativePath(node, context.nodePath)}
-            testID="plugin-declarative-status"
-            label={<Text>{readDeclarativeText(node.label)}</Text>}
-            value={(
-                <Text
-                    testID={`plugin-declarative-status-value:${readDeclarativePath(node, context.nodePath)}`}
-                    selectable
-                    style={{ color: resolveDeclarativeToneColor(context.presentationTheme, node.tone) }}
-                >
-                    {readDeclarativeText(node.value)}
-                </Text>
-            )}
-            tone={resolveDeclarativePresentationTone(node.tone)}
-            theme={context.presentationTheme}
-            contrast={context.contrast}
-            accessibilityLiveRegion="polite"
-        />
-    ),
+    status: (node, context) => {
+        const label = context.localize(node.label);
+        const value = context.localize(node.value);
+        // Declarative status may carry its whole meaning in `tone` while the
+        // label and value stay neutral. Sighted users read that as colour, so
+        // the shared owner is given the same meaning in words, exactly once.
+        const toneLabel = resolveToneAccessibilityLabel(node.tone);
+        const accessibilityLabel = toneLabel
+            ? [toneLabel, label, value].filter((part) => part.length > 0).join(': ')
+            : undefined;
+        return (
+            <HappierStatus
+                key={readDeclarativePath(node, context.nodePath)}
+                testID="plugin-declarative-status"
+                label={<Text>{label}</Text>}
+                value={(
+                    <Text
+                        testID={`plugin-declarative-status-value:${readDeclarativePath(node, context.nodePath)}`}
+                        selectable
+                        style={{ color: resolveDeclarativeToneColor(context.presentationTheme, node.tone) }}
+                    >
+                        {value}
+                    </Text>
+                )}
+                tone={resolveDeclarativePresentationTone(node.tone)}
+                theme={context.presentationTheme}
+                contrast={context.contrast}
+                {...(accessibilityLabel ? { accessibilityLabel } : {})}
+                accessibilityLiveRegion="polite"
+            />
+        );
+    },
     action: (node, context) => {
         const affordance = context.resolveAction(node);
         return affordance ? renderActionAffordance(node, affordance, context) : null;

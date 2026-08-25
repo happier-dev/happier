@@ -397,6 +397,8 @@ export function DeclarativeCollectionList(props: Readonly<{
     dataClient?: PluginUiDataClient | null;
     presentationTheme: HappierUiTheme;
     minimumTouchTarget: number;
+    /** Already localized by the mounted declarative surface owner. */
+    accessibilityLabel?: string;
     /**
      * The mounted root surface delegated its sole scroll viewport to this
      * bounded collection. Embedded lists stay static inside their parent's
@@ -629,13 +631,18 @@ export function DeclarativeCollectionList(props: Readonly<{
                     items={rows}
                     keyForItem={keyForRow}
                     renderItem={renderRow}
+                    accessibilityLabel={props.accessibilityLabel}
                     testID={`plugin-declarative-collection-list:${path}`}
                     style={{ flex: 1, minWidth: 0 }}
                     footer={footer}
                 />
             ) : (
                 <>
-                    <HappierList testID={`plugin-declarative-collection-list:${path}`} style={{ gap: 8 }}>
+                    <HappierList
+                        accessibilityLabel={props.accessibilityLabel}
+                        testID={`plugin-declarative-collection-list:${path}`}
+                        style={{ gap: 8 }}
+                    >
                         {rows.map((row) => (
                             <React.Fragment key={keyForRow(row)}>
                                 {renderRow(row)}

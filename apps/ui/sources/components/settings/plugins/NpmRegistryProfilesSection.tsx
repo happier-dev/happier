@@ -15,10 +15,11 @@ import { randomUUID } from '@/platform/randomUUID';
 import {
     machineAdministrationTargetsEqual,
 } from '@/sync/domains/machines/administration/targetSelection';
-import type {
-    FreshMachineAdministrationExecutionTargetV1,
-    MachineAdministrationTargetSelectionV1,
+import {
+    type FreshMachineAdministrationExecutionTargetV1,
+    type MachineAdministrationTargetSelectionV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import {
     machineNpmRegistryProfilesGet,
     machineNpmRegistryProfilesMutate,
@@ -94,12 +95,13 @@ export function NpmRegistryProfilesSection({
         requestedSelection: string,
         executionTarget: FreshMachineAdministrationExecutionTargetV1,
     ): boolean => {
-        if (selectionKeyRef.current !== requestedSelection) return false;
-        const currentTarget = resolveExactExecutionTarget(executionTarget.target);
-        return currentTarget !== null
-            && currentTarget.serverId === executionTarget.serverId
-            && currentTarget.machine.id === executionTarget.machine.id;
-    }, [resolveExactExecutionTarget]);
+        return isMachineAdministrationExecutionTargetCurrent({
+            expectedTarget: executionTarget,
+            resolveCurrentTarget: resolveExecutionTargetRef.current,
+            expectedSelectionKey: requestedSelection,
+            currentSelectionKey: selectionKeyRef.current,
+        });
+    }, []);
 
     const refresh = React.useCallback(async () => {
         const generation = ++refreshGenerationRef.current;

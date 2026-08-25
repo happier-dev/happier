@@ -6,11 +6,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
+import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ApiTokenSettingsController, ApiTokenSettingsState } from './apiTokenSettingsController';
 
 const runtime = vi.hoisted(() => ({
     logout: vi.fn(),
     announceAccessibilityMessage: vi.fn(),
+    shimmerRepeats: vi.fn(),
+    executeApiTokenAction: vi.fn(),
+    activeAccountScopeLifetime: null as ActiveServerAccountScopeLifetime | null,
     activeServerAccountScope: null as Readonly<{ serverId: string; accountId: string }> | null,
     activeServerAccountScopeListeners: new Set<() => void>(),
     hostActivelyViewed: true,
@@ -37,9 +41,14 @@ installSettingsViewCommonModuleMocks({
 
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    const reanimated = createReanimatedModuleMock();
     return {
-        ...createReanimatedModuleMock(),
+        ...reanimated,
         measure: () => null,
+        withRepeat: <T,>(value: T, ...args: unknown[]): T => {
+            runtime.shimmerRepeats(value, ...args);
+            return reanimated.withRepeat(value);
+        },
     };
 });
 
@@ -49,6 +58,14 @@ vi.mock('@/auth/context/AuthContext', () => ({
 
 vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({
     announceAccessibilityMessage: runtime.announceAccessibilityMessage,
+}));
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => runtime.activeAccountScopeLifetime,
+}));
+
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
+    createFrontDoorActionExecute: () => runtime.executeApiTokenAction,
 }));
 
 vi.mock('@/utils/runtime/useHostActivelyViewed', async () => {
@@ -68,6 +85,18 @@ vi.mock('@/utils/runtime/useHostActivelyViewed', async () => {
 function setHostActivelyViewed(next: boolean): void {
     runtime.hostActivelyViewed = next;
     for (const listener of runtime.hostActivelyViewedListeners) listener();
+}
+
+function createActiveAccountScopeLifetime(): ActiveServerAccountScopeLifetime {
+    const retirementCallbacks = new Set<() => void>();
+    return {
+        scope: { serverId: 'server-a', accountId: 'account-a' },
+        isCurrent: () => true,
+        onRetire(callback) {
+            retirementCallbacks.add(callback);
+            return { dispose: () => retirementCallbacks.delete(callback) };
+        },
+    };
 }
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -143,6 +172,9 @@ afterEach(() => {
     vi.useRealTimers();
     runtime.logout.mockClear();
     runtime.announceAccessibilityMessage.mockClear();
+    runtime.shimmerRepeats.mockClear();
+    runtime.executeApiTokenAction.mockReset();
+    runtime.activeAccountScopeLifetime = null;
     runtime.activeServerAccountScope = null;
     runtime.activeServerAccountScopeListeners.clear();
     runtime.hostActivelyViewed = true;
@@ -176,6 +208,89 @@ describe('ApiTokensSettingsScreen', () => {
         });
 
         expect(refresh).toHaveBeenCalledTimes(2);
+    });
+
+    it('loads rows after a direct route mount waits for the Account scope to become current', async () => {
+        const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
+        runtime.executeApiTokenAction.mockResolvedValue({
+            ok: true,
+            result: {
+                tokens: [{
+                    tokenId: '11111111-1111-4111-8111-111111111111',
+                    label: 'CI',
+                    displayPrefix: 'hap_11111111',
+                    createdAt: '2026-08-22T12:00:00.000Z',
+                    lastUsedAt: null,
+                    expiresAt: null,
+                }],
+            },
+        });
+
+        const screen = await renderScreen(<ApiTokensSettingsScreen />);
+        expect(runtime.executeApiTokenAction).not.toHaveBeenCalled();
+
+        await act(async () => {
+            runtime.activeAccountScopeLifetime = createActiveAccountScopeLifetime();
+            runtime.activeServerAccountScope = { serverId: 'server-a', accountId: 'account-a' };
+            for (const listener of runtime.activeServerAccountScopeListeners) listener();
+        });
+
+        await vi.waitFor(() => {
+            expect(runtime.executeApiTokenAction).toHaveBeenCalledOnce();
+            expect(screen.findByTestId('settings-api-tokens-row:11111111-1111-4111-8111-111111111111')).toBeTruthy();
+        });
+    });
+
+    it('keeps its owned controller current through StrictMode effect replay', async () => {
+        const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
+        runtime.activeAccountScopeLifetime = createActiveAccountScopeLifetime();
+        runtime.activeServerAccountScope = { serverId: 'server-a', accountId: 'account-a' };
+        runtime.executeApiTokenAction.mockResolvedValue({
+            ok: true,
+            result: {
+                tokens: [{
+                    tokenId: '11111111-1111-4111-8111-111111111111',
+                    label: 'CI',
+                    displayPrefix: 'hap_11111111',
+                    createdAt: '2026-08-22T12:00:00.000Z',
+                    lastUsedAt: null,
+                    expiresAt: null,
+                }],
+            },
+        });
+
+        const screen = await renderScreen(
+            <React.StrictMode>
+                <ApiTokensSettingsScreen />
+            </React.StrictMode>,
+        );
+
+        await vi.waitFor(() => {
+            expect(runtime.executeApiTokenAction).toHaveBeenCalledOnce();
+            expect(screen.findByTestId('settings-api-tokens-row:11111111-1111-4111-8111-111111111111')).toBeTruthy();
+        });
+    });
+
+    it('retires an owned controller and cancels its pending list request on actual unmount', async () => {
+        const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
+        runtime.activeAccountScopeLifetime = createActiveAccountScopeLifetime();
+        runtime.activeServerAccountScope = { serverId: 'server-a', accountId: 'account-a' };
+        let requestSignal: AbortSignal | undefined;
+        runtime.executeApiTokenAction.mockImplementationOnce(async (_actionId, _input, context) => {
+            requestSignal = context?.signal;
+            return await new Promise((resolve) => {
+                requestSignal?.addEventListener('abort', () => {
+                    resolve({ ok: false, errorCode: 'aborted', error: 'aborted' });
+                }, { once: true });
+            });
+        });
+
+        const screen = await renderScreen(<ApiTokensSettingsScreen />);
+        await vi.waitFor(() => expect(requestSignal).toBeDefined());
+        expect(requestSignal?.aborted).toBe(false);
+
+        await screen.unmount();
+        expect(requestSignal?.aborted).toBe(true);
     });
 
     it('keeps the last known token list visible and offers a non-destructive retry after refresh failure', async () => {
@@ -298,7 +413,7 @@ describe('ApiTokensSettingsScreen', () => {
         });
     });
 
-    it('uses the final Item row geometry for loading skeletons instead of a fixed-height imitation', async () => {
+    it('uses static final-row geometry for loading skeletons instead of a fixed-height animated imitation', async () => {
         const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
         const { controller } = createController({
             phase: 'loading',
@@ -325,6 +440,7 @@ describe('ApiTokensSettingsScreen', () => {
 
         expect(flattenStyle(skeleton?.props.style).height).toBeUndefined();
         expect(sharedMetricNode).toBeTruthy();
+        expect(runtime.shimmerRepeats).not.toHaveBeenCalled();
     });
 
     it('pauses its single relative-time/expiry clock while hidden and refreshes both states when visible again', async () => {

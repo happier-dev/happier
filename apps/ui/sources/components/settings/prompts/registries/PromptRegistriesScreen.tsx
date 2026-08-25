@@ -40,6 +40,7 @@ import {
   useMachineAdministrationTargetSelection,
   type FreshMachineAdministrationExecutionTargetV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { t, type TranslationKey } from '@/text';
 import { buildPromptRegistryItemDetailsHref } from './promptRegistryItemDetailsHref';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -107,12 +108,13 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     requestedSelection: string,
     executionTarget: FreshMachineAdministrationExecutionTargetV1,
   ): boolean => {
-    if (selectionKeyRef.current !== requestedSelection) return false;
-    const current = resolveExactExecutionTarget(executionTarget.target);
-    return current !== null
-      && current.serverId === executionTarget.serverId
-      && current.machine.id === executionTarget.machine.id;
-  }, [resolveExactExecutionTarget]);
+    return isMachineAdministrationExecutionTargetCurrent({
+      expectedTarget: executionTarget,
+      resolveCurrentTarget: resolveExecutionTargetRef.current,
+      expectedSelectionKey: requestedSelection,
+      currentSelectionKey: selectionKeyRef.current,
+    });
+  }, []);
   const [storedSources, setStoredSources] = useSettingMutable('promptRegistrySourcesV1');
   const {
     workspacePath,

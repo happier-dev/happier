@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import * as React from 'react';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +13,7 @@ import {
 import {
   PLUGIN_UI_HOST_API_VERSION_V1,
   PluginUiArtifactDigestV1Schema,
+  type PluginUiSurfaceContextV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type {
   PluginAccountCollectionDefinition,
@@ -31,6 +33,14 @@ import type {
   PluginUiDataClient,
 } from '@happier-dev/plugin-ui/data';
 import { completePresentationPluginUiDataClient } from '@/dev/testkit/pluginUiDataClient';
+import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
+import {
+  createPluginSurfaceHostApi,
+  createPluginSurfaceHostApiError,
+  type PluginSurfaceHostApiHandlers,
+  type PluginSurfaceHostApiMethodHandler,
+} from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import { createCanonicalPluginReactNativeHostApiAdapter } from './hostApi';
 
 import {
   CHANNEL_DELIVERIES_COLLECTION,
@@ -81,7 +91,6 @@ vi.mock('react-native', async () => {
 });
 
 const { flushHookEffects } = await import('@/dev/testkit');
-const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
 const { StyleSheet } = await import('react-native');
 
 const CHANNELS_SETTINGS_VIEW = { id: 'connections', placement: 'settingsPage' } as const;
@@ -192,10 +201,14 @@ type BindingResourceRow = Readonly<{
   }>;
   inputMode: 'directMentionsOnly' | 'addressedMessages' | 'allAllowedMessages';
   deliveryMode: 'repliesOnly' | 'mirrorSession' | 'finalResult' | 'none';
+  // Mirrors the canonical closed union the persisted target policy can carry
+  // (`channels-protocol` `conversationSessionApprovalPolicyV1` plus the
+  // Automation `notApplicable` projection). A fixture arm the Resource cannot
+  // publish would exercise a state the parser is right to reject.
   approval:
     | Readonly<{ kind: 'notApplicable' }>
     | Readonly<{ kind: 'off' }>
-    | Readonly<{ kind: 'unavailable'; maximumScope: 'request' | 'session' }>;
+    | Readonly<{ kind: 'enabled'; maximumScope: 'request' | 'session' }>;
   enabled: boolean;
   deletionState: 'none' | 'finalizingDelete';
 }>;
@@ -578,18 +591,30 @@ function createOfflineChannelsDataClient(input: Readonly<{
   const query = vi.fn(async (request: Parameters<ChannelStateCollection['query']>[0]): Promise<ChannelStateCollectionPage> => {
     const failure = input.queryFailure?.();
     if (failure !== undefined) throw failure;
-    if (request.index !== CHANNEL_STATE_INDEX_ID.byKind && request.index !== CHANNEL_STATE_INDEX_ID.byAttention) {
+    if (request.index !== CHANNEL_STATE_INDEX_ID.byKind
+      && request.index !== CHANNEL_STATE_INDEX_ID.byAttention
+      && request.index !== CHANNEL_STATE_INDEX_ID.byConnectionBindingV2) {
       throw new Error(`Unexpected direct Collection index: ${request.index}.`);
     }
     if (request.limit !== undefined && request.limit > 200) {
       throw new Error('Direct Collection query exceeded the Data-owned page limit.');
     }
     const matching = [...rows.values()]
-      .filter((row) => (
-        request.index === CHANNEL_STATE_INDEX_ID.byKind
+      .filter((row) => {
+        // The canonical connection reader joins the ingress-conflict index for
+        // every connection it projects. A fixture that only answers `by-kind`
+        // makes that read throw, which reads on screen as "no connections"
+        // rather than as the missing index it is.
+        if (request.index === CHANNEL_STATE_INDEX_ID.byConnectionBindingV2) {
+          return row.value['connection-id'] === request.prefix?.[0]
+            && (row.value['binding-id'] ?? null) === (request.prefix?.[1] ?? null)
+            && row.value['record-kind'] === request.prefix?.[2]
+            && row.value.attention === request.prefix?.[3];
+        }
+        return request.index === CHANNEL_STATE_INDEX_ID.byKind
           ? row.value['record-kind'] === request.prefix?.[0]
-          : row.value.attention === request.prefix?.[0]
-      ))
+          : row.value.attention === request.prefix?.[0];
+      })
       .sort((left, right) => (
         request.index === CHANNEL_STATE_INDEX_ID.byAttention
           ? Number(right.value['updated-at']) - Number(left.value['updated-at'])
@@ -1089,10 +1114,14 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(findByTestId(renderer, 'channels-bindings-list').length).toBeGreaterThan(0);
   });
 
-  it('projects an unavailable Session approval scope without granting or exposing approval authority', async () => {
+  it('projects each Session approval scope distinctly without granting or exposing approval authority', async () => {
     const connection = connectionFixture();
-    const unavailableApprovalBinding = bindingFixture({
-      approval: { kind: 'unavailable', maximumScope: 'request' },
+    const requestScopeBinding = bindingFixture({
+      approval: { kind: 'enabled', maximumScope: 'request' },
+    });
+    const sessionScopeBinding = bindingFixture({
+      bindingId: 'binding-approval-session',
+      approval: { kind: 'enabled', maximumScope: 'session' },
     });
     const automationBinding = bindingFixture({
       bindingId: 'binding-automation',
@@ -1100,34 +1129,52 @@ describe('Channels settings surface (real source, mounted)', () => {
       deliveryMode: 'finalResult',
       approval: { kind: 'notApplicable' },
     });
-    const writableApprovalOffBinding = bindingFixture({
+    const approvalOffBinding = bindingFixture({
       bindingId: 'binding-approval-off',
       approval: { kind: 'off' },
     });
     const host = createChannelsHostApi({
       readResource: async () => connectionResourceContent([connection]),
       readBindingsResource: async () => bindingResourceContent([
-        unavailableApprovalBinding,
+        requestScopeBinding,
+        sessionScopeBinding,
         automationBinding,
-        writableApprovalOffBinding,
+        approvalOffBinding,
       ]),
     });
 
     renderer = await renderChannelsSurface(host.hostApi);
 
-    const unavailableRow = findByTestId(renderer, 'channels-binding-binding-1')[0];
-    if (!unavailableRow) throw new Error('Expected the unavailable-approval binding row to render.');
-    expect(unavailableRow.props.detail).toContain('Approval requests are unavailable for request scope.');
-    expect(unavailableRow.props.detail).toContain('This saved policy does not authorize messages.');
-    expect(unavailableRow.props.accessibilityLabel).toContain('Approval requests are unavailable for request scope.');
-    expect(unavailableRow.props.accessibilityLabel).toContain('This saved policy does not authorize messages.');
-    expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-1').props.disabled).toBe(true);
+    // The two enabled scopes are separate saved policies and must not share one
+    // sentence: `request` admits a single pending request, `session` admits up
+    // to Session scope. A projection that collapsed them would silently
+    // overstate or understate what an approver in the chat can answer.
+    const requestRow = findByTestId(renderer, 'channels-binding-binding-1')[0];
+    if (!requestRow) throw new Error('Expected the request-scope approval binding row to render.');
+    expect(requestRow.props.detail).toContain('answer one permission request at a time');
+    expect(requestRow.props.detail).not.toContain('up to Session scope');
+    expect(requestRow.props.accessibilityLabel).toContain('answer one permission request at a time');
 
+    const sessionRow = findByTestId(renderer, 'channels-binding-binding-approval-session')[0];
+    if (!sessionRow) throw new Error('Expected the session-scope approval binding row to render.');
+    expect(sessionRow.props.detail).toContain('up to Session scope');
+    expect(sessionRow.props.detail).not.toContain('answer one permission request at a time');
+    expect(sessionRow.props.accessibilityLabel).toContain('up to Session scope');
+
+    // A target that cannot mediate approvals, and a Session target whose owner
+    // turned them off, both disclose nothing about approval authority.
     const automationRow = findByTestId(renderer, 'channels-binding-binding-automation')[0];
     if (!automationRow) throw new Error('Expected the Automation binding row to render.');
-    expect(automationRow.props.detail).not.toContain('Approval requests are unavailable');
-    expect(automationRow.props.accessibilityLabel).not.toContain('Approval requests are unavailable');
+    expect(automationRow.props.detail).not.toContain('/allow or /deny');
+    expect(automationRow.props.accessibilityLabel).not.toContain('/allow or /deny');
+
+    const offRow = findByTestId(renderer, 'channels-binding-binding-approval-off')[0];
+    if (!offRow) throw new Error('Expected the approvals-off binding row to render.');
+    expect(offRow.props.detail).not.toContain('/allow or /deny');
     expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-approval-off').props.disabled).toBe(false);
+
+    // Reading the management index is not a mutation: no Action is dispatched
+    // and the surface never becomes an approval authority of its own.
     expect(host.executeAction).not.toHaveBeenCalled();
   });
 
@@ -1172,6 +1219,156 @@ describe('Channels settings surface (real source, mounted)', () => {
       (resource as Readonly<{ localId: string }>).localId === CHANNELS_BINDINGS_RESOURCE.localId
     )).length).toBeGreaterThanOrEqual(2);
     expect(findPressableByTestId(renderer, 'channels-binding-enabled-binding-1').props.checked).toBe(false);
+  });
+
+  /**
+   * The REAL mounted composition — the canonical host-method table plus the
+   * canonical React Native adapter — rather than a hand-written host object.
+   *
+   * A structurally Resource-incapable fake cannot express the outage this
+   * product actually has: the adapter deliberately keeps `version().methods`
+   * stable across a daemon reconnect and reports transient unreachability per
+   * call (`hostApi.test.ts` pins that contract). Building the mount the way
+   * `PluginSurfaceHost` builds it is what makes this test able to fail.
+   */
+  function createRealMountChannelsHostApi(input: Readonly<{
+    isDaemonReachable: () => boolean;
+    readResource: PluginSurfaceHostApiMethodHandler;
+  }>) {
+    const requestSurface = {
+      pluginId: 'happier.channels',
+      contributionId: 'channels-renderer',
+      surfaceId: 'surface_channels_outage',
+      placement: 'appSurface',
+      platform: 'ios',
+      channel: 'internal',
+      resourceScope: [],
+      diagnostics: [],
+    } satisfies PluginUiSurfaceContextV1;
+    const handlers: PluginSurfaceHostApiHandlers = {
+      readResource: input.readResource,
+      watchResource: () => ({}),
+      disposeHostResource: () => ({}),
+      executeAction: () => createPluginSurfaceHostApiError('unavailable', ['channels_outage_fixture']),
+    };
+    const host = createPluginSurfaceHostApi({
+      surfaceContext: requestSurface,
+      handlers,
+      // Exactly the narrowing the bound controller applies while the daemon is
+      // unreachable, mirrored from the deciding adapter test.
+      isMethodAvailable: (method) => method === 'context' || input.isDaemonReachable(),
+    });
+    const adapter = createCanonicalPluginReactNativeHostApiAdapter({
+      surface: createChannelsSettingsSurfaceContextFixture(),
+      requestSurface,
+      requestIdPrefix: 'channels-outage',
+      handleRequest: host.handleRequest,
+      installedMethods: host.installedMethods,
+      getInstalledMethods: () => host.installedMethods,
+      getAdmissionMethods: () => host.admissionMethods,
+    });
+    return adapter;
+  }
+
+  function resourceResponsePayload(content: Readonly<{
+    contentType: string;
+    digest: string;
+    bytes: Uint8Array;
+  }>) {
+    return {
+      contentType: content.contentType,
+      digest: content.digest,
+      bytesBase64: Buffer.from(content.bytes).toString('base64'),
+    };
+  }
+
+  it('opens the Account-local policy editor during a real mounted daemon outage and returns online on reconnect', async () => {
+    const connection = offlineConnectionStateRow();
+    const binding = offlineBindingStateRow();
+    const data = createOfflineChannelsDataClient({ rows: [connection, binding] });
+    let daemonReachable = false;
+    const adapter = createRealMountChannelsHostApi({
+      isDaemonReachable: () => daemonReachable,
+      readResource: (request) => {
+        const resource = (request.payload as Readonly<{ resource?: Readonly<{ localId?: string }> }>)?.resource;
+        return resourceResponsePayload(resource?.localId === CHANNELS_BINDINGS_RESOURCE.localId
+          ? bindingResourceContent([bindingFixture({ bindingId: 'binding-daemon-1' })])
+          : connectionResourceContent([connectionFixture()]));
+      },
+    });
+
+    try {
+      // The structural contract is what makes this an OUTAGE and not a
+      // capability verdict: the mount still advertises the Resource methods.
+      expect(adapter.api.version().methods).toContain('readResource');
+      expect(adapter.api.version().methods).toContain('watchResource');
+
+      renderer = await renderChannelsSurface(
+        adapter.api as never,
+        createChannelsSettingsSurfaceContextFixture(),
+        undefined,
+        data.client,
+      );
+      await flushHookEffects();
+
+      // Cold offline presentation: the direct Account rows, and none of the
+      // daemon-only setup vertical.
+      await vi.waitFor(() => {
+        expect(findByTestId(renderer!, 'channels-binding-binding-offline-1').length).toBeGreaterThan(0);
+      });
+      expect(findByTestId(renderer, 'channels-provider-setup-picker')).toHaveLength(0);
+      expect(data.query).toHaveBeenCalled();
+
+      daemonReachable = true;
+      // Recovery is the canonical Resource owner's own watch retry plus
+      // re-read, which only keeps running because the settings surface — not
+      // the daemon child — holds the subscription.
+      await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(findByTestId(renderer!, 'channels-binding-binding-daemon-1').length).toBeGreaterThan(0);
+      }, { timeout: 10_000, interval: 100 });
+      expect(findByTestId(renderer, 'channels-binding-binding-offline-1')).toHaveLength(0);
+    } finally {
+      adapter.dispose();
+    }
+  });
+
+  it('keeps a reachable daemon on the online surface when its Resource itself fails', async () => {
+    const connection = offlineConnectionStateRow();
+    const binding = offlineBindingStateRow();
+    const data = createOfflineChannelsDataClient({ rows: [connection, binding] });
+    const adapter = createRealMountChannelsHostApi({
+      isDaemonReachable: () => true,
+      readResource: (request) => {
+        const resource = (request.payload as Readonly<{ resource?: Readonly<{ localId?: string }> }>)?.resource;
+        // A daemon-side refusal of one Resource shares the public
+        // `unavailable` code with an outage. Only the method-unavailability
+        // diagnostic separates them, and this arm carries a different one.
+        return resource?.localId === CHANNELS_BINDINGS_RESOURCE.localId
+          ? createPluginSurfaceHostApiError('unavailable', ['plugin_resource_not_declared'])
+          : resourceResponsePayload(connectionResourceContent([connectionFixture()]));
+      },
+    });
+
+    try {
+      renderer = await renderChannelsSurface(
+        adapter.api as never,
+        createChannelsSettingsSurfaceContextFixture(),
+        undefined,
+        data.client,
+      );
+      await flushHookEffects();
+
+      // The daemon surface reports the failed binding Resource; the
+      // Account-local editor would instead have rendered its own rows, which
+      // the direct Data client above is deliberately holding.
+      await vi.waitFor(() => {
+        expect(findByTestId(renderer!, 'channels-bindings-error').length).toBeGreaterThan(0);
+      });
+      expect(findByTestId(renderer, 'channels-binding-binding-offline-1')).toHaveLength(0);
+    } finally {
+      adapter.dispose();
+    }
   });
 
   it('reads and CAS-writes Account-local binding policy cold offline without invoking daemon Resources or Actions', async () => {
@@ -1237,9 +1434,13 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(host.executeAction).not.toHaveBeenCalled();
     expect(data.batch).toHaveBeenCalledWith([
+      // Turning a binding off changes this connection's delivery demand, so the
+      // canonical writer rewrites the owning connection row byte-equal to
+      // advance its revision and defeat a concurrent transfer that already
+      // scanned the old demand.
       {
-        kind: 'assert',
-        rowId: connection.rowId,
+        kind: 'put',
+        value: connection.value,
         expectedRevision: connection.revision,
       },
       expect.objectContaining({
@@ -2271,6 +2472,9 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
 
     expect(host.executeAction).toHaveBeenCalledTimes(1);
+    expect(host.executeAction.mock.calls.map(([actionId]) => actionId)).not.toContain(
+      'connection/set-enabled-v1',
+    );
     expect(host.readResource.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(findByTestId(renderer, 'channels-save-outcome').some(
       (instance) => instance.props?.accessibilityLiveRegion === 'polite',
@@ -3153,7 +3357,9 @@ describe('Channels settings surface (real source, mounted)', () => {
           providerSetupInput,
           credentialRef,
           selectedTransport: 'checkpointedPull',
-          maximumObservationAgeMs: MIN_CONVERSATION_OBSERVATION_AGE_MS,
+          // Setup seeds the Channels domain freshness default, not the smallest
+          // value an owner is allowed to configure.
+          maximumObservationAgeMs: 86_400_000,
         });
         if (!isRecord(payload)) throw new Error('Expected a connection-create input object.');
         expect(payload.providerSelection).toBe(selection);
@@ -3390,7 +3596,12 @@ describe('Channels settings surface (real source, mounted)', () => {
       }),
       executeAction: async (actionId) => {
         expect(actionId).toBe('connection/prepare-v1');
-        return { kind: 'requiresRemediation', remediation: 'telegramWebhookActive' };
+        // The canonical remediation result is a closed `{ kind }` object: the
+        // provider's private conflict is deliberately not disclosed to this
+        // surface. An extra field here is rejected by the same schema the
+        // daemon parses, which settles as `preparationUnavailable` instead and
+        // silently stops exercising the remediation path at all.
+        return { kind: 'requiresRemediation' };
       },
     });
 
@@ -3637,6 +3848,17 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
     await flushHookEffects();
 
+    // The destructive step is confirmed in context, exactly once. A
+    // daemon-target Action's declared confirmation resolves through the
+    // Approvals inbox rather than an app-shell dialog, so this is the only
+    // present-user decision the person can make where they are standing.
+    expect(host.executeAction).not.toHaveBeenCalled();
+    expect(findByTestId(renderer, 'channels-connection-lifecycle-confirmation').length).toBeGreaterThan(0);
+    await act(async () => {
+      await findPressableByTestId(renderer!, 'channels-connection-delete-confirm').props.onPress();
+    });
+    await flushHookEffects();
+
     expect(host.executeAction).toHaveBeenCalledTimes(1);
     expect(host.readResource.mock.calls.length).toBeGreaterThan(readsBeforeDelete);
     expect(findByTestId(renderer, 'channels-connection-delete')).toHaveLength(0);
@@ -3670,6 +3892,10 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     await act(async () => {
       await findPressableByTestId(renderer!, 'channels-connection-delete').props.onPress();
+    });
+    await flushHookEffects();
+    await act(async () => {
+      await findPressableByTestId(renderer!, 'channels-connection-delete-confirm').props.onPress();
     });
     await flushHookEffects();
 
@@ -3733,6 +3959,12 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     await act(async () => {
       await acceptLoss.props.onPress();
+    });
+    await flushHookEffects();
+
+    expect(host.executeAction).not.toHaveBeenCalled();
+    await act(async () => {
+      await findPressableByTestId(renderer!, 'channels-connection-accept-loss-confirm').props.onPress();
     });
     await flushHookEffects();
 

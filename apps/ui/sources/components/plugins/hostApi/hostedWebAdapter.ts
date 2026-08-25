@@ -81,6 +81,7 @@ export type PluginHostedWebCanonicalHostApiBinding = Readonly<{
     identity: PluginUiHostApiWireIdentityV1;
     surface: PluginUiJsonValueV1;
     methods: readonly PluginUiHostMethodV1[];
+    activity?: Readonly<{ active: boolean }>;
 }>;
 
 /**
@@ -148,7 +149,10 @@ export type PluginHostedWebHostApiBridgeHandler = ((
      * order; an identical snapshot is not republished, so establishing a
      * subscription is not itself an event.
      */
-    pushSurfaceContext(surface: PluginUiJsonValueV1): void;
+    pushSurfaceContext(
+        surface: PluginUiJsonValueV1,
+        activity?: Readonly<{ active: boolean }>,
+    ): void;
     /**
      * EU-4b: deliver one live resource invalidation to whichever established
      * subscription it names. The event comes from the mount's ONE invalidation
@@ -341,9 +345,10 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
         return state === 'pending' || state === 'active';
     }
     let currentSurface: PluginUiJsonValueV1 | undefined = params.canonicalHostApi?.surface;
+    let currentActivity = params.canonicalHostApi?.activity ?? Object.freeze({ active: false });
     let currentSurfaceSemanticKey = currentSurface === undefined
         ? undefined
-        : stableJsonStringify(currentSurface);
+        : stableJsonStringify({ surface: currentSurface, activity: currentActivity });
     const currentBootstrap = params.bootstrap;
     let pushSequence = 0;
     let disposed = false;
@@ -677,7 +682,10 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
                 identity: binding.identity,
                 requestId: message.requestId,
                 method: message.method,
-                result: currentSurface ?? binding.surface,
+                result: {
+                    surface: currentSurface ?? binding.surface,
+                    activity: currentActivity,
+                },
             }));
         }
         if (!params.handleRequest) return canonicalRequestError(envelope, message, 'unavailable');
@@ -954,12 +962,16 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
 
     const handler = Object.assign(handleBridgeEnvelope, {
         getReadyState: (): PluginUiHostReadyStateSnapshot => readyState.read(),
-        pushSurfaceContext: (surface: PluginUiJsonValueV1): void => {
+        pushSurfaceContext: (
+            surface: PluginUiJsonValueV1,
+            activity: Readonly<{ active: boolean }> = currentActivity,
+        ): void => {
             const binding = params.canonicalHostApi;
-            if (disposed || !binding || !isCurrent() || surface === currentSurface) return;
-            const surfaceSemanticKey = stableJsonStringify(surface);
+            if (disposed || !binding || !isCurrent()) return;
+            const surfaceSemanticKey = stableJsonStringify({ surface, activity });
             if (surfaceSemanticKey === currentSurfaceSemanticKey) return;
             currentSurface = surface;
+            currentActivity = Object.freeze({ active: activity.active });
             currentSurfaceSemanticKey = surfaceSemanticKey;
             for (const subscriptionId of [...contextSubscriptions]) {
                 pushToFrame(PluginUiHostApiWireEnvelopeV1Schema.parse({
@@ -967,7 +979,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
                     kind: 'subscription',
                     identity: binding.identity,
                     subscriptionId,
-                    event: surface,
+                    event: { surface, activity: currentActivity },
                 }));
             }
         },

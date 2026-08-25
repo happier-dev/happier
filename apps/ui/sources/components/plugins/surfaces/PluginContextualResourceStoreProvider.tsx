@@ -9,6 +9,7 @@ import type {
 
 import { createPluginContextualResourceReadClient } from './pluginSurfaceResourceRead';
 import { createPluginContextualResourceWatchClient } from './pluginSurfaceResourceWatch';
+import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 type PluginContextualResourceStore = ReturnType<typeof createPluginUiResourceStore>;
@@ -84,6 +85,9 @@ function subscriptionIdPrefix(input: ResourceStoreBinding): string {
     return `contextual-resource:${encodeURIComponent(resourceBindingKey(input))}`;
 }
 
+/** Host chrome mounts these stores; there is no plugin-authored surface id to name. */
+const CONTEXTUAL_RESOURCE_SURFACE_ID = 'host:plugin-contextual-resource';
+
 function createPluginContextualResourceStoreOwner(): PluginContextualResourceStoreOwner {
     // The provider lifetime is the sharing boundary. An entry exists only
     // while one of its mounted consumers holds it; no Account-keyed outer map
@@ -140,6 +144,20 @@ function createPluginContextualResourceStoreOwner(): PluginContextualResourceSto
                         subscriptionIdPrefix: subscriptionIdPrefix(input),
                         isCurrent,
                     }),
+                    // A contextual mount has no plugin-authored surface to route
+                    // `hostApi.diagnostic` through, but its author still needs to
+                    // learn when the store refused their Resource. Report into the
+                    // one Plugin UI diagnostic sink the surface transport also uses.
+                    diagnostic: (data: unknown) => {
+                        logPluginSurfaceDiagnostic(
+                            {
+                                pluginId: input.pluginId,
+                                contributionId: null,
+                                surfaceId: CONTEXTUAL_RESOURCE_SURFACE_ID,
+                            },
+                            data,
+                        );
+                    },
                 });
                 createdEntry = {
                     // This contextual owner already owns the captured Account

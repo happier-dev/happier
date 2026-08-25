@@ -12,7 +12,6 @@ const runControlMock = vi.hoisted(() => vi.fn());
 const runAuthenticationMock = vi.hoisted(() => vi.fn());
 const getReadyServerFeaturesMock = vi.hoisted(() => vi.fn());
 const listQualifiedGroupsV4Mock = vi.hoisted(() => vi.fn());
-const listLegacyGroupsV3Mock = vi.hoisted(() => vi.fn());
 const authState = vi.hoisted(() => ({
     credentials: {
         token: 'token',
@@ -110,9 +109,6 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
 }));
 vi.mock('@/sync/api/account/apiQualifiedConnectedAccountsV4', () => ({
     listQualifiedConnectedAccountGroupsV4: listQualifiedGroupsV4Mock,
-}));
-vi.mock('@/sync/api/account/apiConnectedServiceAuthGroupsV3', () => ({
-    listConnectedServiceAuthGroupsV3: listLegacyGroupsV3Mock,
 }));
 vi.mock('@happier-dev/protocol', async (importOriginal) => ({
     ...await importOriginal<typeof import('@happier-dev/protocol')>(),
@@ -422,7 +418,6 @@ describe('ConnectedAccountServiceView', () => {
         runAuthenticationMock.mockReset();
         getReadyServerFeaturesMock.mockReset();
         listQualifiedGroupsV4Mock.mockReset();
-        listLegacyGroupsV3Mock.mockReset();
         modalConfirmMock.mockReset();
         modalPromptMock.mockReset();
         modalAlertMock.mockReset();
@@ -635,7 +630,6 @@ describe('ConnectedAccountServiceView', () => {
             expect(runControlMock).toHaveBeenCalledOnce();
         });
         expect(listQualifiedGroupsV4Mock).not.toHaveBeenCalled();
-        expect(listLegacyGroupsV3Mock).not.toHaveBeenCalled();
         expect(rendered.tree.find(
             (node) => node.props.testID === 'connected-account:error',
         ).props.title).toBe('connectedServices.errors.generic');
@@ -900,7 +894,6 @@ describe('ConnectedAccountServiceView', () => {
         expect(passiveAccount.props.onToggleDefault).toBeUndefined();
         expect(runAuthenticationMock).not.toHaveBeenCalled();
         expect(listQualifiedGroupsV4Mock).not.toHaveBeenCalled();
-        expect(listLegacyGroupsV3Mock).not.toHaveBeenCalled();
     });
 
     it('keeps a revisioned peer row with no stored revision entirely passive', async () => {
@@ -1019,7 +1012,6 @@ describe('ConnectedAccountServiceView', () => {
 
         expect(runAuthenticationMock).not.toHaveBeenCalled();
         expect(listQualifiedGroupsV4Mock).not.toHaveBeenCalled();
-        expect(listLegacyGroupsV3Mock).not.toHaveBeenCalled();
         expect(rendered.tree.find(
             (node) => node.props.testID === 'connected-account:error',
         ).props.title).toBe('connectedServices.errors.generic');

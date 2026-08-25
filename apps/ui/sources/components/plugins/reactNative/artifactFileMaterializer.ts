@@ -27,6 +27,7 @@ type ExpoFileSystemDirectory = Readonly<{
     uri: string;
     exists?: boolean;
     create: (options?: { intermediates?: boolean; idempotent?: boolean }) => void;
+    list?: () => readonly ExpoFileSystemDirectory[];
     delete?: () => void;
 }>;
 
@@ -194,6 +195,18 @@ function deletePersistentArtifactDirectory(artifactDirectory: ExpoFileSystemDire
         throw new Error('plugin_ui_artifact_cache_delete_unavailable');
     }
     artifactDirectory.delete();
+}
+
+function retirePersistentArtifactCommitMarker(
+    FileSystem: ExpoFileSystemModule,
+    artifactDirectory: ExpoFileSystemDirectory,
+): void {
+    const manifestFile = new FileSystem.File(artifactDirectory, PERSISTENT_ARTIFACT_MANIFEST);
+    if (!manifestFile.exists) return;
+    if (!manifestFile.delete) {
+        throw new Error('plugin_ui_artifact_cache_commit_marker_delete_unavailable');
+    }
+    manifestFile.delete();
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -397,7 +410,11 @@ export function createReactNativePersistentArtifactStore(
         },
         remove: async (identity) => {
             try {
-                const { artifactDirectory } = await resolveDirectories(identity);
+                const { FileSystem, artifactDirectory } = await resolveDirectories(identity);
+                // Lookup authority is the manifest, not directory existence.
+                // Retire it durably before best-effort physical reclamation so
+                // a restart cannot resurrect bytes left by a failed delete.
+                retirePersistentArtifactCommitMarker(FileSystem, artifactDirectory);
                 deletePersistentArtifactDirectory(artifactDirectory);
             } catch {
                 options.onCleanupDiagnostic?.('plugin_ui_artifact_cache_delete_failed');
@@ -410,6 +427,12 @@ export function createReactNativePersistentArtifactStore(
                 const cacheDirectory = resolveCacheDirectory(FileSystem);
                 const accountDirectory = createPersistentAccountDirectory(FileSystem, cacheDirectory, scope);
                 if (accountDirectory.exists === false) return;
+                if (!accountDirectory.list) {
+                    throw new Error('plugin_ui_artifact_account_cache_list_unavailable');
+                }
+                for (const artifactDirectory of accountDirectory.list()) {
+                    retirePersistentArtifactCommitMarker(FileSystem, artifactDirectory);
+                }
                 if (!accountDirectory.delete) throw new Error('plugin_ui_artifact_account_cache_delete_unavailable');
                 accountDirectory.delete();
             } catch {

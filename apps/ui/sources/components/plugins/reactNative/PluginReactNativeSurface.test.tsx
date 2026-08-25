@@ -1671,6 +1671,60 @@ describe('PluginReactNativeSurface', () => {
         }
     });
 
+    it('recovers a render failure for a new host mount identity without remounting an equal replacement', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        let nextRecoveredInstance = 0;
+        const CrashingSurface = () => {
+            throw new Error('composer generation A render failure');
+        };
+        const RecoveredSurface = () => {
+            const [instance] = React.useState(() => {
+                nextRecoveredInstance += 1;
+                return `recovered-${nextRecoveredInstance}`;
+            });
+            return React.createElement('PluginNativeSurface', {
+                testID: 'plugin-native-recovered-surface',
+                accessibilityLabel: instance,
+            });
+        };
+        const crashingModule = Object.freeze({
+            renderSurface: () => React.createElement(CrashingSurface),
+        });
+        const recoveredModule = Object.freeze({
+            renderSurface: () => React.createElement(RecoveredSurface),
+        });
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const render = (boundaryResetKey: string, module: typeof crashingModule | typeof recoveredModule) => (
+            <PluginReactNativeSurface
+                surfaceId="composer:logical-instance"
+                mountInstanceKey="composer-region:session-a:summary"
+                boundaryResetKey={boundaryResetKey}
+                renderContext={defaultRenderContext}
+                decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+                module={module}
+                cacheKey="composer-cache"
+            />
+        );
+
+        try {
+            const screen = await renderScreen(render('composer-generation-a', crashingModule));
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
+
+            await screen.update(render('composer-generation-b', recoveredModule));
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            expect(screen.findByTestId('plugin-native-recovered-surface')?.props.accessibilityLabel)
+                .toBe('recovered-1');
+
+            await screen.update(render('composer-generation-b', recoveredModule));
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            expect(screen.findByTestId('plugin-native-recovered-surface')?.props.accessibilityLabel)
+                .toBe('recovered-1');
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
     it('keeps the targeted caller fallback after a contributor render crash while preserving crash reporting', async () => {
         const watchdog = createPluginReactNativeWatchdog({
             createFailureOccurrenceId: () => '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac14',

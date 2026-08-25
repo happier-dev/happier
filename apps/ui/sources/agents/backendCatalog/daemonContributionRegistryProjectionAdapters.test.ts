@@ -152,10 +152,6 @@ describe('daemon contribution registry projection adapters', () => {
         const authorization: NonNullable<
             PluginProjectionV2['actionsById'][string]['authorization']
         > = {
-            packageTrust: {
-                packageIdentity: 'package:acme.review:generation-42',
-                reviewedPackageIdentity: 'package:acme.review:generation-42',
-            },
             generation: {
                 targetGeneration: 'generation-42',
                 desiredGeneration: 'generation-42',

@@ -46,6 +46,17 @@ const administrationTargetSelection = createMachineAdministrationTargetSelection
     selectedMachineId: null,
 });
 installMachineAdministrationTargetSelectionBoundary(administrationTargetSelection);
+const administrationSelectionCalls: Array<Readonly<{
+    selectionKey: string;
+    options: unknown;
+}>> = [];
+vi.doMock('@/sync/domains/machines/administration/useTargetSelection', () => ({
+    ...administrationTargetSelection.module,
+    useMachineAdministrationTargetSelection: (selectionKey: string, options: unknown) => {
+        administrationSelectionCalls.push({ selectionKey, options });
+        return administrationTargetSelection.module.useMachineAdministrationTargetSelection(selectionKey);
+    },
+}));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
@@ -183,6 +194,7 @@ afterEach(() => {
     standardCleanup();
     capture.reset();
     administrationTargetSelection.controller.reset();
+    administrationSelectionCalls.length = 0;
     resetSettingsViewCommonModuleMockState();
 });
 
@@ -192,6 +204,10 @@ describe('ActionSettingsDetailView', () => {
 
         const screen = await renderScreen(<ActionSettingsDetailContent actionId="review.start" />);
 
+        expect(administrationSelectionCalls).toContainEqual({
+            selectionKey: 'actions.settings',
+            options: undefined,
+        });
         expect(capture.searchHeaders).toHaveLength(1);
         expect(capture.itemListsWithSearchHeader).toBe(0);
         expect(capture.itemGroupsWithSearchHeader).toBe(0);

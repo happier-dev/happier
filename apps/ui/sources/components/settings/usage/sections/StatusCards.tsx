@@ -9,6 +9,10 @@ import { ContextGauge, InstrumentCard } from '@/components/instrument';
 import { t } from '@/text';
 import { EntranceView } from './EntranceView';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    shouldForceFreshNewSessionEntryFromPressEvent,
+    useResolveNewSessionOrdinaryEntryRoute,
+} from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
 const styles = StyleSheet.create((theme) => ({
     errorCard: {
@@ -121,6 +125,13 @@ export const UsageErrorCard: React.FC<{ message: string; onRetry?: () => void }>
  */
 export const UsageEmptyState: React.FC = () => {
     const router = useRouter();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
+    const handleStartSession = React.useCallback((event?: unknown) => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute, router]);
 
     return (
         <EntranceView entranceId="usage-empty" style={styles.emptyShell}>
@@ -136,7 +147,7 @@ export const UsageEmptyState: React.FC = () => {
                     <Pressable
                         testID="usage-empty-start-session"
                         style={styles.emptyCta}
-                        onPress={() => router.push('/new')}
+                        onPress={handleStartSession}
                         accessibilityRole="button"
                         accessibilityLabel={t('newSession.title')}
                     >

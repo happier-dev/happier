@@ -39,6 +39,7 @@ const scopedSettingsReadMock = vi.hoisted(() => vi.fn());
 const scopedSettingsWriteMock = vi.hoisted(() => vi.fn());
 const scopedDaemonSecretReadMock = vi.hoisted(() => vi.fn());
 const scopedDaemonSecretWriteMock = vi.hoisted(() => vi.fn());
+const routerPushSpy = vi.hoisted(() => vi.fn());
 const platformEnvironment = vi.hoisted(() => ({
     platform: 'web' as 'web' | 'ios' | 'android',
 }));
@@ -64,6 +65,10 @@ installSettingsViewCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({ router: { push: routerPushSpy } }).module;
     },
 });
 
@@ -572,6 +577,7 @@ async function renderSection(
         machineId?: string | null;
         serverId?: string | null;
         daemonServerIdentityId?: string | null;
+        perActiveServerIdentityId?: string | null;
     }> = {},
 ) {
     const { PluginDetailGenericSettingsSection } = await import('./PluginDetailGenericSettingsSection');
@@ -587,6 +593,9 @@ async function renderSection(
             daemonServerIdentityId={options.daemonServerIdentityId === undefined
                 ? 'server-identity-1'
                 : options.daemonServerIdentityId}
+            perActiveServerIdentityId={options.perActiveServerIdentityId === undefined
+                ? 'server-identity-1'
+                : options.perActiveServerIdentityId}
             daemonOperationsAvailable={options.daemonOperationsAvailable ?? true}
             isDaemonTargetCurrent={options.isDaemonTargetCurrent}
         />
@@ -633,6 +642,7 @@ describe('PluginDetailGenericSettingsSection', () => {
         scopedSettingsWriteMock.mockReset();
         scopedDaemonSecretReadMock.mockReset();
         scopedDaemonSecretWriteMock.mockReset();
+        routerPushSpy.mockReset();
         machinePluginSettingsGetMock.mockResolvedValue(settingsResult({
             endpoint: 'https://api.example.test',
             apiToken: 'must-not-render',
@@ -665,10 +675,11 @@ describe('PluginDetailGenericSettingsSection', () => {
 
     it('refreshes mounted generic and declarative Settings consumers from one shared record watch', async () => {
         let endpoint = 'https://before.example.test';
+        let region = 'eu-before';
         let revision = '0';
         let invalidate: (() => void) | null = null;
         machinePluginSettingsGetMock.mockImplementation(() => Promise.resolve(settingsResult(
-            { endpoint },
+            { endpoint, region },
             [],
             revision,
         )));
@@ -676,8 +687,16 @@ describe('PluginDetailGenericSettingsSection', () => {
             invalidate = input.onInvalidated;
             return { dispose: vi.fn() };
         });
-        const { PluginDetailGenericSettingsSection } = await import('./PluginDetailGenericSettingsSection');
+        // Load the declarative surface before the generic section. This file's
+        // manual `scopedPluginSettingsRuntime` mock resolves through
+        // `importOriginal`, and that actual module reaches
+        // `@/components/plugins/surfaces` through `@/sync/sync`. Vitest skips a
+        // manual mock for a module requested while the mocked id is already on
+        // its import callstack, so whichever Settings consumer is first reached
+        // that way binds the unmocked runtime — a different adapter object and
+        // identity resolver — and can no longer join this record at all.
         const { DeclarativePluginSurface } = await import('@/components/plugins/surfaces/DeclarativePluginSurface');
+        const { PluginDetailGenericSettingsSection } = await import('./PluginDetailGenericSettingsSection');
         const screen = await renderScreen(
             <>
                 <PluginDetailGenericSettingsSection
@@ -687,6 +706,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />
                 <DeclarativePluginSurface
@@ -715,6 +735,19 @@ describe('PluginDetailGenericSettingsSection', () => {
                                     id: 'endpoint',
                                     descriptor: { scope: 'daemon', schema: { type: 'string' } },
                                 },
+                            }, {
+                                // Declared only here. The generic section never
+                                // asks for it, so it can only render from the
+                                // record this declarative consumer joined.
+                                kind: 'field',
+                                path: 'root.region',
+                                order: 2,
+                                label: 'Region',
+                                control: { kind: 'text', settingId: 'region' },
+                                setting: {
+                                    id: 'region',
+                                    descriptor: { scope: 'daemon', schema: { type: 'string' } },
+                                },
                             }],
                         },
                     }}
@@ -735,12 +768,17 @@ describe('PluginDetailGenericSettingsSection', () => {
             await Promise.resolve();
         });
 
+        // One read and one watch for both consumers, and the declarative-only
+        // `region` control proves the declarative surface is a member of that
+        // one record rather than a mount the counts below ignore.
         expect(machinePluginSettingsGetMock).toHaveBeenCalledOnce();
         expect(scopedSettingsWatchMock).toHaveBeenCalledOnce();
         expect(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.value).toBe(endpoint);
         expect(screen.findByTestId('plugin-declarative-field:root.endpoint')?.props.value).toBe(endpoint);
+        expect(screen.findByTestId('plugin-declarative-field:root.region')?.props.value).toBe(region);
 
         endpoint = 'https://changed-elsewhere.example.test';
+        region = 'eu-after';
         revision = '1';
         await act(async () => {
             invalidate?.();
@@ -752,6 +790,50 @@ describe('PluginDetailGenericSettingsSection', () => {
         expect(machinePluginSettingsGetMock).toHaveBeenCalledTimes(2);
         expect(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.value).toBe(endpoint);
         expect(screen.findByTestId('plugin-declarative-field:root.endpoint')?.props.value).toBe(endpoint);
+        expect(screen.findByTestId('plugin-declarative-field:root.region')?.props.value).toBe(region);
+    });
+
+    it('preserves the declaring external Agent identity in its settings cross-link', async () => {
+        const baseGroup = createProjection(1).editableSettingsGroups[0]!;
+        const projection: PluginProjectionEntry = {
+            ...createProjection(1),
+            editableSettingsGroups: [{
+                ...baseGroup,
+                target: {
+                    kind: 'agent',
+                    agent: { pluginId: 'example.agent-two', localId: 'assistant' },
+                },
+                presentation: {
+                    sections: [],
+                    subagentSections: [{
+                        id: 'external-agent-settings',
+                        title: 'External Agent settings',
+                        description: 'Open the matching external Agent settings.',
+                        items: [{
+                            id: 'open-external-agent-settings',
+                            title: 'Open external Agent settings',
+                            description: 'Open settings for this Agent.',
+                            iconIonName: 'people-outline',
+                        }],
+                    }],
+                },
+            }],
+        };
+
+        const { screen } = await renderSection(projection);
+        const settingsLink = screen.findAll((node) => (
+            node.props?.title === 'Open external Agent settings'
+            && typeof node.props?.onPress === 'function'
+        ))[0];
+        expect(settingsLink).toBeTruthy();
+
+        await act(async () => {
+            settingsLink?.props.onPress();
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith(
+            '/(app)/settings/agents/assistant?pluginId=example.agent-two',
+        );
     });
 
     it('renders an external notification channel through the canonical Account Plugin Settings record', async () => {
@@ -1414,6 +1496,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -1523,6 +1606,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -1569,6 +1653,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -1613,6 +1698,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -1667,6 +1753,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -1690,6 +1777,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable={false}
                 />,
             );
@@ -1726,6 +1814,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -1763,6 +1852,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable={false}
                 />,
             );
@@ -2120,6 +2210,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -2169,6 +2260,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -2293,6 +2385,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -2309,6 +2402,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -2362,6 +2456,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     serverId="server-1"
                     accountServerIdentityId="server-identity-1"
                     daemonServerIdentityId="server-identity-1"
+                    perActiveServerIdentityId="server-identity-1"
                     daemonOperationsAvailable
                 />,
             );
@@ -2554,6 +2649,7 @@ describe('PluginDetailGenericSettingsSection', () => {
 
         const { screen } = await renderSection(createProjection(1, boundFields, 'account'), {
             daemonServerIdentityId: 'server-identity-b',
+            perActiveServerIdentityId: 'server-identity-b',
         });
         const inputId = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.serverUrl.input`;
         const saveId = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.serverUrl.save`;
@@ -2584,6 +2680,104 @@ describe('PluginDetailGenericSettingsSection', () => {
                     'server-identity-b': 'https://updated-administration.example.test',
                 },
             },
+        }));
+    });
+
+    it('keeps an offline Administration server override separate from the Account default', async () => {
+        const boundFields: readonly PluginProjectionEditableSettingField[] = [{
+            key: 'serverUrl',
+            control: 'text',
+            valueType: 'string',
+            valueSchema: { type: 'string' },
+            title: 'Server URL',
+            secretCustody: null,
+            redaction: 'none',
+            clearWhenEmpty: 'persist',
+            presentation: {
+                control: 'text',
+                binding: {
+                    kind: 'perActiveServer',
+                    fallbackSettingId: 'serverUrl',
+                    byServerIdSettingId: 'serverUrlByServerId',
+                },
+            },
+        }, {
+            key: 'serverUrlByServerId',
+            control: 'json',
+            valueType: 'object',
+            valueSchema: { type: 'object', additionalProperties: { type: 'string' } },
+            title: 'Per-server URLs',
+            secretCustody: null,
+            redaction: 'none',
+            clearWhenEmpty: 'persist',
+            presentation: { control: 'json', hidden: true },
+        }];
+        const accountTarget = { kind: 'account' as const, serverIdentityId: 'server-identity-1' };
+        scopedSettingsReadMock.mockImplementation((input: Readonly<{ scope?: Readonly<{ kind?: string }> }>) => (
+            input.scope?.kind === 'account'
+                ? Promise.resolve({
+                    status: 'ready' as const,
+                    snapshot: {
+                        scope: { kind: 'account' as const },
+                        target: accountTarget,
+                        revision: { kind: 'account' as const, value: 7 },
+                        values: {
+                            serverUrl: 'https://account-default.example.test',
+                            serverUrlByServerId: {
+                                'offline-selected-identity': 'https://offline-selected.example.test',
+                            },
+                        },
+                    },
+                })
+                : undefined
+        ));
+        scopedSettingsWriteMock.mockResolvedValue({
+            status: 'ready',
+            snapshot: {
+                scope: { kind: 'account' },
+                target: accountTarget,
+                revision: { kind: 'account', value: 8 },
+                values: {
+                    serverUrl: 'https://account-default.example.test',
+                    serverUrlByServerId: {
+                        'offline-selected-identity': 'https://updated-offline-selected.example.test',
+                    },
+                },
+            },
+        });
+
+        const { screen } = await renderSection(createProjection(1, boundFields, 'account'), {
+            machineId: null,
+            serverId: null,
+            daemonServerIdentityId: null,
+            daemonOperationsAvailable: false,
+            perActiveServerIdentityId: 'offline-selected-identity',
+        });
+        const inputId = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.serverUrl.input`;
+        const saveId = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.serverUrl.save`;
+
+        expect(screen.findByTestId(inputId)?.props.value).toBe('https://offline-selected.example.test');
+        await act(async () => {
+            screen.changeTextByTestId(inputId, 'https://updated-offline-selected.example.test');
+        });
+        await act(async () => {
+            screen.pressByTestId(saveId);
+            await Promise.resolve();
+        });
+
+        expect(scopedSettingsWriteMock).toHaveBeenCalledWith(expect.objectContaining({
+            scope: { kind: 'account' },
+            target: accountTarget,
+            fieldId: 'serverUrlByServerId',
+            mutation: {
+                kind: 'set',
+                value: {
+                    'offline-selected-identity': 'https://updated-offline-selected.example.test',
+                },
+            },
+        }));
+        expect(scopedSettingsWriteMock).not.toHaveBeenCalledWith(expect.objectContaining({
+            fieldId: 'serverUrl',
         }));
     });
 

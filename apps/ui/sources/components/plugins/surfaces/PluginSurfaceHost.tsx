@@ -3,11 +3,11 @@ import * as React from 'react';
 import {
     BrowserViewTargetV1Schema,
     DaemonPluginReactNativeCrashStateV1Schema,
+    deriveDaemonPluginReactNativeCrashMountKeyV1,
     isSameDaemonPluginReactNativeCrashBindingTokenV1,
     type ComposerRefV1,
     type ComposerSnapshotV1,
     type DaemonPluginUiComposerSurfaceCatalogEntryV1,
-    type DaemonPluginUiTargetedSurfaceMountIdentityV1,
     type DaemonPluginUiTargetedSurfaceMountV1,
     type DaemonContributionRegistryProjectionMountedTargetV1,
     type BrowserViewTargetV1,
@@ -20,12 +20,14 @@ import {
     buildPluginHostedWebStaticAssetPreviewId,
     isPluginUiDestinationBindingAdmittedAtRuntimeV1,
     PluginUiFallbackRefV1Schema,
+    resolvePluginUiInlineSurfaceSlotV1,
     type PluginUiChannelV1,
     type PluginUiDestinationBindingV1,
     type PluginUiDestinationRuntimeFormFactorV1,
     type PluginUiFallbackRefV1,
     type PluginUiHostApiRequestEnvelopeV1,
     type PluginUiInstanceKeyV1,
+    type PluginUiInlineSurfaceRoleV1,
     type PluginUiJsonValueV1,
     type PluginUiLaunchInputV1,
     type PluginUiResourceSubscriptionEventV1,
@@ -39,6 +41,7 @@ import type {
     RenderContext,
     SurfaceContext,
 } from '@happier-dev/plugin-sdk/ui';
+import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 import { PluginHostApiProvider } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 
@@ -129,9 +132,11 @@ import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins
 import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import {
+    resolvePluginLocalizedText,
     resolvePluginUiTranslationBundle,
     resolvePluginUiTranslationText,
 } from '@/sync/domains/plugins/ui/i18n';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginSurfaceHostApiV1 } from './createPluginSurfaceHostApi';
 import {
     readRequiredPluginSurfaceHostMethods,
@@ -190,6 +195,10 @@ import {
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import {
+    pluginUiProjectionAdmissionTargetKey,
+    readPluginUiProjectionTargetedAdmissionSnapshot,
+} from '@/sync/domains/plugins/ui/projectionWarmCache';
 import { sync } from '@/sync/sync';
 import {
     issueActivePluginAccountHostedArtifactBrowserFrame,
@@ -413,6 +422,8 @@ type DeclarativePluginSurfaceWithDocumentSourceProps = Readonly<{
     serverId?: string | null;
     /** Explicit Settings-route daemon target; `null` intentionally disables origin fallback. */
     daemonSettingsTarget?: ScopedPluginSettingsDaemonTarget | null;
+    /** Portable selected-server identity for Account perActiveServer bindings. */
+    perActiveServerIdentityId?: string | null;
     isDaemonSettingsTargetCurrent?: (target: ScopedPluginSettingsDaemonTarget) => boolean;
     /** Settings-only availability is independent of this mount's action bridge. */
     settingsScopesEnabled?: Readonly<{ account: boolean; daemon: boolean }>;
@@ -451,6 +462,7 @@ function DeclarativePluginSurfaceDocumentContent(
     props: DeclarativePluginSurfaceWithDocumentSourceProps & Readonly<{
         documentMountScope: DeclarativeDocumentSourceMountScope;
         contrast: SurfaceContext['contrast'];
+        presentationEnvironment: ReturnType<typeof projectHappierUiEnvironment>;
     }>,
 ) {
     const document = useDeclarativeDocumentSource({
@@ -473,11 +485,13 @@ function DeclarativePluginSurfaceDocumentContent(
     });
     return (
         <DeclarativePluginSurface
+            environment={props.presentationEnvironment}
             pluginId={props.pluginId}
             model={document.model}
             machineId={props.machineId}
             serverId={props.serverId}
             daemonSettingsTarget={props.daemonSettingsTarget}
+            perActiveServerIdentityId={props.perActiveServerIdentityId}
             isDaemonSettingsTargetCurrent={props.isDaemonSettingsTargetCurrent}
             settingsScopesEnabled={props.settingsScopesEnabled}
             interactionEnabled={props.interactionEnabled}
@@ -526,6 +540,10 @@ function DeclarativePluginSurfaceWithDocumentSource(
         props.surfaceTranslations,
         props.targetedContributions,
     ]);
+    const presentationEnvironment = React.useMemo(
+        () => projectHappierUiEnvironment(surface),
+        [surface],
+    );
     // Environment snapshots update independently of the Resource store. Keep
     // the adapter/store lifetime bound to the controller identity and push the
     // latest public context into the existing adapter rather than reopening a
@@ -577,11 +595,13 @@ function DeclarativePluginSurfaceWithDocumentSource(
     if (!hostApiAdapter || !documentMountScope) {
         return (
             <DeclarativePluginSurface
+                environment={presentationEnvironment}
                 pluginId={props.pluginId}
                 model={props.staticModel}
                 machineId={props.machineId}
                 serverId={props.serverId}
                 daemonSettingsTarget={props.daemonSettingsTarget}
+                perActiveServerIdentityId={props.perActiveServerIdentityId}
                 isDaemonSettingsTargetCurrent={props.isDaemonSettingsTargetCurrent}
                 settingsScopesEnabled={props.settingsScopesEnabled}
                 interactionEnabled={props.interactionEnabled}
@@ -615,6 +635,7 @@ function DeclarativePluginSurfaceWithDocumentSource(
             {...(props.composerRef === undefined ? {} : { composerRef: props.composerRef })}
         >
             <DeclarativePluginSurfaceDocumentContent
+                presentationEnvironment={presentationEnvironment}
                 {...props}
                 documentMountScope={documentMountScope}
                 contrast={environment.contrast}
@@ -853,6 +874,7 @@ function PluginHostedWebBrowserArtifactFramePane(props: Readonly<{
         ActivePluginAccountHostedArtifactBrowserFrameIssueResult,
         { kind: 'available' }
     > | null>(null);
+    const [issuanceRevision, setIssuanceRevision] = React.useState(0);
     const currentnessRef = React.useRef(props.isCurrent);
     currentnessRef.current = props.isCurrent;
     const isCurrent = React.useCallback(() => currentnessRef.current(), []);
@@ -920,12 +942,14 @@ function PluginHostedWebBrowserArtifactFramePane(props: Readonly<{
             retirement.dispose();
         };
     // These keys contain the issued coordinate and the existing technical
-    // admission facts. They are effect dependencies, never a capability cache
-    // or a renewal schedule.
+    // admission facts. `issuanceRevision` is mount-local only: expiry asks the
+    // canonical issuer for another exact capability instead of turning a
+    // healthy current surface into a permanent unavailable state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         props.accountLifetime,
         props.reader,
+        issuanceRevision,
         isCurrent,
         mountInstanceKey,
         requestKey,
@@ -941,10 +965,14 @@ function PluginHostedWebBrowserArtifactFramePane(props: Readonly<{
         const remainingMs = availableFrame.value.expiresAt - Date.now();
         if (remainingMs <= 0) {
             setExpiredFrame(availableFrame);
+            setIssuanceRevision((revision) => revision + 1);
             return;
         }
         const timeout = setTimeout(
-            () => setExpiredFrame(availableFrame),
+            () => {
+                setExpiredFrame(availableFrame);
+                setIssuanceRevision((revision) => revision + 1);
+            },
             Math.min(remainingMs, 2_147_483_647),
         );
         return () => {
@@ -1028,6 +1056,8 @@ function createReactNativeDevServerLoad(
 function PluginReactNativeSurfaceHost(props: Readonly<{
     surfaceId: string;
     mountInstanceKey?: PluginUiInstanceKeyV1;
+    /** Existing host-owned mount/catalog identity for local error recovery. */
+    boundaryResetKey?: string;
     snapshotTitle: string;
     /** Host-private request envelope; never published to the RN module. */
     requestSurface: PluginUiSurfaceContextV1;
@@ -1275,6 +1305,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         () => createPluginUiPrivatePresentationHost(
             canonicalRenderIdentity.brand,
             {
+                direction: environment.direction,
                 ...(brandTargetPresentation
                     ? {
                         resolveBrandTarget: brandTargetPresentation.resolveBrandTarget,
@@ -1308,6 +1339,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             brandTargetPresentation?.resolveBrandTarget,
             brandTargetPresentation?.serverId,
             canonicalTargetAuthorityKey,
+            environment.direction,
             hasRenderTargetedSurface,
             isFocusEligible,
             isBrandTargetPresentationCurrent,
@@ -1341,6 +1373,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             surface: identity.surface,
             hostApi: canonicalHostApiAdapter.api,
             signal: abortController.signal,
+            activity: Object.freeze({ active: isFocusEligible() }),
             // EU-5a: absent launch input stays absent. Spreading a `{ launchInput:
             // undefined }` key would make "opened without input" indistinguishable
             // from "opened with an explicit undefined" for an author reading the key.
@@ -1354,6 +1387,9 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         abortController.signal,
         canonicalHostApiAdapter,
         canonicalRenderIdentity,
+        isFocusEligible,
+        props.focusEligible,
+        props.interactionEnabled,
         props.launchInput,
         props.subPath,
     ]);
@@ -1375,6 +1411,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
         <PluginReactNativeSurface
             surfaceId={props.surfaceId}
             mountInstanceKey={props.mountInstanceKey}
+            {...(props.boundaryResetKey === undefined ? {} : { boundaryResetKey: props.boundaryResetKey })}
             snapshotTitle={props.snapshotTitle}
             decision={props.decision}
             {...(props.loadPolicy ? { loadPolicy: props.loadPolicy } : {})}
@@ -1478,22 +1515,6 @@ function isExactDescriptorReactNativeCrashState(input: Readonly<{
         && input.state.token.artifactDigest === input.artifactDigest;
 }
 
-function sameTargetedReactNativeCrashMount(
-    left: Extract<DaemonPluginReactNativeCrashStateV1['token']['mount'], Readonly<{ kind: 'targetedSurface' }>>,
-    right: DaemonPluginUiTargetedSurfaceMountIdentityV1,
-): boolean {
-    return left.target.pluginId === right.target.pluginId
-        && left.target.immutableGenerationId === right.target.immutableGenerationId
-        && left.point.pointId === right.point.pointId
-        && left.point.protocol.id === right.point.protocol.id
-        && left.point.protocol.version === right.point.protocol.version
-        && left.contributor.pluginId === right.contributor.pluginId
-        && left.contributor.contributionId === right.contributor.contributionId
-        && left.contributor.immutableGenerationId === right.contributor.immutableGenerationId
-        && left.role === right.role
-        && left.presentation === right.presentation;
-}
-
 function isExactTargetedReactNativeCrashState(input: Readonly<{
     state: DaemonPluginReactNativeCrashStateV1;
     mount: DaemonPluginUiTargetedSurfaceMountV1;
@@ -1501,7 +1522,8 @@ function isExactTargetedReactNativeCrashState(input: Readonly<{
 }>): boolean {
     const tokenMount = input.state.token.mount;
     return tokenMount.kind === 'targetedSurface'
-        && sameTargetedReactNativeCrashMount(tokenMount, input.mount)
+        && deriveDaemonPluginReactNativeCrashMountKeyV1(tokenMount)
+            === deriveDaemonPluginReactNativeCrashMountKeyV1(input.mount)
         && input.state.token.renderer.pluginId === input.mount.selectedRenderer.identity.pluginId
         && input.state.token.renderer.localId === input.mount.selectedRenderer.identity.localId
         && input.artifactDigest !== null
@@ -1721,6 +1743,8 @@ export type PluginSurfaceTargetedMountProps = Readonly<{
  */
 export type PluginSurfaceComposerMountProps = Readonly<{
     mount: PluginSurfaceComposerMountBinding;
+    /** Existing exact mount/catalog identity; changing it retires this renderer. */
+    boundaryResetKey?: string;
     /** The real physical target for generic Resource/context semantics. */
     physicalTarget: PluginSurfaceTarget;
     /** The incumbent Composer scope lifetime; this host only observes it. */
@@ -1731,6 +1755,8 @@ export type PluginSurfaceComposerMountProps = Readonly<{
     pluginProjectionV2?: PluginProjectionV2 | null;
     /** Mutation admission remains closed until this current response is ready. */
     daemonProjectionReady: boolean;
+    /** Canonical Composer badge shown if the selected renderer cannot mount. */
+    fallback?: React.ReactNode;
     /** Optional semantic Composer handlers supplied by the scope owner. */
     binding?: BoundPluginSurfaceBinding;
     /**
@@ -1772,6 +1798,8 @@ export function PluginSurfaceHost(props: Readonly<(
     serverId?: string | null;
     /** Explicit Settings-route daemon target; `null` intentionally disables origin fallback. */
     daemonSettingsTarget?: ScopedPluginSettingsDaemonTarget | null;
+    /** Portable selected-server identity for Account perActiveServer bindings. */
+    perActiveServerIdentityId?: string | null;
     isDaemonSettingsTargetCurrent?: (target: ScopedPluginSettingsDaemonTarget) => boolean;
     /** Settings-only availability is independent of this mount's action bridge. */
     settingsScopesEnabled?: Readonly<{ account: boolean; daemon: boolean }>;
@@ -1808,6 +1836,11 @@ export function PluginSurfaceHost(props: Readonly<(
     projectionInteractionEnabled?: boolean;
     policyContext?: PluginUiPolicyEvaluationContext;
     reactNativeLoaderBackend?: PluginReactNativeLoaderBackend;
+    /** Exact host-owned inline placement; admission remains in the Surface Registry. */
+    inlineMount?: Readonly<{
+        role: PluginUiInlineSurfaceRoleV1;
+        presentation: 'content' | 'fill';
+    }>;
 }>): React.ReactElement | null {
     const targetedMount = 'targetedMount' in props ? props.targetedMount : undefined;
     const composerMount = 'composerMount' in props ? props.composerMount : undefined;
@@ -1929,6 +1962,24 @@ export function PluginSurfaceHost(props: Readonly<(
         : origin
             ? origin.phase === 'current' && origin.interactionEnabled === true
             : props.projectionInteractionEnabled;
+    const daemonInteraction = usePluginSurfaceDaemonInteraction({
+        machineId,
+        projectionInteractionEnabled,
+    });
+    // Capture the incumbent Account lifetime once for this mount. It remains an
+    // opaque cancellation/currentness input: neither the surface host nor the
+    // artifact learns an Account id or creates another epoch.
+    //
+    // Refresh on retirement so presentation fails closed synchronously even if
+    // no unrelated parent state happens to rerender this host first. The active
+    // Account-scope owner remains the only lifecycle owner; this mount merely
+    // observes its existing retirement callback.
+    const [, refreshAfterAccountRetirement] = React.useReducer((revision: number) => revision + 1, 0);
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    React.useEffect(() => {
+        const retirement = accountLifetime?.onRetire(refreshAfterAccountRetirement);
+        return () => retirement?.dispose();
+    }, [accountLifetime]);
     const installedPackagesById = mountedPluginUiProjection?.installedPackagesById;
     const mountedTargetPluginId = hasEmbeddedMount ? null : selectedDestinationBinding?.destination.pluginId;
     const mountedTarget = React.useMemo(() => readMountedTarget({
@@ -1951,11 +2002,41 @@ export function PluginSurfaceHost(props: Readonly<(
     )
         ? mountedTargetProjection.inputs
         : null;
+    // A fresh process whose machine has no reachable daemon can still mount the
+    // destination it last confirmed, because the retained presentation slice it
+    // booted from carries the target admission that accompanied it. This is the
+    // same last-confirmed custody the projection itself was restored from —
+    // read-only by construction, since `daemonReachable` being false is exactly
+    // what withholds every daemon-owned method from this mount. The moment a
+    // daemon answers, the live snapshot above supersedes it.
+    const retainedOfflineTargetedContributions = React.useMemo(() => (
+        !hasEmbeddedMount
+        && mountedTarget
+        && !daemonInteraction.daemonReachable
+        && machineId
+        && accountLifetime?.isCurrent() === true
+            ? readPluginUiProjectionTargetedAdmissionSnapshot({
+                scope: accountLifetime.scope,
+                targetKey: pluginUiProjectionAdmissionTargetKey({ serverId, machineId }),
+                machineId,
+                target: mountedTarget,
+            })
+            : null
+    ), [
+        accountLifetime,
+        daemonInteraction.daemonReachable,
+        hasEmbeddedMount,
+        machineId,
+        mountedTarget,
+        serverId,
+    ]);
     const targetedContributions = targetedBinding
         ? targetedBinding.mount.contributorTargetedContributions
         : composerBinding
             ? composerBinding.catalogEntry.contributorTargetedContributions
-            : mountedTargetInputs?.targetedContributions ?? null;
+            : mountedTargetInputs?.targetedContributions
+                ?? retainedOfflineTargetedContributions
+                ?? null;
     const preparedTargetedSurfaceMounts = !hasEmbeddedMount && hasExactMountedTargetedSurfaceMounts(
         mountedTargetProjection.inputs?.preparedTargetedSurfaceMounts,
         mountedTarget,
@@ -1979,10 +2060,6 @@ export function PluginSurfaceHost(props: Readonly<(
     const originInteractionCurrent = selectedEmbeddedRenderer
         ? selectedEmbeddedRenderer.availability.state === 'available'
         : origin ? origin.phase === 'current' && origin.interactionEnabled === true : true;
-    const daemonInteraction = usePluginSurfaceDaemonInteraction({
-        machineId,
-        projectionInteractionEnabled,
-    });
     // §3.2 exact target: Registry/CLI owns the declared target through the
     // selected binding; this host supplies only the current destination facts.
     // Both React Native and hosted-web mounts consume this one resolution.
@@ -2051,6 +2128,13 @@ export function PluginSurfaceHost(props: Readonly<(
     }), [mountedPluginId, mountedPluginUiProjection, surfaceLocale]);
     const surfacePlatform = props.platform ?? 'web';
     const surfaceEnvironment = usePluginSurfaceEnvironment(surfacePlatform);
+    const declarativePresentationEnvironment = React.useMemo(
+        () => projectHappierUiEnvironment({
+            ...surfaceEnvironment,
+            translations: surfaceTranslations,
+        }),
+        [surfaceEnvironment, surfaceTranslations],
+    );
     // Read the surrounding route/tab eligibility exactly once at the generalized
     // physical mount, then lend the fact to every renderer interaction boundary.
     const presentationFocusEligible = usePluginSurfaceFocusEligibility();
@@ -2093,20 +2177,6 @@ export function PluginSurfaceHost(props: Readonly<(
         && descriptor?.contributionKind === 'surfacePlacement'
         ? readSelectedPluginUiResourceCapability(descriptor)
         : undefined;
-    // Capture the incumbent Account lifetime once for this mount. It remains an
-    // opaque cancellation/currentness input: neither the surface host nor the
-    // artifact learns an Account id or creates another epoch.
-    //
-    // Refresh on retirement so presentation fails closed synchronously even if
-    // no unrelated parent state happens to rerender this host first. The active
-    // Account-scope owner remains the only lifecycle owner; this mount merely
-    // observes its existing retirement callback.
-    const [, refreshAfterAccountRetirement] = React.useReducer((revision: number) => revision + 1, 0);
-    const accountLifetime = captureActiveServerAccountScopeLifetime();
-    React.useEffect(() => {
-        const retirement = accountLifetime?.onRetire(refreshAfterAccountRetirement);
-        return () => retirement?.dispose();
-    }, [accountLifetime]);
     const accountLocalInteractionEnabled = accountLifetime?.isCurrent() === true;
     // The Availability projection rematerializes an equivalent bound reader on
     // every AccountChange. A reader remains live for its bound Account scope,
@@ -2344,13 +2414,33 @@ export function PluginSurfaceHost(props: Readonly<(
         mountedComposerOwnerInstanceKey,
         mountedComposerOwnerPluginId,
     ]);
+    // Referentially stable on purpose: this resolver is part of the mounted
+    // Composer applier, which is part of the mount's identity. A semantically
+    // equivalent projection must not retire the mount, and the label is
+    // resolved at admission time anyway, so read the current projection then.
+    const mountedPluginUiProjectionRef = React.useRef(mountedPluginUiProjection);
+    mountedPluginUiProjectionRef.current = mountedPluginUiProjection;
+    const mountedComposerAttachmentLocalize = React.useCallback<PluginLocalizedTextResolver>(
+        (pluginId, value) => resolvePluginLocalizedText({
+            projection: mountedPluginUiProjectionRef.current,
+            pluginId,
+            value,
+            locale: getPreferredLanguage(),
+        }),
+        [],
+    );
     const mountedComposerTransactionApplier = React.useMemo(() => (
         mountedComposerOwner
             ? createComposerPresentationTransactionApplier({
                 composerAttachmentsById: mountedComposerAttachmentsById,
+                localize: mountedComposerAttachmentLocalize,
             })
             : null
-    ), [mountedComposerAttachmentsById, mountedComposerOwner]);
+    ), [
+        mountedComposerAttachmentLocalize,
+        mountedComposerAttachmentsById,
+        mountedComposerOwner,
+    ]);
     const mountedComposerSubscriptionPublisherRef = React.useRef<PluginSurfaceComposerSubscriptionPublisher | null>(null);
     const publishMountedComposerSnapshot = React.useCallback((event: Readonly<{
         subscriptionId: string;
@@ -2580,20 +2670,29 @@ export function PluginSurfaceHost(props: Readonly<(
             targetedSurfaceLaunchInputResetKey,
         ])
         : undefined;
+    const composerBoundaryResetKey = composerMount?.boundaryResetKey;
+    // The three mount inputs are a discriminated union, so the fallback owner
+    // is the ACTIVE arm rather than the first non-nullish value. An author's
+    // explicit `null` means "render no fallback"; a value-level `??` merge
+    // turned that into `undefined` and every downstream presence check then
+    // rendered the generic unavailable presentation the author suppressed.
+    const embeddedFallback = targetedRequest
+        ? targetedRequest.fallback
+        : composerMount?.fallback;
     const renderWithTargetedSurfaceBoundary = (child: React.ReactElement): React.ReactElement => {
-        if (!targetedBinding) return child;
+        if (!targetedBinding && !composerBinding) return child;
         // The physical B mount owns this boundary so its bound controller can
         // publish through the incumbent currentness-aware diagnostic handler.
         // A's artifact boundary and durable RN crash state remain outside it.
         return (
             <PluginUiBoundary
                 surfaceId={mountedSurfaceId}
-                resetKey={targetedSurfaceBoundaryResetKey}
+                resetKey={targetedSurfaceBoundaryResetKey ?? composerBoundaryResetKey}
                 mountInstanceKey={mountedInstanceKey}
-                {...(targetedRequest && targetedRequest.fallback !== undefined
-                    ? { fallback: targetedRequest.fallback }
+                {...(embeddedFallback !== undefined
+                    ? { fallback: embeddedFallback }
                     : {})}
-                onCrash={reportTargetedSurfaceRenderFailure}
+                {...(targetedBinding ? { onCrash: reportTargetedSurfaceRenderFailure } : {})}
             >
                 {child}
             </PluginUiBoundary>
@@ -2758,8 +2857,8 @@ export function PluginSurfaceHost(props: Readonly<(
             descriptorCrashState?.disabled === true,
         );
     const renderUnavailable = (reason: string): React.ReactElement => (
-        targetedBinding && targetedRequest?.fallback !== undefined
-            ? <>{targetedRequest.fallback}</>
+        embeddedFallback !== undefined
+            ? <>{embeddedFallback}</>
             : renderPluginSurfaceUnavailable(reason, props.unavailableAction)
     );
     if (!renderGate.canRender) {
@@ -2792,7 +2891,24 @@ export function PluginSurfaceHost(props: Readonly<(
         installedMethods: controller.admissionMethods,
         canPushToSurface: true,
     });
-    const surfaceMount = mountBinding.kind === 'targetedSurface'
+    const inlineSlot = props.inlineMount
+        ? resolvePluginUiInlineSurfaceSlotV1(props.inlineMount.role, props.inlineMount.presentation)
+        : null;
+    if (props.inlineMount && (
+        !inlineSlot
+        || mountBinding.kind !== 'destination'
+        || selectedDestinationBinding?.container !== inlineSlot.container
+        || selectedDestinationBinding.targetKind !== inlineSlot.targetKind
+    )) {
+        return renderUnavailable('inline_surface_binding_unavailable');
+    }
+    const surfaceMount = inlineSlot
+        ? Object.freeze({
+            kind: 'embedded' as const,
+            role: props.inlineMount!.role,
+            presentation: inlineSlot.presentation,
+        })
+        : mountBinding.kind === 'targetedSurface'
         ? createPluginSurfaceTargetedMountContext(mountBinding)
         : mountBinding.kind === 'composer'
             ? createPluginSurfaceComposerMountContext(mountBinding)
@@ -2824,11 +2940,13 @@ export function PluginSurfaceHost(props: Readonly<(
         }
         const renderStaticModel = () => (
             <DeclarativePluginSurface
+                environment={declarativePresentationEnvironment}
                 pluginId={mountedPluginId}
                 model={model}
                 machineId={machineId}
                 serverId={serverId}
                 daemonSettingsTarget={hasEmbeddedMount ? undefined : props.daemonSettingsTarget}
+                perActiveServerIdentityId={hasEmbeddedMount ? undefined : props.perActiveServerIdentityId}
                 isDaemonSettingsTargetCurrent={hasEmbeddedMount ? undefined : props.isDaemonSettingsTargetCurrent}
                 settingsScopesEnabled={declarativeSettingsScopesEnabled}
                 interactionEnabled={accountLocalInteractionEnabled}
@@ -2894,6 +3012,7 @@ export function PluginSurfaceHost(props: Readonly<(
                     machineId={machineId}
                     serverId={serverId}
                     daemonSettingsTarget={hasEmbeddedMount ? undefined : props.daemonSettingsTarget}
+                    perActiveServerIdentityId={hasEmbeddedMount ? undefined : props.perActiveServerIdentityId}
                     isDaemonSettingsTargetCurrent={hasEmbeddedMount ? undefined : props.isDaemonSettingsTargetCurrent}
                     settingsScopesEnabled={declarativeSettingsScopesEnabled}
                     interactionEnabled={accountLocalInteractionEnabled}
@@ -3029,7 +3148,7 @@ export function PluginSurfaceHost(props: Readonly<(
             nowMs: props.nowMs,
             hostApi: resolvedHostApi,
             canonicalHostApi,
-            ...(targetedBinding ? { targetedFallback: targetedRequest?.fallback } : {}),
+            ...(embeddedFallback === undefined ? {} : { targetedFallback: embeddedFallback }),
             ...(physicalComposerSubscriptionPublisherSetter
                 ? { setComposerSubscriptionPublisher: physicalComposerSubscriptionPublisherSetter }
                 : {}),
@@ -3375,6 +3494,7 @@ export function PluginSurfaceHost(props: Readonly<(
             <PluginReactNativeSurfaceHost
                 surfaceId={mountedSurfaceId}
                 mountInstanceKey={mountInstanceKey}
+                {...(composerBoundaryResetKey === undefined ? {} : { boundaryResetKey: composerBoundaryResetKey })}
                 snapshotTitle={snapshotTitle}
                 requestSurface={requestSurface}
                 decision={runtime?.decision ?? {
@@ -3387,11 +3507,13 @@ export function PluginSurfaceHost(props: Readonly<(
                 {...(runtime?.cacheKey ? { cacheKey: runtime.cacheKey } : {})}
                 load={load}
                 hostApi={resolvedHostApi}
-                {...(targetedBinding ? {
-                    ...(targetedRequest && targetedRequest.fallback !== undefined
-                        ? { targetedFallback: targetedRequest.fallback }
+                {...(targetedBinding || composerBinding ? {
+                    ...(embeddedFallback !== undefined
+                        ? { targetedFallback: embeddedFallback }
                         : {}),
+                    ...(targetedBinding ? {
                     onTargetedSurfaceRenderFailure: reportTargetedSurfaceRenderFailure,
+                    } : {}),
                 } : {})}
                 mountLifetime={controller}
                 interactionEnabled={reactNativeInteractionEnabled}
@@ -3408,7 +3530,12 @@ export function PluginSurfaceHost(props: Readonly<(
                 // Only an outer physical mount receives the private bridge.
                 // Embedded B renders deliberately get no B→C path.
                 renderTargetedSurface={hasEmbeddedMount ? undefined : renderReactTargetedSurface}
-                targetedSurfaceUnavailableReason={targetedBinding ? 'unsupported_nested_targeted_surface' : undefined}
+                // The reason tracks the SAME fact that withheld the bridge above:
+                // every embedded mount — targeted B and Composer alike — is already
+                // one level deep. Keying it to `targetedBinding` left a Composer-
+                // embedded RN mount with no bridge AND no reason, so its author's
+                // `<TargetedSurface>` vanished with no diagnostic at all.
+                targetedSurfaceUnavailableReason={hasEmbeddedMount ? 'unsupported_nested_targeted_surface' : undefined}
                 {...(exactGeneratedCrashState ? {
                     crashStateToken: exactGeneratedCrashState.token,
                     crashStateDisabled: exactGeneratedCrashState.disabled,
@@ -3449,6 +3576,10 @@ export function PluginSurfacePlacementHost(props: Readonly<{
     projectionInteractionEnabled?: boolean;
     policyContext?: PluginUiPolicyEvaluationContext;
     reactNativeLoaderBackend?: PluginReactNativeLoaderBackend;
+    inlineMount?: Readonly<{
+        role: PluginUiInlineSurfaceRoleV1;
+        presentation: 'content' | 'fill';
+    }>;
 }>): React.ReactElement | null {
     return (
         <PluginSurfaceHost
@@ -3474,8 +3605,26 @@ export function PluginSurfacePlacementHost(props: Readonly<{
             projectionInteractionEnabled={props.projectionInteractionEnabled}
             policyContext={props.policyContext}
             reactNativeLoaderBackend={props.reactNativeLoaderBackend}
+            inlineMount={props.inlineMount}
         />
     );
+}
+
+export type PluginInlineSurfaceMountV1 =
+    | Readonly<{ role: 'sessionSubagentLaunch'; presentation: 'content' }>
+    | Readonly<{ role: 'sessionSubagentDetails'; presentation: 'content' | 'fill' }>
+    | Readonly<{ role: 'sessionInfoSection'; presentation: 'content' }>;
+
+export type PluginInlineSurfaceHostProps = Omit<
+    React.ComponentProps<typeof PluginSurfacePlacementHost>,
+    'inlineMount'
+> & Readonly<{ inlineMount: PluginInlineSurfaceMountV1 }>;
+
+/** Thin physical adapter over the one Surface Registry and PluginSurfaceHost. */
+export function PluginInlineSurfaceHost(
+    props: PluginInlineSurfaceHostProps,
+): React.ReactElement | null {
+    return <PluginSurfacePlacementHost {...props} />;
 }
 
 /**
@@ -3489,6 +3638,8 @@ export function PluginSettingsPageHost(props: Readonly<{
     serverId?: string | null;
     /** Explicit Settings-route daemon target; `null` intentionally disables origin fallback. */
     daemonSettingsTarget?: ScopedPluginSettingsDaemonTarget | null;
+    /** Portable selected-server identity for Account perActiveServer bindings. */
+    perActiveServerIdentityId?: string | null;
     isDaemonSettingsTargetCurrent?: (target: ScopedPluginSettingsDaemonTarget) => boolean;
     /** Settings-only availability is independent of this mount's action bridge. */
     settingsScopesEnabled?: Readonly<{ account: boolean; daemon: boolean }>;
@@ -3511,6 +3662,7 @@ export function PluginSettingsPageHost(props: Readonly<{
             machineId={props.machineId}
             serverId={props.serverId}
             daemonSettingsTarget={props.daemonSettingsTarget}
+            perActiveServerIdentityId={props.perActiveServerIdentityId}
             isDaemonSettingsTargetCurrent={props.isDaemonSettingsTargetCurrent}
             settingsScopesEnabled={props.settingsScopesEnabled}
             pluginUiProjection={props.pluginUiProjection}

@@ -22,6 +22,7 @@ import {
     type PluginUiTargetedContributionsV1,
     type PluginUiSelectActionInputRequestV1,
     type PluginUiSelectActionInputResultV1,
+    type PluginUiSelectActionInputTargetedRequestV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import type {
@@ -51,7 +52,10 @@ import {
     resolvePluginProjectedActionPresentation,
     type PluginProjectedActionPresentation,
 } from '@/sync/domains/plugins/ui/actionPresentation';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import {
+    isPluginProjectedActionExecutable,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { getPreferredLanguage } from '@/text';
 
@@ -502,7 +506,7 @@ function descriptorForAction(params: Readonly<{
     const placementBindings = actionPlacementBindings(params.action);
     const scopes = actionScopes(params.action);
     if (
-        params.action.available !== true
+        !isPluginProjectedActionExecutable(params.action)
         || !params.action.surfaces.includes('ui')
         || !placementBindings.includes(params.selector.placement)
         || !scopes.includes(params.selector.scope)
@@ -891,7 +895,7 @@ export function createPluginContributedActionController(params: Readonly<{
             !action
             || !isActionCurrent(snapshot, identity.data)
             || !hasCurrentClientActionRegistration(snapshot, identity.data)
-            || action.available !== true
+            || !isPluginProjectedActionExecutable(action)
             || !action.surfaces.includes('ui')
         ) {
             return { kind: 'stale', reason: 'action_retired' };
@@ -1035,8 +1039,8 @@ export function createPluginContributedActionController(params: Readonly<{
         if (executionTarget === 'daemon' && !host.machineId) {
             return { kind: 'unavailable', reason: 'host_unavailable' };
         }
-        const transportInput = PluginUiJsonValueV1Schema.safeParse(input);
-        if (!transportInput.success) {
+        const transportInput = input === undefined ? undefined : PluginUiJsonValueV1Schema.safeParse(input);
+        if (transportInput !== undefined && !transportInput.success) {
             // This is only the JSON transport boundary. The Action schema still
             // performs final field validation at canonical dispatch.
             return { kind: 'unavailable', reason: 'invalid_input' };
@@ -1054,6 +1058,7 @@ export function createPluginContributedActionController(params: Readonly<{
                 },
                 signal: dispatchSignal ?? new AbortController().signal,
                 isCurrent,
+                pluginUiProjection: resolved.snapshot.pluginUiProjection,
             })
             : undefined;
         try {
@@ -1062,7 +1067,7 @@ export function createPluginContributedActionController(params: Readonly<{
                 // fabricate a mounted plugin caller. The canonical dispatcher
                 // receives only the current host intent carrier, if required.
                 action: resolved.identity,
-                input: transportInput.data,
+                ...(transportInput === undefined ? {} : { input: transportInput.data }),
                 ...(resolved.snapshot.resolveContributedAction
                     ? { resolveContributedAction: resolved.snapshot.resolveContributedAction }
                     : {}),
@@ -1217,12 +1222,8 @@ export function createPluginContributedActionController(params: Readonly<{
     }
 
     function resolveSelectionTarget(
-        request: PluginUiSelectActionInputRequestV1,
+        request: PluginUiSelectActionInputTargetedRequestV1,
     ): SelectionTarget | PluginContributedActionUnavailableOutcome | PluginContributedActionStaleOutcome {
-        // Literal host-owned selectors are resolved by their owning host route.
-        // This controller is the targeted-contribution selection owner only, so
-        // it must not reinterpret a host request as an executable Action.
-        if (!('operation' in request)) return { kind: 'unavailable', reason: 'invalid_input' };
         const snapshot = currentSnapshot();
         if (!snapshot) return { kind: 'unavailable', reason: 'host_unavailable' };
         const host = hostStatus(snapshot);
@@ -1269,7 +1270,7 @@ export function createPluginContributedActionController(params: Readonly<{
         if (
             !action
             || !hasCurrentClientActionRegistration(snapshot, identity.data)
-            || action.available !== true
+            || !isPluginProjectedActionExecutable(action)
             || !action.surfaces.includes('plugin')
         ) {
             return { kind: 'stale', reason: 'action_retired' };
@@ -1285,7 +1286,7 @@ export function createPluginContributedActionController(params: Readonly<{
     }
 
     function resolveCurrentSelection(
-        request: PluginUiSelectActionInputRequestV1,
+        request: PluginUiSelectActionInputTargetedRequestV1,
         original: SelectionTarget,
     ): SelectionTarget | PluginContributedActionUnavailableOutcome | PluginContributedActionStaleOutcome {
         const current = resolveSelectionTarget(request);
@@ -1336,7 +1337,7 @@ export function createPluginContributedActionController(params: Readonly<{
         if (
             !action
             || !hasCurrentClientActionRegistration(snapshot, identity.data)
-            || action.available !== true
+            || !isPluginProjectedActionExecutable(action)
             || !action.surfaces.includes('plugin')
         ) {
             return { kind: 'stale', reason: 'action_retired' };
@@ -1589,7 +1590,7 @@ export function createPluginContributedActionController(params: Readonly<{
     }
 
     function publishCurrentTargetedSelection(
-        request: PluginUiSelectActionInputRequestV1,
+        request: PluginUiSelectActionInputTargetedRequestV1,
         target: SelectionTarget,
         result: PluginContributedActionExactInputSelectionResult
             | PluginContributedActionUnavailableOutcome
@@ -1683,6 +1684,10 @@ export function createPluginContributedActionController(params: Readonly<{
                 : submitted;
         },
         async selectActionInput(request) {
+            // Literal host-owned projections are resolved by their owning host
+            // route. This controller accepts only the targeted request arm and
+            // must not reinterpret either host projection as an Action.
+            if (!('operation' in request)) return { kind: 'unavailable', reason: 'invalid_input' };
             const target = resolveSelectionTarget(request);
             if ('kind' in target) return target;
             // The target-scoped Host API proves membership before borrowing the
@@ -1751,7 +1756,7 @@ export function createPluginContributedActionController(params: Readonly<{
             }
             const submitted = await dispatchResolvedAction(
                 current.value,
-                input === undefined ? null : input,
+                input,
                 () => resolveSessionReference(requested).kind === 'resolved',
                 undefined,
                 current.value.descriptor.placement,

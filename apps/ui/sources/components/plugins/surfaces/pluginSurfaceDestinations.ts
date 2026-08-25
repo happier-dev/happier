@@ -6,8 +6,12 @@ import {
     type PluginUiToneV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
+import {
+    resolvePluginUiIconName,
+    type PluginUiIconDirection,
+} from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { resolvePluginDisplayString } from '@/components/plugins/surfaces/resolvePluginDisplayString';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { canRenderPluginUiProjectionEntry, type PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import type { IconName } from '@/components/ui/icons/Icon';
@@ -81,6 +85,10 @@ export type ResolvePluginSurfaceDestinationsInput = Readonly<{
         placement: PluginUiSurfacePlacementProjection,
         disabledReason: string,
     ) => boolean;
+    /** Projection-bound resolver for declared external-plugin localization. */
+    localize?: PluginLocalizedTextResolver;
+    /** Current app direction for logical display tokens. */
+    direction?: PluginUiIconDirection;
 }>;
 
 export function readPluginSurfaceRecord(value: unknown): UnknownRecord | null {
@@ -113,29 +121,40 @@ export function normalizePluginSurfaceDestinationSlug(value: string): string {
 
 export function resolvePluginSurfaceDestinationLabel(
     placement: PluginUiSurfacePlacementProjection,
+    localize?: PluginLocalizedTextResolver,
 ): string {
-    // `labelKey`/`titleKey` are translation KEYS, `developerFallback`/`label`
-    // are literals, and the contribution id is the last-resort fallback so an
+    // `labelKey`/`titleKey` are translation KEYS, `label`/`title` are authored
+    // literals, and the contribution id is the last-resort fallback so an
     // unresolved key never renders raw.
     return resolvePluginDisplayString({
         developerFallback: placement.display.developerFallback,
-        literals: [placement.display.label],
+        literals: [placement.display.label, placement.display.title],
         keys: [placement.display.labelKey, placement.display.titleKey],
+        ...(localize === undefined
+            ? {}
+            : {
+                resolveKey: (key: string) => localize(placement.pluginId, {
+                    key,
+                    fallback: readPluginSurfaceString(placement.display.developerFallback) ?? placement.descriptorId,
+                }),
+            }),
         fallback: placement.descriptorId,
     }) ?? placement.descriptorId;
 }
 
 export function resolvePluginSurfaceDestinationIcon(
     placement: PluginUiSurfacePlacementProjection,
+    direction?: PluginUiIconDirection,
 ): IconName {
     const token = readPluginSurfaceString(placement.display.iconToken)
         ?? readPluginSurfaceString(placement.display.icon);
-    return resolvePluginUiIconName(token);
+    return resolvePluginUiIconName(token, direction);
 }
 
 /** Resolve one static badge without ever rendering an unresolved projection key. */
 export function resolvePluginSurfaceDestinationBadge(
     placement: PluginUiSurfacePlacementProjection,
+    localize?: PluginLocalizedTextResolver,
 ): PluginSurfaceDestinationBadge | null {
     const badge = readPluginSurfaceRecord(placement.display.badge);
     if (!badge) {
@@ -145,6 +164,14 @@ export function resolvePluginSurfaceDestinationBadge(
         developerFallback: badge.developerFallback,
         literals: [badge.label],
         keys: [badge.labelKey],
+        ...(localize === undefined
+            ? {}
+            : {
+                resolveKey: (key: string) => localize(placement.pluginId, {
+                    key,
+                    fallback: readPluginSurfaceString(badge.developerFallback) ?? '',
+                }),
+            }),
     });
     if (!label) {
         return null;
@@ -232,15 +259,15 @@ export function resolvePluginSurfaceDestinations(
         if (disabledReason !== null && input.hideWhenDisabled?.(placement, disabledReason) === true) {
             continue;
         }
-        const badge = resolvePluginSurfaceDestinationBadge(placement);
+        const badge = resolvePluginSurfaceDestinationBadge(placement, input.localize);
         const groupHint = resolvePluginSurfaceDestinationGroupHint(placement);
         const rankHint = resolvePluginSurfaceDestinationRankHint(placement);
         destinations.push(Object.freeze({
             id,
             pluginId: placement.pluginId,
             descriptorId: placement.descriptorId,
-            label: resolvePluginSurfaceDestinationLabel(placement),
-            icon: resolvePluginSurfaceDestinationIcon(placement),
+            label: resolvePluginSurfaceDestinationLabel(placement, input.localize),
+            icon: resolvePluginSurfaceDestinationIcon(placement, input.direction),
             ...(badge === null ? {} : { badge }),
             ...(groupHint === undefined ? {} : { groupHint }),
             ...(rankHint === undefined ? {} : { rankHint }),

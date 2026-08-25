@@ -26,4 +26,11 @@ describe('createPluginUiPrivatePresentationHost focus transfer', () => {
         expect(oldHostHandle.focusTarget?.(target)).toBe(false);
         expect(target.focus).toHaveBeenCalledTimes(1);
     });
+
+    it('uses the mounted direction for executable logical icons', () => {
+        const host = createPluginUiPrivatePresentationHost(undefined, { direction: 'rtl' });
+
+        expect(host.renderIcon({ name: 'back', size: 16 }).props.name).toBe('arrow-right');
+        expect(host.renderIcon({ name: 'forward', size: 16 }).props.name).toBe('arrow-left');
+    });
 });

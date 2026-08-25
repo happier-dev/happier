@@ -160,7 +160,6 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.actions,
-        { allowSoleCandidate: false },
     );
     const executionTarget = React.useMemo(() => {
         const selectedTarget = administrationTargetSelection.selectedTarget;
@@ -211,6 +210,8 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
         entry?.targets.filter((target) => targetMatchesSearch(target, searchQuery)) ?? []
     ), [entry?.targets, searchQuery]);
     const targetSections = React.useMemo(() => groupTargetsByCategory(filteredTargets), [filteredTargets]);
+    const contributedMachineSelectionTitle = t('settingsActions.contributed.machineSelectionTitle');
+    const contributedMachineSelectionBody = t('settingsActions.contributed.machineSelectionBody');
     const toolExposureTargets = React.useMemo(() => (
         filteredTargets
             .map((target) => {
@@ -296,14 +297,9 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                 <MachineAdministrationTargetSelector
                     selection={administrationTargetSelection}
                     testIDPrefix="settings.actions.administration.target"
+                    groupTitle={contributedMachineSelectionTitle}
+                    unselectedTitle={contributedMachineSelectionBody}
                 />
-                {administrationTargetSelection.selectedTarget === null ? (
-                    <ItemInfoNotice
-                        testID="settings-actions:contributed:machine-selection-required"
-                        title={t('settingsActions.contributed.machineSelectionTitle')}
-                        body={t('settingsActions.contributed.machineSelectionBody')}
-                    />
-                ) : null}
                 <ItemGroup>
                     <Item
                         testID={`settings-actions:action:${entry.actionId}:summary`}

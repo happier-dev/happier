@@ -1,7 +1,7 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import type {
     PluginAgentCliMetadata,
-    PluginAgentUiBehaviorContributionV2,
+    AgentUiProjectedDeclarationV1,
     PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
 
@@ -28,7 +28,7 @@ export type MergedProviderProjectionEntry = Readonly<{
      * feeds the client's single descriptor interpreter; a bundled Agent keeps
      * reaching that interpreter through its build-time projection instead.
      */
-    ui?: PluginAgentUiBehaviorContributionV2 | null;
+    ui?: AgentUiProjectedDeclarationV1 | null;
 }>;
 
 export type MergedBackendProjectionEntry = Readonly<{

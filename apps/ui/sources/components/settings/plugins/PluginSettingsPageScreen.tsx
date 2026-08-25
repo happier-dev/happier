@@ -111,13 +111,24 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
                 selection={administration.selection}
                 testIDPrefix="settings.plugins.page.administration.target"
             />
-            <PluginSurfaceFocusEligibilityProvider active={isFocused}>
+            {/*
+              * A focused Settings route is this subtree's one semantic current
+              * owner, exactly as the App Page route is for its own. Without the
+              * second fact the mounted surface stays presentation-eligible but
+              * permanently current-context-ineligible, so its published entity
+              * and commands never reach the current-context reader or Voice.
+              */}
+            <PluginSurfaceFocusEligibilityProvider
+                active={isFocused}
+                currentUiContextActive={isFocused}
+            >
                 <PluginSettingsPageHost
                     page={destination.page}
                     pluginUiProjection={appShell.pluginUiProjection}
                     machineId={appShell.machineId}
                     serverId={appShell.serverId}
                     daemonSettingsTarget={daemonSettingsTarget}
+                    perActiveServerIdentityId={administration.selectedServerIdentityId}
                     isDaemonSettingsTargetCurrent={isDaemonSettingsTargetCurrent}
                     settingsScopesEnabled={{ account: true, daemon: daemonSettingsTarget !== null }}
                     binding={binding}

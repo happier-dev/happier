@@ -26,6 +26,15 @@ export type PluginInstallationReviewResolution =
 
 type PluginInstallationReviewDialogProps = CustomModalInjectedProps & Readonly<{
     body: string;
+    /**
+     * The exact machine and server this install-and-trust decision lands on.
+     *
+     * Trust is granted on ONE machine reached through ONE server. A review that
+     * names only the package describes a decision the user cannot locate, and
+     * the identical wording against a different selected target is a different,
+     * irreversible grant.
+     */
+    target: Readonly<{ machine: string; server: string }>;
     optionalHostAccess: readonly OptionalHostAccess[];
     onResolve: (resolution: PluginInstallationReviewResolution) => void;
 }>;
@@ -41,6 +50,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     reviewBody: {
         ...Typography.default(),
         color: theme.colors.text.primary,
+    },
+    reviewTarget: {
+        ...Typography.default('semiBold'),
+        color: theme.colors.text.secondary,
     },
     optionalList: {
         gap: 8,
@@ -139,6 +152,15 @@ export function PluginInstallationReviewDialog(props: PluginInstallationReviewDi
             keyboardShouldPersistTaps="handled"
         >
             <Text style={styles.reviewBody}>{props.body}</Text>
+            <Text
+                testID="settings.plugins.installReview.target"
+                style={styles.reviewTarget}
+            >
+                {t('settingsPlugins.pluginChangeConfirmTarget', {
+                    machine: props.target.machine,
+                    server: props.target.server,
+                })}
+            </Text>
             {props.optionalHostAccess.length > 0 ? (
                 <View style={styles.optionalList}>
                     {props.optionalHostAccess.map((entry) => {
@@ -214,6 +236,7 @@ export function PluginInstallationReviewDialog(props: PluginInstallationReviewDi
 export async function showPluginInstallationReviewDialog(params: Readonly<{
     title: string;
     body: string;
+    target: Readonly<{ machine: string; server: string }>;
     optionalHostAccess: readonly OptionalHostAccess[];
 }>): Promise<PluginInstallationReviewResolution> {
     const deferred = createDeferredOnce<PluginInstallationReviewResolution>();
@@ -221,6 +244,7 @@ export async function showPluginInstallationReviewDialog(params: Readonly<{
         component: PluginInstallationReviewDialog,
         props: {
             body: params.body,
+            target: params.target,
             optionalHostAccess: params.optionalHostAccess,
             onResolve: deferred.resolve,
         },

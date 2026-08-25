@@ -91,7 +91,10 @@ function createFakeExpoFileSystem(cacheUri = 'file:///cache/') {
     };
 }
 
-function createFakeExpoFileSystemWithDirectoryDeletion(cacheUri = 'file:///cache/') {
+function createFakeExpoFileSystemWithDirectoryDeletion(
+    cacheUri = 'file:///cache/',
+    options: Readonly<{ failDirectoryDeletion?: boolean }> = {},
+) {
     const files = new Map<string, Uint8Array>();
     const writes: string[] = [];
     const directoryDeletes: string[] = [];
@@ -110,7 +113,19 @@ function createFakeExpoFileSystemWithDirectoryDeletion(cacheUri = 'file:///cache
 
         create(): void {}
 
+        list(): Directory[] {
+            const prefix = `${this.uri.replace(/\/+$/u, '')}/`;
+            const childNames = new Set<string>();
+            for (const path of files.keys()) {
+                if (!path.startsWith(prefix)) continue;
+                const childName = path.slice(prefix.length).split('/')[0];
+                if (childName) childNames.add(childName);
+            }
+            return [...childNames].map((childName) => new Directory(this, childName));
+        }
+
         delete(): void {
+            if (options.failDirectoryDeletion) throw new Error('simulated directory deletion failure');
             const prefix = `${this.uri.replace(/\/+$/u, '')}/`;
             for (const key of [...files.keys()]) {
                 if (key.startsWith(prefix)) {
@@ -323,6 +338,70 @@ describe('React Native persistent artifact store', () => {
             persistentIdentity,
             bytes,
         });
+    });
+
+    it('retires the commit marker before a failed physical deletion so restart cannot restore bytes', async () => {
+        const fake = createFakeExpoFileSystemWithDirectoryDeletion('file:///cache/', {
+            failDirectoryDeletion: true,
+        });
+        const bytes = new TextEncoder().encode('// retired persistent native bytes');
+        const artifactDigest = computePluginUiArtifactSha256DigestV1(bytes);
+        const persistentIdentity = {
+            accountScope: { serverId: 'server-a', accountId: 'account-a' },
+            releaseVersion: '1.2.3',
+            pluginId: 'acme.plugin',
+            contributionId: 'native',
+            tier: 'reactNative' as const,
+            platform: 'ios',
+            artifactDigest,
+        };
+        const first = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
+        await first.write({
+            persistentIdentity,
+            bytes,
+            entryRelativePath: 'entry.js',
+            files: [{ relativePath: 'entry.js', digest: artifactDigest, byteSize: bytes.byteLength, bytes }],
+        });
+
+        await expect(first.remove(persistentIdentity))
+            .rejects.toThrow('plugin_ui_artifact_cache_delete_failed');
+
+        const restarted = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
+        await expect(restarted.read(persistentIdentity)).resolves.toBeNull();
+        expect([...fake.files.keys()].some((path) => path.endsWith('/record.v1.json'))).toBe(false);
+        expect(fake.files.size).toBeGreaterThan(0);
+    });
+
+    it('retires every Account commit marker before failed Account directory deletion', async () => {
+        const fake = createFakeExpoFileSystemWithDirectoryDeletion('file:///cache/', {
+            failDirectoryDeletion: true,
+        });
+        const bytes = new TextEncoder().encode('// retired Account bytes');
+        const artifactDigest = computePluginUiArtifactSha256DigestV1(bytes);
+        const persistentIdentity = {
+            accountScope: { serverId: 'server-a', accountId: 'account-a' },
+            releaseVersion: '1.2.3',
+            pluginId: 'acme.plugin',
+            contributionId: 'native',
+            tier: 'reactNative' as const,
+            platform: 'ios',
+            artifactDigest,
+        };
+        const first = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
+        await first.write({
+            persistentIdentity,
+            bytes,
+            entryRelativePath: 'entry.js',
+            files: [{ relativePath: 'entry.js', digest: artifactDigest, byteSize: bytes.byteLength, bytes }],
+        });
+
+        await expect(first.removeAccount(persistentIdentity.accountScope))
+            .rejects.toThrow('plugin_ui_artifact_account_cache_delete_failed');
+
+        const restarted = createReactNativePersistentArtifactStore({ fileSystem: fake.fileSystem });
+        await expect(restarted.read(persistentIdentity)).resolves.toBeNull();
+        expect([...fake.files.keys()].some((path) => path.endsWith('/record.v1.json'))).toBe(false);
+        expect(fake.files.size).toBeGreaterThan(0);
     });
 
     it('removes an incomplete record directory instead of retaining unreadable cache files', async () => {

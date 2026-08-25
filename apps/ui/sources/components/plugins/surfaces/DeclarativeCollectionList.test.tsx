@@ -7,7 +7,11 @@ import type {
     PluginUiCollectionQuerySnapshot,
     PluginUiDataClient,
 } from '@happier-dev/plugin-ui/data';
-import { HappierListItem } from '@happier-dev/plugin-ui/presentation';
+import { HappierList, HappierListItem } from '@happier-dev/plugin-ui/presentation';
+import {
+    HappierUiEnvironmentProvider,
+    projectHappierUiEnvironment,
+} from '@happier-dev/plugin-ui/environment';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 const {
@@ -131,10 +135,35 @@ type DataPagerSnapshot = Readonly<{
     status: 'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
 }>;
 
+/**
+ * Every production mount installs this. `PluginSurfaceHost` passes a projected,
+ * non-optional environment at all four `DeclarativePluginSurface` call sites, and
+ * the public virtualized List the `ownsScrollViewport` arm renders requires the
+ * localization capability. A harness without it measures a subtree production
+ * never renders — and reports the missing wrapper as a collection defect.
+ */
+const collectionPresentationEnvironment = projectHappierUiEnvironment({
+    theme: presentationTheme,
+    locale: 'en',
+    direction: 'ltr',
+    translations: Object.freeze({}),
+    textScale: 1,
+    reducedMotion: false,
+    screenReaderEnabled: false,
+    contrast: 'normal',
+    platform: 'web',
+    colorScheme: 'dark',
+    safeAreaInsets: Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 }),
+});
+
 function CollectionListWithData(
     props: Omit<React.ComponentProps<typeof DeclarativeCollectionList>, 'modelGeneration'>,
 ) {
-    return <DeclarativeCollectionList modelGeneration="generation-a" {...props} />;
+    return (
+        <HappierUiEnvironmentProvider environment={collectionPresentationEnvironment}>
+            <DeclarativeCollectionList modelGeneration="generation-a" {...props} />
+        </HappierUiEnvironmentProvider>
+    );
 }
 
 function createTestDataClient(
@@ -584,6 +613,7 @@ describe('DeclarativeCollectionList', () => {
         });
         const collectionNode = Object.freeze({
             ...node,
+            label: Object.freeze({ key: 'tasks.open.label', fallback: 'Open tasks' }),
             primaryCommand: Object.freeze({ kind: 'action', action }),
         });
         const rows = Array.from({ length: 200 }, (_, index) => ({
@@ -634,6 +664,9 @@ describe('DeclarativeCollectionList', () => {
             />,
         );
         await vi.waitFor(() => expect(pager.openCollectionQuery).toHaveBeenCalledTimes(1));
+        expect(screen.findByProps({
+            testID: 'plugin-declarative-collection-list:root',
+        }).props.accessibilityLabel).toBe('Open tasks');
 
         const row = (rowId: string) => {
             const match = screen.findAllByType(HappierListItem).find((candidate) => (
@@ -715,6 +748,51 @@ describe('DeclarativeCollectionList', () => {
         expect(tree.root.findAllByType(HappierListItem)).toHaveLength(0);
         expect(pager.openCollectionQuery).toHaveBeenCalledTimes(1);
         expect(createActivePluginCollectionUiQueryPager).not.toHaveBeenCalled();
+    });
+
+    it('names both embedded and viewport-owning collection list branches', async () => {
+        const rows = [{
+            context: {
+                collection: { pluginId: 'acme.tasks', collectionId: 'tasks' },
+                rowId: 'accessible-task',
+                revision: 1,
+            },
+            fields: { title: 'Accessible task', status: 'open' },
+        }];
+        const embeddedPager = installDataPager({ status: 'ready', rows, hasMore: false });
+        const viewportPager = installDataPager({ status: 'ready', rows, hasMore: false });
+        let embedded!: ReturnType<typeof create>;
+        let viewport!: ReturnType<typeof create>;
+
+        await act(async () => {
+            embedded = create(
+                <CollectionListWithData
+                    pluginId="acme.tasks"
+                    node={node}
+                    accountLifetime={accountLifetime()}
+                    dataClient={embeddedPager.dataClient}
+                    presentationTheme={presentationTheme}
+                    minimumTouchTarget={44}
+                    accessibilityLabel="Open tasks"
+                />,
+            );
+            viewport = create(
+                <CollectionListWithData
+                    pluginId="acme.tasks"
+                    node={node}
+                    accountLifetime={accountLifetime()}
+                    dataClient={viewportPager.dataClient}
+                    presentationTheme={presentationTheme}
+                    minimumTouchTarget={44}
+                    accessibilityLabel="Open tasks"
+                    ownsScrollViewport
+                />,
+            );
+            await flushMicrotasks();
+        });
+
+        expect(embedded.root.findByType(HappierList).props.accessibilityLabel).toBe('Open tasks');
+        expect(viewport.root.findByType('FlatList').props.accessibilityLabel).toBe('Open tasks');
     });
 
     it('renders a successful empty Data page as empty rather than retaining a local loading state', async () => {

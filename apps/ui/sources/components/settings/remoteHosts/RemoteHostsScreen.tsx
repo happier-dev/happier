@@ -320,7 +320,8 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
     }), [nativeSshTunnelSnapshot, props.hosts, runner.mode, sshTunnelControl.tunnels]);
     const accessChannels = React.useMemo(() => buildAccessChannelProjection({
         endpoints: accessEndpointProjection.endpoints,
-    }), [accessEndpointProjection.endpoints]);
+        diagnostics: accessEndpointProjection.diagnostics,
+    }), [accessEndpointProjection.diagnostics, accessEndpointProjection.endpoints]);
     const handleAccessEndpointRemediationActionPress = React.useCallback((payload: Readonly<{
         action: Readonly<{
             ownerSurface: string;

@@ -28,6 +28,8 @@ export function PluginSurfaceInteractionBoundary(
     // Presentation eligibility only makes an otherwise available retained or
     // covered snapshot inert; it must not create another focus-return owner.
     const interactionEnabled = props.enabled && props.focusEligible !== false;
+    const wasEnabledRef = React.useRef(props.enabled);
+    const wasInteractionEnabledRef = React.useRef(interactionEnabled);
 
     React.useLayoutEffect(() => {
         const container = containerRef.current;
@@ -35,18 +37,28 @@ export function PluginSurfaceInteractionBoundary(
             return;
         }
 
-        if (!props.enabled) {
+        const wasEnabled = wasEnabledRef.current;
+        const wasInteractionEnabled = wasInteractionEnabledRef.current;
+        wasEnabledRef.current = props.enabled;
+        wasInteractionEnabledRef.current = interactionEnabled;
+
+        if (wasInteractionEnabled && !interactionEnabled) {
             const activeElement = document.activeElement;
             if (activeElement instanceof HTMLElement && container.contains(activeElement)) {
-                focusReturnRef.current = activeElement;
+                // Availability owns recovery focus. Presentation eligibility
+                // only removes an inactive retained snapshot from focus now.
+                focusReturnRef.current = wasEnabled && !props.enabled ? activeElement : null;
                 activeElement.blur();
+            } else {
+                focusReturnRef.current = null;
             }
             return;
         }
 
+        if (wasEnabled || !props.enabled) return;
         const focusReturnTarget = focusReturnRef.current;
         focusReturnRef.current = null;
-        if (!focusReturnTarget?.isConnected || !container.contains(focusReturnTarget)) {
+        if (!interactionEnabled || !focusReturnTarget?.isConnected || !container.contains(focusReturnTarget)) {
             return;
         }
         try {
@@ -54,7 +66,7 @@ export function PluginSurfaceInteractionBoundary(
         } catch {
             focusReturnTarget.focus();
         }
-    }, [props.enabled]);
+    }, [interactionEnabled, props.enabled]);
 
     const blockedCaptureProps = interactionEnabled
         ? {}

@@ -763,6 +763,162 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         });
     }
 
+    it('forwards every public cancellation signal through the mounted Host API request seam', async () => {
+        const controller = new AbortController();
+        const seen: Array<Readonly<{ method: string; signal: AbortSignal | undefined }>> = [];
+        const adapter = createAdapterOverHost({
+            readResource: async (request, options) => {
+                seen.push({ method: request.method, signal: options?.signal });
+                return {
+                    contentType: 'text/plain',
+                    digest: 'sha256:resource',
+                    bytesBase64: 'aGVsbG8=',
+                };
+            },
+            openSurface: async (request, options) => {
+                seen.push({ method: request.method, signal: options?.signal });
+                return null;
+            },
+            notify: async (request, options) => {
+                seen.push({ method: request.method, signal: options?.signal });
+                return null;
+            },
+            readClipboard: async (request, options) => {
+                seen.push({ method: request.method, signal: options?.signal });
+                return { value: 'copied text' };
+            },
+            writeClipboard: async (request, options) => {
+                seen.push({ method: request.method, signal: options?.signal });
+                return null;
+            },
+            openExternalLink: async (request, options) => {
+                seen.push({ method: request.method, signal: options?.signal });
+                return null;
+            },
+        });
+
+        await adapter.api.readResource('plugin.preview.resource', { signal: controller.signal });
+        await adapter.api.openSurface('plugin.preview.details', undefined, { signal: controller.signal });
+        await adapter.api.notify('Saved', { signal: controller.signal });
+        await adapter.api.readClipboard({ signal: controller.signal });
+        await adapter.api.writeClipboard('copied text', { signal: controller.signal });
+        await adapter.api.openExternalLink('https://docs.example.test/plugin', { signal: controller.signal });
+
+        expect(seen).toEqual([
+            { method: 'readResource', signal: controller.signal },
+            { method: 'openSurface', signal: controller.signal },
+            { method: 'notify', signal: controller.signal },
+            { method: 'readClipboard', signal: controller.signal },
+            { method: 'writeClipboard', signal: controller.signal },
+            { method: 'openExternalLink', signal: controller.signal },
+        ]);
+    });
+
+    it('rejects a parked Resource read promptly at caller cancellation and fences its late response', async () => {
+        const controller = new AbortController();
+        let resolveRead: ((value: PluginUiJsonValueV1) => void) | undefined;
+        let seenSignal: AbortSignal | undefined;
+        const adapter = createAdapterOverHost({
+            readResource: async (_request, options) => {
+                seenSignal = options?.signal;
+                return await new Promise<PluginUiJsonValueV1>((resolve) => {
+                    resolveRead = resolve;
+                });
+            },
+        });
+        const settlements: unknown[] = [];
+        const read = adapter.api.readResource('plugin.preview.resource', { signal: controller.signal });
+        void read.then(
+            (value) => settlements.push({ kind: 'result', value }),
+            (error: unknown) => settlements.push({ kind: 'error', error }),
+        );
+
+        try {
+            await vi.waitFor(() => expect(seenSignal).toBe(controller.signal));
+            controller.abort();
+
+            await vi.waitFor(() => expect(settlements).toHaveLength(1), { timeout: 250 });
+            expect(settlements[0]).toMatchObject({
+                kind: 'error',
+                error: {
+                    code: 'unavailable',
+                    diagnostics: [{ code: 'aborted', severity: 'error' }],
+                },
+            });
+
+            resolveRead?.({
+                contentType: 'text/plain',
+                digest: 'sha256:resource',
+                bytesBase64: 'aGVsbG8=',
+            });
+            await vi.waitFor(() => expect(settlements).toHaveLength(1));
+            expect(settlements[0]).toMatchObject({ kind: 'error' });
+        } finally {
+            resolveRead?.(null);
+            await read.catch(() => undefined);
+        }
+    });
+
+    it('rejects a parked outward effect promptly at caller cancellation and ignores its late response', async () => {
+        const controller = new AbortController();
+        let resolveNavigation: ((value: PluginUiJsonValueV1) => void) | undefined;
+        let seenSignal: AbortSignal | undefined;
+        const adapter = createAdapterOverHost({
+            openSurface: async (_request, options) => {
+                seenSignal = options?.signal;
+                return await new Promise<PluginUiJsonValueV1>((resolve) => {
+                    resolveNavigation = resolve;
+                });
+            },
+        });
+        const settlements: unknown[] = [];
+        const navigation = adapter.api.openSurface(
+            'plugin.preview.details',
+            undefined,
+            { signal: controller.signal },
+        );
+        void navigation.then(
+            () => settlements.push({ kind: 'result' }),
+            (error: unknown) => settlements.push({ kind: 'error', error }),
+        );
+
+        try {
+            await vi.waitFor(() => expect(seenSignal).toBe(controller.signal));
+            controller.abort();
+
+            await vi.waitFor(() => expect(settlements).toHaveLength(1), { timeout: 250 });
+            expect(settlements[0]).toMatchObject({
+                kind: 'error',
+                error: {
+                    code: 'unavailable',
+                    diagnostics: [{ code: 'aborted', severity: 'error' }],
+                },
+            });
+
+            resolveNavigation?.(null);
+            await vi.waitFor(() => expect(settlements).toHaveLength(1));
+            expect(settlements[0]).toMatchObject({ kind: 'error' });
+        } finally {
+            resolveNavigation?.(null);
+            await navigation.catch(() => undefined);
+        }
+    });
+
+    it('preserves an outward effect that completed before caller cancellation', async () => {
+        const controller = new AbortController();
+        const openSurface = vi.fn(async () => null);
+        const adapter = createAdapterOverHost({ openSurface });
+
+        await expect(adapter.api.openSurface(
+            'plugin.preview.details',
+            undefined,
+            { signal: controller.signal },
+        )).resolves.toBeUndefined();
+
+        controller.abort();
+        expect(openSurface).toHaveBeenCalledTimes(1);
+    });
+
     it('routes target-scoped selection through the sole 1.0 contract', async () => {
         const selectActionInput = vi.fn(async () => ({ kind: 'cancelled' as const }));
         const host = createPluginSurfaceHostApi({
@@ -1274,10 +1430,10 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
 
     it('refuses a transiently narrowed method as retryable rather than unsupported', async () => {
         // The adapter deliberately outlives a daemon reconnect, so its method
-        // set is a CURRENT availability fact. Answering a merely unreachable
-        // daemon-owned method with `unsupported_method` tells the author the
-        // mount can never serve it and turns an outage into a permanent
-        // capability verdict.
+        // set is the stable structural admission. Answering a merely
+        // unreachable daemon-owned method with `unsupported_method` tells the
+        // author the mount can never serve it and turns an outage into a
+        // permanent capability verdict.
         let daemonReachable = false;
         const host = createPluginSurfaceHostApi({
             surfaceContext: surface,
@@ -1297,7 +1453,9 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             getAdmissionMethods: () => host.admissionMethods,
         });
 
-        expect(adapter.api.version().methods).not.toContain('watchResource');
+        // Structural negotiation is stable for the mount: transient daemon
+        // reachability changes the per-call result, never version().methods.
+        expect(adapter.api.version().methods).toContain('watchResource');
         await expect(adapter.api.watchResource(
             { pluginId: 'acme.preview', localId: 'review-summary' },
             () => undefined,
@@ -1615,6 +1773,17 @@ describe('canonical React Native context subscriptions (UI-D03)', () => {
         subscription.dispose();
         adapter.pushSurfaceContext({ ...canonicalSurface, locale: 'es' });
         expect(contexts).toHaveLength(2);
+    });
+
+    it('does not republish a freshly frozen but semantically unchanged surface context', async () => {
+        const adapter = createAdapter();
+        const contexts: SurfaceContext[] = [];
+        await adapter.api.watchContext((context) => contexts.push(context));
+
+        adapter.pushSurfaceContext(Object.freeze({ ...canonicalSurface }));
+
+        expect(contexts).toEqual([]);
+        await expect(adapter.api.context()).resolves.toBe(canonicalSurface);
     });
 
     it('stops delivery when the surface generation is retired', async () => {

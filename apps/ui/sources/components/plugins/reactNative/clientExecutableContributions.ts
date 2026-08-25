@@ -31,6 +31,7 @@ import type {
     RepackInstalledArtifactModuleReference,
 } from './loader';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
+import { isPluginProjectedActionExecutable } from '@/sync/domains/plugins/ui/projection';
 
 export type PluginUiClientExecutableTarget = Readonly<{
     artifactId: string;
@@ -994,7 +995,7 @@ export function resolvePluginUiClientActionRegistration(input: Readonly<{
     const { action, projectionGeneration, platform } = input;
     if (
         action.execution.target !== 'client'
-        || action.available !== true
+        || !isPluginProjectedActionExecutable(action)
         || !action.authorization
         || !Number.isInteger(projectionGeneration)
         || projectionGeneration < 0

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { NavigationContext, usePreventRemove } from '@react-navigation/native';
 import {
     PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
     PluginHostedWebSecurityPolicyV1Schema,
@@ -45,6 +44,7 @@ import { BrowserFrameError } from '@/components/browser/frame/BrowserFrameError'
 import { BrowserFrameLoading } from '@/components/browser/frame/BrowserFrameLoading';
 import { isLoopbackHostedWebUrl } from '@/components/browser/adapters/HostedPluginTargetSecurity';
 import { resolvePluginUiText } from '@/sync/domains/plugins/ui/i18n';
+import { getPreferredLanguage } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import {
     createPluginSurfaceContext,
@@ -69,6 +69,7 @@ import {
 } from '@/components/plugins/hostApi/hostedWebAdapter';
 import { PluginSurfaceInteractionBoundary } from '@/components/plugins/shared/PluginSurfaceInteractionBoundary';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
+import { RouteRemovalStepConsumer } from '@/utils/navigation/RouteRemovalStepConsumer';
 
 type PluginHostedWebPanePlatform = 'web' | 'ios' | 'android' | 'desktop';
 
@@ -105,57 +106,6 @@ type NativeArtifactHistoryStateForHandle = Readonly<{
     handle: NativeArtifactFrameHandle | null;
     canGoBack: boolean;
 }>;
-
-type RouteNavigationDispatch = Readonly<{
-    dispatch?: (action: unknown) => void;
-}>;
-
-/**
- * Keeps route ownership with React Navigation. This child exists only while a
- * current iOS Artifact guest can navigate back; it neither owns a route nor
- * retains a route action after that guest declines the request.
- */
-function NativeArtifactHistoryRouteBackGuard(props: Readonly<{
-    active: boolean;
-    requestGuestGoBack: () => boolean;
-}>): React.ReactElement | null {
-    const navigation = React.useContext(NavigationContext);
-    // The physical hosted mount has already selected the exact platform in
-    // `active`; checking ambient React Native Platform here creates a second
-    // platform authority and can disagree with an injected/native renderer.
-    if (!props.active || navigation == null) return null;
-    return (
-        <ActiveNativeArtifactHistoryRouteBackGuard
-            navigation={navigation as RouteNavigationDispatch}
-            requestGuestGoBack={props.requestGuestGoBack}
-        />
-    );
-}
-
-function ActiveNativeArtifactHistoryRouteBackGuard(props: Readonly<{
-    navigation: RouteNavigationDispatch;
-    requestGuestGoBack: () => boolean;
-}>): null {
-    const [pendingRouteAction, setPendingRouteAction] = React.useState<unknown | null>(null);
-    const requestGuestGoBackRef = React.useRef(props.requestGuestGoBack);
-    requestGuestGoBackRef.current = props.requestGuestGoBack;
-    const handlePreventedRemove = React.useCallback((event: Readonly<{
-        data: Readonly<{ action: unknown }>;
-    }>) => {
-        if (requestGuestGoBackRef.current()) return;
-        setPendingRouteAction(event.data.action);
-    }, []);
-    usePreventRemove(pendingRouteAction === null, handlePreventedRemove);
-
-    React.useEffect(() => {
-        if (pendingRouteAction === null) return;
-        // `usePreventRemove` sees disabled before this effect redispatches the
-        // declined action, so route ownership resumes without recursive guard.
-        setPendingRouteAction(null);
-        props.navigation.dispatch?.(pendingRouteAction);
-    }, [pendingRouteAction, props.navigation]);
-    return null;
-}
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -866,6 +816,7 @@ export function PluginHostedWebPane(props: Readonly<{
             // one nonce rotates on it. There is deliberately no bridge-owned
             // Account epoch/revision beside the shared lifetime (`03f` r0.4).
             props.accountLifetime,
+            props.endpointUrl,
             launchInputSemanticKey,
             projectionGeneration,
             props.bridgeNonce,
@@ -887,6 +838,7 @@ export function PluginHostedWebPane(props: Readonly<{
             identity: binding.identity,
             methods: binding.methods,
             target: binding.target,
+            activity: Object.freeze({ active: effectiveInteractionEnabled && isSurfaceCurrent() }),
             surface: createPluginSurfaceContext({
                 mount: binding.mount,
                 target: binding.target,
@@ -900,6 +852,8 @@ export function PluginHostedWebPane(props: Readonly<{
         canonicalHostOrigin,
         canonicalWireAllowed,
         props.canonicalHostApi,
+        effectiveInteractionEnabled,
+        isSurfaceCurrent,
         surfaceEnvironment,
     ]);
     // Collection UI-query messages are meaningful only once the canonical
@@ -1161,8 +1115,10 @@ export function PluginHostedWebPane(props: Readonly<{
     // push that runs at mount is not a spurious event.
     React.useEffect(() => {
         const surface = canonicalHostApi?.surface;
-        if (hostApiBridgeHandler && surface) hostApiBridgeHandler.pushSurfaceContext(surface);
-    }, [canonicalHostApi?.surface, hostApiBridgeHandler]);
+        if (hostApiBridgeHandler && surface) {
+            hostApiBridgeHandler.pushSurfaceContext(surface, canonicalHostApi.activity);
+        }
+    }, [canonicalHostApi?.activity, canonicalHostApi?.surface, hostApiBridgeHandler]);
     // EU-4b: the mount's one invalidation sink reaches this transport's push
     // channel. The subscription registry stays the bridge handler's.
     const subscribeResourceInvalidations = props.subscribeResourceInvalidations;
@@ -1332,9 +1288,15 @@ export function PluginHostedWebPane(props: Readonly<{
     const nativeArtifact = platform === 'desktop' ? null : artifactFrameInput;
     const desktopArtifact = platform === 'desktop' ? artifactFrameInput : null;
     const display = readRecord(descriptor.display);
-    const frameTitle = resolvePluginUiText({
+    const literalTitle = typeof display?.title === 'string' && display.title.trim().length > 0
+        ? display.title.trim()
+        : null;
+    const frameTitle = literalTitle ?? resolvePluginUiText({
         projection: props.pluginUiProjection,
         pluginId: descriptor.pluginId,
+        // Without the current locale the shared resolver answers from the
+        // plugin's English bundle no matter what the reader selected.
+        locale: getPreferredLanguage(),
         key: typeof display?.titleKey === 'string' ? display.titleKey : null,
         fallback: typeof display?.developerFallback === 'string'
             ? display.developerFallback
@@ -1353,9 +1315,16 @@ export function PluginHostedWebPane(props: Readonly<{
             enabled={interactionEnabled}
             focusEligible={props.focusEligible}
         >
-            <NativeArtifactHistoryRouteBackGuard
+            {/*
+                The guest's own history, spent before the route leaves. The
+                physical hosted mount has already selected the exact platform in
+                `active`; checking ambient React Native `Platform` here would
+                create a second platform authority that can disagree with an
+                injected or native renderer.
+            */}
+            <RouteRemovalStepConsumer
                 active={platform === 'ios' && effectiveInteractionEnabled && nativeArtifactGuestHistoryActive}
-                requestGuestGoBack={requestNativeArtifactGoBack}
+                consume={requestNativeArtifactGoBack}
             />
             <PluginHostedWebFrame
                 key={[

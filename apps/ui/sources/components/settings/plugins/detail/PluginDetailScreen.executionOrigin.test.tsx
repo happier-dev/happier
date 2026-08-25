@@ -8,6 +8,7 @@ type AccountSettingsMutation = (raw: Readonly<Record<string, unknown>>) => Recor
 
 const fixture = vi.hoisted(() => ({
     accountSettings: {} as Record<string, unknown>,
+    installedPluginById: new Map<string, unknown>(),
     materializationAdmission: null as unknown,
     selections: null as unknown,
     snapshots: [] as readonly unknown[],
@@ -176,17 +177,13 @@ vi.mock('../PluginReadOnlySnapshotNotice', () => ({ PluginReadOnlySnapshotNotice
 vi.mock('../model/usePluginSettingsScreenState', () => ({
     usePluginSettingsScreenState: () => ({
         accountServerIdentityId: null,
+        selectedServerIdentityId: administrationTargetSelection.selectedTarget?.serverIdentityId ?? null,
         canRefreshInstalledPlugins: false,
         daemonOperationsAvailable: false,
         executionMachineId: null,
         executionServerId: null,
         executionServerIdentityId: null,
-        installedPluginById: new Map([['acme.plugin', {
-            pluginId: 'acme.plugin',
-            title: 'Acme plugin',
-            version: '1.0.0',
-            enabled: true,
-        }]]),
+        installedPluginById: fixture.installedPluginById,
         isPluginActionInFlight: () => false,
         isDaemonSettingsTargetCurrent: () => true,
         administrationTargetSelection,
@@ -201,6 +198,12 @@ vi.mock('../model/usePluginSettingsScreenState', () => ({
 
 describe('PluginDetailScreen execution-origin ownership', () => {
     beforeEach(() => {
+        fixture.installedPluginById = new Map([['acme.plugin', {
+            pluginId: 'acme.plugin',
+            title: 'Acme plugin',
+            version: '1.0.0',
+            enabled: true,
+        }]]);
         fixture.selections = {
             v: 1,
             targetsByKey: {},
@@ -303,5 +306,28 @@ describe('PluginDetailScreen execution-origin ownership', () => {
         expect(administrationTargetSelection.selectedTarget).not.toMatchObject({
             machineId: ORIGIN_B.materializationRef.machineId,
         });
+    });
+
+    /**
+     * The Account-recovery route is entered exactly when the selected machine
+     * has no installation and no projection for a plugin the Account still
+     * has somewhere else. That is the one route where "which machine actually
+     * has this?" is the reader's whole question, so the Account-wide matrix
+     * has to be there and not only on the installed route.
+     */
+    it('answers where the plugin actually lives on the Account-recovery route', async () => {
+        fixture.installedPluginById = new Map();
+        const { PluginDetailScreen } = await import('./PluginDetailScreen');
+        const screen = await renderScreen(<PluginDetailScreen pluginId="acme.plugin" />);
+        await act(async () => {
+            await flushAsync();
+        });
+
+        // `findByTestId` returns null on a miss, so `toBeDefined()` would pass
+        // against the unwired screen. Assert the instance itself is truthy.
+        expect(screen.findByTestId('settings.plugins.detail.machineMatrix.acme.plugin.summary'))
+            .toBeTruthy();
+        expect(screen.findByTestId('settings.plugins.detail.machineMatrix.acme.plugin.cell')?.props)
+            .toMatchObject({ title: 'machine-a', mode: 'info' });
     });
 });

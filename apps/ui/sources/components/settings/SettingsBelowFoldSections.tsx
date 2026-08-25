@@ -27,11 +27,12 @@ function SettingsCatalogRootGroup(props: SettingsBelowFoldSectionsProps & Readon
 }>): React.ReactElement {
     switch (props.groupId) {
         case 'groupAiAndAgents':
-            return <SettingsAiAndAgentsSection router={props.router} theme={props.theme} />;
+            return <SettingsAiAndAgentsSection onNavigate={props.onNavigate} router={props.router} theme={props.theme} />;
         case 'groupSessionsBehavior':
             return (
                 <SettingsSessionsBehaviorSection
                     automationsNeedLocalEnablement={props.automationsNeedLocalEnablement}
+                    onNavigate={props.onNavigate}
                     router={props.router}
                     showAutomations={props.showAutomations}
                     terminalUseTmux={props.terminalUseTmux}
@@ -39,11 +40,12 @@ function SettingsCatalogRootGroup(props: SettingsBelowFoldSectionsProps & Readon
                 />
             );
         case 'groupFilesAndSourceControl':
-            return <SettingsFilesAndSourceControlSection router={props.router} theme={props.theme} />;
+            return <SettingsFilesAndSourceControlSection onNavigate={props.onNavigate} router={props.router} theme={props.theme} />;
         case 'groupSystem':
             return (
                 <SettingsSystemSection
                     handleReportIssue={props.handleReportIssue}
+                    onNavigate={props.onNavigate}
                     router={props.router}
                     theme={props.theme}
                 />

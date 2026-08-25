@@ -3,6 +3,7 @@ import * as React from 'react';
 import {
     buildQualifiedPluginContributionKey,
     normalizePluginDeclarativeDocumentV1,
+    parsePluginDeclarativeDocumentResourceBytesV1,
     PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1,
     PluginContributionIdentityV1Schema,
     PluginDeclarativeSettingsInventoryEntryV1Schema,
@@ -480,7 +481,9 @@ function projectNormalizedNode(input: Readonly<{
 }
 
 function parseResourceDocument(bytes: Uint8Array): unknown {
-    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    const parsed = parsePluginDeclarativeDocumentResourceBytesV1(bytes);
+    if (!parsed.ok) throw new Error(parsed.code);
+    return parsed.document;
 }
 
 function normalizeLiveDocument(input: Readonly<{

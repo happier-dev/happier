@@ -1326,6 +1326,224 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         }
     });
 
+    describe('retained admission custody around a target-scoped answer', () => {
+        const CUSTODY_TARGET = {
+            pluginId: 'acme.preview',
+            immutableGenerationId: 'target-generation-a',
+        } as const;
+
+        function custodyProjection(generation: number) {
+            return {
+                ...daemonProjection(generation),
+                installedPackagesById: {
+                    [CUSTODY_TARGET.pluginId]: {
+                        id: CUSTODY_TARGET.pluginId,
+                        displayName: 'Acme preview',
+                        version: '1.0.0',
+                        enabled: true,
+                        source: { kind: 'bundled', locator: CUSTODY_TARGET.pluginId },
+                        immutableGenerationId: CUSTODY_TARGET.immutableGenerationId,
+                        brand: { state: 'missing' },
+                    },
+                },
+                familiesById: {
+                    pluginUi: {
+                        family: 'pluginUi',
+                        entriesById: {
+                            [`translations:${CUSTODY_TARGET.pluginId}`]: {
+                                id: `translations:${CUSTODY_TARGET.pluginId}`,
+                                pluginId: CUSTODY_TARGET.pluginId,
+                                contributionKind: 'translations',
+                                locales: ['en'],
+                                bundles: { en: { title: 'Acme preview' } },
+                            },
+                        },
+                    },
+                },
+            };
+        }
+
+        const custodyTargetedContributions = {
+            target: CUSTODY_TARGET,
+            points: [{
+                pointId: 'review-detail',
+                protocols: [{
+                    protocol: { id: 'review/detail', version: 1 },
+                    contributions: [{
+                        contributor: {
+                            pluginId: 'acme.review',
+                            contributionId: 'detail',
+                            immutableGenerationId: 'review-generation-a',
+                        },
+                        protocol: { id: 'review/detail', version: 1 },
+                        operations: [],
+                        surfaces: [],
+                    }],
+                }],
+            }],
+        } as const;
+
+        async function warmCache() {
+            const warm = await import('@/sync/domains/plugins/ui/projectionWarmCache');
+            const { prepareWarmCacheEncryptionKey } = await import('@/sync/domains/state/warmCacheEncryptionKey');
+            await prepareWarmCacheEncryptionKey();
+            const persistence = await import('@/sync/domains/state/warmCachePersistence');
+            const targetKey = warm.pluginUiProjectionAdmissionTargetKey({
+                serverId: 'server-1',
+                machineId: 'machine-1',
+            });
+            return Object.freeze({
+                targetKey,
+                scope: retainedTestAccountLifetime.scope,
+                readEntry: () => persistence.loadPluginUiProjectionWarmCacheEntries(
+                    retainedTestAccountLifetime.scope.serverId,
+                    retainedTestAccountLifetime.scope.accountId,
+                )[targetKey],
+                reset: () => warm.forgetPluginUiProjectionAdmissionSnapshots(retainedTestAccountLifetime.scope),
+                savePresentation: (generation: number) => warm.savePluginUiProjectionAdmissionSnapshot({
+                    scope: retainedTestAccountLifetime.scope,
+                    targetKey,
+                    machineId: 'machine-1',
+                    projection: custodyProjection(generation) as never,
+                }),
+            });
+        }
+
+        async function primeCustody() {
+            const custody = await warmCache();
+            custody.reset();
+            custody.savePresentation(7);
+            projectionDescribeMock.mockResolvedValueOnce({
+                supported: true,
+                projection: custodyProjection(7),
+                targetedContributions: custodyTargetedContributions,
+            });
+            const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+            await loadDaemonMergedProjectionCacheEntry({
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                mountedTarget: CUSTODY_TARGET,
+                accountLifetime: retainedTestAccountLifetime,
+            });
+            expect(custody.readEntry()?.targetedContributionsByPluginId?.[CUSTODY_TARGET.pluginId])
+                .toEqual(custodyTargetedContributions);
+            return custody;
+        }
+
+        it('retires the whole retained entry when the current target answer is method-not-found', async () => {
+            const custody = await primeCustody();
+            const {
+                clearDaemonMergedProjectionCacheForTests,
+                loadDaemonMergedProjectionCacheEntry,
+            } = await import('./loadDaemonMergedProjectionInputs');
+            clearDaemonMergedProjectionCacheForTests();
+            projectionDescribeMock.mockResolvedValueOnce({ supported: false, reason: 'not-supported' });
+
+            await expect(loadDaemonMergedProjectionCacheEntry({
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                mountedTarget: CUSTODY_TARGET,
+                accountLifetime: retainedTestAccountLifetime,
+            })).resolves.toMatchObject({ kind: 'unsupported' });
+
+            // This client sends one RPC for both shapes, so method-not-found is
+            // a machine fact: the presentation slice goes with the target row.
+            expect(custody.readEntry()).toBeUndefined();
+        });
+
+        it('keeps retained custody through a transient target transport failure', async () => {
+            const custody = await primeCustody();
+            const {
+                clearDaemonMergedProjectionCacheForTests,
+                loadDaemonMergedProjectionCacheEntry,
+            } = await import('./loadDaemonMergedProjectionInputs');
+            clearDaemonMergedProjectionCacheForTests();
+            projectionDescribeMock.mockResolvedValueOnce({ supported: false, reason: 'error' });
+
+            await loadDaemonMergedProjectionCacheEntry({
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                mountedTarget: CUSTODY_TARGET,
+                accountLifetime: retainedTestAccountLifetime,
+            });
+
+            expect(custody.readEntry()?.targetedContributionsByPluginId?.[CUSTODY_TARGET.pluginId])
+                .toEqual(custodyTargetedContributions);
+        });
+
+        it('does not let an old-endpoint method-not-found delete custody a newer machine answer established', async () => {
+            const custody = await primeCustody();
+            const {
+                clearDaemonMergedProjectionCacheForTests,
+                loadDaemonMergedProjectionCacheEntry,
+            } = await import('./loadDaemonMergedProjectionInputs');
+            clearDaemonMergedProjectionCacheForTests();
+
+            let settleStaleResponse!: (value: unknown) => void;
+            projectionDescribeMock.mockImplementationOnce(async () => await new Promise((resolve) => {
+                settleStaleResponse = resolve;
+            }));
+            const stale = loadDaemonMergedProjectionCacheEntry({
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                mountedTarget: CUSTODY_TARGET,
+                accountLifetime: retainedTestAccountLifetime,
+            });
+            await Promise.resolve();
+
+            // The machine's daemon state advanced, so the canonical projection
+            // revision advanced and a newer machine-wide answer re-established
+            // custody. The in-flight response belongs to the previous endpoint.
+            projectionRevision.value += 1;
+            custody.savePresentation(8);
+
+            settleStaleResponse({ supported: false, reason: 'not-supported' });
+            await expect(stale).resolves.toBeNull();
+            expect(custody.readEntry()?.targetedContributionsByPluginId?.[CUSTODY_TARGET.pluginId])
+                .toEqual(custodyTargetedContributions);
+        });
+
+        it('does not persist or publish an old-endpoint target success after the projection revision advances', async () => {
+            const custody = await warmCache();
+            custody.reset();
+            custody.savePresentation(7);
+            const {
+                clearDaemonMergedProjectionCacheForTests,
+                loadDaemonMergedProjectionCacheEntry,
+                readCachedDaemonMergedProjectionCacheEntry,
+            } = await import('./loadDaemonMergedProjectionInputs');
+            clearDaemonMergedProjectionCacheForTests();
+
+            let settleStaleResponse!: (value: unknown) => void;
+            projectionDescribeMock.mockImplementationOnce(async () => await new Promise((resolve) => {
+                settleStaleResponse = resolve;
+            }));
+            const stale = loadDaemonMergedProjectionCacheEntry({
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                mountedTarget: CUSTODY_TARGET,
+                accountLifetime: retainedTestAccountLifetime,
+            });
+            await Promise.resolve();
+            projectionRevision.value += 1;
+
+            settleStaleResponse({
+                supported: true,
+                projection: custodyProjection(7),
+                targetedContributions: custodyTargetedContributions,
+            });
+            await expect(stale).resolves.toBeNull();
+
+            expect(custody.readEntry()?.targetedContributionsByPluginId).toBeUndefined();
+            expect(readCachedDaemonMergedProjectionCacheEntry({
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                mountedTarget: CUSTODY_TARGET,
+                accountLifetime: retainedTestAccountLifetime,
+            })).toBeNull();
+        });
+    });
+
     it('keeps the current Event Automation snapshot in the incumbent projection cache', async () => {
         projectionDescribeMock.mockResolvedValueOnce({
             supported: true,

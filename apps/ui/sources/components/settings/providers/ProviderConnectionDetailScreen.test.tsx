@@ -53,6 +53,11 @@ const router = vi.hoisted(() => ({
     replace: vi.fn(),
     back: vi.fn(),
 }));
+const navigationDispatch = vi.hoisted(() => vi.fn());
+const navigationPreventRemove = vi.hoisted(() => ({
+    enabled: false,
+    callback: null as null | ((event: { data: { action: unknown } }) => void),
+}));
 const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
 const administrationTarget = createMachineAdministrationTargetSelectionMock({
@@ -67,6 +72,7 @@ installSettingsViewCommonModuleMocks({
     router: async () => ({
         usePathname: () => '/settings/providers/cpx-moving',
         useRouter: () => router,
+        useNavigation: () => ({ dispatch: navigationDispatch }),
     }),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -94,6 +100,16 @@ installSettingsViewCommonModuleMocks({
     },
 });
 
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock({
+        usePreventRemove: (enabled, callback) => {
+            navigationPreventRemove.enabled = enabled;
+            navigationPreventRemove.callback = callback;
+        },
+    });
+});
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => {
@@ -110,7 +126,28 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
             : { state: 'enabled', blockedBy: null, blockerCode: 'none' };
     },
 }));
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({ useActiveServerSnapshot: () => ({ serverId: 'server-a' }) }));
+// The active snapshot reports the profile's SCOPE id
+// (`profile.serverIdentityId ?? profile.id`), while an Administration target
+// resolves to the profile's device-local `profile.id`. The two are different
+// strings for the same server, so the suite drives both forms.
+const activeServer = vi.hoisted(() => ({ serverId: 'srv_test' }));
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({ useActiveServerSnapshot: () => ({ serverId: activeServer.serverId }) }));
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    // Stands in for the MMKV-backed profile registry: identifiers resolve to
+    // the profile that owns them, so an identity id and a device-local id of
+    // the same profile are equivalent and two distinct profiles are not.
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => {
+        const profileIdByIdentifier: Readonly<Record<string, string>> = {
+            'server-a': 'server-a',
+            srv_test: 'server-a',
+            'server-b': 'server-b',
+            srv_b: 'server-b',
+        };
+        const leftId = profileIdByIdentifier[String(left ?? '').trim()];
+        const rightId = profileIdByIdentifier[String(right ?? '').trim()];
+        return Boolean(leftId && rightId && leftId === rightId);
+    },
+}));
 vi.mock('@/sync/store/hooks', () => ({
     useProfile: () => ({
         connectedAccountsV4: connectedAccountProfileState.accounts,
@@ -216,6 +253,7 @@ describe('ProviderConnectionDetailScreen', () => {
     beforeEach(() => {
         providerHarness.reset();
         administrationTarget.controller.reset();
+        activeServer.serverId = 'srv_test';
         state.providerDecisionState = 'enabled';
         state.connection = connection();
         state.discoveryCandidates = [];
@@ -239,6 +277,9 @@ describe('ProviderConnectionDetailScreen', () => {
         router.push.mockReset();
         router.replace.mockReset();
         router.back.mockReset();
+        navigationDispatch.mockReset();
+        navigationPreventRemove.enabled = false;
+        navigationPreventRemove.callback = null;
         probeProviderConnection.mockReset();
         probeProviderConnection.mockResolvedValue({
             status: 'success', models: [], requestFingerprint: 'probe-request:v1:detail',
@@ -1651,6 +1692,53 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(run).not.toHaveBeenCalled();
         expect(screen.findAllByType('Item').some(
             (item) => item.props.testID === 'provider-connection-managed-configure',
+        )).toBe(true);
+    });
+
+    it('joins an edited managed-purpose draft to the existing unsaved-changes navigation guard', async () => {
+        state.connection = connection({
+            deployment: { kind: 'external' },
+            managedLocalOption: {
+                targetMachineId: 'machine-a',
+                connectedAccountPurposes: [{
+                    purpose: 'telemetry',
+                    service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                    required: false,
+                }],
+            },
+        });
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const { ConnectedAccountPurposeTargetChooser } = await import(
+            '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser'
+        );
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-configure',
+        ));
+        expect(navigationPreventRemove.enabled).toBe(false);
+
+        await act(async () => {
+            screen.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({
+                kind: 'account',
+                service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                accountId: 'work',
+            });
+            await Promise.resolve();
+        });
+
+        expect(navigationPreventRemove.enabled).toBe(true);
+        navigationPreventRemove.callback?.({ data: { action: { type: 'GO_BACK' } } });
+        await vi.waitFor(() => expect(alert).toHaveBeenCalledWith(
+            'common.discardChanges',
+            'common.unsavedChangesWarning',
+            expect.any(Array),
+        ));
+        const buttons = alert.mock.calls.at(-1)?.[2] as Array<{ text: string; onPress?: () => void }>;
+        await act(async () => { buttons.find((button) => button.text === 'common.keepEditing')?.onPress?.(); });
+
+        expect(navigationDispatch).not.toHaveBeenCalled();
+        expect(screen.findAllByType('Item').some(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-save',
         )).toBe(true);
     });
 

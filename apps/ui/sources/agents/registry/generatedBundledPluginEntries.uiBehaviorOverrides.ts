@@ -73,7 +73,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
   "components": {
     "slots": [
       {
-        "componentId": "firstParty.claude.subagentLaunchCards",
         "id": "claude.subagentLaunchCards",
         "props": {
           "teamIds": {
@@ -83,14 +82,15 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
             ]
           }
         },
-        "slot": "sessionSubagents.launchCards"
+        "slot": "sessionSubagents.launchCards",
+        "surfaceId": "subagent-launch"
       },
       {
-        "componentId": "firstParty.claude.teammateDetailsTab",
         "iconName": "people",
         "id": "claude.teammateDetailsTab",
         "resourceKind": "claudeSubagentLauncher",
         "slot": "sessionSubagents.teammateDetailsTab",
+        "surfaceId": "subagent-details",
         "tab": {
           "keyPrefix": "claude-subagent-launcher",
           "subtitleKey": "session.subagents.panel.launchClaudeTeamsSubtitle",
@@ -147,18 +147,13 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         }
       ]
     },
-    "browseDescriptorId": "claude.externalSessions.browse.v1",
     "sessionHandoff": {
       "clearMetadataKeys": [
         "claudeTranscriptPath",
         "claudeLastCheckpointId",
         "claudeLastAssistantUuid"
       ]
-    },
-    "sessionHandoffDescriptorId": "claude.sessionHandoff.v1"
-  },
-  "mcpServers": {
-    "supportsDetectedConfigScan": true
+    }
   },
   "message": {
     "metaOverrides": [
@@ -201,8 +196,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
           "agentId",
           "backendId"
         ]
-      },
-      "providerId": "claude"
+      }
     }
   }
 } as const),
@@ -294,7 +288,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
             ]
           },
           "legacyModeOutputKey": "codexBackendMode",
-          "providerId": "codex",
           "runtimeDescriptorOutputKey": "runtimeDescriptorV1",
           "sourceFields": [
             "home",
@@ -341,9 +334,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
   },
   "guidance": {
     "includeInSessionGettingStartedCliExamples": true
-  },
-  "mcpServers": {
-    "supportsDetectedConfigScan": true
   },
   "newSession": {
     "relevantInstallableDeps": [
@@ -397,7 +387,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         ]
       },
       "legacyModeOutputKey": "codexBackendMode",
-      "providerId": "codex",
       "runtimeDescriptorOutputKey": "runtimeDescriptorV1",
       "runtimeHandleFields": [
         "backendMode",
@@ -411,7 +400,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
     },
     "sessionExtras": {
       "outputKey": "codexBackendMode",
-      "providerId": "codex",
       "values": [
         "acp",
         "appServer"
@@ -461,8 +449,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
           "agentId",
           "backendId"
         ]
-      },
-      "providerId": "codex"
+      }
     }
   }
 } as const),
@@ -586,15 +573,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
           }
         }
       ]
-    },
-    "browseDescriptorId": "opencode.externalSessions.browse.v1",
-    "sessionHandoffDescriptorId": "opencode.sessionHandoff.v1"
+    }
   },
   "guidance": {
     "includeInSessionGettingStartedCliExamples": true
-  },
-  "mcpServers": {
-    "supportsDetectedConfigScan": true
   },
   "newSession": {
     "transcriptStorageModesByBackendMode": {
@@ -631,7 +613,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
           "acp"
         ]
       },
-      "providerId": "opencode",
       "serverBaseUrl": {
         "allowedProtocols": [
           "http:",

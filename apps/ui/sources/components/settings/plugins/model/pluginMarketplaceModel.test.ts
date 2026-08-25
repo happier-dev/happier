@@ -491,6 +491,12 @@ describe('installed marketplace catalog formatting', () => {
         ['install', null, null, '2.0.0', false],
         ['update', installed, { ...installed, version: '2.0.0' }, '2.0.0', true],
         ['update', installed, installed, '2.0.0', false],
+        // The canonical update owner picks the newest compatible version from the
+        // installed record, so a caller that never reviewed a candidate has no
+        // target version to hold it to: the installed record advancing is the fact.
+        ['update', installed, { ...installed, version: '1.4.0' }, null, true],
+        ['update', installed, installed, null, false],
+        ['update', installed, { ...installed, version: '1.4.0' }, '2.0.0', false],
         ['rollback', installed, { ...installed, version: '0.9.0' }, null, true],
         ['rollback', installed, installed, null, false],
         ['uninstall', installed, null, null, true],

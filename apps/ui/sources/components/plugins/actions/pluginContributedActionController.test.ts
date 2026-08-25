@@ -6,8 +6,22 @@ import type {
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import {
     PluginProjectedActionV2Schema,
+    PluginProjectionInstalledPackageV2Schema,
+    type PluginMachineExecutionOriginV1,
     type PluginProjectedActionV2,
 } from '@happier-dev/protocol';
+import { PluginUiArtifactsManifestEntryV1Schema } from '@happier-dev/protocol/plugins/ui';
+import type { PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
+import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
+import { getInstalledPluginUiClientExecutableComposition } from '@/components/plugins/reactNative/clientExecutableContributions';
+import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/reactNative/clientExecutableProjection';
+import type {
+    PluginReactNativeExecutableExport,
+    PluginReactNativeLoaderBackend,
+} from '@/components/plugins/reactNative/loader';
+import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import type {
     DispatchPluginSurfaceActionInput,
     PluginSurfaceActionDispatchOutcome,
@@ -20,6 +34,7 @@ import {
 import { setPreferredLanguageFromSettings } from '@/text';
 import type {
     PluginUiSelectActionInputRequestV1,
+    PluginUiSelectActionInputTargetedRequestV1,
     PluginUiTargetedContributionOperationV1,
     PluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -174,7 +189,7 @@ function targetedContributions(
 
 function selectionRequest(
     operation: PluginUiTargetedContributionOperationV1,
-    draft?: PluginUiSelectActionInputRequestV1['draft'],
+    draft?: PluginUiSelectActionInputTargetedRequestV1['draft'],
 ): PluginUiSelectActionInputRequestV1 {
     return {
         operation,
@@ -241,6 +256,182 @@ function createAccountLifetimeHarness() {
             for (const callback of [...callbacks]) callback();
         },
     };
+}
+
+const CLIENT_REGISTERED_PLUGIN_ID = 'acme.client-actions';
+const CLIENT_REGISTERED_LOCAL_ID = 'refresh-index';
+const CLIENT_REGISTERED_TARGET = Object.freeze({
+    artifactId: 'client-action-bundle',
+    modulePath: './client/refreshIndex',
+    exportName: 'activate',
+    platform: 'web' as const,
+});
+const CLIENT_REGISTERED_EXECUTION_ORIGIN: PluginMachineExecutionOriginV1 = Object.freeze({
+    serverIdentityId: 'srv_client_registered_action',
+    materializationRef: Object.freeze({
+        pluginId: CLIENT_REGISTERED_PLUGIN_ID,
+        machineId: 'machine-client-registered-action',
+        materializationId: 'materialization-client-registered-action',
+    }),
+});
+const CLIENT_REGISTERED_HOST_ORIGIN = Object.freeze({
+    machineId: CLIENT_REGISTERED_EXECUTION_ORIGIN.materializationRef.machineId,
+    serverId: 'server-client-registered-action',
+    generation: GENERATION,
+    interactionEnabled: true,
+    phase: 'current' as const,
+    executionOrigin: CLIENT_REGISTERED_EXECUTION_ORIGIN,
+});
+const CLIENT_REGISTERED_ARTIFACT_GRAPH = PluginUiArtifactsManifestEntryV1Schema.parse({
+    contributionId: CLIENT_REGISTERED_TARGET.artifactId,
+    tier: 'reactNative',
+    platform: CLIENT_REGISTERED_TARGET.platform,
+    entry: 'react-native/client-action-bundle/index.js',
+    files: [{
+        relativePath: 'react-native/client-action-bundle/index.js',
+        digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        byteSize: 10,
+    }],
+    digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    builtWith: { bundler: 'vite', version: '7.0.0' },
+    hostUiApiVersion: '1.0.0',
+    compat: { react: '19.0.0', reactNative: '0.83.4' },
+});
+const CLIENT_REGISTERED_AUTHORIZATION = Object.freeze({
+    generation: Object.freeze({
+        targetGeneration: String(GENERATION),
+        desiredGeneration: String(GENERATION),
+        appliedGeneration: String(GENERATION),
+    }),
+    resourceSelections: Object.freeze([]),
+    scopedGrants: Object.freeze([]),
+    serviceAvailability: Object.freeze([]),
+    operatingSystemAuthorization: Object.freeze([]),
+});
+
+function clientRegisteredCacheIdentity(): PluginReactNativeBundleCacheIdentity {
+    return Object.freeze({
+        pluginId: CLIENT_REGISTERED_PLUGIN_ID,
+        contributionId: CLIENT_REGISTERED_LOCAL_ID,
+        artifactDigest: CLIENT_REGISTERED_ARTIFACT_GRAPH.digest,
+        hostAppVersion: '2.0.0',
+        hostUiApiVersion: '1.0.0',
+        reactVersion: '19.0.0',
+        reactNativeVersion: '0.83.4',
+        platform: CLIENT_REGISTERED_TARGET.platform,
+        channel: 'internal',
+        nativeCapabilitiesDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        projectionGeneration: GENERATION,
+    });
+}
+
+/**
+ * The allow side of `hasCurrentClientActionRegistration`. Refusal alone cannot
+ * tell "this client Action has not registered yet" apart from "client Actions
+ * are never presented", so this fixture commits a real registration through the
+ * production projection, cache and executable composition the gate reads.
+ */
+function createRegisteredClientActionFixture(handler: PluginClientActionHandler) {
+    const projectedAction = Object.freeze({
+        ...PluginProjectedActionV2Schema.parse({
+            id: CLIENT_REGISTERED_LOCAL_ID,
+            pluginId: CLIENT_REGISTERED_PLUGIN_ID,
+            title: 'Refresh index',
+            scopes: ['global'],
+            surfaces: ['ui'],
+            placementBindings: ['commandPalette'],
+            execution: {
+                target: 'client',
+                client: {
+                    artifactId: CLIENT_REGISTERED_TARGET.artifactId,
+                    modulePath: CLIENT_REGISTERED_TARGET.modulePath,
+                    exportName: CLIENT_REGISTERED_TARGET.exportName,
+                },
+                platforms: [CLIENT_REGISTERED_TARGET.platform],
+            },
+            serverIdentityId: CLIENT_REGISTERED_EXECUTION_ORIGIN.serverIdentityId,
+            materializationRef: CLIENT_REGISTERED_EXECUTION_ORIGIN.materializationRef,
+            priority: 0,
+            dangerLevel: 'safe',
+            available: true,
+            authorization: CLIENT_REGISTERED_AUTHORIZATION,
+        }),
+        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: CLIENT_REGISTERED_HOST_ORIGIN,
+    });
+    const cacheIdentity = clientRegisteredCacheIdentity();
+    const bundleId = `reactNativeBundle:${CLIENT_REGISTERED_PLUGIN_ID}:${CLIENT_REGISTERED_LOCAL_ID}`;
+    const projection = Object.freeze({
+        ...EMPTY_PLUGIN_UI_PROJECTION,
+        generation: GENERATION,
+        installedPackagesById: Object.freeze({
+            [CLIENT_REGISTERED_PLUGIN_ID]: PluginProjectionInstalledPackageV2Schema.parse({
+                id: CLIENT_REGISTERED_PLUGIN_ID,
+                displayName: 'Client Actions',
+                version: '1.2.3',
+                enabled: true,
+                source: { kind: 'localPath', locator: CLIENT_REGISTERED_PLUGIN_ID },
+            }),
+        }),
+        actionsById: Object.freeze({
+            [`${CLIENT_REGISTERED_PLUGIN_ID}/${CLIENT_REGISTERED_LOCAL_ID}`]: projectedAction,
+        }),
+        reactNativeBundlesById: Object.freeze({
+            [bundleId]: Object.freeze({
+                id: bundleId,
+                pluginId: CLIENT_REGISTERED_PLUGIN_ID,
+                contributionKind: 'reactNativeBundle' as const,
+                contributionId: CLIENT_REGISTERED_LOCAL_ID,
+                generatedOwnerKind: 'clientContribution' as const,
+                artifactGraph: CLIENT_REGISTERED_ARTIFACT_GRAPH,
+                runtime: Object.freeze({
+                    decision: Object.freeze({ state: 'load' }),
+                    loadPolicy: Object.freeze({ source: 'installedArtifact' }),
+                    cacheIdentity,
+                }),
+                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: CLIENT_REGISTERED_HOST_ORIGIN,
+            }),
+        }),
+    }) satisfies PluginUiProjectionModel;
+    const resolved = resolveProjectedPluginUiClientExecutables({
+        actionProjection: Object.freeze({ projection }),
+        platform: CLIENT_REGISTERED_TARGET.platform,
+    });
+    const executable = resolved[0];
+    if (!executable || resolved.length !== 1) {
+        throw new Error('client Action fixture did not resolve through the production projection');
+    }
+    const cache = createPluginReactNativeBundleCache();
+    cache.putInstalledArtifact({
+        identity: executable.cacheIdentity,
+        bytes: new Uint8Array([47, 47, 32, 99, 108, 105, 101, 110, 116]),
+        format: 'plainJs',
+    });
+    const activate = vi.fn((api: PluginClientApi) => {
+        api.actions.register(CLIENT_REGISTERED_LOCAL_ID, handler);
+    });
+    const backend: PluginReactNativeLoaderBackend = Object.freeze({
+        backendId: 'reactNativeWebModule',
+        available: true,
+        loadInstalledBundle: vi.fn(async () => activate as PluginReactNativeExecutableExport),
+    });
+    return Object.freeze({
+        action: projectedAction as PluginProjectedActionV2,
+        composition: getInstalledPluginUiClientExecutableComposition(),
+        activation: Object.freeze({
+            pluginId: executable.pluginId,
+            ...(executable.pluginVersion === undefined ? {} : { pluginVersion: executable.pluginVersion }),
+            contributes: executable.contributes,
+            target: executable.target,
+            executionOrigin: executable.executionOrigin,
+            projectionGeneration: executable.projectionGeneration,
+            cache,
+            identity: executable.cacheIdentity,
+            moduleReference: executable.moduleReference,
+            backend,
+            authority: executable.authority,
+            isCurrent: () => true,
+        }),
+    });
 }
 
 describe('plugin contributed Action controller', () => {
@@ -725,6 +916,10 @@ describe('plugin contributed Action controller', () => {
         await expect(controller.selectActionInput({
             hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
         })).resolves.toEqual({ kind: 'unavailable', reason: 'invalid_input' });
+        await expect(controller.selectActionInput({
+            hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+            seed: { prompt: { text: 'Repair the failing check', mode: 'replace' } },
+        })).resolves.toEqual({ kind: 'unavailable', reason: 'invalid_input' });
     });
 
     it('fails closed for absent mounted membership, secret-bearing, and invalid Connected Account draft selections', async () => {
@@ -1017,6 +1212,44 @@ describe('plugin contributed Action controller', () => {
         });
 
         expect(controller.list({ placement: 'commandPalette', scope: 'global' })).toEqual([]);
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('lists the same client Action once its executable registration commits', async () => {
+        const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { refreshed: true } });
+        const fixture = createRegisteredClientActionFixture(async () => ({ refreshed: true }));
+        const initial = snapshot([action({
+            id: CLIENT_REGISTERED_LOCAL_ID,
+            scopes: ['global'],
+            placementBindings: ['commandPalette'],
+        })], { pluginId: CLIENT_REGISTERED_PLUGIN_ID });
+        const current: PluginContributedActionCurrentSnapshot = {
+            ...initial,
+            resolveContributedAction: (identity) => (
+                identity.pluginId === CLIENT_REGISTERED_PLUGIN_ID
+                    && identity.localId === CLIENT_REGISTERED_LOCAL_ID
+                    ? fixture.action
+                    : null
+            ),
+        };
+        const controller = createPluginContributedActionController({
+            resolveCurrent: () => current,
+            dispatch,
+        });
+
+        // Before the executable module commits, the exact registration index is
+        // empty and the generic catalog withholds the entry.
+        await fixture.composition.unload();
+        expect(controller.list({ placement: 'commandPalette', scope: 'global' })).toEqual([]);
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            expect(controller.list({ placement: 'commandPalette', scope: 'global' })
+                .map((entry) => entry.qualifiedActionId)).toEqual([
+                `${CLIENT_REGISTERED_PLUGIN_ID}/${CLIENT_REGISTERED_LOCAL_ID}`,
+            ]);
+        } finally {
+            await fixture.composition.unload();
+        }
         expect(dispatch).not.toHaveBeenCalled();
     });
 
@@ -2178,7 +2411,7 @@ describe('plugin contributed Action controller', () => {
         expect(dispatch.mock.calls[0]?.[0]).not.toHaveProperty('invocation');
     });
 
-    it('opens a current session action reference with the canonical absent-input sentinel and rejects a non-session replacement', async () => {
+    it('opens a current session action reference with input omitted and rejects a non-session replacement', async () => {
         const dispatch = vi.fn().mockResolvedValue({ ok: true, result: { connected: true } });
         const reference = { pluginId: 'acme.channels', localId: 'connect-account' };
         let current: PluginContributedActionCurrentSnapshot = {
@@ -2198,11 +2431,9 @@ describe('plugin contributed Action controller', () => {
             action: expect.objectContaining({ identity: reference }),
             outcome: { ok: true, result: { connected: true } },
         });
-        expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
-            action: reference,
-            input: null,
-        }));
         const dispatchInput = dispatch.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(dispatchInput).toMatchObject({ action: reference });
+        expect(dispatchInput).not.toHaveProperty('input');
         expect(dispatchInput).not.toHaveProperty('callerPluginId');
         expect(dispatchInput).not.toHaveProperty('callerContributionLocalId');
 

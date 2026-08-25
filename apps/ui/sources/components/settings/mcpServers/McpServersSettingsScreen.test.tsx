@@ -10,7 +10,7 @@ import type {
 import { createMachineFixture, flushHookEffects } from '@/dev/testkit';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 
-import { listDetectedMcpProviderIds, listMcpPreviewAgentIds } from './mcpServerScreenHelpers';
+import { listMcpPreviewAgentIds } from './mcpServerScreenHelpers';
 import {
     installMcpServersCommonModuleMocks,
     mcpServersModuleState,
@@ -285,8 +285,10 @@ describe('McpServersSettingsScreen', () => {
 
         await selectHeaderTab(screen, 'detected');
         expect(screen.findRow('settings.mcpServers.detect.refresh')).toBeTruthy();
+        // No provider filter travels: the selected machine's daemon scans every
+        // MCP discovery source its own registry holds, including an installed
+        // Agent's, instead of this binary's bundled Agent list.
         expect(machineMcpServersDetectSpy).toHaveBeenCalledWith('machine-1', {
-            providers: listDetectedMcpProviderIds(),
             directory: undefined,
         }, { serverId: 'server-1' });
 
@@ -399,7 +401,6 @@ describe('McpServersSettingsScreen', () => {
         expect(detectedRowAfterRefresh).toBeTruthy();
 
         expect(machineMcpServersDetectSpy).toHaveBeenLastCalledWith('machine-1', {
-            providers: listDetectedMcpProviderIds(),
             directory: '/repo/project',
         }, { serverId: 'server-1' });
     });
@@ -423,7 +424,6 @@ describe('McpServersSettingsScreen', () => {
         await selectHeaderTab(screen, 'detected');
 
         expect(machineMcpServersDetectSpy).toHaveBeenCalledWith('machine-target', {
-            providers: listDetectedMcpProviderIds(),
             directory: undefined,
         }, { serverId: 'server-target' });
 

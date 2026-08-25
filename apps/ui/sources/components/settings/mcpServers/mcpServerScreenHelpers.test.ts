@@ -2,19 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { AGENT_IDS, DEFAULT_AGENT_ID, getAgentCore } from '@/agents/catalog/catalog';
 
-import { getPreferredMcpPreviewAgentId, listDetectedMcpProviderIds, listMcpPreviewAgentIds } from './mcpServerScreenHelpers';
+import { getPreferredMcpPreviewAgentId, listMcpPreviewAgentIds } from './mcpServerScreenHelpers';
 
 describe('mcpServerScreenHelpers', () => {
-    it('offers a detected-config scan only for Agents that contribute an MCP discovery source', () => {
-        // Derived from each bundled plugin's manifest `contributes.mcp.discoverySources`
-        // — the same declaration the daemon's detection runs — so the screen can never
-        // offer a scan that has no source behind it. ohMyPi is deliberately absent: it
-        // contributes no MCP discovery source, so its scan could only ever return
-        // nothing.
-        expect(listDetectedMcpProviderIds()).toEqual(['claude', 'codex', 'opencode']);
-        expect(listDetectedMcpProviderIds()).not.toContain('ohMyPi');
-    });
-
     it('lists preview-capable MCP agents in canonical registry order without screen-local hardcoding', () => {
         const previewAgentIds = listMcpPreviewAgentIds();
 

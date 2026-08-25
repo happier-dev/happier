@@ -34,6 +34,10 @@ export type MachineAdministrationTargetSelectorProps = Readonly<{
     selection: MachineAdministrationTargetSelectionV1;
     /** Stable test-id prefix for the selected state, clear action, and shared picker. */
     testIDPrefix?: string;
+    /** Contextual label for the machine scope this selector presents. */
+    groupTitle?: string;
+    /** Contextual copy for an unselected machine scope. */
+    unselectedTitle?: string;
 }>;
 
 function targetStatusDetail(state: Exclude<MachineAdministrationTargetStateV1, { kind: 'unselected' }>): string {
@@ -64,10 +68,13 @@ function targetCandidate(state: Exclude<MachineAdministrationTargetStateV1, { ki
     }
 }
 
-function presentCurrentTarget(state: MachineAdministrationTargetStateV1): CurrentTargetPresentation {
+function presentCurrentTarget(
+    state: MachineAdministrationTargetStateV1,
+    unselectedTitle: string | undefined,
+): CurrentTargetPresentation {
     if (state.kind === 'unselected') {
         return {
-            title: t('newSession.noMachineSelected'),
+            title: unselectedTitle ?? t('newSession.noMachineSelected'),
             detail: t('common.unavailable'),
             selected: false,
         };
@@ -130,7 +137,7 @@ function resolvePickerAvailability(machine: MachineAdministrationPickerMachine):
  */
 export function MachineAdministrationTargetSelector(props: MachineAdministrationTargetSelectorProps) {
     const testIDPrefix = props.testIDPrefix ?? 'machine-administration-target';
-    const current = presentCurrentTarget(props.selection.state);
+    const current = presentCurrentTarget(props.selection.state, props.unselectedTitle);
     const groups = buildPickerGroups(props.selection);
     const selectedRow = props.selection.selectedTarget
         ? props.selection.pickerRows.find((row) => machineAdministrationTargetsEqual(
@@ -144,7 +151,7 @@ export function MachineAdministrationTargetSelector(props: MachineAdministration
 
     return (
         <>
-            <ItemGroup title={t('settingsProviders.detail.targetMachine')}>
+            <ItemGroup title={props.groupTitle ?? t('settingsProviders.detail.targetMachine')}>
                 <Item
                     testID={`${testIDPrefix}.current`}
                     title={current.title}

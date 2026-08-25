@@ -35,6 +35,7 @@ import { useSettings } from '@/sync/domains/state/storage';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
 import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { t } from '@/text';
 import { resolveAgentModelsSettingsAccess } from './resolveAgentModelsSettingsAccess';
 
@@ -60,20 +61,17 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
     const machineId = executionTarget?.machine.id ?? null;
     const serverId = executionTarget?.serverId ?? null;
     const resolveCurrentExecutionTarget = React.useCallback(() => {
-        const expectedTarget = executionTarget?.target;
+        if (!executionTarget) return null;
         const resolvedTarget = administrationTargetSelection.resolveExecutionTarget();
-        if (
-            !expectedTarget
-            || !resolvedTarget
-            || !machineAdministrationTargetsEqual(expectedTarget, resolvedTarget.target)
-        ) {
-            return null;
-        }
+        if (!resolvedTarget || !isMachineAdministrationExecutionTargetCurrent({
+            expectedTarget: executionTarget,
+            resolveCurrentTarget: () => resolvedTarget,
+        })) return null;
         return {
             machineId: resolvedTarget.machine.id,
             serverId: resolvedTarget.serverId,
         };
-    }, [administrationTargetSelection, executionTarget?.target]);
+    }, [administrationTargetSelection, executionTarget]);
     const projection = useProviderModelProjection({
         enabled, machineId, serverId, agentTargetKey: props.agentTargetKey, mode: 'management',
     });

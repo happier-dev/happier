@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPluginAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import { renderSettingsView } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
@@ -230,23 +229,44 @@ describe('SubAgentSettingsView', () => {
         expect(ruleItem!.props.subtitle).toContain('subAgentGuidance.settings.rules.meta.target: Custom Review Bot');
     });
 
-    it('renders agent-contributed subagent settings sections and routes to their target screen', async () => {
+    it('keeps colliding external Agent local ids qualified when routing to their settings', async () => {
         pluginProjectionByIdState = {
-            claude: {
+            'example.agent-one': {
                 editableSettingsGroups: [{
                     target: {
                         kind: 'agent',
-                        agent: { pluginId: 'claude', localId: 'claude' },
+                        agent: { pluginId: 'example.agent-one', localId: 'assistant' },
                     },
                     presentation: {
                         subagentSections: [{
-                            id: 'claudeTeams',
-                            title: 'Claude teams',
-                            description: 'Manage Claude-specific subagent behavior.',
+                            id: 'agentOneTeams',
+                            title: 'Agent One teams',
+                            description: 'Manage Agent One subagent behavior.',
                             items: [{
-                                id: 'claude-team-settings',
-                                title: 'Agent Teams',
-                                description: 'Open Claude provider settings',
+                                id: 'agent-one-team-settings',
+                                title: 'Agent One settings',
+                                description: 'Open Agent One settings',
+                                iconIonName: 'people-outline',
+                            }],
+                        }],
+                    },
+                }],
+            },
+            'example.agent-two': {
+                editableSettingsGroups: [{
+                    target: {
+                        kind: 'agent',
+                        agent: { pluginId: 'example.agent-two', localId: 'assistant' },
+                    },
+                    presentation: {
+                        subagentSections: [{
+                            id: 'agentTwoTeams',
+                            title: 'Agent Two teams',
+                            description: 'Manage Agent Two subagent behavior.',
+                            items: [{
+                                id: 'agent-two-team-settings',
+                                title: 'Agent Two settings',
+                                description: 'Open Agent Two settings',
                                 iconIonName: 'people-outline',
                             }],
                         }],
@@ -258,11 +278,19 @@ describe('SubAgentSettingsView', () => {
         const { SubAgentSettingsView } = await import('./SubAgentSettingsView');
 
         const screen = await renderSettingsView(React.createElement(SubAgentSettingsView));
-        const providerItem = screen.findRowByTitle('Agent Teams');
-        expect(providerItem).toBeTruthy();
+        expect(screen.findRowByTitle('Agent One settings')).toBeTruthy();
+        expect(screen.findRowByTitle('Agent Two settings')).toBeTruthy();
 
-        screen.pressRowByTitle('Agent Teams');
+        screen.pressRowByTitle('Agent One settings');
+        screen.pressRowByTitle('Agent Two settings');
 
-        expect(routerPushSpy).toHaveBeenCalledWith(createPluginAgentSettingsRoute('claude'));
+        expect(routerPushSpy).toHaveBeenNthCalledWith(
+            1,
+            '/(app)/settings/agents/assistant?pluginId=example.agent-one',
+        );
+        expect(routerPushSpy).toHaveBeenNthCalledWith(
+            2,
+            '/(app)/settings/agents/assistant?pluginId=example.agent-two',
+        );
     });
 });

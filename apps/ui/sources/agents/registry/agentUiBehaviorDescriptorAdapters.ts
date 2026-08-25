@@ -118,6 +118,7 @@ type RuntimeDescriptorLinkExtrasDescriptor = Readonly<{
 }>;
 
 type BehaviorDescriptorContext = Readonly<{
+    agentId: string;
     descriptor: Readonly<Record<string, unknown>>;
     diagnostics: UiProjectionDiagnostic[];
 }>;
@@ -158,7 +159,17 @@ function normalizeDescriptorUrl(value: unknown, config: NonNullable<EnvironmentD
     }
 }
 
-function readRuntimeDescriptorProvider(metadata: unknown, providerId: string): Record<string, unknown> | null {
+/**
+ * The Agent-owned payload of a persisted runtime descriptor.
+ *
+ * The canonical envelope carries it under `agent`; `provider` is the retired
+ * key the protocol reader normalizes away, and persisted metadata written
+ * before that rename can still hold it. Reading only `provider` made this
+ * branch unreachable for every descriptor the current writer produces, which
+ * silently pushed every affinity read onto the legacy flat metadata keys —
+ * keys an installed Agent's own declaration has no way to occupy.
+ */
+export function readRuntimeDescriptorAgentPayload(metadata: unknown, providerId: string): Record<string, unknown> | null {
     const record = isRecord(metadata) ? metadata : null;
     const runtimeDescriptor = isRecord(record?.runtimeDescriptorV1)
         ? record.runtimeDescriptorV1
@@ -166,6 +177,7 @@ function readRuntimeDescriptorProvider(metadata: unknown, providerId: string): R
             ? record.agentRuntimeDescriptorV1
             : null;
     if (!runtimeDescriptor || runtimeDescriptor.v !== 1 || runtimeDescriptor.agentId !== providerId) return null;
+    if (isRecord(runtimeDescriptor.agent)) return runtimeDescriptor.agent;
     return isRecord(runtimeDescriptor.provider) ? runtimeDescriptor.provider : null;
 }
 
@@ -174,7 +186,7 @@ function readEnvironmentAffinity(metadata: unknown, descriptor: EnvironmentDescr
     serverBaseUrl: string | null;
     serverBaseUrlExplicit: boolean;
 }> {
-    const provider = readRuntimeDescriptorProvider(metadata, descriptor.providerId);
+    const provider = readRuntimeDescriptorAgentPayload(metadata, descriptor.providerId);
     const serverBaseUrlConfig = descriptor.serverBaseUrl;
     if (provider) {
         const explicit = serverBaseUrlConfig
@@ -313,9 +325,13 @@ function buildEnvironmentVariables(opts: Readonly<{
     return base;
 }
 
-function readEnvironmentDescriptor(value: unknown, diagnostics: UiProjectionDiagnostic[]): EnvironmentDescriptor | null {
+function readEnvironmentDescriptor(
+    value: unknown,
+    agentId: string,
+    diagnostics: UiProjectionDiagnostic[],
+): EnvironmentDescriptor | null {
     if (!isRecord(value)) return null;
-    const providerId = readString(value.providerId);
+    const providerId = agentId;
     const backendMode = isRecord(value.backendMode) ? value.backendMode : null;
     const backendModeValues = readStringArray(backendMode?.values);
     const backendModeConfig = providerId && backendMode
@@ -341,7 +357,7 @@ function readEnvironmentDescriptor(value: unknown, diagnostics: UiProjectionDiag
         diagnostics.push(createUiProjectionDiagnostic(
             'A16X1_MALFORMED_DESCRIPTOR',
             'payload.environmentVariables',
-            'Environment variable descriptors require provider id and backend mode field metadata.',
+            'Environment variable descriptors require backend mode field metadata.',
         ));
         return null;
     }
@@ -542,9 +558,12 @@ function readSourceFromCandidateLinkExtrasDescriptor(value: unknown): SourceFrom
     };
 }
 
-function readRuntimeDescriptorLinkExtrasDescriptor(value: unknown): RuntimeDescriptorLinkExtrasDescriptor | null {
+function readRuntimeDescriptorLinkExtrasDescriptor(
+    value: unknown,
+    agentId: string,
+): RuntimeDescriptorLinkExtrasDescriptor | null {
     if (!isRecord(value)) return null;
-    const providerId = readString(value.providerId);
+    const providerId = agentId;
     const runtimeDescriptorOutputKey = readString(value.runtimeDescriptorOutputKey) ?? 'runtimeDescriptorV1';
     const legacyModeOutputKey = readString(value.legacyModeOutputKey);
     const backendMode = isRecord(value.backendMode) ? value.backendMode : null;
@@ -638,6 +657,35 @@ function attachRuntimeDescriptorAgentExtra(
     return agentExtra ? { ...agentPayload, agentExtra } : agentPayload;
 }
 
+/**
+ * This Agent's runtime mode for a record that may carry the canonical envelope
+ * or a pre-envelope shape.
+ *
+ * The canonical envelope is keyed by the Agent id the declaration names, so it
+ * needs no build-time roster: an installed Agent's declaration reads exactly
+ * the shape this module writes, and reaches the same behavior a bundled Agent
+ * does. The generated reader below is consulted only afterwards, and only ever
+ * answers for a BUNDLED Agent — it is what knows that Agent's released
+ * pre-envelope metadata keys and retired mode spellings, which no installed
+ * Agent has. It is a released-compatibility reader, not an admission gate.
+ */
+function readDeclaredRuntimeMode(
+    metadata: unknown,
+    providerId: string,
+    backendMode: RuntimeDescriptorLinkExtrasDescriptor['backendMode'],
+): string | null {
+    const canonical = normalizeDescriptorEnumValue(
+        readRuntimeDescriptorAgentPayload(metadata, providerId)?.backendMode,
+        backendMode,
+    );
+    if (canonical) return canonical;
+    if (!isSupportedRuntimeDescriptorProviderId(providerId)) return null;
+    return normalizeDescriptorEnumValue(
+        readSessionMetadataRuntimeDescriptor(metadata, providerId)?.runtimeKind,
+        backendMode,
+    );
+}
+
 function readCandidateDetailsSource(candidate: Readonly<{ details?: Record<string, unknown> }>): Record<string, unknown> | null {
     const source = candidate.details?.source;
     return isRecord(source) ? source : null;
@@ -709,15 +757,15 @@ function buildRuntimeDescriptorLinkExtras(opts: Readonly<{
     source: ExternalSessionsSource | null;
 }>): Record<string, unknown> {
     const details = opts.candidate.details ?? {};
-    if (!isSupportedRuntimeDescriptorProviderId(opts.descriptor.providerId)) return {};
-    const projectedDescriptor = readSessionMetadataRuntimeDescriptor(details, opts.descriptor.providerId);
-    const backendMode = normalizeDescriptorEnumValue(
-        projectedDescriptor?.runtimeKind,
-        opts.descriptor.backendMode,
-    );
+    const backendMode = readDeclaredRuntimeMode(details, opts.descriptor.providerId, opts.descriptor.backendMode);
     if (!backendMode) return {};
 
-    const providerSessionId = projectedDescriptor?.providerSessionId ?? null;
+    const providerSessionId = normalizeOptionalString(
+        readRuntimeDescriptorAgentPayload(details, opts.descriptor.providerId)?.providerSessionId
+        ?? (isSupportedRuntimeDescriptorProviderId(opts.descriptor.providerId)
+            ? readSessionMetadataRuntimeDescriptor(details, opts.descriptor.providerId)?.providerSessionId
+            : null),
+    );
     const provider: Record<string, unknown> = {
         backendMode,
         ...(providerSessionId ? { providerSessionId } : {}),
@@ -744,19 +792,25 @@ function buildRuntimeDescriptorLinkExtras(opts: Readonly<{
 
 function readRuntimeDescriptorLinkDescriptorFromUiDescriptor(
     descriptor: Readonly<Record<string, unknown>>,
+    agentId: string,
 ): RuntimeDescriptorLinkExtrasDescriptor | null {
     const externalSessions = isRecord(descriptor.externalSessions) ? descriptor.externalSessions : null;
     const browse = isRecord(externalSessions?.browse) ? externalSessions.browse : null;
     const linkEnsureRequestExtras = isRecord(browse?.linkEnsureRequestExtras) ? browse.linkEnsureRequestExtras : null;
-    return readRuntimeDescriptorLinkExtrasDescriptor(linkEnsureRequestExtras?.runtimeDescriptorFromCandidate);
+    return readRuntimeDescriptorLinkExtrasDescriptor(linkEnsureRequestExtras?.runtimeDescriptorFromCandidate, agentId);
 }
 
 function readProjectedRuntimeDescriptorInput(
     runtimeDescriptor: unknown,
     providerId: string,
 ): Record<string, unknown> | null {
-    if (!isSupportedRuntimeDescriptorProviderId(providerId)) return null;
-    return readSessionMetadataRuntimeDescriptor({ runtimeDescriptorV1: runtimeDescriptor }, providerId);
+    // Canonical first so an installed Agent's imported handle is read at all;
+    // the generated reader stays behind it for a bundled Agent's released
+    // pre-envelope shapes.
+    return readRuntimeDescriptorAgentPayload({ runtimeDescriptorV1: runtimeDescriptor }, providerId)
+        ?? (isSupportedRuntimeDescriptorProviderId(providerId)
+            ? readSessionMetadataRuntimeDescriptor({ runtimeDescriptorV1: runtimeDescriptor }, providerId)
+            : null);
 }
 
 function normalizeHandoffUrl(value: unknown): string | null {
@@ -783,13 +837,11 @@ function buildHandoffRuntimeDescriptorFromLinkDescriptor(opts: Readonly<{
         opts.descriptor.providerId,
     );
     const backendMode = importedProvider
-        ? normalizeRuntimeDescriptorBackendMode(importedProvider.runtimeKind, opts.descriptor.backendMode)
-        : isSupportedRuntimeDescriptorProviderId(opts.descriptor.providerId)
-            ? normalizeRuntimeDescriptorBackendMode(
-                readSessionMetadataRuntimeDescriptor(opts.ctx.metadata, opts.descriptor.providerId)?.runtimeKind,
-                opts.descriptor.backendMode,
-            )
-            : null;
+        ? normalizeRuntimeDescriptorBackendMode(
+            importedProvider.backendMode ?? importedProvider.runtimeKind,
+            opts.descriptor.backendMode,
+        )
+        : readDeclaredRuntimeMode(opts.ctx.metadata, opts.descriptor.providerId, opts.descriptor.backendMode);
     if (!backendMode) return null;
 
     const provider: Record<string, unknown> = {
@@ -963,7 +1015,10 @@ function buildConnectedServiceProfileSourceOptions(opts: Readonly<{
     });
 }
 
-function createExternalSessionsBehavior(descriptor: Readonly<Record<string, unknown>>): AgentUiBehavior['externalSessions'] | undefined {
+function createExternalSessionsBehavior(
+    descriptor: Readonly<Record<string, unknown>>,
+    agentId: string,
+): AgentUiBehavior['externalSessions'] | undefined {
     const externalSessions = isRecord(descriptor.externalSessions) ? descriptor.externalSessions : null;
     const browse = isRecord(externalSessions?.browse) ? externalSessions.browse : null;
     const sourceOptions = readSourceOptionDescriptors(browse?.sourceOptions);
@@ -972,7 +1027,10 @@ function createExternalSessionsBehavior(descriptor: Readonly<Record<string, unkn
     const compatibleSource = readCompatibleSourceDescriptor(browse?.compatibleSource);
     const linkEnsureRequestExtras = isRecord(browse?.linkEnsureRequestExtras) ? browse.linkEnsureRequestExtras : null;
     const sourceFromCandidate = readSourceFromCandidateLinkExtrasDescriptor(linkEnsureRequestExtras?.sourceFromCandidate);
-    const runtimeDescriptorFromCandidate = readRuntimeDescriptorLinkExtrasDescriptor(linkEnsureRequestExtras?.runtimeDescriptorFromCandidate);
+    const runtimeDescriptorFromCandidate = readRuntimeDescriptorLinkExtrasDescriptor(
+        linkEnsureRequestExtras?.runtimeDescriptorFromCandidate,
+        agentId,
+    );
     if (
         !externalSessions
         && sourceOptions.length === 0
@@ -1167,11 +1225,12 @@ function createNewSessionBehavior(
 
 function createSessionHandoffBehavior(
     descriptor: Readonly<Record<string, unknown>>,
+    agentId: string,
     environmentDescriptor: EnvironmentDescriptor | null,
 ): AgentUiBehavior['sessionHandoff'] | undefined {
     const externalSessions = isRecord(descriptor.externalSessions) ? descriptor.externalSessions : null;
     const sessionHandoff = isRecord(externalSessions?.sessionHandoff) ? externalSessions.sessionHandoff : null;
-    const runtimeDescriptorLinkDescriptor = readRuntimeDescriptorLinkDescriptorFromUiDescriptor(descriptor);
+    const runtimeDescriptorLinkDescriptor = readRuntimeDescriptorLinkDescriptorFromUiDescriptor(descriptor, agentId);
     const clearMetadataKeys = readStringArray(sessionHandoff?.clearMetadataKeys);
 
     if (clearMetadataKeys.length === 0 && !runtimeDescriptorLinkDescriptor && !environmentDescriptor) {
@@ -1198,12 +1257,18 @@ function createSessionHandoffBehavior(
             ? {
                 buildSourceRecoveryResumePatch: (ctx) => {
                     if (ctx.agentId !== environmentDescriptor.providerId) return {};
-                    const affinity = readEnvironmentAffinity(ctx.metadata, environmentDescriptor);
+                    // The Agent-facing handoff metadata view is a closed first-party
+                    // key list, so an installed Agent's affinity can only come from
+                    // the canonical runtime descriptor the caller already holds.
+                    const metadata = ctx.runtimeDescriptorV1
+                        ? { ...ctx.metadata, runtimeDescriptorV1: ctx.runtimeDescriptorV1 }
+                        : ctx.metadata;
+                    const affinity = readEnvironmentAffinity(metadata, environmentDescriptor);
                     if (!affinity.backendMode && !affinity.serverBaseUrlExplicit) return {};
                     return {
                         environmentVariables: buildEnvironmentVariables({
                             descriptor: environmentDescriptor,
-                            session: { metadata: ctx.metadata },
+                            session: { metadata },
                             allowLegacySettingsServerBaseUrl: false,
                             allowActiveServerFallback: false,
                         }),
@@ -1216,10 +1281,11 @@ function createSessionHandoffBehavior(
 
 function readBackendTransportDescriptor(
     value: unknown,
+    agentId: string,
     diagnostics: UiProjectionDiagnostic[],
 ): BackendTransportDescriptor | null {
     if (!isRecord(value)) return null;
-    const providerId = readString(value.providerId);
+    const providerId = agentId;
     const runtimeDescriptorOutputKey = readString(value.runtimeDescriptorOutputKey) ?? 'runtimeDescriptorV1';
     const legacyModeOutputKey = readString(value.legacyModeOutputKey);
     const backendMode = isRecord(value.backendMode) ? value.backendMode : null;
@@ -1229,7 +1295,7 @@ function readBackendTransportDescriptor(
         diagnostics.push(createUiProjectionDiagnostic(
             'A16X1_MALFORMED_DESCRIPTOR',
             'payload.backendTransport',
-            'Backend transport descriptors require a provider id, backend-mode values, and runtime-handle fields.',
+            'Backend transport descriptors require backend-mode values and runtime-handle fields.',
         ));
         return null;
     }
@@ -1289,19 +1355,23 @@ function createBackendTransportPayloadBehavior(
     return {
         buildBackendTransportFields: ({ agentId, providerMode, legacyExperimentalMode, runtimeDescriptorV1, providerSessionId }) => {
             if (agentId !== descriptor.providerId) return {};
-            if (!isSupportedRuntimeDescriptorProviderId(descriptor.providerId)) return {};
 
-            const projected = readSessionMetadataRuntimeDescriptor(
-                { runtimeDescriptorV1 },
-                descriptor.providerId,
+            // The incoming handle is read from the CANONICAL envelope for this
+            // declaration's own Agent — the same shape this function writes —
+            // so an installed Agent reaches the identical transport behavior.
+            // A bundled Agent keeps its generated reader behind that for
+            // released pre-envelope shapes.
+            const projected = readProjectedRuntimeDescriptorInput(runtimeDescriptorV1, descriptor.providerId);
+            const projectedMode = normalizeBackendTransportMode(
+                projected?.backendMode ?? projected?.runtimeKind,
+                descriptor,
             );
-            const projectedMode = normalizeBackendTransportMode(projected?.runtimeKind, descriptor);
             const resolvedMode = projectedMode
                 ?? normalizeBackendTransportMode(providerMode, descriptor)
                 ?? (legacyExperimentalMode === true ? descriptor.backendMode.legacyExperimentalValue ?? null : null);
             if (!resolvedMode) return {};
 
-            const projectedRecord = projected as Readonly<Record<string, unknown>> | null;
+            const projectedRecord = projected;
             const agentPayload: Record<string, unknown> = projectedRecord
                 ? { backendMode: projectedMode ?? resolvedMode }
                 : {
@@ -1340,13 +1410,13 @@ function createBackendTransportPayloadBehavior(
 
 export function createDescriptorAdapterBehavior(ctx: BehaviorDescriptorContext): AgentUiBehavior {
     const payload = isRecord(ctx.descriptor.payload) ? ctx.descriptor.payload : null;
-    const environmentDescriptor = readEnvironmentDescriptor(payload?.environmentVariables, ctx.diagnostics);
+    const environmentDescriptor = readEnvironmentDescriptor(payload?.environmentVariables, ctx.agentId, ctx.diagnostics);
     const backendTransportDescriptor = payload?.backendTransport === undefined
         ? null
-        : readBackendTransportDescriptor(payload.backendTransport, ctx.diagnostics);
-    const externalSessions = createExternalSessionsBehavior(ctx.descriptor);
+        : readBackendTransportDescriptor(payload.backendTransport, ctx.agentId, ctx.diagnostics);
+    const externalSessions = createExternalSessionsBehavior(ctx.descriptor, ctx.agentId);
     const newSession = createNewSessionBehavior(ctx.descriptor, environmentDescriptor);
-    const sessionHandoff = createSessionHandoffBehavior(ctx.descriptor, environmentDescriptor);
+    const sessionHandoff = createSessionHandoffBehavior(ctx.descriptor, ctx.agentId, environmentDescriptor);
     const payloadBehavior: AgentUiBehavior['payload'] = {
         ...(environmentDescriptor ? createPayloadBehavior(environmentDescriptor) : {}),
         ...(backendTransportDescriptor ? createBackendTransportPayloadBehavior(backendTransportDescriptor) : {}),

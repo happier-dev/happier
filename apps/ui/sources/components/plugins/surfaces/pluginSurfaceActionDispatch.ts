@@ -10,6 +10,7 @@ import {
     type ActionExecuteResult,
     type ActionExecutorContext,
     type ActionId,
+    type ActionOperationDeclarationV1,
     type DaemonPluginStructuredMessageActionInvocationV1,
     type DaemonPluginStructuredMessageActionMountedBinding,
     type InteractionTransientRequesterV1,
@@ -55,6 +56,10 @@ import {
     type PluginUiClientExecutableRegistration,
 } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import {
+    isPluginProjectedActionExecutable,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
 
 import { createPluginSurfaceFeedbackHandlers } from './pluginSurfaceFeedback';
 import {
@@ -197,6 +202,17 @@ export type DispatchPluginSurfaceActionInput = Readonly<{
     /** Stable host request identity used only by the daemon's operation observer. */
     actionRequestId?: string;
     /**
+     * The one admission moment for host-side Action-operation presentation.
+     *
+     * Invoked at most once, synchronously, after every local refusal gate and
+     * immediately before the daemon transport, with the exact admitted
+     * operation declaration. A caller that presents an operation registers
+     * here rather than guessing from its own projection read, so a refused
+     * launch leaves nothing behind and a synchronous operation snapshot cannot
+     * arrive before its presentation custody exists.
+     */
+    onDaemonActionOperationAdmitted?: (operation: ActionOperationDeclarationV1) => void;
+    /**
      * The mounted plugin owning the request (host-stamped, never author-supplied).
      * Direct host presentation deliberately has no plugin caller.
      */
@@ -336,7 +352,7 @@ function resolveProjectedContributedAction(
 ): PluginProjectedActionV2 | null {
     try {
         const action = input.resolveContributedAction?.(identity) ?? null;
-        return action
+        return isPluginProjectedActionExecutable(action)
             && action.pluginId === identity.pluginId
             && action.id === identity.localId
             ? action
@@ -553,12 +569,26 @@ async function executeClientContributedAction(
                     : { sessionId: initial.binding.sessionId }),
                 signal: handlerInput.signal,
             });
-            if (admission.status !== 'admitted') {
-                return Object.freeze({
-                    status: 'unavailable' as const,
-                    code: admission.code,
-                    message: admission.message,
-                });
+            switch (admission.status) {
+                case 'admitted':
+                    break;
+                case 'deferred':
+                    // Deferred approval is an API-only settlement. UI and Voice
+                    // have no deferred response envelope, so keep it as the
+                    // gate's canonical no-effect refusal instead of starting
+                    // the handler without a present-user decision.
+                    return Object.freeze({
+                        status: 'unavailable' as const,
+                        code: 'plugin_action_current_intent_unavailable',
+                        message: 'plugin_action_current_intent_unavailable',
+                    });
+                case 'unavailable':
+                case 'failed':
+                    return Object.freeze({
+                        status: 'unavailable' as const,
+                        code: admission.code,
+                        message: admission.message,
+                    });
             }
             // Approval is followed by the shared gate's fresh policy pass; this
             // final exact registration read closes the interval before effects.
@@ -822,6 +852,13 @@ async function executeContributedAction(
     }
 
     const execute = binding.execute ?? machinePluginStructuredMessageActionExecute;
+    // The admitted projection owns whether this invocation can produce a daemon
+    // operation at all; a declaration-free Action still carries no request id.
+    const admittedOperation = projectedAction.operation;
+    const admittedRequestId = admittedOperation ? input.actionRequestId : undefined;
+    if (admittedOperation && admittedRequestId) {
+        input.onDaemonActionOperationAdmitted?.(admittedOperation);
+    }
     const actionInput = settlement.input;
     const expectedImmutableGenerationId = settlement.direct
         ? settlement.direct.contributor.immutableGenerationId
@@ -830,7 +867,7 @@ async function executeContributedAction(
         serverId: binding.serverId ?? null,
         expectedGeneration: binding.expectedGeneration,
         qualifiedActionId: buildQualifiedPluginContributionKey(identity),
-        ...(input.actionRequestId ? { requestId: input.actionRequestId } : {}),
+        ...(admittedRequestId ? { requestId: admittedRequestId } : {}),
         ...(actionInput === undefined
             ? {}
             : {
@@ -1028,6 +1065,11 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     openableContent?: PluginSurfaceOpenableContentBinding;
     /** Exact mounted provenance for app-scope transient presentation. */
     interactionRequester?: InteractionTransientRequesterV1;
+    /**
+     * The mount's admitted UI projection. Presentation-only: it resolves the
+     * author's declared Action-confirmation wording for the current locale.
+     */
+    pluginUiProjection?: PluginUiProjectionModel | null;
     /** Live controller capability for daemon-owned host methods. */
     isMethodAvailable?: (method: PluginUiHostMethodV1) => boolean;
     /** Live controller capability for the daemon branch of `executeAction`. */
@@ -1063,6 +1105,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
         });
     }
     const feedback = createPluginSurfaceFeedbackHandlers({
+        pluginUiProjection: input.pluginUiProjection,
         surfaceId: input.surfaceContext.surfaceId,
         ...(input.interactionRequester ? { interactionRequester: input.interactionRequester } : {}),
         ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),

@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
@@ -88,7 +87,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         const generated = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS.codex?.descriptor;
         expect(generated).toMatchObject({
             guidance: { includeInSessionGettingStartedCliExamples: true },
-            mcpServers: { supportsDetectedConfigScan: true },
             externalSessions: {
                 browse: {
                     order: 10,
@@ -144,11 +142,10 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         expect(JSON.stringify(generated)).not.toContain('agentRuntimeDescriptorV1');
         expect(JSON.stringify(generated)).not.toContain('providerExtra');
 
-        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(generated);
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(generated, 'codex');
 
         expect(diagnostics).toEqual([]);
         expect(behavior.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
-        expect(behavior.mcpServers?.supportsDetectedConfigScan).toBe(true);
         expect(behavior.externalSessions?.browse?.order).toBe(10);
         expect(behavior.externalSessions?.browse?.getSourceOptions?.({
             agentId: 'codex',
@@ -340,7 +337,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             descriptorId: 'claude.uiBehavior.v1',
             workState: {
                 editableGoals: {
-                    providerId: 'claude',
                     capabilityDriven: true,
                     persistedGoalSnapshot: {
                         path: ['sessionWorkStateV1'],
@@ -349,7 +345,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     },
                 },
             },
-        });
+        }, 'claude');
 
         expect(diagnostics).toEqual([]);
 
@@ -393,7 +389,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             descriptorId: 'claude.uiBehavior.v1',
             workState: {
                 editableGoals: {
-                    providerId: 'claude',
                     capabilityDriven: true,
                     persistedGoalSnapshot: {
                         path: ['sessionWorkStateV1'],
@@ -402,7 +397,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     },
                 },
             },
-        });
+        }, 'claude');
         expect(diagnostics).toEqual([]);
 
         // Provider command metadata is semantic support, not proof that the session RPC exists.
@@ -451,7 +446,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             descriptorId: 'claude.uiBehavior.v1',
             workState: {
                 editableGoals: {
-                    providerId: 'claude',
                     capabilityDriven: true,
                     persistedGoalSnapshot: {
                         path: ['sessionWorkStateV1'],
@@ -460,7 +454,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     },
                 },
             },
-        });
+        }, 'claude');
         expect(diagnostics).toEqual([]);
 
         // Active controls are projected independently so the UI never advertises clear merely
@@ -495,7 +489,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
 
     it('ignores foreign runtime descriptor details when building Codex external-session link extras', () => {
         const generated = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS.codex?.descriptor;
-        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(generated);
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(generated, 'codex');
         const buildExtras = behavior.externalSessions?.browse?.buildLinkEnsureRequestExtras;
 
         expect(diagnostics).toEqual([]);
@@ -591,7 +585,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         // ohMyPi contributes no MCP discovery source, so the derived scan offer is
         // absent: the settings screen must not offer a scan with nothing behind it.
         expect(generated).not.toHaveProperty('mcpServers');
-        expect(behavior.mcpServers?.supportsDetectedConfigScan).toBeUndefined();
         expect(behavior.externalSessions?.browse?.order).toBe(25);
         expect(behavior.externalSessions?.browse?.getSourceOptions?.({
             agentId: 'ohMyPi',
@@ -636,7 +629,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             display: {},
             behavior: {
                 guidance: { includeInSessionGettingStartedCliExamples: true },
-                mcpServers: { supportsDetectedConfigScan: true },
                 permissions: {
                     footer: {
                         usePermissionUpdates: true,
@@ -666,7 +658,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
 
         expect(diagnostics).toEqual([]);
         expect(behavior.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
-        expect(behavior.mcpServers?.supportsDetectedConfigScan).toBe(true);
         expect(behavior.permissions?.footer?.stopHandling).toBe('denyOnly');
         expect(behavior.resume?.experimentSwitches?.[0]?.getValue?.(
             makeSettings({ directTranscriptStorageMode: true }),
@@ -698,7 +689,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
             payload: {
                 backendTransport: {
-                    providerId: 'codex',
                     runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
                     legacyModeOutputKey: 'codexBackendMode',
                     backendMode: {
@@ -714,7 +704,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     },
                 },
             },
-        });
+        }, 'codex');
 
         expect(diagnostics).toEqual([]);
         expect(behavior.payload?.buildBackendTransportFields?.({
@@ -767,7 +757,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         } as any)).toEqual({});
     });
 
-    it('materializes first-party session subagent component slots through the host allowlist', () => {
+    it('materializes session subagent slots through same-plugin public inline surfaces', () => {
         const session = createSessionFixture();
         const subagent = {
             id: 'subagent-1',
@@ -789,22 +779,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             },
             timestamps: {},
         } satisfies SessionSubagent;
-        const detailsTab = {
-            key: 'claude-subagent-launcher:member:team-1',
-            kind: 'claudeSubagentLauncher',
-            title: 'Launch teammate',
-            resource: {
-                kind: 'claudeSubagentLauncher',
-                mode: 'member',
-                initialTeamId: 'team-1',
-            },
-        } satisfies DetailsTab;
-        const iconTab = {
-            key: 'claude-subagent-launcher:member:team-1',
-            kind: 'claudeSubagentLauncher',
-            title: 'Launch teammate',
-            resource: { kind: 'claudeSubagentLauncher', mode: 'member' },
-        } satisfies DetailsTab;
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
             kind: 'plugin.ui.v1',
             pluginId: 'claude',
@@ -819,7 +793,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     {
                         id: 'claude.subagentLaunchCards',
                         slot: 'sessionSubagents.launchCards',
-                        componentId: 'firstParty.claude.subagentLaunchCards',
+                        surfaceId: 'subagent-launch',
                         props: {
                             teamIds: {
                                 kind: 'subagentGroupKeys',
@@ -830,7 +804,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     {
                         id: 'claude.teammateDetailsTab',
                         slot: 'sessionSubagents.teammateDetailsTab',
-                        componentId: 'firstParty.claude.teammateDetailsTab',
+                        surfaceId: 'subagent-details',
                         resourceKind: 'claudeSubagentLauncher',
                         iconName: 'users',
                         tab: {
@@ -844,16 +818,30 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         });
 
         expect(diagnostics).toEqual([]);
+        const renderedLaunchSurfaces: unknown[] = [];
         expect(behavior.sessionSubagents?.renderLaunchCards?.({
             sessionId: 's1',
             scopeId: 'session:s1',
             session,
             subagents: [subagent],
-        })).toHaveLength(1);
-        expect(behavior.sessionSubagents?.createTeammateLauncherDetailsTab?.({
+            renderInlineSurface: (surface) => {
+                renderedLaunchSurfaces.push(surface);
+                return `rendered:${surface.slotId}`;
+            },
+        })).toEqual(['rendered:claude.subagentLaunchCards']);
+        expect(renderedLaunchSurfaces).toEqual([expect.objectContaining({
+            slotId: 'claude.subagentLaunchCards',
+            pluginId: 'claude',
+            surfaceId: 'subagent-launch',
+            sessionId: 's1',
+            agentId: 'claude',
+            launchInput: { teamIds: ['team-1'] },
+        })]);
+        const detailsTab = behavior.sessionSubagents?.createTeammateLauncherDetailsTab?.({
             session,
             teamId: 'team-1',
-        })).toMatchObject({
+        });
+        expect(detailsTab).toMatchObject({
             key: 'claude-subagent-launcher:member:team-1',
             kind: 'claudeSubagentLauncher',
             resource: {
@@ -862,14 +850,15 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                 initialTeamId: 'team-1',
             },
         });
-        expect(behavior.sessionSubagents?.renderDetailsTab?.({
-            sessionId: 's1',
-            scopeId: 'session:s1',
-            tab: detailsTab,
-        })).toBeTruthy();
-        expect(behavior.sessionSubagents?.getDetailsTabIconName?.({
-            tab: iconTab,
-        })).toBe('users');
+        if (!detailsTab) throw new Error('Expected teammate launcher details tab.');
+        expect(detailsTab.resource).toMatchObject({
+            pluginInlineSurface: {
+                pluginId: 'claude',
+                agentId: 'claude',
+                surfaceId: 'subagent-details',
+                iconName: 'users',
+            },
+        });
     });
 
     it('fails closed for unsupported descriptor kinds and payload adapter ids', () => {
@@ -910,7 +899,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             descriptorId: 'opencode.uiBehavior.v1',
             payload: {
                 environmentVariables: {
-                    providerId: 'opencode',
                     backendMode: {
                         envKey: 'HAPPIER_OPENCODE_BACKEND_MODE',
                         settingKey: 'opencodeBackendMode',
@@ -930,7 +918,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     },
                 },
             },
-        });
+        }, 'opencode');
 
         expect(diagnostics).toContainEqual(expect.objectContaining({
             code: 'A16X1_MALFORMED_DESCRIPTOR',
@@ -954,7 +942,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
     it('builds OpenCode behavior from no-execute descriptor data', () => {
         const openCodeBehaviorDescriptor = {
             guidance: { includeInSessionGettingStartedCliExamples: true },
-            mcpServers: { supportsDetectedConfigScan: true },
             externalSessions: {
                 browse: {
                     order: 30,
@@ -980,7 +967,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             },
             payload: {
                 environmentVariables: {
-                    providerId: 'opencode',
                     backendMode: {
                         envKey: 'HAPPIER_OPENCODE_BACKEND_MODE',
                         settingKey: 'opencodeBackendMode',
@@ -1019,13 +1005,12 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         const generated = createAgentUiBehaviorFromDescriptor({
             descriptorId: 'opencode.uiBehavior.v1',
             ...openCodeBehaviorDescriptor,
-        });
+        }, 'opencode');
 
         expect(diagnostics).toEqual([]);
         expect(generated.diagnostics).toEqual([]);
         expect(generated.behavior.payload?.buildSpawnEnvironmentVariables).toBeTypeOf('function');
         expect(behavior.guidance?.includeInSessionGettingStartedCliExamples).toBe(true);
-        expect(behavior.mcpServers?.supportsDetectedConfigScan).toBe(true);
         expect(behavior.externalSessions?.browse?.order).toBe(30);
         const sourceOptions = behavior.externalSessions?.browse?.getSourceOptions?.({
             agentId: 'opencode' as any,

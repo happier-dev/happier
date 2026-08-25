@@ -5,7 +5,6 @@ import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plu
 
 import {
     buildLocalServiceInventoryState,
-    buildManagedLocalServicesState,
     renderScreen,
 } from '@/dev/testkit';
 import {
@@ -147,7 +146,6 @@ function BoundShellCoverage(props: Readonly<{
                 serverId="server-bound"
                 workspaceRoot="/workspace/bound"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={createLocalServiceLauncherState()}
                 publicPreviewState={null}
                 runtimeActionExecute={async () => null}

@@ -165,7 +165,7 @@ function setMachineAdministrationTargetFixture(params: Readonly<{
 }> = {}): void {
     const activeAt = Date.now();
     const target = {
-        serverIdentityId: params.serverIdentityId ?? 'server-identity-a',
+        serverIdentityId: params.serverIdentityId ?? 'srv_identity-a',
         machineId: params.machineId ?? 'machine-1',
     };
     const serverId = params.serverId ?? 'server-a';
@@ -191,7 +191,7 @@ function setMachineAdministrationTargetFixture(params: Readonly<{
         id: 'server-a',
         name: 'Server A',
         serverUrl: 'https://server-a.example.test',
-        serverIdentityId: 'server-identity-a',
+        serverIdentityId: 'srv_identity-a',
         legacyServerIds: [],
     };
     machineAdministrationFixture.profiles = serverId === activeProfile.id
@@ -606,6 +606,7 @@ installSettingsViewCommonModuleMocks({
             translate: (key, params) => (
                 key === 'settingsPlugins.marketplaceInstallReviewBody'
                 || key === 'settingsPlugins.developmentTrustSourceRootBody'
+                || key === 'settingsPlugins.pluginChangeConfirmBody'
             )
                 ? `${key}:${JSON.stringify(params)}`
                 : key,
@@ -1023,7 +1024,7 @@ beforeEach(() => {
 describe('PluginSettingsHomeScreen', () => {
     it('routes plugin capabilities to the exact Administration target rather than active first-machine selection', async () => {
         setMachineAdministrationTargetFixture({
-            serverIdentityId: 'server-identity-b',
+            serverIdentityId: 'srv_identity-b',
             serverId: 'server-b',
             machineId: 'admin-machine-b',
             daemonStateVersion: 7,
@@ -1689,11 +1690,17 @@ describe('PluginSettingsHomeScreen', () => {
                 params: { sourceRootPath },
             },
         }));
-        // The security payload of this decision is the path itself, so the user
-        // is shown the daemon-canonicalised locator verbatim.
+        // The security payload is the path itself, and a path is a location on
+        // ONE machine reached through ONE server: `/Users/me/project` exists on
+        // several of them, so a trust decision naming only the path cannot tell
+        // the user whose filesystem the daemon will build and run code from.
         expect(modalConfirmMock).toHaveBeenCalledWith(
             'settingsPlugins.developmentTrustSourceRootTitle',
-            expect.stringContaining(sourceRootPath),
+            `settingsPlugins.developmentTrustSourceRootBody:${JSON.stringify({
+                path: sourceRootPath,
+                machine: 'machine-1',
+                server: 'Server A',
+            })}`,
             expect.objectContaining({ confirmText: 'settingsPlugins.developmentTrustSourceRootConfirm' }),
         );
         // Trusting a source root is NOT an install commit: the first decision
@@ -2461,9 +2468,17 @@ describe('PluginSettingsHomeScreen', () => {
             screen.pressRow(`settings.plugins.detail.${installedPlugin.pluginId}.action.${method}`);
             await flushAsync();
         });
+        // A plugin change lands on ONE machine reached through ONE server. The
+        // confirmation must name that target: the same wording on a different
+        // selected machine is a different, irreversible action.
         expect(modalConfirmMock).toHaveBeenCalledWith(
             confirmationTitle,
-            'settingsPlugins.pluginChangeConfirmBody',
+            `settingsPlugins.pluginChangeConfirmBody:${JSON.stringify({
+                action: confirmationTitle,
+                name: 'Installed Plugin',
+                machine: 'machine-1',
+                server: 'Server A',
+            })}`,
             expect.objectContaining({
                 confirmText: confirmationTitle,
                 cancelText: 'common.cancel',
@@ -2728,7 +2743,7 @@ describe('PluginSettingsHomeScreen', () => {
         expect(prefetchMachineCapabilitiesMock).toHaveBeenCalledTimes(1);
 
         setMachineAdministrationTargetFixture({
-            serverIdentityId: 'server-identity-b',
+            serverIdentityId: 'srv_identity-b',
             serverId: 'server-b',
             machineId: 'machine-2',
         });
@@ -3000,7 +3015,7 @@ describe('PluginSettingsHomeScreen', () => {
             .filter((input) => input.method === 'daemon.plugins.settings.set');
         expect(setCalls.map((call) => call.payload)).toEqual([
             {
-                serverIdentityId: 'server-identity-a',
+                serverIdentityId: 'srv_identity-a',
                 machineId: 'machine-1',
                 pluginId: 'acme.hooks',
                 scope: { kind: 'daemon' },
@@ -3009,7 +3024,7 @@ describe('PluginSettingsHomeScreen', () => {
                 expectedRevision: '0',
             },
             {
-                serverIdentityId: 'server-identity-a',
+                serverIdentityId: 'srv_identity-a',
                 machineId: 'machine-1',
                 pluginId: 'acme.hooks',
                 scope: { kind: 'daemon' },
@@ -3022,7 +3037,7 @@ describe('PluginSettingsHomeScreen', () => {
             .map(([input]) => input as { method?: string; payload?: Record<string, unknown> })
             .filter((input) => input.method === 'daemon.plugins.secrets.set')
             .map((call) => call.payload)).toEqual([{
-                serverIdentityId: 'server-identity-a',
+                serverIdentityId: 'srv_identity-a',
                 machineId: 'machine-1',
                 pluginId: 'acme.hooks',
                 secretId: 'apiToken',
@@ -3243,7 +3258,7 @@ describe('PluginSettingsHomeScreen', () => {
         });
 
         setMachineAdministrationTargetFixture({
-            serverIdentityId: 'server-identity-b',
+            serverIdentityId: 'srv_identity-b',
             serverId: 'server-b',
             machineId: 'machine-2',
         });
@@ -3320,7 +3335,7 @@ describe('PluginSettingsHomeScreen', () => {
         expect(findRollbackAction()?.props.disabled).toBe(true);
 
         setMachineAdministrationTargetFixture({
-            serverIdentityId: 'server-identity-b',
+            serverIdentityId: 'srv_identity-b',
             serverId: 'server-b',
             machineId: 'machine-2',
         });
@@ -4270,7 +4285,6 @@ describe('PluginSettingsHomeScreen', () => {
                 method: 'update',
                 params: {
                     pluginId: 'community-plugin',
-                    sourceId: 'marketplace:community-npm',
                 },
             },
             alerts: expect.objectContaining({ successMessage: null }),
@@ -4298,6 +4312,79 @@ describe('PluginSettingsHomeScreen', () => {
         }));
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
         expect(modalAlertMock).toHaveBeenCalledWith('common.success', 'common.done');
+    });
+
+    it('reconciles an ambiguous update against the installed record the update owner advanced, not the catalog version', async () => {
+        const communitySourceUrl = 'https://registry.npmjs.org/-/v1/search?text=keywords:happier-plugin';
+        const installedPlugin = createInstalledPlugin({
+            pluginId: 'community-plugin',
+            title: 'Community Plugin',
+            version: '1.0.0',
+        });
+        const initialState = createMachineCapabilitiesState([installedPlugin]);
+        let authoritativeState: MachineCapabilitiesState = initialState;
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: initialState,
+            refresh: vi.fn(),
+        });
+        getMachineCapabilitiesCacheStateMock.mockImplementation(() => authoritativeState);
+        // The canonical update owner selected the newest compatible version, which
+        // is not the version this catalog listing advertises.
+        prefetchMachineCapabilitiesMock.mockImplementationOnce(async () => {
+            authoritativeState = createMachineCapabilitiesState([{
+                ...installedPlugin,
+                version: '1.4.0',
+            }]);
+        });
+        invokeWithAlertsMock.mockResolvedValueOnce({ supported: false, reason: 'error' });
+        machineMarketplaceSourceRegistryGetMock.mockResolvedValue({
+            t: 'happier_marketplace_source_registry_v1',
+            schemaVersion: 1,
+            sources: [{
+                id: 'marketplace:community-npm',
+                title: 'Community npm',
+                sourceUrl: communitySourceUrl,
+                enabled: true,
+                origin: 'community-npm',
+                addedAtMs: 1,
+                updatedAtMs: 1,
+            }],
+        });
+        machineMarketplaceIndexQueryMock.mockResolvedValue(createDaemonMarketplaceIndexResult([
+            createMarketplaceCatalogEntry({
+                pluginId: 'community-plugin',
+                title: 'Community Plugin',
+                version: '2.0.0',
+            }),
+        ], {
+            sourceId: 'marketplace:community-npm',
+            sourceTitle: 'Community npm',
+            sourceUrl: communitySourceUrl,
+            sourceKind: 'community-npm',
+            reviewStatus: 'unreviewed',
+            curatedInstall: 'full-review',
+            curatedUpdate: 'not-applicable',
+        }));
+
+        const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
+        const screen = await renderSettingsView(React.createElement(PluginSettingsHomeScreen));
+        await act(async () => {
+            await flushAsync();
+            await flushAsync();
+        });
+        await selectPluginManagementView(screen, 'discover');
+        await act(async () => {
+            screen.pressRow('settings.plugins.marketplace.loadCatalog');
+            await flushAsync();
+            await flushAsync();
+        });
+        await act(async () => {
+            screen.pressRow('settings.plugins.marketplace.action.update.community-plugin');
+            await flushAsync();
+        });
+
+        expect(modalAlertMock).toHaveBeenCalledWith('common.success', 'common.done');
+        expect(modalAlertMock).not.toHaveBeenCalledWith('common.error', expect.anything());
     });
 
     it.each([

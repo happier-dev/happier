@@ -5,6 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
+import type {
+    ExternalSessionsAutoLinkSourceDescriptor,
+    ExternalSessionsIntegrationDescriptor,
+    ExternalSessionsIntegrationOperations,
+} from './externalSessionsIntegrationModel';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -12,16 +17,54 @@ const accessibilityPlatform = vi.hoisted(() => ({
     os: 'web' as 'web' | 'ios' | 'android',
 }));
 const announceForAccessibilityMock = vi.hoisted(() => vi.fn());
+const actionFocusMock = vi.hoisted(() => vi.fn());
+const sectionFocusFallbackMock = vi.hoisted(() => vi.fn());
+const nativeFocusMock = vi.hoisted(() => vi.fn());
 
 installUiListsCommonModuleMocks({
     reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        const {
+            createFocusablePressableMock,
+            createReactNativeWebMock,
+        } = await import('@/dev/testkit/mocks/reactNative');
         const base = await createReactNativeWebMock();
+        const FocusableSectionFallbackView = React.forwardRef<
+            { focus: () => void },
+            Record<string, unknown>
+        >(function FocusableSectionFallbackView(props, ref) {
+            const focus = props.testID === 'settings-external-sessions-focus-fallback'
+                ? sectionFocusFallbackMock
+                : () => {};
+            React.useImperativeHandle(ref, () => ({ focus }), [focus]);
+            return React.createElement('View', props);
+        });
         return {
             ...base,
+            Pressable: createFocusablePressableMock(actionFocusMock),
+            View: FocusableSectionFallbackView,
+            findNodeHandle: (target: unknown) => {
+                if (
+                    typeof target === 'object'
+                    && target !== null
+                    && 'focus' in target
+                    && target.focus === actionFocusMock
+                ) {
+                    return 101;
+                }
+                if (
+                    typeof target === 'object'
+                    && target !== null
+                    && 'focus' in target
+                    && target.focus === sectionFocusFallbackMock
+                ) {
+                    return 202;
+                }
+                return null;
+            },
             AccessibilityInfo: {
                 ...base.AccessibilityInfo,
                 announceForAccessibility: announceForAccessibilityMock,
+                setAccessibilityFocus: nativeFocusMock,
             },
             Platform: {
                 ...base.Platform,
@@ -88,11 +131,228 @@ function findHostNodeByTestID(
     return nodes.find((node) => typeof node.type === 'string');
 }
 
+function integration(
+    key: string,
+    state: 'installed_enabled' | 'installed_disabled',
+): ExternalSessionsIntegrationDescriptor {
+    return {
+        key,
+        machineId: 'machine-1',
+        agent: {
+            pluginId: 'acme.external-sessions',
+            localId: 'reviewer',
+        },
+        agentTitle: 'Acme Reviewer',
+        state,
+        installationId: 'installation-1',
+    };
+}
+
+function autoLinkSource(
+    setEnabled: (enabled: boolean) => Promise<void>,
+): ExternalSessionsAutoLinkSourceDescriptor {
+    return {
+        machineId: 'machine-1',
+        agent: {
+            pluginId: 'acme.external-sessions',
+            localId: 'reviewer',
+        },
+        agentTitle: 'Acme Reviewer',
+        sourcePolicyId: 'source-policy-1',
+        enabled: true,
+        canChange: true,
+        setEnabled,
+    };
+}
+
 describe('ExternalSessionsIntegrationSection Item boundary', () => {
     beforeEach(() => {
         standardCleanup();
         accessibilityPlatform.os = 'web';
         announceForAccessibilityMock.mockClear();
+        actionFocusMock.mockClear();
+        sectionFocusFallbackMock.mockClear();
+        nativeFocusMock.mockClear();
+    });
+
+    it.each(['web', 'ios'] as const)(
+        'returns user-initiated Disable focus to its surviving Enable replacement on %s',
+        async (platformOS) => {
+            accessibilityPlatform.os = platformOS;
+            const { ExternalSessionsIntegrationSection } = await import(
+                './ExternalSessionsIntegrationSection'
+            );
+            function ActionReplacementHarness() {
+                const [integrations, setIntegrations] = React.useState<readonly ExternalSessionsIntegrationDescriptor[]>([
+                    integration('enabled', 'installed_enabled'),
+                ]);
+                const operations = React.useMemo<ExternalSessionsIntegrationOperations>(() => ({
+                    reviewAndInstall: async () => {},
+                    disable: async () => {
+                        setIntegrations([integration('disabled', 'installed_disabled')]);
+                    },
+                    enable: async () => {},
+                    uninstall: async () => {},
+                    checkAgain: async () => {},
+                }), []);
+
+                return (
+                    <ExternalSessionsIntegrationSection
+                        integrations={integrations}
+                        autoLinkSources={[]}
+                        machineId="machine-1"
+                        agent={null}
+                        operations={operations}
+                    />
+                );
+            }
+
+            const screen = await renderScreen(<ActionReplacementHarness />);
+            const disable = findHostNodeByTestID(
+                screen.findAllByTestId('settings-external-sessions-action-enabled-disable'),
+            );
+
+            await act(async () => {
+                disable?.props.onPress();
+                await Promise.resolve();
+            });
+
+            expect(screen.findByTestId('settings-external-sessions-action-disabled-enable')).toBeTruthy();
+            if (platformOS === 'web') {
+                expect(actionFocusMock).toHaveBeenCalledOnce();
+                expect(sectionFocusFallbackMock).not.toHaveBeenCalled();
+            } else {
+                expect(nativeFocusMock).toHaveBeenCalledOnce();
+                expect(nativeFocusMock).toHaveBeenLastCalledWith(101);
+            }
+        },
+    );
+
+    it.each(['web', 'ios'] as const)(
+        'returns a disappearing user-updated auto-link policy to the section fallback on %s',
+        async (platformOS) => {
+            accessibilityPlatform.os = platformOS;
+            const { ExternalSessionsIntegrationSection } = await import(
+                './ExternalSessionsIntegrationSection'
+            );
+            function AutoLinkFallbackHarness() {
+                const [sources, setSources] = React.useState<
+                    readonly ExternalSessionsAutoLinkSourceDescriptor[]
+                >([]);
+                const source = React.useMemo(
+                    () => autoLinkSource(async () => {
+                        setSources([]);
+                    }),
+                    [],
+                );
+
+                React.useEffect(() => {
+                    setSources([source]);
+                }, [source]);
+
+                return (
+                    <ExternalSessionsIntegrationSection
+                        integrations={[]}
+                        autoLinkSources={sources}
+                        machineId="machine-1"
+                        agent={null}
+                    />
+                );
+            }
+
+            const screen = await renderScreen(<AutoLinkFallbackHarness />);
+            const source = findHostNodeByTestID(
+                screen.findAllByTestId('settings-external-sessions-auto-link-source'),
+            );
+
+            await act(async () => {
+                source?.props.onPress();
+                await Promise.resolve();
+            });
+
+            expect(screen.findAllByTestId('settings-external-sessions-auto-link-source')).toHaveLength(0);
+            if (platformOS === 'web') {
+                expect(sectionFocusFallbackMock).toHaveBeenCalledOnce();
+                expect(actionFocusMock).not.toHaveBeenCalled();
+            } else {
+                expect(nativeFocusMock).toHaveBeenCalledOnce();
+                expect(nativeFocusMock).toHaveBeenLastCalledWith(202);
+            }
+        },
+    );
+
+    it('does not move focus when Check Again leaves its action in place', async () => {
+        const { ExternalSessionsIntegrationSection } = await import(
+            './ExternalSessionsIntegrationSection'
+        );
+        const operations: ExternalSessionsIntegrationOperations = {
+            reviewAndInstall: async () => {},
+            disable: async () => {},
+            enable: async () => {},
+            uninstall: async () => {},
+            checkAgain: async () => {},
+        };
+        const screen = await renderScreen(
+            <ExternalSessionsIntegrationSection
+                integrations={[integration('enabled', 'installed_enabled')]}
+                autoLinkSources={[]}
+                machineId="machine-1"
+                agent={null}
+                operations={operations}
+            />,
+        );
+        const checkAgain = findHostNodeByTestID(
+            screen.findAllByTestId('settings-external-sessions-action-enabled-check_again'),
+        );
+
+        await act(async () => {
+            checkAgain?.props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(screen.findByTestId('settings-external-sessions-action-enabled-check_again')).toBeTruthy();
+        expect(actionFocusMock).not.toHaveBeenCalled();
+        expect(sectionFocusFallbackMock).not.toHaveBeenCalled();
+        expect(nativeFocusMock).not.toHaveBeenCalled();
+    });
+
+    it('does not move focus when a passive inventory update replaces an action', async () => {
+        const { ExternalSessionsIntegrationSection } = await import(
+            './ExternalSessionsIntegrationSection'
+        );
+        const operations: ExternalSessionsIntegrationOperations = {
+            reviewAndInstall: async () => {},
+            disable: async () => {},
+            enable: async () => {},
+            uninstall: async () => {},
+            checkAgain: async () => {},
+        };
+        const screen = await renderScreen(
+            <ExternalSessionsIntegrationSection
+                integrations={[integration('enabled', 'installed_enabled')]}
+                autoLinkSources={[]}
+                machineId="machine-1"
+                agent={null}
+                operations={operations}
+            />,
+        );
+
+        await act(async () => {
+            screen.tree.update(
+                <ExternalSessionsIntegrationSection
+                    integrations={[integration('disabled', 'installed_disabled')]}
+                    autoLinkSources={[]}
+                    machineId="machine-1"
+                    agent={null}
+                    operations={operations}
+                />,
+            );
+        });
+
+        expect(screen.findByTestId('settings-external-sessions-action-disabled-enable')).toBeTruthy();
+        expect(actionFocusMock).not.toHaveBeenCalled();
+        expect(sectionFocusFallbackMock).not.toHaveBeenCalled();
+        expect(nativeFocusMock).not.toHaveBeenCalled();
     });
 
     it('renders the retry status as an accessible keyboard-focusable press target', async () => {

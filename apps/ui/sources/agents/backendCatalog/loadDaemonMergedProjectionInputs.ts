@@ -3,6 +3,11 @@ import {
     machineContributionRegistryProjectionDescribe,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import {
+    forgetPluginUiProjectionAdmissionSnapshot,
+    pluginUiProjectionAdmissionTargetKey,
+    savePluginUiProjectionTargetedAdmissionSnapshot,
+} from '@/sync/domains/plugins/ui/projectionWarmCache';
 
 import {
     adaptDaemonContributionRegistryProjectionToMergedProjectionInputs,
@@ -453,10 +458,15 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
         params.accountLifetime,
     );
     if (!cacheKey) return null;
-    const requestRevision = getMachineContributionRegistryProjectionRevision({
+    // The canonical per-machine projection scope. Its revision advances on
+    // socket reconnect, on an explicit invalidation, and when the machine's
+    // daemon state advances, so it is this request's endpoint identity as well
+    // as its dedupe key.
+    const projectionScope = {
         machineId: normalizeKeyPart(params.machineId),
         serverId: normalizeKeyPart(params.serverId) || null,
-    });
+    };
+    const requestRevision = getMachineContributionRegistryProjectionRevision(projectionScope);
     const incumbentRequest = LATEST_PROJECTION_REQUEST.get(cacheKey);
     if (incumbentRequest?.revision === requestRevision) {
         return await incumbentRequest.promise;
@@ -508,8 +518,30 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
             && !targetCacheScopeIsCurrent(cacheKey, mountedTargetScopeAtRequest)) {
             return null;
         }
+        // The machine's projection authority can advance while this request is
+        // in flight — a replaced or restarted daemon is a different endpoint,
+        // and its own targetless request has its own cache key, so the
+        // latest-request fences above cannot see that transition. A response
+        // that answered for the previous endpoint may neither publish, persist,
+        // prepare a validator, nor retire retained custody for the current one.
+        // The successor request started by the same revision change owns that.
+        if (getMachineContributionRegistryProjectionRevision(projectionScope) !== requestRevision) {
+            return null;
+        }
         if (res.supported !== true) {
             const previous = PROJECTION_CACHE.get(cacheKey);
+            if (res.reason === 'not-supported') {
+                // Method-not-found is a machine fact, not a target one: this
+                // client sends one RPC and the endpoint that answered does not
+                // serve it. Retire the whole retained entry for that machine
+                // through its existing custody owner so a later offline process
+                // cannot restore a target the daemon disclaimed. A transient
+                // `error` keeps custody and retries.
+                forgetPluginUiProjectionAdmissionSnapshot({
+                    scope: params.accountLifetime?.scope ?? null,
+                    targetKey: pluginUiProjectionAdmissionTargetKey(projectionScope),
+                });
+            }
             return publishIfLatest(res.reason === 'not-supported'
                 ? { kind: 'unsupported', fetchedAtMs, projectionRevision: requestRevision }
                 : {
@@ -535,6 +567,18 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
             publishProjectedAgentUiBehaviorDescriptors({
                 machineId: normalizeKeyPart(params.machineId),
                 descriptorsByAgentId: readProjectedAgentUiBehaviorDescriptors(adapted.mergedProviderProjectionById),
+            });
+        }
+        // This is the one moment a target-scoped admission is confirmed, so it
+        // is the only moment it is recorded for the next fresh process. The
+        // Account-scoped custody owner rejects it unless the same Account's
+        // retained presentation slice still admits this exact generation.
+        if (params.mountedTarget && res.targetedContributions !== undefined) {
+            savePluginUiProjectionTargetedAdmissionSnapshot({
+                scope: params.accountLifetime?.scope ?? null,
+                targetKey: pluginUiProjectionAdmissionTargetKey(projectionScope),
+                machineId: projectionScope.machineId,
+                targetedContributions: res.targetedContributions,
             });
         }
         const previous = PROJECTION_CACHE.get(cacheKey);

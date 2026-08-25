@@ -12,7 +12,10 @@ import {
     ConnectedServiceIdSchema,
 } from '@happier-dev/protocol';
 
-import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import {
+    useProjectedPluginLocalizedTextResolver,
+    useProjectedConnectedServicesRegistry,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -64,6 +67,9 @@ import {
     type ConnectedAccountServiceProfile,
 } from './ConnectedAccountServiceContent';
 import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
+import {
+    type PluginLocalizedTextResolver,
+} from '@/sync/domains/plugins/ui/i18n';
 
 type ServiceDescription = Extract<
     ConnectedAccountDaemonControlResponse,
@@ -152,6 +158,7 @@ type ConnectedAccountServiceControllerProps = Readonly<{
     activeServer: ReturnType<typeof useActiveServerSnapshot>;
     targetSelection: MachineAdministrationTargetSelectionV1;
     executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
+    localizePluginText: PluginLocalizedTextResolver;
 }>;
 
 const ConnectedAccountServiceController = React.memo(
@@ -218,6 +225,12 @@ const ConnectedAccountServiceController = React.memo(
     );
     const registryEntry = route?.entry ?? null;
     const serviceId = registryEntry?.serviceId ?? '';
+    const localizeServiceText = React.useCallback(
+        (value: Parameters<typeof resolveProjectedLocalizedText>[0]) => (
+            servicePluginId ? controllerProps.localizePluginText(servicePluginId, value) : ''
+        ),
+        [controllerProps.localizePluginText, servicePluginId],
+    );
     const parsedLegacyServiceId = ConnectedServiceIdSchema.safeParse(
         route?.legacyServiceId,
     );
@@ -662,7 +675,7 @@ const ConnectedAccountServiceController = React.memo(
         account: QualifiedConnectedAccountRef,
         options?: Readonly<{ alreadyConfirmed?: boolean }>,
     ): Promise<boolean> => {
-        const serviceLabel = resolveProjectedLocalizedText(description?.descriptor.title) || serviceId;
+        const serviceLabel = resolveProjectedLocalizedText(description?.descriptor.title, localizeServiceText) || serviceId;
         const confirmed = options?.alreadyConfirmed === true || await Modal.confirm(
             t('modals.disconnect'),
             t('connectedServices.detail.disconnectConfirmBody', {
@@ -786,7 +799,7 @@ const ConnectedAccountServiceController = React.memo(
                     testIDPrefix="connected-account-target"
                 />
                 <ItemGroup
-                    title={resolveProjectedLocalizedText(registryEntry?.projectedTitle)
+                    title={resolveProjectedLocalizedText(registryEntry?.projectedTitle, localizeServiceText)
                         || serviceId
                         || t('connectedServices.title')}
                 >
@@ -800,8 +813,8 @@ const ConnectedAccountServiceController = React.memo(
         );
     }
 
-    const title = resolveProjectedLocalizedText(description?.descriptor.title)
-        || resolveProjectedLocalizedText(registryEntry?.projectedTitle)
+    const title = resolveProjectedLocalizedText(description?.descriptor.title, localizeServiceText)
+        || resolveProjectedLocalizedText(registryEntry?.projectedTitle, localizeServiceText)
         || serviceId;
     // ONE projection of the daemon transport (the `accountPeer` memo) answers
     // every peer-capability question on this route, so a second copy cannot drift
@@ -943,6 +956,7 @@ const ConnectedAccountServiceController = React.memo(
             {description !== null
                 && !(route.focus !== null && authenticationFlowActive) ? (
                 <ConnectedAccountServiceContent
+                    localize={localizeServiceText}
                     title={title}
                     service={service}
                     legacyServiceId={legacyServiceId}
@@ -1046,7 +1060,8 @@ const ConnectedAccountServiceController = React.memo(
             {attempt?.status === 'awaitingManual' && activeMode?.kind === 'manual' ? (
                 <ConnectedAccountManualForm
                     key={attempt.attemptId}
-                    title={resolveProjectedLocalizedText(activeMode.title) || title}
+                    title={resolveProjectedLocalizedText(activeMode.title, localizeServiceText) || title}
+                    localize={localizeServiceText}
                     fields={activeMode.fields}
                     submitting={busy}
                     onSubmit={({ fields }) => runAuthentication({
@@ -1092,7 +1107,8 @@ const ConnectedAccountServiceController = React.memo(
             {configuration && activeMode?.configuration ? (
                 <ConnectedAccountConfigurationForm
                     key={`${configuration.generation}:${configuration.configuration.revision ?? 'new'}`}
-                    title={resolveProjectedLocalizedText(activeMode.title) || title}
+                    title={resolveProjectedLocalizedText(activeMode.title, localizeServiceText) || title}
+                    localize={localizeServiceText}
                     fields={activeMode.configuration.fields}
                     values={configuration.configuration.values}
                     configuredSecretFieldIds={
@@ -1259,6 +1275,7 @@ const ConnectedAccountServiceController = React.memo(
 
 export function ConnectedAccountServiceView() {
     const params = useLocalSearchParams();
+    const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const connectedServicesRegistry =
         useProjectedConnectedServicesRegistry();
     const activeServer = useActiveServerSnapshot();
@@ -1286,9 +1303,13 @@ export function ConnectedAccountServiceView() {
         () => resolveQualifiedConnectedAccountSettingsRoute(params, connectedServicesRegistry.entries),
         [connectedServicesRegistry.entries, params],
     );
+    const focusedServicePluginId = focusedRoute?.service.pluginId ?? '';
     const headerTitle = focusedRoute?.focus?.kind === 'group'
         ? t('connectedServices.detail.groupDetail.routeTitle')
-        : resolveProjectedLocalizedText(focusedRoute?.entry.projectedTitle) || t('settings.connectedServices');
+        : resolveProjectedLocalizedText(
+            focusedRoute?.entry.projectedTitle,
+            (value) => focusedServicePluginId ? localizePluginText(focusedServicePluginId, value) : '',
+        ) || t('settings.connectedServices');
     const navigation = useNavigation();
     React.useLayoutEffect(() => {
         // `useNavigation` returns null when this renders outside a navigator
@@ -1305,6 +1326,7 @@ export function ConnectedAccountServiceView() {
             activeServer={activeServer}
             targetSelection={targetSelection}
             executionTarget={executionTarget}
+            localizePluginText={localizePluginText}
         />
     );
 }

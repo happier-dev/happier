@@ -13,6 +13,8 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 }));
 
 import {
+    createDeclarativeTextResolver,
+    readDeclarativeText,
     renderDeclarativeNode,
     type DeclarativeNodeRenderContext,
 } from './declarativeNodes';
@@ -21,6 +23,7 @@ const context = {
     colors: lightTheme.colors,
     presentationTheme: createPluginSurfaceContextFixture().theme,
     minimumTouchTarget: 44,
+    localize: readDeclarativeText,
     resolveAction: () => null,
     renderField: () => null,
     renderCollectionList: () => null,
@@ -62,6 +65,83 @@ describe('declarative metadata tone presentation', () => {
       theme: context.presentationTheme,
       accessibilityLiveRegion: 'polite',
     });
+  });
+
+  it('names a declarative status meaning that lives only in its tone', () => {
+    const node = renderDeclarativeNode({
+      kind: 'status',
+      // Neutral wording plus a semantic tone: colour is the only channel that
+      // currently carries "this is a failure".
+      label: 'Deployment',
+      value: '12 minutes',
+      tone: 'danger',
+    }, context);
+
+    if (!React.isValidElement<{ accessibilityLabel?: string }>(node)) {
+      throw new Error('Expected the status renderer to produce a shared status element.');
+    }
+
+    // The tone reaches assistive technology as a word, prefixed onto the same
+    // label/value composition the item and metadata adapters already use.
+    expect(node.props.accessibilityLabel).toMatch(/^\S.*: Deployment: 12 minutes$/);
+    expect(node.props.accessibilityLabel).not.toBe('Deployment: 12 minutes');
+  });
+
+  it('leaves a toneless declarative status to speak its own label and value', () => {
+    const node = renderDeclarativeNode({
+      kind: 'status',
+      label: 'Deployment',
+      value: '12 minutes',
+      tone: 'default',
+    }, context);
+
+    if (!React.isValidElement<{ accessibilityLabel?: string }>(node)) {
+      throw new Error('Expected the status renderer to produce a shared status element.');
+    }
+
+    expect(node.props.accessibilityLabel).toBeUndefined();
+  });
+
+  it('resolves declarative localized text through the supplied surface resolver', () => {
+    const localize = createDeclarativeTextResolver(
+      (key: string, fallback?: string) => (key === 'acme.ready' ? 'Bereit' : (fallback ?? '')),
+    );
+    const node = renderDeclarativeNode({
+      kind: 'status',
+      label: { key: 'acme.ready', fallback: 'Ready' },
+      value: { key: 'acme.unknown', fallback: 'Idle' },
+      tone: 'default',
+    }, { ...context, localize });
+
+    if (!React.isValidElement<{ label: React.ReactElement; value: React.ReactElement }>(node)) {
+      throw new Error('Expected the status renderer to produce a shared status element.');
+    }
+
+    expect(
+      (node.props.label as React.ReactElement<{ children?: unknown }>).props.children,
+    ).toBe('Bereit');
+    // An unresolved key must fall back to the author's own words, never leak
+    // the raw key.
+    expect(
+      (node.props.value as React.ReactElement<{ children?: unknown }>).props.children,
+    ).toBe('Idle');
+  });
+
+  it('keeps transcript declarative text on the immutable persisted fallback', () => {
+    const node = renderDeclarativeNode({
+      kind: 'status',
+      label: { key: 'acme.ready', fallback: 'Ready' },
+      value: 'Idle',
+      tone: 'default',
+    }, context);
+
+    if (!React.isValidElement<{ label: React.ReactElement }>(node)) {
+      throw new Error('Expected the status renderer to produce a shared status element.');
+    }
+
+    expect(
+      (node.props.label as React.ReactElement<{ children?: unknown }>).props.children,
+    ).toBe('Ready');
   });
 
   it('passes the host high-contrast fact to the shared status owner', () => {

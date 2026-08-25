@@ -341,6 +341,10 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
                 showError(result.error, { retry: refreshCatalog });
                 return;
             }
+            // The probe belongs to the render-scoped target. If selection moved
+            // while it was running, its catalog presentation is stale and must
+            // not be published into the new target's screen.
+            if (!resolveCurrentTarget()) return;
             setOperationError(null);
             await catalog.refresh();
         } catch (caught) {

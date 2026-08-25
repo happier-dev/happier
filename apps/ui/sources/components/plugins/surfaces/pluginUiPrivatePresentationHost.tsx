@@ -23,7 +23,10 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Popover } from '@/components/ui/popover/Popover';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS } from '@/components/ui/popover/modalAwareFloatingPopoverPortalOptions';
 import { Text } from '@/components/ui/text/Text';
-import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
+import {
+    resolvePluginUiIconName,
+    type PluginUiIconDirection,
+} from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
 import {
     useInstalledPluginBrandPresentation,
@@ -88,6 +91,8 @@ export type PluginUiPrivateTargetedSurfacePresentation = Readonly<{
 type PluginUiPrivateBrandPresentationInput = Omit<InstalledPluginBrandPresentationInput, 'installedPackage'>;
 
 export type PluginUiPrivatePresentationHostOptions = Readonly<{
+    /** Exact mounted direction for logical icon tokens. */
+    direction?: PluginUiIconDirection;
     /** Exact-key lookup only; no enumeration, search, or caller-controlled Resource reference. */
     resolveBrandTarget?: (pluginId: string) => PluginUiPrivateBrandTarget | undefined;
     /** Localized host fallback for an absent exact target or unavailable optional mark. */
@@ -174,7 +179,8 @@ function PluginUiPrivateTargetBrandMark(props: PluginUiPrivateTargetBrandMarkInp
     });
 }
 
-const PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS = Object.freeze({
+function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDirection) {
+    return Object.freeze({
     renderMarkdown(input: Readonly<{ value: string; selectable: boolean; testID?: string }>) {
         return <MarkdownView markdown={input.value} selectable={input.selectable} testID={input.testID} />;
     },
@@ -233,7 +239,7 @@ const PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS = Object.freeze({
     }>) {
         return (
             <Icon
-                name={resolvePluginUiIconName(input.name)}
+                name={resolvePluginUiIconName(input.name, direction)}
                 size={input.size}
                 color={input.color}
                 accessibilityLabel={input.accessibilityLabel}
@@ -241,7 +247,10 @@ const PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS = Object.freeze({
             />
         );
     },
-});
+    });
+}
+
+const PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS = createPluginUiPrivatePresentationRenderers();
 
 export type PluginUiPrivatePresentationHost = Readonly<
     typeof PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS & {
@@ -319,6 +328,9 @@ export function createPluginUiPrivatePresentationHost(
     brand: PluginUiPresentationBrand | undefined,
     options?: PluginUiPrivatePresentationHostOptions,
 ): PluginUiPrivatePresentationHost {
+    const presentationRenderers = options?.direction === undefined
+        ? PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS
+        : createPluginUiPrivatePresentationRenderers(options.direction);
     const fallbackBrandDisplayName = options?.fallbackBrandDisplayName?.trim();
     const resolveBrandTarget = options?.resolveBrandTarget;
     const targetBrandPresentation = fallbackBrandDisplayName && resolveBrandTarget
@@ -363,7 +375,7 @@ export function createPluginUiPrivatePresentationHost(
         }
         : undefined;
     return Object.freeze({
-        ...PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS,
+        ...presentationRenderers,
         ...(brand ? { brand } : {}),
         ...(targetBrandPresentation ?? {}),
         ...(focusPresentation ?? {}),

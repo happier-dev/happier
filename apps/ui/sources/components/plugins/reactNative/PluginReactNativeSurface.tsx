@@ -2,6 +2,8 @@ import * as React from 'react';
 import { AccessibilityInfo, Platform, StyleSheet, View } from 'react-native';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
+    deriveDaemonPluginReactNativeCrashBindingTokenKeyV1,
+    deriveDaemonPluginReactNativeCrashMountKeyV1,
     isSameDaemonPluginReactNativeCrashBindingV1,
     type DaemonPluginReactNativeCrashBindingTokenV1,
     type DaemonPluginReactNativeCrashFailureV1,
@@ -93,6 +95,8 @@ type PluginReactNativeSurfaceProps = Readonly<{
     surfaceId: string;
     /** Resolver-stamped ephemeral mount identity; never a watchdog persistence key. */
     mountInstanceKey?: PluginUiInstanceKeyV1;
+    /** Existing host-owned mount/catalog identity that permits a fresh render attempt. */
+    boundaryResetKey?: string;
     snapshotTitle?: string;
     decision: PluginReactNativeCompatibilityDecision;
     module?: PluginReactNativeSurfaceModule | null;
@@ -127,37 +131,15 @@ type LoadedPluginReactNativeModuleState = Readonly<{
     module: PluginReactNativeSurfaceModule | null;
 }>;
 
+/**
+ * Protocol owns the crash-mount serialization; this surface only narrows an
+ * absent token. Re-expanding the mount union here would be a second owner that
+ * silently ignores a member the daemon token later gains.
+ */
 function readCrashStateTokenMountIdentity(
     token: DaemonPluginReactNativeCrashBindingTokenV1 | undefined,
 ): string | undefined {
-    if (!token) return undefined;
-    const mount = token.mount;
-    switch (mount.kind) {
-        case 'destination':
-            return ['destination', mount.destination.pluginId, mount.destination.localId].join('\u0000');
-        case 'targetedSurface':
-            return [
-                'targetedSurface',
-                mount.target.pluginId,
-                mount.target.immutableGenerationId,
-                mount.point.pointId,
-                mount.point.protocol.id,
-                mount.point.protocol.version,
-                mount.contributor.pluginId,
-                mount.contributor.contributionId,
-                mount.contributor.immutableGenerationId,
-                mount.role,
-                mount.presentation,
-            ].join('\u0000');
-        case 'composer':
-            return [
-                'composer',
-                mount.contribution.pluginId,
-                mount.contribution.localId,
-                mount.immutableGenerationId,
-                mount.role,
-            ].join('\u0000');
-    }
+    return token ? deriveDaemonPluginReactNativeCrashMountKeyV1(token.mount) : undefined;
 }
 
 /**
@@ -185,11 +167,7 @@ function readCrashStateTokenLifecycleVersion(
 ): string {
     if (!token) return crashReportScopeKey ?? '';
     return [
-        readCrashStateTokenMountIdentity(token),
-        token.renderer.pluginId,
-        token.renderer.localId,
-        token.artifactDigest,
-        token.crashStateEpoch,
+        deriveDaemonPluginReactNativeCrashBindingTokenKeyV1(token),
         crashReportScopeKey ?? '',
     ].join('\u0000');
 }
@@ -517,12 +495,14 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         props.surfaceId,
         watchdogCacheKey,
         props.mountInstanceKey ?? '',
+        props.boundaryResetKey ?? '',
         crashStateTokenLifecycleVersion,
         crashReportScopeKey ?? '',
         retryGeneration,
     ].join('\u0000'), [
         crashStateTokenLifecycleVersion,
         mountOwnerId,
+        props.boundaryResetKey,
         props.mountInstanceKey,
         props.surfaceId,
         retryGeneration,
@@ -705,7 +685,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         // An externally supplied mount or artifact replacement is a new
         // lifecycle, not a pending retry from the previous one.
         setRetrying(false);
-    }, [crashStateTokenLifecycleVersion, props.mountInstanceKey, props.surfaceId, watchdogCacheKey]);
+    }, [crashStateTokenLifecycleVersion, props.boundaryResetKey, props.mountInstanceKey, props.surfaceId, watchdogCacheKey]);
 
     const recordDaemonCrashFailure = React.useCallback((
         failure: DaemonPluginReactNativeCrashFailureV1,
@@ -988,6 +968,9 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     const launchInputResetKey = renderContext.launchInput === undefined
         ? 'absent'
         : `present:${stableJsonStringify(renderContext.launchInput)}`;
+    const renderBoundaryResetKey = props.boundaryResetKey === undefined
+        ? `${watchdogCacheKey}\u0000${launchInputResetKey}`
+        : `${props.boundaryResetKey}\u0000${watchdogCacheKey}\u0000${launchInputResetKey}`;
     const launchInputResetKeyRef = React.useRef(launchInputResetKey);
     React.useLayoutEffect(() => {
         const launchInputChanged = launchInputResetKeyRef.current !== launchInputResetKey;
@@ -1092,7 +1075,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         <PluginUiBoundary
             key={mountAttemptId}
             surfaceId={props.surfaceId}
-            resetKey={`${watchdogCacheKey}\u0000${launchInputResetKey}`}
+            resetKey={renderBoundaryResetKey}
             mountInstanceKey={props.mountInstanceKey}
             fallback={props.targetedFallback === undefined ? (
                 <PluginReactNativeUnavailable

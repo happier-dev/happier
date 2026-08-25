@@ -14,7 +14,10 @@ import { useProfile } from '@/sync/store/hooks';
 import { useSettingMutable, useSettings } from '@/sync/store/hooks';
 import { Modal } from '@/modal';
 import { getLegacyConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import {
+  useProjectedPluginLocalizedTextResolver,
+  useProjectedConnectedServicesRegistry,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { AGENT_IDS, getAgentCore } from '@/agents/catalog/catalog';
 import {
   buildQualifiedPluginContributionKey,
@@ -93,6 +96,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
   const styles = stylesheet;
   const profile = useProfile();
   const connectedServicesRegistrySnapshot = useProjectedConnectedServicesRegistry();
+  const localizePluginText = useProjectedPluginLocalizedTextResolver();
   const connectedServicesRegistry = connectedServicesRegistrySnapshot.entries;
   const settings = useSettings();
   const [providerStateSharingSettings, setProviderStateSharingSettings] =
@@ -232,7 +236,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       // Fallback for environments without route support.
       await Modal.alert(
         t('connect.unsupported.connectTitle', {
-          name: resolveConnectedServiceRegistryEntryDisplayName(entry, t),
+          name: resolveConnectedServiceRegistryEntryDisplayName(entry, t, localizePluginText),
         }),
         t('connect.unsupported.runCommandInTerminal'),
         [
@@ -241,7 +245,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
         ],
       );
     }
-  }, [accountTransport, router]);
+  }, [accountTransport, localizePluginText, router]);
 
   /** Released V2/V3 default-auth ingress, explicitly resolved by the adapter. */
   const openLegacyConnectedServiceSettings = React.useCallback(async (serviceId: string) => {
@@ -256,7 +260,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
     .flatMap((entry) => {
       if (!entry.service) return [];
       const serviceKey = buildQualifiedPluginContributionKey(entry.service);
-      const label = resolveConnectedServiceRegistryEntryDisplayName(entry, t);
+      const label = resolveConnectedServiceRegistryEntryDisplayName(entry, t, localizePluginText);
       const v4Profiles = qualifiedAccounts.filter((account) => (
         account.ref.service.pluginId === entry.service!.pluginId
         && account.ref.service.localId === entry.service!.localId
@@ -354,6 +358,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
     services,
     qualifiedAccounts,
     qualifiedGroups,
+    localizePluginText,
     settings.connectedServicesDefaultProfileByServiceId,
     quotaBadgesByKey,
     connectedServicesRegistrySnapshot.errorReason,

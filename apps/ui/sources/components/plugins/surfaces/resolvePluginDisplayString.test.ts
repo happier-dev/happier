@@ -6,12 +6,27 @@ import {
 } from './resolvePluginDisplayString';
 
 describe('resolvePluginDisplayString', () => {
-    it('prefers a developer-authored literal over keys and fallback', () => {
+    it('resolves a keyed plugin value before using its developer fallback', () => {
         expect(resolvePluginDisplayString({
             developerFallback: 'My Plugin Tab',
             keys: ['common.copy'],
             fallback: 'descriptor-id',
+        })).toBe('Copy');
+    });
+
+    it('uses the projection-bound plugin resolver instead of falling into the host catalog', () => {
+        expect(resolvePluginDisplayString({
+            developerFallback: 'My Plugin Tab',
+            keys: ['common.copy'],
+            resolveKey: () => null,
+            fallback: 'descriptor-id',
         })).toBe('My Plugin Tab');
+        expect(resolvePluginDisplayString({
+            developerFallback: 'My Plugin Tab',
+            keys: ['plugin.tab.title'],
+            resolveKey: (key) => key === 'plugin.tab.title' ? 'Mon onglet' : null,
+            fallback: 'descriptor-id',
+        })).toBe('Mon onglet');
     });
 
     it('resolves a translation key when it exists in the catalog', () => {
@@ -54,22 +69,26 @@ describe('resolvePluginDisplayString', () => {
 });
 
 describe('resolveProjectedLocalizedText', () => {
-    it('translates a projected key and ignores the developer fallback', () => {
+    it('delegates projected plugin text to its projection-bound resolver', () => {
         expect(resolveProjectedLocalizedText({
-            key: 'common.copy',
+            key: 'plugin.copy',
             fallback: 'Duplicate',
-        })).toBe('Copy');
+        }, (value) => (
+            typeof value === 'object' && value !== null && 'key' in value
+                ? 'Copier'
+                : ''
+        ))).toBe('Copier');
     });
 
     it('never treats a bare projected literal as a translation key', () => {
         // A descriptor that projected the plain string `common.copy` declared a
         // literal, not a key; resolving it would silently rewrite plugin copy.
-        expect(resolveProjectedLocalizedText('common.copy')).toBe('common.copy');
+        expect(resolveProjectedLocalizedText('common.copy', (value) => String(value))).toBe('common.copy');
     });
 
     it('yields empty text for an absent projection so callers can fall through', () => {
-        expect(resolveProjectedLocalizedText(undefined)).toBe('');
-        expect(resolveProjectedLocalizedText(null)).toBe('');
-        expect(resolveProjectedLocalizedText({ fallback: '   ' })).toBe('');
+        expect(resolveProjectedLocalizedText(undefined, () => '')).toBe('');
+        expect(resolveProjectedLocalizedText(null, () => '')).toBe('');
+        expect(resolveProjectedLocalizedText({ fallback: '   ' }, () => '')).toBe('');
     });
 });

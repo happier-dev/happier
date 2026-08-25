@@ -75,4 +75,23 @@ describe('SettingsAiAndAgentsSection catalog projection', () => {
 
         expect(screen.findAllByProps({ title: 'settingsProviders.title' })).toHaveLength(0);
     });
+
+    it('delegates Voice catalog navigation to the host navigation owner', async () => {
+        catalogState.pages = [page('voice', 'settings.voiceAssistant', '/settings/voice')];
+        const push = vi.fn();
+        const onNavigate = vi.fn();
+        const { SettingsAiAndAgentsSection } = await import('./SettingsAiAndAgentsSection');
+        const screen = await renderScreen(
+            <SettingsAiAndAgentsSection
+                router={{ push } as never}
+                theme={{ colors: { accent: {}, state: {}, text: { secondary: '#777' } } } as never}
+                onNavigate={onNavigate}
+            />,
+        );
+
+        screen.findAllByProps({ title: 'settings.voiceAssistant' })[0]?.props.onPress();
+
+        expect(onNavigate).toHaveBeenCalledWith('/settings/voice');
+        expect(push).not.toHaveBeenCalled();
+    });
 });

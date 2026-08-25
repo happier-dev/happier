@@ -309,7 +309,7 @@ function SkeletonRows() {
                     accessibilityElementsHidden={true}
                     importantForAccessibility="no-hide-descendants"
                 >
-                    <ShimmerView animationEnabled>
+                    <ShimmerView animationEnabled={false}>
                         <Item
                             testID={`settings-api-tokens-skeleton-row:${index}`}
                             mode="info"
@@ -394,15 +394,18 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
 
     React.useEffect(() => {
         void controller.refresh();
-        return () => {
-            if (!props.controller) controller.retire();
-        };
     }, [
         activeServerAccountScope?.accountId,
         activeServerAccountScope?.serverId,
         controller,
-        props.controller,
     ]);
+
+    React.useInsertionEffect(() => {
+        if (props.controller) return undefined;
+        return () => {
+            controller.retire();
+        };
+    }, [controller, props.controller]);
 
     React.useEffect(() => {
         const previousNotice = announcedOperationNoticeRef.current;

@@ -1,4 +1,5 @@
 import { hasTranslation, tLoose } from '@/text';
+import { resolvePluginLocalizedText } from '@/sync/domains/plugins/ui/i18n';
 
 /**
  * UX-1: plugin descriptor display strings carry `developerFallback` literals and
@@ -8,8 +9,8 @@ import { hasTranslation, tLoose } from '@/text';
  * the UI. This is the single owner that resolves those candidates the way the built-in
  * right-sidebar tabs do (`RightSidebarIconTabBar` → `t(labelKey)`):
  *
- *   developerFallback (literal) → other literal candidates → t(key) IF the key is a real
- *   catalog entry → final fallback (e.g. the descriptorId).
+ *   other literal candidates → plugin-owned translation lookup (or host `@/text` for
+ *   static host keys) → developer fallback → final fallback (e.g. the descriptorId).
  *
  * A translation key that is NOT in the catalog resolves to nothing and falls through, so
  * raw, unresolved keys never reach the screen.
@@ -33,7 +34,7 @@ function resolvePluginDisplayKey(value: unknown): string | null {
 }
 
 export type PluginDisplayStringCandidates = Readonly<{
-    /** Plugin-author literal override (highest precedence; never treated as a key). */
+    /** Plugin-author fallback used only when keyed lookup misses. */
     developerFallback?: unknown;
     /** Additional already-human literal candidates (e.g. a `display.label`). */
     literals?: readonly unknown[];
@@ -52,10 +53,6 @@ export type PluginDisplayStringCandidates = Readonly<{
 export function resolvePluginDisplayString(
     candidates: PluginDisplayStringCandidates,
 ): string | null {
-    const developerFallback = readDisplayLiteral(candidates.developerFallback);
-    if (developerFallback) {
-        return developerFallback;
-    }
     for (const literal of candidates.literals ?? []) {
         const resolved = readDisplayLiteral(literal);
         if (resolved) {
@@ -67,12 +64,18 @@ export function resolvePluginDisplayString(
         if (!key) {
             continue;
         }
-        const resolved = readDisplayLiteral(candidates.resolveKey?.(key)) ?? resolvePluginDisplayKey(key);
+        // An external plugin's resolver is authoritative for its own key space. Do not
+        // reinterpret a miss as a host `@/text` key: that would turn an accidental
+        // collision with a host key into a misleading translated label.
+        const resolved = candidates.resolveKey === undefined
+            ? resolvePluginDisplayKey(key)
+            : readDisplayLiteral(candidates.resolveKey(key));
         if (resolved) {
             return resolved;
         }
     }
-    return readDisplayLiteral(candidates.fallback);
+    return readDisplayLiteral(candidates.developerFallback)
+        ?? readDisplayLiteral(candidates.fallback);
 }
 
 /**
@@ -93,12 +96,12 @@ export type PluginProjectedLocalizedText =
  */
 export function resolveProjectedLocalizedText(
     value: PluginProjectedLocalizedText | null | undefined,
+    localize?: (value: PluginProjectedLocalizedText) => string,
 ): string {
-    if (typeof value === 'string') {
-        return resolvePluginDisplayString({ literals: [value] }) ?? '';
-    }
-    return resolvePluginDisplayString({
-        keys: [value?.key],
-        fallback: value?.fallback,
-    }) ?? '';
+    if (value === null || value === undefined) return '';
+    return (localize?.(value) ?? resolvePluginLocalizedText({
+        projection: null,
+        pluginId: '',
+        value,
+    })).trim();
 }

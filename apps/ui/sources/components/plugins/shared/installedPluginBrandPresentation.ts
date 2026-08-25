@@ -78,15 +78,21 @@ function isCurrent(input: InstalledPluginBrandPresentationInput): boolean {
  * this call — or that a ceiling refuses — become the neutral text identity
  * rather than a render that pays to convert them or a mark that silently fails
  * to appear.
+ *
+ * A refusal here is not an author-reportable event: the canonical brand
+ * Resource owner already decodes the mark and enforces stricter type, square,
+ * pixel and byte bounds before any projection can call it `available`. Host
+ * chrome therefore falls back to the neutral text identity instead of naming a
+ * surface it does not have.
  */
 function admittedBrandPresentation(
     displayName: string,
     bytes: Uint8Array | null | undefined,
 ): InstalledPluginBrandPresentation | null {
     if (!bytes || bytes.byteLength === 0) return null;
-    return materializeHappierRenderableImage(bytes) === null
-        ? null
-        : Object.freeze({ displayName, bytes });
+    return materializeHappierRenderableImage(bytes).admitted
+        ? Object.freeze({ displayName, bytes })
+        : null;
 }
 
 function neutralFallback(input: InstalledPluginBrandPresentationInput): InstalledPluginBrandPresentation | null {
@@ -222,7 +228,10 @@ export async function readInstalledPluginBrandPresentation(
         if (resource.contentType !== 'image/png' || resource.digest !== brand.digest) {
             return fallback;
         }
-        return admittedBrandPresentation(installedPackage.displayName, resource.bytes) ?? fallback;
+        return admittedBrandPresentation(
+            installedPackage.displayName,
+            resource.bytes,
+        ) ?? fallback;
     } catch {
         // The package remains current, but its optional visual Resource did not
         // arrive through the admitted owner. Preserve its canonical text-only

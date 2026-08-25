@@ -27,6 +27,7 @@ import {
   type FreshMachineAdministrationExecutionTargetV1,
   useMachineAdministrationTargetSelection,
 } from '@/sync/domains/machines/administration/useTargetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { machinePromptAssetsDelete, machinePromptAssetsListTypes } from '@/sync/ops/machinePromptAssets';
 import { removePromptExternalLink } from '@/sync/ops/promptLibrary/promptDocs';
 import { readPromptLibraryArtifactForExport, writePromptLibraryArtifactToExternalAsset, type ExportablePromptLibraryArtifact } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
@@ -116,12 +117,13 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
     requestedSelection: string,
     executionTarget: FreshMachineAdministrationExecutionTargetV1,
   ): boolean => {
-    if (selectionKeyRef.current !== requestedSelection) return false;
-    const current = resolveExactExecutionTarget(executionTarget.target);
-    return current !== null
-      && current.serverId === executionTarget.serverId
-      && current.machine.id === executionTarget.machine.id;
-  }, [resolveExactExecutionTarget]);
+    return isMachineAdministrationExecutionTargetCurrent({
+      expectedTarget: executionTarget,
+      resolveCurrentTarget: resolveExecutionTargetRef.current,
+      expectedSelectionKey: requestedSelection,
+      currentSelectionKey: selectionKeyRef.current,
+    });
+  }, []);
   const [types, setTypes] = React.useState<PromptAssetTypeDescriptorV1[]>([]);
   const [scope, setScope] = React.useState<PromptAssetScopeV1>(props.initialSelection?.scope ?? 'project');
   const [scopeMenuOpen, setScopeMenuOpen] = React.useState(false);

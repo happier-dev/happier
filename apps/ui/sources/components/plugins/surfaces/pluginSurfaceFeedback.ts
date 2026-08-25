@@ -3,6 +3,7 @@ import type {
     InteractionTransientRequesterV1,
     PluginActionCurrentIntentRequest,
     PluginActionCurrentIntentResult,
+    PluginLocalizedStringV2,
     PluginProjectedActionV2,
 } from '@happier-dev/protocol';
 import type {
@@ -11,6 +12,8 @@ import type {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { createAppShellTransientInteractions } from '@/components/appShell/plugins/appShellQuestionInteractions';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import {
     publishPresentationNotice,
     retirePresentationNotice,
@@ -72,10 +75,20 @@ function readTitle(payload: Readonly<Record<string, PluginUiJsonValueV1>> | null
     return typeof title === 'string' && title.trim().length > 0 ? title : null;
 }
 
-function readConfirmationText(
-    value: string | Readonly<{ key: string; fallback: string }>,
-): string {
-    return typeof value === 'string' ? value : value.fallback;
+/**
+ * Author-declared confirmation wording, resolved for the current locale.
+ *
+ * Reading `.fallback` pinned every admitted plugin's confirmation dialog to its
+ * English declaration. The projected translation bundle is the one authority
+ * that can answer an external plugin's key, so this delegates to it and keeps
+ * the author's fallback for any key it does not define.
+ */
+function createConfirmationTextResolver(
+    pluginId: string,
+    projection: PluginUiProjectionModel | null | undefined,
+): (value: PluginLocalizedStringV2) => string {
+    const resolve = createPluginLocalizedTextResolver({ projection });
+    return (value) => resolve(pluginId, value);
 }
 
 function invalidPayload(reason: string): PluginUiJsonValueV1 {
@@ -89,6 +102,11 @@ function staleSurface(): PluginUiJsonValueV1 {
 export type CreatePluginSurfaceFeedbackHandlersInput = Readonly<{
     /** The surface whose retirement retires this plugin's pending feedback. */
     surfaceId: string;
+    /**
+     * The mount's admitted UI projection, used only to resolve the author's
+     * declared Action-confirmation wording for the current locale.
+     */
+    pluginUiProjection?: PluginUiProjectionModel | null;
     /** Exact mounted provenance; without it confirmation fails closed. */
     interactionRequester?: InteractionTransientRequesterV1;
     /** Host-owned currentness: a retired mount must not reach the user. */
@@ -113,6 +131,12 @@ export function createPluginActionCurrentIntentHandler(input: Readonly<{
     requester: InteractionTransientRequesterV1;
     signal?: AbortSignal;
     isCurrent: () => boolean;
+    /**
+     * The caller's admitted UI projection. Absent means no translation
+     * authority is reachable here and the author's declared fallback wording is
+     * shown; every caller that owns a projection must supply it.
+     */
+    pluginUiProjection?: PluginUiProjectionModel | null;
 }>): (
     request: PluginActionCurrentIntentRequest<PluginProjectedActionV2>,
 ) => Promise<PluginActionCurrentIntentResult> {
@@ -135,6 +159,10 @@ export function createPluginActionCurrentIntentHandler(input: Readonly<{
                 code: 'plugin_action_current_intent_unavailable',
             });
         }
+        const readConfirmationText = createConfirmationTextResolver(
+            request.action.pluginId,
+            input.pluginUiProjection,
+        );
         const title = readConfirmationText(confirmation.title);
         const confirmLabel = confirmation.confirmLabel
             ? readConfirmationText(confirmation.confirmLabel)
@@ -258,6 +286,7 @@ export function createPluginSurfaceFeedbackHandlers(
             requester: input.interactionRequester,
             signal: retirement.signal,
             isCurrent,
+            pluginUiProjection: input.pluginUiProjection,
         })
         : undefined;
 

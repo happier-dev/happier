@@ -1,4 +1,5 @@
 import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import {
     getLegacyConnectedServiceRegistryEntry,
     type ConnectedServiceDisplayNameKey,
@@ -13,8 +14,14 @@ export function resolveConnectedServiceDisplayNameKey(serviceId: string): Connec
 export function resolveConnectedServiceRegistryEntryDisplayName(
     entry: ConnectedServiceRegistryEntry,
     translate: (key: ConnectedServiceDisplayNameKey) => string,
+    localizePluginText?: PluginLocalizedTextResolver,
 ): string {
-    const projectedTitle = resolveProjectedLocalizedText(entry.projectedTitle);
+    const projectedTitle = resolveProjectedLocalizedText(
+        entry.projectedTitle,
+        entry.service && localizePluginText
+            ? (value) => localizePluginText(entry.service!.pluginId, value)
+            : undefined,
+    );
     if (projectedTitle) {
         return projectedTitle;
     }
@@ -31,13 +38,14 @@ export function resolveQualifiedConnectedServiceRegistryDisplayName(
     registry: Pick<ConnectedServiceRegistrySnapshot, 'entries'>,
     service: Readonly<{ pluginId: string; localId: string }>,
     translate: (key: ConnectedServiceDisplayNameKey) => string,
+    localizePluginText?: PluginLocalizedTextResolver,
 ): string {
     const entry = registry.entries.find((candidate) => (
         candidate.service?.pluginId === service.pluginId
         && candidate.service.localId === service.localId
     ));
     return entry
-        ? resolveConnectedServiceRegistryEntryDisplayName(entry, translate)
+        ? resolveConnectedServiceRegistryEntryDisplayName(entry, translate, localizePluginText)
         : translate('connectedServices.fallbackName');
 }
 

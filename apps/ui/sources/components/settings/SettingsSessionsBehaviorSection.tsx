@@ -9,6 +9,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 
 type SettingsSessionsBehaviorSectionProps = Readonly<Pick<SettingsBelowFoldSectionsProps,
     | 'automationsNeedLocalEnablement'
+    | 'onNavigate'
     | 'router'
     | 'showAutomations'
     | 'terminalUseTmux'
@@ -17,6 +18,7 @@ type SettingsSessionsBehaviorSectionProps = Readonly<Pick<SettingsBelowFoldSecti
 
 export const SettingsSessionsBehaviorSection = React.memo(function SettingsSessionsBehaviorSection({
     automationsNeedLocalEnablement,
+    onNavigate,
     router,
     showAutomations,
     terminalUseTmux,
@@ -25,6 +27,7 @@ export const SettingsSessionsBehaviorSection = React.memo(function SettingsSessi
     return (
         <SettingsCatalogOverviewGroup
             groupId="groupSessionsBehavior"
+            onNavigate={onNavigate}
             router={router}
             theme={theme}
             resolveSubtitle={(page, defaultSubtitle) => (

@@ -171,7 +171,7 @@ describe('mounted plugin surface resource snapshot read (§3.6)', () => {
 
         await expect(adapter.api.readResource('missing')).rejects.toMatchObject({
             code: 'unavailable',
-            diagnostics: ['plugin_resource_not_found'],
+            diagnostics: [{ code: 'plugin_resource_not_found', severity: 'error' }],
         });
     });
 
@@ -195,7 +195,7 @@ describe('mounted plugin surface resource snapshot read (§3.6)', () => {
         });
         await expect(adapter.api.readResource('review-summary')).rejects.toMatchObject({
             code: 'unavailable',
-            diagnostics: ['plugin_resource_transport_error'],
+            diagnostics: [{ code: 'plugin_resource_transport_error', severity: 'error' }],
         });
     });
 

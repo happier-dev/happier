@@ -225,5 +225,25 @@ describe('TargetedPluginSurfaceHost', () => {
         expect(mounted).toHaveLength(1);
         expect(rendered.root.findAllByType(MountedTargetedSurface)).toHaveLength(0);
         expect(rendered.root.findAllByType(TargetedFallback)).toHaveLength(1);
+
+        await act(async () => {
+            rendered.update(
+                <TargetedPluginSurfaceHost
+                    node={normalizedLeaf}
+                    fallback={<TargetedFallback />}
+                    mounts={[mount]}
+                    target={target}
+                    renderMountedSurface={renderMountedSurface}
+                />,
+            );
+        });
+
+        // A mismatched cold snapshot is a refusal for that render, not a
+        // terminal latch. Restoring the exact admitted target generation must
+        // remount through the same physical owner without recreating a local
+        // registry or retaining the stale failure.
+        expect(mounted).toHaveLength(2);
+        expect(rendered.root.findAllByType(MountedTargetedSurface)).toHaveLength(1);
+        expect(rendered.root.findAllByType(TargetedFallback)).toHaveLength(0);
     });
 });

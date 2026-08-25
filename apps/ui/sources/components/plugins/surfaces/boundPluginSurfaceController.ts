@@ -894,6 +894,13 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 ? { pluginUiProjection: input.facts.pluginUiProjection }
                 : {}),
             targetedContributions,
+            // The same raw V2 resolver this mount already hands the generic
+            // action Host API. Without it the selection controller reads an
+            // unknown execution realm as daemon-owned and presents a client
+            // Action's form before its executable registration has committed.
+            ...(input.facts.resolveContributedAction
+                ? { resolveContributedAction: input.facts.resolveContributedAction }
+                : {}),
             host: {
                 machineId: daemon.machineId,
                 serverId: daemon.serverId ?? null,
@@ -908,6 +915,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         })
         : null;
     const hostApi = createPluginSurfaceActionHostApi({
+        pluginUiProjection: input.facts.pluginUiProjection,
         surfaceContext,
         ...(interactionRequester ? { interactionRequester } : {}),
         isMethodAvailable,

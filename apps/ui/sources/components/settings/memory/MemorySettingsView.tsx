@@ -22,7 +22,7 @@ import {
     useMachineAdministrationTargetSelection,
     type FreshMachineAdministrationExecutionTargetV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
-import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import {
@@ -58,8 +58,10 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
     const isExecutionTargetCurrent = React.useCallback((
         target: FreshMachineAdministrationExecutionTargetV1,
     ) => {
-        const current = administrationTargetSelection.resolveExecutionTarget();
-        return current !== null && machineAdministrationTargetsEqual(current.target, target.target);
+        return isMachineAdministrationExecutionTargetCurrent({
+            expectedTarget: target,
+            resolveCurrentTarget: administrationTargetSelection.resolveExecutionTarget,
+        });
     }, [administrationTargetSelection.resolveExecutionTarget]);
 
     const [settings, setSettings] = React.useState<MemorySettingsV1>(() => DEFAULT_MEMORY_SETTINGS);

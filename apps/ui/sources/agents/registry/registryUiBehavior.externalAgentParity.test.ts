@@ -5,10 +5,13 @@ import { PluginAgentUiBehaviorContributionV2Schema } from '@happier-dev/protocol
 import { BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS } from './generatedBundledPluginEntries.uiBehaviorOverrides';
 
 import {
+    buildNewSessionOptionsFromUiState,
+    buildResumeSessionExtrasFromUiState,
     buildSessionHandoffSourceRecoveryResumePatch,
     buildSpawnSessionExtrasFromUiState,
     getNewSessionAgentInputExtraActionChips,
     isAttachedSessionTerminalAvailableForSession,
+    resolveAgentUiBehavior,
     resolvePendingDeliveryLabelKeyForSession,
     resolvePendingDeliveryTransientActionForSession,
     resolveSessionGoalActionCapabilityProfile,
@@ -93,7 +96,7 @@ describe('installed external Agent UI parity with a bundled Agent', () => {
         });
 
         it('withholds attached-terminal control from an Agent that declares no support', () => {
-            publishExternalBehavior({ mcpServers: { supportsDetectedConfigScan: true } });
+            publishExternalBehavior({});
 
             expect(isAttachedSessionTerminalAvailableForSession(
                 sessionFixture({ terminal: { ...SERVABLE_TERMINAL } }),
@@ -180,7 +183,7 @@ describe('installed external Agent UI parity with a bundled Agent', () => {
         });
 
         it('withholds interrupt-and-run from an Agent that declares none', () => {
-            publishExternalBehavior({ mcpServers: { supportsDetectedConfigScan: true } });
+            publishExternalBehavior({});
 
             expect(resolvePendingDeliveryTransientActionForSession({
                 session: sessionFixture({
@@ -229,7 +232,6 @@ describe('machine-owned decisions read the owning machine\'s declaration', () =>
     const EDITABLE_GOALS_BEHAVIOR = Object.freeze({
         workState: {
             editableGoals: {
-                providerId: EXTERNAL_AGENT_ID,
                 capabilityDriven: true,
                 persistedGoalSnapshot: {
                     path: ['workStateSnapshotV1'],
@@ -243,7 +245,6 @@ describe('machine-owned decisions read the owning machine\'s declaration', () =>
     const HANDOFF_ENVIRONMENT_BEHAVIOR = Object.freeze({
         payload: {
             environmentVariables: {
-                providerId: EXTERNAL_AGENT_ID,
                 backendMode: {
                     envKey: 'HAPPIER_ACME_BACKEND_MODE',
                     settingKey: 'acmeBackendMode',
@@ -273,7 +274,7 @@ describe('machine-owned decisions read the owning machine\'s declaration', () =>
     it('grants editable goals to the machine whose Agent declares them', () => {
         // The declaring machine sorts AFTER the silent one, so an id-ordered
         // pick answers with the silent machine's (absent) declaration.
-        publishBehaviorForMachine(FIRST_MACHINE_ID, { mcpServers: { supportsDetectedConfigScan: true } });
+        publishBehaviorForMachine(FIRST_MACHINE_ID, {});
         publishBehaviorForMachine(SECOND_MACHINE_ID, EDITABLE_GOALS_BEHAVIOR);
 
         expect(supportsEditableSessionGoals({
@@ -287,7 +288,7 @@ describe('machine-owned decisions read the owning machine\'s declaration', () =>
     });
 
     it('withholds editable goals from a machine whose Agent declares none', () => {
-        publishBehaviorForMachine(FIRST_MACHINE_ID, { mcpServers: { supportsDetectedConfigScan: true } });
+        publishBehaviorForMachine(FIRST_MACHINE_ID, {});
         publishBehaviorForMachine(SECOND_MACHINE_ID, EDITABLE_GOALS_BEHAVIOR);
 
         expect(supportsEditableSessionGoals({
@@ -300,8 +301,31 @@ describe('machine-owned decisions read the owning machine\'s declaration', () =>
         })).toBeNull();
     });
 
+    it('normalizes the declared option base from the selected machine, not a borrowed one', () => {
+        // The option base feeds the spawn envelope. When it is read machine-blind
+        // the composer renders one machine's declared options and normalizes
+        // another's, so the values the reader set never reach `session.spawn_new`.
+        publishBehaviorForMachine(FIRST_MACHINE_ID, {});
+        publishBehaviorForMachine(SECOND_MACHINE_ID, {
+            newSession: {
+                agentOptions: [{ key: 'allowIndexing', kind: 'boolean', spawnConfigOption: true }],
+            },
+        });
+
+        expect(buildNewSessionOptionsFromUiState({
+            agentId: EXTERNAL_AGENT_ID,
+            agentOptionState: { allowIndexing: true },
+            machineId: SECOND_MACHINE_ID,
+        })).toEqual({ allowIndexing: true });
+        expect(buildNewSessionOptionsFromUiState({
+            agentId: EXTERNAL_AGENT_ID,
+            agentOptionState: { allowIndexing: true },
+            machineId: FIRST_MACHINE_ID,
+        })).toBeNull();
+    });
+
     it('spawns on the selected machine with that machine\'s declared session options', () => {
-        publishBehaviorForMachine(FIRST_MACHINE_ID, { mcpServers: { supportsDetectedConfigScan: true } });
+        publishBehaviorForMachine(FIRST_MACHINE_ID, {});
         publishBehaviorForMachine(SECOND_MACHINE_ID, {
             newSession: {
                 agentOptions: [{ key: 'allowIndexing', kind: 'boolean', spawnConfigOption: true }],
@@ -324,14 +348,64 @@ describe('machine-owned decisions read the owning machine\'s declaration', () =>
         });
     });
 
+    const INDEXING_CHIP_BEHAVIOR = Object.freeze({
+        components: {
+            slots: [
+                {
+                    id: 'acme-allow-indexing',
+                    slot: 'newSession.agentInputExtraActionChips',
+                    chip: {
+                        kind: 'booleanOption',
+                        optionStateKey: 'allowIndexing',
+                        iconName: 'magnifying-glass',
+                        onLabelKey: 'agentInput.auggieIndexingChip.on',
+                        offLabelKey: 'agentInput.auggieIndexingChip.off',
+                    },
+                },
+            ],
+        },
+    });
+
+    it('offers the composer chips declared by the machine the composer is about to spawn on', () => {
+        publishBehaviorForMachine(FIRST_MACHINE_ID, {});
+        publishBehaviorForMachine(SECOND_MACHINE_ID, INDEXING_CHIP_BEHAVIOR);
+
+        expect(getNewSessionAgentInputExtraActionChips({
+            agentId: EXTERNAL_AGENT_ID,
+            agentOptionState: { allowIndexing: false },
+            setAgentOptionState: () => {},
+            machineId: SECOND_MACHINE_ID,
+        })?.map((chip) => chip.key)).toEqual(['acme-allow-indexing']);
+    });
+
+    it('withholds composer chips a machine\'s Agent does not declare', () => {
+        publishBehaviorForMachine(FIRST_MACHINE_ID, {});
+        publishBehaviorForMachine(SECOND_MACHINE_ID, INDEXING_CHIP_BEHAVIOR);
+
+        expect(getNewSessionAgentInputExtraActionChips({
+            agentId: EXTERNAL_AGENT_ID,
+            agentOptionState: { allowIndexing: false },
+            setAgentOptionState: () => {},
+            machineId: FIRST_MACHINE_ID,
+        })).toBeUndefined();
+    });
+
     it('recovers a stopped source session with the source machine\'s declared environment', () => {
-        publishBehaviorForMachine(FIRST_MACHINE_ID, { mcpServers: { supportsDetectedConfigScan: true } });
+        publishBehaviorForMachine(FIRST_MACHINE_ID, {});
         publishBehaviorForMachine(SECOND_MACHINE_ID, HANDOFF_ENVIRONMENT_BEHAVIOR);
 
         expect(buildSessionHandoffSourceRecoveryResumePatch({
             agentId: EXTERNAL_AGENT_ID,
-            metadata: { machineId: SECOND_MACHINE_ID, acmeBackendMode: 'server' },
+            machineId: SECOND_MACHINE_ID,
+            metadata: { acmeBackendMode: 'server' },
         })).toEqual({ environmentVariables: { HAPPIER_ACME_BACKEND_MODE: 'server' } });
+        // The first machine declares no handoff environment, so asking it must
+        // answer with nothing rather than the other machine's declaration.
+        expect(buildSessionHandoffSourceRecoveryResumePatch({
+            agentId: EXTERNAL_AGENT_ID,
+            machineId: FIRST_MACHINE_ID,
+            metadata: { acmeBackendMode: 'server' },
+        })).toEqual({});
     });
 });
 
@@ -354,7 +428,6 @@ describe('public Agent UI grammar conformance with the descriptor interpreter', 
         const declaration = PluginAgentUiBehaviorContributionV2Schema.parse({
             behavior: {
                 descriptorId: 'acme.uiBehavior.v1',
-                mcpServers: { supportsDetectedConfigScan: true },
                 permissions: { footer: { usePermissionUpdates: true, stopHandling: 'denyAndAbortRun' } },
                 pendingDelivery: { interruptAndRun: true },
                 newSession: {
@@ -391,6 +464,20 @@ describe('public Agent UI grammar conformance with the descriptor interpreter', 
                         onLabelKey: 'agentInput.auggieIndexingChip.on',
                         offLabelKey: 'agentInput.auggieIndexingChip.off',
                     },
+                }, {
+                    id: 'acme-subagent-launch',
+                    slot: 'sessionSubagents.launchCards',
+                    surfaceId: 'subagent-launch',
+                }, {
+                    id: 'acme-subagent-details',
+                    slot: 'sessionSubagents.teammateDetailsTab',
+                    surfaceId: 'subagent-details',
+                    resourceKind: 'acmeSubagentLauncher',
+                    iconName: 'users',
+                    tab: {
+                        keyPrefix: 'acme-subagent-launcher',
+                        titleKey: 'acme.subagents.launch.title',
+                    },
                 }],
             },
         });
@@ -426,6 +513,39 @@ describe('public Agent UI grammar conformance with the descriptor interpreter', 
         }).sessionConfigOptionOverrides?.overrides).toMatchObject({
             allowIndexing: { value: true, updatedAt: 7 },
         });
+        const externalBehavior = resolveAgentUiBehavior(EXTERNAL_AGENT_ID, MACHINE_ID);
+        const renderedLaunchSurfaces: unknown[] = [];
+        expect(externalBehavior.sessionSubagents?.renderLaunchCards?.({
+            sessionId: 'session-1',
+            scopeId: 'session:session-1',
+            session: sessionFixture(),
+            subagents: [],
+            renderInlineSurface: (surface) => {
+                renderedLaunchSurfaces.push(surface);
+                return `rendered:${surface.slotId}`;
+            },
+        })).toEqual(['rendered:acme-subagent-launch']);
+        expect(renderedLaunchSurfaces).toEqual([expect.objectContaining({
+            pluginId: 'acme',
+            agentId: EXTERNAL_AGENT_ID,
+            surfaceId: 'subagent-launch',
+            sessionId: 'session-1',
+        })]);
+        const detailsTab = externalBehavior.sessionSubagents?.createTeammateLauncherDetailsTab?.({
+            session: sessionFixture(),
+            teamId: 'team-1',
+        });
+        expect(detailsTab).toMatchObject({
+            kind: 'acmeSubagentLauncher',
+            resource: {
+                pluginInlineSurface: {
+                    pluginId: 'acme',
+                    agentId: EXTERNAL_AGENT_ID,
+                    surfaceId: 'subagent-details',
+                    machineId: MACHINE_ID,
+                },
+            },
+        });
     });
 });
 
@@ -434,26 +554,18 @@ describe('public Agent UI grammar conformance with the descriptor interpreter', 
  * write, or an installed Agent cannot reach parity by construction: an author
  * copying a first-party declaration would be refused at their manifest.
  *
- * The single documented exception is `components.slots[].componentId`, which
- * names a component compiled into the app. That is an approved compile-time
- * first-party escape hatch, so it is stripped here rather than admitted into
- * the grammar; every other field a bundled Agent declares must be authorable.
+ * There are no compiled-component exceptions: bundled and installed Agents
+ * use the same host-owned controls and same-plugin inline surfaces.
  */
 describe('the public grammar admits every bundled Agent declaration', () => {
     function splitBundledDeclaration(descriptor: Readonly<Record<string, unknown>>) {
         const { components, message, ...behavior } = descriptor;
-        const slots = (components as { slots?: readonly Record<string, unknown>[] } | undefined)?.slots;
         return {
             ...(Object.keys(behavior).length > 0 ? { behavior } : {}),
             ...(message ? { message } : {}),
             ...(components
                 ? {
-                    components: {
-                        ...(components as Record<string, unknown>),
-                        ...(slots
-                            ? { slots: slots.map(({ componentId: _compiled, ...slot }) => slot) }
-                            : {}),
-                    },
+                    components: components as Record<string, unknown>,
                 }
                 : {}),
         };
@@ -466,5 +578,195 @@ describe('the public grammar admits every bundled Agent declaration', () => {
             splitBundledDeclaration(descriptor),
         );
         expect(parsed.success ? [] : parsed.error.issues).toEqual([]);
+    });
+
+});
+
+/**
+ * The runtime-descriptor half of the public grammar.
+ *
+ * Every block below used to be filtered through the BUNDLED runtime-descriptor
+ * reader roster, so an installed Agent could declare a valid block and watch it
+ * return nothing. The canonical `runtimeDescriptorV1` envelope already names
+ * the Agent that owns it, so these are read from the declaration's own Agent id
+ * instead — the same read a bundled Agent gets.
+ */
+describe('external Agent runtime-descriptor declarations', () => {
+    afterEach(() => {
+        clearProjectedAgentUiBehaviorDescriptors();
+    });
+
+    const RUNTIME_DESCRIPTOR = Object.freeze({
+        v: 1 as const,
+        agentId: EXTERNAL_AGENT_ID,
+        agent: { backendMode: 'turbo', providerSessionId: 'remote-1', workspaceId: 'ws-9' },
+    });
+
+    function publishRuntimeDescriptorBlocks(): void {
+        publishExternalBehavior({
+            payload: {
+                sessionExtras: {
+                    outputKey: 'acmeBackendMode',
+                    values: ['turbo', 'classic'],
+                    settingKey: 'acmeBackendMode',
+                    aliases: { fast: 'turbo' },
+                    defaultValue: 'classic',
+                },
+                backendTransport: {
+                    runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
+                    legacyModeOutputKey: 'acmeBackendMode',
+                    backendMode: { values: ['turbo', 'classic'] },
+                    runtimeHandleFields: ['backendMode', 'providerSessionId', 'workspaceId'],
+                    agentExtra: { owner: 'acme', schemaId: 'acme.runtime', v: 1 },
+                },
+            },
+            workState: {
+                editableGoals: {
+                    modeValues: ['turbo', 'classic'],
+                    activeModeValues: ['turbo'],
+                },
+            },
+            externalSessions: {
+                browse: {
+                    linkEnsureRequestExtras: {
+                        runtimeDescriptorFromCandidate: {
+                            runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
+                            legacyModeOutputKey: 'acmeBackendMode',
+                            backendMode: { values: ['turbo', 'classic'] },
+                            sourceFields: ['workspaceId'],
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    it('builds spawn extras from the Agent’s own declared account setting', () => {
+        publishRuntimeDescriptorBlocks();
+
+        expect(buildSpawnSessionExtrasFromUiState({
+            agentId: EXTERNAL_AGENT_ID,
+            machineId: MACHINE_ID,
+            settings: makeSettings({ acmeBackendMode: 'fast' }) as never,
+            resumeSessionId: '',
+        })).toMatchObject({ acmeBackendMode: 'turbo' });
+
+        // Unset falls to the declared default; an unreadable value never
+        // escapes the declared value set.
+        expect(buildSpawnSessionExtrasFromUiState({
+            agentId: EXTERNAL_AGENT_ID,
+            machineId: MACHINE_ID,
+            settings: makeSettings({ acmeBackendMode: 'nonsense' }) as never,
+            resumeSessionId: '',
+        })).toMatchObject({ acmeBackendMode: 'classic' });
+    });
+
+    it('reads the resume mode from the Agent’s canonical runtime descriptor', () => {
+        publishRuntimeDescriptorBlocks();
+
+        expect(buildResumeSessionExtrasFromUiState({
+            agentId: EXTERNAL_AGENT_ID,
+            settings: makeSettings({ acmeBackendMode: 'classic' }) as never,
+            session: {
+                metadata: { machineId: MACHINE_ID, runtimeDescriptorV1: RUNTIME_DESCRIPTOR },
+            } as never,
+        })).toEqual({ acmeBackendMode: 'turbo' });
+    });
+
+    it('builds backend transport fields from the declared runtime handle', () => {
+        publishRuntimeDescriptorBlocks();
+
+        const fields = resolveAgentUiBehavior(EXTERNAL_AGENT_ID, MACHINE_ID)
+            .payload?.buildBackendTransportFields?.({
+                agentId: EXTERNAL_AGENT_ID,
+                backendTarget: { kind: 'backend', backendId: EXTERNAL_AGENT_ID } as never,
+                runtimeDescriptorV1: RUNTIME_DESCRIPTOR as never,
+            });
+
+        expect(fields).toEqual({
+            acmeBackendMode: 'turbo',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: EXTERNAL_AGENT_ID,
+                agent: {
+                    backendMode: 'turbo',
+                    providerSessionId: 'remote-1',
+                    workspaceId: 'ws-9',
+                    agentExtra: {
+                        owner: 'acme',
+                        schemaId: 'acme.runtime',
+                        v: 1,
+                        runtimeHandle: {
+                            backendMode: 'turbo',
+                            providerSessionId: 'remote-1',
+                            workspaceId: 'ws-9',
+                        },
+                    },
+                },
+            },
+        });
+    });
+
+    it('builds External Sessions link extras from a candidate’s canonical descriptor', () => {
+        publishRuntimeDescriptorBlocks();
+
+        expect(resolveAgentUiBehavior(EXTERNAL_AGENT_ID, MACHINE_ID)
+            .externalSessions?.browse?.buildLinkEnsureRequestExtras?.({
+                agentId: EXTERNAL_AGENT_ID,
+                source: { kind: 'acmeWorkspace' } as never,
+                candidate: { details: { runtimeDescriptorV1: RUNTIME_DESCRIPTOR } },
+            })).toMatchObject({
+            acmeBackendMode: 'turbo',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: EXTERNAL_AGENT_ID,
+                agent: { backendMode: 'turbo', providerSessionId: 'remote-1' },
+            },
+        });
+    });
+
+    it('drives mode-based goal editability from the same declared descriptor', () => {
+        publishRuntimeDescriptorBlocks();
+
+        expect(supportsEditableSessionGoals({
+            agentId: EXTERNAL_AGENT_ID,
+            session: {
+                active: true,
+                metadata: { machineId: MACHINE_ID, runtimeDescriptorV1: RUNTIME_DESCRIPTOR },
+                agentState: { capabilities: { sessionGoalSetSupported: true } },
+            } as never,
+        })).toBe(true);
+
+        // The positive twin: a mode outside `activeModeValues` is not editable,
+        // so the read is a real decision rather than a constant.
+        expect(supportsEditableSessionGoals({
+            agentId: EXTERNAL_AGENT_ID,
+            session: {
+                active: true,
+                metadata: {
+                    machineId: MACHINE_ID,
+                    runtimeDescriptorV1: {
+                        ...RUNTIME_DESCRIPTOR,
+                        agent: { ...RUNTIME_DESCRIPTOR.agent, backendMode: 'classic' },
+                    },
+                },
+                agentState: { capabilities: { sessionGoalSetSupported: true } },
+            } as never,
+        })).toBe(false);
+    });
+
+    it('ignores another Agent’s runtime descriptor', () => {
+        publishRuntimeDescriptorBlocks();
+
+        expect(buildResumeSessionExtrasFromUiState({
+            agentId: EXTERNAL_AGENT_ID,
+            settings: makeSettings({}) as never,
+            session: {
+                metadata: {
+                    machineId: MACHINE_ID,
+                    runtimeDescriptorV1: { ...RUNTIME_DESCRIPTOR, agentId: 'other.agent' },
+                },
+            } as never,
+        })).toEqual({ acmeBackendMode: 'classic' });
     });
 });

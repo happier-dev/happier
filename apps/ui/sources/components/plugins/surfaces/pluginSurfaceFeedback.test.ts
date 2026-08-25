@@ -59,6 +59,8 @@ const {
     retirePresentationNotice,
 } = await import('@/components/sessions/presentation/presentationNotices');
 const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
+const { createPluginActionCurrentIntentHandler } = await import('./pluginSurfaceFeedback');
+const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
 
 const surfaceContext: PluginUiSurfaceContextV1 = {
     pluginId: 'acme.preview',
@@ -189,6 +191,63 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
         modalHarness.readConfig().props.onCancel();
         await expect(declined).resolves.toBe(false);
         adapter.dispose();
+    });
+
+    it('presents an Action confirmation through the plugin\'s admitted translation bundle', async () => {
+        // The declaration carries `{ key, fallback }`. Reading `.fallback`
+        // pinned every admitted plugin to its authored English wording, which
+        // the projected bundle is the only authority able to replace.
+        const requestCurrentIntent = createPluginActionCurrentIntentHandler({
+            requester: {
+                pluginId: 'acme.preview',
+                contributionId: 'publish',
+                generationId: 'generation-1',
+                invocationId: 'surface_1',
+            },
+            isCurrent: () => true,
+            pluginUiProjection: {
+                ...EMPTY_PLUGIN_UI_PROJECTION,
+                translationsByPluginId: {
+                    'acme.preview': {
+                        pluginId: 'acme.preview',
+                        bundles: {
+                            en: {
+                                'acme.publish.title': 'Publish this preview?',
+                                'acme.publish.body': 'It becomes visible to your team.',
+                            },
+                        },
+                    },
+                },
+            } as never,
+        });
+
+        const pending = requestCurrentIntent({
+            action: {
+                id: 'publish',
+                pluginId: 'acme.preview',
+                title: 'Publish',
+                scopes: ['session'],
+                surfaces: ['ui'],
+                execution: { target: 'client' },
+                dangerLevel: 'safe',
+                available: true,
+                confirmation: {
+                    title: { key: 'acme.publish.title', fallback: 'Publish?' },
+                    body: { key: 'acme.publish.body', fallback: 'Are you sure?' },
+                },
+            } as never,
+            fingerprint: 'publish-1',
+            surface: 'ui',
+            invocationSurface: 'ui',
+        });
+        await openedDialog();
+
+        expect(modalHarness.readConfig().chrome?.title).toBe('Publish this preview?');
+        expect(modalHarness.show.mock.calls[0]?.[0]).toMatchObject({
+            props: { description: 'It becomes visible to your team.' },
+        });
+        modalHarness.readConfig().props.onConfirm();
+        await expect(pending).resolves.toMatchObject({ status: 'approved' });
     });
 
     it('a declined confirmation prevents the effect', async () => {

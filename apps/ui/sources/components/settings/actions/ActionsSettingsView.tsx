@@ -9,7 +9,6 @@ import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemInfoNotice } from '@/components/ui/lists/ItemInfoNotice';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -142,12 +141,10 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
     const voiceEnabled = useFeatureEnabled('voice');
     const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
-    // Contributed actions are machine-local daemon declarations. This screen deliberately opts
-    // out of the administration controller's convenient sole-machine selection: no observed
-    // daemon must be presented as an account-wide action catalog without an explicit choice.
+    // Contributed actions are machine-local daemon declarations. The shared controller may
+    // initialize one verified online machine, but host actions remain account-wide.
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.actions,
-        { allowSoleCandidate: false },
     );
     const executionTarget = React.useMemo(() => {
         const selectedTarget = administrationTargetSelection.selectedTarget;
@@ -193,6 +190,8 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
     // configure each family (browser, simulator, plugins, local services, …) together. The per-row
     // enable toggle + per-action approval controls (detail view) are unchanged.
     const familySections = React.useMemo(() => groupActionSettingsEntriesByFamily(entries), [entries]);
+    const contributedMachineSelectionTitle = t('settingsActions.contributed.machineSelectionTitle');
+    const contributedMachineSelectionBody = t('settingsActions.contributed.machineSelectionBody');
 
     const commitSettings = React.useCallback((next: unknown) => {
         setRawSettings(normalizeActionsSettings(next));
@@ -254,14 +253,9 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
             <MachineAdministrationTargetSelector
                 selection={administrationTargetSelection}
                 testIDPrefix="settings.actions.administration.target"
+                groupTitle={contributedMachineSelectionTitle}
+                unselectedTitle={contributedMachineSelectionBody}
             />
-            {administrationTargetSelection.selectedTarget === null ? (
-                <ItemInfoNotice
-                    testID="settings-actions:contributed:machine-selection-required"
-                    title={t('settingsActions.contributed.machineSelectionTitle')}
-                    body={t('settingsActions.contributed.machineSelectionBody')}
-                />
-            ) : null}
             <SearchHeader
                 value={searchQuery}
                 onChangeText={setSearchQuery}

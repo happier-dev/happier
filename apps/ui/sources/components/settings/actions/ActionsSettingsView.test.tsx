@@ -180,7 +180,7 @@ describe('ActionsSettingsView', () => {
         expect(capture.items.every((item) => String(item.testID).startsWith('settings-actions:action:'))).toBe(true);
     });
 
-    it('requires an explicit machine and never mixes contributed actions from different daemon projections', async () => {
+    it('uses the canonical machine selection for contributed-action scoping and never mixes daemon projections', async () => {
         capture.reset();
         daemonProjection.byMachineId = {
             'machine-a': {
@@ -225,11 +225,11 @@ describe('ActionsSettingsView', () => {
         await renderScreen(<ActionsSettingsView />);
         expect(administrationSelectionCalls).toContainEqual({
             selectionKey: 'actions.settings',
-            options: { allowSoleCandidate: false },
+            options: undefined,
         });
         expect(capture.notices.some((notice) => (
             notice.testID === 'settings-actions:contributed:machine-selection-required'
-        ))).toBe(true);
+        ))).toBe(false);
         expect(capture.items.some((item) => item.testID === 'settings-actions:action:com.acme.a/actions/review/a')).toBe(false);
 
         capture.items = [];

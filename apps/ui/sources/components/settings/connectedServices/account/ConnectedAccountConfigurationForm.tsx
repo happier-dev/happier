@@ -78,15 +78,16 @@ function ConfigurationSelectField(props: Readonly<{
     field: PluginConfigurationSettingFieldV2;
     value: unknown;
     disabled: boolean;
+    localize?: (value: Parameters<typeof resolveProjectedLocalizedText>[0]) => string;
     onChange: (value: PluginJsonValueV2) => void;
 }>) {
     const [open, setOpen] = React.useState(false);
     const options = listConnectedAccountConfigurationOptions(props.field);
     const items = React.useMemo<DropdownMenuItem[]>(() => options.map((option) => ({
         id: JSON.stringify(option.value),
-        title: resolveProjectedLocalizedText(option.title),
-        subtitle: resolveProjectedLocalizedText(option.description) || undefined,
-    })), [options]);
+        title: resolveProjectedLocalizedText(option.title, props.localize),
+        subtitle: resolveProjectedLocalizedText(option.description, props.localize) || undefined,
+    })), [options, props.localize]);
     const selectedId = props.value === undefined ? null : JSON.stringify(props.value);
     return (
         <DropdownMenu
@@ -100,8 +101,8 @@ function ConfigurationSelectField(props: Readonly<{
             matchTriggerWidth
             connectToTrigger
             itemTrigger={{
-                title: resolveProjectedLocalizedText(props.field.title),
-                subtitle: resolveProjectedLocalizedText(props.field.description) || undefined,
+                title: resolveProjectedLocalizedText(props.field.title, props.localize),
+                subtitle: resolveProjectedLocalizedText(props.field.description, props.localize) || undefined,
             }}
             items={items}
             onSelect={(itemId) => {
@@ -116,6 +117,7 @@ function ConfigurationSelectField(props: Readonly<{
 
 export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAccountConfigurationForm(props: Readonly<{
     title: string;
+    localize?: (value: Parameters<typeof resolveProjectedLocalizedText>[0]) => string;
     fields: readonly PluginConfigurationSettingFieldV2[];
     values: Readonly<Record<string, PluginJsonValueV2>>;
     configuredSecretFieldIds: readonly string[];
@@ -165,8 +167,8 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
         >
             {fields.map((field) => {
                 const control = resolveConnectedAccountConfigurationControl(field);
-                const title = resolveProjectedLocalizedText(field.title);
-                const description = resolveProjectedLocalizedText(field.description);
+                const title = resolveProjectedLocalizedText(field.title, props.localize);
+                const description = resolveProjectedLocalizedText(field.description, props.localize);
                 const disabled = props.saving;
                 if (control === 'switch') {
                     const value = draft[field.id] === true;
@@ -195,7 +197,8 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
                     return (
                         <ConfigurationSelectField
                             key={field.id}
-                            field={field}
+                                field={field}
+                                localize={props.localize}
                             value={draft[field.id]}
                             disabled={disabled}
                             onChange={(value) => updateDraft(field.id, value)}
@@ -212,7 +215,7 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
                     return options.map((option) => {
                         const optionId = JSON.stringify(option.value);
                         const selected = selectedIds.has(optionId);
-                        const optionTitle = resolveProjectedLocalizedText(option.title);
+                        const optionTitle = resolveProjectedLocalizedText(option.title, props.localize);
                         const toggle = () => updateDraft(
                             field.id,
                             selected
@@ -223,7 +226,7 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
                             <Item
                                 key={`${field.id}:${optionId}`}
                                 title={optionTitle}
-                                subtitle={resolveProjectedLocalizedText(option.description) || undefined}
+                                subtitle={resolveProjectedLocalizedText(option.description, props.localize) || undefined}
                                 rightElement={(
                                     <Switch
                                         testID={`connected-account-configuration:${field.id}:${optionId}`}
@@ -257,7 +260,7 @@ export const ConnectedAccountConfigurationForm = React.memo(function ConnectedAc
                             multiline={multiline}
                             autoCapitalize="none"
                             autoCorrect={false}
-                            placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder)}
+                            placeholder={resolveProjectedLocalizedText(field.presentation?.placeholder, props.localize)}
                             placeholderTextColor={theme.colors.input.placeholder}
                             style={[
                                 styles.input,

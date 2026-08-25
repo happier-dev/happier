@@ -27,6 +27,9 @@ import {
     type CustomProviderPreset,
     updateCustomProviderDraftPreset,
 } from '@/providers/authoring/state';
+import {
+    useRetireProviderStateOnAccountChange,
+} from '@/providers/hooks/accountLifetimeRetirement';
 import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
 import { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
 import { useProviderConnections } from '@/providers/hooks/useProviderConnections';
@@ -119,6 +122,13 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const connectionId = React.useRef(`pc_${randomUUID()}`).current;
     const [draft, setDraft] = React.useState<CustomProviderDraft>(() => createCustomProviderDraft('openai-responses'));
     const [secretId, setSecretId] = React.useState<string | null>(null);
+    // A SavedSecret reference belongs to the Account Settings that hold it, so
+    // the selection is retired with the Account that made it. The rest of the
+    // draft describes a machine-local Provider connection and stays.
+    const discardAccountScopedSecretSelection = React.useCallback(() => {
+        setSecretId(null);
+    }, []);
+    useRetireProviderStateOnAccountChange(discardAccountScopedSecretSelection);
     const [presetOpen, setPresetOpen] = React.useState(false);
     const [credentialOpen, setCredentialOpen] = React.useState(false);
     const [probeState, setProbeState] = React.useState<'idle' | 'probing' | 'success' | 'notSupported'>('idle');
@@ -184,7 +194,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     // verified candidate after the first render — including it here would mark
     // a pristine form dirty and prompt for changes the user never made.
     const authoringStateKey = JSON.stringify({
-        draft, secretId, enableAfterSaving, machineId,
+        draft, secretId, enableAfterSaving,
         selectedCandidateId, contributionDisplayName,
         contributionEndpointValues,
     });

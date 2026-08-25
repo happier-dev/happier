@@ -158,11 +158,15 @@ export function isPluginMutationVisibleAfterRefresh(params: Readonly<{
     if (!params.before || !params.after || params.after.pluginId !== params.pluginId) {
         return false;
     }
-    if (params.method === 'update') {
-        return params.targetVersion !== null
-            && params.after.version === params.targetVersion
+    if (params.method === 'update' && params.targetVersion !== null) {
+        return params.after.version === params.targetVersion
             && params.after.version !== params.before.version;
     }
+    // An update the user never reviewed a candidate for has no caller-known
+    // target: the canonical update owner reads the installed record, enforces its
+    // policy and selects the newest compatible version, which is not the version
+    // any catalog listing happens to advertise. The installed record advancing is
+    // therefore the only honest evidence the change landed.
     return params.after.version !== params.before.version
         || params.after.admittedIntegrity !== params.before.admittedIntegrity
         || params.after.desiredGeneration !== params.before.desiredGeneration
