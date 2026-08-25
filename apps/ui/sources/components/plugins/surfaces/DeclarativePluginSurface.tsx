@@ -964,7 +964,7 @@ export function DeclarativePluginSurface(props: Readonly<{
                     id: `action:${action.qualifiedId}:${commandIndex}`,
                     label: action.title,
                     ...(action.icon ? {
-                        icon: <Icon name={resolvePluginUiIconName(action.icon, props.environment?.direction)} size={ICON_SIZE.sm} />,
+                        icon: <Icon name={resolvePluginUiIconName(action.icon, props.environment?.localization.direction)} size={ICON_SIZE.sm} />,
                     } : {}),
                     disabled,
                     busy,
@@ -984,7 +984,7 @@ export function DeclarativePluginSurface(props: Readonly<{
             return Object.freeze({
                 id: `destination:${destination.qualifiedId}:${commandIndex}`,
                 label: resolvePluginSurfaceDestinationLabel(placement, localizePluginText),
-                icon: <Icon name={resolvePluginSurfaceDestinationIcon(placement, props.environment?.direction)} size={ICON_SIZE.sm} />,
+                icon: <Icon name={resolvePluginSurfaceDestinationIcon(placement, props.environment?.localization.direction)} size={ICON_SIZE.sm} />,
                 disabled,
                 onPress: () => { void props.openSurface(destination.identity); },
             });
@@ -1312,7 +1312,7 @@ export function DeclarativePluginSurface(props: Readonly<{
         colors: theme.colors,
         presentationTheme,
         localize: localized,
-        direction: props.environment?.direction,
+        direction: props.environment?.localization.direction,
         contrast: props.contrast,
         minimumTouchTarget,
         resolveAction,

@@ -79,10 +79,13 @@ describe('resolvePluginSurfaceDestinations', () => {
         let locale: 'en' | 'fr' = 'fr';
         const localize: PluginLocalizedTextResolver = (_pluginId, value) => {
             if (typeof value === 'string') return value;
-            const key = value.key;
+            const candidate = value && typeof value === 'object' && !Array.isArray(value)
+                ? value as Readonly<Record<string, unknown>>
+                : null;
+            const key = typeof candidate?.key === 'string' ? candidate.key : '';
             if (key === 'review.dashboard.title') return locale === 'fr' ? 'Tableau de revue' : 'Review dashboard';
             if (key === 'review.dashboard.badge') return locale === 'fr' ? 'Aperçu' : 'Preview';
-            return value.fallback ?? '';
+            return typeof candidate?.fallback === 'string' ? candidate.fallback : '';
         };
         const input = {
             placements: [createPlacement()],

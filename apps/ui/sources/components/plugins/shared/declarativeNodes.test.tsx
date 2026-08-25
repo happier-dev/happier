@@ -75,7 +75,9 @@ describe('declarative item action structure', () => {
             renderCollectionList: () => null,
         });
 
-        const props = (rendered as React.ReactElement<Readonly<{ icon?: React.ReactElement }>>).props;
+        const props = (rendered as React.ReactElement<Readonly<{
+            icon?: React.ReactElement<Readonly<{ name?: string }>>;
+        }>>).props;
         expect(props.icon?.props.name).toBe('arrow-right');
     });
 });
