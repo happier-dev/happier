@@ -1,4 +1,5 @@
 import { normalizeUrlNoTrailingSlash } from '../net/url.mjs';
+import { resolveMobileReachableServerUrl } from '../server/mobile_api_url.mjs';
 
 function parseHttpUrl(raw, { label }) {
   const value = String(raw ?? '').trim();
@@ -20,6 +21,7 @@ export function resolveDevServerConnection({
   kv,
   env = process.env,
   resolvedLocalUrls,
+  requireMobileReachability = false,
 }) {
   const noServer = flags.has('--no-server');
   const serverUrlFromArg = parseHttpUrl(kv.get('--server-url') ?? '', { label: '--server-url' });
@@ -57,11 +59,17 @@ export function resolveDevServerConnection({
     };
   }
 
+  const localPublicServerUrl = requireMobileReachability
+    ? resolveMobileReachableServerUrl({
+        env,
+        serverUrl: resolvedLocalUrls.publicServerUrl,
+      })
+    : resolvedLocalUrls.publicServerUrl;
   return {
     startServer: true,
     internalServerUrl: resolvedLocalUrls.internalServerUrl,
-    publicServerUrl: advertisedServerUrl || resolvedLocalUrls.publicServerUrl,
-    uiApiUrl: advertisedServerUrl || resolvedLocalUrls.defaultPublicUrl,
+    publicServerUrl: advertisedServerUrl || localPublicServerUrl,
+    uiApiUrl: advertisedServerUrl || localPublicServerUrl,
     source: 'local',
   };
 }

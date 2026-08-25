@@ -101,12 +101,19 @@ export async function ensureDevTargetSyncProject(
     args: ['version'],
     env: mutagenRuntime.env,
   }), 'Mutagen preflight');
-  const desiredProject = renderMutagenProject({ sourceDir, targets, ownerId });
   const existingProject = await readFile(mutagenRuntime.projectFile, 'utf8').catch(() => null);
+  const borrowingIndependentProject = Boolean(
+    allowIndependentBorrow
+    && isMutagenProjectOwnedBy(existingProject, INDEPENDENT_DEV_TARGET_SYNC_OWNER),
+  );
+  const desiredProject = renderMutagenProject({
+    sourceDir,
+    targets,
+    ownerId: borrowingIndependentProject ? INDEPENDENT_DEV_TARGET_SYNC_OWNER : ownerId,
+  });
 
   if (
-    allowIndependentBorrow
-    && isMutagenProjectOwnedBy(existingProject, INDEPENDENT_DEV_TARGET_SYNC_OWNER)
+    borrowingIndependentProject
     && isEquivalentMutagenProject(existingProject, desiredProject)
   ) {
     requireSuccessful(await runProcess({
@@ -179,9 +186,10 @@ export async function ensureDevTargetSyncProject(
   return {
     ...mutagenRuntime,
     openSsh,
-    ownership: 'owned',
+    ownership: borrowingIndependentProject ? 'independent' : 'owned',
     projectCreated,
     async release(action) {
+      if (borrowingIndependentProject) return;
       const current = await readFile(mutagenRuntime.projectFile, 'utf8').catch(() => null);
       if (!isMutagenProjectOwnedBy(current, ownerId)) return;
       await runProcess({

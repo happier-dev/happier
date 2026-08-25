@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { chmod, cp, mkdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 
 import { pathExists } from '../fs/fs.mjs';
-import { run, spawnProc } from './proc.mjs';
+import { appendBoundedTail, formatFailureDiagnostic, run, spawnProc } from './proc.mjs';
 import { resolveCommandPath } from './commands.mjs';
 import { coerceHappyMonorepoRootFromPath, getDefaultAutostartPaths, getHappyStacksHomeDir } from '../paths/paths.mjs';
 import { resolveInstalledPath, resolveInstalledCliRoot } from '../paths/runtime.mjs';
@@ -954,22 +954,46 @@ export async function syncSharedDepsForSourceDev(repoRoot, {
     ...(lockPath ? { HAPPIER_SOURCE_DEV_SHARED_DEPS_LOCK_PATH: lockPath } : {}),
   };
   let resultPayload = null;
+  const diagnosticStreamMaxChars = 8_000;
+  let diagnosticOut = '';
+  let diagnosticErr = '';
+  let failureDiagnosticTruncated = false;
   const resultPrefix = '__HAPPIER_SOURCE_DEV_SYNC_RESULT__=';
   const child = spawnProcImpl('local', process.execPath, args, childEnv, {
     cwd: repoRoot,
     silent: Boolean(quiet),
     lineFilter: ({ stream, line }) => {
-      if (stream !== 'stdout' || !line.startsWith(resultPrefix)) return true;
-      resultPayload = JSON.parse(line.slice(resultPrefix.length));
-      return false;
+      if (stream === 'stdout' && line.startsWith(resultPrefix)) {
+        resultPayload = JSON.parse(line.slice(resultPrefix.length));
+        return false;
+      }
+      const chunk = `${line}\n`;
+      if (stream === 'stdout') {
+        failureDiagnosticTruncated ||= diagnosticOut.length + chunk.length > diagnosticStreamMaxChars;
+        diagnosticOut = appendBoundedTail(diagnosticOut, chunk, diagnosticStreamMaxChars);
+      } else if (stream === 'stderr') {
+        failureDiagnosticTruncated ||= diagnosticErr.length + chunk.length > diagnosticStreamMaxChars;
+        diagnosticErr = appendBoundedTail(diagnosticErr, chunk, diagnosticStreamMaxChars);
+      }
+      return true;
     },
   });
   const completion = await child.completion;
   if (completion.code !== 0) {
-    throw new Error(
+    const failureDiagnostic = formatFailureDiagnostic({
+      out: diagnosticOut,
+      err: diagnosticErr,
+      truncated: failureDiagnosticTruncated,
+      env: childEnv,
+    });
+    const error = new Error(
       `Current CLI source-dev dependency publication failed ` +
-      `(code=${completion.code ?? 'null'}, sig=${completion.signal ?? 'null'})`,
+      `(code=${completion.code ?? 'null'}, sig=${completion.signal ?? 'null'})${failureDiagnostic}`,
     );
+    error.code = 'EEXIT';
+    error.exitCode = completion.code;
+    error.signal = completion.signal;
+    throw error;
   }
   if (!resultPayload || typeof resultPayload !== 'object') {
     throw new Error('Current CLI source-dev dependency publication did not report its result');
@@ -1006,10 +1030,6 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
   await ensureDepsInstalled(cliDir, 'happier-cli', { quiet, env: envIn });
 
   const prepareWorkspaceOutputs = async () => {
-    const workspacePreparation = await ensureWorkspacePackagesBuiltForComponent(
-      cliDir,
-      { quiet, env: envIn },
-    );
     let sourceDevPreparation = null;
     if (repoRoot) {
       sourceDevPreparation = await syncSharedDepsForSourceDev(repoRoot, {
@@ -1018,7 +1038,7 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
         quiet,
       });
     }
-    return { workspacePreparation, sourceDevPreparation };
+    return { sourceDevPreparation };
   };
   const preparation = await prepareWorkspaceOutputs();
 
@@ -1144,8 +1164,7 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
         // fallthrough to build
       } else if (await isCliDistFreshForInputs(distEntrypoint, inputFreshness)) {
         if (
-          preparation.workspacePreparation.built.length === 0
-          && preparation.sourceDevPreparation?.synced !== true
+          preparation.sourceDevPreparation?.synced !== true
         ) {
           await discardReleaseBackup();
           return { built: false, current: true, reason: 'up_to_date' };

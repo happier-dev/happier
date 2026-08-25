@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "product": "Lima",
+  "versionBasis": "2.1.0 installed and inspected on 2026-08-25",
+  "capturedAt": "2026-08-25T00:00:00.000Z",
+  "capabilities": {
+    "backend": {
+      "status": "verified",
+      "finding": "VZ is the default for new native-architecture instances on macOS 13.5+, but the managed profile pins vmType=vz because VM type is creation-only.",
+      "sources": ["https://lima-vm.io/docs/config/vmtype/", "https://lima-vm.io/docs/config/vmtype/vz/"]
+    },
+    "architecture": {
+      "status": "verified",
+      "finding": "Native aarch64 Linux guests are supported; the managed profile pins aarch64 and does not use x86 guest emulation.",
+      "sources": ["https://lima-vm.io/docs/config/vmtype/", "https://github.com/lima-vm/lima/blob/master/templates/default.yaml"]
+    },
+    "mounts": {
+      "status": "verified",
+      "finding": "VZ uses VirtioFS for configured host mounts by default, and limactl create --mount-none removes all mounts. The hot repository must therefore live on the guest block filesystem.",
+      "sources": ["https://lima-vm.io/docs/config/mount/"]
+    },
+    "rosetta": {
+      "status": "verified",
+      "finding": "Rosetta and binfmt are optional VZ settings. Lima 2.0 added Rosetta AOT caching support, but the baseline disables Rosetta and uses native ARM64 tools.",
+      "sources": ["https://lima-vm.io/docs/config/multi-arch/", "https://github.com/lima-vm/lima/discussions/4312"]
+    },
+    "networking": {
+      "status": "verified",
+      "finding": "Default user-mode networking and static localhost port forwards are supported; vzNAT is optional and is not required by the initial profile.",
+      "sources": ["https://lima-vm.io/docs/config/network/", "https://github.com/lima-vm/lima/discussions/4312"]
+    },
+    "memoryReclamation": {
+      "status": "observed",
+      "finding": "A VZ balloon device exists in current source, but reliable return of a high-water allocation to general macOS use is not an established Lima contract. Stop remains the deterministic reclamation operation.",
+      "sources": ["https://github.com/lima-vm/lima/discussions/2720", "https://github.com/lima-vm/lima/issues/4220"]
+    },
+    "diskFormats": {
+      "status": "verified",
+      "finding": "The VZ primary disk supports raw and ASIF; raw is the built-in default. ASIF requires macOS 26+ and cannot be converted back to raw, so it remains an experiment.",
+      "sources": ["https://github.com/lima-vm/lima/blob/master/templates/default.yaml", "https://lima-vm.io/docs/config/disk/"]
+    },
+    "diskResize": {
+      "status": "verified",
+      "finding": "Primary disks can be expanded with limactl edit --disk; shrinking is not recommended and is rejected by the managed owner.",
+      "sources": ["https://lima-vm.io/docs/config/disk/"]
+    },
+    "lifecycle": {
+      "status": "verified",
+      "finding": "Create/start/stop/restart are supported. Suspend/resume is not a current CLI contract, and a 2026 VZ autostart issue shows broken-state recovery still needs explicit operational testing.",
+      "sources": ["https://lima-vm.io/docs/reference/limactl/", "https://github.com/lima-vm/lima/issues/5087"]
+    },
+    "ssh": {
+      "status": "verified",
+      "finding": "Each instance publishes an SSH config path and localhost port; Lima 2.x can use AF_VSOCK internally. Host SSH-agent forwarding is explicitly disabled in the managed profile.",
+      "sources": ["https://lima-vm.io/docs/usage/ssh/", "https://github.com/lima-vm/lima/discussions/4312"]
+    },
+    "processModel": {
+      "status": "observed",
+      "finding": "The inspected VZ instance uses a limactl hostagent plus Apple's Virtualization.VirtualMachine XPC process. Host RSS must include both rather than only the hostagent.",
+      "sources": ["https://lima-vm.io/docs/dev/internals/"]
+    },
+    "macos26": {
+      "status": "observed",
+      "finding": "macOS 26 enables ASIF but does not yet provide a proven Lima high-water memory-reclamation guarantee. Lifecycle, disk, and memory behavior require local measurement.",
+      "sources": ["https://github.com/lima-vm/lima/blob/master/templates/default.yaml", "https://github.com/lima-vm/lima/discussions/2720"]
+    },
+    "m5": {
+      "status": "unknown",
+      "finding": "No Lima M5-specific performance guarantee was found. Native ARM64/VZ behavior is expected to apply, but this machine's throughput, RSS, thermals, and lifecycle are benchmark questions.",
+      "sources": []
+    }
+  }
+}

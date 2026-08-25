@@ -175,6 +175,8 @@ if (envCapturePath) {
     HAPPIER_SQLITE_AUTO_MIGRATE: process.env.HAPPIER_SQLITE_AUTO_MIGRATE ?? null,
     HAPPIER_SQLITE_MIGRATIONS_DIR: process.env.HAPPIER_SQLITE_MIGRATIONS_DIR ?? null,
     HAPPIER_SERVER_LIGHT_DATA_DIR: process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? null,
+    HAPPIER_PUBLIC_SERVER_URL: process.env.HAPPIER_PUBLIC_SERVER_URL ?? null,
+    PUBLIC_URL: process.env.PUBLIC_URL ?? null,
   }, null, 2) + '\\n', 'utf8');
 }
 const server = createServer((req, res) => {

@@ -67,6 +67,46 @@ process.exit(0);
 `.trimStart();
 }
 
+function buildBudgetBoundDaemonStartCliScript({
+  cliHomeDir,
+  startDelayMs,
+  childPidPath,
+  outcomePath,
+}) {
+  const statePath = join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json');
+  return `
+import { writeFileSync } from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { spawnDaemonLikeProcess } from ${JSON.stringify(DAEMON_TEST_PROCESS_HELPER_PATH)};
+
+const args = process.argv.slice(2);
+if (args[0] !== 'daemon') process.exit(0);
+const sub = args[1] || '';
+if (sub === 'stop') process.exit(0);
+if (sub === 'status') process.exit(1);
+if (sub !== 'start') process.exit(0);
+
+const child = spawnDaemonLikeProcess({
+  cliHomeDir: ${JSON.stringify(cliHomeDir)},
+  statePaths: [${JSON.stringify(statePath)}],
+  internalServerUrl: String(process.env.HAPPIER_SERVER_URL || ''),
+  publicServerUrl: String(process.env.HAPPIER_WEBAPP_URL || ''),
+  startDelayMs: ${JSON.stringify(startDelayMs)},
+});
+writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid), 'utf-8');
+
+const waitMs = Number(process.env.HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS || '0');
+if (waitMs < ${JSON.stringify(startDelayMs)}) {
+  await delay(Math.max(waitMs, 1));
+  writeFileSync(${JSON.stringify(outcomePath)}, JSON.stringify({ outcome: 'failed', waitMs }), 'utf-8');
+  process.exit(1);
+}
+
+await delay(${JSON.stringify(startDelayMs)});
+writeFileSync(${JSON.stringify(outcomePath)}, JSON.stringify({ outcome: 'started', waitMs }), 'utf-8');
+`.trimStart();
+}
+
 function buildSynchronousDaemonStartCliScript({ cliHomeDir, startDelayMs }) {
   const statePath = join(cliHomeDir, 'servers', 'stack_dev__id_default', 'daemon.state.json');
   return `
@@ -2313,6 +2353,72 @@ test('startLocalDaemonWithAuth tolerates transient non-zero direct-executable st
       // ignore
     }
   } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth gives nested daemon start the stack-owned readiness budget', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-nested-start-budget-'));
+  const cliHomeDir = join(tmp, 'stack', 'cli');
+  const cliBin = join(tmp, 'bin', 'happier');
+  const cliCommandScript = join(tmp, 'cli-command.mjs');
+  const childPidPath = join(tmp, 'daemon.pid');
+  const outcomePath = join(tmp, 'nested-start-outcome.json');
+  let childPid = null;
+
+  try {
+    await mkdir(dirname(cliBin), { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+    await writeFile(cliBin, '#!/bin/sh\nexit 0\n', 'utf-8');
+    await chmod(cliBin, 0o755);
+    await writeFile(
+      cliCommandScript,
+      buildBudgetBoundDaemonStartCliScript({
+        cliHomeDir,
+        startDelayMs: 80,
+        childPidPath,
+        outcomePath,
+      }),
+      'utf-8',
+    );
+
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliCommand: process.execPath,
+      cliCommandArgs: [cliCommandScript],
+      cliHomeDir,
+      internalServerUrl: 'http://127.0.0.1:4301',
+      publicServerUrl: 'http://localhost:4301',
+      isShuttingDown: () => false,
+      forceRestart: true,
+      env: {
+        ...process.env,
+        HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS: '20',
+        HAPPIER_STACK_STACK: 'dev',
+        HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+        HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+        HAPPIER_STACK_CLI_BUILD: '1',
+        HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '1000',
+        HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+        HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+      },
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+
+    childPid = Number(await readFile(childPidPath, 'utf-8'));
+    const outcome = JSON.parse(await readFile(outcomePath, 'utf-8'));
+    assert.deepEqual(outcome, { outcome: 'started', waitMs: 1000 });
+  } finally {
+    if (Number.isFinite(childPid) && childPid > 1) {
+      try {
+        killDetachedProcessGroup(childPid, 'SIGKILL');
+      } catch {
+        // already stopped by the fixture cleanup
+      }
+    }
     await rm(tmp, { recursive: true, force: true });
   }
 });

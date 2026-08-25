@@ -403,6 +403,82 @@ test('real app and Prisma descriptor changes select migrations independently', a
   });
 });
 
+test('server preflight permits superseded activation only when no active server is available', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const preflightCalls = [];
+    const unavailableExecutor = createDevServerReloadExecutor(
+      executorOptions(serverDir, { serverProcRef: { current: null } }),
+      {
+        preflightDevServerRestartImpl: async () => preflightCalls.push('unavailable'),
+        logger: { log() {}, error() {} },
+      },
+    );
+    const activeExecutor = createDevServerReloadExecutor(
+      executorOptions(serverDir),
+      {
+        preflightDevServerRestartImpl: async () => preflightCalls.push('active'),
+        logger: { log() {}, error() {} },
+      },
+    );
+
+    assert.deepEqual(
+      await unavailableExecutor.build({ generation: 1, changedDescriptors: ['server:app'] }),
+      { ok: true, allowSupersededActivation: true },
+    );
+    assert.deepEqual(
+      await activeExecutor.build({ generation: 2, changedDescriptors: ['server:app'] }),
+      { ok: true },
+    );
+    assert.deepEqual(preflightCalls, ['unavailable', 'active']);
+  });
+});
+
+test('an unavailable proxy server activates its completed preflight after the source generation is superseded', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const exitedServer = { pid: 101, exitCode: 1, signalCode: null };
+    const replacement = { pid: 202, exitCode: null, signalCode: null };
+    const serverProcRef = { current: exitedServer };
+    const flips = [];
+    const executor = createDevServerReloadExecutor(
+      executorOptions(serverDir, {
+        serverProcRef,
+        children: [exitedServer],
+        proxyController: {
+          pid: process.pid,
+          async enterMaintenance() { return { targetHost: '127.0.0.1', targetPort: 6101 }; },
+          async flipUpstream({ targetPort }) { flips.push(targetPort); },
+          async drainConnections() {},
+        },
+      }),
+      {
+        preflightDevServerRestartImpl: async () => {},
+        waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+        pickNextFreeTcpPortImpl: async () => 5102,
+        pmSpawnScriptImpl: async () => replacement,
+        waitForServerReadyImpl: async () => {},
+        listListenPidsImpl: async (port) => Number(port) === 5102 ? [202] : [],
+        getProcessGroupIdImpl: async (pid) => Number(pid),
+        isPidAliveImpl: (pid) => Number(pid) !== 101,
+        logger: { log() {}, warn() {}, error() {} },
+      },
+    );
+
+    const buildResult = await executor.build({ generation: 1, changedDescriptors: ['server:app'] });
+    assert.equal(buildResult.allowSupersededActivation, true);
+
+    const result = await executor.restart({
+      generation: 1,
+      changedDescriptors: ['server:app'],
+      allowSupersededActivation: buildResult.allowSupersededActivation,
+      revalidateGeneration: async () => false,
+    });
+
+    assert.deepEqual(result, { restarted: true });
+    assert.equal(serverProcRef.current, replacement);
+    assert.deepEqual(flips, [5102]);
+  });
+});
+
 
 test('proxy exclusiveDb restart enters maintenance, swaps backend, flips upstream, and records runtime', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
@@ -1232,6 +1308,46 @@ test('exclusiveDb proxy restart drains maintenance target after kill failure wit
       ['flip', 5101],
       ['drain', { targetHost: '127.0.0.1', targetPort: 6101, graceMs: 2000 }],
     ]);
+  });
+});
+
+test('exclusiveDb proxy restart accepts a concurrent clean exit after ownership kill refusal', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const child = { pid: 101, exitCode: null, signalCode: null };
+    const serverProcRef = { current: child };
+    let killCalls = 0;
+    let oldAlive = true;
+    const proxy = {
+      async enterMaintenance() { return { targetHost: '127.0.0.1', targetPort: 6101 }; },
+      async flipUpstream() {},
+      async drainConnections() {},
+    };
+    const executor = createDevServerReloadExecutor(
+      executorOptions(serverDir, { serverProcRef, children: [child], proxyController: proxy }),
+      {
+        ensureSourceServerWorkspacePackagesBuiltImpl: async () => {},
+        preflightDevServerRestartImpl: async () => {},
+        killProcessGroupOwnedByStackImpl: async () => {
+          killCalls += 1;
+          child.exitCode = 1;
+          oldAlive = false;
+          return { killed: false, reason: 'process_instance_changed' };
+        },
+        waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+        pickNextFreeTcpPortImpl: async () => 5102,
+        pmSpawnScriptImpl: async () => ({ pid: 202, exitCode: null, signalCode: null }),
+        waitForServerReadyImpl: async () => {},
+        listListenPidsImpl: async (port) => Number(port) === 5101 ? [101] : [202],
+        getProcessGroupIdImpl: async (pid) => Number(pid),
+        isTcpPortFreeImpl: async () => true,
+        isPidAliveImpl: (pid) => Number(pid) !== 101 || oldAlive,
+        logger: { log() {}, error() {} },
+      },
+    );
+
+    await executor.restart({ generation: 2, changedDescriptors: ['server:app'] });
+    assert.equal(killCalls, 1);
+    assert.equal(serverProcRef.current?.pid, 202);
   });
 });
 

@@ -576,11 +576,17 @@ function formatSshForward(forward) {
   if (!/^[A-Za-z0-9.:[\]-]+$/.test(listenHost) || !/^[A-Za-z0-9.:[\]-]+$/.test(targetHost)) {
     throw new Error('[dev-targets] invalid SSH forward host');
   }
+  // OpenSSH treats `0.0.0.0` as IPv4-only, while `*` is its native dual-stack
+  // wildcard. LAN-exposed local forwards (notably remote Metro) must remain
+  // reachable when a device resolves this Mac through IPv6/Tailscale.
+  const effectiveListenHost = direction === 'local' && listenHost === '0.0.0.0'
+    ? '*'
+    : listenHost;
   const listenPort = requireServicePort(forward.listenPort, 'SSH forward listen port');
   const targetPort = requireServicePort(forward.targetPort, 'SSH forward target port');
   return {
     flag: direction === 'local' ? '-L' : '-R',
-    specification: `${listenHost}:${listenPort}:${targetHost}:${targetPort}`,
+    specification: `${effectiveListenHost}:${listenPort}:${targetHost}:${targetPort}`,
   };
 }
 

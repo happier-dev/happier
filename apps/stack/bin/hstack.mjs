@@ -12,6 +12,9 @@ import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../scripts/utils/pat
 import { resolveExplicitStackEnvFilePath, resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
 import { SANDBOX_PRESERVE_KEYS, scrubHappierStackEnv } from '../scripts/utils/env/scrub_env.mjs';
 import { resolveStackHappierPassthroughEntrypoint } from '../scripts/stack/stack_happier_passthrough_entrypoint.mjs';
+import { readExecutionHostProfile } from '../scripts/utils/execution_host/config.mjs';
+import { shouldDelegateToActiveExecutionHost } from '../scripts/utils/execution_host/controller.mjs';
+import { runDelegatedHstackCommand } from '../scripts/utils/execution_host/delegation.mjs';
 import {
   isBundledWorkspaceMetadataInvocation,
   refreshLocalBundledWorkspacePackages,
@@ -359,7 +362,7 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   // Dev-target configuration and SSH diagnostics use only Stack-local modules.
   // Keep them available while an unrelated CLI/workspace publication owns the
   // shared build lock (notably for inspecting or repairing a running target).
-  if (command === 'dev-targets') return true;
+  if (command === 'dev-targets' || command === 'host') return true;
 
   // The TUI must render before repository publication can block. Its long-lived
   // child delegates dependency admission to the server, daemon, and Expo owners,
@@ -502,6 +505,26 @@ async function main() {
   // component/worktree context even when the actual scripts run with cwd=cliRootDir.
   if (!(process.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim()) {
     process.env.HAPPIER_STACK_INVOKED_CWD = process.cwd();
+  }
+
+  const executionHostProfile = readExecutionHostProfile(process.env);
+  if (shouldDelegateToActiveExecutionHost({
+    profile: executionHostProfile,
+    argv,
+    platform: process.platform,
+    env: process.env,
+  })) {
+    const outcome = await runDelegatedHstackCommand({
+      profile: executionHostProfile,
+      argv,
+      cwd: process.cwd(),
+      env: process.env,
+    });
+    if (outcome.signal) {
+      process.kill(process.pid, outcome.signal);
+      return;
+    }
+    process.exit(outcome.exitCode ?? 1);
   }
 
   if (handleMissingExplicitStackEnvBeforePreflight(argv)) return;

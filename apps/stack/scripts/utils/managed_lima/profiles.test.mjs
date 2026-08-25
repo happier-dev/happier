@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  buildManagedLimaCreateArgs,
+  buildManagedLimaEditArgs,
+  resolveManagedLimaProfile,
+} from './profiles.mjs';
+
+test('managed Lima balanced profile is bounded, mount-free, ARM64 VZ, and containerd-free', () => {
+  const profile = resolveManagedLimaProfile('balanced');
+
+  assert.deepEqual(profile, {
+    schemaVersion: 1,
+    name: 'balanced',
+    vmType: 'vz',
+    arch: 'aarch64',
+    template: 'ubuntu-24.04',
+    diskImageFormat: 'raw',
+    cpus: 10,
+    memoryGiB: 24,
+    diskGiB: 200,
+    containerd: 'none',
+    mountNone: true,
+    rosetta: false,
+    portForwards: [
+      { guestStart: 13000, guestEnd: 13999, hostStart: 13000, hostEnd: 13999 },
+      { guestStart: 18000, guestEnd: 19099, hostStart: 18000, hostEnd: 19099 },
+    ],
+  });
+
+  assert.deepEqual(buildManagedLimaCreateArgs({ instance: 'happier-agent-primary', profile }), [
+    'create',
+    '--name', 'happier-agent-primary',
+    '--tty=false',
+    '--vm-type', 'vz',
+    '--arch', 'aarch64',
+    '--cpus', '10',
+    '--memory', '24',
+    '--disk', '200',
+    '--containerd', 'none',
+    '--mount-none',
+    '--set', '.vmOpts.vz.diskImageFormat = "raw"',
+    '--set', '.ssh.forwardAgent = false',
+    '--set', '.vmOpts.vz.rosetta.enabled = false | .vmOpts.vz.rosetta.binfmt = false',
+    '--set', '.portForwards = [{"guestPortRange":[13000,13999],"hostPortRange":[13000,13999],"static":true},{"guestPortRange":[18000,19099],"hostPortRange":[18000,19099],"static":true}]',
+    'template:ubuntu-24.04',
+  ]);
+});
+
+test('managed Lima edit args update only mutable retained-instance settings', () => {
+  assert.deepEqual(buildManagedLimaEditArgs({
+    instance: 'happier-agent-primary',
+    profile: resolveManagedLimaProfile('small'),
+  }), [
+    'edit',
+    '--tty=false',
+    '--cpus', '8',
+    '--memory', '16',
+    '--disk', '160',
+    '--mount-none',
+    '--set', '.ssh.forwardAgent = false',
+    '--set', '.vmOpts.vz.rosetta.enabled = false | .vmOpts.vz.rosetta.binfmt = false',
+    '--set', '.containerd.user = false | .containerd.system = false',
+    '--set', '.portForwards = [{"guestPortRange":[13000,13999],"hostPortRange":[13000,13999],"static":true},{"guestPortRange":[18000,19099],"hostPortRange":[18000,19099],"static":true}]',
+    'happier-agent-primary',
+  ]);
+});
+
+test('managed Lima profile rejects unknown profiles and unsafe instance names', () => {
+  assert.throws(() => resolveManagedLimaProfile('enormous'), /unknown managed Lima profile/);
+  assert.throws(
+    () => buildManagedLimaCreateArgs({ instance: '../escape', profile: resolveManagedLimaProfile('small') }),
+    /invalid managed Lima instance name/,
+  );
+});

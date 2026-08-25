@@ -199,7 +199,7 @@ function writeChildStdinBestEffort(child, input) {
 const DEFAULT_FAILURE_DIAGNOSTIC_MAX_CHARS = 16_000;
 const SECRET_ENV_KEY_PATTERN = /(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL)/i;
 
-function appendBoundedTail(current, chunk, maxChars) {
+export function appendBoundedTail(current, chunk, maxChars) {
   const next = `${current}${chunk.toString()}`;
   return next.length > maxChars ? next.slice(-maxChars) : next;
 }
@@ -221,7 +221,7 @@ function redactFailureDiagnostic(output, env) {
   return redacted.trim();
 }
 
-function formatFailureDiagnostic({ out, err, truncated, env }) {
+export function formatFailureDiagnostic({ out, err, truncated, env }) {
   const sections = [];
   const sanitizedOut = redactFailureDiagnostic(out, env);
   const sanitizedErr = redactFailureDiagnostic(err, env);

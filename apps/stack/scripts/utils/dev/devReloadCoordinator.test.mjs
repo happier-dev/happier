@@ -370,7 +370,7 @@ test('reload coordinator publishes planned, retry-scheduled, and build-blocked l
   ]);
 });
 
-test('a later daemon build failure terminalizes the server lifecycle already published as planned', async () => {
+test('a later daemon build failure does not block or terminalize the server refresh', async () => {
   const calls = [];
   const lifecycle = [];
   const shared = descriptor({ id: 'shared:protocol', target: 'shared' });
@@ -401,9 +401,11 @@ test('a later daemon build failure terminalizes the server lifecycle already pub
   shared.set('1');
   await onChange({ eventType: 'change', filename: 'types.ts' });
 
-  assert.deepEqual(lifecycle.map(({ phase }) => phase), ['planned', 'blocked']);
-  assert.equal(lifecycle[1].disposition.code, 'build_failed');
-  assert.equal(lifecycle[1].plan.generation, 1);
+  assert.deepEqual(lifecycle.map(({ phase }) => phase), ['planned']);
+  assert.deepEqual(
+    calls.filter((call) => typeof call === 'string' && /:(?:build|restart):/.test(call)),
+    ['server:build:1', 'server:restart:1', 'daemon:build:1'],
+  );
 });
 
 function startCoordinator({ descriptors, executors, calls, logger = { error() {} }, coordinatorBoundary = {} }) {
@@ -770,6 +772,51 @@ test('a retryable build rejection gets one bounded retry while ordinary build fa
   assert.equal(attempts, 3, 'an ordinary build failure must stay terminal for its source signature');
   assert.equal(scheduled.length, 1, 'an ordinary build failure must not schedule a retry');
   assert.deepEqual(lifecycle.map(({ phase }) => phase).slice(-2), ['planned', 'blocked']);
+});
+
+test('a terminal startup refresh failure consumes pathless baseline ambiguity instead of forcing every descriptor again', async () => {
+  const calls = [];
+  const transitions = [];
+  const server = descriptor({ id: 'server:app', target: 'server' });
+  const daemon = descriptor({ id: 'daemon:cli', target: 'daemon' });
+  let daemonAttempts = 0;
+  const onChange = startCoordinator({
+    descriptors: [server, daemon],
+    executors: [
+      executor('server', calls, {
+        emitTransitionEvent(event, details) {
+          transitions.push({ event, ...details });
+        },
+      }),
+      executor('daemon', calls, {
+        build() {
+          daemonAttempts += 1;
+          throw new Error('daemon source does not compile');
+        },
+      }),
+    ],
+    calls,
+  });
+
+  await onChange({
+    eventType: 'change',
+    filename: null,
+    signatureInitializedAtObservation: false,
+  });
+  assert.equal(daemonAttempts, 1);
+
+  server.set('1');
+  await onChange({ eventType: 'change', filename: 'server.ts' });
+
+  assert.equal(daemonAttempts, 1, 'unchanged failed daemon inputs must not be rebuilt for a server-only edit');
+  assert.deepEqual(transitions.map(({ changedDescriptors }) => changedDescriptors), [
+    ['server:app', 'daemon:cli'],
+    ['server:app'],
+  ]);
+  assert.deepEqual(
+    calls.filter((call) => typeof call === 'string' && /:(?:build|restart):/.test(call)),
+    ['server:build:1', 'server:restart:1', 'daemon:build:1', 'server:build:2', 'server:restart:2'],
+  );
 });
 
 test('the coordinator alone projects transient retry and exhausted terminal disposition', async () => {
@@ -1325,6 +1372,7 @@ test('a terminally published daemon build activates before a superseding watch g
         return undefined;
       },
       async restart(context) {
+        assert.equal(context.allowSupersededActivation, context.generation === 1);
         activations.push(context.generation);
       },
     })],
@@ -1337,7 +1385,7 @@ test('a terminally published daemon build activates before a superseding watch g
   assert.deepEqual(activations, [1, 2]);
 });
 
-test('terminal publication authority cannot bypass stale-generation fencing for the server target', async () => {
+test('an unavailable server may activate a successful superseded build before the latest generation', async () => {
   const calls = [];
   const server = descriptor({ id: 'server:app', target: 'server' });
   const activations = [];
@@ -1352,6 +1400,7 @@ test('terminal publication authority cannot bypass stale-generation fencing for 
         return undefined;
       },
       async restart(context) {
+        assert.equal(context.allowSupersededActivation, context.generation === 1);
         activations.push(context.generation);
       },
     })],
@@ -1361,7 +1410,7 @@ test('terminal publication authority cannot bypass stale-generation fencing for 
   server.set('1');
   await onChange({ eventType: 'change', filename: 'app.ts' });
 
-  assert.deepEqual(activations, [2]);
+  assert.deepEqual(activations, [1, 2]);
 });
 
 test('a named Prisma observation during the pre-activation sampling gap revokes the app-only generation', async () => {
@@ -1538,7 +1587,7 @@ test('a new signature cancels the old retry and starts a fresh bounded retry epi
   assert.equal(attempts, 2, 'a canceled timer must not replay an old signature episode');
 });
 
-test('shared edits build all targets before restarting server then daemon', async () => {
+test('shared edits refresh server and daemon independently in restart order', async () => {
   const calls = [];
   const shared = descriptor({ id: 'shared:protocol', target: 'shared' });
   const onChange = startCoordinator({
@@ -1552,8 +1601,8 @@ test('shared edits build all targets before restarting server then daemon', asyn
 
   assert.deepEqual(calls.slice(1), [
     'server:build:1',
-    'daemon:build:1',
     'server:restart:1',
+    'daemon:build:1',
     'daemon:restart:1',
   ]);
 });
@@ -1609,7 +1658,7 @@ test('failed build skips restarts and later changes can retry', async () => {
   assert.ok(errors.some((message) => message.includes('preflight failed')));
 });
 
-test('failed shared transaction stays dirty until all affected targets restart', async () => {
+test('a failed shared daemon refresh does not make a completed server refresh repeat', async () => {
   const calls = [];
   let daemonBuildAttempts = 0;
   const shared = descriptor({ id: 'shared:protocol', target: 'shared' });
@@ -1632,18 +1681,46 @@ test('failed shared transaction stays dirty until all affected targets restart',
 
   shared.set('1');
   await onChange({});
-  assert.deepEqual(calls.slice(1), ['server:build:1', 'daemon:build:1']);
+  assert.deepEqual(calls.slice(1), [
+    'server:build:1',
+    'server:restart:1',
+    'daemon:build:1',
+  ]);
 
   daemon.set('1');
   await onChange({});
   assert.deepEqual(calls.slice(1), [
     'server:build:1',
+    'server:restart:1',
     'daemon:build:1',
-    'server:build:2',
     'daemon:build:2',
-    'server:restart:2',
     'daemon:restart:2',
   ]);
+});
+
+test('a failed server refresh does not block an independent daemon refresh', async () => {
+  const calls = [];
+  const shared = descriptor({ id: 'shared:protocol', target: 'shared' });
+  const onChange = startCoordinator({
+    descriptors: [shared],
+    executors: [
+      executor('server', calls, {
+        build() {
+          throw new Error('server build failed');
+        },
+      }),
+      executor('daemon', calls),
+    ],
+    calls,
+  });
+
+  shared.set('1');
+  await onChange({ eventType: 'change', filename: 'types.ts' });
+
+  assert.deepEqual(
+    calls.filter((call) => typeof call === 'string' && /:(?:build|restart):/.test(call)),
+    ['server:build:1', 'daemon:build:1', 'daemon:restart:1'],
+  );
 });
 
 test('changes during a running cycle collapse into one trailing cycle', async () => {

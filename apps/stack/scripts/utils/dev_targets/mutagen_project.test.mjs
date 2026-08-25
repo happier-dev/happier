@@ -57,6 +57,7 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     '.tmp.*',
     '.backup.*',
     '.happier-plugin-ui-build-*',
+    'packages/brand/brand',
     '.project',
     '.happier',
     'coverage',
@@ -71,6 +72,7 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     'graphify-out',
     '/workspace',
     '.expo',
+    '.turbo',
     'target',
     '!packages/protocol/src/browser/target',
     '!packages/protocol/src/browser/target/**',
@@ -118,6 +120,20 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
   ]) {
     assert.ok(rendered.includes(`- "${ignored}"`));
   }
+
+  for (const replicaOwnedProjection of [
+    'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+    'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ts',
+    'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.web.ts',
+    'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ios.ts',
+    'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.android.ts',
+  ]) {
+    assert.ok(rendered.includes(`- "${replicaOwnedProjection}"`));
+  }
+  assert.ok(
+    !rendered.includes('- "apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts"'),
+    'serialized manifest facts must reach command-only targets through the source replica',
+  );
   assert.ok(
     rendered.indexOf('- "/.project/*"')
       < rendered.indexOf('- "!/.project/plans"'),
@@ -153,6 +169,30 @@ test('renderMutagenProject re-includes tracked source coverage without unignorin
       '- "!packages/triage-qa/src/coverage/**"',
     ],
     'the generic generated-coverage ignore must precede the tracked source exception',
+  );
+});
+
+test('renderMutagenProject re-includes tracked fixture target directories without unignoring build output', () => {
+  const rendered = renderMutagenProject({
+    sourceDir: '/Users/dev/happier',
+    targets,
+  });
+
+  assert.deepEqual(
+    rendered
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /target(?:\/\*\*)?"$/.test(line)),
+    [
+      '- "target"',
+      '- "!packages/protocol/src/browser/target"',
+      '- "!packages/protocol/src/browser/target/**"',
+      '- "!packages/plugin-sdk/fixtures/external-targeted-packages/target"',
+      '- "!packages/plugin-sdk/fixtures/external-targeted-packages/target/**"',
+      '- "!packages/tests/fixtures/plugin-platform/packed-targeted-contribution-projection/target"',
+      '- "!packages/tests/fixtures/plugin-platform/packed-targeted-contribution-projection/target/**"',
+    ],
+    'the Rust build-output ignore must not swallow tracked fixture directories named `target`',
   );
 });
 

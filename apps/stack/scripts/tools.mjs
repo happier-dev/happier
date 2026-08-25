@@ -18,6 +18,8 @@ const TOOL_SCRIPTS = {
   import: 'scripts/import.mjs',
   review: 'scripts/review.mjs',
   edison: 'scripts/edison.mjs',
+  bench: 'scripts/bench.mjs',
+  'managed-lima': 'scripts/managed_lima.mjs',
 };
 
 async function main() {
@@ -42,7 +44,7 @@ async function main() {
   if (wantsHelp(argv, { flags }) || !cmd || cmd === 'help') {
     printResult({
       json,
-      data: { commands: ['setup-pr', 'review-pr', 'import', 'review', 'edison'] },
+      data: { commands: ['setup-pr', 'review-pr', 'import', 'review', 'edison', 'bench', 'managed-lima'] },
       text: [
         '[tools] usage:',
         '  hstack tools setup-pr --repo=<pr-url|number> [--dev|--start] [--json] [-- ...]',
@@ -50,6 +52,8 @@ async function main() {
         '  hstack tools import [--json]',
         '  hstack tools review [ui|cli|server|all] [--json]',
         '  hstack tools edison [--stack=<name>] -- <edison args...>',
+        '  hstack tools bench run [--output-dir=PATH] [--label=NAME] [--warmup=0] [--repeat=5] [--json] -- COMMAND [ARG...]',
+        '  hstack tools managed-lima setup|status|doctor|start|stop|shell|ssh-config --instance=NAME [--profile=balanced] [--json]',
       ].join('\n'),
     });
     return;

@@ -368,6 +368,10 @@ test('run lifecycle owner admits an early stop once and preserves the daemon', {
     const state = await readStackRuntimeStateFile(runtimeStatePath).catch(() => null);
     return state?.stopRequest?.preserveDaemon === true;
   }, { label: 'run stop boundary to publish preserveDaemon' });
+  await waitFor(
+    () => stdout.includes('[local] shutting down'),
+    { label: 'run owner to begin canonical shutdown' },
+  );
   owner.kill('SIGTERM');
   const [stopResult, exit] = await Promise.all([stopPromise, ownerExit]);
 

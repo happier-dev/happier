@@ -338,7 +338,7 @@ test('recoverable conflict repair deletes only the exact managed replica root af
   });
   assert.equal(calls[1].options.syncAlreadyVerified, true);
   assert.equal(calls[1].options.dependencyAdmission, 'skip');
-  assert.deepEqual(calls[1].options.commandArgs.slice(-7), [
+  assert.deepEqual(calls[1].options.commandArgs.slice(-8), [
     'hstack-sync-repair',
     '/remote/repo',
     'packages/plugins/retired-plugin',
@@ -346,9 +346,11 @@ test('recoverable conflict repair deletes only the exact managed replica root af
     'dist',
     '.happier',
     '.tsbuildinfo',
+    '.turbo',
   ]);
   assert.match(calls[1].options.commandArgs[2], /rm -rf -- "\$candidate"/);
   assert.match(calls[1].options.commandArgs[2], /"\$candidate\/\$marker"/);
+  assert.match(calls[1].options.commandArgs[2], /"\$candidate_name" = "\$marker"/);
   assert.deepEqual(calls.slice(2).map((call) => call.options.args.slice(0, 2)), [
     ['sync', 'reset'],
     ['sync', 'flush'],

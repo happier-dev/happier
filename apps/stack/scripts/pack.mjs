@@ -1222,7 +1222,15 @@ function normalizeExpectedPeerDependencies(value) {
   for (const [name, version] of Object.entries(value)) {
     const peerName = normalizePublicationPackageName(name);
     const peerVersion = String(version ?? '').trim();
-    if (!peerVersion || peerVersion !== version || peerVersion.length > 128 || /\s/u.test(peerVersion)) {
+    // An ordinary npm range can be a space-separated comparator set such as
+    // `>=0.0.0 <1.0.0`. The bound is a printable single-line token, not the
+    // absence of whitespace: the trim equality above already rejects padding.
+    if (
+      !peerVersion
+      || peerVersion !== version
+      || peerVersion.length > 128
+      || /[^\u0020-\u007E]/u.test(peerVersion)
+    ) {
       throw new Error(`[pack] publication peer dependency ${peerName} must have a bounded version range`);
     }
     peers[peerName] = peerVersion;

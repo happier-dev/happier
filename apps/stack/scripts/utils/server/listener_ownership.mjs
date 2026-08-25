@@ -316,23 +316,16 @@ export async function resolveSpawnedProcessGroupListenPid(
     if (processGroupListenerPid) return processGroupListenerPid;
   }
 
+  // Inconclusive evidence is not evidence of foreign ownership. Discovery that timed out, failed, is
+  // unsupported, saw no listener at all, or could not read a process group means only that we learned
+  // nothing — so this proof returns `null` (unproven) and never asks a caller holding an
+  // already-ready server to destroy it over an unfinished diagnostic. Only a listener that is
+  // *visibly* outside the spawned process group disproves ownership, and that still throws.
   const listenResult = await scope.observe(serverPort, {}, { requireListener: true });
-  if (listenResult.status !== 'ok') {
-    const error = new Error(
-      `[local] server readiness ownership could not be proven on port ${serverPort}: ` +
-        `${listenResult.reason ?? listenResult.status}`,
-    );
-    error.code = 'ELISTENERDISCOVERYINCONCLUSIVE';
-    error.observation = listenResult;
-    throw error;
-  }
+  if (listenResult.status !== 'ok') return null;
 
   const listenPids = listenResult.pids;
-  if (!listenPids.length) {
-    throw new Error(
-      `[local] server readiness ownership could not be proven on port ${serverPort}: no listener PID was discovered`,
-    );
-  }
+  if (!listenPids.length) return null;
 
   for (const listenPid of listenPids) {
     if (Number(listenPid) === rootPid) continue;
@@ -341,18 +334,14 @@ export async function resolveSpawnedProcessGroupListenPid(
       rootPgid = await getProcessGroupIdImpl(spawnedPid, {
         timeoutMs: Math.max(1, scope.remainingMs()),
       }).catch(() => null);
-      if (!rootPgid) {
-        throw new Error(
-          `[local] server readiness ownership could not be proven on port ${serverPort}: ` +
-            `process group unavailable for pid=${spawnedPid}, listeners=${listenPids.join(', ')}`,
-        );
-      }
+      if (!rootPgid) return null;
     }
     // eslint-disable-next-line no-await-in-loop
     const listenPgid = await getProcessGroupIdImpl(listenPid, {
       timeoutMs: Math.max(1, scope.remainingMs()),
     }).catch(() => null);
-    if (!listenPgid || listenPgid !== rootPgid) {
+    if (!listenPgid) return null;
+    if (listenPgid !== rootPgid) {
       throw new Error(
         `[local] server readiness was answered by another process on port ${serverPort}; ` +
           `spawned pid=${spawnedPid}, listeners=${listenPids.join(', ')}`,

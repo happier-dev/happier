@@ -54,6 +54,41 @@ test('source-dev shared dependency publication runs outside the Stack owner proc
   assert.equal(invocation?.options.cwd, root);
 });
 
+test('source-dev shared dependency publication preserves bounded child failure evidence', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-source-dev-sync-failure-'));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+
+  const cliDir = join(root, 'apps', 'cli');
+  const scriptsDir = join(cliDir, 'scripts');
+  await mkdir(scriptsDir, { recursive: true });
+  await writeFile(
+    join(scriptsDir, 'buildSharedDeps.mjs'),
+    'export async function syncSharedDepsForSourceDev() {}\n',
+  );
+  await writeFile(join(scriptsDir, 'syncSharedDepsForDev.mjs'), '// canonical child entrypoint\n');
+
+  await assert.rejects(
+    () => syncSharedDepsForSourceDev(root, {
+      cliDir,
+      quiet: true,
+      spawnProcImpl: (_label, _command, _args, _env, options) => {
+        options.lineFilter({
+          stream: 'stderr',
+          line: '[cli-build-inputs] runtime inputs changed while this build was running; refusing to finalize a mixed CLI closure',
+        });
+        return { completion: Promise.resolve({ code: 1, signal: null }) };
+      },
+    }),
+    (error) => (
+      error?.code === 'EEXIT'
+      && error?.exitCode === 1
+      && error?.signal === null
+      && error.message.includes('[stderr]')
+      && error.message.includes('[cli-build-inputs] runtime inputs changed while this build was running')
+    ),
+  );
+});
+
 function applyEnv(t, entries) {
   for (const [key, value] of Object.entries(entries)) {
     const previous = process.env[key];
@@ -69,6 +104,7 @@ function applyEnv(t, entries) {
 async function writeSharedWorkspace(root, workspaceName, dependencies = {}) {
   const workspaceDir = join(root, 'packages', workspaceName);
   await mkdir(join(workspaceDir, 'src'), { recursive: true });
+  await mkdir(join(workspaceDir, 'scripts'), { recursive: true });
   await writeFile(join(workspaceDir, 'src', 'index.ts'), `export const ${workspaceName.replaceAll('-', '_')} = true;\n`);
   await writeFile(join(workspaceDir, 'tsconfig.json'), '{}\n');
   await writeFile(join(workspaceDir, 'package.json'), JSON.stringify({
@@ -78,6 +114,19 @@ async function writeSharedWorkspace(root, workspaceName, dependencies = {}) {
     dependencies,
     scripts: { build: 'node scripts/build.mjs' },
   }));
+  await writeFile(join(workspaceDir, 'scripts', 'build.mjs'), [
+    "import { appendFile, mkdir, writeFile } from 'node:fs/promises';",
+    "import { existsSync } from 'node:fs';",
+    "import { join, resolve } from 'node:path';",
+    `const workspaceName = ${JSON.stringify(workspaceName)};`,
+    "const repoRoot = process.env.FIXTURE_ROOT;",
+    "const lockState = existsSync(join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock')) ? 'present' : 'absent';",
+    "await appendFile(process.env.EVENTS_PATH, `shared:${workspaceName}\\nshared-lock:${workspaceName}:${lockState}\\n`);",
+    "const outputDir = resolve(process.cwd(), process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR || 'dist');",
+    "await mkdir(outputDir, { recursive: true });",
+    "await writeFile(join(outputDir, 'index.js'), 'export const built = true;\\n');",
+    '',
+  ].join('\n'));
 }
 
 async function writeUsableCliDist(cliDir) {

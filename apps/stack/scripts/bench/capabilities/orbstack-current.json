@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "product": "OrbStack",
+  "versionBasis": "current public documentation and issue tracker inspected on 2026-08-25; no local installation assumed",
+  "capturedAt": "2026-08-25T00:00:00.000Z",
+  "capabilities": {
+    "backend": {
+      "status": "claimed",
+      "finding": "OrbStack documents one lightweight Linux VM with a shared kernel and purpose-built services. Public documentation does not expose enough hypervisor detail to treat its internals as equivalent to Lima VZ.",
+      "sources": ["https://docs.orbstack.dev/architecture"]
+    },
+    "machineIsolation": {
+      "status": "verified",
+      "finding": "OrbStack machines share one kernel and are not independent VMs. Trusted machines integrate with macOS; isolated machines are available but are not a substitute for a full VM against actively malicious code.",
+      "sources": ["https://docs.orbstack.dev/architecture", "https://docs.orbstack.dev/machines/isolated"]
+    },
+    "filesystem": {
+      "status": "claimed",
+      "finding": "Mac sharing builds on VirtioFS with proprietary dynamic caching. Linux-machine root filesystem/backing details are not sufficiently documented to assume ext4 or the same behavior as a dedicated Lima raw disk.",
+      "sources": ["https://docs.orbstack.dev/architecture", "https://docs.orbstack.dev/machines/file-sharing"]
+    },
+    "memoryReclamation": {
+      "status": "claimed",
+      "finding": "OrbStack claims fully dynamic allocation and automatic return of unused memory to macOS. An issue report describes retained memory until app restart, so this must be measured under the Happier high-water workload.",
+      "sources": ["https://docs.orbstack.dev/efficiency", "https://github.com/orbstack/orbstack/issues/1338"]
+    },
+    "disk": {
+      "status": "claimed",
+      "finding": "OrbStack claims dynamic disk growth and shrinkage. A 2025 issue reports failure to reclaim host disk space, so disk behavior remains empirical for this decision.",
+      "sources": ["https://docs.orbstack.dev/efficiency", "https://github.com/orbstack/orbstack/issues/2030"]
+    },
+    "networking": {
+      "status": "verified",
+      "finding": "OrbStack provides a custom NAT/DNS/bridge stack and event-based localhost forwarding. This polish is useful but not required for headless workers.",
+      "sources": ["https://docs.orbstack.dev/architecture"]
+    },
+    "rosetta": {
+      "status": "verified",
+      "finding": "Rosetta-backed x86 userspace execution is supported on Apple Silicon.",
+      "sources": ["https://docs.orbstack.dev/architecture"]
+    },
+    "scheduling": {
+      "status": "claimed",
+      "finding": "Global CPU limits are exposed, while proprietary scheduling and per-machine resource mechanics are not auditable from public source.",
+      "sources": ["https://docs.orbstack.dev/efficiency"]
+    },
+    "limitations": {
+      "status": "observed",
+      "finding": "The public tracker includes disk-reclamation, retained-memory, network-bridge CPU, and macOS 26 crash reports. They are reports, not universal behavior, and define benchmark probes rather than rejection by anecdote.",
+      "sources": ["https://github.com/orbstack/orbstack/issues/2030", "https://github.com/orbstack/orbstack/issues/1338", "https://github.com/orbstack/orbstack/issues/2461", "https://github.com/orbstack/orbstack/issues/2493"]
+    },
+    "macos26": {
+      "status": "observed",
+      "finding": "A public report describes an OrbStack 2.1.3 build workload crash on macOS 26.5. This is a targeted stability probe, not proof of general incompatibility.",
+      "sources": ["https://github.com/orbstack/orbstack/issues/2493"]
+    },
+    "m5": {
+      "status": "observed",
+      "finding": "A public M5/macOS 26 report exists for a 2.2.1 container-rootfs regression, but no M5 Happier-style agent benchmark or efficiency guarantee was found.",
+      "sources": ["https://github.com/orbstack/orbstack/issues/2605"]
+    }
+  }
+}

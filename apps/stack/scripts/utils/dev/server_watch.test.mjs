@@ -12,6 +12,7 @@ import {
   startDevServer,
   stopStackOwnedServerForRestart,
 } from './server.mjs';
+import { resolveSpawnedProcessGroupListenPid } from '../server/listener_ownership.mjs';
 
 test('server restart preflight delegates runtime validation to the package-manager owner', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
@@ -507,6 +508,80 @@ test('startDevServer boots an admitted prior runtime before source preparation a
   });
 });
 
+test('startDevServer tries existing source outputs before making freshness a recovery gate', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const calls = [];
+    const children = [];
+    const priorChild = { pid: 2001, exitCode: 1 };
+    const sourceChild = { pid: 2002, exitCode: null, kill() {} };
+    const runtimeServerDir = join(serverDir, 'prior-runtime', 'server');
+    let readyCount = 0;
+
+    const result = await startDevServer(
+      {
+        serverComponentName: 'happier-server-light',
+        serverDir,
+        autostart: { stackName: 'start-test', baseDir: serverDir },
+        baseEnv: {},
+        serverPort: 34567,
+        internalServerUrl: 'http://127.0.0.1:34567',
+        publicServerUrl: 'http://localhost:34567',
+        envPath: join(serverDir, 'env'),
+        stackMode: true,
+        runtimeStatePath: join(serverDir, 'stack.runtime.json'),
+        serverAlreadyRunning: false,
+        restart: false,
+        admitPriorBuildsImmediately: true,
+        priorRuntimeServerLaunchSpec: {
+          source: 'runtime',
+          serverDir: runtimeServerDir,
+          command: join(runtimeServerDir, 'happier-server'),
+          args: [],
+        },
+        children,
+        quiet: true,
+      },
+      {
+        ensureDepsInstalledImpl: async (_dir, _label, options) => {
+          calls.push(options.refreshExisting === false ? 'deps:prior' : 'deps:fresh');
+        },
+        ensureSourceServerWorkspacePackagesBuiltImpl: async ({ admitPriorOutputsImmediately }) => {
+          calls.push(admitPriorOutputsImmediately ? 'workspace:prior' : 'workspace:fresh');
+        },
+        spawnPriorRuntimeServerImpl: async () => {
+          calls.push('spawn:runtime');
+          return priorChild;
+        },
+        pmSpawnScriptImpl: async () => {
+          calls.push('spawn:source');
+          return sourceChild;
+        },
+        waitForServerReadyImpl: async () => {
+          readyCount += 1;
+          calls.push(`ready:${readyCount}`);
+          if (readyCount === 1) throw new Error('prior runtime failed after restart');
+        },
+        assertServerPortOwnedBySpawnedProcessGroupImpl: async () => 3002,
+        recordStackRuntimeServerActivationImpl: async () => calls.push('record'),
+        killProcessGroupOwnedByStackImpl: async () => ({ killed: false, reason: 'already-exited' }),
+      },
+    );
+
+    assert.equal(result.serverProc, sourceChild);
+    assert.equal(result.bootstrapSource, 'source');
+    assert.deepEqual(children, [sourceChild]);
+    assert.deepEqual(calls, [
+      'spawn:runtime',
+      'ready:1',
+      'deps:prior',
+      'workspace:prior',
+      'spawn:source',
+      'ready:2',
+      'record',
+    ]);
+  });
+});
+
 test('startDevServer refreshes once and retries when an admitted prior generation cannot boot', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
     const calls = [];
@@ -964,4 +1039,76 @@ test('successful provisional ownership cleanup consumes canonical server grace w
     },
   }]);
   assert.deepEqual(children, []);
+});
+
+test('startDevServer keeps a ready server when listener-ownership discovery is inconclusive', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const child = { pid: 2001, exitCode: null, kill() {} };
+    const killed = [];
+    const spawns = [];
+    let recorded = null;
+
+    const result = await startDevServer(
+      {
+        serverComponentName: 'happier-server',
+        serverDir,
+        autostart: { stackName: 'start-test', baseDir: serverDir },
+        baseEnv: { HAPPIER_STACK_MANAGED_INFRA: '0', HAPPIER_STACK_PRISMA_MIGRATE: '0' },
+        serverPort: 34567,
+        internalServerUrl: 'http://127.0.0.1:34567',
+        publicServerUrl: 'http://localhost:34567',
+        envPath: join(serverDir, 'env'),
+        stackMode: true,
+        runtimeStatePath: join(serverDir, 'stack.runtime.json'),
+        serverAlreadyRunning: false,
+        restart: false,
+        admitPriorBuildsImmediately: true,
+        children: [],
+        quiet: true,
+      },
+      {
+        ensureDepsInstalledImpl: async () => {},
+        ensureSourceServerWorkspacePackagesBuiltImpl: async () => {},
+        pmSpawnScriptImpl: async () => {
+          spawns.push('server');
+          return child;
+        },
+        waitForServerReadyImpl: async () => {},
+        // Only the OS listener-discovery boundary is stubbed; the ownership decision below it is real.
+        assertServerPortOwnedBySpawnedProcessGroupImpl: async ({ serverPort, spawnedPid }) => (
+          await resolveSpawnedProcessGroupListenPid(
+            { port: serverPort, spawnedPid },
+            {
+              listenerOwnershipTimeoutMs: 60,
+              listenerOwnershipRetryDelayMs: 0,
+              listListenPidsWithStatusImpl: async () => ({
+                status: 'timeout',
+                supported: true,
+                pids: [],
+                reason: 'listener-discovery-timeout',
+              }),
+              getProcessGroupIdImpl: async () => 4242,
+            },
+          )
+        ),
+        killProcessGroupOwnedByStackImpl: async (pid) => {
+          killed.push(pid);
+          return { killed: true };
+        },
+        killSpawnedChildImpl: async (pid) => {
+          killed.push(pid);
+          return { killed: true };
+        },
+        recordStackRuntimeServerActivationImpl: async (_statePath, activation) => {
+          recorded = activation;
+        },
+      },
+    );
+
+    assert.equal(result.serverProc, child, 'a server that already passed readiness must survive an inconclusive probe');
+    assert.deepEqual(killed, [], 'an inconclusive diagnostic must not terminate the server it failed to describe');
+    assert.deepEqual(spawns, ['server'], 'the ready server must not be discarded and respawned');
+    assert.equal(recorded?.listenerPid, null, 'an unproven listener PID must never be recorded as a kill target');
+    assert.equal(recorded?.wrapperPid, child.pid, 'the PID we actually spawned stays recorded so stop/restart remain complete');
+  });
 });

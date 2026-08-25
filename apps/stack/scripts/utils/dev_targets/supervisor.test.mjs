@@ -1290,8 +1290,8 @@ test('remote Expo ownership does not launch a competing local workspace publicat
     );
     assert.equal(worker?.env?.HAPPIER_STACK_LOG_TEE_TIMESTAMPS, '1');
     assert.ok(
-      tunnel.args.some((arg) => /^0\.0\.0\.0:18081:localhost:\d+$/.test(arg)),
-      'the tunnel must resolve the remote localhost name so IPv4 and IPv6 Metro listeners are reachable',
+      tunnel.args.some((arg) => /^\*:18081:localhost:\d+$/.test(arg)),
+      'the tunnel must listen on both IPv4 and IPv6 while resolving remote localhost for Metro',
     );
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile, readdir, readlink } from 'node:fs/promises';
+import { lstat, readFile, readdir, readlink, realpath, unlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { pathExists } from '../fs/fs.mjs';
@@ -122,6 +122,32 @@ function snapshotsMatch(before, after) {
   });
 }
 
+async function inspectSelfReferentialNodeModulesLink(installDir) {
+  const nodeModules = join(installDir, 'node_modules');
+  const candidatePath = join(nodeModules, 'node_modules');
+  try {
+    const stats = await lstat(candidatePath);
+    if (!stats.isSymbolicLink()) return null;
+    const [nodeModulesRealPath, candidateRealPath] = await Promise.all([
+      realpath(nodeModules),
+      realpath(candidatePath),
+    ]);
+    return nodeModulesRealPath === candidateRealPath ? candidatePath : null;
+  } catch {
+    return null;
+  }
+}
+
+async function repairSelfReferentialNodeModulesLink(installDir) {
+  const candidatePath = await inspectSelfReferentialNodeModulesLink(installDir);
+  if (!candidatePath) return false;
+  // Remove only the exact self-referential link. `unlink` never traverses its
+  // target, so the admitted dependency tree and every package below it remain
+  // untouched.
+  await unlink(candidatePath);
+  return true;
+}
+
 export async function inspectDependencyRefresh({ installDir, componentDir = installDir }) {
   const resolvedInstallDir = resolve(installDir);
   const nodeModules = join(installDir, 'node_modules');
@@ -133,19 +159,32 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
   const markerPath = join(nodeModules, REFRESH_MARKER);
   const markerState = await readJsonIfExists(markerPath).catch(() => null);
   const nodeModulesPresent = await pathExists(nodeModules);
+  const selfReferentialNodeModulesLinkPath = nodeModulesPresent
+    ? await inspectSelfReferentialNodeModulesLink(installDir)
+    : null;
   if (
     markerState?.version === REFRESH_STATE_VERSION
     && markerState.installDir === resolvedInstallDir
     && Array.isArray(markerState.inputs)
   ) {
     return {
-      required: !nodeModulesPresent || markerState.superseded === true || !snapshotsMatch(markerState.inputs, inputSnapshot),
+      required: !nodeModulesPresent
+        || selfReferentialNodeModulesLinkPath !== null
+        || markerState.superseded === true
+        || !snapshotsMatch(markerState.inputs, inputSnapshot),
       inputPaths,
       inputSnapshot,
       markerPath,
+      selfReferentialNodeModulesLinkPath,
     };
   }
-  return { required: true, inputPaths, inputSnapshot, markerPath };
+  return {
+    required: true,
+    inputPaths,
+    inputSnapshot,
+    markerPath,
+    selfReferentialNodeModulesLinkPath,
+  };
 }
 
 export async function withDependencyRefresh({
@@ -165,8 +204,18 @@ export async function withDependencyRefresh({
     const afterDependencyLock = await inspectDependencyRefresh({ installDir, componentDir });
     if (!afterDependencyLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
     const mutate = async () => {
-      const beforeMutation = await inspectDependencyRefresh({ installDir, componentDir });
+      let beforeMutation = await inspectDependencyRefresh({ installDir, componentDir });
       let result = { refreshed: false, reason: 'up-to-date' };
+      if (beforeMutation.selfReferentialNodeModulesLinkPath !== null) {
+        const repaired = await repairSelfReferentialNodeModulesLink(installDir);
+        if (repaired) {
+          beforeMutation = await inspectDependencyRefresh({ installDir, componentDir });
+          result = {
+            refreshed: false,
+            reason: 'repaired-self-referential-node-modules-link',
+          };
+        }
+      }
       if (beforeMutation.required) {
         await refresh({});
         const refreshedInputPaths = await collectDependencyInputPaths({ installDir, componentDir });

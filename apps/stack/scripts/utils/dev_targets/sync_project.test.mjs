@@ -120,6 +120,45 @@ test('Stack borrows an equivalent independent project without changing its lifec
   assert.deepEqual(calls.map((call) => call.args[1] ?? call.args[0]), ['version', 'list', 'list']);
 });
 
+test('Stack refreshes a changed independent project without taking lifecycle ownership', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-refresh-independent-'));
+  const projectFile = join(root, 'mutagen', 'mutagen.yml');
+  await mkdir(join(root, 'mutagen'), { recursive: true });
+  await writeFile(projectFile, renderMutagenProject({
+    sourceDir: '/source/happier',
+    targets: [target],
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+  }));
+  const calls = [];
+  const refreshedTarget = { ...target, repoDir: '/remote/happier-refreshed' };
+
+  const result = await ensureDevTargetSyncProject({
+    stackBaseDir: root,
+    sourceDir: '/source/happier',
+    targets: [refreshedTarget],
+    ownerId: 123,
+    allowIndependentBorrow: true,
+    env: {},
+  }, {
+    runProcess: async ({ command, args }) => {
+      calls.push({ command, args });
+      return { code: 0 };
+    },
+  });
+
+  assert.equal(result.ownership, 'independent');
+  assert.match(
+    await readFile(projectFile, 'utf8'),
+    new RegExp(`^# hstack-owner: ${JSON.stringify(INDEPENDENT_DEV_TARGET_SYNC_OWNER)}`),
+  );
+  assert.match(await readFile(projectFile, 'utf8'), /happier-refreshed/);
+  await result.release('pause');
+  assert.deepEqual(
+    calls.filter((call) => call.command === 'mutagen').map((call) => call.args[1] ?? call.args[0]),
+    ['version', 'terminate', 'start', 'list'],
+  );
+});
+
 test('Stack default runner captures active independent status for every configured target', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-default-runner-'));
   t.after(() => rm(root, { recursive: true, force: true }));

@@ -94,6 +94,7 @@ export class HappierPipeline {
     const internalOutJson = `${artifactDir}/eas_build_android.json`
 
     const easWorkdirRoot = "/tmp/eas-workdir"
+    const terminalNativeBuildInputCacheRoot = "/root/.cache/happier-terminal-native-build-inputs"
     // EAS local build requires the working dir itself to be empty. Because we mount a persistent
     // cache volume at `easWorkdirRoot`, use a per-invocation subdir so residues from prior runs
     // cannot block subsequent builds even if Dagger caches intermediate exec steps.
@@ -107,6 +108,7 @@ export class HappierPipeline {
       // - we avoid tmpfs ENOSPC failures
       // - we avoid exploding the container snapshot/engine cache
       .withMountedCache(easWorkdirRoot, dag.cacheVolume("happier-expo-eas-workdir"))
+      .withMountedCache(terminalNativeBuildInputCacheRoot, dag.cacheVolume("happier-terminal-native-build-inputs"))
       .withExec([
         "bash",
         "scripts/ci/apt-install-with-retry.sh",
@@ -138,6 +140,7 @@ export class HappierPipeline {
       .withEnvVariable("NODE_OPTIONS", nodeOptions)
       .withEnvVariable("HAPPIER_INSTALL_SCOPE", "ui,protocol,agents")
       .withEnvVariable("HAPPIER_UI_VENDOR_WEB_ASSETS", "0")
+      .withEnvVariable("HAPPIER_TERMINAL_NATIVE_BUILD_INPUT_CACHE_DIR", terminalNativeBuildInputCacheRoot)
 
     container = container
       .withEnvVariable("npm_config_registry", "https://registry.npmjs.org")

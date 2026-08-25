@@ -2144,6 +2144,10 @@ export async function startLocalDaemonWithAuth({
   const startVerifyTimeoutMs = resolveStackDaemonStartVerifyTimeoutMs(baseEnv);
   const startVerifyPollMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS, 125);
   const startVerifyStableMs = parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS, 750);
+  // The Stack lifecycle owns this start attempt's readiness deadline. The nested `happier daemon
+  // start` command also waits for its detached child, so do not let an inherited CLI timeout
+  // classify a still-starting daemon as failed before this owner finishes verification.
+  daemonEnv.HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS = String(Math.max(1, startVerifyTimeoutMs));
   const daemonLifecycleLockTimeoutMs = resolveAttendedStartupTimeoutMs({
     isTui,
     timeoutMs: parseNonNegativeInt(baseEnv.HAPPIER_STACK_DAEMON_LIFECYCLE_LOCK_TIMEOUT_MS, 180_000),

@@ -30,6 +30,7 @@ import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './utils/proc/
 import cliDistBuildManifest from '../../../packages/cli-common/cliDistBuildManifest.cjs';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from '../../../packages/cli-common/cliRuntimeSidecars.mjs';
 import {
+  PINNED_RUNNER_LAYOUT_VERSION,
   PINNED_RUNNER_MANAGED_PROVIDER_RUNTIME_RELATIVE_PATH,
   resolveNewestReadyPinnedRunnerSnapshot,
 } from '../../../packages/cli-common/pinnedRunnerSnapshot.mjs';
@@ -131,7 +132,7 @@ test('watch startup admits the newest ready immutable runner when the mutable CL
   const snapshotEntrypoint = join(
     cliDir,
     '.runner-snapshots',
-    `${'b'.repeat(16)}-${'c'.repeat(64)}-${'d'.repeat(64)}-package-dist-v4`,
+    `${'b'.repeat(16)}-${'c'.repeat(64)}-${'d'.repeat(64)}-${PINNED_RUNNER_LAYOUT_VERSION}`,
     'package-dist',
     'index.mjs',
   );
@@ -2159,7 +2160,7 @@ test('source daemon cold-start executes a ready immutable runner while retaining
     entrypoint: stagingEntrypoint,
     relativePath: PINNED_RUNNER_MANAGED_PROVIDER_RUNTIME_RELATIVE_PATH.join('/'),
   }).runtimeAsset;
-  const snapshotIdentity = `${manifest.fingerprint}-${runtimeAsset.sha256}-${workspaceRuntimeIdentity}-package-dist-v4`;
+  const snapshotIdentity = `${manifest.fingerprint}-${runtimeAsset.sha256}-${workspaceRuntimeIdentity}-${PINNED_RUNNER_LAYOUT_VERSION}`;
   const snapshotRoot = join(snapshotsDir, snapshotIdentity);
   await rename(stagingSnapshotRoot, snapshotRoot);
   await writeFile(join(snapshotRoot, '.fingerprint'), `${manifest.fingerprint}\n`, 'utf-8');

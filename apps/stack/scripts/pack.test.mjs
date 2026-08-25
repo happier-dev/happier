@@ -697,6 +697,91 @@ test('exportPackSandboxTarball aligns the staged Plugin SDK manifest before Plug
   }
 });
 
+async function packPublicCandidateWithPeerRange(peerRange) {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-public-sdk-peer-range-'));
+  const sandboxRoot = join(root, 'sandbox');
+  const sandboxPackDir = join(sandboxRoot, 'packages', 'channels-protocol');
+  const sourceRoot = join(root, 'source');
+  const sourcePackageJsonPath = join(sourceRoot, 'packages', 'channels-protocol', 'package.json');
+  const destinationDir = join(root, 'destination');
+  const candidateVersion = '0.1.0-preview.9';
+  const tarballName = `happier-dev-channels-protocol-${candidateVersion}.tgz`;
+  try {
+    await mkdir(sandboxPackDir, { recursive: true });
+    await mkdir(dirname(sourcePackageJsonPath), { recursive: true });
+    await mkdir(destinationDir);
+    const sourceManifest = {
+      name: '@happier-dev/channels-protocol',
+      version: '0.0.0',
+      happier: {
+        publicSdkRelease: {
+          posture: 'developer_preview',
+          supportPolicy: 'README.md#release-posture',
+          externalPublicationRequiresApproval: true,
+        },
+      },
+      peerDependencies: { '@happier-dev/plugin-sdk': peerRange },
+    };
+    await writeFile(sourcePackageJsonPath, JSON.stringify(sourceManifest));
+    await writeFile(join(sandboxPackDir, 'package.json'), JSON.stringify(sourceManifest));
+
+    return await exportPackSandboxTarball({
+      monorepoRoot: sourceRoot,
+      packageRelDir: 'packages/channels-protocol',
+      destinationDir,
+      packageVersion: candidateVersion,
+      publication: {
+        expectedPackageName: '@happier-dev/channels-protocol',
+        requiredFiles: ['README.md'],
+        expectedPeerDependencies: { '@happier-dev/plugin-sdk': peerRange },
+      },
+      createPackSandboxImpl: async () => sandboxRoot,
+      runCaptureImpl: async (command, args) => {
+        if (command === 'npm') {
+          if (args.includes('--dry-run')) return 'dry-run';
+          await writeFile(join(sandboxPackDir, tarballName), 'public-candidate');
+          return tarballName;
+        }
+        if (command === 'tar' && args[0] === '-tf') {
+          return ['package/package.json', 'package/README.md'].join('\n');
+        }
+        if (command === 'tar' && args[0] === '-xOf') {
+          return JSON.stringify({
+            name: '@happier-dev/channels-protocol',
+            version: candidateVersion,
+            happier: {
+              publicSdkRelease: {
+                posture: 'developer_preview',
+                supportPolicy: 'README.md#release-posture',
+                externalPublicationRequiresApproval: true,
+              },
+            },
+            publishConfig: { access: 'public' },
+            peerDependencies: { '@happier-dev/plugin-sdk': peerRange },
+          });
+        }
+        throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+      },
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test('exportPackSandboxTarball retains a compound peer range and still rejects an unprintable one', async () => {
+  // `@happier-dev/channels-protocol` is the first public candidate whose peer
+  // dependency is an ordinary two-comparator npm range. Rejecting the space
+  // inside it made that package unpublishable through the canonical release
+  // owner, so the bound is printable characters, not "no whitespace".
+  const metadata = await packPublicCandidateWithPeerRange('>=0.0.0 <1.0.0');
+  assert.equal(metadata.publication.name, '@happier-dev/channels-protocol');
+
+  await assert.rejects(
+    () => packPublicCandidateWithPeerRange('>=0.0.0\n<1.0.0'),
+    /publication peer dependency @happier-dev\/plugin-sdk must have a bounded version range/u,
+  );
+});
+
 test('exportPackSandboxTarball requires canonical Developer Preview metadata for a public SDK package', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pack-test-public-sdk-preview-metadata-'));
   const sandboxRoot = join(root, 'sandbox');

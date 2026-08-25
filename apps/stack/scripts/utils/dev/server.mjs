@@ -396,7 +396,7 @@ async function resolveServerPortListenerPidInProcessGroup({
   listenerObservationScope,
 }) {
   try {
-    return await assertServerPortOwnedBySpawnedProcessGroup({
+    const listenerPid = await assertServerPortOwnedBySpawnedProcessGroup({
       serverPort,
       spawnedPid: rootPid,
       listListenPidsImpl,
@@ -404,6 +404,21 @@ async function resolveServerPortListenerPidInProcessGroup({
       getProcessGroupIdImpl,
       listenerObservationScope,
     });
+    if (Number.isFinite(Number(listenerPid)) && Number(listenerPid) > 1) return Number(listenerPid);
+    // Unlike provisioning, every caller here is about to stop or adopt a process, so an unproven
+    // listener must stay a refusal. Re-read the scope's memoized observation (no second discovery)
+    // so the refusal keeps the transient-vs-permanent classification its caller retries on.
+    const observation = await listenerObservationScope?.observe(serverPort, {}, { requireListener: true });
+    if (observation && observation.status !== 'ok') {
+      const error = new Error(
+        `[local] server listener ownership could not be proven on port ${serverPort}: ` +
+          `${observation.reason ?? observation.status}`,
+      );
+      error.code = 'ELISTENERDISCOVERYINCONCLUSIVE';
+      error.observation = observation;
+      throw error;
+    }
+    return null;
   } catch (error) {
     if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE') throw error;
     return null;
@@ -904,6 +919,13 @@ export async function startDevServer({
         serverPort: bindPort,
         spawnedPid: server.pid,
       });
+      if (!(Number(listenerPid) > 1) && !quiet) {
+        console.warn(
+          `[local] server listener ownership on port ${bindPort} could not be proven ` +
+            `(listener discovery inconclusive); keeping the ready server (pid=${server.pid}) ` +
+            'and recording no listener PID.',
+        );
+      }
       if (hasChildExited(server)) {
         throw new Error(`[local] server process exited after readiness check (pid=${server.pid}, code=${server.exitCode})`);
       }
@@ -924,6 +946,7 @@ export async function startDevServer({
     }
   };
 
+  const attemptedPriorRuntime = usePriorRuntime;
   let provisioned;
   try {
     provisioned = await provisionServer();
@@ -931,13 +954,34 @@ export async function startDevServer({
     if (!admitPriorBuildsImmediately || error?.code === 'ESERVERPROVISIONINGCLEANUPINCOMPLETE') {
       throw error;
     }
-    if (!quiet) {
-      console.warn('[local] prior server generation could not start; refreshing once before retrying.');
+    const failureMessage = error instanceof Error ? error.message : String(error);
+    if (attemptedPriorRuntime) {
+      if (!quiet) {
+        console.warn(`[local] prior runtime server could not start (${failureMessage}); trying existing source outputs before refreshing.`);
+      }
+      usePriorRuntime = false;
+      await prepareDependencies({ admitPrior: true });
+      await ensureWorkspacePackagesBuiltBeforeSpawn({ admitPrior: true });
+      try {
+        provisioned = await provisionServer();
+      } catch (sourceError) {
+        if (sourceError?.code === 'ESERVERPROVISIONINGCLEANUPINCOMPLETE') {
+          throw sourceError;
+        }
+        const sourceFailureMessage = sourceError instanceof Error ? sourceError.message : String(sourceError);
+        if (!quiet) {
+          console.warn(`[local] existing source server could not start (${sourceFailureMessage}); refreshing once before retrying.`);
+        }
+      }
+    } else if (!quiet) {
+      console.warn(`[local] prior server generation could not start (${failureMessage}); refreshing once before retrying.`);
     }
-    await prepareDependencies({ admitPrior: false });
-    await ensureWorkspacePackagesBuiltBeforeSpawn({ admitPrior: false });
-    usePriorRuntime = false;
-    provisioned = await provisionServer();
+    if (!provisioned) {
+      await prepareDependencies({ admitPrior: false });
+      await ensureWorkspacePackagesBuiltBeforeSpawn({ admitPrior: false });
+      usePriorRuntime = false;
+      provisioned = await provisionServer();
+    }
   }
   const { server, listenerPid } = provisioned;
   if (stackMode && runtimeStatePath) {
@@ -1492,7 +1536,11 @@ export function createDevServerReloadExecutor({
         })
       : null;
     const ownsCurrentListener = Number.isFinite(Number(currentListenerPid)) && Number(currentListenerPid) > 1;
-    if (typeof context.revalidateGeneration === 'function' && !await context.revalidateGeneration()) return false;
+    if (
+      context.allowSupersededActivation !== true
+      && typeof context.revalidateGeneration === 'function'
+      && !await context.revalidateGeneration()
+    ) return false;
     if (!ownsCurrentListener && currentPidWasAlive) {
       const availability = await waitForTcpPortFreeImpl(oldBackendPort, {
         host: '127.0.0.1',
@@ -1544,7 +1592,11 @@ export function createDevServerReloadExecutor({
       });
       throw error;
     }
-    if (typeof context.revalidateGeneration === 'function' && !await context.revalidateGeneration()) {
+    if (
+      context.allowSupersededActivation !== true
+      && typeof context.revalidateGeneration === 'function'
+      && !await context.revalidateGeneration()
+    ) {
       await flipProxyUpstreamAndDrainTargets({
         targetPort: oldBackendPort,
         drainTargets: [maintenanceTarget],
@@ -1576,21 +1628,33 @@ export function createDevServerReloadExecutor({
         }),
       });
       if (!killResult?.killed) {
-        observeActiveChildExit(currentServerProc);
-        await flipProxyUpstreamAndDrainTargets({
-          targetPort: oldBackendPort,
-          drainTargets: [maintenanceTarget],
-          transition: {
-            generation: reloadPlan.generation,
-            pid,
-            mode: reloadPlan.mode,
-            purpose: 'maintenance_restore',
-          },
+        const release = await waitForTcpPortFreeImpl(oldBackendPort, {
+          host: '127.0.0.1',
+          timeoutMs: 5_000,
+          intervalMs: 100,
         });
-        throw new Error(
-          `[local] watch restart refused: server pid ${pid} owns backend port ${oldBackendPort} but could not be stopped safely.\n` +
-            `[local] Fix: run 'hstack stack stop ${stackName}' then re-run.`
-        );
+        const exitedConcurrently = (
+          hasChildExited(currentServerProc)
+          || !isPidAliveImpl(pid)
+        ) && release?.status === 'free';
+        if (!exitedConcurrently) {
+          observeActiveChildExit(currentServerProc);
+          await flipProxyUpstreamAndDrainTargets({
+            targetPort: oldBackendPort,
+            drainTargets: [maintenanceTarget],
+            transition: {
+              generation: reloadPlan.generation,
+              pid,
+              mode: reloadPlan.mode,
+              purpose: 'maintenance_restore',
+            },
+          });
+          throw new Error(
+            `[local] watch restart refused: server pid ${pid} owns backend port ${oldBackendPort} but could not be stopped safely ` +
+              `(reason=${killResult?.reason ?? 'unknown'}).\n` +
+              `[local] Fix: run 'hstack stack stop ${stackName}' then re-run.`
+          );
+        }
       }
       oldServerStopped = true;
       removeChildFromChildren(children, currentServerProc);
@@ -1846,7 +1910,11 @@ export function createDevServerReloadExecutor({
         })
       : null;
     const ownsCurrentListener = Number.isFinite(Number(currentListenerPid)) && Number(currentListenerPid) > 1;
-    if (typeof context.revalidateGeneration === 'function' && !await context.revalidateGeneration()) return false;
+    if (
+      context.allowSupersededActivation !== true
+      && typeof context.revalidateGeneration === 'function'
+      && !await context.revalidateGeneration()
+    ) return false;
     if (ownsCurrentListener) {
       disarmActiveChildExit(currentServerProc);
       const killResult = await killServerProcessGroupForPlannedReload({
@@ -2055,7 +2123,13 @@ export function createDevServerReloadExecutor({
           logger,
         });
         emitTransitionEvent('preflight_completed', { ...transition, disposition: 'succeeded' });
-        return { ok: true };
+        const activeServer = serverProcRef?.current;
+        return {
+          ok: true,
+          ...(!activeServer || hasChildExited(activeServer)
+            ? { allowSupersededActivation: true }
+            : {}),
+        };
       } catch (error) {
         emitTransitionEvent('preflight_completed', { ...transition, disposition: 'failed' });
         throw error;

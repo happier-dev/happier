@@ -97,6 +97,19 @@ test('TUI cleanup remains bound to the runtime owner admitted by its own child',
   });
 });
 
+test('TUI reports a successful detached launcher completion without implying its runtime owner exited', async () => {
+  const module = await import('./utils/tui/restart_operation.mjs');
+  assert.equal(typeof module.formatTuiForwardedChildExit, 'function');
+  assert.equal(
+    module.formatTuiForwardedChildExit({ code: 0, signal: null, detachedBackgroundOwner: true }),
+    'launcher completed (code=0); detached runtime continues independently',
+  );
+  assert.equal(
+    module.formatTuiForwardedChildExit({ code: 1, signal: null, detachedBackgroundOwner: true }),
+    'child exited (code=1, sig=null)',
+  );
+});
+
 test('TUI can admit its detached owner after the short-lived launch wrapper exits', () => {
   const tracker = createTuiRuntimeOwnershipTracker({ runtimeOwnerBeforeSpawn: null });
   tracker.recordDetachedRunnerLogPath('/stacks/exp1/logs/dev.202.log');

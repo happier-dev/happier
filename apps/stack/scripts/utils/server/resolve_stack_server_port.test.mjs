@@ -234,6 +234,7 @@ test('non-main stack does not adopt a healthy runtime port without stack listene
       stackName: 'repo-test-abc',
       runtimeStatePath,
       defaultPort: 3005,
+      waitForTcpPortFreeImpl: async () => ({ status: 'occupied', reason: 'address-in-use' }),
     });
     assert.notEqual(out, port);
   } finally {

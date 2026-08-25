@@ -230,6 +230,43 @@ test('hstack stack start --runtime --background launches the active runtime snap
   }
 });
 
+test('runtime stack projects the advertised web hostname as the signed auth audience', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createStartableRuntimeSnapshotFixture(t, { stackName: 'runtime-auth-audience' });
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+  };
+
+  const startRes = await runNode(
+    [
+      join(rootDir, 'bin', 'hstack.mjs'),
+      'stack', 'start', fixture.stackName,
+      '--background', '--runtime', '--no-daemon', '--no-browser',
+    ],
+    { cwd: rootDir, env },
+  );
+  assert.equal(startRes.code, 0, `stdout:\n${startRes.stdout}\nstderr:\n${startRes.stderr}`);
+
+  try {
+    await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
+    const serverRuntimeEnv = JSON.parse(await readFile(fixture.serverEnvCapturePath, 'utf8'));
+    assert.equal(
+      serverRuntimeEnv.HAPPIER_PUBLIC_SERVER_URL,
+      `http://happier-${fixture.stackName}.localhost:${fixture.serverPort}`,
+    );
+    assert.equal(serverRuntimeEnv.PUBLIC_URL, serverRuntimeEnv.HAPPIER_PUBLIC_SERVER_URL);
+  } finally {
+    await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
+      cwd: rootDir,
+      env,
+    });
+  }
+});
+
 test('unmanaged full runtime migrates from the admitted immutable server directory before server spawn', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createStartableRuntimeSnapshotFixture(t, {

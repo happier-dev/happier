@@ -112,24 +112,58 @@ test('spawned listener proof lets one process-group discovery consume its reserv
   assert.ok(timeoutBudgets[0] > 1_100);
 });
 
-test('spawned listener proof fails closed when group and broad discovery stay inconclusive', async () => {
-  await assert.rejects(
-    () => resolveSpawnedProcessGroupListenPid(
-      { port: 4101, spawnedPid: 301 },
-      {
-        listenerOwnershipTimeoutMs: 60,
-        listenerOwnershipRetryDelayMs: 0,
-        listListenPidsWithStatusImpl: async () => ({
-          status: 'timeout',
-          supported: true,
-          pids: [],
-          reason: 'listener-discovery-timeout',
-        }),
-        getProcessGroupIdImpl: async () => 301,
-      },
-    ),
-    (error) => error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE',
+test('spawned listener proof reports inconclusive discovery as unproven rather than hostile', async () => {
+  // A timed-out diagnostic means we learned nothing. It is categorically different from learning the
+  // port belongs to someone else, and it must not be reported as a failure a caller can only resolve
+  // by destroying the server it already proved ready.
+  const pid = await resolveSpawnedProcessGroupListenPid(
+    { port: 4101, spawnedPid: 301 },
+    {
+      listenerOwnershipTimeoutMs: 60,
+      listenerOwnershipRetryDelayMs: 0,
+      listListenPidsWithStatusImpl: async () => ({
+        status: 'timeout',
+        supported: true,
+        pids: [],
+        reason: 'listener-discovery-timeout',
+      }),
+      getProcessGroupIdImpl: async () => 301,
+    },
   );
+
+  assert.equal(pid, null);
+});
+
+test('spawned listener proof reports an undiscoverable listener as unproven rather than hostile', async () => {
+  // Discovery that completes without finding any listener on a port that answered readiness is a
+  // visibility limit (restricted process tables, another uid), not proof of a foreign owner.
+  const pid = await resolveSpawnedProcessGroupListenPid(
+    { port: 4101, spawnedPid: 301 },
+    {
+      listenerOwnershipTimeoutMs: 60,
+      listenerOwnershipRetryDelayMs: 0,
+      listListenPidsWithStatusImpl: async () => ({ status: 'ok', supported: true, pids: [] }),
+      getProcessGroupIdImpl: async () => 301,
+    },
+  );
+
+  assert.equal(pid, null);
+});
+
+test('spawned listener proof reports an unreadable process group as unproven rather than hostile', async () => {
+  const pid = await resolveSpawnedProcessGroupListenPid(
+    { port: 4101, spawnedPid: 301 },
+    {
+      listenerOwnershipTimeoutMs: 200,
+      listenerOwnershipRetryDelayMs: 0,
+      listListenPidsWithStatusImpl: async (_port, options) => (options.processGroupId
+        ? { status: 'ok', supported: true, pids: [] }
+        : { status: 'ok', supported: true, pids: [999] }),
+      getProcessGroupIdImpl: async () => null,
+    },
+  );
+
+  assert.equal(pid, null);
 });
 
 test('spawned listener proof rejects a listener from a foreign process group', async () => {

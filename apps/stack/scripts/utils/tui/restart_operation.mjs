@@ -19,6 +19,17 @@ function normalizeRunnerLogPath(value) {
   return String(value ?? '').trim();
 }
 
+export function formatTuiForwardedChildExit({
+  code = null,
+  signal = null,
+  detachedBackgroundOwner = false,
+} = {}) {
+  if (detachedBackgroundOwner && code === 0 && signal == null) {
+    return 'launcher completed (code=0); detached runtime continues independently';
+  }
+  return `child exited (code=${code}, sig=${signal ?? 'null'})`;
+}
+
 export function createTuiRuntimeOwnershipTracker({ runtimeOwnerBeforeSpawn = null } = {}) {
   const baseline = normalizeRuntimeOwnerIncarnation(runtimeOwnerBeforeSpawn);
   let expectedOwner = null;

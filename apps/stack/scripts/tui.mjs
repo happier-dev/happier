@@ -64,6 +64,7 @@ import { resolveTuiChildEnv } from './utils/tui/resolve_child_env.mjs';
 import {
   beginTuiRestartOperation,
   createTuiRuntimeOwnershipTracker,
+  formatTuiForwardedChildExit,
   resolveTuiShutdownChildren,
 } from './utils/tui/restart_operation.mjs';
 import { checkDaemonStatePingAware } from './daemon.mjs';
@@ -935,7 +936,11 @@ async function main() {
       scheduleRender();
     });
     proc.on('exit', (code, sig) => {
-      logOrch(`child exited (code=${code}, sig=${sig ?? 'null'})`);
+      logOrch(formatTuiForwardedChildExit({
+        code,
+        signal: sig,
+        detachedBackgroundOwner,
+      }));
       scheduleRender();
     });
     proc.on('error', (error) => {

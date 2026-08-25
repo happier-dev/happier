@@ -253,16 +253,6 @@ export async function buildDaemonArtifact({
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
-  const supportArtifact = await buildDaemonSupportArtifact({
-    stackBaseDir: resolvedStackBaseDir,
-    supportArtifactFingerprint: resolvedSupportArtifactFingerprint,
-    sourceMetadata,
-    target,
-    env,
-    runCaptureImpl,
-    buildDaemonSupportArtifactPayloadImpl,
-  });
-
   await buildIntoTempThenReplace(artifactDir, async (tmpArtifactDir) => {
     const payloadDir = artifactPayloadDir(tmpArtifactDir);
     const built = await buildCliBinaryArtifactPayloadImpl({
@@ -271,6 +261,24 @@ export async function buildDaemonArtifact({
       target,
       externals,
       env,
+    });
+    const currentSupportArtifactFingerprint = String(
+      await resolveDaemonSupportArtifactFingerprintImpl({ rootDir, sourceMetadata, env }),
+    ).trim();
+    if (currentSupportArtifactFingerprint !== resolvedSupportArtifactFingerprint) {
+      throw new Error(
+        '[component-artifacts] daemon support publication changed before staging '
+        + `(expected ${resolvedSupportArtifactFingerprint}, found ${currentSupportArtifactFingerprint})`,
+      );
+    }
+    const supportArtifact = await buildDaemonSupportArtifact({
+      stackBaseDir: resolvedStackBaseDir,
+      supportArtifactFingerprint: resolvedSupportArtifactFingerprint,
+      sourceMetadata,
+      target,
+      env,
+      runCaptureImpl,
+      buildDaemonSupportArtifactPayloadImpl,
     });
     await linkDaemonSupportPayload({
       codePayloadDir: payloadDir,

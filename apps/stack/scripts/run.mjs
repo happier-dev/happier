@@ -427,21 +427,15 @@ async function main() {
 
   // Public URL automation:
   // - Only the main stack should ever auto-enable Tailscale Serve by default.
-  // - Non-main stacks default to localhost unless the user explicitly configured a public URL
-  //   OR Tailscale Serve is already configured for this stack's internal URL (status matches).
+  // - Local stack URLs retain their stack-scoped hostname so the server's signed auth audience
+  //   matches the same origin that stack info and browser launch advertise to the UI.
   const allowEnableTailscale =
     !stackMode ||
     stackName === 'main' ||
     (baseEnv.HAPPIER_STACK_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
   const resolvedUrls = await resolveServerUrls({ env: baseEnv, serverPort, allowEnable: allowEnableTailscale });
   defaultPublicUrl = resolvedUrls.defaultPublicUrl;
-  if (stackMode && stackName !== 'main' && !resolvedUrls.envPublicUrl) {
-    const src = String(resolvedUrls.publicServerUrlSource ?? '');
-    const hasStackScopedTailscale = src.startsWith('tailscale-');
-    publicServerUrl = hasStackScopedTailscale ? resolvedUrls.publicServerUrl : resolvedUrls.defaultPublicUrl;
-  } else {
-    publicServerUrl = resolvedUrls.publicServerUrl;
-  }
+  publicServerUrl = resolvedUrls.publicServerUrl;
 
   const publishExistingServerOwnership = async () => {
     if (!(startupDecision.adoptedServer && stackMode && runtimeStatePath)) return;
@@ -654,13 +648,18 @@ async function main() {
           port: serverPort,
           spawnedPid: server.pid,
         });
-        if (!(Number.isFinite(Number(listenerPid)) && Number(listenerPid) > 1)) {
-          throw new Error(
-            `[local] server readiness ownership could not be proven on port ${serverPort}: no stack-owned listener PID was discovered`
+        const provenListenerPid = Number.isFinite(Number(listenerPid)) && Number(listenerPid) > 1
+          ? Number(listenerPid)
+          : null;
+        if (provenListenerPid === null) {
+          console.warn(
+            `[local] server listener ownership on port ${serverPort} could not be proven ` +
+              `(listener discovery inconclusive); keeping the ready server (pid=${server.pid}) ` +
+              'and recording no listener PID.'
           );
         }
         await recordStackRuntimeServerActivation(runtimeStatePath, {
-          listenerPid: Number(listenerPid),
+          listenerPid: provenListenerPid,
           wrapperPid: server.pid,
           stablePort: serverPort,
           mode: 'direct',

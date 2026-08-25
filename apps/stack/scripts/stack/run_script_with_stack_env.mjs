@@ -821,7 +821,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         }
         if (shouldAttachToLiveBackgroundRuntime({ background, wantsRestart, existingRuntimeStatus })) {
           const runnerLog = String(runtimeState?.logs?.runner ?? '').trim();
-          console.log(`[stack] ${stackName}: detached runtime owner is still starting (pid=${existingOwnerPid}); attaching`);
+          console.log(`[stack] ${stackName}: detached runtime owner is active (pid=${existingOwnerPid}); reusing it`);
           if (runnerLog) console.log(`[stack] ${stackName}: runner log: ${runnerLog}`);
           return;
         }

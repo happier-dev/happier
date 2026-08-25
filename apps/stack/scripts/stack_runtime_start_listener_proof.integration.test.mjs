@@ -38,6 +38,16 @@ async function waitForRecordedServerPids(statePath, timeoutMs = 5_000) {
   assert.fail(`server pids were not recorded in ${statePath}`);
 }
 
+async function waitForRecordedServerWrapperPid(statePath, timeoutMs = 5_000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const state = await readFile(statePath, 'utf8').then(JSON.parse, () => null);
+    if (Number(state?.processes?.serverWrapperPid) > 1) return state;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(`server wrapper pid was not recorded in ${statePath}`);
+}
+
 async function waitForLogMatch(path, pattern, timeoutMs = 10_000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -122,7 +132,7 @@ test('runtime start retries a transient empty spawned-group listener observation
   }
 });
 
-test('runtime start fails closed and cleans up when spawned and broad listener discovery stay inconclusive', async (t) => {
+test('runtime start keeps a ready server when spawned and broad listener discovery stay inconclusive', async (t) => {
   if (process.platform === 'win32') return t.skip('process-group listener proof is POSIX-specific');
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createStartableRuntimeSnapshotFixture(t, {
@@ -146,9 +156,28 @@ test('runtime start fails closed and cleans up when spawned and broad listener d
   assert.equal(startRes.code, 0, `stdout:\n${startRes.stdout}\nstderr:\n${startRes.stderr}`);
   const logPath = startRes.stdout.match(/logs:\s*(.+)\s*$/m)?.[1]?.trim();
   assert.ok(logPath, `missing background run log path in stdout:\n${startRes.stdout}`);
-  await waitForLogMatch(logPath, /listener discovery is inconclusive|readiness ownership could not be proven/i);
+  try {
+    await waitForHealth(fixture.baseUrl);
+    await waitForLogMatch(logPath, /listener ownership on port \d+ could not be proven/i);
+    const spawnedPid = Number(await readFile(fixture.serverPidCapturePath, 'utf8'));
+    assert.ok(spawnedPid > 1);
+    // A diagnostic that learned nothing must not destroy the server it already proved ready.
+    process.kill(spawnedPid, 0);
+    assert.equal(await isTcpPortListening(fixture.serverPort), true);
+    const runtimeState = await waitForRecordedServerWrapperPid(join(fixture.stackDir, 'stack.runtime.json'));
+    assert.equal(
+      runtimeState.processes.serverPid ?? null,
+      null,
+      'an unproven listener PID must never be recorded as a kill target',
+    );
+  } finally {
+    await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
+      cwd: rootDir,
+      env: { ...env, PATH: process.env.PATH },
+    });
+  }
+  // The wrapper PID we actually spawned stays recorded, so stop still terminates the whole stack.
   const spawnedPid = Number(await readFile(fixture.serverPidCapturePath, 'utf8'));
-  assert.ok(spawnedPid > 1);
   await waitForPidExit(spawnedPid);
   assert.equal(await isTcpPortListening(fixture.serverPort), false);
 });

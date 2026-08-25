@@ -341,10 +341,8 @@ test('hstack help command routing stays read-only when bundled workspace publica
   }
 });
 
-test('hstack wrapper refreshes bundled workspace packages for happier passthrough help', async () => {
+test('hstack happier passthrough help stays read-only without bundled workspace publication', async () => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const repoRoot = coerceHappyMonorepoRootFromPath(rootDir);
-  assert.ok(repoRoot, `expected monorepo root for ${rootDir}`);
   const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-wrapper-bundled-sync-happier-help-'));
   try {
     const { loaderPath, syncMarkerPath } = createBundledWorkspaceSyncLoaderFixture(fixtureDir);
@@ -357,10 +355,8 @@ test('hstack wrapper refreshes bundled workspace packages for happier passthroug
       },
     });
 
-    const syncOptions = JSON.parse(readFileSync(syncMarkerPath, 'utf8'));
-    assert.equal(syncOptions.repoRoot, repoRoot);
-    assert.deepEqual(syncOptions.hostApps, ['stack']);
-    assert.equal(syncOptions.replaceExisting, false);
+    assert.equal(res.code, 0, `happier help must remain available\nstderr:\n${res.stderr}`);
+    assert.equal(existsSync(syncMarkerPath), false, 'happier help must not publish bundled workspace packages');
   } finally {
     rmSync(fixtureDir, { recursive: true, force: true });
   }

@@ -286,14 +286,15 @@ async function main() {
     kv,
     env: baseEnv,
     resolvedLocalUrls: resolvedUrls,
+    requireMobileReachability: startMobile,
   });
   const requestedStartServer = serverConnection.startServer;
   const localInternalServerUrl = resolvedUrls.internalServerUrl;
   const internalServerUrl = serverConnection.internalServerUrl;
   let publicServerUrl = serverConnection.publicServerUrl;
-  // Expo app config: this is what both web + native app use to reach the Happy server.
-  // LAN rewrite (for dev-client) is centralized in ensureDevExpoServer.
-  const uiApiUrl = requestedStartServer ? resolvedUrls.defaultPublicUrl : serverConnection.uiApiUrl;
+  // The server challenge audience and every UI client must use the same canonical public origin.
+  // Local mobile stacks resolve that origin to a LAN-reachable address before either side starts.
+  const uiApiUrl = serverConnection.uiApiUrl;
   const serverConnectionSource = serverConnection.source;
   const restart = flags.has('--restart');
   const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()

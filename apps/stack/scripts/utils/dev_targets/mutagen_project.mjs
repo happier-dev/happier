@@ -3,6 +3,7 @@ export const DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS = Object.freeze([
   'dist',
   '.happier',
   '.tsbuildinfo',
+  '.turbo',
 ]);
 
 const [NODE_MODULES, DIST, HAPPIER] = DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS;
@@ -21,6 +22,19 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   '.tmp.*',
   '.backup.*',
   '.happier-plugin-ui-build-*',
+  // A nested checkout-local link can point back outside the synchronization
+  // root and Mutagen cannot represent it. The real brand package beside this
+  // redundant link remains synchronized normally.
+  'packages/brand/brand',
+  // These files are derived from each replica's ignored plugin `dist` trees.
+  // Remote daemon/Expo preparation publishes them atomically through the same
+  // canonical generator after rebuilding those trees; syncing a local last-green
+  // projection over them can leave the target requiring bytes absent remotely.
+  'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginArtifacts.ts',
+  'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ts',
+  'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.web.ts',
+  'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.ios.ts',
+  'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.android.ts',
   '.project',
   HAPPIER,
   '.happier-stack',
@@ -38,9 +52,18 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   'graphify-out',
   '/workspace',
   '.expo',
+  '.turbo',
+  // `target` is the Rust build-output convention. Tracked repository directories
+  // that happen to carry that name are source and must still reach a dev target;
+  // without these exceptions they are silently absent there and every routed
+  // typecheck reports phantom `TS2307`s for files that exist in the checkout.
   'target',
   '!packages/protocol/src/browser/target',
   '!packages/protocol/src/browser/target/**',
+  '!packages/plugin-sdk/fixtures/external-targeted-packages/target',
+  '!packages/plugin-sdk/fixtures/external-targeted-packages/target/**',
+  '!packages/tests/fixtures/plugin-platform/packed-targeted-contribution-projection/target',
+  '!packages/tests/fixtures/plugin-platform/packed-targeted-contribution-projection/target/**',
   'Pods',
   '.next',
   '.runner-snapshots',

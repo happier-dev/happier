@@ -12,7 +12,7 @@ function makeArgs({ flags = [], kv = {} } = {}) {
 
 const localUrls = {
   internalServerUrl: 'http://127.0.0.1:3005',
-  publicServerUrl: 'http://localhost:3005',
+  publicServerUrl: 'http://qa-agent-x.localhost:3005',
   defaultPublicUrl: 'http://localhost:3005',
 };
 
@@ -22,8 +22,23 @@ test('uses local server defaults when no remote flags are set', () => {
   assert.equal(out.startServer, true);
   assert.equal(out.internalServerUrl, localUrls.internalServerUrl);
   assert.equal(out.publicServerUrl, localUrls.publicServerUrl);
-  assert.equal(out.uiApiUrl, localUrls.defaultPublicUrl);
+  assert.equal(out.uiApiUrl, localUrls.publicServerUrl);
   assert.equal(out.source, 'local');
+});
+
+test('uses one LAN-reachable canonical audience for a local mobile stack server and its clients', () => {
+  const { flags, kv } = makeArgs();
+  const out = resolveDevServerConnection({
+    flags,
+    kv,
+    env: { HAPPIER_STACK_LAN_IP: '192.168.0.50' },
+    resolvedLocalUrls: localUrls,
+    requireMobileReachability: true,
+  });
+  assert.equal(out.startServer, true);
+  assert.equal(out.internalServerUrl, localUrls.internalServerUrl);
+  assert.equal(out.publicServerUrl, 'http://192.168.0.50:3005');
+  assert.equal(out.uiApiUrl, 'http://192.168.0.50:3005');
 });
 
 test('uses explicit --server-url and disables local server', () => {

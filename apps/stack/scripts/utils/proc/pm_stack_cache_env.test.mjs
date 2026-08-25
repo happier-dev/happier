@@ -2532,6 +2532,7 @@ test('ensureCliBuilt refreshes shared workspace deps before trusting a cached cl
 
   applyEnvOverrides(t, {
     PATH: [binDir, process.env.PATH].filter(Boolean).join(delimiter),
+    npm_execpath: join(binDir, 'yarn-stub.cjs'),
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_CLI_BUILD_MODE: 'auto',
     HAPPIER_STACK_ENV_FILE: null,
@@ -2541,7 +2542,7 @@ test('ensureCliBuilt refreshes shared workspace deps before trusting a cached cl
   const result = await ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
 
   const argv = await readFile(outputPath, 'utf-8');
-  assert.match(argv, /-s build/);
+  assert.match(argv, /(^|\n)-s build(\n|$)/);
   assert.match(argv, /(^|\n)build:prepared(\n|$)/);
   assert.deepEqual(result, { built: true, current: true, reason: 'changed' });
   assert.equal(await readFile(join(agentsDir, 'dist', 'session', 'state', 'index.js'), 'utf-8'), 'export const state = true;\n');
@@ -2556,6 +2557,97 @@ test('ensureCliBuilt refreshes shared workspace deps before trusting a cached cl
       workspaceNames: ['agents'],
     }),
     { current: true, reason: 'current' },
+  );
+});
+
+test('ensureCliBuilt delegates workspace preparation only to the canonical source-dev owner', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-canonical-source-dev-preparation-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const cliDir = join(root, 'apps', 'cli');
+  const pluginDir = join(root, 'packages', 'plugins', 'broken');
+  await mkdir(join(cliDir, 'scripts'), { recursive: true });
+  await mkdir(join(cliDir, 'node_modules'), { recursive: true });
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await mkdir(join(pluginDir, 'src'), { recursive: true });
+  await mkdir(join(pluginDir, 'dist'), { recursive: true });
+  await writeFile(join(root, 'package.json'), JSON.stringify({
+    private: true,
+    workspaces: ['apps/*', 'packages/plugins/*'],
+  }, null, 2) + '\n');
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n');
+  await writeFile(join(root, 'apps', 'ui', 'package.json'), '{ "name": "@happier-dev/ui" }\n');
+  await writeFile(join(root, 'apps', 'server', 'package.json'), '{ "name": "@happier-dev/server" }\n');
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/cli',
+    private: true,
+    dependencies: {
+      '@happier-dev/plugins-broken': '0.0.0',
+    },
+    bundledDependencies: ['@happier-dev/plugins-broken'],
+  }, null, 2) + '\n');
+  await writeFile(join(cliDir, 'node_modules', '.yarn-integrity'), 'ok\n');
+  await mkdir(join(cliDir, 'node_modules', '@happier-dev'), { recursive: true });
+  await symlink(
+    pluginDir,
+    join(cliDir, 'node_modules', '@happier-dev', 'plugins-broken'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  await writeFile(
+    join(cliDir, 'scripts', 'buildSharedDeps.mjs'),
+    'export async function syncSharedDepsForSourceDev() { return { synced: false, reason: "last-green-plugin-output" }; }\n',
+  );
+  await writeFile(
+    join(cliDir, 'scripts', 'syncSharedDepsForDev.mjs'),
+    [
+      "import { syncSharedDepsForSourceDev } from './buildSharedDeps.mjs';",
+      'const result = await syncSharedDepsForSourceDev();',
+      'process.stdout.write(`__HAPPIER_SOURCE_DEV_SYNC_RESULT__=${JSON.stringify(result)}\\n`);',
+      '',
+    ].join('\n'),
+  );
+  await writeFile(join(pluginDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/plugins-broken',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    exports: { '.': { default: './dist/index.js' } },
+  }, null, 2) + '\n');
+  await writeFile(join(pluginDir, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: {
+      declaration: true,
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      outDir: 'dist',
+      rootDir: 'src',
+      target: 'ES2022',
+    },
+    include: ['src/**/*.ts'],
+  }, null, 2) + '\n');
+  await writeFile(join(pluginDir, 'dist', 'index.js'), 'export const lastGreen = true;\n');
+  await writeFile(join(pluginDir, 'dist', 'index.d.ts'), 'export declare const lastGreen = true;\n');
+  await writeFile(join(pluginDir, 'src', 'index.ts'), 'export const broken: string = 1;\n');
+  const oldTime = new Date('2020-01-01T00:00:00.000Z');
+  const changedTime = new Date('2030-01-01T00:00:00.000Z');
+  await utimes(join(pluginDir, 'package.json'), oldTime, oldTime);
+  await utimes(join(pluginDir, 'tsconfig.json'), oldTime, oldTime);
+  await utimes(join(pluginDir, 'dist', 'index.js'), oldTime, oldTime);
+  await utimes(join(pluginDir, 'dist', 'index.d.ts'), oldTime, oldTime);
+  await utimes(join(pluginDir, 'src', 'index.ts'), changedTime, changedTime);
+
+  const result = await ensureCliBuilt(cliDir, {
+    buildCli: false,
+    quiet: true,
+    env: process.env,
+  });
+
+  assert.deepEqual(result, { built: false, reason: 'disabled' });
+  assert.equal(
+    await readFile(join(pluginDir, 'dist', 'index.js'), 'utf-8'),
+    'export const lastGreen = true;\n',
   );
 });
 

@@ -132,13 +132,23 @@ export function resolveRecoverableReplicaArtifactConflictRoots(session) {
       && (alphaChanges[0]?.old == null || alphaChanges[0]?.old?.kind === 'directory')
       && alphaChanges[0]?.new == null;
     const rootPrefix = `${root}/`;
+    const rootName = root.split(/[\\/]+/).at(-1);
+    const rootIsDisposableArtifact = disposableArtifactRoots.has(rootName);
     const betaOnlyHasIgnoredArtifacts = betaChanges.length > 0 && betaChanges.every((change) => (
       String(change?.path ?? '').startsWith(rootPrefix)
       && disposableArtifactRoots.has(String(change.path).slice(rootPrefix.length).split(/[\\/]/, 1)[0])
       && change?.old == null
       && change?.new?.kind === 'untracked'
     ));
-    if (!alphaRemovesRoot || !betaOnlyHasIgnoredArtifacts) continue;
+    const betaOnlyHasUntrackedRootContents = betaChanges.length > 0 && betaChanges.every((change) => (
+      String(change?.path ?? '').startsWith(rootPrefix)
+      && change?.old == null
+      && change?.new?.kind === 'untracked'
+    ));
+    if (
+      !alphaRemovesRoot
+      || !(betaOnlyHasIgnoredArtifacts || (rootIsDisposableArtifact && betaOnlyHasUntrackedRootContents))
+    ) continue;
     roots.push(root);
   }
   return roots;

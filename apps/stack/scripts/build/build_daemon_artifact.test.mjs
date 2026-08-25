@@ -25,7 +25,7 @@ async function writeDaemonCodePayload({ payloadDir }) {
   await mkdir(join(payloadDir, 'package-dist'), { recursive: true });
   await writeFile(join(payloadDir, 'happier'), 'daemon binary', 'utf8');
   await writeFile(join(payloadDir, 'package-dist', 'index.mjs'), 'export {};', 'utf8');
-  return { entrypoint: 'happier' };
+  return { entrypoint: 'happier', workspaceRuntimeIdentity: 'a'.repeat(64) };
 }
 
 function sourceMetadata(root) {
@@ -154,6 +154,45 @@ test('a changed daemon support identity publishes only a new daemon support arti
       await readFile(join(second.artifactDir, 'payload', 'tools', 'tool.txt'), 'utf8'),
       'tool:daemon-support-new',
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('daemon code preparation detects support drift before copying the stale support closure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'runtime-daemon-support-drift-'));
+  const stackBaseDir = join(root, 'stack');
+  const events = [];
+  try {
+    await assert.rejects(
+      buildDaemonArtifact({
+        rootDir: root,
+        stackBaseDir,
+        artifactDir: join(stackBaseDir, 'artifacts', 'daemon', 'daemon-code'),
+        artifactFingerprint: 'daemon-code',
+        supportArtifactFingerprint: 'daemon-support-before-code-build',
+        sourceMetadata: sourceMetadata(root),
+        resolveDaemonSupportArtifactFingerprintImpl: async () => {
+          events.push('support-identity-after-code');
+          return 'daemon-support-after-code-build';
+        },
+        buildDaemonSupportArtifactPayloadImpl: async (args) => {
+          events.push('support-copy');
+          return await writeDaemonSupportPayload({
+            payloadDir: args.payloadDir,
+            fingerprint: 'daemon-support-before-code-build',
+          });
+        },
+        buildCliBinaryArtifactPayloadImpl: async (args) => {
+          events.push('code');
+          return await writeDaemonCodePayload(args);
+        },
+        writeCliBinaryArtifactRuntimeAssetBuildManifestImpl: () => {},
+      }),
+      /daemon support publication changed before staging/i,
+    );
+
+    assert.deepEqual(events, ['code', 'support-identity-after-code']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

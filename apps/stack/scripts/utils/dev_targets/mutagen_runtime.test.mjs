@@ -240,3 +240,61 @@ test('Mutagen conflict recovery recognizes deleted alpha roots blocked only by d
     assert.deepEqual(resolveRecoverableReplicaArtifactConflictRoots(session), []);
   }
 });
+
+test('Mutagen conflict recovery recognizes a disposable artifact directory created only on the replica', () => {
+  const root = 'packages/plugins/antigravity/.turbo';
+  const recoverable = {
+    mode: 'one-way-replica',
+    conflicts: [{
+      root,
+      alphaChanges: [{ path: root, old: null, new: null }],
+      betaChanges: [{
+        path: `${root}/turbo-project:finite.log`,
+        old: null,
+        new: { kind: 'untracked' },
+      }],
+    }],
+  };
+
+  assert.deepEqual(resolveRecoverableReplicaArtifactConflictRoots(recoverable), [root]);
+
+  for (const session of [
+    {
+      ...recoverable,
+      conflicts: [{
+        ...recoverable.conflicts[0],
+        betaChanges: [{
+          path: `${root}/turbo-project:finite.log`,
+          old: { kind: 'file' },
+          new: { kind: 'untracked' },
+        }],
+      }],
+    },
+    {
+      ...recoverable,
+      conflicts: [{
+        ...recoverable.conflicts[0],
+        betaChanges: [{
+          path: `${root}/turbo-project:finite.log`,
+          old: null,
+          new: { kind: 'file' },
+        }],
+      }],
+    },
+    {
+      ...recoverable,
+      conflicts: [{
+        ...recoverable.conflicts[0],
+        root: 'packages/plugins/antigravity/src',
+        alphaChanges: [{ path: 'packages/plugins/antigravity/src', old: null, new: null }],
+        betaChanges: [{
+          path: 'packages/plugins/antigravity/src/generated.ts',
+          old: null,
+          new: { kind: 'untracked' },
+        }],
+      }],
+    },
+  ]) {
+    assert.deepEqual(resolveRecoverableReplicaArtifactConflictRoots(session), []);
+  }
+});

@@ -106,6 +106,34 @@ test('repository publication parses a machine result that is filtered from human
   });
 });
 
+test('repository publication preserves bounded child failure evidence', async () => {
+  await assert.rejects(
+    () => publishRepositoryRuntimeSnapshotInChildProcess({
+      rootDir: '/work/happier',
+      authority: { producerStackName: 'repo-dev-a1cc5e0671' },
+      requestedComponents: ['daemon'],
+      env: process.env,
+      spawnProcImpl(_label, _command, _args, _env, options) {
+        options.lineFilter({
+          stream: 'stderr',
+          line: '[component-artifacts] daemon support publication changed before staging',
+        });
+        return {
+          exitCode: null,
+          completion: Promise.resolve({ code: 1, signal: null }),
+        };
+      },
+    }),
+    (error) => (
+      error?.code === 'EEXIT'
+      && error?.exitCode === 1
+      && error?.signal === null
+      && error.message.includes('[stderr]')
+      && error.message.includes('daemon support publication changed before staging')
+    ),
+  );
+});
+
 test('only the managed checkout-pinned repository producer owns automatic publication', () => {
   const authority = { producerStackName: 'repo-dev-a1cc5e0671', explicit: false };
 
@@ -465,6 +493,31 @@ test('a failed publication waits for the next material refresh before retrying',
 
   await publisher.markRefreshed(['daemon']);
   assert.deepEqual(requested, [['server'], ['server'], ['daemon']]);
+});
+
+test('an input-change rejection gets one bounded trailing publication attempt', async () => {
+  let attempts = 0;
+  const publisher = createBackgroundRuntimeSnapshotPublisher({
+    resolveComponents: async ({ requestedComponents }) => ({
+      components: requestedComponents,
+      currentSnapshotId: 'snapshot-old',
+    }),
+    publishComponents: async ({ requestedComponents }) => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error(
+          '[component-artifacts] daemon support publication changed before staging',
+        );
+      }
+      return { snapshotId: 'snapshot-new', changedComponents: requestedComponents };
+    },
+    logger: { error() {} },
+  });
+
+  const result = await publisher.markRefreshed(['daemon']);
+
+  assert.equal(attempts, 2);
+  assert.equal(result?.snapshotId, 'snapshot-new');
 });
 
 test('shutdown does not let an already-started publication update runtime status afterward', async () => {

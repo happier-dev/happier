@@ -1,9 +1,17 @@
 import { fileURLToPath } from 'node:url';
 
-import { spawnProc } from '../proc/proc.mjs';
+import { appendBoundedTail, formatFailureDiagnostic, spawnProc } from '../proc/proc.mjs';
 
 const RUNTIME_COMPONENTS = ['web', 'server', 'daemon'];
 const RUNTIME_COMPONENT_SET = new Set(RUNTIME_COMPONENTS);
+const RUNTIME_PUBLICATION_INPUT_CHANGE_MESSAGES = [
+  'daemon support publication changed before staging',
+  'daemon support publication changed while staging',
+  'CLI workspace runtime publication changed before staging',
+  'CLI workspace runtime publication changed while staging',
+  'server runtime support inputs changed while publishing',
+  'server runtime support inputs changed while staging',
+];
 
 export const RUNTIME_PUBLICATION_RESULT_PREFIX = '__HAPPIER_RUNTIME_PUBLICATION_RESULT__=';
 
@@ -18,6 +26,11 @@ function normalizeComponents(components) {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isRuntimePublicationInputChangeError(error) {
+  const message = errorMessage(error);
+  return RUNTIME_PUBLICATION_INPUT_CHANGE_MESSAGES.some((diagnostic) => message.includes(diagnostic));
 }
 
 export function isRepositoryRuntimePublicationOwner({
@@ -55,6 +68,10 @@ export async function publishRepositoryRuntimeSnapshotInChildProcess({
   }), 'utf8').toString('base64url');
   let result = null;
   let resultError = null;
+  const diagnosticStreamMaxChars = 8_000;
+  let diagnosticOut = '';
+  let diagnosticErr = '';
+  let failureDiagnosticTruncated = false;
   const child = spawnProcImpl(
     'runtime-publisher',
     process.execPath,
@@ -63,13 +80,23 @@ export async function publishRepositoryRuntimeSnapshotInChildProcess({
     {
       cwd: rootDir,
       lineFilter({ stream, line }) {
-        if (stream !== 'stdout' || !line.startsWith(RUNTIME_PUBLICATION_RESULT_PREFIX)) return true;
-        try {
-          result = JSON.parse(line.slice(RUNTIME_PUBLICATION_RESULT_PREFIX.length));
-        } catch (error) {
-          resultError = error;
+        if (stream === 'stdout' && line.startsWith(RUNTIME_PUBLICATION_RESULT_PREFIX)) {
+          try {
+            result = JSON.parse(line.slice(RUNTIME_PUBLICATION_RESULT_PREFIX.length));
+          } catch (error) {
+            resultError = error;
+          }
+          return false;
         }
-        return false;
+        const chunk = `${line}\n`;
+        if (stream === 'stdout') {
+          failureDiagnosticTruncated ||= diagnosticOut.length + chunk.length > diagnosticStreamMaxChars;
+          diagnosticOut = appendBoundedTail(diagnosticOut, chunk, diagnosticStreamMaxChars);
+        } else if (stream === 'stderr') {
+          failureDiagnosticTruncated ||= diagnosticErr.length + chunk.length > diagnosticStreamMaxChars;
+          diagnosticErr = appendBoundedTail(diagnosticErr, chunk, diagnosticStreamMaxChars);
+        }
+        return true;
       },
     },
   );
@@ -83,9 +110,20 @@ export async function publishRepositoryRuntimeSnapshotInChildProcess({
   }
   if (completion?.error) throw completion.error;
   if (completion?.code !== 0) {
-    throw new Error(
-      `runtime publisher child failed (code=${completion?.code ?? 'null'}, sig=${completion?.signal ?? 'null'})`,
+    const failureDiagnostic = formatFailureDiagnostic({
+      out: diagnosticOut,
+      err: diagnosticErr,
+      truncated: failureDiagnosticTruncated,
+      env,
+    });
+    const error = new Error(
+      `runtime publisher child failed ` +
+      `(code=${completion?.code ?? 'null'}, sig=${completion?.signal ?? 'null'})${failureDiagnostic}`,
     );
+    error.code = 'EEXIT';
+    error.exitCode = completion?.code ?? null;
+    error.signal = completion?.signal ?? null;
+    throw error;
   }
   if (resultError) {
     throw new Error('runtime publisher child returned an invalid result', { cause: resultError });
@@ -262,6 +300,7 @@ export function createBackgroundRuntimeSnapshotPublisher({
 
   const runPublication = async () => {
     let lastResult = null;
+    const consumedInputChangeRetries = new Set();
     for (;;) {
       if (closed || isShuttingDown?.()) return lastResult;
       const requestedComponents = normalizeComponents(Array.from(dirtyComponents));
@@ -320,11 +359,23 @@ export function createBackgroundRuntimeSnapshotPublisher({
           await reportStatus();
         } catch (error) {
           if (closed || isShuttingDown?.()) return lastResult;
+          const retryInputChange = isRuntimePublicationInputChangeError(error)
+            && !consumedInputChangeRetries.has(component);
           dirtyComponents.add(component);
-          setComponentsPhase([component], 'failed', errorMessage(error));
+          if (retryInputChange) {
+            consumedInputChangeRetries.add(component);
+            publishAgain = true;
+          }
+          setComponentsPhase(
+            [component],
+            retryInputChange ? 'stale' : 'failed',
+            retryInputChange ? null : errorMessage(error),
+          );
           await reportStatus();
           logger.error?.(
-            `[local] ${component} runtime publication failed; keeping the current snapshot selected and source services unchanged. ${errorMessage(error)}`,
+            retryInputChange
+              ? `[local] ${component} runtime publication inputs changed; recomputing once from settled inputs.`
+              : `[local] ${component} runtime publication failed; keeping the current snapshot selected and source services unchanged. ${errorMessage(error)}`,
           );
         }
       }
