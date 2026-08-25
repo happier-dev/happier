@@ -37,8 +37,8 @@ const fetchAndApplyPendingMessagesV2 = (
     outboxScope,
     isOutboxScopeCurrent: () => true,
 });
-const withOutboxScope = <T extends { outboxScope: ServerAccountScope }>(
-    fn: (params: T) => Promise<void>,
+const withOutboxScope = <T extends { outboxScope: ServerAccountScope }, TResult>(
+    fn: (params: T) => Promise<TResult>,
 ) => (params: Omit<T, 'outboxScope'>) =>
     // Test adapter restores the one deliberately omitted required boundary field.
     fn({ ...params, outboxScope } as T);

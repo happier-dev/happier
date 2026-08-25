@@ -1411,7 +1411,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             preparedComposerAdmission: { stagedMediaHandles: [stagedMediaHandle] },
             encryption: null,
             request: async () => new Response(null, { status: 204 }),
-        } as Parameters<typeof updatePendingMessageV2Impl>[0]);
+        });
 
         expect(result).toEqual({
             sessionId,
