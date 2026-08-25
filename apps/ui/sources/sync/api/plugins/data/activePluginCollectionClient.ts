@@ -10,19 +10,17 @@ import {
     PluginCollectionGetRequestV1Schema,
     PluginCollectionGetResultV1Schema,
     PluginCollectionMutationErrorV1Schema,
-    PluginCollectionMutationRequestV1Schema,
     PluginCollectionMutationResultV1Schema,
     PluginCollectionQueryRequestV1Schema,
     PluginCollectionQueryResultV1Schema,
     PluginCollectionReadErrorV1Schema,
-    PluginCollectionRowIdV1Schema,
     compilePluginJsonSchema,
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createAccountScopedCryptoMaterialSnapshotV1,
     decodePluginCollectionLogicalRowV1,
     encodePluginCollectionLogicalValueV1,
     isValidPluginJsonSchemaValue,
-    measurePluginCollectionMutationRequestDecompositionV1,
+    preparePluginCollectionLogicalMutationRequestV1,
     resolveEffectivePluginCollectionLimitsV1,
     resolvePluginCollectionIdentityTagV1,
     type AccountScopedCryptoMaterial,
@@ -34,7 +32,6 @@ import {
     type PluginCollectionEffectiveLimitsV1,
     type PluginCollectionMutationOperationV1,
     type PluginCollectionMutationRequestMeasurementV1,
-    type PluginCollectionMutationRequestV1,
     type PluginCollectionMutationResultEntryV1,
     type PluginCollectionProjectionV1,
     type PluginCollectionQueryRangeV1,
@@ -81,6 +78,19 @@ export type ActivePluginCollectionUnavailableReasonV1 =
     | 'collection-unavailable'
     | 'writer-contract-unavailable'
     | 'response-invalid'
+    /**
+     * The runtime's `JSON.stringify` refused this request body. Protocol admits
+     * strict JSON iteratively and carries no depth quota, so an admitted value
+     * can still exceed what this realm's engine will serialize — and this client
+     * spans the widest engine range in the product: Hermes natively, JSC in the
+     * macOS/iOS webview, V8 on Windows and Chrome, SpiderMonkey on Firefox.
+     * Hermes refuses past 511 nesting levels, an order of magnitude below every
+     * browser engine, so this is reachable rather than theoretical; the measured
+     * spread is recorded with the Protocol strict-JSON owner. A body this runtime
+     * cannot serialize can never be written: it is a permanent defect in the
+     * value, never a transport outage a caller should retry.
+     */
+    | 'request-not-serializable'
     | 'transport-unavailable';
 
 export type ActivePluginCollectionUnavailableV1 = Readonly<{
@@ -444,13 +454,25 @@ export async function requestCollectionOperation(input: Readonly<{
     | ActivePluginCollectionUnavailableV1
 > {
     const method = input.method ?? 'POST';
+    // Serialize before the request so the host serializer's refusal is reported
+    // as the permanent value defect it is, instead of being swallowed by the
+    // transport catch below. The daemon host classifies the same refusal as an
+    // invalid value, and the two realms must not disagree about one input.
+    let serializedBody: string | undefined;
+    if (method !== 'GET') {
+        try {
+            serializedBody = JSON.stringify(input.body);
+        } catch {
+            return unavailable('request-not-serializable');
+        }
+    }
     try {
         const response = await input.operation.authority.request(
             input.path,
             withAccountStoredContentCompatibilityRequestDeclaration({
                 method,
                 headers: input.operation.headers,
-                ...(method === 'GET' ? {} : { body: JSON.stringify(input.body) }),
+                ...(method === 'GET' ? {} : { body: serializedBody }),
                 signal: input.operation.signal,
             }, PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
         );
@@ -516,24 +538,6 @@ export function encodePluginCollectionLogicalValue<TValue extends PluginAccountC
             rowId: encoded.rowId,
             content: encoded.content,
             projection: encoded.projection,
-        }
-        : null;
-}
-
-function splitLogicalPut<TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition>>(input: Readonly<{
-    contract: NormalizedPluginAccountCollectionContractV1;
-    validate: ReturnType<typeof compilePluginJsonSchema>;
-    value: TValue;
-    expectedRevision: number | 'absent';
-    encryptionMode: 'plain' | 'e2ee';
-    material: AccountScopedCryptoMaterial | null;
-}>): Extract<PluginCollectionMutationOperationV1, { kind: 'put' }> | null {
-    const encoded = encodePluginCollectionLogicalValue(input);
-    return encoded
-        ? {
-            kind: 'put',
-            expectedRevision: input.expectedRevision,
-            ...encoded,
         }
         : null;
 }
@@ -791,46 +795,17 @@ export function createActivePluginCollectionClient<
      * batches measures exactly the bytes the mutation will send, private
      * envelope and projection included, rather than modelling the expansion.
      */
-    const sealMutationRequest = (
+    const prepareMutationRequest = (
         operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
         operation: PreparedCollectionOperation,
-    ): PluginCollectionMutationRequestV1 | null => {
-        const wireOperations: PluginCollectionMutationOperationV1[] = [];
-        for (const candidate of operations) {
-            if (candidate.kind === 'delete' || candidate.kind === 'assert') {
-                const parsed = PluginCollectionRowIdV1Schema.safeParse(candidate.rowId);
-                if (!parsed.success || !Number.isSafeInteger(candidate.expectedRevision) || candidate.expectedRevision < 1) {
-                    return null;
-                }
-                wireOperations.push({
-                    kind: candidate.kind,
-                    rowId: parsed.data,
-                    expectedRevision: candidate.expectedRevision,
-                });
-                continue;
-            }
-            const split = splitLogicalPut<TValue>({
-                contract: params.contract,
-                validate,
-                value: candidate.value,
-                expectedRevision: candidate.expectedRevision,
-                encryptionMode: operation.encryptionMode,
-                material: operation.material,
-            });
-            if (!split) return null;
-            wireOperations.push(split);
-        }
-        const request = PluginCollectionMutationRequestV1Schema.safeParse({
-            pluginId: params.contract.pluginId,
-            collectionId: params.contract.collectionId,
-            writerContext: {
-                schemaVersion: params.contract.schemaVersion,
-                contractDigest: params.contract.contractDigest,
-            },
-            operations: wireOperations,
-        });
-        return request.success ? request.data : null;
-    };
+    ) => preparePluginCollectionLogicalMutationRequestV1<TValue>({
+        contract: params.contract,
+        isValidLogicalValue: (value): value is TValue => isLogicalCollectionValue<TValue>(validate, value),
+        operations,
+        encryptionMode: operation.encryptionMode,
+        material: operation.material,
+        randomBytes: getRandomBytes,
+    });
 
     const mutate = async (
         operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
@@ -845,12 +820,12 @@ export function createActivePluginCollectionClient<
         const prepared = await prepareCollectionOperation(options, params.accountLifetime);
         if (prepared.status === 'unavailable') return prepared;
         try {
-            const request = sealMutationRequest(operations, prepared.operation);
-            if (!request) return rejected('collection_mutation_invalid');
+            const sealed = prepareMutationRequest(operations, prepared.operation);
+            if (sealed.status === 'failed') return rejected('collection_mutation_invalid');
             const response = await requestCollectionOperation({
                 operation: prepared.operation,
                 path: PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1,
-                body: request,
+                body: sealed.request,
                 options,
             });
             if (response.status === 'unavailable') return response;
@@ -951,14 +926,13 @@ export function createActivePluginCollectionClient<
             const operationEncodedBytes: number[] = [];
             let overheadEncodedBytes = 0;
             for (let offset = 0; offset < operations.length; offset += window) {
-                const request = sealMutationRequest(
+                const sealed = prepareMutationRequest(
                     operations.slice(offset, offset + window),
                     prepared.operation,
                 );
-                if (!request) return rejected('collection_mutation_invalid');
-                const measured = measurePluginCollectionMutationRequestDecompositionV1(request);
-                overheadEncodedBytes = measured.overheadEncodedBytes;
-                operationEncodedBytes.push(...measured.operationEncodedBytes);
+                if (sealed.status === 'failed') return rejected('collection_mutation_invalid');
+                overheadEncodedBytes = sealed.measurement.overheadEncodedBytes;
+                operationEncodedBytes.push(...sealed.measurement.operationEncodedBytes);
             }
             return {
                 status: 'ready',

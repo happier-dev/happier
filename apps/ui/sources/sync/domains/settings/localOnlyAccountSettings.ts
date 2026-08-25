@@ -1,8 +1,44 @@
 import type { Settings } from '@/sync/domains/settings/settings';
 
 import {
+    NewSessionOrdinaryEntryDraftIdSchema,
     parseLocalAccountSettings,
+    type LocalAccountSettings,
 } from '@/sync/domains/settings/registry/local/localAccountSettingDefinitions';
+
+type NewSessionOrdinaryEntryDraftPointerSettings = Readonly<Pick<
+    LocalAccountSettings,
+    'newSessionOrdinaryEntryDraftId'
+>>;
+
+export type NewSessionOrdinaryEntryDraftPointerDelta = Readonly<Pick<
+    LocalAccountSettings,
+    'newSessionOrdinaryEntryDraftId'
+>>;
+
+export function readNewSessionOrdinaryEntryDraftId(
+    settings: NewSessionOrdinaryEntryDraftPointerSettings,
+): string | null {
+    const parsed = NewSessionOrdinaryEntryDraftIdSchema.safeParse(settings.newSessionOrdinaryEntryDraftId);
+    return parsed.success ? parsed.data : null;
+}
+
+export function setNewSessionOrdinaryEntryDraftId(
+    draftId: string,
+): NewSessionOrdinaryEntryDraftPointerDelta | null {
+    const parsed = NewSessionOrdinaryEntryDraftIdSchema.safeParse(draftId);
+    return parsed.success ? { newSessionOrdinaryEntryDraftId: parsed.data } : null;
+}
+
+export function clearNewSessionOrdinaryEntryDraftIdExact(
+    settings: NewSessionOrdinaryEntryDraftPointerSettings,
+    draftId: string,
+): NewSessionOrdinaryEntryDraftPointerDelta | null {
+    const currentDraftId = readNewSessionOrdinaryEntryDraftId(settings);
+    const expectedDraftId = NewSessionOrdinaryEntryDraftIdSchema.safeParse(draftId);
+    if (!expectedDraftId.success || currentDraftId !== expectedDraftId.data) return null;
+    return { newSessionOrdinaryEntryDraftId: null };
+}
 
 /**
  * Runtime projections are non-persisted Settings facts.
@@ -26,6 +62,7 @@ export function stripLocalOnlyAccountSettings(settings: Partial<Settings>): Part
         lastUsedAgent: _lastUsedAgent,
         lastUsedBackendTarget: _lastUsedBackendTarget,
         lastNewSessionAgentPickerViewV1: _lastNewSessionAgentPickerView,
+        newSessionOrdinaryEntryDraftId: _newSessionOrdinaryEntryDraftId,
         serverSelectionGroups: _serverSelectionGroups,
         serverSelectionActiveTargetKind: _serverSelectionActiveTargetKind,
         serverSelectionActiveTargetId: _serverSelectionActiveTargetId,

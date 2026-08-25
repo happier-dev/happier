@@ -203,7 +203,7 @@ function createProjection(): PluginProjectionV2 {
                         contributionKind: 'sessionHeaderAction',
                         descriptorId: 'open-preview',
                         title: { key: 'title', fallback: 'Open preview' },
-                        action: {
+                        command: {
                             kind: 'executeAction',
                             action: { pluginId: 'acme.preview', localId: 'open-preview' },
                         },
@@ -672,7 +672,7 @@ describe('plugin UI projection normalization', () => {
         });
         expect(model.sessionHeaderActionsById['sessionHeaderAction:acme.preview:open-preview']).toMatchObject({
             descriptorId: 'open-preview',
-            action: {
+            command: {
                 kind: 'executeAction',
                 action: { pluginId: 'acme.preview', localId: 'open-preview' },
             },
@@ -773,7 +773,7 @@ describe('plugin UI projection normalization', () => {
             .sessionHeaderActionsById['sessionHeaderAction:acme.preview:open-preview'])
             .toMatchObject({
                 descriptorId: 'open-preview',
-                action: {
+                command: {
                     kind: 'executeAction',
                     action: { pluginId: 'acme.preview', localId: 'open-preview' },
                 },
@@ -810,6 +810,91 @@ describe('plugin UI projection normalization', () => {
                 actions: [{ pluginId: 'acme.preview', localId: 'open-preview' }],
             }),
         });
+    });
+
+    it('retains a daemon-admitted session-info section with its declarative renderer', () => {
+        const projection = createProjection();
+        const entries = projection.familiesById.pluginUi?.entriesById;
+        if (!entries) throw new Error('pluginUi fixture family is required');
+        const sessionInfoBinding = binding({
+            pluginId: 'acme.preview',
+            destinationId: 'overview',
+            rendererId: 'session-info-overview',
+            fallbackRendererIds: [],
+            availableRendererIds: ['session-info-overview'],
+            container: 'sessionInfoSection',
+            target: { kind: 'session' },
+            instancePolicy: 'singleton',
+        });
+        entries['sessionInfoSection:acme.preview:overview'] = {
+            id: 'sessionInfoSection:acme.preview:overview',
+            pluginId: 'acme.preview',
+            pluginVersion: '1.0.0',
+            contributionKind: 'sessionInfoSection',
+            descriptorId: 'overview',
+            order: 25,
+            resource: { pluginId: 'acme.preview', localId: 'session-overview' },
+            actions: [{ pluginId: 'acme.preview', localId: 'open-preview' }],
+            renderer: {
+                kind: 'declarative',
+                contributionId: 'session-info-overview',
+                documentSource: { kind: 'resource', resourceId: 'session-overview' },
+            },
+            runtime: { resource: { available: true } },
+            placement: {
+                id: 'sessionInfoSectionPlacement:acme.preview:overview',
+                pluginId: 'acme.preview',
+                contributionKind: 'surfacePlacement',
+                descriptorId: 'overview',
+                binding: sessionInfoBinding,
+                target: sessionInfoBinding.target,
+                renderer: {
+                    kind: 'declarative',
+                    contributionId: 'session-info-overview',
+                    documentSource: { kind: 'resource', resourceId: 'session-overview' },
+                },
+                display: {},
+                availability: { state: 'available', reason: 'available', diagnostics: [] },
+                headerActions: [],
+                runtime: { resource: { available: true } },
+            },
+        };
+
+        expect(normalizePluginUiProjection(projection).sessionInfoSectionsById).toEqual({
+            'sessionInfoSection:acme.preview:overview': expect.objectContaining({
+                descriptorId: 'overview',
+                order: 25,
+                resource: { pluginId: 'acme.preview', localId: 'session-overview' },
+                actions: [{ pluginId: 'acme.preview', localId: 'open-preview' }],
+                renderer: expect.objectContaining({ contributionId: 'session-info-overview' }),
+                placement: expect.objectContaining({
+                    binding: expect.objectContaining({ container: 'sessionInfoSection' }),
+                }),
+            }),
+        });
+    });
+
+    it('rejects a Session-info section whose nested physical placement targets another container', () => {
+        const projection = createProjection();
+        const entries = projection.familiesById.pluginUi?.entriesById;
+        if (!entries) throw new Error('pluginUi fixture family is required');
+        const wrongPlacement = entries['surfacePlacement:acme.preview:preview-pane'];
+        if (!wrongPlacement) throw new Error('surface placement fixture is required');
+        entries['sessionInfoSection:acme.preview:wrong-container'] = {
+            id: 'sessionInfoSection:acme.preview:wrong-container',
+            pluginId: 'acme.preview',
+            pluginVersion: '1.0.0',
+            contributionKind: 'sessionInfoSection',
+            descriptorId: 'wrong-container',
+            resource: { pluginId: 'acme.preview', localId: 'session-overview' },
+            actions: [],
+            renderer: { kind: 'declarative', contributionId: 'session-info-wrong-container' },
+            placement: wrongPlacement,
+        };
+
+        expect(normalizePluginUiProjection(projection)
+            .sessionInfoSectionsById['sessionInfoSection:acme.preview:wrong-container'])
+            .toBeUndefined();
     });
 
     it('keeps the previous model while a projection refresh is unresolved', () => {

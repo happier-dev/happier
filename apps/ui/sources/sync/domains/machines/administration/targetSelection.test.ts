@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     isMachineAdministrationCandidateSelectable,
+    resolveMachineAdministrationTargetLabel,
     resolveMachineAdministrationTargetState,
     type MachineAdministrationCandidateV1,
 } from './targetSelection';
@@ -26,6 +27,44 @@ function candidate(input: Readonly<{
         ...(input.replacementTarget ? { replacementTarget: input.replacementTarget } : {}),
     };
 }
+
+describe('resolveMachineAdministrationTargetLabel', () => {
+    it('names the exact selected machine and server, not another candidate with the same machine id', () => {
+        // One machine id observed under two server identities is the case a
+        // machine-scoped confirmation must not blur: an irreversible change
+        // confirmed against `srv_two` must not be described with `srv_one`'s row.
+        const onSrvOne: MachineAdministrationCandidateV1 = {
+            ...candidate({ serverIdentityId: 'srv_one', machineId: 'machine-shared' }),
+            displayName: 'Laptop',
+            serverLabel: 'Server One',
+        };
+        const onSrvTwo: MachineAdministrationCandidateV1 = {
+            ...candidate({ serverIdentityId: 'srv_two', machineId: 'machine-shared' }),
+            displayName: 'Build box',
+            serverLabel: 'Server Two',
+        };
+
+        expect(resolveMachineAdministrationTargetLabel({
+            target: { serverIdentityId: 'srv_two', machineId: 'machine-shared' },
+            candidates: [onSrvOne, onSrvTwo],
+        })).toEqual({ machine: 'Build box', server: 'Server Two' });
+        expect(resolveMachineAdministrationTargetLabel({
+            target: { serverIdentityId: 'srv_one', machineId: 'machine-shared' },
+            candidates: [onSrvOne, onSrvTwo],
+        })).toEqual({ machine: 'Laptop', server: 'Server One' });
+    });
+
+    it('falls back to the portable target ids rather than omitting the target', () => {
+        expect(resolveMachineAdministrationTargetLabel({
+            target: { serverIdentityId: 'srv_gone', machineId: 'machine-gone' },
+            candidates: [candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a' })],
+        })).toEqual({ machine: 'machine-gone', server: 'srv_gone' });
+        expect(resolveMachineAdministrationTargetLabel({
+            target: null,
+            candidates: [candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a' })],
+        })).toBeNull();
+    });
+});
 
 describe('resolveMachineAdministrationTargetState', () => {
     it('admits only a live online candidate for an explicit target change', () => {

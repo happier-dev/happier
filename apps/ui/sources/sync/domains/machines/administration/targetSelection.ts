@@ -50,6 +50,31 @@ export function machineAdministrationTargetsEqual(
     return left.serverIdentityId === right.serverIdentityId && left.machineId === right.machineId;
 }
 
+/**
+ * How the picker names the machine and server a target points at.
+ *
+ * A confirmation for an irreversible machine-scoped change must say which
+ * machine and which server it lands on: the same wording against a different
+ * selection is a different action. The candidate inventory owns those labels,
+ * so callers reuse them instead of inventing a second naming rule. A target
+ * that is no longer in the inventory still has its own portable ids, and those
+ * are the truthful fallback rather than an omission.
+ */
+export function resolveMachineAdministrationTargetLabel(params: Readonly<{
+    target: MachineAdministrationTargetV1 | null;
+    candidates: readonly MachineAdministrationCandidateV1[];
+}>): Readonly<{ machine: string; server: string }> | null {
+    const target = params.target;
+    if (!target) return null;
+    const candidate = params.candidates.find((entry) => (
+        machineAdministrationTargetsEqual(entry.target, target)
+    )) ?? null;
+    return Object.freeze({
+        machine: candidate?.displayName ?? target.machineId,
+        server: candidate?.serverLabel ?? target.serverIdentityId,
+    });
+}
+
 function compareCandidates(left: MachineAdministrationCandidateV1, right: MachineAdministrationCandidateV1): number {
     const serverOrder = left.target.serverIdentityId.localeCompare(right.target.serverIdentityId);
     return serverOrder !== 0 ? serverOrder : left.target.machineId.localeCompare(right.target.machineId);

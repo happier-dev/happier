@@ -1,6 +1,5 @@
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import type { LocalServiceInventoryRow } from '@/sync/domains/local/services/inventory/store';
-import type { ManagedLocalServiceRow } from '@/sync/domains/local/services/managed/store';
 
 import {
     isLocalServiceRowAttributedToSession,
@@ -13,7 +12,7 @@ export type ServiceRowScope = 'thisSession' | 'workspace' | 'machine' | 'suggest
 export type ServiceRowStatus = 'running' | 'starting' | 'stale' | 'stopped' | 'unavailable';
 
 export type ServiceRow = Readonly<{
-    id: string; // stable identity (inventory:<id> | managed:<id> | package:<id> | ...)
+    id: string; // stable identity (inventory:<id> | package:<id> | ...)
     scope: ServiceRowScope; // ranking band
     title: string;
     portLabel: string | null; // ":<port>" or null (single port-token authority)
@@ -28,7 +27,6 @@ export type ServiceRow = Readonly<{
         | Readonly<{ kind: 'open'; openTarget: LocalServiceLaunchTarget }>
         | Readonly<{ kind: 'start'; target: LocalServiceLaunchTarget }>
         | null; // null ⇒ inert row (quiet caption, no headline action)
-    managed: ManagedLocalServiceRow | null; // secondary stop/restart affordances when managed
     terminateIdentityConfidence?: 'full' | 'pid_only' | null;
     /** The underlying launch target, carried for per-row secondary affordances (e.g. public preview). */
     target: LocalServiceLaunchTarget;
@@ -155,8 +153,8 @@ function runningFirstKey(status: ServiceRowStatus): 0 | 1 {
 }
 
 /**
- * The ONE ranked service-row model. Folds detected inventory rows, launcher targets,
- * and managed rows into a single list ordered:
+ * The ONE ranked service-row model. Folds detected inventory rows and launcher targets
+ * into a single list ordered:
  *   running/this-session → workspace → machine → suggestions.
  * Order within a band is stable (running-first). Never filters: every in-scope launch
  * target lands in exactly one band. Openability is judged via
@@ -168,7 +166,6 @@ function runningFirstKey(status: ServiceRowStatus): 0 | 1 {
  */
 export function buildLocalServiceRows(input: Readonly<{
     inventoryRows: readonly LocalServiceInventoryRow[];
-    managedRows: readonly ManagedLocalServiceRow[];
     launchTargets: readonly LocalServiceLaunchTarget[];
     sessionId: string | null;
     scope: 'workspace' | 'machine';
@@ -177,23 +174,9 @@ export function buildLocalServiceRows(input: Readonly<{
     for (const row of input.inventoryRows) {
         inventoryById.set(row.id, row);
     }
-    const managedByInventoryId = new Map<string, ManagedLocalServiceRow>();
-    const managedById = new Map<string, ManagedLocalServiceRow>();
-    for (const row of input.managedRows) {
-        managedById.set(row.id, row);
-        if (row.inventoryId) {
-            managedByInventoryId.set(row.inventoryId, row);
-        }
-    }
-
     const rows = input.launchTargets.map((target, index): { row: ServiceRow; index: number } => {
         const inventoryId = inventoryIdFromTarget(target);
         const inventoryRow = inventoryId ? inventoryById.get(inventoryId) : undefined;
-        const managedRow = inventoryId
-            ? managedByInventoryId.get(inventoryId) ?? null
-            : target.id.startsWith('managed:')
-                ? managedById.get(target.id.slice('managed:'.length)) ?? null
-                : null;
         const status = resolveStatus(target);
         const row: ServiceRow = {
             id: target.id,
@@ -208,7 +191,6 @@ export function buildLocalServiceRows(input: Readonly<{
             status,
             reasonCode: target.unavailableReason ?? null,
             primaryAction: resolvePrimaryAction(target),
-            managed: managedRow,
             terminateIdentityConfidence: readTerminateIdentityConfidence(inventoryRow, target),
             target,
         };

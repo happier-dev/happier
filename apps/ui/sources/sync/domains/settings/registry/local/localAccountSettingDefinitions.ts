@@ -1,6 +1,7 @@
 import {
     BackendTargetKeyV2Schema,
     BackendTargetRefV2InputSchema,
+    SessionDraftAddressV1Schema,
     buildSettingArtifacts,
     defineSettingDefinitions,
     readBackendTargetRefV2,
@@ -36,6 +37,11 @@ export const NewSessionAgentPickerViewV1Schema = z.preprocess((value) => {
 ]).nullable().default(null));
 
 export type NewSessionAgentPickerViewV1 = z.infer<typeof NewSessionAgentPickerViewV1Schema>;
+
+export const NewSessionOrdinaryEntryDraftIdSchema = z.string().refine(
+    (draftId) => SessionDraftAddressV1Schema.safeParse({ kind: 'newSession', draftId }).success,
+    'Expected a canonical new-session draft UUID',
+);
 
 const LastUsedBackendTargetSchema = z.union([
     BackendTargetRefV2InputSchema,
@@ -76,6 +82,12 @@ export const LOCAL_ACCOUNT_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Last explicitly focused view in the new-session engine picker',
         storageScope: 'local',
     },
+    newSessionOrdinaryEntryDraftId: {
+        schema: NewSessionOrdinaryEntryDraftIdSchema.nullable(),
+        default: null,
+        description: 'Ordinary-entry new-session draft identity for this device and Account/server scope',
+        storageScope: 'local',
+    },
     serverSelectionGroups: {
         schema: z.array(ServerSelectionGroupSchema),
         default: [],
@@ -108,6 +120,7 @@ export const LOCAL_ACCOUNT_SETTING_KEYS = [
     'lastUsedAgent',
     'lastUsedBackendTarget',
     'lastNewSessionAgentPickerViewV1',
+    'newSessionOrdinaryEntryDraftId',
     'serverSelectionGroups',
     'serverSelectionActiveTargetKind',
     'serverSelectionActiveTargetId',
@@ -135,6 +148,7 @@ export function parseLocalAccountSettings(input: unknown): LocalAccountSettings 
         lastUsedAgent: parseLocalSetting(definitions.lastUsedAgent, record.lastUsedAgent),
         lastUsedBackendTarget: parseLocalSetting(definitions.lastUsedBackendTarget, record.lastUsedBackendTarget),
         lastNewSessionAgentPickerViewV1: parseLocalSetting(definitions.lastNewSessionAgentPickerViewV1, record.lastNewSessionAgentPickerViewV1),
+        newSessionOrdinaryEntryDraftId: parseLocalSetting(definitions.newSessionOrdinaryEntryDraftId, record.newSessionOrdinaryEntryDraftId),
         serverSelectionGroups: parseLocalSetting(definitions.serverSelectionGroups, record.serverSelectionGroups),
         serverSelectionActiveTargetKind: parseLocalSetting(definitions.serverSelectionActiveTargetKind, record.serverSelectionActiveTargetKind),
         serverSelectionActiveTargetId: parseLocalSetting(definitions.serverSelectionActiveTargetId, record.serverSelectionActiveTargetId),

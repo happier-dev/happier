@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import type { LocalServiceLauncherSnapshotClientResult } from './api';
 import {
     getLocalServiceLauncherState,
@@ -7,7 +8,6 @@ import {
     resetLocalServiceLauncherStoreForTests,
     subscribeLocalServiceLauncherStore,
 } from './sharedStore';
-import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import { selectLocalServiceLaunchTargets } from './store';
 import type { LocalServiceLauncherSnapshot } from './types';
 
@@ -86,9 +86,16 @@ describe('shared local-service launcher store', () => {
 
     it('does not re-fetch launch targets on a wall clock while subscribed', async () => {
         const snapshotClient = vi.fn(async (): Promise<LocalServiceLauncherSnapshotClientResult> => ({
-            status: 'ok',
+            ok: true,
             snapshot,
         }));
+        const key = {
+            machineId: 'machine-a',
+            serverId: 'server-a',
+            sessionId: 'session-a',
+            scope: 'workspace' as const,
+            workspaceRoot: '/repo',
+        };
 
         await expectNoWallClockPolling({
             subscribe: () => subscribeLocalServiceLauncherStore(key, () => {}, { snapshotClient }),

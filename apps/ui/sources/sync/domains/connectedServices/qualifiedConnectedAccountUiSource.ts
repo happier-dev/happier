@@ -2,16 +2,6 @@ import type {
     AuthCredentials,
 } from '@/auth/storage/tokenStorage';
 import {
-    addConnectedServiceAuthGroupMemberV3,
-    createConnectedServiceAuthGroupV3,
-    deleteConnectedServiceAuthGroupV3,
-    listConnectedServiceAuthGroupsV3,
-    patchConnectedServiceAuthGroupMemberV3,
-    patchConnectedServiceAuthGroupV3,
-    removeConnectedServiceAuthGroupMemberV3,
-    setConnectedServiceAuthGroupActiveProfileV3,
-} from '@/sync/api/account/apiConnectedServiceAuthGroupsV3';
-import {
     addQualifiedConnectedAccountGroupMemberV4,
     createQualifiedConnectedAccountGroupV4,
     deleteQualifiedConnectedAccountGroupV4,
@@ -28,19 +18,13 @@ import {
     type ConnectedServiceAuthGroupMemberStateV1,
     type ConnectedServiceAuthGroupPolicyV1,
     type ConnectedServiceAuthGroupStateV1,
-    type ConnectedServiceAuthGroupV1,
     type ConnectedServiceId,
     type PluginContributionIdentityV1,
     type QualifiedConnectedAccountGroupV4,
     type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol';
 
-export type QualifiedConnectedAccountUiSource =
-    | Readonly<{ protocol: 'v4' }>
-    | Readonly<{
-        protocol: 'legacy-v3';
-        legacyServiceId: ConnectedServiceId;
-    }>;
+export type QualifiedConnectedAccountUiSource = Readonly<{ protocol: 'v4' }>;
 
 export type QualifiedConnectedAccountUiLegacyPeerClass =
     | 'exact-v0.2.1'
@@ -65,17 +49,12 @@ export class QualifiedConnectedAccountUiSourceError extends Error {
     }
 }
 
-export type QualifiedConnectedAccountUiGroupRevision =
-    | Readonly<{
-        protocol: 'v4';
-        incarnation: string;
-        generation: number;
-        runtimeStateRevision: number;
-    }>
-    | Readonly<{
-        protocol: 'legacy-v3';
-        generation: number;
-    }>;
+export type QualifiedConnectedAccountUiGroupRevision = Readonly<{
+    protocol: 'v4';
+    incarnation: string;
+    generation: number;
+    runtimeStateRevision: number;
+}>;
 
 export type QualifiedConnectedAccountUiGroupMember = Readonly<{
     ref: QualifiedConnectedAccountRef;
@@ -165,47 +144,6 @@ function fromQualifiedGroup(
     };
 }
 
-function fromLegacyGroup(
-    group: ConnectedServiceAuthGroupV1,
-    expectedService: PluginContributionIdentityV1,
-    expectedLegacyServiceId: ConnectedServiceId,
-): QualifiedConnectedAccountUiGroup {
-    if (
-        group.serviceId !== expectedLegacyServiceId
-        || group.members.some((member) => (
-            member.serviceId !== expectedLegacyServiceId
-            || member.groupId !== group.groupId
-        ))
-    ) {
-        throw new QualifiedConnectedAccountUiSourceError(
-            'qualified_connected_accounts_inconsistent_peer',
-        );
-    }
-    return {
-        ref: {
-            service: expectedService,
-            groupId: group.groupId,
-        },
-        displayName: group.displayName,
-        policy: group.policy,
-        activeAccountId: group.activeProfileId,
-        revision: {
-            protocol: 'legacy-v3',
-            generation: group.generation,
-        },
-        state: group.state,
-        members: group.members.map((member) => ({
-            ref: {
-                service: expectedService,
-                accountId: member.profileId,
-            },
-            priority: member.priority,
-            enabled: member.enabled,
-            state: member.state,
-        })),
-    };
-}
-
 function mergePolicy(
     current: ConnectedServiceAuthGroupPolicyV1,
     patch: Partial<ConnectedServiceAuthGroupPolicyV1>,
@@ -221,12 +159,7 @@ function mergePolicy(
 
 function readV4Revision(
     group: QualifiedConnectedAccountUiGroup,
-): Extract<QualifiedConnectedAccountUiGroupRevision, { protocol: 'v4' }> {
-    if (group.revision.protocol !== 'v4') {
-        throw new QualifiedConnectedAccountUiSourceError(
-            'qualified_connected_accounts_cross_source_ref',
-        );
-    }
+): QualifiedConnectedAccountUiGroupRevision {
     return group.revision;
 }
 
@@ -299,7 +232,7 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
     service: PluginContributionIdentityV1;
     source: QualifiedConnectedAccountUiSource;
 }>): QualifiedConnectedAccountGroupsClient {
-    const { credentials, service, source } = params;
+    const { credentials, service } = params;
 
     const assertAccount = (account: QualifiedConnectedAccountRef) => {
         if (!sameService(account.service, service)) {
@@ -309,64 +242,32 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
         }
     };
     const assertGroup = (group: QualifiedConnectedAccountUiGroup) => {
-        if (
-            !sameService(group.ref.service, service)
-            || group.revision.protocol !== source.protocol
-        ) {
+        if (!sameService(group.ref.service, service)) {
             throw new QualifiedConnectedAccountUiSourceError(
                 'qualified_connected_accounts_cross_source_ref',
             );
         }
     };
-    const normalize = (
-        group: QualifiedConnectedAccountGroupV4 | ConnectedServiceAuthGroupV1,
-    ): QualifiedConnectedAccountUiGroup => source.protocol === 'v4'
-        ? fromQualifiedGroup(group as QualifiedConnectedAccountGroupV4, service)
-        : fromLegacyGroup(
-            group as ConnectedServiceAuthGroupV1,
-            service,
-            source.legacyServiceId,
-        );
+    const normalize = (group: QualifiedConnectedAccountGroupV4): QualifiedConnectedAccountUiGroup =>
+        fromQualifiedGroup(group, service);
 
     return {
         async list() {
-            if (source.protocol === 'v4') {
-                const response = await listQualifiedConnectedAccountGroupsV4(
-                    credentials,
-                    { service },
-                );
-                return response.groups.map((group) => fromQualifiedGroup(group, service));
-            }
-            const response = await listConnectedServiceAuthGroupsV3(credentials, {
-                serviceId: source.legacyServiceId,
-            });
-            return response.groups.map((group) => fromLegacyGroup(
-                group,
-                service,
-                source.legacyServiceId,
-            ));
+            const response = await listQualifiedConnectedAccountGroupsV4(
+                credentials,
+                { service },
+            );
+            return response.groups.map((group) => fromQualifiedGroup(group, service));
         },
         async create(input) {
-            if (source.protocol === 'v4') {
-                return normalize((await createQualifiedConnectedAccountGroupV4(
-                    credentials,
-                    {
-                        service,
-                        group: {
-                            groupId: input.groupId,
-                            displayName: input.displayName,
-                        },
-                    },
-                )).group);
-            }
-            return normalize((await createConnectedServiceAuthGroupV3(
+            return normalize((await createQualifiedConnectedAccountGroupV4(
                 credentials,
                 {
-                    serviceId: source.legacyServiceId,
-                    groupId: input.groupId,
-                    displayName: input.displayName,
-                    members: [],
-                    activeProfileId: null,
+                    service,
+                    group: {
+                        groupId: input.groupId,
+                        displayName: input.displayName,
+                    },
                 },
             )).group);
         },
@@ -375,179 +276,99 @@ export function createQualifiedConnectedAccountGroupsClient(params: Readonly<{
             const policy = input.policy
                 ? mergePolicy(input.group.policy, input.policy)
                 : undefined;
-            if (source.protocol === 'v4') {
-                const revision = readV4Revision(input.group);
-                return normalize((await patchQualifiedConnectedAccountGroupV4(
-                    credentials,
-                    {
-                        service,
-                        groupId: input.group.ref.groupId,
-                        ...(input.displayName !== undefined
-                            ? { displayName: input.displayName }
-                            : {}),
-                        ...(policy ? { policy } : {}),
-                        expectedIncarnation: revision.incarnation,
-                        expectedRuntimeStateRevision:
-                            revision.runtimeStateRevision,
-                    },
-                )).group);
-            }
-            return normalize((await patchConnectedServiceAuthGroupV3(
+            const revision = readV4Revision(input.group);
+            return normalize((await patchQualifiedConnectedAccountGroupV4(
                 credentials,
                 {
-                    serviceId: source.legacyServiceId,
+                    service,
                     groupId: input.group.ref.groupId,
-                    patch: {
-                        ...(input.displayName !== undefined
-                            ? { displayName: input.displayName }
-                            : {}),
-                        ...(policy ? { policy } : {}),
-                        expectedGeneration: input.group.revision.generation,
-                    },
+                    ...(input.displayName !== undefined
+                        ? { displayName: input.displayName }
+                        : {}),
+                    ...(policy ? { policy } : {}),
+                    expectedIncarnation: revision.incarnation,
+                    expectedRuntimeStateRevision:
+                        revision.runtimeStateRevision,
                 },
             )).group);
         },
         async delete(group) {
             assertGroup(group);
-            if (source.protocol === 'v4') {
-                const revision = readV4Revision(group);
-                await deleteQualifiedConnectedAccountGroupV4(credentials, {
-                    group: group.ref,
-                    expectedIncarnation: revision.incarnation,
-                    expectedRuntimeStateRevision:
-                        revision.runtimeStateRevision,
-                });
-                return;
-            }
-            await deleteConnectedServiceAuthGroupV3(credentials, {
-                serviceId: source.legacyServiceId,
-                groupId: group.ref.groupId,
+            const revision = readV4Revision(group);
+            await deleteQualifiedConnectedAccountGroupV4(credentials, {
+                group: group.ref,
+                expectedIncarnation: revision.incarnation,
+                expectedRuntimeStateRevision:
+                    revision.runtimeStateRevision,
             });
         },
         async addMember(input) {
             assertGroup(input.group);
             assertAccount(input.account);
             const priority = nextMemberPriority(input.group.members);
-            if (source.protocol === 'v4') {
-                const revision = readV4Revision(input.group);
-                return normalize((await addQualifiedConnectedAccountGroupMemberV4(
-                    credentials,
-                    {
-                        group: input.group.ref,
-                        connectedAccountId: input.account.accountId,
-                        priority,
-                        enabled: true,
-                        expectedIncarnation: revision.incarnation,
-                        expectedRuntimeStateRevision:
-                            revision.runtimeStateRevision,
-                    },
-                )).group);
-            }
-            return normalize((await addConnectedServiceAuthGroupMemberV3(
+            const revision = readV4Revision(input.group);
+            return normalize((await addQualifiedConnectedAccountGroupMemberV4(
                 credentials,
                 {
-                    serviceId: source.legacyServiceId,
-                    groupId: input.group.ref.groupId,
-                    profileId: input.account.accountId,
+                    group: input.group.ref,
+                    connectedAccountId: input.account.accountId,
                     priority,
                     enabled: true,
-                    expectedGeneration: input.group.revision.generation,
+                    expectedIncarnation: revision.incarnation,
+                    expectedRuntimeStateRevision:
+                        revision.runtimeStateRevision,
                 },
             )).group);
         },
         async patchMember(input) {
             assertGroup(input.group);
             assertAccount(input.account);
-            if (source.protocol === 'v4') {
-                const revision = readV4Revision(input.group);
-                return normalize((await patchQualifiedConnectedAccountGroupMemberV4(
-                    credentials,
-                    {
-                        group: input.group.ref,
-                        connectedAccountId: input.account.accountId,
-                        ...(input.enabled === undefined
-                            ? {}
-                            : { enabled: input.enabled }),
-                        ...(input.priority === undefined
-                            ? {}
-                            : { priority: input.priority }),
-                        expectedIncarnation: revision.incarnation,
-                        expectedRuntimeStateRevision:
-                            revision.runtimeStateRevision,
-                    },
-                )).group);
-            }
-            return normalize((await patchConnectedServiceAuthGroupMemberV3(
+            const revision = readV4Revision(input.group);
+            return normalize((await patchQualifiedConnectedAccountGroupMemberV4(
                 credentials,
                 {
-                    serviceId: source.legacyServiceId,
-                    groupId: input.group.ref.groupId,
-                    profileId: input.account.accountId,
-                    patch: {
-                        ...(input.enabled === undefined
-                            ? {}
-                            : { enabled: input.enabled }),
-                        ...(input.priority === undefined
-                            ? {}
-                            : { priority: input.priority }),
-                        expectedGeneration: input.group.revision.generation,
-                    },
+                    group: input.group.ref,
+                    connectedAccountId: input.account.accountId,
+                    ...(input.enabled === undefined
+                        ? {}
+                        : { enabled: input.enabled }),
+                    ...(input.priority === undefined
+                        ? {}
+                        : { priority: input.priority }),
+                    expectedIncarnation: revision.incarnation,
+                    expectedRuntimeStateRevision:
+                        revision.runtimeStateRevision,
                 },
             )).group);
         },
         async removeMember(input) {
             assertGroup(input.group);
             assertAccount(input.account);
-            if (source.protocol === 'v4') {
-                const revision = readV4Revision(input.group);
-                return normalize((await removeQualifiedConnectedAccountGroupMemberV4(
-                    credentials,
-                    {
-                        group: input.group.ref,
-                        connectedAccountId: input.account.accountId,
-                        expectedIncarnation: revision.incarnation,
-                        expectedRuntimeStateRevision:
-                            revision.runtimeStateRevision,
-                    },
-                )).group);
-            }
-            return normalize((await removeConnectedServiceAuthGroupMemberV3(
+            const revision = readV4Revision(input.group);
+            return normalize((await removeQualifiedConnectedAccountGroupMemberV4(
                 credentials,
                 {
-                    serviceId: source.legacyServiceId,
-                    groupId: input.group.ref.groupId,
-                    profileId: input.account.accountId,
-                    expectedGeneration: input.group.revision.generation,
+                    group: input.group.ref,
+                    connectedAccountId: input.account.accountId,
+                    expectedIncarnation: revision.incarnation,
+                    expectedRuntimeStateRevision:
+                        revision.runtimeStateRevision,
                 },
             )).group);
         },
         async setActiveAccount(input) {
             assertGroup(input.group);
             assertAccount(input.account);
-            if (source.protocol === 'v4') {
-                const revision = readV4Revision(input.group);
-                return normalize((await setQualifiedConnectedAccountGroupActiveAccountV4(
-                    credentials,
-                    {
-                        group: input.group.ref,
-                        connectedAccountId: input.account.accountId,
-                        expectedGeneration: revision.generation,
-                        expectedIncarnation: revision.incarnation,
-                        expectedRuntimeStateRevision:
-                            revision.runtimeStateRevision,
-                        ...(input.overrideRuntimeCooldown
-                            ? { overrideRuntimeCooldown: true }
-                            : {}),
-                    },
-                )).group);
-            }
-            return normalize((await setConnectedServiceAuthGroupActiveProfileV3(
+            const revision = readV4Revision(input.group);
+            return normalize((await setQualifiedConnectedAccountGroupActiveAccountV4(
                 credentials,
                 {
-                    serviceId: source.legacyServiceId,
-                    groupId: input.group.ref.groupId,
-                    profileId: input.account.accountId,
-                    expectedGeneration: input.group.revision.generation,
+                    group: input.group.ref,
+                    connectedAccountId: input.account.accountId,
+                    expectedGeneration: revision.generation,
+                    expectedIncarnation: revision.incarnation,
+                    expectedRuntimeStateRevision:
+                        revision.runtimeStateRevision,
                     ...(input.overrideRuntimeCooldown
                         ? { overrideRuntimeCooldown: true }
                         : {}),

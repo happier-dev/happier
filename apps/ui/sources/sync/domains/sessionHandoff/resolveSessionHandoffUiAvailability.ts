@@ -209,8 +209,8 @@ export function resolveSessionHandoffUiAvailability(input: Readonly<{
 
     if (transport.negotiatedTransportStrategy === 'server_routed_stream') {
         return {
-            available: false,
-            reason: 'runtime_direct_peer_unavailable',
+            available: true,
+            reason: 'available',
         };
     }
 

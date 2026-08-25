@@ -73,13 +73,11 @@ function entryMatches(
 function failRefresh(
     state: LocalServiceLauncherState,
     input: NormalizedLocalServiceLauncherStoreKeyInput,
-    failedAt: number,
     reasonCode: string,
 ): LocalServiceLauncherState {
     return failLocalServiceLauncherRefresh(state, {
         machineId: input.machineId,
         sessionId: input.sessionId ?? undefined,
-        failedAt,
         reasonCode,
     });
 }
@@ -95,15 +93,14 @@ const store = createLocalServicesSharedSubscriptionStore<
     normalizeInput,
     storeKey,
     defaultSnapshotClient,
-    beginRefresh: (state, input, nowMs) => {
+    beginRefresh: (state, input) => {
         const normalized = normalizeInput(input);
         return applyLocalServiceLauncherRefreshStarted(state, {
             machineId: normalized.machineId,
             sessionId: normalized.sessionId ?? undefined,
-            requestedAt: nowMs(),
         });
     },
-    refresh: async ({ input, state, snapshotClient, nowMs, signal }) => {
+    refresh: async ({ input, state, snapshotClient, signal }) => {
         const normalized = normalizeInput(input);
         const result = await snapshotClient({
             machineId: normalized.machineId,
@@ -115,10 +112,10 @@ const store = createLocalServicesSharedSubscriptionStore<
         });
         return result.ok
             ? applyLocalServiceLauncherSnapshot(state, result.snapshot)
-            : failRefresh(state, normalized, nowMs(), result.reason);
+            : failRefresh(state, normalized, result.reason);
     },
-    failRefresh: (state, input, nowMs) => (
-        failRefresh(state, normalizeInput(input), nowMs(), 'request_failed')
+    failRefresh: (state, input) => (
+        failRefresh(state, normalizeInput(input), 'request_failed')
     ),
     applySnapshot: applyLocalServiceLauncherSnapshot,
     matchesPublish: entryMatches,

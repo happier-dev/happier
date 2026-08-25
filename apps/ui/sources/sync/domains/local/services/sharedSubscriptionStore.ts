@@ -52,6 +52,18 @@ export type LocalServicesSharedSubscriptionStoreConfig<
     applySnapshot: (state: TState, snapshot: TSnapshot) => TState;
     matchesPublish?: (entryInput: TInput, publishInput: TInput) => boolean;
     /**
+     * Whether a published snapshot actually covers a matching entry's scope.
+     *
+     * `matchesPublish` answers "could this publication affect this entry"; this answers "does the
+     * payload it carried describe this entry". They differ for a domain whose entries are narrower
+     * than a publication — a public-preview entry pinned to one `exposureId` is affected by a
+     * session-wide publication but must not adopt a snapshot describing a different exposure. When
+     * this returns false the entry refreshes instead of applying, so it converges on its own scope
+     * rather than silently showing another scope's state. Omit it and every matching entry applies
+     * the snapshot, which is right for a domain whose entries and publications share a scope.
+     */
+    snapshotCoversEntry?: (entryInput: TInput, snapshot: TSnapshot) => boolean;
+    /**
      * Optional push half. While an entry has subscribers the store keeps exactly one watch
      * outstanding and re-arms it on every answer, so a domain that supplies this stays fresh
      * without any interval. Domains that do not supply it keep the pull-only lifecycle.
@@ -289,13 +301,19 @@ export function createLocalServicesSharedSubscriptionStore<
         publish(input, snapshot) {
             const normalized = config.normalizeInput(input);
             const matchesPublish = config.matchesPublish;
+            const snapshotCoversEntry = config.snapshotCoversEntry;
             for (const entry of entries.values()) {
                 const matches = matchesPublish
                     ? matchesPublish(entry.input, input)
                     : config.storeKey(entry.input) === config.storeKey(normalized);
-                if (matches) {
-                    setState(entry, config.applySnapshot(entry.state, snapshot));
+                if (!matches) {
+                    continue;
                 }
+                if (snapshotCoversEntry && !snapshotCoversEntry(entry.input, snapshot)) {
+                    void runRefresh(entry);
+                    continue;
+                }
+                setState(entry, config.applySnapshot(entry.state, snapshot));
             }
         },
         reset() {

@@ -5,9 +5,11 @@ import {
     measurePluginCollectionMutationRequestEncodedBytesV1,
     normalizePluginAccountCollectionContractV1,
     PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1,
+    PluginAccountCollectionContributionV1Schema,
     PluginCollectionMutationRequestV1Schema,
     PluginManifestV2Schema,
 } from '@happier-dev/protocol';
+import { projectPluginAccountCollectionDeclaration, type JsonValue } from '@happier-dev/plugin-sdk';
 import {
     defineAccountCollection,
 } from '@happier-dev/plugin-sdk/collections';
@@ -26,7 +28,8 @@ import {
 const pluginId = 'example.tasks';
 const collectionDefinition = defineAccountCollection({
     id: 'tasks',
-    schemaVersion: 1,
+    schemaVersion: 2,
+    readableSchemaVersions: [1, 2],
     schema: defineProtocolObject({
         id: defineProtocolString({ maxLength: 256 }),
         title: defineProtocolString({ maxLength: 256 }),
@@ -57,15 +60,27 @@ const collectionDefinition = defineAccountCollection({
         projectedFields: ['title', 'status'],
     }],
     relations: [],
+    // A declared migration carries executable target-artifact code. The admitted
+    // contract is therefore built through the SDK's declaration projector — the
+    // one owner that strips the callback and the executable schema — so this
+    // harness proves the client resolves the same digest the daemon binds,
+    // rather than proving a callback-free definition can be normalized.
+    migrations: [{
+        id: 'seed-status',
+        fromSchemaVersion: 1,
+        toSchemaVersion: 2,
+        migrate: (value: Readonly<Record<string, JsonValue>>) => ({
+            ...value,
+            status: 'open',
+        }) as never,
+    }],
 });
 
 const contract = normalizePluginAccountCollectionContractV1({
     pluginId,
-    contribution: {
-        ...collectionDefinition,
-        schema: collectionDefinition.schema.jsonSchema,
-        migrations: [],
-    },
+    contribution: PluginAccountCollectionContributionV1Schema.parse(
+        projectPluginAccountCollectionDeclaration(collectionDefinition.id, collectionDefinition),
+    ),
 });
 const ref = {
     pluginId: contract.pluginId,
@@ -106,6 +121,7 @@ function createAvailabilityReader() {
     const snapshot = {
         availabilityCursor: 7,
         materializations: [],
+        snapshots: [],
         intentReads: [{
             pluginId,
             response: {
@@ -286,8 +302,12 @@ describe('Plugin UI Data client', () => {
         await expect(client.accountKv.get('b/1')).resolves.toEqual({ version: 5, deleted: true });
 
         // A stale writer that believes the key is absent must not resurrect it.
+        // The Protocol row owner's own error class already carries this `code`, so
+        // the name is asserted too: it is what proves the surface translated the
+        // rule violation into the author-facing `PluginError` a daemon plugin gets,
+        // rather than leaking a raw internal error past the SDK contract.
         await expect(client.accountKv.set('b/1', 'revived', { expectedVersion: 'absent' }))
-            .rejects.toMatchObject({ code: 'plugin_account_kv_conflict' });
+            .rejects.toMatchObject({ name: 'PluginError', code: 'plugin_account_kv_conflict' });
         await expect(client.accountKv.set('a/1', 'stale', { expectedVersion: 1 }))
             .rejects.toMatchObject({ code: 'plugin_account_kv_conflict' });
         expect(accountKvWrites).toEqual([]);

@@ -40,7 +40,6 @@ import type { WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
 import type { SessionOrganizationDomain } from './domains/sessionOrganization';
 import type { SessionListRenderableDelta } from './domains/sessionListIndexFinalization';
 import type { SessionTranscriptLoadIssue } from './domains/transcriptLoading';
-import type { SessionComposerTextMutationToken } from '../domains/input/draftValues/sessionDraftValueStore';
 
 export type KnownEntitlements = 'voice' | 'pro';
 export type SessionModelMode = NonNullable<Session['modelMode']>;
@@ -113,11 +112,6 @@ export interface SessionsDomainSlice {
     getWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => string[];
     setWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase, paths: string[]) => void;
     clearWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => void;
-    updateSessionDraft: (
-        sessionId: string,
-        draft: string | null,
-        options?: Readonly<{ composerTextMutationToken?: SessionComposerTextMutationToken }>,
-    ) => void;
     upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => void;
     setSessionReviewCommentDraftIncluded: (sessionId: string, commentId: string, included: boolean) => void;
     deleteSessionReviewCommentDraft: (sessionId: string, commentId: string) => void;
@@ -253,6 +247,11 @@ export interface AutomationsDomainSlice {
     upsertAutomation: (automation: AutomationDefinition) => void;
     removeAutomation: (automationId: string) => void;
     setAutomationRuns: (automationId: string, runs: AutomationDefinitionRun[], nextCursor: string | null) => void;
+    refreshAutomationRunsWindow: (
+        automationId: string,
+        runs: AutomationDefinitionRun[],
+        nextCursor: string | null,
+    ) => void;
     appendAutomationRuns: (
         automationId: string,
         expectedCursor: string,

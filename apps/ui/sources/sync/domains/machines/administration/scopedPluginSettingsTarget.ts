@@ -11,26 +11,9 @@ import {
     type MachineAdministrationTargetSelectionOptions,
     type MachineAdministrationTargetSelectionV1,
 } from './useTargetSelection';
+import { isMachineAdministrationExecutionTargetCurrent } from './operationCurrentness';
 
 const DAEMON_PLUGIN_SETTINGS_SCOPE = Object.freeze({ kind: 'daemon' as const });
-
-/**
- * Two resolutions of the same Account-portable preference are the same
- * administration target only when their portable identity, their device-local
- * routing id AND the daemon generation behind them all match. The generation is
- * part of the identity because a daemon that restarted between the render and
- * the write is a different authority for a Settings record, even though the
- * machine is the same machine.
- */
-export function sameMachineAdministrationExecutionTarget(
-    left: FreshMachineAdministrationExecutionTargetV1,
-    right: FreshMachineAdministrationExecutionTargetV1,
-): boolean {
-    return left.target.serverIdentityId === right.target.serverIdentityId
-        && left.machine.id === right.machine.id
-        && left.serverId === right.serverId
-        && left.machine.daemonStateVersion === right.machine.daemonStateVersion;
-}
 
 /**
  * The one projection from an Administration-selected machine to the exact
@@ -70,6 +53,8 @@ export function resolveAdministrationScopedPluginSettingsTarget(
  */
 export type ScopedPluginSettingsDaemonTargetBindingV1 = Readonly<{
     selection: MachineAdministrationTargetSelectionV1;
+    /** Portable server identity retained even when the selected daemon is offline. */
+    selectedServerIdentityId: string | null;
     /** The freshly re-resolved administration machine, or `null` when none is usable. */
     executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
     /** The exact Settings/Secrets record target for that machine. */
@@ -82,11 +67,31 @@ export type ScopedPluginSettingsDaemonTargetBindingV1 = Readonly<{
     ) => FreshMachineAdministrationExecutionTargetV1 | null;
 }>;
 
+export function isAdministrationScopedPluginSettingsTargetCurrent(params: Readonly<{
+    target: ScopedPluginSettingsDaemonTarget;
+    expectedExecutionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
+    resolveCurrentExecutionTarget: () => FreshMachineAdministrationExecutionTargetV1 | null;
+}>): boolean {
+    if (!params.expectedExecutionTarget) return false;
+    const expectedTarget = resolveAdministrationScopedPluginSettingsTarget(params.expectedExecutionTarget);
+    if (
+        !expectedTarget
+        || expectedTarget.serverIdentityId !== params.target.serverIdentityId
+        || expectedTarget.machineId !== params.target.machineId
+        || expectedTarget.serverId !== params.target.serverId
+    ) return false;
+    return isMachineAdministrationExecutionTargetCurrent({
+        expectedTarget: params.expectedExecutionTarget,
+        resolveCurrentTarget: params.resolveCurrentExecutionTarget,
+    });
+}
+
 export function useScopedPluginSettingsDaemonTargetBinding(
     selectionKey: string,
     options: MachineAdministrationTargetSelectionOptions = {},
 ): ScopedPluginSettingsDaemonTargetBindingV1 {
     const selection = useMachineAdministrationTargetSelection(selectionKey, options);
+    const selectedServerIdentityId = selection.selectedTarget?.serverIdentityId ?? null;
     const executionTarget = selection.resolveExecutionTarget();
     const target = React.useMemo(
         () => resolveAdministrationScopedPluginSettingsTarget(executionTarget),
@@ -101,22 +106,24 @@ export function useScopedPluginSettingsDaemonTargetBinding(
     ): FreshMachineAdministrationExecutionTargetV1 | null => {
         if (!expected) return null;
         const current = selection.resolveExecutionTarget();
-        return current && sameMachineAdministrationExecutionTarget(current, expected)
-            ? current
-            : null;
+        return isMachineAdministrationExecutionTargetCurrent({
+            expectedTarget: expected,
+            resolveCurrentTarget: () => current,
+        }) ? current : null;
     }, [selection]);
     const isTargetCurrent = React.useCallback((candidate: ScopedPluginSettingsDaemonTarget): boolean => {
-        const current = resolveCurrentExecutionTarget(executionTarget);
-        return current !== null
-            && current.target.serverIdentityId === candidate.serverIdentityId
-            && current.machine.id === candidate.machineId
-            && current.serverId === candidate.serverId;
-    }, [executionTarget, resolveCurrentExecutionTarget]);
+        return isAdministrationScopedPluginSettingsTargetCurrent({
+            target: candidate,
+            expectedExecutionTarget: executionTarget,
+            resolveCurrentExecutionTarget: selection.resolveExecutionTarget,
+        });
+    }, [executionTarget, selection.resolveExecutionTarget]);
     return React.useMemo(() => Object.freeze({
         selection,
+        selectedServerIdentityId,
         executionTarget,
         target,
         isTargetCurrent,
         resolveCurrentExecutionTarget,
-    }), [executionTarget, isTargetCurrent, resolveCurrentExecutionTarget, selection, target]);
+    }), [executionTarget, isTargetCurrent, resolveCurrentExecutionTarget, selectedServerIdentityId, selection, target]);
 }

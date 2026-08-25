@@ -62,6 +62,8 @@ function serializeValue(
 }
 
 export function emitPluginSettingChangedEvent(params: Readonly<{
+    pluginId: string;
+    scope: 'account' | 'daemon';
     previousValue: unknown;
     nextValue: unknown;
     field: PluginProjectionEditableSettingField;
@@ -77,8 +79,8 @@ export function emitPluginSettingChangedEvent(params: Readonly<{
         : serializeValue(params.field.defaultValue, params.field);
 
     tracking.capture('setting_changed', {
-        setting_key: params.field.key,
-        scope: 'account_setting',
+        setting_key: `${params.pluginId}/${params.field.key}`,
+        scope: params.scope === 'account' ? 'account_setting' : 'local_setting',
         identity_scope: analytics.identityScope,
         value_kind: analytics.valueKind,
         prev_value: previousValue,

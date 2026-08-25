@@ -220,8 +220,8 @@ describe('sessionRpcWithServerScope', () => {
     await expect(sessionRpcWithServerScope({
       sessionId: 'session-1',
       serverId: 'server-b',
-      method: 'method-watch',
-      payload: { value: 2 },
+      method: 'session.permission.remote.grants.list',
+      payload: { sessionId: 'session-1' },
       timeoutMs: null,
     })).resolves.toEqual({ watched: true });
 
@@ -230,8 +230,9 @@ describe('sessionRpcWithServerScope', () => {
     }));
     expect(timeout).not.toHaveBeenCalled();
     expect(emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
-      method: 'session-1:method-watch',
-      params: { value: 2 },
+      method: 'session-1:session.permission.remote.grants.list',
+      params: { sessionId: 'session-1' },
+      authorization: { kind: 'session.write', sessionId: 'session-1' },
     });
     expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
   });

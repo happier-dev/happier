@@ -14,6 +14,7 @@ export type ReasonCopyKind =
     | 'browserLaunchpad' // launchpad-card disabledReason/detail tokens
     | 'localServiceLauncher' // local-service launcher reason/state tokens
     | 'localServiceInventory' // local-service inventory scan diagnostic codes
+    | 'localServiceAction' // daemon LocalServiceActionResultV1 refusal/failure reason codes
     | 'simulatorPreview' // simulator preview availability reason codes
     | 'streamPlayer' // live-stream player error/diagnostic reason codes
     | 'pluginRuntime'; // plugin runtime load/fallback diagnostic codes
@@ -193,6 +194,63 @@ const LOCAL_SERVICE_LAUNCHER_KEYS = {
     unavailable: 'localServices.launcher.unavailableReason.unavailable',
 } as const satisfies Record<string, LocalServiceLauncherMessageKey>;
 
+/**
+ * Daemon `LocalServiceActionResultV1.reasonCode` → the one sentence the user can act on.
+ *
+ * Thirty-one codes, three sentences, on purpose. `DESIGN.md`'s error-copy rule asks what failed *in
+ * language the user can act on* and whether the operation can be retried, needs permission, or must
+ * wait — and on that axis these codes collapse to exactly three answers. Enumerating thirty-one
+ * bespoke sentences across twelve locales would be machinery, not clarity.
+ *
+ * The map stays explicit per code rather than pattern-matching a suffix, so an unmapped code added
+ * by a newer daemon is visible to a grep and falls to the generic "didn't complete" sentence instead
+ * of silently joining the wrong family. The raw code is never rendered; it stays on
+ * `diagnosticCode` (see `noInternalCodesInPrimaryUi.test.ts`).
+ */
+const LOCAL_SERVICE_ACTION_KEYS = {
+    // Refused: a policy, a permission, or a confirmation the user can go and change.
+    confirmation_nonce_invalid: 'localServices.actions.failure.refused',
+    confirmation_required: 'localServices.actions.failure.refused',
+    ownership_not_established: 'localServices.actions.failure.refused',
+    terminate_feature_disabled: 'localServices.actions.failure.refused',
+    terminate_permission_denied: 'localServices.actions.failure.refused',
+
+    // Unavailable: this machine cannot do this to this service, and retrying will not change it.
+    identity_changed: 'localServices.actions.failure.unavailable',
+    launcher_start_unsupported: 'localServices.actions.failure.unavailable',
+    low_signal_process: 'localServices.actions.failure.unavailable',
+    managed_restart_unavailable: 'localServices.actions.failure.unavailable',
+    managed_stop_executor_unavailable: 'localServices.actions.failure.unavailable',
+    managed_stop_unavailable: 'localServices.actions.failure.unavailable',
+    process_identity_unavailable: 'localServices.actions.failure.unavailable',
+    restart_not_configured: 'localServices.actions.failure.unavailable',
+    terminate_detected_executor_unavailable: 'localServices.actions.failure.unavailable',
+    unknown_inventory_entry: 'localServices.actions.failure.unavailable',
+    unknown_managed_service: 'localServices.actions.failure.unavailable',
+    unsafe_pid: 'localServices.actions.failure.unavailable',
+    wrong_machine: 'localServices.actions.failure.unavailable',
+    wrong_target_kind: 'localServices.actions.failure.unavailable',
+
+    // Didn't complete: it was attempted and did not finish, or could not be confirmed. Retryable.
+    forget_verification_failed: 'localServices.actions.failure.incomplete',
+    listener_state_unverifiable: 'localServices.actions.failure.incomplete',
+    managed_restart_executor_failed: 'localServices.actions.failure.incomplete',
+    managed_restart_verification_failed: 'localServices.actions.failure.incomplete',
+    managed_stop_executor_failed: 'localServices.actions.failure.incomplete',
+    managed_stop_verification_failed: 'localServices.actions.failure.incomplete',
+    port_not_released: 'localServices.actions.failure.incomplete',
+    port_release_unverified: 'localServices.actions.failure.incomplete',
+    process_tree_unresolved: 'localServices.actions.failure.incomplete',
+    service_not_listening: 'localServices.actions.failure.incomplete',
+    terminate_detected_executor_failed: 'localServices.actions.failure.incomplete',
+    terminate_no_process_signaled: 'localServices.actions.failure.incomplete',
+    terminate_signal_failed: 'localServices.actions.failure.incomplete',
+
+    // Front-door refusals, from `ActionExecutor.execute`'s `{ ok:false, errorCode }` envelope.
+    action_disabled: 'localServices.actions.failure.refused',
+    invalid_parameters: 'localServices.actions.failure.unavailable',
+} as const satisfies Record<string, LocalServiceActionMessageKey>;
+
 type BrowserMessageKey =
     | 'browserShell.unavailable.desktopEngineUnavailable'
     | 'browserShell.unavailable.desktopWebView'
@@ -304,6 +362,11 @@ type LocalServiceLauncherMessageKey =
     | 'localServices.launcher.unavailableReason.stale'
     | 'localServices.launcher.unavailableReason.unavailable';
 
+type LocalServiceActionMessageKey =
+    | 'localServices.actions.failure.refused'
+    | 'localServices.actions.failure.unavailable'
+    | 'localServices.actions.failure.incomplete';
+
 function resolveGenericMessage(kind: ReasonCopyKind): string {
     switch (kind) {
         case 'browserLaunchpad':
@@ -314,6 +377,10 @@ function resolveGenericMessage(kind: ReasonCopyKind): string {
             // Inventory scan diagnostics are scan-level facts, not per-service failures:
             // a neutral "scan needs attention" line, raw code kept on diagnosticCode only.
             return t('localServices.inventory.errorTitle');
+        case 'localServiceAction':
+            // An unmapped daemon code means the action was attempted and did not finish; the
+            // retryable sentence is the honest default, never the raw code.
+            return t('localServices.actions.failure.incomplete');
         case 'simulatorPreview':
             return t('simulatorPreview.availability.unavailableGeneric');
         case 'streamPlayer':
@@ -331,6 +398,10 @@ function resolveTitle(kind: ReasonCopyKind): string {
     switch (kind) {
         case 'localServiceInventory':
             return t('localServices.inventory.errorTitle');
+        case 'localServiceAction':
+            // A refused action is not an "unavailable surface": the caller supplies the specific
+            // "Couldn't stop <service>" title, and this generic one only backstops a bare resolve.
+            return t('localServices.actions.failure.title');
         case 'simulatorPreview':
         case 'streamPlayer':
             return t('streamPlayer.status.unavailable');
@@ -363,6 +434,10 @@ function resolveKnownMessage(kind: ReasonCopyKind, reasonCode: string): string |
             // No per-code inventory copy today: every scan diagnostic resolves to the
             // neutral generic, keeping the raw code on diagnosticCode for diagnostics.
             return null;
+        case 'localServiceAction': {
+            const key = LOCAL_SERVICE_ACTION_KEYS[reasonCode as keyof typeof LOCAL_SERVICE_ACTION_KEYS];
+            return key ? t(key) : null;
+        }
         case 'simulatorPreview': {
             const key = SIMULATOR_PREVIEW_KEYS[reasonCode as keyof typeof SIMULATOR_PREVIEW_KEYS];
             return key ? t(key) : null;

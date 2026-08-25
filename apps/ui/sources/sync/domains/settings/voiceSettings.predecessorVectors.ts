@@ -3,6 +3,12 @@
  * the current Voice types. The same source blob is present in the listed
  * released refs and in the inspected remote-dev worktree.
  *
+ * `sourceBlob` is the provenance anchor and stays re-verifiable
+ * (`git -C ../remote-dev hash-object <sourcePath>`).
+ * `inspectedRemoteDevHead` is the capture-time sibling commit, not a claim
+ * about that moving frontier's current HEAD; it advancing is expected and is
+ * not vector staleness.
+ *
  * Capture procedure: bundle the pinned `voiceSettings.ts`, execute its
  * `voiceSettingsParse` over a current-writer sidecar, then serialize the
  * returned value. A predecessor whole-object write serializes this same closed
@@ -18,7 +24,7 @@ export const PREDECESSOR_VOICE_VECTOR_PROVENANCE = {
         '4913c1e533c872a0712ba1c25b3104fd470aacc2',
         'e25a74bcc6c7032e2ced52cefdbd60c53636900e',
     ],
-    remoteDevHead: 'cc456326037c778ea126b1ee3b6ebfe5d773239e',
+    inspectedRemoteDevHead: 'cc456326037c778ea126b1ee3b6ebfe5d773239e',
 } as const;
 
 export type CapturedPredecessorCredentialMode = 'plain' | 'e2ee';

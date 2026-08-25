@@ -14,13 +14,6 @@ type ProviderModelExecutionTarget = Readonly<{
     serverId: string | null;
 }>;
 
-function executionTargetsEqual(
-    left: ProviderModelExecutionTarget,
-    right: ProviderModelExecutionTarget,
-): boolean {
-    return left.machineId === right.machineId && left.serverId === right.serverId;
-}
-
 function waitForProviderModelLoadOrLocalCancellation(
     request: Promise<DaemonProviderModelLoadResponseV1>,
     signal: AbortSignal,
@@ -68,7 +61,7 @@ export function useProviderModelLoadAction(input: Readonly<{
         if (!input.machineId) {
             return {
                 status: 'error',
-                error: createProviderErrorV1('provider_endpoint_unavailable', { connectionId }),
+                error: createProviderErrorV1('provider_machine_unavailable', { connectionId }),
             };
         }
         const initialExecutionTarget: ProviderModelExecutionTarget = {
@@ -78,10 +71,23 @@ export function useProviderModelLoadAction(input: Readonly<{
         const executionTarget = input.resolveExecutionTarget
             ? input.resolveExecutionTarget()
             : initialExecutionTarget;
-        if (!executionTarget || !executionTargetsEqual(initialExecutionTarget, executionTarget)) {
+        // A moved machine must refuse; a replaced device-local routing id for
+        // the same machine must be followed, exactly like every other Provider
+        // effect. Comparing the routing id here would report a reconnected
+        // server as an unavailable endpoint.
+        if (!executionTarget) {
             return {
                 status: 'error',
-                error: createProviderErrorV1('provider_endpoint_unavailable', {
+                error: createProviderErrorV1('provider_machine_unavailable', {
+                    connectionId,
+                    machineId: initialExecutionTarget.machineId,
+                }),
+            };
+        }
+        if (executionTarget.machineId !== initialExecutionTarget.machineId) {
+            return {
+                status: 'error',
+                error: createProviderErrorV1('provider_authorization_changed', {
                     connectionId,
                     machineId: initialExecutionTarget.machineId,
                 }),

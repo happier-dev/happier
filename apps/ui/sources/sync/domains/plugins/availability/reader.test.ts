@@ -99,27 +99,34 @@ function intentRead() {
 }
 
 function snapshot(overrides: Partial<PluginAccountAvailabilitySnapshot> = {}): PluginAccountAvailabilitySnapshot {
+    const materialization = PluginMachineMaterializationV1Schema.parse({
+        serverIdentityId: 'srv_fixture',
+        machineId: 'machine-1',
+        materializationId: 'install-1',
+        pluginId: 'com.acme.fixture',
+        version: '1.2.3',
+        sourceClass: 'registryPackage',
+        portableRelease: true,
+        uiArtifacts: [{
+            contributionId: 'hosted',
+            tier: 'hostedWeb',
+            platform: 'web',
+            artifactDigest: `sha256:${'a'.repeat(64)}`,
+        }],
+        enabled: false,
+        trustState: 'revoked',
+        observedAt: 1_700_000_000_000,
+    });
     return {
         availabilityCursor: 42,
         intentReads: [],
-        materializations: [PluginMachineMaterializationV1Schema.parse({
-            serverIdentityId: 'srv_fixture',
-            machineId: 'machine-1',
-            materializationId: 'install-1',
-            pluginId: 'com.acme.fixture',
-            version: '1.2.3',
-            sourceClass: 'registryPackage',
-            portableRelease: true,
-            uiArtifacts: [{
-                contributionId: 'hosted',
-                tier: 'hostedWeb',
-                platform: 'web',
-                artifactDigest: `sha256:${'a'.repeat(64)}`,
-            }],
-            enabled: false,
-            trustState: 'revoked',
-            observedAt: 1_700_000_000_000,
-        })],
+        materializations: [materialization],
+        snapshots: [{
+            serverIdentityId: materialization.serverIdentityId,
+            machineId: materialization.machineId,
+            revision: 1,
+            materializations: [materialization],
+        }],
         ...overrides,
     };
 }
@@ -549,11 +556,13 @@ describe('Plugin Account Availability reader', () => {
         store.replace({ scope, snapshot: snapshot({
             availabilityCursor: 43,
             materializations: [],
+            snapshots: [],
         }) });
         expect(reader.readMaterializations()).toEqual({
             kind: 'available',
             availabilityCursor: 43,
             materializations: [],
+            snapshots: [],
         });
     });
 
@@ -604,6 +613,12 @@ describe('Plugin Account Availability reader', () => {
                 response: mutableResponse,
             }],
             materializations: mutableMaterializations,
+            snapshots: [{
+                serverIdentityId: 'srv_fixture',
+                machineId: 'machine-1',
+                revision: 1,
+                materializations: mutableMaterializations,
+            }],
         };
         const directReader = createPluginAccountAvailabilityReader({
             scope,
@@ -649,6 +664,13 @@ describe('Plugin Account Availability reader', () => {
                 materializations: [{
                     enabled: false,
                     uiArtifacts: [{ contributionId: 'hosted' }],
+                }],
+                snapshots: [{
+                    revision: 1,
+                    materializations: [{
+                        enabled: false,
+                        uiArtifacts: [{ contributionId: 'hosted' }],
+                    }],
                 }],
             });
         }

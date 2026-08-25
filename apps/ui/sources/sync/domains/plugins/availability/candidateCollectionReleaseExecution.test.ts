@@ -145,6 +145,12 @@ function createReader(currentMaterialization = materialization): PluginAccountAv
             kind: 'available',
             availabilityCursor: 11,
             materializations: [currentMaterialization],
+            snapshots: [{
+                serverIdentityId: currentMaterialization.serverIdentityId,
+                machineId: currentMaterialization.machineId,
+                revision: 1,
+                materializations: [currentMaterialization],
+            }],
         }),
     } as unknown as PluginAccountAvailabilityReader;
 }

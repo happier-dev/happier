@@ -1,30 +1,37 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodexBackendMode } from '@happier-dev/protocol';
 
 const buildProviderPatchInputMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+vi.mock('@/agents/registry/registryUiBehavior', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/registry/registryUiBehavior')>();
     return {
         ...actual,
-        getAgentBehavior: (agentId: Parameters<typeof actual.getAgentBehavior>[0]) => {
-            const behavior = actual.getAgentBehavior(agentId);
+        resolveAgentUiBehavior: (
+            agentId: Parameters<typeof actual.resolveAgentUiBehavior>[0],
+            machineId?: Parameters<typeof actual.resolveAgentUiBehavior>[1],
+        ) => {
+            const behavior = actual.resolveAgentUiBehavior(agentId, machineId);
             const buildProviderPatch = behavior.sessionHandoff?.buildProviderPatch;
+            if (!buildProviderPatch) return behavior;
             return {
                 ...behavior,
                 sessionHandoff: {
                     ...behavior.sessionHandoff,
-                    buildProviderPatch: buildProviderPatch
-                        ? (input: Parameters<typeof buildProviderPatch>[0]) => {
-                            buildProviderPatchInputMock(input);
-                            return buildProviderPatch(input);
-                        }
-                        : undefined,
+                    buildProviderPatch: (input: Parameters<typeof buildProviderPatch>[0]) => {
+                        buildProviderPatchInputMock({ ...input, resolvedForMachineId: machineId ?? null });
+                        return buildProviderPatch(input);
+                    },
                 },
             };
         },
     };
 });
+
+import {
+    clearProjectedAgentUiBehaviorDescriptors,
+    publishProjectedAgentUiBehaviorDescriptors,
+} from '@/agents/registry/agentUiBehaviorProjection';
 
 import { buildSessionHandoffMetadataPatch } from './buildSessionHandoffMetadataPatch';
 
@@ -33,6 +40,11 @@ describe('buildSessionHandoffMetadataPatch', () => {
 
     beforeEach(() => {
         buildProviderPatchInputMock.mockReset();
+        clearProjectedAgentUiBehaviorDescriptors();
+    });
+
+    afterEach(() => {
+        clearProjectedAgentUiBehaviorDescriptors();
     });
 
     it('stores source/target workspace roots in handoffV1 for handoff-back planning', () => {
@@ -274,7 +286,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 machineId: 'machine_source',
                 opencodeSessionId: 'sess_old',
                 opencodeBackendMode: 'server',
-                opencodeServerBaseUrl: 'http://old.example',
+                opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
                 opencodeServerBaseUrlExplicit: true,
                 externalSessionOperationV1: {
                     v: 1,
@@ -293,7 +305,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 machineId: 'machine_source',
                 opencodeSessionId: 'sess_old',
                 opencodeBackendMode: 'server',
-                opencodeServerBaseUrl: 'http://old.example',
+                opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
                 opencodeServerBaseUrlExplicit: true,
                 externalSessionOperationV1: {
                     v: 1,
@@ -314,12 +326,12 @@ describe('buildSessionHandoffMetadataPatch', () => {
             transportStrategy: 'direct_peer',
             completedAtMs: 456,
             targetRemoteSessionId: 'sess_new',
-            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://new.example', directory: '/repo/target' },
+            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4097/', directory: '/repo/target' },
         });
 
         expect(updated.opencodeSessionId).toBe('sess_new');
         expect(updated.opencodeBackendMode).toBe('server');
-        expect(updated.opencodeServerBaseUrl).toBe('http://new.example');
+        expect(updated.opencodeServerBaseUrl).toBe('http://127.0.0.1:4097');
         expect(updated.opencodeServerBaseUrlExplicit).toBe(true);
         expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
@@ -327,7 +339,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             agent: {
                 backendMode: 'server',
                 providerSessionId: 'sess_new',
-                serverBaseUrl: 'http://new.example',
+                serverBaseUrl: 'http://127.0.0.1:4097',
                 serverBaseUrlExplicit: true,
                 agentExtra: {
                     owner: 'opencode',
@@ -341,19 +353,25 @@ describe('buildSessionHandoffMetadataPatch', () => {
             v: 1,
             progress: { operationId: 'target-owner-operation-private' },
         });
+        // The Agent-facing handoff view carries the Agent's own resume facts and
+        // nothing the host owns, and the behavior is resolved for the machine that
+        // owns the session after the handoff.
         expect(buildProviderPatchInputMock).toHaveBeenCalledWith(expect.objectContaining({
+            resolvedForMachineId: 'machine_target',
             metadata: {
                 path: '/repo/target',
+                providerSessionId: 'sess_new',
                 opencodeSessionId: 'sess_new',
                 opencodeBackendMode: 'server',
-                opencodeServerBaseUrl: 'http://old.example',
+                opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
                 opencodeServerBaseUrlExplicit: true,
             },
             sourceMetadataForHandoff: {
                 path: '/repo/source',
+                providerSessionId: 'sess_old',
                 opencodeSessionId: 'sess_old',
                 opencodeBackendMode: 'server',
-                opencodeServerBaseUrl: 'http://old.example',
+                opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
                 opencodeServerBaseUrlExplicit: true,
             },
         }));
@@ -378,28 +396,28 @@ describe('buildSessionHandoffMetadataPatch', () => {
             transportStrategy: 'server_routed_stream',
             completedAtMs: 456,
             targetRemoteSessionId: 'sess_new',
-            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://new.example', directory: '/repo/target' },
+            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4097/', directory: '/repo/target' },
             targetRuntimeDescriptor: {
                 v: 1,
                 agentId: 'opencode',
                 agent: {
                     backendMode: 'server',
                     providerSessionId: 'sess_new',
-                    serverBaseUrl: 'http://canonical.example',
+                    serverBaseUrl: 'http://127.0.0.1:4098/',
                     serverBaseUrlExplicit: true,
                 },
             },
         });
 
         expect(updated.opencodeBackendMode).toBe('server');
-        expect(updated.opencodeServerBaseUrl).toBe('http://canonical.example');
+        expect(updated.opencodeServerBaseUrl).toBe('http://127.0.0.1:4098');
         expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
             agentId: 'opencode',
             agent: {
                 backendMode: 'server',
                 providerSessionId: 'sess_new',
-                serverBaseUrl: 'http://canonical.example',
+                serverBaseUrl: 'http://127.0.0.1:4098',
                 serverBaseUrlExplicit: true,
             },
         });
@@ -418,7 +436,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                     agentId: 'opencode',
                     remoteSessionId: 'old_remote',
                     importedAtMs: 1,
-                    source: { kind: 'opencodeServer', baseUrl: 'http://old.example' },
+                    source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
                 },
             },
             agentId: 'opencode',
@@ -430,7 +448,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             transportStrategy: 'direct_peer',
             completedAtMs: 10,
             targetRemoteSessionId: 'sess_direct',
-            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://new.example', directory: '/repo/target' },
+            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4097/', directory: '/repo/target' },
         });
 
         expect(updated).not.toHaveProperty('externalHistoryImportV1');
@@ -514,6 +532,65 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(buildProviderPatchInputMock).not.toHaveBeenCalled();
     });
 
+    it("applies an installed Agent's declared handoff cleanup from the target machine descriptor", () => {
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine_target',
+            descriptorsByAgentId: {
+                'acme.agent': {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme',
+                    agentId: 'acme.agent',
+                    version: 1,
+                    behavior: {
+                        externalSessions: {
+                            sessionHandoff: { clearMetadataKeys: ['acmeTargetStaleKey'] },
+                        },
+                    },
+                },
+            },
+        });
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine_source',
+            descriptorsByAgentId: {
+                'acme.agent': {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme',
+                    agentId: 'acme.agent',
+                    version: 1,
+                    behavior: {
+                        externalSessions: {
+                            sessionHandoff: { clearMetadataKeys: ['acmeSourceOnlyKey'] },
+                        },
+                    },
+                },
+            },
+        });
+
+        const updated = buildSessionHandoffMetadataPatch({
+            metadata: {
+                flavor: 'acme.agent',
+                host: 'source-host',
+                machineId: 'machine_source',
+                path: '/repo/source',
+                acmeTargetStaleKey: 'stale',
+                acmeSourceOnlyKey: 'kept',
+            } as unknown as Parameters<typeof buildSessionHandoffMetadataPatch>[0]['metadata'],
+            agentId: 'acme.agent',
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            sessionStorageBefore: 'persisted',
+            sessionStorageAfter: 'persisted',
+            targetPath: '/repo/target',
+            transportStrategy: 'server_routed_stream',
+            completedAtMs: 123,
+            targetRemoteSessionId: 'acme_target_session',
+            targetDirectSource: { kind: 'acmeWorkspace' },
+        });
+
+        expect(updated).not.toHaveProperty('acmeTargetStaleKey');
+        expect(updated.acmeSourceOnlyKey).toBe('kept');
+    });
+
     it('clears stale Claude machine-local transcript metadata after handoff rebinding', () => {
         const updated = buildSessionHandoffMetadataPatch({
             metadata: {
@@ -588,18 +665,18 @@ describe('buildSessionHandoffMetadataPatch', () => {
             transportStrategy: 'direct_peer',
             completedAtMs: 456,
             targetRemoteSessionId: 'sess_new',
-            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://new.example', directory: '/repo/target' },
+            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4097/', directory: '/repo/target' },
         });
 
         expect(updated.opencodeBackendMode).toBe('server');
-        expect(updated.opencodeServerBaseUrl).toBe('http://new.example');
+        expect(updated.opencodeServerBaseUrl).toBe('http://127.0.0.1:4097');
         expect(updated.runtimeDescriptorV1).toMatchObject({
             v: 1,
             agentId: 'opencode',
             agent: {
                 backendMode: 'server',
                 providerSessionId: 'sess_new',
-                serverBaseUrl: 'http://new.example',
+                serverBaseUrl: 'http://127.0.0.1:4097',
                 serverBaseUrlExplicit: true,
                 agentExtra: {
                     owner: 'opencode',

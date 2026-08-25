@@ -12,8 +12,10 @@ import { storage } from '@/sync/domains/state/storage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { sync } from '@/sync/sync';
+import type { NormalizedMessage } from '@/sync/typesRaw';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { buildVoiceTranscriptHistorySessionMetadata } from '@/voice/persistence/voiceTranscriptHistorySession';
+import { createVoiceTranscriptProjector } from '@/voice/transcript/VoiceTranscriptProjector';
 
 const HISTORY_SESSION_ID = 'voice-history-stale-shell';
 
@@ -218,6 +220,324 @@ describe('sync.persistSessionTranscriptMessage', () => {
 
         expect(request).toHaveBeenCalledOnce();
         expect(apiSocket.request).not.toHaveBeenCalled();
+    });
+
+    it('reconstructs one corrected canonical row after a higher revision waits behind the initial final ACK', async () => {
+        storage.getState().applySessions([
+            createSessionFixture({
+                id: HISTORY_SESSION_ID,
+                active: false,
+                encryptionMode: 'plain',
+                metadata: {
+                    path: '/tmp/voice-history',
+                    host: 'test-host',
+                    ...buildVoiceTranscriptHistorySessionMetadata(),
+                },
+            }),
+        ]);
+        let resolveInitialPost!: () => void;
+        const initialPost = new Promise<void>((resolve) => {
+            resolveInitialPost = resolve;
+        });
+        let postCount = 0;
+        const postedTexts: string[] = [];
+        const request = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+            const url = String(input);
+            expect(url).toMatch(new RegExp(`/v2/sessions/${HISTORY_SESSION_ID}/messages$`));
+            expect(init?.method).toBe('POST');
+            const body = JSON.parse(String(init?.body));
+            const localId = String(body.localId);
+            postedTexts.push(String(body.content?.v?.content?.text));
+            postCount += 1;
+            if (postCount === 1) await initialPost;
+            return new Response(JSON.stringify({
+                didWrite: postCount === 1,
+                didUpdate: postCount === 2,
+                message: {
+                    id: 'server-corrected-user-turn',
+                    seq: 1,
+                    localId,
+                    createdAt: 100,
+                },
+            }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+        installRuntimeRequest(request);
+        const projector = createVoiceTranscriptProjector({
+            getState: () => storage.getState(),
+            persistFinal: (input) => sync.persistSessionTranscriptMessage(input),
+        });
+
+        projector.projectCanonicalEvent({
+            conversationSessionId: HISTORY_SESSION_ID,
+            event: {
+                v: 1,
+                type: 'voice.transcript.final',
+                epoch: 1,
+                sequence: 1,
+                revision: 1,
+                eventId: 'user-final-r1',
+                itemId: 'user-turn',
+                role: 'user',
+                text: 'original spoken question',
+                provenance: 'live',
+            },
+        });
+        await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+
+        projector.projectCanonicalEvent({
+            conversationSessionId: HISTORY_SESSION_ID,
+            event: {
+                v: 1,
+                type: 'voice.transcript.corrected',
+                epoch: 1,
+                sequence: 2,
+                revision: 2,
+                eventId: 'user-correction-r2',
+                itemId: 'user-turn',
+                role: 'user',
+                text: 'corrected spoken question',
+                provenance: 'live',
+            },
+        });
+        expect(request).toHaveBeenCalledOnce();
+        const attemptIdentity = projector.canonicalSnapshot(HISTORY_SESSION_ID)[0]?.attemptIdentity;
+        expect(attemptIdentity).toEqual(expect.any(String));
+        if (!attemptIdentity) throw new Error('canonical attempt identity was not projected');
+
+        const drain = projector.releaseCanonicalConversation(HISTORY_SESSION_ID, attemptIdentity);
+        resolveInitialPost();
+        await expect(drain).resolves.toBe(true);
+
+        expect(postedTexts).toEqual(['original spoken question', 'corrected spoken question']);
+        const reloadedMessages = readStoredSessionMessages(storage.getState(), HISTORY_SESSION_ID);
+        expect(reloadedMessages).toEqual([
+            expect.objectContaining({
+                realID: 'server-corrected-user-turn',
+                localId: expect.stringMatching(/^voice-realtime:[^:]+:user:user-turn$/),
+                kind: 'user-text',
+                text: 'corrected spoken question',
+            }),
+        ]);
+        expect(request).toHaveBeenCalledTimes(2);
+    });
+
+    it('retires a cached history carrier after its authoritative message POST reports it absent, without retrying that final', async () => {
+        const freshHistorySessionId = 'voice-history-fresh-shell';
+        storage.getState().applySessions([
+            createSessionFixture({
+                id: HISTORY_SESSION_ID,
+                active: false,
+                encryptionMode: 'plain',
+                metadata: {
+                    path: '/tmp/voice-history',
+                    host: 'test-host',
+                    ...buildVoiceTranscriptHistorySessionMetadata(),
+                },
+            }),
+        ]);
+        const request = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes('/v2/session-organization')) {
+                return new Response(JSON.stringify({
+                    snapshot: {
+                        schemaVersion: 1,
+                        version: 0,
+                        pins: [],
+                        folders: [],
+                        folderAssignments: [],
+                        tags: [],
+                        tagAssignments: [],
+                        orderEntries: [],
+                        labels: [],
+                    },
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (url.includes('/v2/sessions?')) {
+                return new Response(JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            expect(init?.method).toBe('POST');
+            if (url.endsWith(`/v2/sessions/${HISTORY_SESSION_ID}/messages`)) {
+                return new Response(JSON.stringify({ error: 'Session not found' }), {
+                    status: 404,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            if (url.endsWith(`/v2/sessions/${freshHistorySessionId}/messages`)) {
+                return createAckResponse('voice-realtime:fresh-attempt:user:spoken-question', 'server-fresh-user-final');
+            }
+            throw new Error(`Unexpected Voice History request: ${url}`);
+        });
+        installRuntimeRequest(request);
+
+        await expect(sync.persistSessionTranscriptMessage(createTranscriptInput(
+            'voice-realtime:stale-attempt:user:spoken-question',
+            'stale spoken question',
+        ))).rejects.toThrow('Session transcript message write failed (404)');
+
+        const messagePosts = () => request.mock.calls.filter(([input]) => (
+            String(input).endsWith('/messages')
+        ));
+        expect(messagePosts()).toHaveLength(1);
+        expect(storage.getState().sessions[HISTORY_SESSION_ID]).toBeUndefined();
+        expect(readStoredSessionMessages(storage.getState(), HISTORY_SESSION_ID)).toEqual([]);
+
+        // Carrier creation stays with the direct-media owner. Once it has supplied
+        // a fresh carrier, the next final can use that carrier normally.
+        storage.getState().applySessions([
+            createSessionFixture({
+                id: freshHistorySessionId,
+                active: false,
+                encryptionMode: 'plain',
+                metadata: {
+                    path: '/tmp/voice-history',
+                    host: 'test-host',
+                    ...buildVoiceTranscriptHistorySessionMetadata(),
+                },
+            }),
+        ]);
+        await expect(sync.persistSessionTranscriptMessage({
+            ...createTranscriptInput(
+                'voice-realtime:fresh-attempt:user:spoken-question',
+                'fresh spoken question',
+            ),
+            sessionId: freshHistorySessionId,
+        })).resolves.toBeUndefined();
+
+        expect(messagePosts()).toHaveLength(2);
+        expect(readStoredSessionMessages(storage.getState(), freshHistorySessionId)).toEqual([
+            expect.objectContaining({
+                realID: 'server-fresh-user-final',
+                localId: 'voice-realtime:fresh-attempt:user:spoken-question',
+                text: 'fresh spoken question',
+            }),
+        ]);
+    });
+
+    it('preserves an encrypted history carrier for a route-shaped transcript POST 404', async () => {
+        await activeEncryption.initializeSessions(new Map([[HISTORY_SESSION_ID, null]]));
+        const removeSessionEncryption = vi.spyOn(activeEncryption, 'removeSessionEncryption');
+        storage.getState().applySessions([
+            createSessionFixture({
+                id: HISTORY_SESSION_ID,
+                active: false,
+                encryptionMode: 'e2ee',
+                metadata: {
+                    path: '/tmp/voice-history',
+                    host: 'test-host',
+                    ...buildVoiceTranscriptHistorySessionMetadata(),
+                },
+            }),
+        ]);
+        storage.getState().applyMessages(HISTORY_SESSION_ID, [{
+            id: 'preexisting-history-message',
+            localId: null,
+            createdAt: 99,
+            role: 'user',
+            content: { type: 'text', text: 'already persisted' },
+            seq: 1,
+            isSidechain: false,
+        } satisfies NormalizedMessage]);
+        const request = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+            const url = String(input);
+            expect(url).toMatch(new RegExp(`/v2/sessions/${HISTORY_SESSION_ID}/messages$`));
+            expect(init?.method).toBe('POST');
+            return new Response(JSON.stringify({
+                error: 'Not found',
+                path: `/v2/sessions/${HISTORY_SESSION_ID}/messages`,
+                method: 'POST',
+            }), {
+                status: 404,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+        installRuntimeRequest(request);
+
+        await expect(sync.persistSessionTranscriptMessage(createTranscriptInput(
+            'voice-realtime:compatibility-attempt:user:spoken-question',
+            'do not retire this carrier',
+        ))).rejects.toThrow('Session transcript message write failed (404)');
+
+        expect(request).toHaveBeenCalledOnce();
+        expect(storage.getState().sessions[HISTORY_SESSION_ID]).toEqual(expect.objectContaining({
+            id: HISTORY_SESSION_ID,
+            encryptionMode: 'e2ee',
+        }));
+        expect(readStoredSessionMessages(storage.getState(), HISTORY_SESSION_ID)).toEqual([
+            expect.objectContaining({
+                realID: 'preexisting-history-message',
+                text: 'already persisted',
+            }),
+        ]);
+        expect(activeEncryption.getSessionEncryption(HISTORY_SESSION_ID)).not.toBeNull();
+        expect(removeSessionEncryption).not.toHaveBeenCalled();
+    });
+
+    it('preserves an encrypted history carrier for a current-text transcript POST 404 with route metadata', async () => {
+        await activeEncryption.initializeSessions(new Map([[HISTORY_SESSION_ID, null]]));
+        const removeSessionEncryption = vi.spyOn(activeEncryption, 'removeSessionEncryption');
+        storage.getState().applySessions([
+            createSessionFixture({
+                id: HISTORY_SESSION_ID,
+                active: false,
+                encryptionMode: 'e2ee',
+                metadata: {
+                    path: '/tmp/voice-history',
+                    host: 'test-host',
+                    ...buildVoiceTranscriptHistorySessionMetadata(),
+                },
+            }),
+        ]);
+        storage.getState().applyMessages(HISTORY_SESSION_ID, [{
+            id: 'preexisting-history-message',
+            localId: null,
+            createdAt: 99,
+            role: 'user',
+            content: { type: 'text', text: 'already persisted' },
+            seq: 1,
+            isSidechain: false,
+        } satisfies NormalizedMessage]);
+        const request = vi.fn(async (input: URL | RequestInfo, init?: RequestInit) => {
+            const url = String(input);
+            expect(url).toMatch(new RegExp(`/v2/sessions/${HISTORY_SESSION_ID}/messages$`));
+            expect(init?.method).toBe('POST');
+            return new Response(JSON.stringify({
+                error: 'Session not found',
+                path: `/v2/sessions/${HISTORY_SESSION_ID}/messages`,
+                method: 'POST',
+            }), {
+                status: 404,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        });
+        installRuntimeRequest(request);
+
+        await expect(sync.persistSessionTranscriptMessage(createTranscriptInput(
+            'voice-realtime:current-text-extra-attempt:user:spoken-question',
+            'do not retire this carrier',
+        ))).rejects.toThrow('Session transcript message write failed (404)');
+
+        expect(storage.getState().sessions[HISTORY_SESSION_ID]).toEqual(expect.objectContaining({
+            id: HISTORY_SESSION_ID,
+            encryptionMode: 'e2ee',
+        }));
+        expect(readStoredSessionMessages(storage.getState(), HISTORY_SESSION_ID)).toEqual([
+            expect.objectContaining({
+                realID: 'preexisting-history-message',
+                text: 'already persisted',
+            }),
+        ]);
+        expect(activeEncryption.getSessionEncryption(HISTORY_SESSION_ID)).not.toBeNull();
+        expect(removeSessionEncryption).not.toHaveBeenCalled();
+        expect(request).toHaveBeenCalledOnce();
     });
 
     it('rejects an ACK from the captured account after the active account switches during POST', async () => {

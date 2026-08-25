@@ -28,6 +28,7 @@ describe('capabilities guardrails', () => {
     it('only fetches /v1/features via serverFeaturesClient', async () => {
         const allowed = new Set<string>([
             join(SOURCES_ROOT, 'sync', 'api', 'capabilities', 'serverFeaturesClient.ts'),
+            join(SOURCES_ROOT, 'dev', 'testkit', 'fixtures', 'releasedServerV021Compatibility.ts'),
         ]);
 
         const files = await listSourceFiles(SOURCES_ROOT);

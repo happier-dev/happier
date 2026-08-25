@@ -86,6 +86,7 @@ describe('apiProviderAccountUsage', () => {
                 json: async () => ({
                     content: { t: 'plain', v: snapshot },
                     metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' },
+                    sources: [],
                 }),
             };
         });
@@ -96,7 +97,7 @@ describe('apiProviderAccountUsage', () => {
 
         expect(result?.recordId).toBe(snapshot.recordId);
         expect(fetchMock).toHaveBeenCalledWith(
-            `https://api.example.test/v3/connect/provider-account-usage/${encodeURIComponent(snapshot.recordId)}`,
+            `https://api.example.test/v4/connect/qualified/provider-account-usage/record?recordId=${encodeURIComponent(snapshot.recordId)}`,
             expect.objectContaining({ method: 'GET', headers: expect.any(Headers) }),
         );
     });
@@ -113,8 +114,9 @@ describe('apiProviderAccountUsage', () => {
                 ok: true,
                 status: 200,
                 json: async () => ({
-                    sealed: { format: 'account_scoped_v1', ciphertext: 'ciphertext' },
+                    content: { t: 'encrypted', c: 'ciphertext' },
                     metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' },
+                    sources: [],
                 }),
             };
         });
@@ -123,10 +125,42 @@ describe('apiProviderAccountUsage', () => {
         const { getProviderAccountUsageSnapshotSealed } = await loadApi();
         const result = await getProviderAccountUsageSnapshotSealed(credentials, { recordId: snapshot.recordId });
 
-        expect(result?.sealed.ciphertext).toBe('ciphertext');
+        expect(result?.content).toEqual({ t: 'encrypted', c: 'ciphertext' });
         expect(fetchMock).toHaveBeenCalledWith(
-            `https://api.example.test/v2/connect/provider-account-usage/${encodeURIComponent(snapshot.recordId)}`,
+            `https://api.example.test/v4/connect/qualified/provider-account-usage/record?recordId=${encodeURIComponent(snapshot.recordId)}`,
             expect.objectContaining({ method: 'GET', headers: expect.any(Headers) }),
+        );
+    });
+
+    it('requests a provider account usage refresh through the V4 record owner', async () => {
+        mockServerConfig();
+        const snapshot = makeSnapshot();
+        const fetchMock = vi.fn(async (input: unknown) => {
+            const url = String(input);
+            if (url === 'https://api.example.test/health') {
+                return { ok: true, status: 200, json: async () => ({ ok: true }) };
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ success: true }),
+            };
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { requestProviderAccountUsageSnapshotRefresh } = await loadApi();
+        await expect(requestProviderAccountUsageSnapshotRefresh(
+            credentials,
+            { recordId: snapshot.recordId },
+        )).resolves.toBe(true);
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            'https://api.example.test/v4/connect/qualified/provider-account-usage/record/refresh',
+            expect.objectContaining({
+                method: 'POST',
+                body: JSON.stringify({ recordId: snapshot.recordId }),
+                headers: expect.any(Headers),
+            }),
         );
     });
 });

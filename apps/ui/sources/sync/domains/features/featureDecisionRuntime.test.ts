@@ -155,7 +155,7 @@ describe('featureDecisionRuntime', () => {
         await screen.unmount();
     });
 
-    it('keeps app.ui.onboardingTour fail-closed until the rollout env explicitly enables it', async () => {
+    it('keeps app.ui.onboardingTour disabled even when the legacy rollout env enables it', async () => {
         const env = process.env as Record<string, string | undefined>;
         const enableKey = 'EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED';
         const previousEnable = env[enableKey];
@@ -201,17 +201,17 @@ describe('featureDecisionRuntime', () => {
             });
 
             env[enableKey] = '1';
-            const enabled = resolveRuntimeFeatureDecisionFromSnapshot({
+            const stillDisabled = resolveRuntimeFeatureDecisionFromSnapshot({
                 featureId: 'app.ui.onboardingTour',
                 settings,
                 snapshot: { status: 'loading' },
                 scope: { scopeKind: 'runtime' },
             });
 
-            expect(enabled).toMatchObject({
-                state: 'enabled',
-                blockedBy: null,
-                blockerCode: 'none',
+            expect(stillDisabled).toMatchObject({
+                state: 'disabled',
+                blockedBy: 'local_policy',
+                blockerCode: 'flag_disabled',
             });
         } finally {
             if (previousEnable === undefined) delete env[enableKey];

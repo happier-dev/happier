@@ -9,6 +9,7 @@ import {
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
+import { storage } from '@/sync/domains/state/storageStore';
 import { useSetting } from '@/sync/store/hooks';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -144,10 +145,11 @@ export function usePluginMachineExecutionOriginSelection(params: Readonly<{
 
     const resolveExecutionOrigin = React.useCallback(() => resolveFreshPluginMachineExecutionOrigin({
         pluginId: params.pluginId,
-        origin: selections.pluginExecutionOriginsByPluginId[params.pluginId] ?? null,
+        origin: storage.getState().settings.machineAdministrationSelectionsV1
+            .pluginExecutionOriginsByPluginId[params.pluginId] ?? null,
         reader,
         classifyRelease: params.classifyRelease,
-    }), [params.classifyRelease, params.pluginId, reader, selections.pluginExecutionOriginsByPluginId]);
+    }), [params.classifyRelease, params.pluginId, reader]);
 
     return React.useMemo(() => ({
         candidates,

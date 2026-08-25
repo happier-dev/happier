@@ -1,5 +1,10 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { afterEach, describe, expect, expectTypeOf, it } from 'vitest';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
+
+import {
+    clearProjectedAgentUiBehaviorDescriptors,
+    publishProjectedAgentUiBehaviorDescriptors,
+} from '@/agents/registry/agentUiBehaviorProjection';
 
 import {
     buildSpawnHappySessionRpcParams,
@@ -7,7 +12,78 @@ import {
     type SpawnSessionOptions,
 } from './spawnSessionPayload';
 
+const EXTERNAL_AGENT_ID = 'example.machine-scoped-agent';
+
+function publishMachineScopedTransportDescriptors(): void {
+    publishProjectedAgentUiBehaviorDescriptors({
+        machineId: 'machine-a',
+        descriptorsByAgentId: {
+            [EXTERNAL_AGENT_ID]: {
+                kind: 'plugin.ui.v1',
+                pluginId: 'example.machine-a',
+                agentId: EXTERNAL_AGENT_ID,
+                version: 1,
+                behavior: {
+                    payload: {
+                        backendTransport: {
+                            backendMode: { values: ['shared-mode'] },
+                            runtimeHandleFields: ['backendMode'],
+                            agentExtra: { owner: 'example.machine-a', schemaId: 'transport-a', v: 1 },
+                        },
+                    },
+                },
+            },
+        },
+    });
+    publishProjectedAgentUiBehaviorDescriptors({
+        machineId: 'machine-b',
+        descriptorsByAgentId: {
+            [EXTERNAL_AGENT_ID]: {
+                kind: 'plugin.ui.v1',
+                pluginId: 'example.machine-b',
+                agentId: EXTERNAL_AGENT_ID,
+                version: 2,
+                behavior: {
+                    payload: {
+                        backendTransport: {
+                            backendMode: { values: ['shared-mode'] },
+                            runtimeHandleFields: ['backendMode'],
+                            agentExtra: { owner: 'example.machine-b', schemaId: 'transport-b', v: 2 },
+                        },
+                    },
+                },
+            },
+        },
+    });
+}
+
 describe('buildSpawnHappySessionRpcParams', () => {
+    afterEach(() => {
+        clearProjectedAgentUiBehaviorDescriptors();
+    });
+
+    it('uses the target machine descriptor when building an external Agent launch', () => {
+        publishMachineScopedTransportDescriptors();
+
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-b',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'backend', backendId: EXTERNAL_AGENT_ID },
+            codexBackendMode: 'shared-mode' as never,
+        });
+
+        expect(params.runtimeDescriptorV1).toMatchObject({
+            agentId: EXTERNAL_AGENT_ID,
+            agent: {
+                agentExtra: {
+                    owner: 'example.machine-b',
+                    schemaId: 'transport-b',
+                    v: 2,
+                },
+            },
+        });
+    });
+
     it('does not let ordinary session creation place startup instructions on the daemon wire', () => {
         expectTypeOf<SpawnSessionOptions>()
             .not.toHaveProperty('agentSessionStartupInstructionsV1');

@@ -39,7 +39,10 @@ describe('native SSH tunnel AccessEndpoint source', () => {
                 label: 'settings.accessEndpoints.kind.ssh-tunnel-native',
             }),
         ]);
-        expect(endpoints[0]?.diagnostics?.map((diagnostic) => diagnostic.id)).toContain('foreground-only');
+        // Runtime limitations belong to the projection, not to a lease-derived endpoint: they
+        // exist (and matter most) when there is no lease at all.
+        expect(endpoints[0]?.diagnostics?.map((diagnostic) => diagnostic.id))
+            .toEqual(['ssh-tunnel.native.this-device-only']);
         expect(endpoints[0]?.remediationActions).toEqual([{
             id: 'ssh-tunnel-native:lease-a:stop',
             label: 'sshTunnel.stop',

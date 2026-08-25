@@ -21,6 +21,8 @@ describe('emitPluginSettingChangedEvent', () => {
 
     it('tracks successful safe canonical settings changes', () => {
         emitPluginSettingChangedEvent({
+            pluginId: 'com.happier.claude',
+            scope: 'account',
             previousValue: ['user'],
             nextValue: ['project', 'user'],
             field: {
@@ -47,7 +49,7 @@ describe('emitPluginSettingChangedEvent', () => {
         });
 
         expect(mocks.tracking.capture).toHaveBeenCalledWith('setting_changed', {
-            setting_key: 'claudeRemoteSettingSourcesV2',
+            setting_key: 'com.happier.claude/claudeRemoteSettingSourcesV2',
             scope: 'account_setting',
             identity_scope: 'person',
             value_kind: 'enum',
@@ -60,8 +62,55 @@ describe('emitPluginSettingChangedEvent', () => {
         expect(mocks.tracking.flush).toHaveBeenCalledTimes(1);
     });
 
+    it('qualifies repeated field ids and reports daemon-local settings as local', () => {
+        const field = {
+            key: 'enabled',
+            control: 'switch' as const,
+            valueType: 'boolean' as const,
+            valueSchema: { type: 'boolean' as const },
+            title: 'Enabled',
+            secretCustody: null,
+            redaction: 'none' as const,
+            clearWhenEmpty: 'persist' as const,
+            analytics: {
+                trackChanges: true,
+                valueKind: 'boolean' as const,
+                privacy: 'safe' as const,
+                identityScope: 'device_user' as const,
+            },
+        };
+
+        emitPluginSettingChangedEvent({
+            pluginId: 'com.acme.one',
+            scope: 'daemon',
+            previousValue: false,
+            nextValue: true,
+            field,
+        });
+        emitPluginSettingChangedEvent({
+            pluginId: 'com.acme.two',
+            scope: 'daemon',
+            previousValue: false,
+            nextValue: true,
+            field,
+        });
+
+        expect(mocks.tracking.capture.mock.calls.map((call) => call[1])).toEqual([
+            expect.objectContaining({
+                setting_key: 'com.acme.one/enabled',
+                scope: 'local_setting',
+            }),
+            expect.objectContaining({
+                setting_key: 'com.acme.two/enabled',
+                scope: 'local_setting',
+            }),
+        ]);
+    });
+
     it('does not track undeclared or forbidden values', () => {
         emitPluginSettingChangedEvent({
+            pluginId: 'com.acme.secrets',
+            scope: 'daemon',
             previousValue: 'before',
             nextValue: 'after',
             field: {
@@ -82,6 +131,8 @@ describe('emitPluginSettingChangedEvent', () => {
             },
         });
         emitPluginSettingChangedEvent({
+            pluginId: 'com.acme.untracked',
+            scope: 'account',
             previousValue: false,
             nextValue: true,
             field: {

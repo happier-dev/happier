@@ -10,15 +10,19 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let isFocused = true;
+let onHarnessLayoutEffect: (() => void) | null = null;
 let sessionsById: Record<string, {
   draft: string | null;
   metadata?: any;
   metadataLayoutVersion?: number;
   ownerMetadataView?: any;
 }>;
-const updateSessionDraftSpy = vi.fn();
+const writeExistingSessionDraftSpy = vi.fn();
+const flushSessionDraftSpy = vi.fn(async (_input: unknown) => ({ status: 'clean' as const }));
 const patchSessionMetadataWithRetrySpy = vi.fn();
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'ios' | 'android' }));
+const activeServerAccountScope = Object.freeze({ serverId: 'server-test', accountId: 'account-test' });
+const sessionDraftListeners = new Set<() => void>();
 
 vi.mock('@react-navigation/native', () => ({
   useIsFocused: () => isFocused,
@@ -47,20 +51,38 @@ vi.mock('@/sync/domains/state/storage', async () => {
     storage: {
     getState: () => ({
       sessions: sessionsById,
-      updateSessionDraft: (sessionId: string, draft: string | null) => {
-        updateSessionDraftSpy(sessionId, draft);
-        sessionsById = {
-          ...sessionsById,
-          [sessionId]: {
-            ...(sessionsById[sessionId] ?? { draft: null }),
-            draft,
-          },
-        };
-      },
     }),
   },
 });
 });
+
+vi.mock('@/sync/store/hooks', () => ({
+  useActiveServerAccountScope: () => activeServerAccountScope,
+}));
+
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+  flushSessionDraft: (input: unknown) => flushSessionDraftSpy(input),
+  getSessionDraftSnapshot: (_scope: unknown, address: { sessionId: string }) => {
+    const text = sessionsById[address.sessionId]?.draft;
+    return typeof text === 'string'
+      ? { document: { composer: { text: { value: text } } } }
+      : null;
+  },
+  subscribeSessionDraft: (_scope: unknown, _address: unknown, listener: () => void) => {
+    sessionDraftListeners.add(listener);
+    return () => sessionDraftListeners.delete(listener);
+  },
+  writeExistingSessionDraft: (input: { sessionId: string; patch: { text?: string } }) => {
+    writeExistingSessionDraftSpy(input.sessionId, input.patch.text?.trim() ? input.patch.text : null);
+    sessionsById = {
+      ...sessionsById,
+      [input.sessionId]: {
+        ...(sessionsById[input.sessionId] ?? { draft: null }),
+        draft: input.patch.text?.trim() ? input.patch.text : null,
+      },
+    };
+  },
+}));
 
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -189,6 +211,9 @@ async function renderHarness(params: { initialSessionId: string }): Promise<{
       restoreDraft,
       restoreComposerSnapshot,
     } = useDraft(sessionId, value, setValue, { autoSaveInterval: 60_000 });
+    React.useLayoutEffect(() => {
+      onHarnessLayoutEffect?.();
+    });
     current = {
       sessionId,
       setSessionId,
@@ -224,21 +249,24 @@ async function renderHarness(params: { initialSessionId: string }): Promise<{
 describe('useDraft', () => {
   beforeEach(() => {
     isFocused = true;
+    onHarnessLayoutEffect = null;
     platformState.os = 'web';
     sessionsById = {
       s1: { draft: 'draft-1', metadata: {} },
       s2: { draft: null, metadata: {} },
       s3: { draft: 'draft-3', metadata: {} },
     };
-    updateSessionDraftSpy.mockReset();
+    writeExistingSessionDraftSpy.mockReset();
+    flushSessionDraftSpy.mockClear();
     patchSessionMetadataWithRetrySpy.mockReset();
+    sessionDraftListeners.clear();
   });
 
-  it('debounces large web draft saves instead of persisting synchronously on the first non-empty transition', async () => {
+  it('publishes a large web draft locally while debouncing its remote flush', async () => {
     vi.useFakeTimers();
     try {
       const harness = await renderHarness({ initialSessionId: 's2' });
-      updateSessionDraftSpy.mockClear();
+      writeExistingSessionDraftSpy.mockClear();
       const largeDraft = `x${'y'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT)}`;
 
       await act(async () => {
@@ -246,25 +274,27 @@ describe('useDraft', () => {
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(updateSessionDraftSpy).not.toHaveBeenCalledWith('s2', largeDraft);
+      expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s2', largeDraft);
+      expect(flushSessionDraftSpy).not.toHaveBeenCalled();
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000);
       });
 
-      expect(updateSessionDraftSpy).toHaveBeenCalledWith('s2', largeDraft);
+      expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s2', largeDraft);
+      expect(flushSessionDraftSpy).toHaveBeenCalled();
       harness.unmount();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('debounces large native draft saves instead of persisting synchronously on the first non-empty transition', async () => {
+  it('publishes a large native draft locally while debouncing its remote flush', async () => {
     platformState.os = 'ios';
     vi.useFakeTimers();
     try {
       const harness = await renderHarness({ initialSessionId: 's2' });
-      updateSessionDraftSpy.mockClear();
+      writeExistingSessionDraftSpy.mockClear();
       const largeDraft = `x${'y'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT)}`;
 
       await act(async () => {
@@ -272,18 +302,47 @@ describe('useDraft', () => {
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(updateSessionDraftSpy).not.toHaveBeenCalledWith('s2', largeDraft);
+      expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s2', largeDraft);
+      expect(flushSessionDraftSpy).not.toHaveBeenCalled();
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000);
       });
 
-      expect(updateSessionDraftSpy).toHaveBeenCalledWith('s2', largeDraft);
+      expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s2', largeDraft);
+      expect(flushSessionDraftSpy).toHaveBeenCalled();
       harness.unmount();
     } finally {
       vi.useRealTimers();
       platformState.os = 'web';
     }
+  });
+
+  it('publishes composer edits to the local canonical replica in the input event', async () => {
+    const harness = await renderHarness({ initialSessionId: 's2' });
+    writeExistingSessionDraftSpy.mockClear();
+
+    act(() => {
+      harness.getCurrent().setDraftValue('hello world hello world');
+      expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s2', 'hello world hello world');
+    });
+
+    expect(harness.getCurrent().value).toBe('hello world hello world');
+    harness.unmount();
+  });
+
+  it('flushes a cleared draft to the remote repository in the clear event', async () => {
+    const harness = await renderHarness({ initialSessionId: 's1' });
+    flushSessionDraftSpy.mockClear();
+
+    act(() => {
+      harness.getCurrent().clearDraft();
+      expect(flushSessionDraftSpy).toHaveBeenCalledWith(expect.objectContaining({
+        address: { kind: 'session', sessionId: 's1' },
+      }));
+    });
+
+    harness.unmount();
   });
 
   it('clears the composer value when switching to a session with no stored draft', async () => {
@@ -294,6 +353,7 @@ describe('useDraft', () => {
       harness.getCurrent().setValue('typed-1');
     });
     await flushHookEffects({ cycles: 1, turns: 1 });
+    flushSessionDraftSpy.mockClear();
 
     await act(async () => {
       harness.getCurrent().setSessionId('s2');
@@ -301,6 +361,9 @@ describe('useDraft', () => {
     await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(harness.getCurrent().value).toBe('');
+    expect(flushSessionDraftSpy).toHaveBeenCalledWith(expect.objectContaining({
+      address: { kind: 'session', sessionId: 's1' },
+    }));
     harness.unmount();
   });
 
@@ -357,7 +420,7 @@ describe('useDraft', () => {
     const harness = await renderHarness({ initialSessionId: 's_child' });
 
     expect(harness.getCurrent().value).toBe('restored fork prompt');
-    expect(updateSessionDraftSpy).toHaveBeenCalledWith('s_child', 'restored fork prompt');
+    expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s_child', 'restored fork prompt');
     expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith(
       's_child',
       expect.any(Function),
@@ -395,7 +458,7 @@ describe('useDraft', () => {
     const harness = await renderHarness({ initialSessionId: 's_child' });
 
     expect(harness.getCurrent().value).toBe('private restored fork prompt');
-    expect(updateSessionDraftSpy).toHaveBeenCalledWith('s_child', 'private restored fork prompt');
+    expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s_child', 'private restored fork prompt');
     harness.unmount();
   });
 
@@ -418,7 +481,7 @@ describe('useDraft', () => {
     const harness = await renderHarness({ initialSessionId: 's_target' });
 
     expect(harness.getCurrent().value).toBe('selected transcript messages');
-    expect(updateSessionDraftSpy).toHaveBeenCalledWith('s_target', 'selected transcript messages');
+    expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s_target', 'selected transcript messages');
     expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith('s_target', expect.any(Function));
     harness.unmount();
   });
@@ -476,7 +539,7 @@ describe('useDraft', () => {
     const harness = await renderHarness({ initialSessionId: 's_target' });
 
     expect(harness.getCurrent().value).toBe('existing destination draft\n\nselected transcript messages');
-    expect(updateSessionDraftSpy).toHaveBeenCalledWith('s_target', 'existing destination draft\n\nselected transcript messages');
+    expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s_target', 'existing destination draft\n\nselected transcript messages');
     expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith('s_target', expect.any(Function));
     harness.unmount();
   });
@@ -504,12 +567,12 @@ describe('useDraft', () => {
     const harness = await renderHarness({ initialSessionId: 's_child' });
 
     expect(harness.getCurrent().value).toBe('fork seed\n\nselected transcript messages');
-    expect(updateSessionDraftSpy).toHaveBeenCalledWith('s_child', 'fork seed\n\nselected transcript messages');
+    expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s_child', 'fork seed\n\nselected transcript messages');
     expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith('s_child', expect.any(Function));
     harness.unmount();
   });
 
-  it('defers sessionInitialPromptV1 adoption while the destination composer has unsaved local edits', async () => {
+  it('appends sessionInitialPromptV1 to the immediate canonical local edit', async () => {
     sessionsById = {
       s_target: { draft: 'existing destination draft', metadata: {} },
     };
@@ -524,7 +587,7 @@ describe('useDraft', () => {
 
     sessionsById = {
       s_target: {
-        draft: 'existing destination draft',
+        draft: 'unsaved local edit',
         metadata: {
           sessionInitialPromptV1: {
             v: 1,
@@ -541,8 +604,8 @@ describe('useDraft', () => {
     });
     await flushHookEffects({ cycles: 1, turns: 1 });
 
-    expect(harness.getCurrent().value).toBe('unsaved local edit');
-    expect(patchSessionMetadataWithRetrySpy).not.toHaveBeenCalledWith('s_target', expect.any(Function));
+    expect(harness.getCurrent().value).toBe('unsaved local edit\n\nselected transcript messages');
+    expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith('s_target', expect.any(Function));
     harness.unmount();
   });
 
@@ -584,9 +647,8 @@ describe('useDraft', () => {
     };
 
     await act(async () => {
-      harness.getCurrent().rerender();
+      for (const listener of sessionDraftListeners) listener();
     });
-    await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(harness.getCurrent().value).toBe('rollback restored prompt');
         harness.unmount();
@@ -595,16 +657,20 @@ describe('useDraft', () => {
     it('normalizes session ids before reading and clearing drafts', async () => {
         const harness = await renderHarness({ initialSessionId: '  s1  ' });
         expect(harness.getCurrent().value).toBe('draft-1');
+        flushSessionDraftSpy.mockClear();
 
         await act(async () => {
             harness.getCurrent().clearDraft();
         });
 
-        expect(updateSessionDraftSpy).toHaveBeenCalledWith('s1', null);
+        expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s1', null);
+        expect(flushSessionDraftSpy).toHaveBeenCalledWith(expect.objectContaining({
+          address: { kind: 'session', sessionId: 's1' },
+        }));
         harness.unmount();
     });
 
-    it('replaces the composer when an external draft update arrives and there are no unsaved local edits', async () => {
+  it('replaces the composer when an external draft update arrives and there are no unsaved local edits', async () => {
         sessionsById = {
             s1: { draft: 'draft-1', metadata: {} },
         };
@@ -639,6 +705,33 @@ describe('useDraft', () => {
     harness.unmount();
   });
 
+  it('does not adopt a repository snapshot superseded before its passive hydration effect runs', async () => {
+    sessionsById = {
+      s2: { draft: 'hello world', metadata: {} },
+    };
+    const harness = await renderHarness({ initialSessionId: 's2' });
+    expect(harness.getCurrent().value).toBe('hello world');
+
+    sessionsById = {
+      s2: { draft: 'hello wo', metadata: {} },
+    };
+    onHarnessLayoutEffect = () => {
+      onHarnessLayoutEffect = null;
+      sessionsById = {
+        s2: { draft: 'hello world', metadata: {} },
+      };
+    };
+
+    await act(async () => {
+      harness.getCurrent().rerender();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(harness.getCurrent().value).toBe('hello world');
+    expect(sessionsById.s2?.draft).toBe('hello world');
+    harness.unmount();
+  });
+
   it('does not restore the previous draft after clearDraft clears the composer', async () => {
     sessionsById = {
       s1: { draft: 'draft-1', metadata: {} },
@@ -655,6 +748,30 @@ describe('useDraft', () => {
 
     expect(sessionsById.s1?.draft).toBeNull();
     expect(harness.getCurrent().value).toBe('');
+    harness.unmount();
+  });
+
+  it('does not let a pre-handoff passive save resurrect text after compare-clear', async () => {
+    sessionsById = {
+      s1: { draft: null, metadata: {} },
+    };
+
+    const harness = await renderHarness({ initialSessionId: 's1' });
+    onHarnessLayoutEffect = () => {
+      onHarnessLayoutEffect = null;
+      expect(harness.getCurrent().clearDraftForSessionIfCurrentValueMatches({
+        sessionId: 's1',
+        text: 'submitted prompt',
+      })).toBe(true);
+    };
+
+    await act(async () => {
+      harness.getCurrent().setDraftValue('submitted prompt');
+    });
+    await flushHookEffects({ cycles: 2, turns: 2 });
+
+    expect(harness.getCurrent().value).toBe('');
+    expect(sessionsById.s1?.draft).toBeNull();
     harness.unmount();
   });
 
@@ -791,14 +908,16 @@ describe('useDraft', () => {
 
     try {
       expect(harness.getCurrent().value).toBe('draft-1');
-      updateSessionDraftSpy.mockClear();
+      writeExistingSessionDraftSpy.mockClear();
+      flushSessionDraftSpy.mockClear();
 
       await act(async () => {
         harness.getCurrent().setValue('draft-1 edited before background');
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(sessionsById.s1?.draft).toBe('draft-1');
+      expect(sessionsById.s1?.draft).toBe('draft-1 edited before background');
+      expect(flushSessionDraftSpy).not.toHaveBeenCalled();
 
       fakeVisibilityDocument.setVisibilityState('hidden');
       await act(async () => {
@@ -807,7 +926,8 @@ describe('useDraft', () => {
       await flushHookEffects({ cycles: 1, turns: 1 });
 
       expect(sessionsById.s1?.draft).toBe('draft-1 edited before background');
-      expect(updateSessionDraftSpy).toHaveBeenCalledWith('s1', 'draft-1 edited before background');
+      expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s1', 'draft-1 edited before background');
+      expect(flushSessionDraftSpy).toHaveBeenCalled();
     } finally {
       harness.unmount();
       fakeVisibilityDocument.restore();
@@ -822,15 +942,17 @@ describe('useDraft', () => {
 
     try {
       expect(harness.getCurrent().value).toBe('draft-1');
-      updateSessionDraftSpy.mockClear();
+      writeExistingSessionDraftSpy.mockClear();
+      flushSessionDraftSpy.mockClear();
 
       await act(async () => {
         harness.getCurrent().setValue('draft-1 edited before window blur');
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(updateSessionDraftSpy).not.toHaveBeenCalledWith('s1', 'draft-1 edited before window blur');
-      expect(sessionsById.s1?.draft).toBe('draft-1');
+      expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s1', 'draft-1 edited before window blur');
+      expect(sessionsById.s1?.draft).toBe('draft-1 edited before window blur');
+      expect(flushSessionDraftSpy).not.toHaveBeenCalled();
 
       fakeVisibilityDocument.setVisibilityState('visible');
       await act(async () => {
@@ -839,7 +961,8 @@ describe('useDraft', () => {
       await flushHookEffects({ cycles: 1, turns: 1 });
 
       expect(sessionsById.s1?.draft).toBe('draft-1 edited before window blur');
-      expect(updateSessionDraftSpy).toHaveBeenCalledWith('s1', 'draft-1 edited before window blur');
+      expect(writeExistingSessionDraftSpy).toHaveBeenCalledWith('s1', 'draft-1 edited before window blur');
+      expect(flushSessionDraftSpy).toHaveBeenCalled();
     } finally {
       harness.unmount();
       fakeWindowLifecycle.restore();
@@ -869,7 +992,7 @@ describe('useDraft', () => {
     await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(harness.getCurrent().value).toBe('');
-    expect(sessionsById.s1?.draft).toBe('');
+    expect(sessionsById.s1?.draft).toBeNull();
     harness.unmount();
   });
 });

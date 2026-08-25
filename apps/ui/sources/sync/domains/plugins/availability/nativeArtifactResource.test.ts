@@ -116,6 +116,7 @@ function fixture(current: boolean) {
             availabilityCursor: 1,
             intentReads: current ? [{ pluginId: slot.pluginId, response }] : [],
             materializations: [],
+            snapshots: [],
         } satisfies PluginAccountAvailabilitySnapshot,
         graph: {
             contributionId: slot.contributionId,

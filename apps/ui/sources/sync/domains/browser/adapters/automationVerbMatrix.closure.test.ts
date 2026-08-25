@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
@@ -47,7 +47,6 @@ type Surface = Readonly<{
     supportedTargetKinds: readonly BrowserViewTargetKindV1[];
     supportedRenderEngines: readonly BrowserRenderEngineKindV1[];
     desktopWebViewSupport?: DesktopWebViewSupport | null;
-    streamedSurfaceLive?: boolean;
 }>;
 
 /** Every surface the product can actually mount, in the shape its owner builds it. */
@@ -96,11 +95,12 @@ const SURFACES: readonly Surface[] = [
         supportedRenderEngines: ['streamedSurface'],
     },
     {
-        label: 'Streamed browser surface (live sidecar)',
+        // DEC-5: the streamed adapter is contracted, so there is no longer a "live" variant of this
+        // surface — it is always the fail-closed one.
+        label: 'Streamed browser surface (contracted, fail-closed)',
         adapterKind: 'streamedBrowserSurface',
         supportedTargetKinds: ['streamedBrowser'],
         supportedRenderEngines: ['streamedSurface'],
-        streamedSurfaceLive: true,
     },
     {
         label: 'Chromium sidecar (no UI-reachable runtime)',
@@ -120,10 +120,20 @@ function capabilitiesFor(surface: Surface): BrowserAdapterCapabilitiesV1 {
         ...(surface.desktopWebViewSupport === undefined
             ? {}
             : { desktopWebViewSupport: surface.desktopWebViewSupport }),
-        ...(surface.streamedSurfaceLive === undefined
-            ? {}
-            : { streamedSurfaceLive: surface.streamedSurfaceLive }),
     });
+}
+
+/**
+ * `automationActions` is optional on the schema, so a surface that produced none would silently
+ * render as an empty row. Every surface must declare the full map — that is the point of the
+ * matrix — so an absent map is a builder defect, not an empty cell.
+ */
+function automationActionsFor(surface: Surface): BrowserAutomationActionCapabilityMapV1 {
+    const actions = capabilitiesFor(surface).automationActions;
+    if (!actions) {
+        throw new Error(`buildBrowserAdapterCapabilities returned no automationActions for ${surface.label}`);
+    }
+    return actions;
 }
 
 function availableVerbs(actions: BrowserAutomationActionCapabilityMapV1): readonly string[] {
@@ -144,21 +154,54 @@ function cell(values: readonly string[]): string {
     return values.length < 1 ? '_none_' : values.map((value) => `\`${value}\``).join(', ');
 }
 
-function renderMatrix(): string {
-    const header = [
+function renderSurfaceTable(): readonly string[] {
+    return [
         '| Surface | Automation verbs available | Disabled reasons reported |',
         '|---|---|---|',
+        ...SURFACES.map((surface) => {
+            const actions = automationActionsFor(surface);
+            return `| ${surface.label} | ${cell(availableVerbs(actions))} | ${cell(disabledReasons(actions))} |`;
+        }),
     ];
-    const rows = SURFACES.map((surface) => {
-        const actions = capabilitiesFor(surface).automationActions;
-        return `| ${surface.label} | ${cell(availableVerbs(actions))} | ${cell(disabledReasons(actions))} |`;
-    });
+}
+
+function renderVerbTable(): readonly string[] {
+    return [
+        '| Capability | Available on | Reason where unavailable |',
+        '|---|---|---|',
+        ...CAPABILITY_KINDS.map((kind) => {
+            const surfaces: string[] = [];
+            const reasons = new Set<string>();
+            for (const surface of SURFACES) {
+                const capability = automationActionsFor(surface)[kind];
+                if (capability.available === true) {
+                    surfaces.push(surface.label);
+                    continue;
+                }
+                for (const reason of capability.disabledReasons) reasons.add(reason);
+            }
+            const availableOn = surfaces.length < 1
+                ? '**nowhere**'
+                : surfaces.length === SURFACES.length
+                    ? 'every surface'
+                    : surfaces.join('<br>');
+            return `| \`${kind}\` | ${availableOn} | ${cell([...reasons].sort())} |`;
+        }),
+    ];
+}
+
+function renderMatrix(): string {
     const uncovered = BrowserAutomationActionKindV1Schema.options.filter((actionKind) => (
         !(CAPABILITY_KINDS as readonly string[]).includes(actionKind)
     ));
     return [
-        ...header,
-        ...rows,
+        '### Surfaces',
+        '',
+        ...renderSurfaceTable(),
+        '',
+        '### Capabilities',
+        '',
+        ...renderVerbTable(),
         '',
         `Action kinds with no capability bit of their own: ${cell(uncovered)}. `
         + 'They ride the surface\'s general synthetic-input path — navigation kinds are gated by '
@@ -176,9 +219,32 @@ function readDocMatrix(): string {
     return doc.slice(start + TABLE_START.length, end).trim();
 }
 
+/**
+ * Regeneration path. The doc is derived, so when the capability builder legitimately changes the
+ * answer must be re-rendered, not hand-patched from a test diff:
+ *
+ *     UPDATE_AUTOMATION_VERB_MATRIX=1 vitest run sources/sync/domains/browser/adapters/automationVerbMatrix.closure.test.ts
+ *
+ * Without the variable this is a pure comparison, so CI still fails on drift.
+ */
+function writeDocMatrix(matrix: string): void {
+    const doc = readFileSync(DOC_PATH, 'utf8');
+    const start = doc.indexOf(TABLE_START);
+    const end = doc.indexOf(TABLE_END);
+    expect(start, `${DOC_PATH} is missing ${TABLE_START}`).toBeGreaterThanOrEqual(0);
+    expect(end, `${DOC_PATH} is missing ${TABLE_END}`).toBeGreaterThan(start);
+    writeFileSync(
+        DOC_PATH,
+        `${doc.slice(0, start + TABLE_START.length)}\n${matrix}\n${doc.slice(end)}`,
+        'utf8',
+    );
+}
+
 describe('browser automation verb matrix (UB-1)', () => {
     it('publishes the matrix the capability builder actually produces', () => {
-        expect(readDocMatrix()).toBe(renderMatrix());
+        const matrix = renderMatrix();
+        if (process.env.UPDATE_AUTOMATION_VERB_MATRIX === '1') writeDocMatrix(matrix);
+        expect(readDocMatrix()).toBe(matrix);
     });
 
     it('covers every capability kind the protocol declares', () => {
@@ -194,7 +260,7 @@ describe('browser automation verb matrix (UB-1)', () => {
         // The failure mode UB-1 names: a surface that reports zero available verbs and zero
         // reasons is a silent dead end for an agent.
         for (const surface of SURFACES) {
-            const actions = capabilitiesFor(surface).automationActions;
+            const actions = automationActionsFor(surface);
             if (availableVerbs(actions).length > 0) continue;
             expect(disabledReasons(actions), `${surface.label} disables everything with no reason`)
                 .not.toEqual([]);

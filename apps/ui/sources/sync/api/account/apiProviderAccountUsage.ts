@@ -9,11 +9,9 @@ import { backoff } from '@/utils/timing/time';
 import {
     ProviderAccountUsageRecordIdSchema,
     ProviderAccountUsageSnapshotV1Schema,
-    SealedProviderAccountUsageSnapshotV1Schema,
-    StoredJsonContentEnvelopeSchema,
+    QualifiedProviderAccountUsageRecordResponseV4Schema,
     type ProviderAccountUsageRecordId,
     type ProviderAccountUsageSnapshotV1,
-    type SealedProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
@@ -23,25 +21,40 @@ function extractErrorCode(json: unknown): string | null {
     return typeof obj.error === 'string' ? obj.error : null;
 }
 
-const ProviderAccountUsageMetadataSchema = z.object({
-    fetchedAt: z.number().int().nonnegative(),
-    staleAfterMs: z.number().int().nonnegative(),
-    status: z.enum(['ok', 'unavailable', 'estimated', 'error']),
-    refreshRequestedAt: z.number().int().nonnegative().optional(),
-});
-
-const ProviderAccountUsagePlainResponseSchema = z.object({
-    content: StoredJsonContentEnvelopeSchema,
-    metadata: ProviderAccountUsageMetadataSchema,
-});
-
-const ProviderAccountUsageSealedResponseSchema = z.object({
-    sealed: SealedProviderAccountUsageSnapshotV1Schema,
-    metadata: ProviderAccountUsageMetadataSchema,
-});
+type QualifiedProviderAccountUsageRecordResponse = z.infer<
+    typeof QualifiedProviderAccountUsageRecordResponseV4Schema
+>;
+type EncryptedQualifiedProviderAccountUsageRecordResponse = Extract<
+    QualifiedProviderAccountUsageRecordResponse,
+    Readonly<{ content: Readonly<{ t: 'encrypted'; c: string }> }>
+>;
 
 function parseRecordId(recordId: ProviderAccountUsageRecordId): ProviderAccountUsageRecordId {
     return ProviderAccountUsageRecordIdSchema.parse(recordId);
+}
+
+function parseQualifiedProviderAccountUsageRecordResponse(
+    json: unknown,
+    recordId: ProviderAccountUsageRecordId,
+): QualifiedProviderAccountUsageRecordResponse {
+    const parsed = QualifiedProviderAccountUsageRecordResponseV4Schema.safeParse(json);
+    if (!parsed.success) {
+        throw new Error(`Invalid provider account usage response for ${recordId}`);
+    }
+    return parsed.data;
+}
+
+function rejectContentModeMismatch(
+    recordId: ProviderAccountUsageRecordId,
+): never {
+    throw new HappyError(
+        `Provider account usage content does not match the Account encryption mode for ${recordId}`,
+        false,
+        {
+            kind: 'server',
+            code: 'provider_account_usage_content_mode_mismatch',
+        },
+    );
 }
 
 export async function getProviderAccountUsageSnapshotPlain(
@@ -55,7 +68,7 @@ export async function getProviderAccountUsageSnapshotPlain(
     const recordId = parseRecordId(params.recordId);
     return await backoff(async () => {
         const response = await serverFetch(
-            `/v3/connect/provider-account-usage/${encodeURIComponent(recordId)}`,
+            `/v4/connect/qualified/provider-account-usage/record?recordId=${encodeURIComponent(recordId)}`,
             {
                 method: 'GET',
                 signal: opts?.signal,
@@ -91,14 +104,12 @@ export async function getProviderAccountUsageSnapshotPlain(
             throw new Error(`Failed to load provider account usage for ${recordId}: ${response.status}`);
         }
 
-        const json: unknown = await response.json();
-        const parsed = ProviderAccountUsagePlainResponseSchema.safeParse(json);
-        if (!parsed.success) {
-            throw new Error(`Invalid provider account usage response for ${recordId}`);
+        const parsed = parseQualifiedProviderAccountUsageRecordResponse(await response.json(), recordId);
+        if (parsed.content.t !== 'plain') {
+            return rejectContentModeMismatch(recordId);
         }
-        if (parsed.data.content.t !== 'plain') return null;
 
-        const snapshot = ProviderAccountUsageSnapshotV1Schema.safeParse(parsed.data.content.v);
+        const snapshot = ProviderAccountUsageSnapshotV1Schema.safeParse(parsed.content.v);
         if (!snapshot.success || snapshot.data.recordId !== recordId) {
             throw new Error(`Invalid provider account usage response for ${recordId}`);
         }
@@ -113,14 +124,11 @@ export async function getProviderAccountUsageSnapshotSealed(
         signal?: AbortSignal;
         expectedActiveServer?: ExpectedActiveServerFetchBasis;
     }>,
-): Promise<Readonly<{
-    sealed: SealedProviderAccountUsageSnapshotV1;
-    metadata: z.infer<typeof ProviderAccountUsageMetadataSchema>;
-}> | null> {
+): Promise<EncryptedQualifiedProviderAccountUsageRecordResponse | null> {
     const recordId = parseRecordId(params.recordId);
     return await backoff(async () => {
         const response = await serverFetch(
-            `/v2/connect/provider-account-usage/${encodeURIComponent(recordId)}`,
+            `/v4/connect/qualified/provider-account-usage/record?recordId=${encodeURIComponent(recordId)}`,
             {
                 method: 'GET',
                 signal: opts?.signal,
@@ -156,42 +164,39 @@ export async function getProviderAccountUsageSnapshotSealed(
             throw new Error(`Failed to load sealed provider account usage for ${recordId}: ${response.status}`);
         }
 
-        const json: unknown = await response.json();
-        const parsed = ProviderAccountUsageSealedResponseSchema.safeParse(json);
-        if (!parsed.success) {
-            throw new Error(`Invalid sealed provider account usage response for ${recordId}`);
+        const parsed = parseQualifiedProviderAccountUsageRecordResponse(await response.json(), recordId);
+        if (parsed.content.t !== 'encrypted') {
+            return rejectContentModeMismatch(recordId);
         }
-        return parsed.data;
+        return parsed;
     });
 }
 
 export async function requestProviderAccountUsageSnapshotRefresh(
     credentials: AuthCredentials,
     params: Readonly<{ recordId: ProviderAccountUsageRecordId }>,
-    opts: Readonly<{
-        mode: 'plain' | 'e2ee';
+    opts?: Readonly<{
         expectedActiveServer?: ExpectedActiveServerFetchBasis;
     }>,
 ): Promise<boolean> {
     const recordId = parseRecordId(params.recordId);
-    const routeVersion = opts.mode === 'plain' ? 'v3' : 'v2';
     return await backoff(async () => {
         const response = await serverFetch(
-            `/${routeVersion}/connect/provider-account-usage/${encodeURIComponent(recordId)}/refresh`,
+            '/v4/connect/qualified/provider-account-usage/record/refresh',
             {
                 method: 'POST',
                 headers: {
                     Authorization: `Bearer ${credentials.token}`,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({}),
+                body: JSON.stringify({ recordId }),
             },
             {
                 includeAuth: false,
-                ...(opts.expectedActiveServer
+                ...(opts?.expectedActiveServer
                     ? {
                         expectedActiveServer:
-                            opts.expectedActiveServer,
+                            opts?.expectedActiveServer,
                     }
                     : {}),
             },

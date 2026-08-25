@@ -45,16 +45,25 @@ import {
     PendingRequestedActionV1Schema,
     DEFAULT_PENDING_REQUESTED_ACTION_V1,
     HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
+    HappierStructuredInputV1Schema,
     PendingMessageMutationFingerprintV1Schema,
     RawIngressStructuredInputV1Schema,
+    SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema,
+    readIngressComposerAttachmentSelectionV1,
     SessionStoredMessageContentSchema,
+    type ComposerContentHandleV1,
+    type SessionPendingMessageComposerAdmissionAcceptedRequestV1,
     type RawIngressStructuredInputV1,
+    type HappierStructuredInputV1,
     type PendingDeliveryBlockedReason,
     type PendingDeliveryStatusV1,
     type PendingRequestedActionV1,
     type SessionStoredMessageContent,
 } from '@happier-dev/protocol';
-import { admitMentionRefsV1ForText } from '@happier-dev/protocol/runtime';
+import {
+    admitMentionRefsV1ForText,
+    readAdmittedHappierStructuredInputV1FromMeta,
+} from '@happier-dev/protocol/runtime';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
@@ -79,6 +88,10 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 export { assertValidPendingMessageId } from '@/sync/domains/pending/pendingMessageId';
 
 type PendingStatus = 'queued' | 'delivering' | 'external_handoff' | 'blocked' | 'discarded' | 'unknown';
+
+/** The only fact callers may use for Composer post-accept work. */
+export type PendingMessageComposerAdmissionAcceptedFactV1 =
+    SessionPendingMessageComposerAdmissionAcceptedRequestV1;
 
 type PendingRow = {
     localId: string;
@@ -430,7 +443,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 function replacePendingEditStructuredInput(
     rawRecord: RawRecord,
-    structuredInput: RawIngressStructuredInputV1 | undefined,
+    structuredInput: RawIngressStructuredInputV1 | HappierStructuredInputV1 | undefined,
     text: string,
 ): RawRecord {
     if (structuredInput === undefined) return rawRecord;
@@ -445,13 +458,14 @@ function replacePendingEditStructuredInput(
     if (hasExistingStructuredInput && !isPlainObject(existingStructuredInput)) {
         throw new Error('Pending structured input is invalid');
     }
-    // A Pending row is Message ingress: the queue re-sends its stored metadata verbatim
-    // through the send RPC, where the daemon's SessionMedia finalizer turns a draft's staged
-    // claim into a durable reference. Validating it as the persisted envelope rejected every
-    // queued media row — on both the stored and the replacement side — so a media attachment
-    // could be prepared but never saved.
+    // A queued row may still be raw ingress, while an edited row now carries the
+    // exact daemon-admitted envelope. Read both at this canonical Pending writer;
+    // never reinterpret an invalid shape as text-only.
     const parsedExisting = hasExistingStructuredInput
-        ? RawIngressStructuredInputV1Schema.safeParse(existingStructuredInput)
+        ? (() => {
+            const admitted = HappierStructuredInputV1Schema.safeParse(existingStructuredInput);
+            return admitted.success ? admitted : RawIngressStructuredInputV1Schema.safeParse(existingStructuredInput);
+        })()
         : null;
     if (parsedExisting && !parsedExisting.success) throw new Error('Pending structured input is invalid');
 
@@ -461,7 +475,10 @@ function replacePendingEditStructuredInput(
     delete nextStructuredInput.mentions;
     delete nextStructuredInput.composerAttachments;
 
-    const parsedReplacement = RawIngressStructuredInputV1Schema.safeParse(structuredInput);
+    const admittedReplacement = HappierStructuredInputV1Schema.safeParse(structuredInput);
+    const parsedReplacement = admittedReplacement.success
+        ? admittedReplacement
+        : RawIngressStructuredInputV1Schema.safeParse(structuredInput);
     if (!parsedReplacement.success) throw new Error('Pending structured input is invalid');
     const admittedMentions = admitMentionRefsV1ForText(text, parsedReplacement.data.mentions ?? []);
     if (admittedMentions.length) {
@@ -818,7 +835,16 @@ function coercePendingUserTextRecord(decrypted: unknown): { rawRecord: RawRecord
     if (record.role !== 'user') return null;
 
     const text = record.content.text;
-    if (typeof text !== 'string' || text.trim().length === 0) return null;
+    if (typeof text !== 'string') return null;
+    // A Pending row is Message ingress, and an attachment-only image/video turn is blank by
+    // design. Treating blank text alone as an unreadable row published the user's queued media
+    // message as a decrypt failure and dropped the rawRecord that still carried its selection.
+    if (
+        text.trim().length === 0
+        && (readIngressComposerAttachmentSelectionV1(record.meta) ?? []).length === 0
+    ) {
+        return null;
+    }
 
     const displayTextRaw = record.meta?.displayText;
     const displayText = typeof displayTextRaw === 'string' && displayTextRaw.trim().length > 0 ? displayTextRaw : undefined;
@@ -2455,13 +2481,17 @@ export async function updatePendingMessageV2(params: {
      */
     replacementLocalId?: string;
     /** The complete current editable Composer semantic input; an empty envelope removes it. */
-    structuredInput?: RawIngressStructuredInputV1;
+    structuredInput?: RawIngressStructuredInputV1 | HappierStructuredInputV1;
+    /** Opaque daemon-produced staged-media handles; the canonical writer returns them only after PATCH acceptance. */
+    preparedComposerAdmission?: Readonly<{
+        stagedMediaHandles: readonly ComposerContentHandleV1[];
+    }>;
     encryption: Encryption | null;
     fetchArtifactWithBody?: (artifactId: string) => Promise<DecryptedArtifact | null>;
     updateArtifact?: (artifact: DecryptedArtifact) => void;
     request: (path: string, init?: RequestInit) => Promise<Response>;
     outboxScope: ServerAccountScope;
-}): Promise<void> {
+}): Promise<PendingMessageComposerAdmissionAcceptedFactV1 | undefined> {
     const { sessionId, pendingId, text, encryption, request } = params;
     if (params.replacementLocalId !== undefined) {
         assertValidPendingMessageId(params.replacementLocalId);
@@ -2486,6 +2516,9 @@ export async function updatePendingMessageV2(params: {
     const retainedOutbox = findPendingOutboxMessage(sessionId, localId, params.outboxScope);
     if (retainedOutbox?.operation === 'cancel') {
         throw new Error('Pending cancellation is outstanding');
+    }
+    if (params.preparedComposerAdmission && params.structuredInput === undefined) {
+        throw new Error('Pending Composer admission requires a canonical structured input');
     }
 
     const rawRecord: RawRecord = replacePendingEditStructuredInput((() => {
@@ -2524,6 +2557,27 @@ export async function updatePendingMessageV2(params: {
         });
     })(), params.structuredInput, text);
 
+    const acceptedComposerAdmissionTemplate = params.preparedComposerAdmission
+        ? (() => {
+            const admitted = readAdmittedHappierStructuredInputV1FromMeta(rawRecord.meta);
+            const structuredInput = admitted.status === 'admitted'
+                ? admitted.structuredInput
+                : admitted.status === 'absent'
+                    ? HappierStructuredInputV1Schema.parse({ v: 1 })
+                    : (() => {
+                        throw new Error('Pending Composer admission is not canonical');
+                    })();
+            // Parse before writing so invalid staged-media claims cannot turn a
+            // rejected PATCH into an accepted-but-unsettleable outcome.
+            return SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema.parse({
+                sessionId,
+                localId: params.replacementLocalId ?? localId,
+                structuredInput,
+                stagedMediaHandles: params.preparedComposerAdmission.stagedMediaHandles,
+            });
+        })()
+        : undefined;
+
     const replacementMutationFingerprint = params.replacementLocalId
         ? derivePendingMessageMutationFingerprintV1({
             sessionId,
@@ -2550,7 +2604,7 @@ export async function updatePendingMessageV2(params: {
     };
     const updatedAt = nowServerMs();
 
-    await runPendingEnqueueCommitInOrder(params.outboxScope, sessionId, async () => {
+    return await runPendingEnqueueCommitInOrder(params.outboxScope, sessionId, async () => {
         const beforePatch = findPendingOutboxMessage(sessionId, localId, params.outboxScope);
         if (beforePatch?.operation === 'cancel') throw new Error('Pending cancellation is outstanding');
         const response = await request(pendingMessagePath(sessionId, localId), {
@@ -2577,6 +2631,12 @@ export async function updatePendingMessageV2(params: {
             }
             confirmedLocalId = responseLocalId;
         }
+        const acceptedComposerAdmission = acceptedComposerAdmissionTemplate
+            ? SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema.parse({
+                ...acceptedComposerAdmissionTemplate,
+                localId: confirmedLocalId,
+            })
+            : undefined;
         // The PATCH is ITSELF an acknowledgement: a 2xx proves the server holds a pending row for
         // this localId, so a snapshot read issued BEFORE it cannot list that row and must not be
         // applied over it. BOTH facts are recorded here — at the RESPONSE — because both are facts
@@ -2587,7 +2647,11 @@ export async function updatePendingMessageV2(params: {
         markPendingLocalIdAcceptedAfterSnapshotCapture(params.outboxScope, sessionId, confirmedLocalId);
         supersedePendingSnapshotRefreshForLocalWrite(params.outboxScope, sessionId);
         const afterPatch = findPendingOutboxMessage(sessionId, localId, params.outboxScope);
-        if (afterPatch?.operation === 'cancel') throw new Error('Pending cancellation is outstanding');
+        // A 2xx is the durable acceptance boundary. A cancellation that began
+        // while this PATCH was in flight still owns projection removal, but it
+        // must not turn an accepted write into a rejection: callers need the
+        // resolved outcome to run Composer post-accept settlement exactly once.
+        if (afterPatch?.operation === 'cancel') return acceptedComposerAdmission;
         const currentProjection = revalidateResolvedPendingMutationTarget(
             sessionId,
             resolvedTarget,
@@ -2598,7 +2662,7 @@ export async function updatePendingMessageV2(params: {
             !currentProjection
             || currentProjection.pendingOutboxOperation === 'cancel'
             || isPendingCancellationRequested(params.outboxScope, sessionId, localId)
-        ) return;
+        ) return acceptedComposerAdmission;
 
         if (afterPatch?.operation === 'enqueue') {
             removePendingOutboxMessage(sessionId, localId, params.outboxScope);
@@ -2619,6 +2683,7 @@ export async function updatePendingMessageV2(params: {
             rawRecord,
             displayText: currentProjection.pendingDecryptFailure ? undefined : currentProjection.displayText,
         });
+        return acceptedComposerAdmission;
     });
 }
 

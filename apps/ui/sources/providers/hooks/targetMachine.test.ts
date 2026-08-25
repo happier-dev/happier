@@ -7,16 +7,61 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 
+type TestAccountLifetime = Readonly<{
+    scope: Readonly<{ serverId: string; accountId: string }>;
+    isCurrent(): boolean;
+    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
+}>;
+
+/**
+ * A controllable stand-in for the sole active-Account lifetime. Mocking the
+ * canonical scope owner is the only way to drive a same-server Account switch
+ * from a hook test; everything below it is the real Provider target owner.
+ */
+function createTestAccountLifetime(accountId: string) {
+    let retired = false;
+    const cancellations = new Set<() => void>();
+    const lifetime: TestAccountLifetime = {
+        scope: { serverId: 'server-a', accountId },
+        isCurrent: () => !retired,
+        onRetire(cancel: () => void) {
+            if (retired) {
+                cancel();
+                return { dispose() {} };
+            }
+            cancellations.add(cancel);
+            return { dispose() { cancellations.delete(cancel); } };
+        },
+    };
+    return {
+        lifetime,
+        retire() {
+            if (retired) return;
+            retired = true;
+            for (const cancel of [...cancellations]) cancel();
+            cancellations.clear();
+        },
+    };
+}
+
+const activeAccountLifetime: { value: TestAccountLifetime | null } = { value: null };
+
 async function importTargetHook(
     mock: ReturnType<typeof createMachineAdministrationTargetSelectionMock>,
 ) {
     vi.resetModules();
     vi.doMock('@/sync/domains/machines/administration/useTargetSelection', () => mock.module);
+    vi.doMock('@/sync/domains/scope/activeServerAccountScope', () => ({
+        captureActiveServerAccountScopeLifetime: () => activeAccountLifetime.value,
+    }));
     return (await import('./targetMachine')).useProviderSettingsTarget;
 }
 
 describe('useProviderSettingsTarget', () => {
-    afterEach(standardCleanup);
+    afterEach(() => {
+        activeAccountLifetime.value = null;
+        standardCleanup();
+    });
 
     it('addresses the exact selected machine and follows a later selection', async () => {
         const mock = createMachineAdministrationTargetSelectionMock({
@@ -131,6 +176,72 @@ describe('useProviderSettingsTarget', () => {
         expect(rendered.getCurrent().resolveCurrentTarget()).toEqual({
             machineId: 'machine-shared',
             serverId: 'server-b',
+        });
+    });
+
+    it('refuses a captured resolver once the same machine id is selected on another Account', async () => {
+        // A machine id is unique only inside one server identity. A resolver
+        // captured while srv_a/machine-shared was the target must not authorize
+        // a later effect after the selection moved to the OTHER Account's
+        // machine of the same id: the machine id still matches, so only the
+        // identity half of the check can refuse it.
+        const mock = createMachineAdministrationTargetSelectionMock({
+            serverId: 'server-a',
+            serverIdentityId: 'srv_a',
+            machines: [
+                { machineId: 'machine-shared', displayName: 'Studio on A' },
+                {
+                    machineId: 'machine-shared',
+                    displayName: 'Studio on B',
+                    serverIdentityId: 'srv_b',
+                    serverId: 'server-b',
+                },
+            ],
+            selectedMachineId: 'machine-shared',
+            selectedServerIdentityId: 'srv_a',
+        });
+        const useProviderSettingsTarget = await importTargetHook(mock);
+        const rendered = await renderHook(() => useProviderSettingsTarget());
+        const resolveOnAccountA = rendered.getCurrent().resolveCurrentTarget;
+        expect(resolveOnAccountA()).toEqual({ machineId: 'machine-shared', serverId: 'server-a' });
+
+        await act(async () => { mock.controller.select('machine-shared', 'srv_b'); });
+
+        expect(resolveOnAccountA()).toBeNull();
+        expect(rendered.getCurrent().resolveCurrentTarget()).toEqual({
+            machineId: 'machine-shared',
+            serverId: 'server-b',
+        });
+    });
+
+    it('refuses a captured resolver once its Account lifetime retires on the same server and machine', async () => {
+        // The canonical reset retires the Account lifetime and clears live
+        // inventory, then Account B restores the SAME server identity and
+        // machine. Only the Account lifetime distinguishes A's captured
+        // resolver from B's, so a machine/server comparison cannot refuse it.
+        const accountA = createTestAccountLifetime('account-a');
+        activeAccountLifetime.value = accountA.lifetime;
+        const mock = createMachineAdministrationTargetSelectionMock({
+            machines: [{ machineId: 'machine-shared' }],
+            selectedMachineId: 'machine-shared',
+        });
+        const useProviderSettingsTarget = await importTargetHook(mock);
+        const rendered = await renderHook(() => useProviderSettingsTarget());
+        const resolveOnAccountA = rendered.getCurrent().resolveCurrentTarget;
+        expect(resolveOnAccountA()).toEqual({ machineId: 'machine-shared', serverId: 'server-a' });
+
+        const accountB = createTestAccountLifetime('account-b');
+        await act(async () => {
+            accountA.retire();
+            activeAccountLifetime.value = accountB.lifetime;
+        });
+        await rendered.rerender();
+
+        expect(resolveOnAccountA()).toBeNull();
+        // Positive twin: Account B's own render still addresses the machine.
+        expect(rendered.getCurrent().resolveCurrentTarget()).toEqual({
+            machineId: 'machine-shared',
+            serverId: 'server-a',
         });
     });
 

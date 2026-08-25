@@ -156,6 +156,12 @@ function fixture(input: Readonly<{
             availabilityCursor: 1,
             intentReads: [{ pluginId: slot.pluginId, response }],
             materializations: input.materialized ? [materialization] : [],
+            snapshots: [{
+                serverIdentityId: materialization.serverIdentityId,
+                machineId: materialization.machineId,
+                revision: 1,
+                materializations: input.materialized ? [materialization] : [],
+            }],
         } satisfies PluginAccountAvailabilitySnapshot),
         bytesByPath: new Map<string, Uint8Array>([
             [entryPath, entryBytes],
@@ -300,6 +306,7 @@ function snapshotWithAvailability(input: Readonly<{
             }),
         })]),
         materializations: input.current.snapshot.materializations,
+        snapshots: input.current.snapshot.snapshots,
     });
 }
 
@@ -492,7 +499,7 @@ describe('hosted-web Artifact lease acquisition', () => {
         expect(accountHosted).toHaveBeenCalledTimes(2);
     });
 
-    it('permanently discards only the exact persistent Artifact when Availability withdraws it', async () => {
+    it('retires the lease without deleting the retained bytes when the Account disables the plugin', async () => {
         const current = fixture();
         const readerStore = createPluginAccountAvailabilityReaderStore();
         readerStore.replace({ scope, snapshot: current.snapshot });
@@ -523,14 +530,16 @@ describe('hosted-web Artifact lease acquisition', () => {
         await Promise.resolve();
 
         expect(acquired.lease.isCurrent()).toBe(false);
-        expect(persistent.remove).toHaveBeenCalledTimes(1);
-        expect(persistent.remove).toHaveBeenCalledWith(current.record.persistentIdentity);
+        // Disable stops new use and retains the bounded archive (PEP-ARTIFACTS
+        // 10.1); the projection writer that holds both verified snapshots is the
+        // only owner allowed to delete these bytes.
+        expect(persistent.remove).not.toHaveBeenCalled();
         expect(persistent.removeAccount).not.toHaveBeenCalled();
-        expect(persistent.records.has(persistentRecordKey(current.record.persistentIdentity))).toBe(false);
+        expect(persistent.records.has(persistentRecordKey(current.record.persistentIdentity))).toBe(true);
         expect(persistent.records.has(persistentRecordKey(neighboringRecord.persistentIdentity))).toBe(true);
     });
 
-    it('permanently discards the old exact persistent Artifact when Availability replaces its version', async () => {
+    it('retires the lease on a version replacement and leaves the superseded deletion to the projection writer', async () => {
         const current = fixture();
         const readerStore = createPluginAccountAvailabilityReaderStore();
         readerStore.replace({ scope, snapshot: current.snapshot });
@@ -554,9 +563,8 @@ describe('hosted-web Artifact lease acquisition', () => {
         await Promise.resolve();
 
         expect(acquired.lease.isCurrent()).toBe(false);
-        expect(persistent.remove).toHaveBeenCalledTimes(1);
-        expect(persistent.remove).toHaveBeenCalledWith(current.record.persistentIdentity);
+        expect(persistent.remove).not.toHaveBeenCalled();
         expect(persistent.removeAccount).not.toHaveBeenCalled();
-        expect(persistent.records.has(persistentRecordKey(current.record.persistentIdentity))).toBe(false);
+        expect(persistent.records.has(persistentRecordKey(current.record.persistentIdentity))).toBe(true);
     });
 });

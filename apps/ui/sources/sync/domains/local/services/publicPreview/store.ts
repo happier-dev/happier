@@ -44,24 +44,36 @@ export function createLocalServicePublicPreviewState(): LocalServicePublicPrevie
     };
 }
 
+/**
+ * A refresh is in flight; keep the last good rows and the generation they came from.
+ *
+ * Takes no clock: a refresh starting produces no daemon generation, so `generatedAt` keeps naming the
+ * snapshot the visible rows actually came from. `refreshState` carries the transition. (Mirrors the
+ * inventory store, where stamping the client clock here fabricated a rescan for consumers and
+ * corrupted a watch cursor.)
+ */
 export function applyLocalServicePublicPreviewRefreshStarted(
     state: LocalServicePublicPreviewState,
-    generatedAt: number,
 ): LocalServicePublicPreviewState {
     return {
         ...state,
-        generatedAt,
         refreshState: 'refreshing',
     };
 }
 
+/**
+ * A refresh failed; keep the last good rows and the generation they came from.
+ *
+ * Takes no clock: a failed read produces no daemon generation, so `generatedAt` keeps naming the
+ * snapshot the visible rows actually came from. `refreshState` carries the transition. (Mirrors the
+ * inventory store, where stamping the client clock here fabricated a rescan for consumers and
+ * corrupted a watch cursor.)
+ */
 export function applyLocalServicePublicPreviewRefreshFailed(
     state: LocalServicePublicPreviewState,
-    generatedAt: number,
 ): LocalServicePublicPreviewState {
     return {
         ...state,
-        generatedAt,
         refreshState: 'error',
     };
 }

@@ -428,7 +428,7 @@ describe('peer mediation observability UI store', () => {
                         body: 'must-not-surface',
                         authorization: 'must-not-surface',
                         previewToken: 'must-not-surface',
-                        headers: { cookie: 'must-not-surface' },
+                        headers: { cookie: 'must-not-surface', 'content-type': 'text/html' },
                     },
                     websocket: {
                         subprotocol: 'vite-hmr',
@@ -447,6 +447,12 @@ describe('peer mediation observability UI store', () => {
             method: 'GET',
             path: '/safe',
             statusCode: 200,
+            // DEC-8: the UI folds through the canonical protocol redactor, which applies the shared
+            // SAFE_TELEMETRY_HEADER_NAMES allowlist. The predecessor UI fork dropped every header
+            // object wholesale, so an allowlisted header the producer had already vetted never
+            // reached the panel. Pinning both directions keeps this distinguishable from that fork
+            // AND from a redactor that leaks the unsafe name.
+            headers: { 'content-type': 'text/html' },
         });
         expect(selectors.selectPeerMediationObservabilityWebSocketMetadata(next, {
             scope: machineScope,

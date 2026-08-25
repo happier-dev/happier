@@ -1,6 +1,6 @@
 import type { NativeSshTunnelSnapshot, NativeSshTunnelStatus } from '@/sync/runtime/nativeSshTunnels/types';
 
-import type { AccessEndpoint, AccessEndpointStatus } from '../model';
+import type { AccessEndpoint, AccessEndpointDiagnostic, AccessEndpointStatus } from '../model';
 import { createScopedAccessEndpointRemediationAction } from '../remediation';
 import {
     deriveAccessEndpointWsBaseUrl,
@@ -22,6 +22,23 @@ function toAccessEndpointStatus(status: NativeSshTunnelStatus): AccessEndpointSt
         default:
             return 'unknown';
     }
+}
+
+/**
+ * Platform limitations belong to the native SSH runtime, not to any one lease: the supervisor
+ * records them on start failure, probe failure and suspension, and the two failure reasons users
+ * most need (`authentication-failed`, `host-key-*`) happen *before* a lease exists. Emitting them
+ * once at projection level is what makes them reachable at all; nesting a copy inside every
+ * lease-derived endpoint both repeated them and dropped them whenever there were zero leases.
+ */
+export function buildNativeSshTunnelDiagnostics(params: Readonly<{
+    snapshot?: NativeSshTunnelAccessEndpointInput;
+}>): readonly AccessEndpointDiagnostic[] {
+    return (params.snapshot?.platformLimitations ?? []).map((limitation) => ({
+        id: limitation.id,
+        severity: limitation.severity,
+        message: limitation.message,
+    }));
 }
 
 export function buildNativeSshTunnelAccessEndpoints(params: Readonly<{
@@ -58,11 +75,6 @@ export function buildNativeSshTunnelAccessEndpoints(params: Readonly<{
                     message: 'settings.accessEndpoints.limitation.this-device-only',
                     detail: 'settings.accessEndpoints.limitation.not-public-share-url',
                 },
-                ...params.snapshot!.platformLimitations.map((limitation) => ({
-                    id: limitation.id,
-                    severity: limitation.severity,
-                    message: limitation.message,
-                })),
             ],
             remediationActions: lease.status !== 'stopped'
                 ? [createScopedAccessEndpointRemediationAction({

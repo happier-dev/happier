@@ -101,7 +101,6 @@ describe('sessions domain: local server/account scope', () => {
         expect(domain.activateSessionLocalStateScope).toBeTypeOf('function');
         domain.activateSessionLocalStateScope(scopeA);
         domain.applySessions([session('s1') as any]);
-        domain.updateSessionDraft('s1', 'account A draft');
         domain.updateSessionPermissionMode('s1', 'yolo');
         domain.updateSessionModelMode('s1', 'gemini-2.5-pro');
         domain.markSessionViewed('s1');
@@ -112,7 +111,6 @@ describe('sessions domain: local server/account scope', () => {
             input: { target: 'unit' },
         });
 
-        expect(get().sessions.s1?.draft).toBe('account A draft');
         expect(get().sessions.s1?.permissionMode).toBe('yolo');
         expect(get().sessions.s1?.modelMode).toBe('gemini-2.5-pro');
         expect(get().reviewCommentsDraftsBySessionId.s1?.[0]?.body).toBe('account A review');
@@ -123,7 +121,6 @@ describe('sessions domain: local server/account scope', () => {
         domain.activateSessionLocalStateScope(scopeB);
         domain.applySessions([session('s1') as any]);
 
-        expect(get().sessions.s1?.draft ?? null).toBeNull();
         expect(get().sessions.s1?.permissionMode).not.toBe('yolo');
         expect(get().sessions.s1?.modelMode).not.toBe('gemini-2.5-pro');
         expect(get().reviewCommentsDraftsBySessionId.s1 ?? []).toEqual([]);
@@ -134,7 +131,6 @@ describe('sessions domain: local server/account scope', () => {
         domain.activateSessionLocalStateScope(scopeA);
         domain.applySessions([session('s1') as any]);
 
-        expect(get().sessions.s1?.draft).toBe('account A draft');
         expect(get().sessions.s1?.permissionMode).toBe('yolo');
         expect(get().sessions.s1?.modelMode).toBe('gemini-2.5-pro');
         expect(get().reviewCommentsDraftsBySessionId.s1?.[0]?.body).toBe('account A review');

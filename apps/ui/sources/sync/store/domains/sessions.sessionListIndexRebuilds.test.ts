@@ -2613,7 +2613,6 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         const initialIndex = get().sessionListIndexByServerId['server-active'];
         expect(Array.isArray(initialIndex)).toBe(true);
 
-        domain.updateSessionDraft('s1', 'hello');
         expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
     });
 
@@ -2652,12 +2651,6 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
         expect(saveWarmCache).toHaveBeenCalledTimes(1);
 
-        domain.updateSessionDraft('s1', 'local draft');
-        expect(get().sessions.s1?.draft).toBe('local draft');
-
-        domain.updateSessionDraft('s1', null);
-        expect(get().sessions.s1?.draft).toBeNull();
-
         domain.applySessions([
             {
                 id: 's1',
@@ -2677,7 +2670,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             } as any,
         ]);
 
-        expect(get().sessions.s1?.draft).toBeNull();
+        expect(get().sessions.s1?.draft).toBe('server stale draft');
         await vi.advanceTimersByTimeAsync(1_000);
         expect(saveWarmCache).toHaveBeenCalledTimes(2);
         } finally {

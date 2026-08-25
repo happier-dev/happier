@@ -1,6 +1,7 @@
 import type { ActionId, BackendTargetRefV2Input } from '@happier-dev/protocol';
 
 import { buildActionDraftInput } from './buildActionDraftInput';
+import { normalizeExecutionRunActionPermissionMode } from './executionRunActionPermissionMode';
 import { resolveExecutionRunActionDefaultPermissionMode } from './resolveExecutionRunActionDefaultPermissionMode';
 
 function hasExplicitPermissionMode(extra: Record<string, unknown> | null): boolean {
@@ -18,10 +19,15 @@ export function buildExecutionRunActionDraftInputForUi(args: Readonly<{
     const extra = args.extra && typeof args.extra === 'object' ? args.extra : null;
     const defaultPermissionMode = resolveExecutionRunActionDefaultPermissionMode(args.actionId);
 
-    // UI launch surfaces must seed canonical UI permission tokens here so new
-    // entrypoints cannot drift back to protocol-only aliases.
-    const mergedExtra = hasExplicitPermissionMode(extra) || !defaultPermissionMode
-        ? extra
+    // Action inputs use protocol permission tokens even when the UI surface uses
+    // the equivalent session-facing vocabulary.
+    const mergedExtra = hasExplicitPermissionMode(extra)
+        ? {
+            ...(extra ?? {}),
+            permissionMode: normalizeExecutionRunActionPermissionMode(extra?.permissionMode),
+        }
+        : !defaultPermissionMode
+            ? extra
         : {
             ...(extra ?? {}),
             permissionMode: defaultPermissionMode,

@@ -26,7 +26,6 @@ import { nowServerMs } from '../../runtime/time';
 import { clearSessionTranscriptDerivedCachesForSession } from '../../runtime/sessionTranscriptDerivedCaches';
 import { readSessionPresentationCompletedRequests } from '../../domains/session/presentation/readSessionPresentationCompletedRequests';
 import {
-    loadSessionDrafts,
     loadSessionLastViewed,
     loadSessionModelModeUpdatedAts,
     loadSessionModelModes,
@@ -35,7 +34,6 @@ import {
     loadSessionActionDrafts,
     loadSessionReviewCommentsDrafts,
     loadWorkspaceReviewCommentsDrafts,
-    saveSessionDrafts,
     saveSessionLastViewed,
     saveSessionModelModeUpdatedAts,
     saveSessionModelModes,
@@ -46,12 +44,6 @@ import {
     saveWorkspaceReviewCommentsDrafts,
 } from '../../domains/state/sessionPersistence';
 import { prepareSessionLocalStateScopeForActivation } from '../../domains/state/persistence';
-import {
-    advanceSessionComposerSemanticRevision,
-    consumeSessionComposerTextMutationToken,
-    invalidateSessionComposerTextMutationToken,
-    type SessionComposerTextMutationToken,
-} from '../../domains/input/draftValues/sessionDraftValueStore';
 import {
     resolveWarmCacheAccountScope,
     peekSessionListWarmCacheEntries,
@@ -230,11 +222,6 @@ export type SessionsDomain = {
     getWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => string[];
     setWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase, paths: string[]) => void;
     clearWorkspaceRepositoryTreeExpandedPaths: (scope: WorkspaceScopeBase) => void;
-    updateSessionDraft: (
-        sessionId: string,
-        draft: string | null,
-        options?: Readonly<{ composerTextMutationToken?: SessionComposerTextMutationToken }>,
-    ) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
     markSessionResuming: (sessionId: string) => void;
@@ -560,7 +547,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     get: StoreGet<S>;
 }): SessionsDomain {
     let sessionLocalStateScope: ServerAccountScope | null = null;
-    let sessionDrafts = loadSessionDrafts();
     let sessionPermissionModes = loadSessionPermissionModes();
     let sessionModelModes = loadSessionModelModes();
     let sessionPermissionModeUpdatedAts = loadSessionPermissionModeUpdatedAts();
@@ -615,7 +601,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     };
     const hydrateSessionLocalStateScope = (scope: ServerAccountScope) => {
         sessionLocalStateScope = scope;
-        sessionDrafts = loadSessionDrafts(scope);
         sessionPermissionModes = loadSessionPermissionModes(scope);
         sessionModelModes = loadSessionModelModes(scope);
         sessionPermissionModeUpdatedAts = loadSessionPermissionModeUpdatedAts(scope);
@@ -710,14 +695,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             set((state) => {
                 let nextSessions = state.sessions;
                 for (const [sessionId, session] of Object.entries(state.sessions)) {
-                    const scopedDraft = sessionDrafts[sessionId] ?? null;
                     const scopedPermissionMode = sessionPermissionModes[sessionId] ?? 'default';
                     const scopedPermissionModeUpdatedAt = sessionPermissionModeUpdatedAts[sessionId] ?? null;
                     const scopedModelMode = sessionModelModes[sessionId] ?? 'default';
                     const scopedModelModeUpdatedAt = sessionModelModeUpdatedAts[sessionId] ?? null;
                     if (
-                        session.draft === scopedDraft
-                        && session.permissionMode === scopedPermissionMode
+                        session.permissionMode === scopedPermissionMode
                         && (session.permissionModeUpdatedAt ?? null) === scopedPermissionModeUpdatedAt
                         && session.modelMode === scopedModelMode
                         && (session.modelModeUpdatedAt ?? null) === scopedModelModeUpdatedAt
@@ -729,7 +712,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     }
                     nextSessions[sessionId] = {
                         ...session,
-                        draft: scopedDraft,
                         permissionMode: scopedPermissionMode,
                         permissionModeUpdatedAt: scopedPermissionModeUpdatedAt,
                         modelMode: scopedModelMode,
@@ -751,7 +733,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         clearSessionLocalStateScope: () => {
             clearDeferredWarmCacheSave();
             sessionLocalStateScope = null;
-            sessionDrafts = {};
             sessionPermissionModes = {};
             sessionModelModes = {};
             sessionPermissionModeUpdatedAts = {};
@@ -896,8 +877,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 
                 // Preserve existing draft and permission mode if they exist, or load from saved data
                 const hasLoadedSession = previousSession !== undefined;
-                const existingDraft = previousSession?.draft;
-                const savedDraft = sessionDrafts[session.id];
                 const existingPermissionMode = previousSession?.permissionMode;
                 const savedPermissionMode = savedPermissionModes[session.id];
                 const existingModelMode = previousSession?.modelMode;
@@ -1103,9 +1082,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     presence,
                     latestReadyEventSeq: incomingLatestReadyEventSeq ?? previousSession?.latestReadyEventSeq ?? null,
                     latestReadyEventAt: incomingLatestReadyEventAt ?? previousSession?.latestReadyEventAt ?? null,
-                    draft: hasLoadedSession
-                        ? (existingDraft ?? null)
-                        : (savedDraft ?? session.draft ?? null),
                     optimisticThinkingAt: mergedOptimisticThinkingAt,
                     resumingAt: mergedResumingAt,
                     thinkingGraceUntil: mergedThinkingGraceUntil,
@@ -1921,69 +1897,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 }
             };
         }),
-        updateSessionDraft: (sessionId: string, draft: string | null, options) => {
-            const draftScope = sessionLocalStateScope;
-            let shouldAdvanceComposerSemanticRevision = false;
-            let shouldInvalidateComposerTextMutationToken = false;
-            set((state) => {
-                const session = state.sessions[sessionId];
-                // Don't store empty strings, convert to null
-                const normalizedDraft = draft?.trim() ? draft : null;
-                const previousDraft = sessionDrafts[sessionId] ?? null;
-
-                // Preserve drafts for sessions that have not been materialized into this store slice yet.
-                const allDrafts: Record<string, string> = { ...sessionDrafts };
-                Object.entries(state.sessions).forEach(([id, sess]) => {
-                    if (sess.draft?.trim()) {
-                        allDrafts[id] = sess.draft;
-                    } else {
-                        delete allDrafts[id];
-                    }
-                });
-                if (normalizedDraft) {
-                    allDrafts[sessionId] = normalizedDraft;
-                } else {
-                    delete allDrafts[sessionId];
-                }
-
-                // Persist drafts
-                saveSessionDrafts(allDrafts, draftScope);
-                sessionDrafts = allDrafts;
-                const textMutationAlreadyAdvanced = consumeSessionComposerTextMutationToken(
-                    draftScope,
-                    sessionId,
-                    options?.composerTextMutationToken,
-                );
-                if (
-                    previousDraft !== normalizedDraft
-                    && !textMutationAlreadyAdvanced
-                ) {
-                    shouldInvalidateComposerTextMutationToken = true;
-                    shouldAdvanceComposerSemanticRevision = true;
-                }
-
-                if (!session) return state;
-
-                const updatedSessions = {
-                    ...state.sessions,
-                    [sessionId]: {
-                        ...session,
-                        draft: normalizedDraft
-                    }
-                };
-
-                return {
-                    ...state,
-                    sessions: updatedSessions,
-                };
-            });
-            if (shouldInvalidateComposerTextMutationToken) {
-                invalidateSessionComposerTextMutationToken(draftScope, sessionId);
-            }
-            if (shouldAdvanceComposerSemanticRevision) {
-                advanceSessionComposerSemanticRevision(draftScope, sessionId);
-            }
-        },
         upsertSessionReviewCommentDraft: (sessionId: string, draft: ReviewCommentDraft) => set((state) => {
             const existing = state.reviewCommentsDraftsBySessionId[sessionId] ?? [];
             const next = existing.some((d) => d.id === draft.id)
@@ -2647,12 +2560,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const { [sessionId]: _deletedActionDrafts, ...remainingActionDrafts } = state.actionDraftsBySessionId;
             actionDraftsBySessionId = remainingActionDrafts;
 
-            // Clear drafts and permission modes from persistent storage
-            const drafts = loadSessionDrafts(sessionLocalStateScope);
-            delete drafts[sessionId];
-            saveSessionDrafts(drafts, sessionLocalStateScope);
-            sessionDrafts = drafts;
-
+            // Clear permission modes and other session-local projections from persistent storage.
             const reviewDrafts = loadSessionReviewCommentsDrafts(sessionLocalStateScope);
             delete reviewDrafts[sessionId];
             saveSessionReviewCommentsDrafts(reviewDrafts, sessionLocalStateScope);

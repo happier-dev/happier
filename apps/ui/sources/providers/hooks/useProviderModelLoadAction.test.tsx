@@ -202,7 +202,7 @@ describe('useProviderModelLoadAction', () => {
 
         expect(result).toEqual({
             status: 'error',
-            error: createProviderErrorV1('provider_endpoint_unavailable', {
+            error: createProviderErrorV1('provider_authorization_changed', {
                 connectionId: 'pc_a',
                 machineId: 'machine-a',
             }),
@@ -228,11 +228,42 @@ describe('useProviderModelLoadAction', () => {
 
         expect(result).toEqual({
             status: 'error',
-            error: createProviderErrorV1('provider_endpoint_unavailable', {
+            error: createProviderErrorV1('provider_machine_unavailable', {
                 connectionId: 'pc_a',
                 machineId: 'machine-a',
             }),
         });
         expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+    });
+
+    it('loads through the routing id the target resolves to at effect time', async () => {
+        // The device-local routing id of the selected server identity can be
+        // replaced between the render that built the row and the load itself.
+        // The machine did not change, so the load must follow the freshly
+        // resolved routing id — the same contract every other Provider effect
+        // holds — instead of reporting the endpoint unavailable.
+        machineRpcWithServerScope.mockResolvedValueOnce({ status: 'loaded', source: 'requested' });
+        const value: { current: ReturnType<typeof useProviderModelLoadAction> | null } = { current: null };
+        function Harness() {
+            value.current = useProviderModelLoadAction({
+                machineId: 'machine-a',
+                serverId: 'server-a',
+                refresh: async () => true,
+                resolveExecutionTarget: () => ({
+                    machineId: 'machine-a',
+                    serverId: 'server-a-reconnected',
+                }),
+            });
+            return React.createElement('View');
+        }
+        await renderScreen(<Harness />);
+
+        let result: unknown;
+        await act(async () => { result = await value.current?.load('pc_a', 'model-a'); });
+
+        expect(result).toEqual({ status: 'loaded', source: 'requested' });
+        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server-a-reconnected',
+        }));
     });
 });

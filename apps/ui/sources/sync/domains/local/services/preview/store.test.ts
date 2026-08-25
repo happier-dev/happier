@@ -87,7 +87,7 @@ describe('local service preview store', () => {
             diagnostics: [],
         });
 
-        const refreshing = mod.applyLocalServicePreviewRefreshStarted(hydrated, 1_500);
+        const refreshing = mod.applyLocalServicePreviewRefreshStarted(hydrated);
 
         expect(mod.selectLocalServicePreviewRows(refreshing)).toHaveLength(1);
         expect(refreshing.refreshState).toBe('refreshing');
@@ -113,10 +113,10 @@ describe('local service preview store', () => {
             diagnostics: [],
         });
 
-        const failed = mod.applyLocalServicePreviewRefreshFailed(hydrated, 1_500);
+        const failed = mod.applyLocalServicePreviewRefreshFailed(hydrated);
 
         expect(mod.selectLocalServicePreviewRows(failed)).toHaveLength(1);
-        expect(failed.generatedAt).toBe(1_500);
+        expect(failed.generatedAt).toBe(1_000);
         expect(failed.refreshState).toBe('error');
     });
 

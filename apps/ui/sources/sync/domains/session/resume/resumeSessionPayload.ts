@@ -50,6 +50,8 @@ export type ResumeHappySessionRpcParams = AgentBackendTransportFields & {
 };
 
 type BuildResumeHappySessionRpcInput = Omit<ResumeHappySessionRpcParams, 'type' | 'backendTarget' | 'codexBackendMode'> & {
+    /** Builder-only target identity; daemon wire payloads never carry it. */
+    machineId: string;
     backendTarget: BackendTargetRefV2Input;
     codexBackendMode?: CodexBackendMode;
     experimentalCodexAcp?: boolean;
@@ -80,6 +82,7 @@ const ResumeHappySessionRpcParamsSchema = z.object({
 
 export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionRpcInput): ResumeHappySessionRpcParams {
     const {
+        machineId,
         modelSelection,
         modelId: _legacyModelId,
         modelUpdatedAt: _legacyModelUpdatedAt,
@@ -91,6 +94,7 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         ...rest
     } = input as BuildResumeHappySessionRpcInput & { modelId?: unknown; modelUpdatedAt?: unknown };
     const backendTransportFields = buildBackendTransportFieldsFromUiState({
+        machineId,
         backendTarget: rest.backendTarget,
         providerMode: codexBackendMode,
         legacyExperimentalMode: experimentalCodexAcp,

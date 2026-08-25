@@ -155,7 +155,11 @@ async function importLocalUiStateStore() {
 }
 
 async function importSessionDraftValueStore() {
-    return await import('@/sync/domains/input/draftValues/sessionDraftValueStore');
+    return await import('@/dev/testkit/sessionDraftRepositoryTestkit');
+}
+
+async function importSessionDraftRepository() {
+    return await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 }
 
 async function importLocalUiStatePersistence() {
@@ -754,6 +758,44 @@ describe('useSessionAgentInputComposerPersistence', () => {
             'session-a',
             'structuredInput.mentions',
         )).toEqual([survivingMention]);
+    });
+
+    it('does not rerender composer persistence for unrelated draft text writes', async () => {
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+        const repository = await importSessionDraftRepository();
+        const scope = activeScopeState.value;
+        if (!scope) throw new Error('expected active account scope');
+        let renderCount = 0;
+
+        function Harness() {
+            renderCount += 1;
+            useSessionAgentInputComposerPersistence({
+                sessionId: 'session-a',
+                text: '',
+                textLength: 0,
+                fontScale: 1,
+            });
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(React.createElement(Harness));
+        });
+        const settledRenderCount = renderCount;
+
+        await act(async () => {
+            repository.writeExistingSessionDraft({
+                scope,
+                sessionId: 'session-a',
+                patch: { text: 'hello' },
+            });
+        });
+
+        expect(renderCount).toBe(settledRenderCount);
+        await act(async () => {
+            tree!.unmount();
+        });
     });
 
     it('persists structured mention changes for the session owner', async () => {

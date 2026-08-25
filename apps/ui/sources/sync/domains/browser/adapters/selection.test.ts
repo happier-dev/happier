@@ -356,44 +356,11 @@ describe('selectBrowserTargetAdapter', () => {
         });
     });
 
-    it('selects an available daemon-authoritative streamed browser surface when its control transport is reachable', () => {
-        const selection = selectBrowserTargetAdapter({
-            target: {
-                kind: 'streamedBrowser',
-                targetId: 'stream_1',
-                streamId: 'stream_1',
-            },
-            platform: 'web',
-            streamedBrowserSurfaceAvailability: { daemonControlReachable: true },
-        });
-
-        expect(selection).toMatchObject({
-            ok: true,
-            outcome: 'renderEngine',
-            adapterKind: 'streamedBrowserSurface',
-            engineKind: 'streamedSurface',
-            capabilities: {
-                adapterKind: 'streamedBrowserSurface',
-                supportedTargetKinds: ['streamedBrowser'],
-                supportedRenderEngines: ['streamedSurface'],
-                supportsStreamingDisplay: true,
-                // A daemon-driven real Chromium can navigate; navigation routes over the daemon
-                // control transport (the `daemonCommand` effect), so the address bar is enabled.
-                navigation: {
-                    canNavigate: true,
-                    canReload: true,
-                    canGoBack: true,
-                    canGoForward: true,
-                    canStop: true,
-                },
-            },
-        });
-        // It must NOT carry the fail-closed unavailable marker.
-        expect((selection as { capabilities?: { disabledReasons?: unknown } }).capabilities?.disabledReasons)
-            .toEqual([]);
-    });
-
-    it('keeps the streamed browser surface fail-closed when the daemon control transport is not reachable', () => {
+    // DEC-5: the streamed adapter is CONTRACTED. Nothing in production can produce a
+    // `streamedBrowser` target, no renderer exists, and the server excludes the kind outright, so a
+    // reachable daemon control transport must no longer make the surface selectable. Reachability
+    // of a transport is not the existence of a renderer.
+    it('never selects a streamed browser surface, even with a reachable daemon control transport', () => {
         expect(selectBrowserTargetAdapter({
             target: {
                 kind: 'streamedBrowser',
@@ -401,7 +368,6 @@ describe('selectBrowserTargetAdapter', () => {
                 streamId: 'stream_1',
             },
             platform: 'web',
-            streamedBrowserSurfaceAvailability: { daemonControlReachable: false },
         })).toMatchObject({
             ok: false,
             adapterKind: 'streamedBrowserSurface',
@@ -410,20 +376,118 @@ describe('selectBrowserTargetAdapter', () => {
         });
     });
 
-    it('builds available navigable capabilities for a live streamed browser surface', () => {
+    // DEC-5: there is no longer any input that lets the streamed adapter escape the fail-closed
+    // gate. It could previously advertise a full navigable capability set to agents and plugins
+    // while no renderer existed anywhere in the product.
+    it('never builds navigable capabilities for a streamed browser surface', () => {
         const capabilities = buildBrowserAdapterCapabilities({
             adapterKind: 'streamedBrowserSurface',
             supportedTargetKinds: ['streamedBrowser'],
             supportedRenderEngines: ['streamedSurface'],
-            streamedSurfaceLive: true,
         });
 
         expect(capabilities).toMatchObject({
-            supportedRenderEngines: ['streamedSurface'],
-            supportsStreamingDisplay: true,
-            navigation: { canNavigate: true, canReload: true },
+            supportedRenderEngines: ['unavailable'],
+            supportsStreamingDisplay: false,
+            navigation: {
+                canNavigate: false,
+                canReload: false,
+                canGoBack: false,
+                canGoForward: false,
+                canStop: false,
+            },
         });
-        expect(capabilities.disabledReasons).toEqual([]);
+        expect(capabilities.disabledReasons).toEqual(['streamed_browser_unavailable']);
+    });
+
+    // E2-F6: the policy owner's decision is the authority for EVERY target kind, not just external
+    // URLs. `evaluateBrowserTargetPolicy` can deny a hosted-plugin target (profile mismatch), and
+    // that denial used to be dropped on the floor here because only the `externalUrl` branch read
+    // the decision — the selector returned a fully renderable engine for a denied target.
+    it('refuses a target the policy owner denied, whatever its kind', () => {
+        expect(selectBrowserTargetAdapter({
+            target: hostedPluginTarget,
+            platform: 'web',
+            targetPolicyDecision: {
+                ...deniedExternalUrlPolicy,
+                targetKind: 'hostedPluginWeb',
+            },
+        })).toMatchObject({
+            ok: false,
+            adapterKind: 'hostedPlugin',
+            engineKind: 'unavailable',
+        });
+
+        expect(selectBrowserTargetAdapter({
+            target: localPreviewTarget,
+            platform: 'web',
+            targetPolicyDecision: {
+                ...deniedExternalUrlPolicy,
+                targetKind: 'localServicePreview',
+            },
+        })).toMatchObject({
+            ok: false,
+            adapterKind: 'localPreview',
+            engineKind: 'unavailable',
+        });
+    });
+
+    // G17: a local-service preview is rendered by the WEB bundle's iframe on desktop too, so the
+    // selector must say `webIframe`. Claiming `desktopWebView` collapsed the whole capability set
+    // to unavailable and shipped a dead address bar and reload on Tauri desktop only.
+    it('selects the iframe engine that actually renders a desktop local-service preview', () => {
+        expect(selectBrowserTargetAdapter({
+            target: localPreviewTarget,
+            platform: 'desktop',
+        })).toMatchObject({
+            ok: true,
+            adapterKind: 'localPreview',
+            engineKind: 'webIframe',
+            capabilities: {
+                supportedRenderEngines: ['webIframe'],
+                navigation: { canNavigate: true, canReload: true },
+            },
+        });
+    });
+
+    // R-3 / G9: a desktop host whose native webview is RESOLVED-unavailable must not dead-end an
+    // allowed site. It resolves to the same fulfilled OS-tab handoff the web build already uses.
+    it('offers the system-browser handoff for an allowed external URL a desktop host cannot embed', () => {
+        expect(selectBrowserTargetAdapter({
+            target: externalUrlTarget,
+            platform: 'desktop',
+            targetPolicyDecision: allowedExternalUrlPolicy,
+            desktopWebViewAvailability: {
+                ...availableDesktopWebView,
+                available: false,
+                platform: 'windows',
+                primitive: 'windowsHwndWebView2',
+                renderEngine: 'unavailable',
+                producer: 'none',
+                supports: { ...availableDesktopWebView.supports, navigation: false },
+                disabledReasons: ['desktop_webview_child_view_unverified'],
+            },
+        })).toEqual({
+            ok: true,
+            outcome: 'openExternalTab',
+            adapterKind: 'externalUrl',
+            url: 'https://example.com/',
+        });
+    });
+
+    // ...but an UNRESOLVED probe is not evidence the host cannot embed. Opening an OS tab during
+    // that window would be a wrong, invisible action, so it still fails closed.
+    it('does not hand off to the system browser while desktop native availability is unresolved', () => {
+        expect(selectBrowserTargetAdapter({
+            target: externalUrlTarget,
+            platform: 'desktop',
+            targetPolicyDecision: allowedExternalUrlPolicy,
+        })).toMatchObject({
+            ok: false,
+            adapterKind: 'externalUrl',
+            engineKind: 'unavailable',
+            reasonCode: 'desktop_engine_unavailable',
+        });
     });
 
     it('selects the streamed simulator adapter for simulator preview targets', () => {
@@ -475,12 +539,14 @@ describe('selectBrowserTargetAdapter', () => {
             supportedTargetKinds: ['streamedBrowser'],
             supportedRenderEngines: ['streamedSurface'],
         });
-        const externalUrl = buildBrowserAdapterCapabilities({
-            adapterKind: 'externalUrl',
-            supportedTargetKinds: ['externalUrl'],
-            supportedRenderEngines: ['nativeWebView'],
-        });
-
+        // NOTE (R-2): `externalUrl + nativeWebView` used to be asserted here as a third
+        // "no runtime owner" engine. It is not one — the RN `WebView` is exactly the runtime owner
+        // for an external site on ios/android, and `selectBrowserTargetAdapter` selects it (see
+        // "selects the native WebView engine for allowed external URLs on ios/android" above). This
+        // assertion was the capability half of that split-brain: the selector said "render it", the
+        // builder said "unavailable", and mobile shipped a dead toolbar. The positive contract now
+        // lives at the capability owner (`capabilities.test.ts`); the genuinely ownerless engines
+        // are the two below, and the fail-closed desktop case has its own test.
         expect(sidecar).toMatchObject({
             supportedRenderEngines: ['unavailable'],
             disabledReasons: ['sidecar_runtime_unavailable'],
@@ -510,18 +576,6 @@ describe('selectBrowserTargetAdapter', () => {
             fidelity: 'unavailable',
             trustedInput: false,
             disabledReasons: ['streamed_browser_unavailable'],
-        });
-
-        expect(externalUrl).toMatchObject({
-            supportedRenderEngines: ['unavailable'],
-            disabledReasons: ['external_url_unavailable'],
-            inputRouting: 'none',
-        });
-        expect(externalUrl.automationActions?.navigate).toMatchObject({
-            available: false,
-            fidelity: 'unavailable',
-            trustedInput: false,
-            disabledReasons: ['external_url_unavailable'],
         });
     });
 

@@ -289,11 +289,13 @@ import type {
 import { getUserProfile } from './api/social/apiFriends';
 import {
     cancelAutomationRunV3,
+    clearAutomationRunHistoryV3,
     createAutomation as createAutomationApi,
     createPluginEventAutomationDefinitionV3,
     deleteAutomationDefinitionV3,
     getAutomationDefinitionV3,
     getAutomationRunDetailV3,
+    getAutomationSettingsV3,
     isAutomationApiErrorCode,
     pauseAutomationDefinitionV3,
     replaceAutomationDefinitionAssignmentsV3,
@@ -302,6 +304,7 @@ import {
     type AutomationCreateInput,
     type AutomationPatchInput,
     updatePluginEventAutomationDefinitionV3,
+    updateAutomationSettingsV3,
     updateAutomation as updateAutomationApi,
 } from './api/automations/apiAutomations';
 import { kvBulkGet } from './api/account/apiKv';
@@ -463,6 +466,11 @@ import type { AccountPetMetadata } from './domains/pets/accountPetLibraryTypes';
 import { planSyncActionsFromChanges } from './runtime/orchestration/changesPlanner';
 import { applyPlannedChangeActions } from './runtime/orchestration/changesApplier';
 import { runSocketReconnectCatchUpViaChanges } from './runtime/orchestration/socketReconnectViaChanges';
+import {
+    SessionDraftRuntimeHydrationGate,
+    materializeSessionDraftSocketWake,
+    parseSessionDraftSocketWake,
+} from './runtime/orchestration/sessionDraftSyncRuntime';
 import { socketEmitWithAckFallback } from './engine/socket/socketEmitWithAckFallback';
 import { publishPermissionModeToMetadata as publishPermissionModeToMetadataEngine } from './state/permissionModePublish';
 import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrideToMetadataEngine } from './state/acpSessionModeOverridePublish';
@@ -470,6 +478,17 @@ import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverr
 import { isRpcMethodNotFoundResult, RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
+import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecisionInputs';
+import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { createApiSessionDraftsTransport } from '@/sync/api/account/apiSessionDrafts';
+import { createSessionDraftCipher } from '@/sync/encryption/sessionDraftEncryption';
+import {
+    configureSessionDraftRepository,
+    ensureSessionDraftRepositoryHydrated,
+    materializeExactSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { migrateLegacySessionDrafts } from '@/sync/domains/input/drafts/sessionDraftLegacyMigration';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import {
     SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY,
     decideExternalSessionTranscriptRefreshApplicationV1,
@@ -479,14 +498,18 @@ import {
     readPendingLocalId,
     hasRawComposerAttachmentSelectionV1,
     SessionUserMessageSendResponseSchema,
+    type ComposerContentHandleV1,
+    type HappierStructuredInputV1,
     type RawIngressStructuredInputV1,
     type ExternalSessionTranscriptInvalidationV1,
     type PendingDeliveryBlockedReason,
     type PendingRequestedActionV1,
     type ExternalSessionTranscriptRawMessageV1,
     type SessionMetadataInactiveModelIntentExpectationV1,
+    type AutomationV3ClearRunHistoryResponse,
     type AutomationV3PluginEventDefinitionCreateRequest,
     type AutomationV3PluginEventDefinitionPatchRequest,
+    type AutomationV3Settings,
 } from '@happier-dev/protocol';
 import { serverFetch } from './http/client';
 import {
@@ -518,6 +541,7 @@ import { resolveSessionMessageRouteId } from './domains/messages/messageRouteIds
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { readSessionOwnerMetadataView } from './domains/session/readSessionOwnerMetadataView';
 import { fetchAndApplySessionById } from './engine/sessions/sessionById';
+import { looksLikeCurrentV2SessionNotFound404 } from './engine/sessions/sessionHttpCompat';
 import { getForkedTranscriptSnapshotCached } from './domains/sessionFork/forkedTranscriptSnapshot';
 import {
     computeForkedTranscriptHasMoreOlder,
@@ -542,6 +566,7 @@ import {
     setPendingMessageSendState,
     restoreDiscardedPendingMessageV2,
     updatePendingMessageV2,
+    type PendingMessageComposerAdmissionAcceptedFactV1,
     updatePendingRequestedActionV2,
 } from './engine/pending/pendingQueueV2';
 import {
@@ -1102,6 +1127,10 @@ class Sync {
       private readonly usesPersistentDesktopSync = isDesktopHost();
       private isForeground = this.usesPersistentDesktopSync || AppState.currentState === 'active';
       public encryptionCache = new EncryptionCache();
+      private sessionDraftSyncEnabled = false;
+      private sessionDraftOfflineCatchUpPending = false;
+      private sessionDraftRepositoryConfiguredScope: ServerAccountScope | null = null;
+      private readonly sessionDraftRuntimeHydrationGate = new SessionDraftRuntimeHydrationGate();
     private sessionsSync: InvalidateSync;
     private fetchSessionsInFlight: {
         serverScopeGeneration: number;
@@ -2144,7 +2173,90 @@ class Sync {
         }
     }
 
+    public reconfigureSessionDraftRepositoryForAccountMode(
+        credentials: AuthCredentials,
+        accountMode: 'plain' | 'e2ee',
+    ): void {
+        const scope = getActiveServerAccountScope();
+        if (!scope || credentials.token !== this.credentials?.token) {
+            throw new Error('Session draft repository scope is unavailable');
+        }
+        configureSessionDraftRepository({
+            transport: this.sessionDraftSyncEnabled
+                ? createApiSessionDraftsTransport({ credentials })
+                : undefined,
+            cipher: createSessionDraftCipher({
+                accountMode,
+                accountCryptoMaterial: isTokenOnlyAuthCredentials(credentials)
+                    ? null
+                    : resolveAccountScopedCryptoMaterialFromCredentials(credentials),
+                getSessionContext: (sessionId) => {
+                    const session = storage.getState().sessions[sessionId] ?? null;
+                    if (!session) return null;
+                    if (session.encryptionMode === 'plain') return { mode: 'plain' };
+                    return {
+                        mode: 'e2ee',
+                        encryption: this.encryption?.getSessionEncryption(sessionId) ?? null,
+                    };
+                },
+                randomBytes: getRandomBytes,
+            }),
+            syncEnabled: this.sessionDraftSyncEnabled,
+        });
+    }
+
+    private ensureSessionDraftRepositoryRuntimeReady(params: Readonly<{
+        forceSnapshotHydration?: boolean;
+    }> = {}): Promise<void> {
+        const scope = getActiveServerAccountScope();
+        const credentials = this.credentials;
+        if (!scope || !credentials) return Promise.resolve();
+        const capturedScope = scope;
+        const capturedGeneration = this.serverScopeGeneration;
+        const shouldContinue = () => (
+            this.serverScopeGeneration === capturedGeneration
+            && areServerAccountScopesEqual(getActiveServerAccountScope(), capturedScope)
+        );
+        return this.sessionDraftRuntimeHydrationGate.run({
+            scope: capturedScope,
+            force: params.forceSnapshotHydration === true,
+            hydrate: async () => {
+                if (
+                    params.forceSnapshotHydration === true
+                    || !areServerAccountScopesEqual(this.sessionDraftRepositoryConfiguredScope, capturedScope)
+                ) {
+                    const syncEnabled = await isRuntimeFeatureEnabled({
+                        featureId: 'sessions.drafts',
+                        serverId: capturedScope.serverId,
+                    });
+                    if (!shouldContinue()) return false;
+                    this.sessionDraftSyncEnabled = syncEnabled;
+                    if (syncEnabled) {
+                        const mode = await fetchAccountEncryptionMode(credentials);
+                        if (!shouldContinue()) return false;
+                        this.reconfigureSessionDraftRepositoryForAccountMode(credentials, mode.mode);
+                    } else {
+                        configureSessionDraftRepository({ syncEnabled: false });
+                    }
+                    this.sessionDraftRepositoryConfiguredScope = capturedScope;
+                }
+                if (!shouldContinue()) return false;
+                await migrateLegacySessionDrafts(capturedScope);
+                if (!shouldContinue()) return false;
+                await ensureSessionDraftRepositoryHydrated(capturedScope);
+                if (!shouldContinue()) return false;
+                if (params.forceSnapshotHydration === true) this.sessionDraftOfflineCatchUpPending = false;
+                return true;
+            },
+        });
+    }
+
     private resetServerScopedRuntimeState = () => {
+        this.sessionDraftSyncEnabled = false;
+        this.sessionDraftOfflineCatchUpPending = false;
+        this.sessionDraftRepositoryConfiguredScope = null;
+        this.sessionDraftRuntimeHydrationGate.reset();
+        configureSessionDraftRepository({ syncEnabled: false });
         // The UI-sync generation fence is the sole shared Account retirement
         // boundary. Consumers receive synchronous owner-local cancellation
         // before this reset continues, while no consumer cleanup is awaited.
@@ -3963,12 +4075,12 @@ class Sync {
             nextCursor?: string | null;
             expectedAuthorityKey?: string;
         }>,
-    ): Promise<void> {
+    ): Promise<boolean> {
         const session = storage.getState().sessions[sessionId] ?? null;
         const externalSessionLink = readExternalSessionLink(
             session ? readSessionOwnerMetadataView(session) : null,
         );
-        if (!externalSessionLink) return;
+        if (!externalSessionLink) return false;
         if (
             options?.expectedAuthorityKey !== undefined
             && (
@@ -3981,7 +4093,7 @@ class Sync {
                 ) !== options.expectedAuthorityKey
             )
         ) {
-            return;
+            return false;
         }
 
         const normalizedMessages = normalizeExternalSessionTranscriptMessages(items, {
@@ -4000,6 +4112,7 @@ class Sync {
         }
 
         await this.publishExternalSessionObservedProgress(sessionId, items);
+        return true;
     }
 
     /**
@@ -4352,16 +4465,22 @@ class Sync {
         sessionId: string,
         pendingId: string,
         text: string,
-        structuredInput?: RawIngressStructuredInputV1,
-        options?: Readonly<{ replacementLocalId?: string }>,
-    ): Promise<void> {
+        structuredInput?: RawIngressStructuredInputV1 | HappierStructuredInputV1,
+        options?: Readonly<{
+            replacementLocalId?: string;
+            preparedComposerAdmission?: Readonly<{
+                stagedMediaHandles: readonly ComposerContentHandleV1[];
+            }>;
+        }>,
+    ): Promise<PendingMessageComposerAdmissionAcceptedFactV1 | undefined> {
         const { outboxScope, request } = await this.resolvePendingQueueOwnerContext(sessionId);
-        await updatePendingMessageV2({
+        return await updatePendingMessageV2({
             sessionId,
             pendingId,
             text,
             structuredInput,
             replacementLocalId: options?.replacementLocalId,
+            preparedComposerAdmission: options?.preparedComposerAdmission,
             encryption: this.encryption,
             fetchArtifactWithBody: (artifactId) => this.fetchArtifactWithBody(artifactId),
             updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
@@ -4794,17 +4913,11 @@ class Sync {
                     if (exactResult.errorCode === 'not_found') {
                         stagedSessionDataKeys.delete(sessionId);
                         stagedSessionDataKeyEnvelopes.delete(sessionId);
-                        handleDeleteSessionSocketUpdate({
-                            sessionId,
-                            dropSocketSessionWork,
-                            invalidateSessionHydration: this.invalidateSessionByIdHydration,
-                            resetSessionTranscriptState: (targetSessionId) => this.resetSessionTranscriptState(targetSessionId),
-                            deleteSession: (targetSessionId) => storage.getState().deleteSession(targetSessionId),
-                            removeSessionEncryption: (targetSessionId) => activeEncryption?.removeSessionEncryption(targetSessionId),
-                            removeProjectManagerSession: (targetSessionId) => projectManager.removeSession(targetSessionId),
-                            clearScmStatusForSession: (targetSessionId) => scmStatusSync.clearForSession(targetSessionId),
-                            log,
-                        });
+                        // Exact hydration has authoritative absence evidence. Reuse
+                        // the canonical local deletion owner so it fences any
+                        // older session-list snapshot as well as transcript and
+                        // socket work.
+                        this.retireLocalSession(sessionId);
                     } else {
                         throw new Error(
                             `Required session shell hydration failed for ${sessionId}: ${exactResult.errorCode ?? 'unknown'}`,
@@ -5200,6 +5313,11 @@ class Sync {
                       return;
                   }
 
+                  await this.ensureSessionDraftRepositoryRuntimeReady({
+                      forceSnapshotHydration: reason === 'manual' || this.sessionDraftOfflineCatchUpPending,
+                  });
+                  if (!shouldContinue()) return;
+
                   let accountId = storage.getState().profile?.id ?? null;
                   if (!accountId) {
                       this.profileSync.invalidateCoalesced();
@@ -5326,6 +5444,8 @@ class Sync {
               bootstrapConcurrencyLimit
           );
 
+          await this.ensureSessionDraftRepositoryRuntimeReady();
+
           await this.rearmPendingOutboxForActiveScope();
 
           try {
@@ -5377,6 +5497,8 @@ class Sync {
               ],
               concurrencyLimit
           );
+
+          await this.ensureSessionDraftRepositoryRuntimeReady({ forceSnapshotHydration: true });
 
           // Catch up transcripts only for loaded sessions that currently consume live transcript content.
           // Hidden loaded sessions keep their transcript state until they become visible or otherwise active.
@@ -5471,6 +5593,55 @@ class Sync {
 
     public refreshAutomations = async () => {
         return this.automationsSync.invalidateAndAwait();
+    }
+
+    /** Account-scoped Automation settings stay direct: their server owner is not another UI cache. */
+    public async getAutomationSettings(): Promise<AutomationV3Settings> {
+        const credentials = this.credentials;
+        if (!credentials) {
+            throw new Error('Not authenticated');
+        }
+        const shouldContinue = this.createServerScopeGuard();
+        const settings = await getAutomationSettingsV3(credentials);
+        if (!shouldContinue()) {
+            throw new Error('Automation server-account scope changed');
+        }
+        return settings;
+    }
+
+    /** The server validates and owns the complete Automation settings record. */
+    public async updateAutomationSettings(input: AutomationV3Settings): Promise<AutomationV3Settings> {
+        const credentials = this.credentials;
+        if (!credentials) {
+            throw new Error('Not authenticated');
+        }
+        const shouldContinue = this.createServerScopeGuard();
+        const settings = await updateAutomationSettingsV3(credentials, input);
+        if (!shouldContinue()) {
+            throw new Error('Automation server-account scope changed');
+        }
+        return settings;
+    }
+
+    /**
+     * Clear-history keeps server eligibility authoritative, then re-seeds the
+     * incumbent first Run window so active/non-eligible rows remain visible.
+     */
+    public async clearAutomationRunHistory(automationId: string): Promise<AutomationV3ClearRunHistoryResponse> {
+        const credentials = this.credentials;
+        if (!credentials) {
+            throw new Error('Not authenticated');
+        }
+        const shouldContinue = this.createServerScopeGuard();
+        const result = await clearAutomationRunHistoryV3(credentials, automationId);
+        if (!shouldContinue()) {
+            throw new Error('Automation server-account scope changed');
+        }
+        await this.fetchAutomationRuns(automationId);
+        if (!shouldContinue()) {
+            throw new Error('Automation server-account scope changed');
+        }
+        return result;
     }
 
     public async fetchAutomationRuns(
@@ -5915,8 +6086,8 @@ class Sync {
             shouldContinue,
             applyAutomations: (automations) => storage.getState().applyAutomations(automations),
             loadedAutomationRunIds: Object.keys(storage.getState().automationRunsByAutomationId),
-            setAutomationRuns: (automationId, runs, nextCursor) =>
-                storage.getState().setAutomationRuns(automationId, runs, nextCursor),
+            refreshAutomationRunsWindow: (automationId, runs, nextCursor) =>
+                storage.getState().refreshAutomationRunsWindow(automationId, runs, nextCursor),
         });
     }
 
@@ -7559,10 +7730,66 @@ class Sync {
           }
       }
 
+      /**
+       * A live Agent transcript has exactly ONE read authority and ONE cursor: the bounded
+       * global Agent page walked by `loadOlderMessagesForChain`. Sidechain rows are not a
+       * separate stream — they arrive in that same page carrying `sidechainId`, and the
+       * reducer indexes them under it. There is no Agent sidechain read, and the hosted
+       * server `/messages` sidechain scope is NOT peer authority here: the common apply
+       * boundary correctly drops every persisted server row for a `live_agent` session, so
+       * asking the server can only apply zero rows while looking like a completed load.
+       */
+      private isLiveAgentTranscriptSession(sessionId: string): boolean {
+          const session = storage.getState().sessions[sessionId] ?? null;
+          if (!session) return false;
+          const externalSessionLink = readExternalSessionLinkFromSession(session);
+          if (!externalSessionLink) return false;
+          return this.resolveTranscriptAuthority(session, externalSessionLink).kind === 'live_agent';
+      }
+
+      private readLoadedSidechainRowCount(sessionId: string, sidechainId: string): number {
+          return storage.getState().sessionMessages[sessionId]
+              ?.reducerState
+              ?.sidechains
+              ?.get(sidechainId)
+              ?.length
+              ?? 0;
+      }
+
+      /**
+       * Demand hydration for a live-Agent sidechain: the child rows either are already in
+       * the common store or lie behind the session's own older Agent history. Advance the
+       * one global cursor by a single page per call and report progress through the
+       * existing statuses, so the caller's demand-retry owner drives the walk and no second
+       * loop, timer or cursor is introduced here. `no_more` is an authoritative answer:
+       * with the Agent history exhausted, an absent sidechain is empty, not pending.
+       */
+      private async ensureLiveAgentSidechainRowsLoaded(
+          sessionId: string,
+          sidechainId: string,
+      ): Promise<'loaded' | 'not_ready' | 'in_flight'> {
+          if (this.readLoadedSidechainRowCount(sessionId, sidechainId) > 0) return 'loaded';
+          const older = await this.loadOlderMessagesForChain({ sessionId, scope: 'main' });
+          if (this.readLoadedSidechainRowCount(sessionId, sidechainId) > 0) return 'loaded';
+          switch (older.status) {
+              case 'loaded':
+              case 'in_flight':
+                  return 'in_flight';
+              case 'no_more':
+                  return 'loaded';
+              default:
+                  return 'not_ready';
+          }
+      }
+
       public async ensureSidechainMessagesLoaded(sessionId: string, sidechainId: string): Promise<'loaded' | 'not_ready' | 'in_flight'> {
           const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
           const normalizedSidechainId = typeof sidechainId === 'string' ? sidechainId.trim() : '';
           if (!normalizedSessionId || !normalizedSidechainId) return 'not_ready';
+
+          if (this.isLiveAgentTranscriptSession(normalizedSessionId)) {
+              return await this.ensureLiveAgentSidechainRowsLoaded(normalizedSessionId, normalizedSidechainId);
+          }
 
           const pagingKey = this.buildSessionMessagesPaginationKey({
               sessionId: normalizedSessionId,
@@ -7628,6 +7855,15 @@ class Sync {
           const normalizedSidechainId = typeof sidechainId === 'string' ? sidechainId.trim() : '';
           if (!normalizedSessionId || !normalizedSidechainId) {
               return { loaded: 0, hasMore: true, status: 'not_ready' };
+          }
+
+          // Older sidechain history for a live Agent IS older global history; there is no
+          // separate child cursor to initialize or advance.
+          if (this.isLiveAgentTranscriptSession(normalizedSessionId)) {
+              return await this.loadOlderMessagesForChain({
+                  sessionId: normalizedSessionId,
+                  scope: 'main',
+              });
           }
 
           const pagingKey = this.buildSessionMessagesPaginationKey({
@@ -7998,10 +8234,11 @@ class Sync {
         apiSocket.onMessage('session', () => {});
 
 		          apiSocket.onStatusChange((status) => {
-		              if (status === 'connected') {
-		                  if (this.lastSocketDisconnectedAtMs != null) {
-		                      this.lastSocketOfflineDurationMs = Date.now() - this.lastSocketDisconnectedAtMs;
-		                      this.socketOfflineCatchUpConsumedSessionIds.clear();
+	              if (status === 'connected') {
+	                  if (this.lastSocketDisconnectedAtMs != null) {
+	                      this.lastSocketOfflineDurationMs = Date.now() - this.lastSocketDisconnectedAtMs;
+	                      this.sessionDraftOfflineCatchUpPending = true;
+	                      this.socketOfflineCatchUpConsumedSessionIds.clear();
 		                  }
 		                  this.lastSocketDisconnectedAtMs = null;
 		                  return;
@@ -8502,6 +8739,19 @@ class Sync {
                         applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
                         kvBulkGet,
                         convergePendingForSession: (sessionId) => this.fetchPendingMessages(sessionId),
+                        materializeSessionDraft: async (address) => {
+                            const scope = getActiveServerAccountScope();
+                            if (!scope || !shouldContinue()) {
+                                throw new Error('Session draft scope changed before materialization');
+                            }
+                            await materializeExactSessionDraft(scope, address);
+                            if (
+                                !shouldContinue()
+                                || !areServerAccountScopesEqual(getActiveServerAccountScope(), scope)
+                            ) {
+                                throw new Error('Session draft scope changed during materialization');
+                            }
+                        },
                         concurrencyLimit: this.syncTuning.resumeConcurrencyLimit,
                     });
                 },
@@ -8646,6 +8896,17 @@ class Sync {
     }
 
     private handleEphemeralUpdate = (update: unknown) => {
+        if (parseSessionDraftSocketWake(update)) {
+            const capturedScope = getActiveServerAccountScope();
+            if (!capturedScope) return;
+            fireAndForget(materializeSessionDraftSocketWake({
+                payload: update,
+                capturedScope,
+                readActiveScope: getActiveServerAccountScope,
+                materializeExact: materializeExactSessionDraft,
+            }), { tag: 'Sync.handleSessionDraftSocketWake' });
+            return;
+        }
         const sourceServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
         const accountScope = getActiveServerAccountScope();
         const shouldContinue = this.createServerScopeGuard();
@@ -8789,10 +9050,17 @@ class Sync {
             response,
         );
         if (decision.kind === 'apply') {
-            await this.applyExternalSessionTranscriptItems(binding.sessionId, decision.items, {
+            const didApply = await this.applyExternalSessionTranscriptItems(binding.sessionId, decision.items, {
                 nextCursor: decision.nextCursor,
                 expectedAuthorityKey,
             });
+            if (didApply) {
+                storage.getState().setSessionTranscriptLoadIssue(binding.sessionId, null);
+            }
+            return;
+        }
+        if (decision.reason === 'already_current') {
+            storage.getState().setSessionTranscriptLoadIssue(binding.sessionId, null);
             return;
         }
         if (decision.reason === 'resync_required') {
@@ -9136,25 +9404,44 @@ class Sync {
             active: session.active,
             metadata: readSessionOwnerMetadataView(session),
         });
-        const persisted = await persistSessionTranscriptMessageAtOwner({
-            request: async (path, init) => {
-                assertAuthorityCurrent();
-                const response = await authority.request(path, init);
-                assertAuthorityCurrent();
-                return response;
-            },
-            sessionEncryptionMode,
-            ...(sessionEncryption
-                ? {
-                    encryptRawRecord: async (rawRecord) => {
+        let receivedAuthoritativeSessionNotFound = false;
+        const persisted = await (async () => {
+            try {
+                return await persistSessionTranscriptMessageAtOwner({
+                    request: async (path, init) => {
                         assertAuthorityCurrent();
-                        const encrypted = await sessionEncryption.encryptRaw(rawRecord);
+                        const response = await authority.request(path, init);
+                        const responseBody = response.status === 404
+                            ? await response.clone().json().catch(() => null)
+                            : null;
                         assertAuthorityCurrent();
-                        return encrypted;
+                        // The current v2 write route uses this exact payload for a
+                        // deleted or inaccessible session. Other 404 shapes may be
+                        // a route/version failure and must leave local state alone.
+                        receivedAuthoritativeSessionNotFound = response.status === 404
+                            && looksLikeCurrentV2SessionNotFound404(responseBody);
+                        return response;
                     },
+                    sessionEncryptionMode,
+                    ...(sessionEncryption
+                        ? {
+                            encryptRawRecord: async (rawRecord) => {
+                                assertAuthorityCurrent();
+                                const encrypted = await sessionEncryption.encryptRaw(rawRecord);
+                                assertAuthorityCurrent();
+                                return encrypted;
+                            },
+                        }
+                        : {}),
+                }, input);
+            } catch (error) {
+                assertAuthorityCurrent();
+                if (receivedAuthoritativeSessionNotFound) {
+                    this.retireLocalSession(input.sessionId);
                 }
-                : {}),
-        }, input);
+                throw error;
+            }
+        })();
         assertAuthorityCurrent();
         // A delete-session update may arrive while an earlier write response is
         // still in flight. The server-side whole-session deletion remains

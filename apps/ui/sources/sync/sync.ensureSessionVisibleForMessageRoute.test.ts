@@ -83,11 +83,18 @@ vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: runtimeFetchMock,
 }));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
-    TokenStorage: {
-        getCredentialsForServerUrl: getCredentialsForServerUrlMock,
-    },
-}));
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
+    const actual = await importOriginal<
+        typeof import('@/auth/storage/tokenStorage')
+    >();
+    return {
+        ...actual,
+        TokenStorage: {
+            ...actual.TokenStorage,
+            getCredentialsForServerUrl: getCredentialsForServerUrlMock,
+        },
+    };
+});
 
 vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
     createEncryptionFromAuthCredentials: createEncryptionFromAuthCredentialsMock,
@@ -131,6 +138,14 @@ function createSession(params: { sessionId: string }): Session {
     };
 }
 
+function tokenForSub(sub: string): string {
+    const payload = globalThis.btoa(JSON.stringify({ sub }))
+        .replaceAll('+', '-')
+        .replaceAll('/', '_')
+        .replaceAll('=', '');
+    return `e30.${payload}.signature`;
+}
+
 async function waitForAssertion(assertion: () => void): Promise<void> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -143,6 +158,14 @@ async function waitForAssertion(assertion: () => void): Promise<void> {
         }
     }
     throw lastError;
+}
+
+function expectRuntimeFetchWithBearer(url: string, token: string): void {
+    const call = runtimeFetchMock.mock.calls.find(([requestedUrl]) => requestedUrl === url);
+    expect(call).toBeDefined();
+    const init = call?.[1] as RequestInit | undefined;
+    expect(init).toEqual(expect.objectContaining({ method: 'GET' }));
+    expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
 }
 
 describe('sync.ensureSessionVisibleForMessageRoute', () => {
@@ -908,6 +931,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('does not refresh the active session-list snapshot after hydrating a non-active source-server socket update', async () => {
         const sessionId = 'socket_foreign_server_targeted_hydration';
+        const scopedToken = tokenForSub('scoped-account');
         const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
         const ownerServer = upsertServerProfile({ serverUrl: 'https://scoped.example', name: 'Owner' });
         setActiveServerId(activeServer.id, { scope: 'device' });
@@ -928,7 +952,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         syncInternals.fetchSessions = fetchSessionsSpy;
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'scoped-token', secret: 'scoped-secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken, secret: 'scoped-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({
             decryptEncryptionKey: vi.fn(async () => null),
             initializeSessions: vi.fn(async () => {}),
@@ -962,14 +986,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             );
 
             expect(requestMock).not.toHaveBeenCalled();
-            expect(runtimeFetchMock).toHaveBeenCalledWith(
+            expectRuntimeFetchWithBearer(
                 `https://scoped.example/v2/sessions/${sessionId}`,
-                expect.objectContaining({
-                    method: 'GET',
-                    headers: expect.objectContaining({
-                        Authorization: 'Bearer scoped-token',
-                    }),
-                }),
+                scopedToken,
             );
             expect(fetchSessionsSpy).not.toHaveBeenCalled();
         } finally {
@@ -1003,7 +1022,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(requestMock).not.toHaveBeenCalled();
     });
 
-    it('does not fast-path a layout-v1 owner list row that is missing its owner view', async () => {
+    it('keeps a layout-v1 owner list row retryable when its by-id 404 is unparseable', async () => {
         const sessionId = 'layout1_owner_list_shell';
         storage.getState().applySessions([{
             ...createSession({ sessionId }),
@@ -1026,9 +1045,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         requestMock.mockResolvedValue(new Response('missing', { status: 404 }));
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
-            kind: 'missing',
+            kind: 'retryable_failure',
             sessionId,
+            cause: 'unknown',
         });
+        expect(storage.getState().sessions[sessionId]).toBeDefined();
         expect(requestMock).toHaveBeenCalledWith(
             `/v2/sessions/${sessionId}`,
             expect.objectContaining({ method: 'GET' }),
@@ -1089,7 +1110,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         });
     });
 
-    it('returns a terminal missing result for not-found session ids so deep links can fail closed instead of spinning forever', async () => {
+    it('returns a retryable result for an unparseable not-found body so deep links can recover', async () => {
         const sessionId = 'deep_link_missing_session';
 
         const { sync } = await import('./sync');
@@ -1106,9 +1127,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         requestMock.mockResolvedValue(new Response('not found', { status: 404 }));
 
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
-            kind: 'missing',
+            kind: 'retryable_failure',
             sessionId,
-            cause: 'not_found',
+            cause: 'unknown',
         });
     });
 
@@ -1506,6 +1527,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('hydrates through the preferred owner server when local cache maps the session to a non-active server', async () => {
         const sessionId = 'deep_link_scoped_owner';
+        const scopedToken = tokenForSub('scoped-account');
         const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
         const ownerServer = upsertServerProfile({ serverUrl: 'https://scoped.example', name: 'Owner' });
         setActiveServerId(activeServer.id, { scope: 'device' });
@@ -1545,7 +1567,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         };
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'scoped-token', secret: 'scoped-secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken, secret: 'scoped-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({
             decryptEncryptionKey: async () => null,
             initializeSessions: async () => {},
@@ -1565,7 +1587,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                         dataEncryptionKey: null,
                         metadataVersion: 0,
                         metadata: 'null',
-                        agentStateVersion: 0,
+                        agentStateVersion: 1,
                         agentState: null,
                         share: null,
                     },
@@ -1581,14 +1603,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         });
 
         expect(requestMock).not.toHaveBeenCalled();
-        expect(runtimeFetchMock).toHaveBeenCalledWith(
+        expectRuntimeFetchWithBearer(
             `https://scoped.example/v2/sessions/${sessionId}`,
-            expect.objectContaining({
-                method: 'GET',
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer scoped-token',
-                }),
-            }),
+            scopedToken,
         );
         expect(storage.getState().sessions[sessionId]?.serverId).toBe(ownerServer.id);
         expect(storage.getState().sessionListRowStateByServerId?.[activeServer.id]?.[sessionId]).toBeUndefined();
@@ -1609,6 +1626,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('hydrates through an explicit serverId override even when the active server differs', async () => {
         const sessionId = 'deep_link_explicit_server';
+        const scopedToken = tokenForSub('scoped-account');
         const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
         const ownerServer = upsertServerProfile({ serverUrl: 'https://scoped.example', name: 'Owner' });
         setActiveServerId(activeServer.id, { scope: 'device' });
@@ -1634,7 +1652,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         };
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'scoped-token', secret: 'scoped-secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken, secret: 'scoped-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({
             decryptEncryptionKey: async () => null,
             initializeSessions: async () => {},
@@ -1654,7 +1672,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
                         dataEncryptionKey: null,
                         metadataVersion: 0,
                         metadata: 'null',
-                        agentStateVersion: 0,
+                        agentStateVersion: 1,
                         agentState: null,
                         share: null,
                     },
@@ -1670,14 +1688,9 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         });
 
         expect(requestMock).not.toHaveBeenCalled();
-        expect(runtimeFetchMock).toHaveBeenCalledWith(
+        expectRuntimeFetchWithBearer(
             `https://scoped.example/v2/sessions/${sessionId}`,
-            expect.objectContaining({
-                method: 'GET',
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer scoped-token',
-                }),
-            }),
+            scopedToken,
         );
         expect(storage.getState().sessions[sessionId]?.serverId).toBe(ownerServer.id);
         expect(storage.getState().sessionListRowStateByServerId?.[activeServer.id]?.[sessionId]).toBeUndefined();
@@ -1825,6 +1838,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
     it('initializes encrypted explicit-server route hydration with the owner server scope', async () => {
         const sessionId = 'deep_link_explicit_server_encrypted';
+        const scopedToken = tokenForSub('scoped-account');
         const activeServer = upsertServerProfile({ serverUrl: 'https://active.example', name: 'Active' });
         const ownerServer = upsertServerProfile({ serverUrl: 'https://scoped.example', name: 'Owner' });
         setActiveServerId(activeServer.id, { scope: 'device' });
@@ -1847,7 +1861,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         };
 
         requestMock.mockRejectedValue(new Error('active request should not be used'));
-        getCredentialsForServerUrlMock.mockResolvedValue({ token: 'scoped-token', secret: 'scoped-secret' });
+        getCredentialsForServerUrlMock.mockResolvedValue({ token: scopedToken, secret: 'scoped-secret' });
         createEncryptionFromAuthCredentialsMock.mockResolvedValue({
             decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
             initializeSessions: scopedInitializeSessions,

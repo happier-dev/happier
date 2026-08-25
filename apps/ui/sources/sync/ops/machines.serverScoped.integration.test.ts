@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import { storage } from '@/sync/domains/state/storage';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -7,8 +11,35 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 }));
 
 describe('machines ops server-scoped routing', () => {
+    const initialStorageState = storage.getInitialState();
+    const machine: Machine = {
+        id: 'machine-1',
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        revokedAt: null,
+        metadata: {
+            host: 'test-machine',
+            platform: 'darwin',
+            happyCliVersion: '0.2.0',
+            happyHomeDir: '/Users/alice/.happier',
+            homeDir: '/Users/alice',
+        },
+        metadataVersion: 0,
+        daemonState: null,
+        daemonStateVersion: 0,
+    };
+
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+        storage.setState({
+            ...initialStorageState,
+            profileScope: { serverId: 'server-b', accountId: 'account-a' },
+            machines: { 'machine-1': machine },
+        }, true);
+        getPersistenceStorage().clearAll();
     });
 
     it('routes spawn requests through server-scoped rpc with the requested server id', async () => {

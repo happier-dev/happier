@@ -23,6 +23,7 @@ import {
     resolvePluginBrowserPolicyDecision,
 } from './policy';
 import type { PluginBrowserActionProjection, PluginBrowserProjectionModel } from './targets';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 export type PluginBrowserActionTransport = PluginSurfaceContributedActionTransport;
 
@@ -81,6 +82,8 @@ export async function executePluginBrowserAction(params: Readonly<{
     signal?: AbortSignal;
     isCurrent?: () => boolean;
     readCurrentUiContext?: () => CurrentUiContextSnapshotV1 | null | undefined;
+    /** Admitted UI projection; resolves declared confirmation wording. */
+    pluginUiProjection?: PluginUiProjectionModel | null;
 }>): Promise<
     PluginSurfaceActionDispatchOutcome
 > {
@@ -115,6 +118,7 @@ export async function executePluginBrowserAction(params: Readonly<{
             },
             ...(params.signal ? { signal: params.signal } : {}),
             isCurrent,
+            pluginUiProjection: params.pluginUiProjection,
         })
         : undefined;
 

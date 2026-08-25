@@ -14,6 +14,8 @@ import {
     RPC_ERROR_CODES,
     RPC_ERROR_MESSAGES,
     RPC_METHODS,
+    SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
+    resolveSocketRpcSessionWriteAuthorizationMethod,
     type SocketRpcAuthorizationContext,
 } from '@happier-dev/protocol/rpc';
 import { handleUiBrowserRecordingCaptureFrameRequest } from '@/sync/domains/browser/recording/reverseCaptureHandler';
@@ -437,6 +439,14 @@ class ApiSocket {
                 payload: encryptedParams,
                 timeoutMs: options?.timeoutMs,
                 requestId,
+                ...(resolveSocketRpcSessionWriteAuthorizationMethod(method)
+                    ? {
+                        authorization: {
+                            kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+                            sessionId,
+                        },
+                    }
+                    : {}),
             }),
             {
                 ...options,

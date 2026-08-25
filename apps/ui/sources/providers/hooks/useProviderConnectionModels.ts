@@ -3,6 +3,10 @@ import type { ProviderErrorV1 } from '@happier-dev/protocol';
 import type { DaemonProviderModelRowV1 } from '@happier-dev/protocol/rpc';
 
 import { describeProviderConnectionModels, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import {
+    captureActiveServerAccountScopeLifetime,
+    type ActiveServerAccountScopeLifetime,
+} from '@/sync/domains/scope/activeServerAccountScope';
 
 export function useProviderConnectionModels(input: Readonly<{
     enabled: boolean;
@@ -10,19 +14,51 @@ export function useProviderConnectionModels(input: Readonly<{
     serverId: string | null;
     connectionId: string;
 }>) {
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [models, setModels] = React.useState<readonly DaemonProviderModelRowV1[]>([]);
     const [connectionRevision, setConnectionRevision] = React.useState<number | null>(null);
     const [manualModelPolicy, setManualModelPolicy] = React.useState<'allowed' | 'catalog-only' | null>(null);
     const [modelLoadAction, setModelLoadAction] = React.useState<'available' | 'descriptor_absent' | 'feature_disabled' | null>(null);
     const [error, setError] = React.useState<ProviderErrorV1 | null>(null);
     const [loading, setLoading] = React.useState(false);
+    const [stateAccountLifetime, setStateAccountLifetime] = React.useState<
+        ActiveServerAccountScopeLifetime | null
+    >(null);
     const generation = React.useRef(0);
     const activeScopeKey = React.useRef<string | null>(null);
+    const currentAccountLifetimeRef = React.useRef(accountLifetime);
+    currentAccountLifetimeRef.current = accountLifetime;
+    const stateAccountLifetimeRef = React.useRef(stateAccountLifetime);
+    stateAccountLifetimeRef.current = stateAccountLifetime;
     const scopeKey = JSON.stringify([input.enabled, input.machineId, input.serverId, input.connectionId]);
+
+    React.useEffect(() => {
+        const registration = accountLifetime?.onRetire(() => {
+            if (currentAccountLifetimeRef.current !== accountLifetime) return;
+            generation.current += 1;
+            if (stateAccountLifetimeRef.current !== accountLifetime) return;
+            stateAccountLifetimeRef.current = null;
+            setStateAccountLifetime(null);
+            setModels([]);
+            setConnectionRevision(null);
+            setManualModelPolicy(null);
+            setModelLoadAction(null);
+            setError(null);
+            setLoading(false);
+        });
+        return () => registration?.dispose();
+    }, [accountLifetime]);
 
     const refreshWithResult = React.useCallback(async () => {
         const requestGeneration = ++generation.current;
+        const requestStillCurrent = (): boolean => (
+            currentAccountLifetimeRef.current === accountLifetime
+            && (accountLifetime?.isCurrent() ?? true)
+        );
+        if (!requestStillCurrent()) return null;
         if (!input.enabled || !input.machineId || !input.connectionId) {
+            stateAccountLifetimeRef.current = accountLifetime;
+            setStateAccountLifetime(accountLifetime);
             setModels([]);
             setConnectionRevision(null);
             setManualModelPolicy(null);
@@ -31,6 +67,15 @@ export function useProviderConnectionModels(input: Readonly<{
             setLoading(false);
             return null;
         }
+        if (stateAccountLifetimeRef.current !== accountLifetime) {
+            stateAccountLifetimeRef.current = accountLifetime;
+            setStateAccountLifetime(accountLifetime);
+            setModels([]);
+            setConnectionRevision(null);
+            setManualModelPolicy(null);
+            setModelLoadAction(null);
+            setError(null);
+        }
         setLoading(true);
         try {
             const result = await describeProviderConnectionModels({
@@ -38,8 +83,10 @@ export function useProviderConnectionModels(input: Readonly<{
                 serverId: input.serverId,
                 connectionId: input.connectionId,
             });
-            if (generation.current !== requestGeneration) return null;
+            if (generation.current !== requestGeneration || !requestStillCurrent()) return null;
             if (result.status === 'success') {
+                stateAccountLifetimeRef.current = accountLifetime;
+                setStateAccountLifetime(accountLifetime);
                 setModels(result.models);
                 setConnectionRevision(result.connectionRevision);
                 setManualModelPolicy(result.manualModelPolicy);
@@ -50,25 +97,32 @@ export function useProviderConnectionModels(input: Readonly<{
             }
             return result;
         } catch (caught) {
-            if (generation.current !== requestGeneration) return null;
+            if (generation.current !== requestGeneration || !requestStillCurrent()) return null;
             const error = providerErrorFromRpcFailure(caught, {
                 connectionId: input.connectionId,
                 machineId: input.machineId,
             });
+            stateAccountLifetimeRef.current = accountLifetime;
+            setStateAccountLifetime(accountLifetime);
             setError(error);
             return { status: 'error' as const, error };
         } finally {
-            if (generation.current === requestGeneration) setLoading(false);
+            if (generation.current === requestGeneration && requestStillCurrent()) setLoading(false);
         }
-    }, [input.connectionId, input.enabled, input.machineId, input.serverId]);
+    }, [accountLifetime, input.connectionId, input.enabled, input.machineId, input.serverId]);
 
     const refresh = React.useCallback(async (): Promise<void> => {
         await refreshWithResult();
     }, [refreshWithResult]);
 
     React.useEffect(() => {
-        if (activeScopeKey.current !== scopeKey) {
+        if (
+            activeScopeKey.current !== scopeKey
+            || stateAccountLifetimeRef.current !== accountLifetime
+        ) {
             activeScopeKey.current = scopeKey;
+            stateAccountLifetimeRef.current = accountLifetime;
+            setStateAccountLifetime(accountLifetime);
             setModels([]);
             setConnectionRevision(null);
             setManualModelPolicy(null);
@@ -77,7 +131,18 @@ export function useProviderConnectionModels(input: Readonly<{
         }
         void refreshWithResult();
         return () => { generation.current += 1; };
-    }, [refreshWithResult, scopeKey]);
+    }, [accountLifetime, refreshWithResult, scopeKey]);
 
-    return { models, connectionRevision, manualModelPolicy, modelLoadAction, error, loading, refresh, refreshWithResult };
+    const stateMatchesAccountLifetime = stateAccountLifetime === accountLifetime;
+    const scopeEnabled = Boolean(input.enabled && input.machineId && input.connectionId);
+    return {
+        models: stateMatchesAccountLifetime ? models : [],
+        connectionRevision: stateMatchesAccountLifetime ? connectionRevision : null,
+        manualModelPolicy: stateMatchesAccountLifetime ? manualModelPolicy : null,
+        modelLoadAction: stateMatchesAccountLifetime ? modelLoadAction : null,
+        error: stateMatchesAccountLifetime ? error : null,
+        loading: scopeEnabled && (!stateMatchesAccountLifetime || loading),
+        refresh,
+        refreshWithResult,
+    };
 }

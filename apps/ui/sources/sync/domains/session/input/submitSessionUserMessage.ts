@@ -337,21 +337,10 @@ async function directSend(
     opts: SubmitSessionUserMessageOptions,
     bypassPendingQueueReason: DirectMessageBypassReason,
 ): Promise<SubmitSessionUserMessageResult> {
+    let handoffLocalId: string | undefined;
+    let sawLocalPendingProjection = false;
+    let reportedOutboundHandoff = false;
     try {
-        let didMarkOutboundHandoff = false;
-        let handoffLocalId: string | undefined;
-        let sawLocalPendingProjection = false;
-        const markOutboundHandoff = (persistence: DirectSubmitPersistence, localId?: string) => {
-            if (didMarkOutboundHandoff) {
-                return;
-            }
-            didMarkOutboundHandoff = true;
-            handoffLocalId = localId;
-            opts.onOutboundHandoff?.({
-                persistence,
-                ...(localId ? { localId } : {}),
-            });
-        };
         const sendOptions = {
             profileId: opts.profileId ?? undefined,
             localId: opts.localId ?? undefined,
@@ -360,7 +349,12 @@ async function directSend(
             onLocalPendingProjectionCreated: opts.onOutboundHandoff
                 ? ({ localId }: { localId: string }) => {
                     sawLocalPendingProjection = true;
-                    markOutboundHandoff('pending', localId);
+                    handoffLocalId = localId;
+                    reportedOutboundHandoff = true;
+                    opts.onOutboundHandoff?.({
+                        persistence: 'pending',
+                        localId,
+                    });
                 }
                 : undefined,
         };
@@ -373,8 +367,11 @@ async function directSend(
         );
         const localId = readLocalId(sendResult) ?? handoffLocalId ?? opts.localId ?? undefined;
         const persistence = resolveDirectSubmitPersistence(sendResult, sawLocalPendingProjection);
-        if (!didMarkOutboundHandoff) {
-            markOutboundHandoff(persistence, localId);
+        if (!reportedOutboundHandoff) {
+            opts.onOutboundHandoff?.({
+                persistence,
+                ...(localId ? { localId } : {}),
+            });
         }
         return {
             type: 'success',
@@ -388,6 +385,7 @@ async function directSend(
             type: 'send_failed',
             persistence: 'none',
             wake: { attempted: false, state: 'not_needed' },
+            ...(handoffLocalId ? { localId: handoffLocalId } : {}),
             ...getSubmitSendFailure(error, 'Failed to send message'),
         };
     }
@@ -409,19 +407,7 @@ async function enqueuePending(
     });
 
     let enqueueResult: PendingMessageSubmitResult;
-    let didMarkOutboundHandoff = false;
     let handoffLocalId: string | undefined;
-    const markOutboundHandoff = (localId?: string) => {
-        if (didMarkOutboundHandoff) {
-            return;
-        }
-        didMarkOutboundHandoff = true;
-        handoffLocalId = localId;
-        opts.onOutboundHandoff?.({
-            persistence: 'pending',
-            ...(localId ? { localId } : {}),
-        });
-    };
     try {
         enqueueResult = await port.enqueuePendingMessage(
             opts.sessionId,
@@ -433,7 +419,9 @@ async function enqueuePending(
                 ...(opts.hostAdmissionOrigin ? { hostAdmissionOrigin: opts.hostAdmissionOrigin } : {}),
                 requestedAction,
                 onLocalPendingProjectionCreated: opts.onOutboundHandoff
-                    ? ({ localId }) => markOutboundHandoff(localId)
+                    ? ({ localId }) => {
+                        handoffLocalId = localId;
+                    }
                     : undefined,
             },
         );
@@ -447,7 +435,10 @@ async function enqueuePending(
     }
 
     const localId = readLocalId(enqueueResult) ?? handoffLocalId;
-    markOutboundHandoff(localId);
+    opts.onOutboundHandoff?.({
+        persistence: 'pending',
+        ...(localId ? { localId } : {}),
+    });
     if (enqueueResult && typeof enqueueResult === 'object' && enqueueResult.cancelled === true) {
         return {
             type: 'rejected',

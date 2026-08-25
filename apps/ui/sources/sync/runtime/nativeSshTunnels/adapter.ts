@@ -1,5 +1,6 @@
 import { parseSshTarget } from '@happier-dev/protocol';
 import {
+    getOptionalHappierSshNativeModule,
     startNativeSshLoopbackTunnel,
     stopNativeSshLoopbackTunnel,
     type NativeSshAuthPromptEvent,
@@ -49,6 +50,17 @@ function isNativeSshAuthPromptEvent(value: unknown): value is NativeSshAuthPromp
     return event.kind === 'private-key-passphrase' || event.kind === 'keyboard-interactive';
 }
 
+/**
+ * `undefined` means "resolve the optional Expo module", `null` means "explicitly none" — the same
+ * rule `startNativeSshLoopbackTunnel` already applies. Applying it here too is what makes the
+ * host-key and auth prompt bridges register against the module the tunnel actually starts on;
+ * without it the sole production caller (`runtime.ts`) skipped both subscriptions and every host
+ * needing trust or credentials timed out (§7.1).
+ */
+function resolveNativeModule(nativeModule?: NativeSshModule | null): NativeSshModule | null {
+    return nativeModule === undefined ? getOptionalHappierSshNativeModule() : nativeModule;
+}
+
 export function createNativeSshTunnelAdapter(params: Readonly<{
     nativeModule?: NativeSshModule | null;
     resolveCredentials: NativeSshTunnelCredentialResolver;
@@ -67,7 +79,7 @@ export function createNativeSshTunnelAdapter(params: Readonly<{
             }
             const credentials = await params.resolveCredentials(request.credentialsRef, request);
             const requestId = `native-ssh-tunnel:${buildNativeSshTunnelKey(request)}`;
-            const nativeModule = params.nativeModule;
+            const nativeModule = resolveNativeModule(params.nativeModule);
             const hostKeySubscription: NativeSshSubscription | null = nativeModule?.addListener
                 && nativeModule.respondToHostKeyPrompt
                 && params.promptHostKey
@@ -134,7 +146,7 @@ export function createNativeSshTunnelAdapter(params: Readonly<{
         },
         async stopLoopbackTunnel(nativeTunnelId) {
             await stopNativeSshLoopbackTunnel({
-                nativeModule: params.nativeModule,
+                nativeModule: resolveNativeModule(params.nativeModule),
                 nativeTunnelId,
             });
         },

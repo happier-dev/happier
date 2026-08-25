@@ -1,9 +1,95 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test } from 'vitest';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol';
 
-import { buildResumeHappySessionRpcParams } from './resumeSessionPayload';
+import {
+    clearProjectedAgentUiBehaviorDescriptors,
+    publishProjectedAgentUiBehaviorDescriptors,
+} from '@/agents/registry/agentUiBehaviorProjection';
+
+import { buildResumeHappySessionRpcParams as buildResumeHappySessionRpcParamsForMachine } from './resumeSessionPayload';
+
+function buildResumeHappySessionRpcParams(
+    input: Omit<Parameters<typeof buildResumeHappySessionRpcParamsForMachine>[0], 'machineId'> & {
+        machineId?: string;
+    },
+) {
+    const { machineId = 'machine-1', ...rest } = input;
+    return buildResumeHappySessionRpcParamsForMachine({ ...rest, machineId });
+}
+
+const EXTERNAL_AGENT_ID = 'example.machine-scoped-agent';
+
+function publishMachineScopedTransportDescriptors(): void {
+    publishProjectedAgentUiBehaviorDescriptors({
+        machineId: 'machine-a',
+        descriptorsByAgentId: {
+            [EXTERNAL_AGENT_ID]: {
+                kind: 'plugin.ui.v1',
+                pluginId: 'example.machine-a',
+                agentId: EXTERNAL_AGENT_ID,
+                version: 1,
+                behavior: {
+                    payload: {
+                        backendTransport: {
+                            backendMode: { values: ['shared-mode'] },
+                            runtimeHandleFields: ['backendMode'],
+                            agentExtra: { owner: 'example.machine-a', schemaId: 'transport-a', v: 1 },
+                        },
+                    },
+                },
+            },
+        },
+    });
+    publishProjectedAgentUiBehaviorDescriptors({
+        machineId: 'machine-b',
+        descriptorsByAgentId: {
+            [EXTERNAL_AGENT_ID]: {
+                kind: 'plugin.ui.v1',
+                pluginId: 'example.machine-b',
+                agentId: EXTERNAL_AGENT_ID,
+                version: 2,
+                behavior: {
+                    payload: {
+                        backendTransport: {
+                            backendMode: { values: ['shared-mode'] },
+                            runtimeHandleFields: ['backendMode'],
+                            agentExtra: { owner: 'example.machine-b', schemaId: 'transport-b', v: 2 },
+                        },
+                    },
+                },
+            },
+        },
+    });
+}
 
 describe('buildResumeHappySessionRpcParams', () => {
+    afterEach(() => {
+        clearProjectedAgentUiBehaviorDescriptors();
+    });
+
+    test('uses its machine-only input for descriptor resolution without placing it on the wire', () => {
+        publishMachineScopedTransportDescriptors();
+
+        const params = buildResumeHappySessionRpcParams({
+            sessionId: 'session-1',
+            machineId: 'machine-b',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'backend', backendId: EXTERNAL_AGENT_ID },
+            codexBackendMode: 'shared-mode' as never,
+        });
+
+        expect(params.runtimeDescriptorV1).toMatchObject({
+            agent: {
+                agentExtra: {
+                    owner: 'example.machine-b',
+                    schemaId: 'transport-b',
+                    v: 2,
+                },
+            },
+        });
+        expect(params).not.toHaveProperty('machineId');
+    });
+
     test('builds typed params for resume-session', () => {
         expect(buildResumeHappySessionRpcParams({
             sessionId: 's1',

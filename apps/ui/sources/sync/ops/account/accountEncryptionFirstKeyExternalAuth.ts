@@ -931,12 +931,53 @@ async function submitAccountEncryptionFirstKeyMigration(
             ...params.request,
             externalAuthProof,
         });
-    const result = await migrateAccountEncryptionMode(
-        params.currentCredentials,
-        requestWithExternalAuth,
-        { retry: 'none' },
-    );
-    return result;
+    if (!requestWithExternalAuth.sessionDrafts?.items.length) {
+        return await migrateAccountEncryptionMode(
+            params.currentCredentials,
+            requestWithExternalAuth,
+            { retry: 'none' },
+        );
+    }
+    const [
+        { runAccountEncryptionModeMigration },
+        { getActiveServerAccountScope },
+        {
+            acknowledgeNewSessionDraftEncryptionMigration,
+        },
+        { sync },
+    ] = await Promise.all([
+        import('./runAccountEncryptionModeMigration'),
+        import('@/sync/domains/scope/activeServerAccountScope'),
+        import('@/sync/ops/sessionDrafts/sessionDraftRepository'),
+        import('@/sync/sync'),
+    ]);
+    const sessionDraftScope = getActiveServerAccountScope();
+    return await runAccountEncryptionModeMigration({
+        request: requestWithExternalAuth,
+        migrate: async (migrationRequest) =>
+            await migrateAccountEncryptionMode(
+                params.currentCredentials,
+                migrationRequest,
+                { retry: 'none' },
+            ),
+        activateTargetMode: () => {
+            sync.reconfigureSessionDraftRepositoryForAccountMode(
+                params.proposedCredentials,
+                'e2ee',
+            );
+        },
+        acknowledgeSessionDrafts: async (records) => {
+            if (!sessionDraftScope) {
+                throw new Error(
+                    'Session draft repository scope is unavailable',
+                );
+            }
+            await acknowledgeNewSessionDraftEncryptionMigration(
+                sessionDraftScope,
+                records,
+            );
+        },
+    });
 }
 
 export async function resumeAccountEncryptionFirstKeyExternalAuth(

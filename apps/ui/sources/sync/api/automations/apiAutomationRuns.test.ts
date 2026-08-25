@@ -38,6 +38,7 @@ const v3EventRun = {
     replyHandoffState: 'none' as const,
     replyHandoffAttempt: 0,
     replyHandoffDueAt: null,
+    contentRemovedAt: null,
     createdAt: 1_786_257_600_000,
     updatedAt: 1_786_257_600_000,
 };

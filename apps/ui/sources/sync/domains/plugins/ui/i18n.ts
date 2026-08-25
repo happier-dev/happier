@@ -1,3 +1,5 @@
+import { getPreferredLanguage } from '@/text';
+
 import type { PluginUiProjectionModel } from './projection';
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -87,4 +89,59 @@ export function resolvePluginUiTranslationText(params: Readonly<{
     }
 
     return null;
+}
+
+/**
+ * Resolves one declared `PluginLocalizedStringV2` for a plugin.
+ *
+ * Author-declared strings arrive as `string` or `{ key, fallback }`. Reading
+ * `.fallback` directly is what every fallback-only consumer used to do, and it
+ * silently pinned external plugins to their English declaration no matter which
+ * locale the user picked. Protocol guarantees a non-empty `fallback` whenever a
+ * `key` is present, so an unresolved key degrades to the author's own words
+ * rather than exposing the key.
+ */
+export function resolvePluginLocalizedText(params: Readonly<{
+    projection: PluginUiProjectionModel | null | undefined;
+    pluginId: string;
+    value: unknown;
+    locale?: string | null;
+}>): string {
+    const { value } = params;
+    if (typeof value === 'string') return value;
+    const candidate = readRecord(value);
+    const key = typeof candidate?.key === 'string' ? candidate.key : null;
+    const fallback = typeof candidate?.fallback === 'string' ? candidate.fallback : null;
+    if (key === null && fallback === null) return '';
+    return resolvePluginUiText({
+        projection: params.projection,
+        pluginId: params.pluginId,
+        key,
+        fallback,
+        locale: params.locale,
+    });
+}
+
+/** Resolves declared plugin strings for the current locale. */
+export type PluginLocalizedTextResolver = (pluginId: string, value: unknown) => string;
+
+/**
+ * Binds {@link resolvePluginLocalizedText} to one projection and locale so a
+ * presentation owner can hand a single narrow resolver to every consumer that
+ * displays declared plugin strings. It is a binding over the existing owner, not
+ * a second catalog: the host's bundled-translation catalog cannot answer an
+ * admitted external plugin's bundle, and must not be treated as if it could.
+ */
+export function createPluginLocalizedTextResolver(params: Readonly<{
+    projection: PluginUiProjectionModel | null | undefined;
+    /** Defaults to the app's current preferred language. */
+    locale?: string | null;
+}>): PluginLocalizedTextResolver {
+    const locale = params.locale ?? getPreferredLanguage();
+    return (pluginId, value) => resolvePluginLocalizedText({
+        projection: params.projection,
+        pluginId,
+        value,
+        locale,
+    });
 }

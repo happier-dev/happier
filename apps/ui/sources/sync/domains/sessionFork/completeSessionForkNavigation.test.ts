@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const requireLocalSessionVisibleForRouteMock = vi.hoisted(() => vi.fn());
 const patchSessionMetadataWithRetryMock = vi.hoisted(() => vi.fn());
-const updateSessionDraftMock = vi.hoisted(() => vi.fn());
+const writeExistingSessionDraftMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/localSessionRouteReadiness', () => ({
     requireLocalSessionVisibleForRoute: (params: unknown) => requireLocalSessionVisibleForRouteMock(params),
@@ -15,26 +15,26 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/state/storage', () => ({
-    storage: {
-        getState: () => ({
-            updateSessionDraft: (...args: unknown[]) => updateSessionDraftMock(...args),
-        }),
-    },
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    getActiveServerAccountScope: () => ({ serverId: 'server-a', accountId: 'account-a' }),
+}));
+
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+    writeExistingSessionDraft: (input: unknown) => writeExistingSessionDraftMock(input),
 }));
 
 describe('completeSessionForkNavigation', () => {
     beforeEach(() => {
         requireLocalSessionVisibleForRouteMock.mockReset();
         patchSessionMetadataWithRetryMock.mockReset();
-        updateSessionDraftMock.mockReset();
+        writeExistingSessionDraftMock.mockReset();
         requireLocalSessionVisibleForRouteMock.mockResolvedValue(undefined);
         patchSessionMetadataWithRetryMock.mockResolvedValue(undefined);
     });
 
     it('proves the expected child before restoring its draft, navigating, and persisting prompt metadata', async () => {
         const events: string[] = [];
-        updateSessionDraftMock.mockImplementation(() => {
+        writeExistingSessionDraftMock.mockImplementation(() => {
             events.push('draft');
         });
         requireLocalSessionVisibleForRouteMock.mockImplementation(async () => {
@@ -63,7 +63,10 @@ describe('completeSessionForkNavigation', () => {
             writeForkInitialPrompt: true,
         });
 
-        expect(updateSessionDraftMock).toHaveBeenCalledWith('child', '  retry this  ');
+        expect(writeExistingSessionDraftMock).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'child',
+            patch: { text: '  retry this  ' },
+        }));
         expect(requireLocalSessionVisibleForRouteMock).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'child',
             serverId: 'server-a',
@@ -98,14 +101,14 @@ describe('completeSessionForkNavigation', () => {
             writeForkInitialPrompt: true,
         })).rejects.toThrow('child unavailable');
 
-        expect(updateSessionDraftMock).not.toHaveBeenCalled();
+        expect(writeExistingSessionDraftMock).not.toHaveBeenCalled();
         expect(navigate).not.toHaveBeenCalled();
         expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
     });
 
     it('propagates required metadata persistence failure after navigation', async () => {
         patchSessionMetadataWithRetryMock.mockRejectedValueOnce(new Error('metadata write failed'));
-        updateSessionDraftMock.mockImplementationOnce(() => {
+        writeExistingSessionDraftMock.mockImplementationOnce(() => {
             throw new Error('local draft unavailable');
         });
         const navigate = vi.fn(async () => undefined);

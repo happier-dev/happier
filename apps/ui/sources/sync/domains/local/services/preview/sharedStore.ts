@@ -73,7 +73,7 @@ const store = createLocalServicesSharedSubscriptionStore<
     normalizeInput,
     storeKey,
     defaultSnapshotClient,
-    beginRefresh: (state, _input, nowMs) => applyLocalServicePreviewRefreshStarted(state, nowMs()),
+    beginRefresh: (state) => applyLocalServicePreviewRefreshStarted(state),
     refresh: async ({ input, state, snapshotClient, nowMs, signal }) => {
         const result = await snapshotClient({
             machineId: input.machineId,
@@ -82,9 +82,9 @@ const store = createLocalServicesSharedSubscriptionStore<
         });
         return result.ok
             ? applyLocalServicePreviewSnapshot(state, result.snapshot)
-            : applyLocalServicePreviewRefreshFailed(state, nowMs());
+            : applyLocalServicePreviewRefreshFailed(state);
     },
-    failRefresh: (state, _input, nowMs) => applyLocalServicePreviewRefreshFailed(state, nowMs()),
+    failRefresh: (state) => applyLocalServicePreviewRefreshFailed(state),
     applySnapshot: applyLocalServicePreviewSnapshot,
 });
 

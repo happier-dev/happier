@@ -192,6 +192,33 @@ describe('useQualifiedConnectedAccountGroups', () => {
             .toBe('connectedServices.errors.groupNotFound');
     });
 
+    it('does not select the removed V3 group client for a revisioned legacy peer', async () => {
+        const { useQualifiedConnectedAccountGroups } = await import(
+            './useQualifiedConnectedAccountGroups'
+        );
+        const hook = await renderHook(() => useQualifiedConnectedAccountGroups({
+            serverId: 'server-a',
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            peer: {
+                status: 'ready',
+                transport: {
+                    protocol: 'legacy',
+                    peerClass: 'revisioned-v2-v3',
+                    legacyServiceId: 'openai-codex',
+                },
+                errorCode: null,
+            },
+        }));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()).toEqual(expect.objectContaining({
+            status: 'unsupported',
+            source: null,
+            groups: [],
+        }));
+        expect(createClientMock).not.toHaveBeenCalled();
+    });
+
     it('keeps the loaded pools visible while a refresh is in flight', async () => {
         const service = { pluginId: 'acme.accounts', localId: 'a' };
         // The peer state must keep its identity across renders: the hook's load

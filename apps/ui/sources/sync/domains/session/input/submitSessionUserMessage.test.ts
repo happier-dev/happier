@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
-import type { SessionSubmitPort } from './types';
+import type { DirectMessageSubmitResult, SessionSubmitPort } from './types';
 import { submitSessionUserMessage } from './submitSessionUserMessage';
 
 function createSession(overrides: Partial<Session> = {}): Session {
@@ -34,7 +34,7 @@ function createPort() {
     const enqueuePendingMessage = vi.fn(async () => ({ localId: 'pending-1', accepted: true }));
     const updatePendingRequestedAction = vi.fn(async () => undefined);
     const ensureSessionRuntimeForPendingInput = vi.fn(async () => ({ type: 'success' as const }));
-    const sendMessage = vi.fn(async () => ({ localId: 'direct-1', seq: 2 }));
+    const sendMessage = vi.fn<SessionSubmitPort['sendMessage']>(async () => ({ localId: 'direct-1', seq: 2 }));
     const port: SessionSubmitPort = {
         enqueuePendingMessage,
         updatePendingRequestedAction,
@@ -194,6 +194,131 @@ describe('submitSessionUserMessage Pending action ownership', () => {
             persistence: 'pending',
             localId: 'pending-ambiguous',
         });
+    });
+
+    it('does not hand off Composer custody until Pending persistence succeeds', async () => {
+        const session = createSession();
+        const { port, enqueuePendingMessage } = createPort();
+        const onOutboundHandoff = vi.fn();
+        let rejectPersistence!: (error: Error) => void;
+        enqueuePendingMessage.mockImplementationOnce(async (...args: unknown[]) => {
+            const options = args[4] as Readonly<{
+                onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void;
+            }>;
+            options.onLocalPendingProjectionCreated?.({ localId: 'pending-before-persistence' });
+            return await new Promise((_, reject) => {
+                rejectPersistence = reject;
+            });
+        });
+
+        const pending = submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            onOutboundHandoff,
+        });
+        await vi.waitFor(() => expect(enqueuePendingMessage).toHaveBeenCalledTimes(1));
+        expect(onOutboundHandoff).not.toHaveBeenCalled();
+
+        rejectPersistence(new Error('outbox write failed'));
+        await expect(pending).resolves.toMatchObject({
+            type: 'send_failed',
+            persistence: 'none',
+            errorMessage: 'outbox write failed',
+        });
+        expect(onOutboundHandoff).not.toHaveBeenCalled();
+    });
+
+    it('hands off Composer custody when direct send creates the local pending projection', async () => {
+        const session = createSession({
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                host: 'host',
+                flavor: 'unknown-agent',
+                version: '0.0.1',
+            },
+        });
+        const { port, sendMessage } = createPort();
+        const onOutboundHandoff = vi.fn();
+        let rejectAdmission!: (error: Error) => void;
+        sendMessage.mockImplementationOnce(async (...args: unknown[]) => {
+            const options = args[4] as Readonly<{
+                onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void;
+            }>;
+            options.onLocalPendingProjectionCreated?.({ localId: 'direct-before-admission' });
+            return await new Promise((_, reject) => {
+                rejectAdmission = reject;
+            });
+        });
+
+        const pending = submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            forceImmediate: true,
+            onOutboundHandoff,
+        });
+        await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        expect(onOutboundHandoff).toHaveBeenCalledOnce();
+        expect(onOutboundHandoff).toHaveBeenCalledWith({
+            persistence: 'pending',
+            localId: 'direct-before-admission',
+        });
+
+        rejectAdmission(new Error('direct admission failed'));
+        await expect(pending).resolves.toMatchObject({
+            type: 'send_failed',
+            persistence: 'none',
+            localId: 'direct-before-admission',
+            errorMessage: 'direct admission failed',
+        });
+        expect(onOutboundHandoff).toHaveBeenCalledOnce();
+    });
+
+    it('hands off Composer custody immediately after direct admission succeeds', async () => {
+        const session = createSession({
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                host: 'host',
+                flavor: 'unknown-agent',
+                version: '0.0.1',
+            },
+        });
+        const { port, sendMessage } = createPort();
+        const onOutboundHandoff = vi.fn();
+        let acceptAdmission!: (result: DirectMessageSubmitResult) => void;
+        sendMessage.mockImplementationOnce(async (...args: unknown[]) => {
+            const options = args[4] as Readonly<{
+                onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void;
+            }>;
+            options.onLocalPendingProjectionCreated?.({ localId: 'direct-after-admission' });
+            return await new Promise<DirectMessageSubmitResult>((resolve) => {
+                acceptAdmission = resolve;
+            });
+        });
+
+        const pending = submitSessionUserMessage(port, {
+            ...submitOptions(session),
+            forceImmediate: true,
+            onOutboundHandoff,
+        });
+        await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+        expect(onOutboundHandoff).toHaveBeenCalledOnce();
+        expect(onOutboundHandoff).toHaveBeenCalledWith({
+            persistence: 'pending',
+            localId: 'direct-after-admission',
+        });
+
+        acceptAdmission({
+            localId: 'direct-after-admission',
+            persistence: 'provider_direct',
+            providerAcceptancePending: true,
+        });
+        await expect(pending).resolves.toMatchObject({
+            type: 'success',
+            persistence: 'provider_direct',
+            providerAcceptancePending: true,
+            localId: 'direct-after-admission',
+        });
+        expect(onOutboundHandoff).toHaveBeenCalledOnce();
     });
 
     it('persists steer_if_active only for a currently steerable turn', async () => {

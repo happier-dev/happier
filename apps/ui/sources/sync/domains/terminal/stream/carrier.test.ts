@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 const machineTerminalStreamReadMock = vi.hoisted(() => vi.fn());
 const machineTerminalStreamReadBytesMock = vi.hoisted(() => vi.fn());
@@ -121,6 +122,50 @@ describe('machine RPC terminal stream carrier', () => {
             { terminalId: 'term-1', cursor: 0, maxBytes: 64, maxEvents: 4 },
             { serverId: undefined, timeoutMs: undefined },
         );
+        if (!result.ok) throw new Error('expected legacy fallback');
+        expect(result.frames[0]).toEqual(expect.objectContaining({
+            t: 'bytes',
+            seq: 0,
+            byteOffset: 0,
+            source: 'legacy-string',
+        }));
+    });
+
+    it.each([
+        RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        RPC_ERROR_CODES.METHOD_NOT_FOUND,
+    ])('negotiates legacy terminal streaming when a predecessor daemon rejects readBytes with %s', async (rpcErrorCode) => {
+        machineTerminalStreamReadBytesMock.mockRejectedValueOnce(Object.assign(
+            new Error('older daemon has no byte terminal stream'),
+            { rpcErrorCode },
+        ));
+        machineTerminalStreamReadMock.mockResolvedValueOnce({
+            ok: true,
+            terminalId: 'term-1',
+            events: [{ t: 'data', data: 'legacy' }],
+            nextCursor: 1,
+            done: false,
+        });
+        const { createMachineRpcTerminalStreamCarrier } = await import('./carrier');
+
+        const carrier = createMachineRpcTerminalStreamCarrier({ machineId: 'machine-1' });
+        const result = await carrier.read({
+            terminalId: 'term-1',
+            cursor: { mode: 'byte-offset', value: 9 },
+            maxBytes: 64,
+            maxFrames: 4,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+            ok: true,
+            mode: 'legacy-event-cursor',
+            nextCursor: 1,
+        }));
+        expect(machineTerminalStreamReadMock).toHaveBeenCalledWith(
+            'machine-1',
+            { terminalId: 'term-1', cursor: 0, maxBytes: 64, maxEvents: 4 },
+            { serverId: undefined, timeoutMs: undefined },
+        );
     });
 
     it('preserves the legacy event cursor once legacy fallback mode is active', async () => {
@@ -186,6 +231,27 @@ describe('machine RPC terminal stream carrier', () => {
             { serverId: undefined, timeoutMs: 2000 },
         );
         expect(machineTerminalInputMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        RPC_ERROR_CODES.METHOD_NOT_FOUND,
+    ])('negotiates legacy terminal input when a predecessor daemon rejects stream input with %s', async (rpcErrorCode) => {
+        machineTerminalStreamSendInputMock.mockRejectedValueOnce(Object.assign(
+            new Error('older daemon has no terminal stream input'),
+            { rpcErrorCode },
+        ));
+        machineTerminalInputMock.mockResolvedValueOnce({ ok: true });
+        const { createMachineRpcTerminalStreamCarrier } = await import('./carrier');
+
+        const carrier = createMachineRpcTerminalStreamCarrier({ machineId: 'machine-1' });
+        await carrier.sendInput('term-1', { t: 'text', text: 'clear\r' });
+
+        expect(machineTerminalInputMock).toHaveBeenCalledWith(
+            'machine-1',
+            { terminalId: 'term-1', data: 'clear\r' },
+            { serverId: undefined, timeoutMs: undefined },
+        );
     });
 
     it('does not start a second input send while the previous send is still in flight', async () => {

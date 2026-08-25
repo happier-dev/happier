@@ -7,11 +7,16 @@ const documentPicker = vi.hoisted(() => ({
 }));
 const uploadComposerMediaStageFromReaderSpy = vi.hoisted(() => vi.fn());
 const getComposerMediaContentAvailabilitySpy = vi.hoisted(() => vi.fn());
+const runTransferFinalizeRecoveryMock = vi.hoisted(() => vi.fn());
 
 vi.mock('expo-document-picker', () => documentPicker);
 vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
     getComposerMediaContentAvailability: (params: unknown) => getComposerMediaContentAvailabilitySpy(params),
     uploadComposerMediaStageFromReader: (params: unknown) => uploadComposerMediaStageFromReaderSpy(params),
+}));
+
+vi.mock('@/components/transfers/recovery/runTransferFinalizeRecovery', () => ({
+    runTransferFinalizeRecovery: (...args: unknown[]) => runTransferFinalizeRecoveryMock(...args),
 }));
 
 const executionTarget = { serverId: 'server-1', machineId: 'machine-1' } as const;
@@ -22,6 +27,7 @@ describe('pickAndStageComposerMedia', () => {
         documentPicker.getDocumentAsync.mockReset();
         uploadComposerMediaStageFromReaderSpy.mockReset();
         getComposerMediaContentAvailabilitySpy.mockReset();
+        runTransferFinalizeRecoveryMock.mockReset();
     });
 
     it('does not open the picker when the target daemon does not negotiate Composer media content', async () => {
@@ -99,6 +105,60 @@ describe('pickAndStageComposerMedia', () => {
             name: 'hero.png',
             sha256,
         }));
+    });
+
+    it('projects a retained direct-finalize continuation through the shared Retry or Discard presenter', async () => {
+        const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+        const file = new File([bytes], 'hero.png', { type: 'image/png' });
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        const handle = {
+            v: 1,
+            id: 'stage-1',
+            executionTarget,
+            owner,
+            mediaKind: 'image' as const,
+            mimeType: 'image/png' as const,
+            name: 'hero.png',
+            sizeBytes: bytes.byteLength,
+            sha256,
+        };
+        const recovery = {
+            kind: 'transfer_finalize_recovery' as const,
+            expiresAt: Date.now() + 60_000,
+            actions: ['retry_finalize', 'discard_staged'] as const,
+            isActionable: () => true,
+            invoke: vi.fn(),
+        };
+        documentPicker.getDocumentAsync.mockResolvedValueOnce({
+            canceled: false,
+            assets: [{ file, uri: 'blob:hero', name: 'hero.png', mimeType: 'image/png' }],
+        });
+        getComposerMediaContentAvailabilitySpy.mockResolvedValueOnce({
+            available: true,
+            capability: 'composer.mediaContent.v1',
+        });
+        uploadComposerMediaStageFromReaderSpy.mockResolvedValueOnce({
+            success: false,
+            error: 'Finalize recovery is required',
+            errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+            recovery,
+        });
+        runTransferFinalizeRecoveryMock.mockResolvedValueOnce({
+            status: 'finalized',
+            response: { success: true, handle },
+        });
+
+        const { pickAndStageComposerMedia } = await import('./pickAndStageComposerMedia');
+
+        await expect(pickAndStageComposerMedia({
+            executionTarget,
+            owner,
+            kinds: ['image'],
+        })).resolves.toEqual(handle);
+
+        expect(runTransferFinalizeRecoveryMock).toHaveBeenCalledWith(expect.objectContaining({ recovery }));
+        expect(uploadComposerMediaStageFromReaderSpy).toHaveBeenCalledTimes(1);
+        expect(recovery.invoke).not.toHaveBeenCalled();
     });
 
     it('fails closed when the platform returns a non-media MIME despite the requested filter', async () => {

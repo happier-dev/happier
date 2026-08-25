@@ -13,6 +13,13 @@ import type {
     PluginAccountAvailabilityArtifactSlot,
     PluginAccountAvailabilityReader,
 } from './reader';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type {
+    PluginUiPersistentArtifactFile,
+    PluginUiPersistentArtifactIdentity,
+    PluginUiPersistentArtifactRecord,
+    PluginUiPersistentArtifactStore,
+} from '@/sync/domains/plugins/ui/artifactByteCache';
 
 export type PluginArtifactSourceKind =
     | 'appExact'
@@ -56,12 +63,6 @@ export type PluginArtifactSourceCandidate = Readonly<{
      * when the lease proves that its complete declared file graph is invalid.
      */
     discardInvalid?: () => Promise<void>;
-    /**
-     * Persistent byte custody can atomically remove the exact entry that this
-     * lease had admitted when Availability later withdraws or replaces it.
-     * This is never called for ordinary consumer disposal.
-     */
-    discardRevoked?: () => Promise<void>;
 }>;
 
 export type PluginSelectedArtifactLeaseFileResult =
@@ -180,6 +181,179 @@ export type PluginArtifactVerifiedSourceResult =
     }>
     | Readonly<{ kind: 'notCurrent' }>
     | Readonly<{ kind: 'unavailable'; integrityFailed: boolean }>;
+
+export type PluginArtifactLeasePersistentScope = Readonly<{
+    scope: ServerAccountScope;
+    store: PluginUiPersistentArtifactStore;
+    isCurrent: () => boolean;
+    removePersistentArtifact: (identity: PluginUiPersistentArtifactIdentity) => Promise<void>;
+}>;
+
+function persistentIdentityFor(input: Readonly<{
+    scope: ServerAccountScope;
+    artifact: PluginSelectedArtifactIdentity;
+}>): PluginUiPersistentArtifactIdentity {
+    return Object.freeze({
+        accountScope: input.scope,
+        releaseVersion: input.artifact.releaseVersion,
+        pluginId: input.artifact.pluginId,
+        contributionId: input.artifact.contributionId,
+        tier: input.artifact.tier,
+        platform: input.artifact.platform,
+        artifactDigest: input.artifact.digest,
+    });
+}
+
+export function isPluginArtifactPersistentScopeCurrent(
+    scope: PluginArtifactLeasePersistentScope | undefined,
+): boolean {
+    return scope ? scope.isCurrent() : true;
+}
+
+export function createPluginArtifactPersistentSource<TIdentity>(input: Readonly<{
+    scope: PluginArtifactLeasePersistentScope;
+    identity: TIdentity;
+    artifactMatchesIdentity: (artifact: PluginSelectedArtifactIdentity, identity: TIdentity) => boolean;
+}>): PluginArtifactSourceCandidate {
+    let pending: Promise<PluginUiPersistentArtifactRecord | null> | null = null;
+    let persistentIdentityKey = '';
+    let loadedIdentity: PluginUiPersistentArtifactIdentity | null = null;
+    let loadedRecord: PluginUiPersistentArtifactRecord | null = null;
+    const clearLoaded = () => {
+        const identity = loadedIdentity;
+        loadedIdentity = null;
+        loadedRecord = null;
+        pending = Promise.resolve(null);
+        return identity;
+    };
+    return Object.freeze({
+        kind: 'persistentCache',
+        readFile: async ({ artifact, relativePath }) => {
+            if (!input.scope.isCurrent() || !input.artifactMatchesIdentity(artifact, input.identity)) return null;
+            const persistentIdentity = persistentIdentityFor({ scope: input.scope.scope, artifact });
+            const currentKey = [
+                persistentIdentity.releaseVersion,
+                persistentIdentity.pluginId,
+                persistentIdentity.contributionId,
+                persistentIdentity.tier,
+                persistentIdentity.platform,
+                persistentIdentity.artifactDigest,
+            ].join('\u0000');
+            if (currentKey !== persistentIdentityKey) {
+                persistentIdentityKey = currentKey;
+                loadedIdentity = persistentIdentity;
+                loadedRecord = null;
+                pending = input.scope.store.read(persistentIdentity)
+                    .then((record) => {
+                        loadedRecord = record;
+                        return record;
+                    })
+                    .catch(() => null);
+            }
+            const record = await pending;
+            if (!record || !input.scope.isCurrent()) return null;
+            const file = record.files.find((candidate) => candidate.relativePath === relativePath);
+            return file ? new Uint8Array(file.bytes) : null;
+        },
+        discardInvalid: async () => {
+            if (!input.scope.isCurrent() || !loadedIdentity || !loadedRecord) return;
+            const identity = clearLoaded();
+            if (identity) await input.scope.removePersistentArtifact(identity);
+        },
+    });
+}
+
+export function wrapPluginArtifactLeaseCurrentness(input: Readonly<{
+    lease: PluginSelectedArtifactLease;
+    reader: PluginAccountAvailabilityReader;
+    isAdditionalCurrent: () => boolean;
+}>): PluginSelectedArtifactLease {
+    const revokeListeners = new Set<() => void>();
+    let revoked = false;
+    let disposed = false;
+    const revoke = () => {
+        if (revoked) return;
+        revoked = true;
+        for (const listener of revokeListeners) {
+            try { listener(); } catch { /* notify every independent listener */ }
+        }
+        revokeListeners.clear();
+    };
+    const isCurrent = () => {
+        if (revoked || !input.lease.isCurrent() || !input.isAdditionalCurrent()) {
+            revoke();
+            return false;
+        }
+        return true;
+    };
+    const accountSubscription = input.reader.subscribe(isCurrent);
+    const leaseSubscription = input.lease.onRevoke(revoke);
+    return Object.freeze({
+        ...input.lease,
+        isCurrent,
+        readFile: async (relativePath) => {
+            if (!isCurrent()) return Object.freeze({ kind: 'unavailable' as const, code: 'artifact_lease_revoked' as const });
+            const result = await input.lease.readFile(relativePath);
+            return isCurrent()
+                ? result
+                : Object.freeze({ kind: 'unavailable' as const, code: 'artifact_lease_revoked' as const });
+        },
+        onRevoke: (listener) => {
+            if (revoked) {
+                listener();
+                return Object.freeze({ dispose: () => {} });
+            }
+            revokeListeners.add(listener);
+            return Object.freeze({ dispose: () => revokeListeners.delete(listener) });
+        },
+        dispose: () => {
+            if (disposed) return;
+            disposed = true;
+            accountSubscription();
+            leaseSubscription.dispose();
+            input.lease.dispose();
+            revoke();
+        },
+    });
+}
+
+export async function persistVerifiedPluginArtifactLease(input: Readonly<{
+    lease: PluginSelectedArtifactLease;
+    persistent: PluginArtifactLeasePersistentScope;
+}>): Promise<void> {
+    if (!input.persistent.isCurrent() || !input.lease.isCurrent()) return;
+    const files: PluginUiPersistentArtifactFile[] = [];
+    for (const declared of input.lease.files) {
+        const result = await input.lease.readFile(declared.relativePath);
+        if (result.kind !== 'available' || !input.persistent.isCurrent() || !input.lease.isCurrent()) return;
+        files.push(Object.freeze({
+            relativePath: result.file.relativePath,
+            digest: result.file.digest,
+            byteSize: result.file.byteSize,
+            bytes: new Uint8Array(result.bytes),
+        }));
+    }
+    const entry = files.find((file) => file.relativePath === input.lease.artifactGraph.entry);
+    if (!entry || !input.persistent.isCurrent() || !input.lease.isCurrent()) return;
+    const persistentIdentity = persistentIdentityFor({
+        scope: input.persistent.scope,
+        artifact: input.lease.artifact,
+    });
+    try {
+        await input.persistent.store.write(Object.freeze({
+            persistentIdentity,
+            bytes: new Uint8Array(entry.bytes),
+            entryRelativePath: input.lease.artifactGraph.entry,
+            files: Object.freeze(files),
+        }));
+    } catch {
+        return;
+    }
+    // A write that lands is retained. Account/scope custody is fenced inside the
+    // persistent store owner, which refuses a retired scope outright, so undoing
+    // the write here could only fire on ordinary lease currentness loss — and
+    // would throw away bytes this acquisition just paid for.
+}
 
 /**
  * The one verified-source materializer. It walks already-ordered candidates,
@@ -310,20 +484,6 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
     const revokeListeners = new Set<() => void>();
     let unsubscribe: (() => void) | null = null;
     let revoked = false;
-    let discardedRevokedPersistentSource = false;
-    const discardRevokedPersistentArtifact = () => {
-        if (discardedRevokedPersistentSource) return;
-        discardedRevokedPersistentSource = true;
-        for (const source of sources) {
-            if (source.kind !== 'persistentCache') continue;
-            // Cache cleanup is best effort, but a failure must never leave the
-            // revoked lease current or prevent other subscribers from seeing it.
-            const discardRevoked = source.discardRevoked;
-            if (discardRevoked) {
-                void discardRevoked().catch(() => undefined);
-            }
-        }
-    };
     const revoke = () => {
         if (revoked) return;
         revoked = true;
@@ -338,10 +498,17 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
         }
         revokeListeners.clear();
     };
+    // Losing the current admission retires this lease's reachability; it never
+    // deletes the retained verified bytes. Bootstrap, resume, and every
+    // level-triggered AccountChange withdraw the projection before one coalesced
+    // refresh re-supplies it, so deleting here would charge the same Account a
+    // full re-download for ordinary currentness loss. Ordinary replacement and
+    // withdrawal are retirement only, including `A -> B -> A`; physical deletion
+    // belongs to the invalid-record discard below, the cache's own corruption
+    // and eviction owners, and the logout/forget Account-wide owner.
     const isCurrent = () => {
         if (revoked) return false;
         if (!sameArtifactIdentity(artifact, input.reader.readCurrentArtifact(input.slot))) {
-            discardRevokedPersistentArtifact();
             revoke();
             return false;
         }

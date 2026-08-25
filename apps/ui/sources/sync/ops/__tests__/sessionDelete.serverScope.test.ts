@@ -91,15 +91,20 @@ describe('sessionDeleteWithServerScope', () => {
 
     const res = await sessionDeleteWithServerScope('sid-2', { serverId: 'server-b' });
     expect(res).toEqual({ success: true });
-    expect(mockRuntimeFetch).toHaveBeenCalledWith(
-      'https://scoped.example/v1/sessions/sid-2',
-      expect.objectContaining({
-        method: 'DELETE',
-        headers: expect.objectContaining({
-          Authorization: 'Bearer tok_scoped',
-        }),
-      }),
+    // The scoped transport reaches `runtimeFetch` through the canonical
+    // server-reachability wrapper, which normalizes the request headers into a
+    // `Headers` instance (and also issues its own reachability probe). Reading
+    // the header back through that API is what proves the bearer token survived
+    // the wrapper; matching a plain `{ Authorization }` bag never can, so an
+    // assertion shaped that way is incapable of failing for the right reason.
+    const deleteCalls = mockRuntimeFetch.mock.calls.filter(
+      ([, init]: [string, RequestInit]) => init?.method === 'DELETE',
     );
+    expect(deleteCalls).toHaveLength(1);
+    const [deleteUrl, deleteInit] = deleteCalls[0] as [string, RequestInit];
+    expect(deleteUrl).toBe('https://scoped.example/v1/sessions/sid-2');
+    expect(new Headers(deleteInit.headers).get('Authorization'))
+      .toBe('Bearer tok_scoped');
     expect(mockRequest).not.toHaveBeenCalled();
   });
 

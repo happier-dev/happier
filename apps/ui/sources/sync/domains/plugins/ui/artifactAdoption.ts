@@ -1,12 +1,12 @@
 import {
     DaemonPluginHostedWebArtifactCacheIdentityV1Schema,
+    DaemonPluginReactNativeBundleCacheIdentityV1Schema,
     type DaemonPluginReactNativeCrashBindingTokenV1,
     type DaemonPluginHostedWebArtifactCacheIdentityV1,
     type PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol';
 import {
     deriveGeneratedHostedWebAssetPolicyV1,
-    PluginUiArtifactDigestV1Schema,
     PluginUiArtifactsManifestEntryV1Schema,
     type HostedWebAssetPolicyInput,
     type PluginUiArtifactsManifestEntryV1,
@@ -370,60 +370,17 @@ export function readPluginUiHostedWebArtifactReadIdentity(
     return parsed.success ? parsed.data : null;
 }
 
+/**
+ * Reads the daemon-projected React Native cache identity through the canonical
+ * Protocol schema. The producer validates the same wire member with the same
+ * strict schema, so this reader must not admit a shape that producer cannot
+ * emit — a looser copy here derives a different cache key for it.
+ */
 export function readPluginUiReactNativeBundleCacheIdentity(
     value: unknown,
 ): PluginReactNativeBundleCacheIdentity | null {
-    const identity = readRecord(value);
-    if (!identity) return null;
-
-    const pluginId = readOptionalString(identity.pluginId);
-    const contributionId = readOptionalString(identity.contributionId);
-    const artifactDigest = PluginUiArtifactDigestV1Schema.safeParse(identity.artifactDigest);
-    const hostAppVersion = readOptionalString(identity.hostAppVersion);
-    const hostUiApiVersion = readOptionalString(identity.hostUiApiVersion);
-    const reactVersion = readOptionalString(identity.reactVersion);
-    const reactNativeVersion = readOptionalString(identity.reactNativeVersion);
-    const platform = readOptionalString(identity.platform);
-    const channel = readOptionalString(identity.channel);
-    const nativeCapabilitiesDigest = PluginUiArtifactDigestV1Schema.safeParse(identity.nativeCapabilitiesDigest);
-    const projectionGeneration = typeof identity.projectionGeneration === 'number'
-        && Number.isInteger(identity.projectionGeneration)
-        && identity.projectionGeneration >= 0
-        ? identity.projectionGeneration
-        : null;
-    if (
-        !pluginId
-        || !contributionId
-        || !artifactDigest.success
-        || !hostAppVersion
-        || !hostUiApiVersion
-        || !reactVersion
-        || !reactNativeVersion
-        || !platform
-        || !channel
-        || !nativeCapabilitiesDigest.success
-        || projectionGeneration === null
-    ) {
-        return null;
-    }
-
-    const expoRuntimeVersion = readOptionalString(identity.expoRuntimeVersion);
-    const hermesVersion = readOptionalString(identity.hermesVersion);
-    return Object.freeze({
-        pluginId,
-        contributionId,
-        artifactDigest: artifactDigest.data,
-        hostAppVersion,
-        hostUiApiVersion,
-        reactVersion,
-        reactNativeVersion,
-        ...(expoRuntimeVersion ? { expoRuntimeVersion } : {}),
-        ...(hermesVersion ? { hermesVersion } : {}),
-        platform,
-        channel,
-        nativeCapabilitiesDigest: nativeCapabilitiesDigest.data,
-        projectionGeneration,
-    });
+    const parsed = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(value);
+    return parsed.success ? Object.freeze(parsed.data) : null;
 }
 
 export function readPluginUiGeneratedReactNativeModuleReference(

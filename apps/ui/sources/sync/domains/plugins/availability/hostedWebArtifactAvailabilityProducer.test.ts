@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const activeAccountHostedArtifactSource = vi.hoisted(() => ({
     create: vi.fn(),
+    publish: vi.fn(async (_input: unknown) => undefined),
 }));
 
 const bundledAppExactArtifactSource = vi.hoisted(() => ({
@@ -16,6 +17,9 @@ const availabilityProjectionFixture = vi.hoisted(() => ({
 vi.mock('@/sync/api/plugins/availability/activePluginAccountHostedArtifactRead', () => ({
     createActivePluginAccountHostedArtifactSourceCandidate: (input: unknown) => (
         activeAccountHostedArtifactSource.create(input)
+    ),
+    publishActivePluginAccountHostedArtifact: (input: unknown) => (
+        activeAccountHostedArtifactSource.publish(input)
     ),
 }));
 
@@ -188,6 +192,7 @@ function fixture() {
             availabilityCursor: 1,
             intentReads: [{ pluginId: slot.pluginId, response }],
             materializations: [],
+            snapshots: [],
         } satisfies PluginAccountAvailabilitySnapshot),
         bytesByPath: new Map<string, Uint8Array>([
             [entryPath, entryBytes],
@@ -341,6 +346,27 @@ function snapshotWithAvailability(input: Readonly<{
             },
         })]),
         materializations: input.current.snapshot.materializations,
+        snapshots: input.current.snapshot.snapshots,
+    } satisfies PluginAccountAvailabilitySnapshot);
+}
+
+/**
+ * The same admitted release with NO committed Account Artifact link, which is
+ * the only state in which hosting publication is admitted at all.
+ */
+function snapshotWithoutHostedLink(
+    current: ReturnType<typeof fixture>,
+): PluginAccountAvailabilitySnapshot {
+    const response = current.snapshot.intentReads[0]?.response;
+    if (!response) throw new Error('Fixture must contain an intent read.');
+    return Object.freeze({
+        availabilityCursor: current.snapshot.availabilityCursor,
+        intentReads: Object.freeze([Object.freeze({
+            pluginId: slot.pluginId,
+            response: { ...response, uiArtifacts: [] },
+        })]),
+        materializations: current.snapshot.materializations,
+        snapshots: current.snapshot.snapshots,
     } satisfies PluginAccountAvailabilitySnapshot);
 }
 
@@ -413,6 +439,7 @@ describe('hosted-web Artifact availability producer', () => {
             registry,
         });
         const producer = createPluginHostedWebArtifactAvailabilityProducer({
+            getHostRuntimeIdentity: () => null,
             getNativeResources: () => Object.freeze({ nativePersistentStore, registry }),
             getCache: () => Object.freeze({
                 bindAccountLifetime,
@@ -480,6 +507,7 @@ describe('hosted-web Artifact availability producer', () => {
         });
         const bindAccountLifetime = vi.fn();
         const producer = createPluginHostedWebArtifactAvailabilityProducer({
+            getHostRuntimeIdentity: () => null,
             getNativeResources: () => Object.freeze({ nativePersistentStore, registry }),
             getCache: () => Object.freeze({
                 bindAccountLifetime,
@@ -532,6 +560,214 @@ describe('hosted-web Artifact availability producer', () => {
         expect(persistent.write).toHaveBeenCalledOnce();
         expect(accountHosted).toHaveBeenCalledTimes(2);
         if (second.kind === 'available') second.handle.dispose();
+    });
+
+    it('publishes the verified hosted-web archive to Account hosting when the slot has no committed link', async () => {
+        const current = fixture();
+        const custodyEvents: string[] = [];
+        const persistent = createNativePersistentStore();
+        const registry = createPluginNativeArtifactResourceRegistry({
+            registrar: Object.freeze({
+                register: vi.fn(async () => nativeRegistrationAccepted),
+                unregister: vi.fn(() => true),
+            }),
+            createOpaqueId: () => 'opaque-publish',
+        });
+        const nativePersistentStore = createPluginNativeArtifactResourcePersistentStore({
+            store: persistent.rawStore,
+            registry,
+        });
+        const producer = createPluginHostedWebArtifactAvailabilityProducer({
+            getHostRuntimeIdentity: () => Object.freeze({
+                platform: 'ios' as const,
+                channel: 'store' as const,
+                appVersion: '1.4.2',
+                availableNativeCapabilities: [],
+            }),
+            getNativeResources: () => Object.freeze({ nativePersistentStore, registry }),
+            getCache: () => Object.freeze({
+                bindAccountLifetime: vi.fn(),
+                capturePersistentAccountOperation: () => createCurrentPersistentAccountOperation(),
+                removePersistentArtifact: async () => undefined,
+            }),
+        });
+        const { lifetime } = createLifetime();
+        bundledAppExactArtifactSource.create.mockReset();
+        bundledAppExactArtifactSource.create.mockReturnValue(Object.freeze({
+            kind: 'appExact' as const,
+            readFile: async ({ relativePath }: Readonly<{ relativePath: string }>) => {
+                custodyEvents.push(`verified:${relativePath}`);
+                return current.bytesByPath.get(relativePath) ?? null;
+            },
+        }));
+        activeAccountHostedArtifactSource.create.mockReset();
+        activeAccountHostedArtifactSource.create.mockReturnValue(Object.freeze({
+            kind: 'accountHosted' as const,
+            readFile: async () => null,
+        }));
+        activeAccountHostedArtifactSource.publish.mockClear();
+        activeAccountHostedArtifactSource.publish.mockImplementationOnce(async () => {
+            custodyEvents.push('published');
+        });
+
+        const acquired = await producer.acquire({
+            reader: createReader(snapshotWithoutHostedLink(current)),
+            artifactGraph: current.graph,
+            cacheIdentity: current.cacheIdentity,
+            accountLifetime: lifetime,
+            isCurrent: () => true,
+            hostedWebPolicy: hostedWebPolicy(current.graph),
+        });
+
+        expect(acquired.kind).toBe('available');
+        expect(activeAccountHostedArtifactSource.publish).toHaveBeenCalledOnce();
+        // A hosted-web frame declares no framework compatibility at all: the one
+        // version that decides which hosts a stored link may serve comes from
+        // the verified graph, and the app/channel facts are this host's own.
+        expect(activeAccountHostedArtifactSource.publish).toHaveBeenCalledWith(expect.objectContaining({
+            accountLifetime: lifetime,
+            release: { pluginId: slot.pluginId, version: '1.2.3' },
+            slot: expect.objectContaining({
+                contributionId: slot.contributionId,
+                tier: 'hostedWeb',
+                platform: 'web',
+                artifactDigest: current.graph.digest,
+            }),
+            hostCompatibility: {
+                hostAppVersion: '1.4.2',
+                hostUiApiVersion: '1.0.0',
+                platform: 'web',
+                channel: 'store',
+                nativeCapabilities: [],
+            },
+            artifactGraph: current.graph,
+        }));
+        const published = activeAccountHostedArtifactSource.publish.mock.calls[0]?.[0] as
+            | Readonly<{ files: readonly Readonly<{ relativePath: string; bytes: Uint8Array }>[] }>
+            | undefined;
+        expect(published?.files.map((file) => file.relativePath))
+            .toEqual(current.graph.files.map((file) => file.relativePath));
+        expect(custodyEvents).toEqual([
+            ...current.graph.files.map((file) => `verified:${file.relativePath}`),
+            'published',
+        ]);
+        if (acquired.kind === 'available') acquired.handle.dispose();
+    });
+
+    it('cancels hosted-web Account publication when the Account lifetime retires during verification', async () => {
+        const current = fixture();
+        const persistent = createNativePersistentStore();
+        const registry = createPluginNativeArtifactResourceRegistry({
+            registrar: Object.freeze({
+                register: vi.fn(async () => nativeRegistrationAccepted),
+                unregister: vi.fn(() => true),
+            }),
+            createOpaqueId: () => 'opaque-retired-before-publish',
+        });
+        const nativePersistentStore = createPluginNativeArtifactResourcePersistentStore({
+            store: persistent.rawStore,
+            registry,
+        });
+        const producer = createPluginHostedWebArtifactAvailabilityProducer({
+            getHostRuntimeIdentity: () => Object.freeze({
+                platform: 'ios' as const,
+                channel: 'store' as const,
+                appVersion: '1.4.2',
+                availableNativeCapabilities: [],
+            }),
+            getNativeResources: () => Object.freeze({ nativePersistentStore, registry }),
+            getCache: () => Object.freeze({
+                bindAccountLifetime: vi.fn(),
+                capturePersistentAccountOperation: () => createCurrentPersistentAccountOperation(),
+                removePersistentArtifact: async () => undefined,
+            }),
+        });
+        const { lifetime, retire } = createLifetime();
+        let verifiedFiles = 0;
+        bundledAppExactArtifactSource.create.mockReset();
+        bundledAppExactArtifactSource.create.mockReturnValue(Object.freeze({
+            kind: 'appExact' as const,
+            readFile: async ({ relativePath }: Readonly<{ relativePath: string }>) => {
+                const bytes = current.bytesByPath.get(relativePath) ?? null;
+                verifiedFiles += 1;
+                if (verifiedFiles === current.graph.files.length) retire();
+                return bytes;
+            },
+        }));
+        activeAccountHostedArtifactSource.create.mockReset();
+        activeAccountHostedArtifactSource.create.mockReturnValue(Object.freeze({
+            kind: 'accountHosted' as const,
+            readFile: async () => null,
+        }));
+        activeAccountHostedArtifactSource.publish.mockClear();
+
+        const acquired = await producer.acquire({
+            reader: createReader(snapshotWithoutHostedLink(current)),
+            artifactGraph: current.graph,
+            cacheIdentity: current.cacheIdentity,
+            accountLifetime: lifetime,
+            isCurrent: () => true,
+            hostedWebPolicy: hostedWebPolicy(current.graph),
+        });
+
+        expect(verifiedFiles).toBe(current.graph.files.length);
+        expect(acquired).toEqual({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+        expect(activeAccountHostedArtifactSource.publish).not.toHaveBeenCalled();
+    });
+
+    it('publishes nothing when the host cannot describe its own adoption facts', async () => {
+        const current = fixture();
+        const persistent = createNativePersistentStore();
+        const registry = createPluginNativeArtifactResourceRegistry({
+            registrar: Object.freeze({
+                register: vi.fn(async () => nativeRegistrationAccepted),
+                unregister: vi.fn(() => true),
+            }),
+            createOpaqueId: () => 'opaque-no-identity',
+        });
+        const nativePersistentStore = createPluginNativeArtifactResourcePersistentStore({
+            store: persistent.rawStore,
+            registry,
+        });
+        const producer = createPluginHostedWebArtifactAvailabilityProducer({
+            // Same admitted slot, same verified bytes; only the host's ability to
+            // name itself is missing. A fabricated key would publish a link whose
+            // recorded provenance no host actually reported.
+            getHostRuntimeIdentity: () => null,
+            getNativeResources: () => Object.freeze({ nativePersistentStore, registry }),
+            getCache: () => Object.freeze({
+                bindAccountLifetime: vi.fn(),
+                capturePersistentAccountOperation: () => createCurrentPersistentAccountOperation(),
+                removePersistentArtifact: async () => undefined,
+            }),
+        });
+        const { lifetime } = createLifetime();
+        bundledAppExactArtifactSource.create.mockReset();
+        bundledAppExactArtifactSource.create.mockReturnValue(Object.freeze({
+            kind: 'appExact' as const,
+            readFile: async ({ relativePath }: Readonly<{ relativePath: string }>) => (
+                current.bytesByPath.get(relativePath) ?? null
+            ),
+        }));
+        activeAccountHostedArtifactSource.create.mockReset();
+        activeAccountHostedArtifactSource.create.mockReturnValue(Object.freeze({
+            kind: 'accountHosted' as const,
+            readFile: async () => null,
+        }));
+        activeAccountHostedArtifactSource.publish.mockClear();
+
+        const acquired = await producer.acquire({
+            reader: createReader(snapshotWithoutHostedLink(current)),
+            artifactGraph: current.graph,
+            cacheIdentity: current.cacheIdentity,
+            accountLifetime: lifetime,
+            isCurrent: () => true,
+            hostedWebPolicy: hostedWebPolicy(current.graph),
+        });
+
+        expect(acquired.kind).toBe('available');
+        expect(activeAccountHostedArtifactSource.publish).not.toHaveBeenCalled();
+        if (acquired.kind === 'available') acquired.handle.dispose();
     });
 
     it('keeps retained native Artifact bytes unreadable while the Account lifetime is retired', async () => {
@@ -600,6 +836,7 @@ describe('hosted-web Artifact availability producer', () => {
             registry,
         });
         const producer = createPluginHostedWebArtifactAvailabilityProducer({
+            getHostRuntimeIdentity: () => null,
             getNativeResources: () => Object.freeze({
                 nativePersistentStore: composition.nativePersistentStore,
                 registry,
@@ -700,6 +937,7 @@ describe('hosted-web Artifact availability producer', () => {
             registry,
         });
         const producer = createPluginHostedWebArtifactAvailabilityProducer({
+            getHostRuntimeIdentity: () => null,
             getNativeResources: () => Object.freeze({
                 nativePersistentStore: composition.nativePersistentStore,
                 registry,
@@ -754,7 +992,7 @@ describe('hosted-web Artifact availability producer', () => {
         expect(write).not.toHaveBeenCalled();
     });
 
-    it('physically removes a producer-selected persistent hosted Artifact when Availability withdraws it after acquisition closes', async () => {
+    it('revokes a producer-selected hosted Artifact handle without deleting its retained bytes when the Account disables the plugin', async () => {
         const current = fixture();
         const record = persistentRecordFor(current);
         const persistent = createNativePersistentStore({ initialRecord: record });
@@ -771,6 +1009,7 @@ describe('hosted-web Artifact availability producer', () => {
             registry,
         });
         const producer = createPluginHostedWebArtifactAvailabilityProducer({
+            getHostRuntimeIdentity: () => null,
             getNativeResources: () => Object.freeze({
                 nativePersistentStore: composition.nativePersistentStore,
                 registry,
@@ -806,36 +1045,22 @@ describe('hosted-web Artifact availability producer', () => {
         });
 
         await vi.waitFor(() => {
-            expect(persistent.remove).toHaveBeenCalledWith(record.persistentIdentity);
+            expect(unregister).toHaveBeenCalledWith('opaque-withdrawn-persistent-artifact');
         });
-        expect(persistent.removeAccount).not.toHaveBeenCalled();
-        expect(persistent.readRecord()).toBeNull();
         expect(acquired.handle.isCurrent()).toBe(false);
-        expect(unregister).toHaveBeenCalledWith('opaque-withdrawn-persistent-artifact');
+        // Disable revokes the native token and retires reachability. The bytes
+        // stay retained (PEP-ARTIFACTS 10.1) so re-enabling costs no download.
+        expect(persistent.remove).not.toHaveBeenCalled();
+        expect(persistent.removeAccount).not.toHaveBeenCalled();
+        expect(persistent.readRecord()).not.toBeNull();
 
         acquired.handle.dispose();
     });
 
-    it('does not re-adopt a persistent hosted Artifact while its revoked exact deletion is still draining', async () => {
+    it('retires the stale native token, retains bytes, and reuses A after A → B → A', async () => {
         const current = fixture();
         const record = persistentRecordFor(current);
-        let beginExactRemoval!: () => void;
-        const exactRemovalBegan = new Promise<void>((resolve) => {
-            beginExactRemoval = resolve;
-        });
-        let allowExactRemoval!: () => void;
-        const exactRemovalGate = new Promise<void>((resolve) => {
-            allowExactRemoval = resolve;
-        });
-        const persistent = createNativePersistentStore({
-            initialRecord: record,
-            onRemove: async () => {
-                // The native store has already revoked the old opaque token
-                // before this raw physical-delete boundary begins.
-                beginExactRemoval();
-                await exactRemovalGate;
-            },
-        });
+        const persistent = createNativePersistentStore({ initialRecord: record });
         const unregister = vi.fn(() => true);
         let opaqueId = 0;
         const registry = createPluginNativeArtifactResourceRegistry({
@@ -850,6 +1075,7 @@ describe('hosted-web Artifact availability producer', () => {
             registry,
         });
         const producer = createPluginHostedWebArtifactAvailabilityProducer({
+            getHostRuntimeIdentity: () => null,
             getNativeResources: () => Object.freeze({
                 nativePersistentStore: composition.nativePersistentStore,
                 registry,
@@ -859,12 +1085,16 @@ describe('hosted-web Artifact availability producer', () => {
         const readerStore = createPluginAccountAvailabilityReaderStore();
         readerStore.replace({ scope, snapshot: current.snapshot });
         const { lifetime } = createLifetime();
+        availabilityProjectionFixture.cache = composition.cache;
+        availabilityProjectionFixture.lifetime = lifetime;
         activeAccountHostedArtifactSource.create.mockReset();
+        const accountHostedRead = vi.fn(async () => null);
         activeAccountHostedArtifactSource.create.mockReturnValue(Object.freeze({
             kind: 'accountHosted' as const,
-            readFile: async () => null,
+            readFile: accountHostedRead,
         }));
 
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: current.snapshot });
         const initiallyAcquired = await producer.acquire({
             reader: readerStore.bind(scope),
             artifactGraph: current.graph,
@@ -877,29 +1107,34 @@ describe('hosted-web Artifact availability producer', () => {
             throw new Error('Expected the seeded persistent Artifact to materialize.');
         }
 
+        let reacquiredHandle: Readonly<{ dispose: () => void }> | null = null;
         try {
-            readerStore.replace({
-                scope,
-                snapshot: snapshotWithAvailability({
-                    current,
-                    availabilityCursor: 2,
-                    version: '1.2.4',
-                }),
+            const supersededSnapshot = snapshotWithAvailability({
+                current,
+                availabilityCursor: 2,
+                version: '1.2.4',
             });
-            await exactRemovalBegan;
-            expect(unregister).toHaveBeenCalledWith('opaque-revoked-re-admitted-1');
+            readerStore.replace({ scope, snapshot: supersededSnapshot });
+            // The projection writer is the one owner that supersedes the old
+            // current release, because only it holds both verified snapshots.
+            replacePluginAccountAvailabilityProjection({ scope, snapshot: supersededSnapshot });
+            await vi.waitFor(() => {
+                expect(unregister).toHaveBeenCalledWith('opaque-revoked-re-admitted-1');
+            });
+            expect(initiallyAcquired.handle.isCurrent()).toBe(false);
+            expect(persistent.remove).not.toHaveBeenCalled();
+            expect(persistent.removeAccount).not.toHaveBeenCalled();
+            expect(persistent.readRecord()).toEqual(record);
 
-            // A is current again before B's revoked A deletion reaches disk.
-            // Reacquisition must wait behind that exact deletion rather than
-            // receive a fresh token for bytes the deletion will erase.
-            readerStore.replace({
-                scope,
-                snapshot: snapshotWithAvailability({
-                    current,
-                    availabilityCursor: 3,
-                }),
+            // A receives a fresh opaque token only after currentness revoked
+            // the old token. Its retained bytes remain the source.
+            const readmittedSnapshot = snapshotWithAvailability({
+                current,
+                availabilityCursor: 3,
             });
-            const reacquisition = producer.acquire({
+            readerStore.replace({ scope, snapshot: readmittedSnapshot });
+            replacePluginAccountAvailabilityProjection({ scope, snapshot: readmittedSnapshot });
+            const reacquisition = await producer.acquire({
                 reader: readerStore.bind(scope),
                 artifactGraph: current.graph,
                 cacheIdentity: current.cacheIdentity,
@@ -908,25 +1143,21 @@ describe('hosted-web Artifact availability producer', () => {
                 hostedWebPolicy: hostedWebPolicy(current.graph),
             });
 
-            // This is the second producer attempt. Its persistent raw read
-            // cannot start until the incumbent exact deletion drains.
-            expect(persistent.read).toHaveBeenCalledOnce();
-            expect(unregister).toHaveBeenCalledOnce();
-
-            allowExactRemoval();
-            await expect(reacquisition).resolves.toEqual({
-                kind: 'unavailable',
-                code: 'artifact_source_unavailable',
-            });
-            expect(persistent.read).toHaveBeenCalledTimes(2);
-            expect(persistent.readRecord()).toBeNull();
+            if (reacquisition.kind !== 'available') {
+                throw new Error('Expected retained A Artifact bytes to be re-adopted.');
+            }
+            reacquiredHandle = reacquisition.handle;
+            expect(reacquisition.handle.isCurrent()).toBe(true);
+            expect(accountHostedRead).not.toHaveBeenCalled();
+            expect(persistent.remove).not.toHaveBeenCalled();
+            expect(persistent.readRecord()).toEqual(record);
         } finally {
-            allowExactRemoval();
+            reacquiredHandle?.dispose();
             initiallyAcquired.handle.dispose();
         }
     });
 
-    it('physically removes a disposed hosted Artifact when Availability clears then replaces its current projection', async () => {
+    it('retains a disposed hosted Artifact while cleared Availability is replaced', async () => {
         const current = fixture();
         const record = persistentRecordFor(current);
         const persistent = createNativePersistentStore({ initialRecord: record });
@@ -943,6 +1174,7 @@ describe('hosted-web Artifact availability producer', () => {
             registry,
         });
         const producer = createPluginHostedWebArtifactAvailabilityProducer({
+            getHostRuntimeIdentity: () => null,
             getNativeResources: () => Object.freeze({
                 nativePersistentStore: composition.nativePersistentStore,
                 registry,
@@ -983,11 +1215,11 @@ describe('hosted-web Artifact availability producer', () => {
         });
 
         await vi.waitFor(() => {
-            expect(persistent.remove).toHaveBeenCalledWith(record.persistentIdentity);
+            expect(unregister).toHaveBeenCalledWith('opaque-disposed-projection-replacement');
         });
+        expect(persistent.remove).not.toHaveBeenCalled();
         expect(persistent.removeAccount).not.toHaveBeenCalled();
-        expect(persistent.readRecord()).toBeNull();
-        expect(unregister).toHaveBeenCalledWith('opaque-disposed-projection-replacement');
+        expect(persistent.readRecord()).toEqual(record);
     });
 
     it('binds initial Availability to Account retirement without deleting retained Artifact bytes', async () => {
@@ -1047,80 +1279,6 @@ describe('hosted-web Artifact availability producer', () => {
         });
 
         expect(removePersistentArtifact).not.toHaveBeenCalled();
-    });
-
-    it('retires only the exact hosted Artifact when Availability replaces it and its deletion fails', async () => {
-        const current = fixture();
-        const record = persistentRecordFor(current);
-        const persistent = createNativePersistentStore({
-            initialRecord: record,
-            onRemove: async () => {
-                throw new Error('exact persistent deletion failed');
-            },
-        });
-        const registry = createPluginNativeArtifactResourceRegistry({
-            registrar: Object.freeze({
-                register: async () => nativeRegistrationAccepted,
-                unregister: () => true,
-            }),
-            createOpaqueId: () => 'opaque-replaced-persistent-artifact',
-        });
-        const composition = createPluginReactNativeBundleCacheWithNativeArtifactResources({
-            persistentStore: persistent.rawStore,
-            registry,
-        });
-        const producer = createPluginHostedWebArtifactAvailabilityProducer({
-            getNativeResources: () => Object.freeze({
-                nativePersistentStore: composition.nativePersistentStore,
-                registry,
-            }),
-            getCache: () => composition.cache,
-        });
-        const readerStore = createPluginAccountAvailabilityReaderStore();
-        readerStore.replace({ scope, snapshot: current.snapshot });
-        const { lifetime } = createLifetime();
-        availabilityProjectionFixture.cache = composition.cache;
-        availabilityProjectionFixture.lifetime = lifetime;
-        activeAccountHostedArtifactSource.create.mockReset();
-        activeAccountHostedArtifactSource.create.mockReturnValue(Object.freeze({
-            kind: 'accountHosted' as const,
-            readFile: async () => null,
-        }));
-
-        replacePluginAccountAvailabilityProjection({ scope, snapshot: current.snapshot });
-        const acquired = await producer.acquire({
-            reader: readerStore.bind(scope),
-            artifactGraph: current.graph,
-            cacheIdentity: current.cacheIdentity,
-            accountLifetime: lifetime,
-            isCurrent: () => true,
-            hostedWebPolicy: hostedWebPolicy(current.graph),
-        });
-        if (acquired.kind !== 'available') throw new Error('Expected the seeded persistent Artifact to materialize.');
-        acquired.handle.dispose();
-
-        try {
-            clearPluginAccountAvailabilityProjection();
-            replacePluginAccountAvailabilityProjection({
-                scope,
-                snapshot: snapshotWithAvailability({
-                    current,
-                    availabilityCursor: 2,
-                    version: '1.2.4',
-                }),
-            });
-
-            await vi.waitFor(() => {
-                expect(persistent.remove).toHaveBeenCalledWith(record.persistentIdentity);
-            });
-            // A failed exact deletion retires that one identity and keeps its
-            // physical deletion owed. It must never escalate into destroying
-            // every cached Artifact for the Account.
-            expect(persistent.removeAccount).not.toHaveBeenCalled();
-            expect(persistent.readRecord()).toEqual(record);
-        } finally {
-            acquired.handle.dispose();
-        }
     });
 
 });

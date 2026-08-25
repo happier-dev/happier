@@ -76,6 +76,22 @@ describe('provider settings RPC client', () => {
             });
     });
 
+    it('classifies failed machine transport separately from a typed Provider endpoint failure', async () => {
+        machineRpcWithServerScope.mockRejectedValueOnce(new Error('selected machine disconnected'));
+        await expect(describeProviderConnections({ machineId: 'machine-a', serverId: 'server-a' }))
+            .rejects.toEqual(createProviderErrorV1('provider_machine_unavailable', {
+                machineId: 'machine-a',
+            }));
+
+        const endpointFailure = createProviderErrorV1('provider_endpoint_unavailable', {
+            connectionId: 'pc_a', machineId: 'machine-a',
+        });
+        machineRpcWithServerScope.mockRejectedValueOnce(endpointFailure);
+        await expect(describeProviderConnections({
+            machineId: 'machine-a', serverId: 'server-a', connectionId: 'pc_a',
+        })).rejects.toEqual(endpointFailure);
+    });
+
     it.each([
         {
             name: 'connection describe', kind: 'read', invoke: () => describeProviderConnections({

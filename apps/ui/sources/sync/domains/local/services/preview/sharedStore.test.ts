@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
 
+import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import {
     type LocalServicePreviewSnapshotClientResult,
 } from './api';
@@ -12,7 +13,6 @@ import {
     resetLocalServicePreviewStoreForTests,
     subscribeLocalServicePreviewStore,
 } from './sharedStore';
-import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import { selectLocalServicePreviewRows, type LocalServicePreviewSnapshot } from './store';
 
 function previewResource(previewId: string): LocalServicePreviewResourceV1 {
@@ -169,9 +169,10 @@ describe('shared local-service preview store (PRV-4)', () => {
 
     it('does not re-fetch previews on a wall clock while subscribed (PRV-4 DONE gate)', async () => {
         const snapshotClient = vi.fn(async (): Promise<LocalServicePreviewSnapshotClientResult> => ({
-            status: 'ok',
-            snapshot,
+            ok: true,
+            snapshot: snapshotWith('preview_1'),
         }));
+        const key = { machineId: 'machine_1', serverId: 'server_1' };
 
         await expectNoWallClockPolling({
             subscribe: () => subscribeLocalServicePreviewStore(key, () => {}, { snapshotClient }),

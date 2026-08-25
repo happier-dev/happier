@@ -290,6 +290,10 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
                             materializations: Object.freeze(materializations.snapshots.flatMap(
                                 (snapshot) => snapshot.materializations,
                             )),
+                            snapshots: Object.freeze(materializations.snapshots.map((snapshot) => Object.freeze({
+                                ...snapshot,
+                                materializations: Object.freeze([...snapshot.materializations]),
+                            }))),
                         }),
                     });
                 }

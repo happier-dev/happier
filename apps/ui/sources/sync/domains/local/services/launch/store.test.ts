@@ -43,7 +43,6 @@ describe('local service launcher UI store', () => {
         const refreshing = applyLocalServiceLauncherRefreshStarted(loaded, {
             machineId: 'machine_1',
             sessionId: 'session_1',
-            requestedAt: 1_100,
         });
         const reloaded = applyLocalServiceLauncherSnapshot(refreshing, {
             ...snapshot,
@@ -53,5 +52,45 @@ describe('local service launcher UI store', () => {
         expect(refreshing.refreshStatus).toBe('refreshing');
         expect(selectLocalServiceLaunchTargets(refreshing)).toEqual(snapshot.targets);
         expect(selectLocalServiceLaunchTargets(reloaded)[0]).toBe(firstTarget);
+    });
+
+    it('does not fabricate a feed update time on the refresh or failure transitions', async () => {
+        const {
+            failLocalServiceLauncherRefresh,
+            applyLocalServiceLauncherRefreshStarted,
+            applyLocalServiceLauncherSnapshot,
+            createLocalServiceLauncherState,
+            snapshotFromLocalServiceLauncherState,
+        } = await import('./store');
+
+        // `updatedAt` is the daemon's launcher-feed update time — `applyLocalServiceLauncherSnapshot`
+        // takes it straight from the wire. Neither starting nor failing a refresh produces one, and
+        // stamping the client clock is not harmless here: `snapshotFromLocalServiceLauncherState`
+        // reconstructs a wire-shaped snapshot out of this field for a live consumer, so a fabricated
+        // value leaves the store claiming a daemon feed time that never existed.
+        const loaded = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), snapshot);
+        expect(loaded.updatedAt).toBe(1_000);
+
+        const refreshing = applyLocalServiceLauncherRefreshStarted(loaded, {
+            machineId: 'machine_1',
+            sessionId: 'session_1',
+        });
+        expect(refreshing.updatedAt).toBe(1_000);
+
+        const failed = failLocalServiceLauncherRefresh(refreshing, {
+            machineId: 'machine_1',
+            sessionId: 'session_1',
+            reasonCode: 'request_failed',
+        });
+        expect(failed.refreshStatus).toBe('error');
+        expect(failed.updatedAt).toBe(1_000);
+
+        // A different machine has no loaded feed, so it reports none — and the snapshot
+        // reconstruction correctly refuses to invent one.
+        const switched = applyLocalServiceLauncherRefreshStarted(loaded, {
+            machineId: 'machine_2',
+        });
+        expect(switched.updatedAt).toBeNull();
+        expect(snapshotFromLocalServiceLauncherState(switched)).toBeNull();
     });
 });

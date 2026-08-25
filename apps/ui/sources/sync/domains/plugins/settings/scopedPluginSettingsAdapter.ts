@@ -148,7 +148,8 @@ export type ScopedPluginSettingsReadResult =
     | Readonly<{ status: 'ready'; snapshot: ScopedPluginSettingsSnapshot }>
     | Readonly<{
         status: 'unavailable';
-        reason: 'transport' | 'scope-mismatch' | 'target-mismatch' | 'invalid-value';
+        reason: 'transport' | 'scope-mismatch' | 'target-mismatch' | 'invalid-value' | 'plugin_settings_server_identity_conflict';
+        conflictingServerIdentityIds?: readonly string[];
     }>;
 
 /**
@@ -480,13 +481,111 @@ export function projectSafeScopedPluginSettingsValues(params: Readonly<{
  */
 export function createAccountScopedPluginSettingsTransport(
     boundary: ScopedPluginSettingsAccountRecordBoundary,
+    options: Readonly<{
+        resolveLegacyServerIdentityIds?: (
+            target: ScopedPluginSettingsAccountTarget,
+        ) => readonly string[];
+    }> = {},
 ): ScopedPluginSettingsAccountTransport {
+    function jsonValuesEqual(left: unknown, right: unknown): boolean {
+        if (Object.is(left, right)) return true;
+        if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false;
+        if (Array.isArray(left) || Array.isArray(right)) {
+            return Array.isArray(left) && Array.isArray(right)
+                && left.length === right.length
+                && left.every((value, index) => jsonValuesEqual(value, right[index]));
+        }
+        const leftRecord = left as Readonly<Record<string, unknown>>;
+        const rightRecord = right as Readonly<Record<string, unknown>>;
+        const leftKeys = Object.keys(leftRecord);
+        const rightKeys = Object.keys(rightRecord);
+        return leftKeys.length === rightKeys.length
+            && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(rightRecord, key)
+                && jsonValuesEqual(leftRecord[key], rightRecord[key]));
+    }
+
+    function adoptCanonicalServerIdentity(input: Readonly<{
+        target: ScopedPluginSettingsAccountTarget;
+        fields: readonly ScopedPluginSettingsField[];
+        values: Readonly<Record<string, unknown>>;
+    }>):
+        | Readonly<{ status: 'unchanged'; values: Readonly<Record<string, unknown>> }>
+        | Readonly<{ status: 'updated'; values: Readonly<Record<string, unknown>> }>
+        | Readonly<{ status: 'conflict'; conflictingServerIdentityIds: readonly string[] }> {
+        const aliases = [...new Set(options.resolveLegacyServerIdentityIds?.(input.target) ?? [])]
+            .filter((id) => id !== input.target.serverIdentityId);
+        if (aliases.length === 0) return { status: 'unchanged', values: input.values };
+        const next = { ...input.values };
+        let changed = false;
+        for (const field of input.fields) {
+            const binding = field.binding;
+            if (binding?.kind !== 'perActiveServer') continue;
+            const currentMap = readRecord(next[binding.byServerIdSettingId]);
+            if (!currentMap) continue;
+            const identities = [input.target.serverIdentityId, ...aliases]
+                .filter((id) => Object.prototype.hasOwnProperty.call(currentMap, id));
+            if (identities.length === 0) continue;
+            const value = currentMap[identities[0]!]!;
+            if (identities.some((id) => !jsonValuesEqual(currentMap[id], value))) {
+                return {
+                    status: 'conflict',
+                    conflictingServerIdentityIds: Object.freeze(identities),
+                };
+            }
+            const normalized = { ...currentMap, [input.target.serverIdentityId]: value };
+            for (const alias of aliases) delete normalized[alias];
+            if (!jsonValuesEqual(normalized, currentMap)) {
+                next[binding.byServerIdSettingId] = normalized;
+                changed = true;
+            }
+        }
+        return changed
+            ? { status: 'updated', values: next }
+            : { status: 'unchanged', values: input.values };
+    }
+
     async function read(input: ScopedPluginSettingsAccountReadInput): Promise<ScopedPluginSettingsReadResult> {
         try {
             const record = await boundary.readRecord({
                 pluginId: input.pluginId,
                 target: input.target,
             });
+            if (record.status === 'present') {
+                const adoption = adoptCanonicalServerIdentity({
+                    target: input.target,
+                    fields: input.fields,
+                    values: record.values,
+                });
+                if (adoption.status === 'conflict') {
+                    return {
+                        status: 'unavailable',
+                        reason: 'plugin_settings_server_identity_conflict',
+                        conflictingServerIdentityIds: adoption.conflictingServerIdentityIds,
+                    };
+                }
+                if (adoption.status === 'updated') {
+                    if (!haveBoundedPerActiveServerValues(adoption.values, input.fields)) {
+                        return { status: 'unavailable', reason: 'invalid-value' };
+                    }
+                    const write = await boundary.writeRecord({
+                        pluginId: input.pluginId,
+                        target: input.target,
+                        expectedRevision: record.revision,
+                        values: adoption.values,
+                    });
+                    if (write.status !== 'updated') {
+                        return { status: 'unavailable', reason: 'transport' };
+                    }
+                    return accountRecordToScopedResult({
+                        input,
+                        record: {
+                            status: 'present',
+                            revision: write.revision,
+                            values: adoption.values,
+                        },
+                    });
+                }
+            }
             return accountRecordToScopedResult({ record, input });
         } catch {
             return { status: 'unavailable', reason: 'transport' };

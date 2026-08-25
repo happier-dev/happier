@@ -4,7 +4,6 @@ import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugi
 
 import {
     getInstalledPluginReactNativeBundleCache,
-    type PluginReactNativeBundleCache,
 } from '@/components/plugins/reactNative/bundleCache';
 import {
     captureActiveServerAccountScopeLifetime,
@@ -16,13 +15,11 @@ import {
 } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import {
-    derivePluginUiPersistentArtifactKey,
-    type PluginUiPersistentArtifactIdentity,
-} from '@/sync/domains/plugins/ui/artifactByteCache';
+    forgetPluginUiProjectionAdmissionSnapshots,
+} from '@/sync/domains/plugins/ui/projectionWarmCache';
 
 import {
     createPluginAccountAvailabilityReaderStore,
-    createPluginAccountAvailabilityReader,
     projectPluginAccountAvailabilityMaterializationIdentity,
     type PluginAccountAvailabilityReader,
     type PluginAccountAvailabilityReleaseClassificationV1,
@@ -83,69 +80,6 @@ function retainClearedProjection(previous: PluginAccountAvailabilityStoredProjec
     }
 }
 
-function currentPersistentArtifactIdentities(
-    projection: Readonly<{
-        scope: ServerAccountScope;
-        snapshot: PluginAccountAvailabilitySnapshot;
-    }>,
-): ReadonlyMap<string, PluginUiPersistentArtifactIdentity> {
-    const reader = createPluginAccountAvailabilityReader(projection);
-    const identities = new Map<string, PluginUiPersistentArtifactIdentity>();
-    for (const intentRead of projection.snapshot.intentReads) {
-        const slots = intentRead.response.release?.uiSlots ?? [];
-        for (const slot of slots) {
-            const admission = reader.readCurrentArtifact({
-                pluginId: intentRead.pluginId,
-                contributionId: slot.contributionId,
-                tier: slot.tier,
-                platform: slot.platform,
-            });
-            if (admission.kind !== 'available') continue;
-            const identity: PluginUiPersistentArtifactIdentity = Object.freeze({
-                accountScope: projection.scope,
-                releaseVersion: admission.artifact.releaseVersion,
-                pluginId: admission.artifact.pluginId,
-                contributionId: admission.artifact.contributionId,
-                tier: admission.artifact.tier,
-                platform: admission.artifact.platform,
-                artifactDigest: admission.artifact.digest,
-            });
-            identities.set(derivePluginUiPersistentArtifactKey(identity), identity);
-        }
-    }
-    return identities;
-}
-
-function discardPersistentArtifactsRevokedByProjectionReplacement(input: Readonly<{
-    previous: PluginAccountAvailabilityStoredProjection;
-    next: Readonly<{
-        scope: ServerAccountScope;
-        snapshot: PluginAccountAvailabilitySnapshot;
-    }>;
-    revision: number;
-    lifetime: ActiveServerAccountScopeLifetime;
-    cache: Pick<PluginReactNativeBundleCache, 'removePersistentArtifact'>;
-}>): void {
-    if (!areServerAccountScopesEqual(input.previous.scope, input.next.scope)) return;
-    const previous = currentPersistentArtifactIdentities(input.previous);
-    if (previous.size === 0) return;
-    const next = currentPersistentArtifactIdentities(input.next);
-    const revoked = [...previous].filter(([key]) => !next.has(key));
-    if (revoked.length === 0) return;
-
-    const isCurrent = () => (
-        projectionRevision === input.revision
-        && input.lifetime.isCurrent()
-        && areServerAccountScopesEqual(input.lifetime.scope, input.next.scope)
-    );
-    for (const [, identity] of revoked) {
-        // The cache owns physical removal, its Account operation fence, and
-        // account quarantine on deletion failure. The projection only revokes
-        // identities its new verified snapshot no longer admits.
-        void input.cache.removePersistentArtifact(identity, isCurrent).catch(() => undefined);
-    }
-}
-
 /**
  * The sole UI projection writer. The Account Availability HTTP/change owner
  * replaces one complete verified snapshot; consumers only read Account
@@ -156,24 +90,41 @@ export function replacePluginAccountAvailabilityProjection(input: Readonly<{
     scope: ServerAccountScope;
     snapshot: PluginAccountAvailabilitySnapshot;
 }>): void {
-    const previous = readerStore.replace(input) ?? clearedProjection;
+    readerStore.replace(input);
     releaseClearedProjection();
     advanceProjectionRevision();
     const lifetime = currentProjectionLifetime(input.scope);
     if (!lifetime) return;
-    const cache = getInstalledPluginReactNativeBundleCache();
     // Availability is the current Account projection owner. Binding the
     // incumbent cache here makes prior-run bytes retire even when no surface
-    // acquires an Artifact during this app lifetime.
-    cache.bindAccountLifetime(lifetime);
-    if (!previous) return;
-    discardPersistentArtifactsRevokedByProjectionReplacement({
-        previous,
-        next: input,
-        revision: projectionRevision,
-        lifetime,
-        cache,
-    });
+    // acquires an Artifact during this app lifetime. Retiring reachability is
+    // the whole transition: replacing this projection is never a deletion
+    // authority, so `A -> B -> A` reuses retained bytes instead of paying for a
+    // second download (PEP master decision 9; PEP-ARTIFACTS 8.2). Physical
+    // deletion stays with logout/forget/explicit clear and with the cache's own
+    // corruption and eviction owners.
+    getInstalledPluginReactNativeBundleCache().bindAccountLifetime(lifetime);
+}
+
+/**
+ * Logout, forget Account, or an explicit local clear. An Account switch or
+ * deactivation only retires handles, projections and lookup authority — its
+ * Account-qualified bytes may remain inert and are reusable once the same
+ * Account and exact current release authority are re-established. Forgetting
+ * the Account on this device is the one path that also deletes those bytes,
+ * through the incumbent cache owner's Account cleanup and quarantine fence,
+ * together with the Account's retained plugin UI admission snapshot: an index
+ * entry that outlived a forgotten Account would still name its plugins.
+ */
+export function forgetPluginAccountAvailabilityArtifacts(scope: ServerAccountScope): void {
+    clearPluginAccountAvailabilityProjection();
+    forgetPluginUiProjectionAdmissionSnapshots(scope);
+    // The cache owner fences the Account synchronously and owns the physical
+    // deletion, its retry, and its quarantine. This adds no second cleanup
+    // owner, timer or worker.
+    void getInstalledPluginReactNativeBundleCache()
+        .removePersistentArtifactsForAccount(scope)
+        .catch(() => undefined);
 }
 
 /** Called by the incumbent Account-lifetime/reset owner through its consumer hook. */

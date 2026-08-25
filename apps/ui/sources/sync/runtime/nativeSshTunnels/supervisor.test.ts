@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { buildAccessEndpointProjection } from '@/sync/domains/accessEndpoints/buildProjection';
+import { buildAccessChannelProjection } from '@/sync/domains/accessEndpoints/channels/buildProjection';
+
 import type { NativeSshTunnelAdapter, NativeSshTunnelProbe } from './types';
 
 function createRequest() {
@@ -544,6 +547,51 @@ describe('native SSH tunnel supervisor', () => {
         expect(supervisor.listTunnels().platformLimitations.find((limitation) => limitation.reason === 'platform-suspended')?.message)
             .toBe('settings.accessEndpoints.limitation.platform-suspended');
         expect(supervisor.listTunnels().leases[0]?.status).toBe('degraded');
+    });
+
+    /**
+     * §7.1 deciding check. An authentication failure aborts before any lease exists, so the whole
+     * chain — supervisor limitation → snapshot → projection diagnostics → access channel — has to
+     * carry it without an endpoint. Only the native adapter (a real system boundary) is faked.
+     */
+    it('surfaces an authentication failure all the way to an access channel with no lease', async () => {
+        const loaded = await import('./supervisor').catch(() => null);
+        expect(loaded).not.toBeNull();
+
+        const authError = Object.assign(new Error('native_ssh_auth'), { code: 'authentication-failed' });
+        const adapter: NativeSshTunnelAdapter = {
+            startLoopbackTunnel: vi.fn(async () => {
+                throw authError;
+            }),
+            stopLoopbackTunnel: vi.fn(async () => undefined),
+        };
+        const supervisor = loaded!.createNativeSshTunnelSupervisor({
+            adapter,
+            probe: vi.fn(async () => ({ ok: true as const })),
+        });
+
+        await expect(supervisor.ensureTunnel(createRequest())).rejects.toBe(authError);
+
+        const snapshot = supervisor.listTunnels();
+        expect(snapshot.leases).toEqual([]);
+
+        const projection = buildAccessEndpointProjection({
+            clientContext: 'native',
+            nativeSshTunnelSnapshot: snapshot,
+        });
+        expect(projection.endpoints).toEqual([]);
+        expect(projection.diagnostics.map((diagnostic) => diagnostic.id))
+            .toContain('native-ssh.authentication-failed');
+
+        const channels = buildAccessChannelProjection({
+            endpoints: projection.endpoints,
+            diagnostics: projection.diagnostics,
+        });
+        expect(channels.map((channel) => channel.kind)).toEqual(['ssh-tunnel-native']);
+        expect(channels[0]?.limitations).toContainEqual(expect.objectContaining({
+            reason: 'authentication-failed',
+            severity: 'error',
+        }));
     });
 
     it('rejects direct supervisor tunnel starts while suspended', async () => {

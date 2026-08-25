@@ -70,6 +70,20 @@ function placementEntry(input: Readonly<{
     };
 }
 
+function structuredMessageEntry(input: Readonly<{
+    pluginId: string;
+    kind: string;
+}>): Readonly<Record<string, unknown>> {
+    return {
+        id: `structuredMessage:${input.pluginId}:${input.kind}`,
+        pluginId: input.pluginId,
+        contributionKind: 'structuredMessage',
+        descriptorId: input.kind,
+        kind: input.kind,
+        fallback: { kind: 'hidden' },
+    };
+}
+
 function reactNativeBundleEntry(pluginId: string): Readonly<Record<string, unknown>> {
     return {
         id: `reactNativeBundle:${pluginId}:bundle`,
@@ -732,6 +746,74 @@ describe('unionPluginUiProjections', () => {
         expect(union.pluginUiProjection?.surfacePlacementsById['surfacePlacement:acme.selected:panel'])
             .toBeUndefined();
         expect(union.pluginUiProjection?.installedPackagesById['acme.selected']).toBeUndefined();
+    });
+
+    it('keeps the first admitted machine when two machines replicate one unmaterialized plugin', () => {
+        // A plugin the Account can never materialize arrives UNSTAMPED from
+        // every machine that holds it, so two connected machines publish the
+        // SAME contribution key. Members are ordered by `machineId`; taking the
+        // later one would silently re-home every such surface — and shadow its
+        // package brand — the moment an unrelated machine connects.
+        const replica = (machineId: string, version: string): PluginUiProjectionUnionMember => ({
+            machineId,
+            serverId: 'server-1',
+            projection: machineProjection({
+                generation: 7,
+                entriesById: {
+                    placement: placementEntry({ pluginId: 'happier.triage', localId: 'triage' }),
+                    message: structuredMessageEntry({ pluginId: 'happier.triage', kind: 'triage.result' }),
+                },
+                installedPackagesById: {
+                    'happier.triage': {
+                        id: 'happier.triage',
+                        displayName: 'Triage',
+                        version,
+                        enabled: true,
+                        source: { kind: 'bundled', locator: 'happier.triage' },
+                    },
+                },
+            }),
+            phase: 'current',
+            interactionEnabled: true,
+        });
+
+        const union = unionPluginUiProjections(
+            [replica('machine-b', '2.0.0'), replica('machine-a', '1.0.0')],
+            new Map(),
+        );
+
+        const placement = union.pluginUiProjection
+            ?.surfacePlacementsById['surfacePlacement:happier.triage:triage'];
+        expect(readPluginUiContributionOrigin(placement)?.machineId).toBe('machine-a');
+        expect(union.pluginUiProjection?.installedPackagesById['happier.triage']?.version).toBe('1.0.0');
+        // A second machine's copy of the SAME plugin's transcript kind is a
+        // replica, not two plugins claiming one kind, so the kind survives.
+        expect(union.pluginUiProjection?.structuredMessagesByKind['triage.result']?.pluginId)
+            .toBe('happier.triage');
+    });
+
+    it('still drops a transcript kind two different plugins claim across machines', () => {
+        // The positive twin of the replica rule: cross-machine deduplication
+        // must not weaken the genuine cross-plugin ambiguity contract.
+        const claimant = (machineId: string, pluginId: string): PluginUiProjectionUnionMember => ({
+            machineId,
+            serverId: 'server-1',
+            projection: machineProjection({
+                generation: 7,
+                entriesById: {
+                    message: structuredMessageEntry({ pluginId, kind: 'triage.result' }),
+                },
+            }),
+            phase: 'current',
+            interactionEnabled: true,
+        });
+
+        const union = unionPluginUiProjections(
+            [claimant('machine-a', 'acme.alpha'), claimant('machine-b', 'acme.beta')],
+            new Map(),
+        );
+
+        expect(union.pluginUiProjection?.structuredMessagesByKind['triage.result']).toBeUndefined();
     });
 
     it('treats an authority flip as a member change and an unchanged snapshot as none', () => {

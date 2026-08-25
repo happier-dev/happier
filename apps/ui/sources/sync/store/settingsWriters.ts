@@ -3,9 +3,15 @@ import React from 'react';
 import type { LocalSettings } from '../domains/settings/localSettings';
 import type {
   AccountSettingsWriteDelta,
+  Settings,
   SettingsWriteDelta,
 } from '../domains/settings/settings';
-import type { RetainedSecretBindingsByProfileId } from '../domains/settings/secretBindings';
+import { settingsDefaults } from '../domains/settings/settings';
+import {
+  mergeCurrentSecretBindingsIntoRawBindings,
+  readRetainedSecretBindingsByProfileId,
+  type RetainedSecretBindingsByProfileId,
+} from '../domains/settings/secretBindings';
 import type {
   CurrentSessionAuthoringSelectionsRuntimeProjection,
 } from '../domains/settings/sessionAuthoringSelectionPersistence';
@@ -29,6 +35,51 @@ export function useApplySettings(): (delta: SettingsWriteDelta) => void {
   return React.useCallback((delta: SettingsWriteDelta) => {
     getSyncSingleton().applySettings(delta, { source: 'ui' satisfies SettingsAnalyticsSource });
   }, []);
+}
+
+export function useApplyProfileSave(): (input: Readonly<{
+  profiles: Settings['profiles'];
+  profileId: string;
+  secretBindings?: Readonly<Record<string, string>>;
+}>) => void {
+  return React.useCallback((input) => {
+    const settings = getStorage().getState().settings ?? settingsDefaults;
+    const delta: AccountSettingsWriteDelta = input.secretBindings === undefined
+      ? { profiles: input.profiles }
+      : {
+        profiles: input.profiles,
+        secretBindingsByProfileId: mergeProfileSecretBindings({
+          settings,
+          profileId: input.profileId,
+          secretBindings: input.secretBindings,
+        }),
+      };
+    getSyncSingleton().applySettings(delta, { source: 'ui' satisfies SettingsAnalyticsSource });
+  }, []);
+}
+
+/**
+ * Merge one profile's edited current bindings back into the retained Protocol
+ * carrier. Clearing every entry removes the profile from the current map so
+ * the merge drops it, while opaque entries this UI never rendered survive.
+ */
+function mergeProfileSecretBindings(input: Readonly<{
+  settings: Settings;
+  profileId: string;
+  secretBindings: Readonly<Record<string, string>>;
+}>): RetainedSecretBindingsByProfileId {
+  const currentBindings = input.settings.currentSecretBindingsByProfileId;
+  const nextBindings = { ...currentBindings };
+  if (Object.keys(input.secretBindings).length === 0) {
+    delete nextBindings[input.profileId];
+  } else {
+    nextBindings[input.profileId] = { ...input.secretBindings };
+  }
+  return mergeCurrentSecretBindingsIntoRawBindings({
+    rawBindings: readRetainedSecretBindingsByProfileId(input.settings),
+    currentBindings,
+    nextBindings,
+  });
 }
 
 /**

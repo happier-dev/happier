@@ -1,5 +1,4 @@
 import {
-    BrowserTargetDisplayV1Schema,
     BrowserViewTargetV1Schema,
     type BrowserViewTargetV1,
     type LocalServiceLauncherSnapshotV1,
@@ -7,6 +6,10 @@ import {
 } from '@happier-dev/protocol';
 
 import { resolvePluginBrowserPolicyDecision } from '@/sync/domains/plugins/browser/policy';
+import {
+    resolvePluginLocalizedText,
+    type PluginLocalizedTextResolver,
+} from '@/sync/domains/plugins/ui/i18n';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import type {
     PluginBrowserProjectionModel,
@@ -87,28 +90,6 @@ function parseTarget(value: unknown): BrowserViewTargetV1 | null {
     return result.success ? result.data : null;
 }
 
-function readDisplay(value: unknown): Readonly<{
-    title: string;
-    subtitle?: string;
-}> | null {
-    const parsed = BrowserTargetDisplayV1Schema.safeParse(value);
-    if (parsed.success) {
-        return {
-            title: parsed.data.title,
-            subtitle: parsed.data.addressLabel,
-        };
-    }
-    const record = asRecord(value);
-    const title = readString(record?.title);
-    if (!title) {
-        return null;
-    }
-    return {
-        title,
-        subtitle: readString(record?.addressLabel) ?? undefined,
-    };
-}
-
 function sectionForLaunchTarget(target: LocalServiceLaunchTargetV1): BrowserLaunchpadSection {
     if (target.state !== 'available') {
         return 'unavailable';
@@ -186,16 +167,24 @@ function rowFromPluginTarget(
     entry: PluginBrowserTargetProjection,
     nowMs: number,
     policyContext?: PluginUiPolicyEvaluationContext,
+    localizePluginText?: PluginLocalizedTextResolver,
 ): BrowserLaunchpadRow | null {
-    const policyDecision = resolvePluginBrowserPolicyDecision(entry, policyContext);
+    const policyDecision = resolvePluginBrowserPolicyDecision(entry, policyContext, localizePluginText);
     if (!policyDecision.visible) {
         return null;
     }
     const target = parseTarget(entry.target);
-    const display = readDisplay(entry.display);
-    if (!target || !display) {
+    const display = asRecord(entry.display);
+    const title = localizePluginText?.(entry.pluginId, display?.title)
+        ?? resolvePluginLocalizedText({
+            projection: null,
+            pluginId: entry.pluginId,
+            value: display?.title,
+        });
+    if (!target || !title) {
         return null;
     }
+    const subtitle = readString(display?.addressLabel) ?? undefined;
     if (target.kind === 'externalUrl') {
         const launchMode = entry.launchMode;
         const profileMode = entry.profileMode;
@@ -209,8 +198,8 @@ function rowFromPluginTarget(
             id: `pluginExternalUrl:${entry.id}`,
             section: policyDecision.enabled ? 'plugin' : 'unavailable',
             sourceKind: 'pluginExternalUrl',
-            title: display.title,
-            subtitle: display.subtitle,
+            title,
+            subtitle,
             detail: entry.pluginId,
             target,
             currentUrl: target.url,
@@ -239,8 +228,8 @@ function rowFromPluginTarget(
         id: `pluginHostedWeb:${entry.id}`,
         section: 'plugin',
         sourceKind: 'hostedPluginWeb',
-        title: display.title,
-        subtitle: display.subtitle,
+        title,
+        subtitle,
         detail: entry.pluginId,
         target,
         ...(currentUrl ? { currentUrl } : {}),
@@ -298,6 +287,7 @@ export function buildBrowserLaunchpadRows(input: Readonly<{
     localServicePreviewState?: LocalServicePreviewState | null;
     pluginBrowserProjection?: PluginBrowserProjectionModel | null;
     pluginBrowserPolicyContext?: PluginUiPolicyEvaluationContext;
+    localizePluginText?: PluginLocalizedTextResolver;
     recents?: readonly BrowserRecentTarget[];
     nowMs?: number;
 }>): readonly BrowserLaunchpadRow[] {
@@ -313,7 +303,12 @@ export function buildBrowserLaunchpadRows(input: Readonly<{
     const launcherRows = (input.launcherSnapshot?.targets ?? [])
         .map((target) => rowFromLaunchTarget(target, input.launcherSnapshot?.updatedAt ?? nowMs));
     const pluginRows = Object.values(input.pluginBrowserProjection?.targetsById ?? {})
-        .map((entry) => rowFromPluginTarget(entry, nowMs, input.pluginBrowserPolicyContext))
+        .map((entry) => rowFromPluginTarget(
+            entry,
+            nowMs,
+            input.pluginBrowserPolicyContext,
+            input.localizePluginText,
+        ))
         .filter((row): row is BrowserLaunchpadRow => Boolean(row));
     const recentRows = (input.recents ?? []).map(rowFromRecent);
     return dedupeRows([...localPreviewRows, ...launcherRows, ...pluginRows, ...recentRows].sort(rankRows));

@@ -118,6 +118,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
             sessions: {
                 enabled: false,
+                drafts: { enabled: false },
                 folders: {
                     enabled: false,
                 },

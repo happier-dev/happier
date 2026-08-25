@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
+
 import { fetchAndApplyAutomationRuns, fetchAndApplyAutomations } from './syncAutomations';
 
 const listAutomationDefinitionsV3Mock = vi.hoisted(() => vi.fn());
@@ -75,6 +77,7 @@ const eventRun = {
     replyHandoffState: 'none' as const,
     replyHandoffAttempt: 0,
     replyHandoffDueAt: null,
+    contentRemovedAt: null,
     createdAt: 10,
     updatedAt: 12,
 };
@@ -96,13 +99,13 @@ describe('fetchAndApplyAutomations', () => {
 
     it('applies content-free V3 summaries and refreshes already-loaded Event runs through V3', async () => {
         const applyAutomations = vi.fn();
-        const setAutomationRuns = vi.fn();
+        const refreshAutomationRunsWindow = vi.fn();
 
         await fetchAndApplyAutomations({
             credentials: { accessToken: 'token' } as any,
             applyAutomations,
             loadedAutomationRunIds: ['event-1'],
-            setAutomationRuns,
+            refreshAutomationRunsWindow,
         });
 
         expect(applyAutomations).toHaveBeenCalledWith([expect.objectContaining({
@@ -122,7 +125,7 @@ describe('fetchAndApplyAutomations', () => {
             automationId: 'event-1',
             limit: 20,
         });
-        expect(setAutomationRuns).toHaveBeenCalledWith('event-1', [eventRun], null);
+        expect(refreshAutomationRunsWindow).toHaveBeenCalledWith('event-1', [eventRun], null);
     });
 
     it('does not turn a list refresh into a private direct-detail fanout', async () => {
@@ -139,21 +142,54 @@ describe('fetchAndApplyAutomations', () => {
         });
     });
 
+    it('refreshes already-loaded run lists through the shared request-concurrency owner', async () => {
+        const applyAutomations = vi.fn();
+        const refreshAutomationRunsWindow = vi.fn();
+        const loadedAutomationRunIds = Array.from({ length: 20 }, (_unused, index) => `event-${index + 1}`);
+        listAutomationDefinitionsV3Mock.mockResolvedValue(loadedAutomationRunIds.map((id) => ({
+            ...eventSummary,
+            id,
+        })));
+        let inFlight = 0;
+        let peakInFlight = 0;
+        listAutomationDefinitionRunsV3Mock.mockImplementation(async () => {
+            inFlight += 1;
+            peakInFlight = Math.max(peakInFlight, inFlight);
+            await Promise.resolve();
+            inFlight -= 1;
+            return { runs: [eventRun], nextCursor: null };
+        });
+
+        await fetchAndApplyAutomations({
+            credentials: { accessToken: 'token' } as any,
+            applyAutomations,
+            loadedAutomationRunIds,
+            refreshAutomationRunsWindow,
+        });
+
+        // The Account ceiling allows thousands of definitions, so one socket
+        // invalidation must never open one request per cached run list at once.
+        expect(listAutomationDefinitionRunsV3Mock).toHaveBeenCalledTimes(20);
+        expect(peakInFlight).toBeLessThanOrEqual(
+            loadSyncTuning().automationDefinitionDetailHydrationConcurrencyLimit,
+        );
+    });
+
     it('drops fetched automations when the captured sync scope is stale before apply', async () => {
         const applyAutomations = vi.fn();
-        const setAutomationRuns = vi.fn();
+        const refreshAutomationRunsWindow = vi.fn();
 
         await fetchAndApplyAutomations({
             credentials: { accessToken: 'token' } as any,
             applyAutomations,
             loadedAutomationRunIds: ['event-1'],
-            setAutomationRuns,
+            refreshAutomationRunsWindow,
             shouldContinue: () => false,
         });
 
         expect(applyAutomations).not.toHaveBeenCalled();
         expect(listAutomationDefinitionRunsV3Mock).not.toHaveBeenCalled();
-        expect(setAutomationRuns).not.toHaveBeenCalled();
+        expect(refreshAutomationRunsWindow).not.toHaveBeenCalled();
     });
 });
 

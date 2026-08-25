@@ -5,6 +5,20 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { FeatureId } from '@happier-dev/protocol';
 
 describe('featureLocalPolicy', () => {
+    it('keeps the paused onboarding tour disabled even when the legacy rollout env is enabled', () => {
+        const env = process.env as Record<string, string | undefined>;
+        const enableKey = 'EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED';
+        const previousEnable = env[enableKey];
+        env[enableKey] = '1';
+
+        try {
+            expect(resolveLocalFeaturePolicyEnabled('app.ui.onboardingTour', settingsDefaults)).toBe(false);
+        } finally {
+            if (previousEnable === undefined) delete env[enableKey];
+            else env[enableKey] = previousEnable;
+        }
+    });
+
     it('does not let a persisted retired channel bridge toggle decide local availability', () => {
         // Account settings from a predecessor can contain a retired feature identifier.
         expect(resolveLocalFeaturePolicyEnabled('channelBridges' as unknown as FeatureId, {

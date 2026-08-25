@@ -156,6 +156,9 @@ export const UI_FEATURE_REGISTRY = {
     'sessions.agentSwitching': {
         settingsToggle: undefined,
     },
+    'sessions.drafts': {
+        settingsToggle: undefined,
+    },
     'sessions.usageLimitRecovery': {
         settingsToggle: undefined,
     },

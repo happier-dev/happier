@@ -325,6 +325,7 @@ async function runResumeSession(
         const parsedConnectedServices = parsedConnectedServicesRaw == null ? undefined : parsedConnectedServicesRaw;
         const params: ResumeHappySessionRpcParams = buildResumeHappySessionRpcParams({
             sessionId,
+            machineId,
             directory,
             backendTarget,
             ...(resume ? { resume } : {}),

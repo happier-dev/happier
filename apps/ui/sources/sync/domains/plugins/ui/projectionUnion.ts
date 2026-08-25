@@ -407,6 +407,20 @@ export function unionPluginUiProjections(
     const voiceProvidersById: Record<string, PluginVoiceProviderProjection> = {};
     const unknownEntriesById: Record<string, UnknownRecord> = {};
 
+    // A plugin the Account can never materialize is admitted through the
+    // unmaterialized arm on EVERY machine that holds it, so the same
+    // contribution key arrives once per member. `admittedContributing` is
+    // already ordered by `machineId`, which makes the first admitted replica
+    // the deterministic one; plain assignment instead published the last, so
+    // connecting an unrelated machine silently re-homed every such surface and
+    // shadowed its package brand. A replica is therefore skipped. The selected
+    // arm cannot produce a duplicate at all — it admits only the one member
+    // whose `machineId` equals the selection's — so this changes nothing there.
+    const publishFirstAdmitted = <T>(map: Record<string, T>, key: string, value: T): void => {
+        if (Object.hasOwn(map, key)) return;
+        map[key] = value;
+    };
+
     for (const member of admittedContributing) {
         const model = member.projection;
         const admittedPluginIds = new Set<string>();
@@ -435,12 +449,17 @@ export function unionPluginUiProjections(
 
         for (const [pluginId, entry] of Object.entries(model.translationsByPluginId)) {
             const origin = originFor(entry);
-            if (origin) translationsByPluginId[pluginId] = stamp(entry, origin);
+            if (origin) publishFirstAdmitted(translationsByPluginId, pluginId, stamp(entry, origin));
         }
         for (const [kind, entry] of Object.entries(model.structuredMessagesByKind)) {
             const origin = originFor(entry);
             if (!origin || ambiguousStructuredMessageKinds.has(kind)) continue;
-            if (Object.hasOwn(structuredMessagesByKind, kind)) {
+            const published = structuredMessagesByKind[kind];
+            if (published !== undefined) {
+                // Another machine's copy of the SAME plugin's descriptor is a
+                // replica, not a competing claim: dropping the kind there would
+                // erase the renderer as soon as a second machine connected.
+                if (published.pluginId === entry.pluginId) continue;
                 // Two plugins claiming one transcript kind is ambiguous, exactly
                 // as it is inside a single machine's normalization.
                 delete structuredMessagesByKind[kind];
@@ -451,40 +470,40 @@ export function unionPluginUiProjections(
         }
         for (const [id, entry] of Object.entries(model.sessionHeaderActionsById)) {
             const origin = originFor(entry);
-            if (origin) sessionHeaderActionsById[id] = stamp(entry, origin);
+            if (origin) publishFirstAdmitted(sessionHeaderActionsById, id, stamp(entry, origin));
         }
         for (const [id, entry] of Object.entries(model.hostedWebById)) {
             const origin = originFor(entry);
-            if (origin) hostedWebById[id] = stamp(entry, origin);
+            if (origin) publishFirstAdmitted(hostedWebById, id, stamp(entry, origin));
         }
         for (const [id, entry] of Object.entries(model.reactNativeBundlesById)) {
             const origin = originFor(entry);
-            if (origin) reactNativeBundlesById[id] = stamp(entry, origin);
+            if (origin) publishFirstAdmitted(reactNativeBundlesById, id, stamp(entry, origin));
         }
         for (const [id, entry] of Object.entries(model.surfacePlacementsById)) {
             const origin = originFor(entry);
-            if (origin) surfacePlacementsById[id] = stamp(entry, origin);
+            if (origin) publishFirstAdmitted(surfacePlacementsById, id, stamp(entry, origin));
         }
         for (const [id, entry] of Object.entries(model.settingsGroupsById)) {
             const origin = originFor(entry);
-            if (origin) settingsGroupsById[id] = stamp(entry, origin);
+            if (origin) publishFirstAdmitted(settingsGroupsById, id, stamp(entry, origin));
         }
         for (const [id, entry] of Object.entries(model.settingsPagesById)) {
             const origin = originFor(entry);
-            if (origin) settingsPagesById[id] = stamp(entry, origin);
+            if (origin) publishFirstAdmitted(settingsPagesById, id, stamp(entry, origin));
         }
         for (const [id, entry] of Object.entries(model.actionsById)) {
             const origin = originFor(entry);
-            if (origin) actionsById[id] = stamp(entry, origin);
+            if (origin) publishFirstAdmitted(actionsById, id, stamp(entry, origin));
         }
         for (const [id, entry] of Object.entries(model.voiceProvidersById)) {
             const origin = originFor(entry);
-            if (origin) voiceProvidersById[id] = stamp(entry, origin);
+            if (origin) publishFirstAdmitted(voiceProvidersById, id, stamp(entry, origin));
         }
         for (const [id, entry] of Object.entries(model.unknownEntriesById)) {
             const origin = originFor(entry);
             if (origin) {
-                unknownEntriesById[id] = stamp(entry, origin);
+                publishFirstAdmitted(unknownEntriesById, id, stamp(entry, origin));
             }
         }
         // A package catalog fact has no contribution-level origin stamp of its
@@ -496,7 +515,7 @@ export function unionPluginUiProjections(
         for (const pluginId of admittedPluginIds) {
             const installedPackage = model.installedPackagesById[pluginId];
             if (installedPackage) {
-                installedPackagesById[pluginId] = installedPackage;
+                publishFirstAdmitted(installedPackagesById, pluginId, installedPackage);
             }
         }
     }
@@ -558,6 +577,7 @@ export function unionPluginUiProjections(
         openableContentViewersById: Object.freeze({}),
         unknownEntriesById: Object.freeze(unknownEntriesById),
         transcriptActivitiesById: Object.freeze({}),
+        sessionInfoSectionsById: Object.freeze({}),
     });
 
     return Object.freeze({

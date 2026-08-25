@@ -59,7 +59,7 @@ import {
 import { getPersistenceStorage } from './persistenceStorage';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { prepareSessionPersistenceScopeForActivation } from './sessionPersistence';
-import { scopedSessionLocalStateKey } from './sessionLocalStateKeys';
+import { scopedSessionLocalStateKey, sessionDraftValuesStorageKey } from './sessionLocalStateKeys';
 export { loadProfile, saveProfile } from './profilePersistence';
 export { clearPersistence } from './persistenceLifecycle';
 export {
@@ -799,9 +799,23 @@ export function saveSessionMaterializedMaxSeqById(data: Record<string, number>, 
 
 export function prepareSessionLocalStateScopeForActivation(scope: ServerAccountScope): void {
     const mmkv = getPersistenceStorage();
-    // Active-session drafts are recoverable user text, so legacy values migrate once.
-    // Launch drafts include machine/profile/secret intent and are dropped below instead.
+    // Drafts are recoverable user intent. Preserve the released unscoped
+    // singleton long enough for the canonical repository migration to project
+    // only its explicitly synchronized, non-secret fields.
     prepareSessionPersistenceScopeForActivation(scope);
+
+    const scopedDraftValuesKey = sessionDraftValuesStorageKey(scope);
+    const legacyDraftValuesKey = sessionDraftValuesStorageKey();
+    if (typeof mmkv.getString(scopedDraftValuesKey) !== 'string') {
+        const legacyDraftValues = mmkv.getString(legacyDraftValuesKey);
+        if (typeof legacyDraftValues === 'string') mmkv.set(scopedDraftValuesKey, legacyDraftValues);
+    }
+    mmkv.delete(legacyDraftValuesKey);
+
+    if (typeof mmkv.getString(newSessionDraftKey(scope)) !== 'string') {
+        const legacyNewSessionDraft = loadNewSessionDraft();
+        if (legacyNewSessionDraft) saveNewSessionDraft(legacyNewSessionDraft, scope);
+    }
 
     mmkv.delete(newSessionDraftKey());
     mmkv.delete(sessionMaterializedMaxSeqKey());

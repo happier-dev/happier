@@ -6,7 +6,7 @@ import {
     type DaemonFilesystemListDirectoryResponse,
     type DaemonFilesystemListRootsResponse,
 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
@@ -21,20 +21,29 @@ function throwUnsupportedResponse(method: string): never {
     throw new Error(`Unsupported response from machine RPC (${method})`);
 }
 
-function toMachineFileBrowserRootsRpcError(error: unknown): Extract<DaemonFilesystemListRootsResponse, { ok: false }> {
+/**
+ * A throw out of the machine RPC means no answer came back: the transport failed, timed out, or the
+ * machine is unreachable. The `error` string here is rendered verbatim by the folder picker
+ * (`components/ui/filesystemBrowser/FilesystemBrowser.tsx`), so passing `error.message` through put
+ * internal exception text — `Cannot read properties of undefined (reading 'emit')` — in front of the
+ * user (`F-UI-2`). The local-services inventory adapter, which shares this transport, turns the same
+ * throw into a typed reason and never lets the message escape; do the same here. A failure the
+ * daemon itself reports still arrives as a parsed `{ ok: false, error }` response and is untouched.
+ */
+function toMachineFileBrowserRpcError(error: unknown): Readonly<{ ok: false; error: string; errorCode: string }> {
     return {
         ok: false,
-        error: error instanceof Error ? error.message : 'Machine RPC failed',
-        errorCode: readRpcErrorCode(error),
+        error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+        errorCode: readRpcErrorCode(error) ?? RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
     };
 }
 
+function toMachineFileBrowserRootsRpcError(error: unknown): Extract<DaemonFilesystemListRootsResponse, { ok: false }> {
+    return toMachineFileBrowserRpcError(error);
+}
+
 function toMachineFileBrowserDirectoryRpcError(error: unknown): Extract<DaemonFilesystemListDirectoryResponse, { ok: false }> {
-    return {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Machine RPC failed',
-        errorCode: readRpcErrorCode(error),
-    };
+    return toMachineFileBrowserRpcError(error);
 }
 
 export async function machineFilesystemListRoots(

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { DaemonPluginReactNativeBundleCacheIdentityV1Schema } from '@happier-dev/protocol';
+
 import {
     PluginUiArtifactAdoptionOwner,
+    readPluginUiReactNativeBundleCacheIdentity,
     resolvePluginUiRendererTechnicalAdmission,
 } from './artifactAdoption';
 
@@ -130,5 +133,55 @@ describe('PluginUiArtifactAdoptionOwner', () => {
         });
 
         owner.dispose();
+    });
+});
+
+describe('readPluginUiReactNativeBundleCacheIdentity', () => {
+    const canonicalIdentity = Object.freeze({
+        pluginId: 'com.acme.preview',
+        contributionId: 'native-preview',
+        artifactDigest: `sha256:${'a'.repeat(64)}`,
+        hostAppVersion: '2.0.0',
+        hostUiApiVersion: '1.0.0',
+        reactVersion: '19.0.0',
+        reactNativeVersion: '0.83.4',
+        platform: 'ios',
+        channel: 'internal',
+        nativeCapabilitiesDigest: `sha256:${'b'.repeat(64)}`,
+        projectionGeneration: 12,
+    });
+
+    it('admits exactly what the canonical daemon cache-identity schema admits', () => {
+        // The producer validates `runtime.cacheIdentity` with
+        // `DaemonPluginReactNativeBundleCacheIdentityV1Schema`
+        // (`apps/cli/src/rpc/handlers/daemonContributionRegistryProjection.ts`).
+        // A second, more lenient reader here silently accepts values that
+        // producer can never emit, and derives a different cache key for them.
+        const canonical = DaemonPluginReactNativeBundleCacheIdentityV1Schema.parse(canonicalIdentity);
+        expect(readPluginUiReactNativeBundleCacheIdentity(canonicalIdentity)).toEqual(canonical);
+
+        // Unknown members: the canonical schema is `.strict()`.
+        expect(DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse({
+            ...canonicalIdentity,
+            unexpectedMember: 'x',
+        }).success).toBe(false);
+        expect(readPluginUiReactNativeBundleCacheIdentity({
+            ...canonicalIdentity,
+            unexpectedMember: 'x',
+        })).toBeNull();
+
+        // Surrounding whitespace: the canonical schema normalizes it, so a
+        // reader that keeps the raw value derives a divergent cache key for
+        // the same identity.
+        const padded = { ...canonicalIdentity, channel: '  internal  ' };
+        expect(DaemonPluginReactNativeBundleCacheIdentityV1Schema.parse(padded).channel).toBe('internal');
+        expect(readPluginUiReactNativeBundleCacheIdentity(padded)?.channel).toBe('internal');
+
+        // A blank optional member is rejected by the canonical schema rather
+        // than being silently dropped from the identity.
+        expect(readPluginUiReactNativeBundleCacheIdentity({
+            ...canonicalIdentity,
+            hermesVersion: '   ',
+        })).toBeNull();
     });
 });

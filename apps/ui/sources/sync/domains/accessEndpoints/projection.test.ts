@@ -18,6 +18,7 @@ type Endpoint = Readonly<{
 type Projection = Readonly<{
     endpoints: readonly Endpoint[];
     remediationActions: readonly Readonly<{ id: string; ownerSurface: string; payload?: Readonly<Record<string, unknown>> }>[];
+    diagnostics: readonly Readonly<{ id: string; severity: string; message: string }>[];
 }>;
 
 type ClassifierModule = Readonly<{
@@ -511,5 +512,85 @@ describe('AccessEndpoint projection', () => {
             'loopback',
             'cloudflare',
         ]);
+    });
+
+    /**
+     * §7.1: on auth or host-key failure the native supervisor records a runtime limitation but
+     * never calls `store.put`, so there is no lease. Limitations that only travel nested inside a
+     * lease-derived endpoint are therefore dropped in the primary failure case. They belong to the
+     * projection, not to an endpoint.
+     */
+    it('surfaces native SSH platform limitations at projection level when no lease exists', async () => {
+        const projectionModule = await loadProjectionModule();
+
+        const projection = projectionModule.buildAccessEndpointProjection({
+            clientContext: 'native',
+            nativeSshTunnelSnapshot: {
+                leases: [],
+                platformLimitations: [
+                    {
+                        id: 'native-ssh.foreground-only',
+                        severity: 'info',
+                        reason: 'foreground-only',
+                        message: 'settings.accessEndpoints.limitation.foreground-only',
+                    },
+                    {
+                        id: 'native-ssh.authentication-failed',
+                        severity: 'error',
+                        reason: 'authentication-failed',
+                        message: 'settings.accessEndpoints.limitation.authentication-failed',
+                    },
+                ],
+            },
+        });
+
+        expect(projection.endpoints).toEqual([]);
+        expect(projection.diagnostics).toEqual([
+            {
+                id: 'native-ssh.foreground-only',
+                severity: 'info',
+                message: 'settings.accessEndpoints.limitation.foreground-only',
+            },
+            {
+                id: 'native-ssh.authentication-failed',
+                severity: 'error',
+                message: 'settings.accessEndpoints.limitation.authentication-failed',
+            },
+        ]);
+    });
+
+    it('emits the platform limitations once at projection level rather than per lease', async () => {
+        const projectionModule = await loadProjectionModule();
+
+        const lease = (suffix: string, port: number) => ({
+            leaseId: `native-lease-${suffix}`,
+            key: `native-key-${suffix}`,
+            remoteHostId: 'host-a',
+            localUrl: `http://127.0.0.1:${port}`,
+            channelMode: 'loopback-port' as const,
+            purpose: 'server-http',
+            status: 'ready',
+            startedAt: '2026-05-06T10:00:00.000Z',
+        });
+        const projection = projectionModule.buildAccessEndpointProjection({
+            clientContext: 'native',
+            nativeSshTunnelSnapshot: {
+                leases: [lease('a', 49154), lease('b', 49155)],
+                platformLimitations: [{
+                    id: 'native-ssh.host-key-untrusted',
+                    severity: 'error',
+                    reason: 'host-key-untrusted',
+                    message: 'settings.accessEndpoints.limitation.host-key-untrusted',
+                }],
+            },
+        });
+
+        expect(projection.endpoints).toHaveLength(2);
+        expect(projection.diagnostics.filter((entry) => entry.id === 'native-ssh.host-key-untrusted'))
+            .toHaveLength(1);
+        for (const endpoint of projection.endpoints) {
+            expect((endpoint.diagnostics ?? []).map((entry) => entry.id))
+                .toEqual(['ssh-tunnel.native.this-device-only']);
+        }
     });
 });

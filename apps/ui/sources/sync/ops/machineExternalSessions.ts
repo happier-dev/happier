@@ -1,5 +1,4 @@
 import {
-    ExternalSessionTakeoverInputV1Schema,
     ExternalSessionOperationActionResponseV1Schema,
     ExternalSessionOperationCancelInputV1Schema,
     ExternalSessionOperationDiscardInputV1Schema,
@@ -12,7 +11,6 @@ import {
     type ExternalSessionOperationReferenceV1,
     type ExternalSessionMaterializeStartInputV1,
     type ExternalSessionTakeoverStartInputV1,
-    type ExternalSessionTakeoverInputV1,
 } from '@happier-dev/protocol/sessions';
 import {
     decodeBase64,
@@ -26,7 +24,6 @@ import {
     ExternalSessionLinkEnsureResponseSchema,
     ExternalSessionStatusGetRequestSchema,
     ExternalSessionStatusGetResponseSchema,
-    ExternalSessionTakeoverResponseSchema,
     ExternalSessionsCandidatesListRequestSchema,
     ExternalSessionsCandidatesListResponseSchema,
     ExternalSessionTranscriptPageRequestSchema,
@@ -45,7 +42,6 @@ import {
     type ExternalSessionLinkEnsureResponse,
     type ExternalSessionStatusGetRequest,
     type ExternalSessionStatusGetResponse,
-    type ExternalSessionTakeoverResponse,
     type ExternalSessionsCandidatesListRequest,
     type ExternalSessionsCandidatesListResponse,
     type ExternalSessionTranscriptPageRequest,
@@ -71,10 +67,6 @@ type MachineExternalSessionsOpts = Readonly<{
     signal?: AbortSignal;
 }>;
 
-type LegacyExternalSessionTakeoverRequest = Readonly<{
-    machineId: string;
-    sessionId: string;
-}>;
 type ExternalSessionTakeoverOperationRequest = Readonly<{
     machineId: string;
 }> & ExternalSessionTakeoverStartInputV1;
@@ -478,31 +470,6 @@ export async function machineExternalSessionTranscriptRefreshReadAfter(
         responseSchema: ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
         // The secure refresh contract never downgrades to transcript-bearing
         // released/predecessor RPC shapes.
-        opts,
-    });
-}
-
-export async function machineExternalSessionTakeover(
-    input: LegacyExternalSessionTakeoverRequest,
-    opts?: MachineExternalSessionsOpts,
-): Promise<ExternalSessionTakeoverResponse> {
-    const actionInput = {
-        machineId: input.machineId,
-        linkedSessionId: input.sessionId,
-        targetRuntimeMode: 'terminal',
-        storageMode: 'external-linked',
-    } satisfies ExternalSessionTakeoverInputV1;
-
-    return callExternalSessionMachineRpc({
-        machineId: input.machineId,
-        method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER,
-        input: actionInput,
-        requestSchema: ExternalSessionTakeoverInputV1Schema,
-        responseSchema: ExternalSessionTakeoverResponseSchema,
-        legacy: {
-            method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY,
-            input,
-        },
         opts,
     });
 }

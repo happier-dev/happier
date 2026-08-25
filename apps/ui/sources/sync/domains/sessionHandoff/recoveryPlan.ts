@@ -102,12 +102,16 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
     const codexBackendMode = normalizeCodexBackendMode(input.sourceMetadata.codexBackendMode);
     const agentMetadata = projectSessionMetadataForAgentHandoff(input.sourceMetadata);
     const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(input.sourceMetadata);
-    const sourceRecoveryPatch = isBundledAgentId(agent)
-        ? buildSessionHandoffSourceRecoveryResumePatch({
-            agentId: agent,
-            metadata: agentMetadata,
-        })
-        : null;
+    // Every Agent reaches the one descriptor interpreter here: a bundled Agent
+    // through its build-time projection and an installed one through the
+    // descriptor its source machine published. The machine is passed explicitly
+    // because the Agent-facing metadata view carries no host-owned machine id.
+    const sourceRecoveryPatch = buildSessionHandoffSourceRecoveryResumePatch({
+        agentId: agent,
+        machineId: input.sourceMachineId,
+        metadata: agentMetadata,
+        ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
+    });
     const vendorResumeId = resolveVendorResumeId(agent, agentMetadata, runtimeDescriptorV1);
 
     return {

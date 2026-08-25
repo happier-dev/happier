@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsDefaults, settingsParse } from '../settings/settings';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ServerAccountScope } from '../scope/serverAccountScope';
+import { sessionDraftValuesStorageKey } from './sessionLocalStateKeys';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -1492,7 +1493,7 @@ describe('persistence', () => {
             expect(loadNewSessionDraft(sessionLocalScopeA)).toBeNull();
         });
 
-        it('drops legacy new session launch drafts during scope activation', () => {
+        it('moves a legacy new session launch draft into the active scope for repository migration', () => {
             const legacyDraft = {
                 input: 'legacy launch must not cross accounts',
                 selectedMachineId: 'legacy-machine',
@@ -1509,11 +1510,19 @@ describe('persistence', () => {
             } satisfies NonNullable<ReturnType<typeof loadNewSessionDraft>>;
 
             saveNewSessionDraft(legacyDraft);
+            const legacyStructuredDraftValues = JSON.stringify({
+                'session-a': {
+                    'routing.recipient': { v: 1, updatedAt: 1, value: null },
+                },
+            });
+            store.set(sessionDraftValuesStorageKey(), legacyStructuredDraftValues);
 
             prepareSessionLocalStateScopeForActivation(sessionLocalScopeB);
 
             expect(loadNewSessionDraft()).toBeNull();
-            expect(loadNewSessionDraft(sessionLocalScopeB)).toBeNull();
+            expect(loadNewSessionDraft(sessionLocalScopeB)).toMatchObject(legacyDraft);
+            expect(store.get(sessionDraftValuesStorageKey())).toBeUndefined();
+            expect(store.get(sessionDraftValuesStorageKey(sessionLocalScopeB))).toBe(legacyStructuredDraftValues);
         });
 
         it('migrates legacy workspace review comment drafts during scope activation', () => {

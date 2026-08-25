@@ -2,6 +2,7 @@ import {
     evaluatePluginUiPolicy,
     type PluginUiPolicyEvaluationContext,
 } from '@/sync/domains/plugins/ui/policy/evaluate';
+import { resolvePluginLocalizedText, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginBrowserProjectionEntry } from './targets';
 
 export type PluginBrowserPolicyDecision = Readonly<{
@@ -60,18 +61,18 @@ export function canUsePluginBrowserProjectionEntry(
     return decision.visible && decision.enabled;
 }
 
-function readLocalizedText(value: unknown): string | null {
-    if (typeof value === 'string') {
-        const normalized = value.trim();
-        return normalized.length > 0 ? normalized : null;
-    }
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return null;
-    }
-    const fallback = (value as Readonly<{ fallback?: unknown }>).fallback;
-    return typeof fallback === 'string' && fallback.trim().length > 0
-        ? fallback.trim()
-        : null;
+function readLocalizedText(
+    value: unknown,
+    pluginId: string,
+    localize?: PluginLocalizedTextResolver,
+): string | null {
+    const resolved = localize?.(pluginId, value) ?? resolvePluginLocalizedText({
+        projection: null,
+        pluginId,
+        value,
+    });
+    const normalized = resolved.trim();
+    return normalized.length > 0 ? normalized : null;
 }
 
 /**
@@ -81,6 +82,7 @@ function readLocalizedText(value: unknown): string | null {
 export function resolvePluginBrowserPolicyDecision(
     entry: PluginBrowserProjectionEntry | null | undefined,
     ctx: PluginUiPolicyEvaluationContext = {},
+    localize?: PluginLocalizedTextResolver,
 ): PluginBrowserPolicyDecision {
     if (!entry) {
         return { visible: false, enabled: false, unavailableReason: null };
@@ -94,8 +96,13 @@ export function resolvePluginBrowserPolicyDecision(
         };
     }
     const availability = entry.availability;
-    const disabledReason = availability && typeof availability === 'object' && !Array.isArray(availability)
-        ? readLocalizedText((availability as Readonly<{ disabledReason?: unknown }>).disabledReason)
+    const pluginId = typeof entry.pluginId === 'string' ? entry.pluginId : null;
+    const disabledReason = pluginId && availability && typeof availability === 'object' && !Array.isArray(availability)
+        ? readLocalizedText(
+            (availability as Readonly<{ disabledReason?: unknown }>).disabledReason,
+            pluginId,
+            localize,
+        )
         : null;
     return {
         visible: true,

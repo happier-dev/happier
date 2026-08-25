@@ -63,6 +63,58 @@ function assertString(value: unknown, name: string): asserts value is string {
 }
 
 describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
+  it('includes Account-owned new-session drafts in the signed atomic e2ee migration request', async () => {
+    const credentials = createLegacyCredentials();
+    const material = resolveAccountScopedCryptoMaterialFromCredentials(credentials);
+    const sign = vi.fn(() => 'request-signature');
+    const address = {
+      kind: 'newSession' as const,
+      draftId: '00000000-0000-4000-8000-000000000101',
+    };
+    const document = {
+      v: 1 as const,
+      composer: {
+        text: { mutationId: '00000000-0000-4000-8000-000000000102', value: 'draft' },
+        mentions: { mutationId: '00000000-0000-4000-8000-000000000103', value: [] },
+        attachments: { mutationId: '00000000-0000-4000-8000-000000000104', value: [] },
+      },
+      target: { kind: 'newSession' as const, authoring: {} },
+      extensions: {},
+    };
+
+    const request = await buildAccountEncryptionMigrateToE2eeRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
+      credentials,
+      keyProof: { ...CONTENT_KEY_PROOF, sign },
+      expectedSettingsVersion: 1,
+      settings: { schemaVersion: 2, backendEnabledById: {} } as any,
+      connectedServiceProfiles: [],
+      automations: [],
+      sessionDrafts: [{ address, baseRevision: 7, document }],
+      fetchConnectedServiceCredentialPlain: async () => {
+        throw new Error('unexpected fetchConnectedServiceCredentialPlain');
+      },
+    });
+
+    expect(request.sessionDrafts?.items).toHaveLength(1);
+    const item = request.sessionDrafts!.items[0];
+    expect(item).toMatchObject({ address, expectedRevision: 7, content: { t: 'encrypted' } });
+    if (item.content.t !== 'encrypted') throw new Error('expected encrypted draft');
+    expect(openAccountScopedBlobCiphertext({
+      kind: 'account_session_draft_private_payload',
+      material,
+      ciphertext: item.content.c,
+    })?.value).toEqual({ v: 1, address, document });
+    expect(sign).toHaveBeenCalledWith(
+      createAccountEncryptionMigrateProofSigningInputV1({
+        request,
+        accountId: CURRENTNESS.accountId,
+        sourceMode: 'plain',
+      }),
+    );
+  });
+
   it('builds assert_empty directives when no connected services or automations exist', async () => {
     const credentials = createLegacyCredentials();
     const sign = vi.fn(() => 'request-signature');
@@ -97,6 +149,7 @@ describe('buildAccountEncryptionMigrateToE2eeRequest', () => {
     });
     expect(typeof (request.settingsContent as any).c).toBe('string');
     expect(request.sessions).toEqual({ action: 'assert_empty' });
+    expect(request.sessionDrafts).toBeUndefined();
     expect(sign).toHaveBeenCalledWith(
       createAccountEncryptionMigrateProofSigningInputV1({
         request,

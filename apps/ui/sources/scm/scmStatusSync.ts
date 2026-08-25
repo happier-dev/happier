@@ -7,6 +7,7 @@ import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 
 import { scmRepositoryService, snapshotToScmStatus } from './scmRepositoryService';
 import {
@@ -480,16 +481,26 @@ export class ScmStatusSync {
                 await clearSearchCacheForProject(this.sessionToProjectKey, activeProjectKey);
             }
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error ?? 'Unknown source-control status error');
                 const scmErrorCode =
                     typeof error === 'object' && error !== null && 'scmErrorCode' in error && typeof (error as { scmErrorCode?: unknown }).scmErrorCode === 'string'
                         ? (error as { scmErrorCode: string }).scmErrorCode
                         : undefined;
+            // A genuine source-control failure always arrives carrying `scmErrorCode`, because
+            // `scmRepositoryService` builds it from the response's `errorCode` before throwing. An
+            // error without one is an internal fault (a transport exception, a malformed response),
+            // and this store feeds a user-facing error slot — so its message must not be the
+            // exception text. That is how `Cannot read properties of undefined (reading 'emit')`
+            // reached the git surface (`F-UI-2`). Classify it the same way the machine SCM adapter
+            // classifies its own transport throws.
+            const message = scmErrorCode
+                ? (error instanceof Error ? error.message : String(error ?? 'Unknown source-control status error'))
+                : RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE;
+            const errorCode = scmErrorCode ?? SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE;
             const now = Date.now();
             storage.getState().updateSessionProjectScmSnapshotError(sessionId, {
                 message,
                 at: now,
-                    ...(scmErrorCode ? { errorCode: scmErrorCode } : {}),
+                errorCode,
             });
                 if (scmErrorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
                     this.projectAutoRefreshSuspended.add(scheduledProjectKey);

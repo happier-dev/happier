@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
     ComposerAgentContinuationIntentV1Schema,
     ComposerAttachmentDraftV1Schema,
+    MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
     SessionAgentTransitionInputV1Schema,
     type ComposerAttachmentDraftV1,
     type ComposerReferenceMentionPayloadV1,
@@ -196,8 +197,8 @@ export const ComposerStructuredInputMentionsSchema = z.preprocess(
 export const SessionArmedAgentContinuationSubmissionCurrentnessSchema = z.object({
     text: z.string(),
     mentions: ComposerStructuredInputMentionsSchema,
-    composerAttachments: z.array(ComposerAttachmentDraftV1Schema).max(64),
-    attachmentDraftIds: z.array(z.string().trim().min(1)).max(64),
+    composerAttachments: z.array(ComposerAttachmentDraftV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
+    attachmentDraftIds: z.array(z.string().trim().min(1)).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
 }).strict();
 export type SessionArmedAgentContinuationSubmissionCurrentness = DeepReadonly<
     z.infer<typeof SessionArmedAgentContinuationSubmissionCurrentnessSchema>
@@ -256,7 +257,7 @@ export const SESSION_DRAFT_VALUE_SCHEMAS = {
     'routing.recipient': ParticipantRecipientV1Schema.nullable(),
     'routing.agentContinuation': SessionArmedAgentContinuationSchema,
     'routing.executionRunDelivery': ExecutionRunDeliveryModeSchema,
-    'structuredInput.composerAttachments': z.array(ComposerAttachmentDraftV1Schema).max(64),
+    'structuredInput.composerAttachments': z.array(ComposerAttachmentDraftV1Schema).max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1),
     'structuredInput.mentions': ComposerStructuredInputMentionsSchema,
 } satisfies Readonly<Record<SessionDraftValueFieldId, z.ZodType>>;
 

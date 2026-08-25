@@ -39,6 +39,11 @@ type PaginatedRunsState = State & {
         runs: AutomationRun[],
         nextCursor: string | null,
     ) => void;
+    refreshAutomationRunsWindow: (
+        automationId: string,
+        runs: AutomationRun[],
+        nextCursor: string | null,
+    ) => void;
 };
 
 const eventDefinitionSummary = {
@@ -305,6 +310,7 @@ describe('createAutomationsDomain', () => {
                 replyHandoffState: 'none',
                 replyHandoffAttempt: 0,
                 replyHandoffDueAt: null,
+                contentRemovedAt: null,
                 createdAt: 100,
                 updatedAt: 10_000,
             },
@@ -332,6 +338,7 @@ describe('createAutomationsDomain', () => {
                 replyHandoffState: 'none',
                 replyHandoffAttempt: 0,
                 replyHandoffDueAt: null,
+                contentRemovedAt: null,
                 createdAt: 200,
                 updatedAt: 1,
             },
@@ -378,7 +385,7 @@ describe('createAutomationsDomain', () => {
         expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1).toBeUndefined();
     });
 
-    it('stops advancing the run cursor once a fetched older page falls outside the bounded window', () => {
+    it('keeps traversing past the passive window and reports the server continuation verbatim', () => {
         const harness = createHarness();
         const domain = harness.get() as PaginatedRunsState;
         const max = loadSyncTuning().automationRunsMaxEntriesPerAutomation;
@@ -390,8 +397,9 @@ describe('createAutomationsDomain', () => {
             ) as any,
             'cursor-1',
         );
-        // An older page is strictly older than everything retained, so the
-        // bounded newest-first window evicts every fetched row.
+        // The page the reader explicitly asked for is older than everything
+        // already retained. The passive newest-first ceiling must not decide
+        // that the server ran out of history.
         domain.appendAutomationRuns(
             'a1',
             'cursor-1',
@@ -400,8 +408,48 @@ describe('createAutomationsDomain', () => {
         );
 
         expect(harness.get().automationRunsByAutomationId.a1?.some((entry) => entry.id === 'older-1'))
-            .toBe(false);
+            .toBe(true);
+        expect(harness.get().automationRunsByAutomationId.a1?.at(-1)?.id).toBe('older-1');
+        expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1)
+            .toBe('cursor-2');
+        // A server that really is exhausted still terminates the traversal.
+        domain.appendAutomationRuns(
+            'a1',
+            'cursor-2',
+            [run({ id: 'older-2', automationId: 'a1', scheduledAt: -3 })] as any,
+            null,
+        );
         expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1).toBeNull();
+    });
+
+    it('does not let a single run update evict an explicitly traversed run window', () => {
+        const harness = createHarness();
+        const domain = harness.get() as PaginatedRunsState;
+        const max = loadSyncTuning().automationRunsMaxEntriesPerAutomation;
+
+        domain.setAutomationRuns(
+            'a1',
+            Array.from({ length: max }, (_, index) =>
+                run({ id: `r${index + 1}`, automationId: 'a1', scheduledAt: max - index }),
+            ) as any,
+            'cursor-1',
+        );
+        domain.appendAutomationRuns(
+            'a1',
+            'cursor-1',
+            [run({ id: 'older-1', automationId: 'a1', scheduledAt: -2 })] as any,
+            'cursor-2',
+        );
+        expect(harness.get().automationRunsByAutomationId.a1).toHaveLength(max + 1);
+
+        harness.get().upsertAutomationRun(
+            run({ id: 'r1', automationId: 'a1', scheduledAt: max, state: 'succeeded', updatedAt: 99 }) as any,
+        );
+
+        expect(harness.get().automationRunsByAutomationId.a1).toHaveLength(max + 1);
+        expect(harness.get().automationRunsByAutomationId.a1?.some((entry) => entry.id === 'older-1'))
+            .toBe(true);
+        expect(harness.get().automationRunsByAutomationId.a1?.[0]?.state).toBe('succeeded');
     });
 
     it('keeps advancing the run cursor while fetched older pages stay inside the bounded window', () => {
@@ -424,6 +472,80 @@ describe('createAutomationsDomain', () => {
             .toEqual(['r1', 'older-1']);
         expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1)
             .toBe('cursor-2');
+    });
+
+    it('does not rewind an explicitly traversed run window when a background list refresh restates the newest page', () => {
+        const harness = createHarness();
+        const domain = harness.get() as PaginatedRunsState;
+
+        // The reader opened the Automation (one server page) and then paged.
+        domain.setAutomationRuns(
+            'a1',
+            Array.from({ length: 20 }, (_unused, index) =>
+                run({ id: `r${index + 1}`, automationId: 'a1', scheduledAt: 1000 - index }),
+            ) as any,
+            'cursor-page-1',
+        );
+        domain.appendAutomationRuns(
+            'a1',
+            'cursor-page-1',
+            Array.from({ length: 20 }, (_unused, index) =>
+                run({ id: `r${index + 21}`, automationId: 'a1', scheduledAt: 980 - index }),
+            ) as any,
+            'cursor-page-2',
+        );
+        expect(harness.get().automationRunsByAutomationId.a1).toHaveLength(40);
+
+        // Any Automation socket update refreshes every cached run list with the
+        // newest page and that page's continuation.
+        domain.refreshAutomationRunsWindow(
+            'a1',
+            [
+                run({ id: 'r-new', automationId: 'a1', scheduledAt: 1001 }),
+                ...Array.from({ length: 19 }, (_unused, index) =>
+                    run({ id: `r${index + 1}`, automationId: 'a1', scheduledAt: 1000 - index }),
+                ),
+            ] as any,
+            'cursor-page-1-refreshed',
+        );
+
+        const traversed = harness.get().automationRunsByAutomationId.a1 ?? [];
+        expect(traversed).toHaveLength(41);
+        expect(traversed[0]?.id).toBe('r-new');
+        expect(traversed.at(-1)?.id).toBe('r40');
+        expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1)
+            .toBe('cursor-page-2');
+    });
+
+    it('re-seeds a run window the reader never paged so a background refresh still delivers new Runs and the current continuation', () => {
+        const harness = createHarness();
+        const domain = harness.get() as PaginatedRunsState;
+
+        domain.setAutomationRuns(
+            'a1',
+            Array.from({ length: 20 }, (_unused, index) =>
+                run({ id: `r${index + 1}`, automationId: 'a1', scheduledAt: 1000 - index }),
+            ) as any,
+            'cursor-page-1',
+        );
+
+        domain.refreshAutomationRunsWindow(
+            'a1',
+            [
+                run({ id: 'r-new', automationId: 'a1', scheduledAt: 1001 }),
+                ...Array.from({ length: 19 }, (_unused, index) =>
+                    run({ id: `r${index + 1}`, automationId: 'a1', scheduledAt: 1000 - index }),
+                ),
+            ] as any,
+            'cursor-page-1-refreshed',
+        );
+
+        const seeded = harness.get().automationRunsByAutomationId.a1 ?? [];
+        expect(seeded).toHaveLength(20);
+        expect(seeded[0]?.id).toBe('r-new');
+        expect(seeded.at(-1)?.id).toBe('r19');
+        expect((harness.get() as PaginatedRunsState).automationRunNextCursorByAutomationId.a1)
+            .toBe('cursor-page-1-refreshed');
     });
 
     it('retains only bounded newest runs per automation', () => {

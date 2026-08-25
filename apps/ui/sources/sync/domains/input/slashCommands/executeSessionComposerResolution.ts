@@ -281,7 +281,7 @@ export async function executeSessionComposerResolution(args: Readonly<{
   }
 
   if (actionId === 'subagents.plan.start' || actionId === 'subagents.delegate.start') {
-    const permissionMode = resolveExecutionRunActionDefaultPermissionMode(actionId) ?? 'read-only';
+    const permissionMode = resolveExecutionRunActionDefaultPermissionMode(actionId) ?? 'read_only';
     const instructions = rest.trim();
     if (instructions.length === 0) {
       clearAcceptedComposer(args);

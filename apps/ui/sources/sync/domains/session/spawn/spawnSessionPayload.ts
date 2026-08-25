@@ -117,6 +117,7 @@ function buildSpawnHappySessionRpcParamsInternal(
     trustedHiddenSystemSessionStartupInstructions?: AgentSessionStartupInstructionsV1,
 ): SpawnHappySessionRpcParams {
     const {
+        machineId,
         directory,
         transcriptStorage,
         approvedNewDirectoryCreation = false,
@@ -153,6 +154,7 @@ function buildSpawnHappySessionRpcParamsInternal(
         throw new Error('Spawn model selection target mismatch');
     }
     const backendTransportFields = buildBackendTransportFieldsFromUiState({
+        machineId,
         backendTarget: canonicalBackendTarget,
         providerMode: codexBackendMode,
         legacyExperimentalMode: experimentalCodexAcp,

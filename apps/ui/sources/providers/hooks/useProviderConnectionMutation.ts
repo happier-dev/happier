@@ -53,6 +53,13 @@ export function useProviderConnectionMutation(input: Readonly<{
             revision: activeScope.current.revision + 1,
         };
     }
+    // The scope this render belongs to. A request built by this render must be
+    // decided by this render's resolver: the target owner rebuilds the resolver
+    // only when the selected `{ serverIdentityId, machineId }` actually moves,
+    // so reading the latest scope instead would let a request captured for one
+    // Account be authorized by whichever Account is selected when a modal
+    // finally closes — including another profile exposing the same machine id.
+    const boundScope = activeScope.current;
     React.useEffect(() => {
         const scope = activeScope.current;
         setPending((current) => current.scope === scope
@@ -84,7 +91,7 @@ export function useProviderConnectionMutation(input: Readonly<{
         request: z.input<typeof DaemonProviderConnectionMutationRequestV1Schema>,
         key = `${request.action}:${request.connectionId}`,
     ): Promise<ProviderConnectionMutationResult> => {
-        const scope = activeScope.current;
+        const scope = boundScope;
         let parsedRequest: z.output<typeof DaemonProviderConnectionMutationRequestV1Schema>;
         try {
             parsedRequest = DaemonProviderConnectionMutationRequestV1Schema.parse(request);
@@ -124,9 +131,11 @@ export function useProviderConnectionMutation(input: Readonly<{
                 // machine the user has since moved away from.
                 const target = scope.resolveTarget();
                 if (!target || target.machineId !== parsedRequest.machineId) {
-                    if (isCurrentScope()) {
-                        setFailure({ error: createProviderErrorV1('provider_authorization_changed', errorContext) });
-                    }
+                    // The user asked for this write, so the refusal is reported
+                    // even when the selection has already moved on: a silently
+                    // dropped destructive action is indistinguishable from one
+                    // that succeeded.
+                    setFailure({ error: createProviderErrorV1('provider_authorization_changed', errorContext) });
                     return null;
                 }
                 let result: Awaited<ReturnType<typeof mutateProviderConnection>>;
@@ -178,7 +187,7 @@ export function useProviderConnectionMutation(input: Readonly<{
             }
         })();
         return operation.promise;
-    }, [updatePending]);
+    }, [boundScope, updatePending]);
     const isPending = React.useCallback((key: string): boolean => (
         pending.scope === activeScope.current && (pending.countByKey.get(key) ?? 0) > 0
     ), [pending]);

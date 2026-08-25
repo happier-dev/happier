@@ -1,6 +1,23 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { NativeSshAuthPromptEvent, NativeSshHostKeyPromptEvent, NativeSshModule } from '@happier-dev/ssh-native';
+
+/**
+ * The Expo native module is a genuine system boundary: the adapter asks `@happier-dev/ssh-native`
+ * for the optional module and everything beneath that call is real adapter logic.
+ */
+let resolvedNativeModule: NativeSshModule | null = null;
+vi.mock('@happier-dev/ssh-native', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/ssh-native')>();
+    return {
+        ...actual,
+        getOptionalHappierSshNativeModule: () => resolvedNativeModule,
+    };
+});
+
+afterEach(() => {
+    resolvedNativeModule = null;
+});
 
 describe('createNativeSshTunnelAdapter', () => {
     it('starts native loopback tunnels with resolved credentials and prompt host-key verification', async () => {
@@ -376,5 +393,90 @@ describe('createNativeSshTunnelAdapter', () => {
         await adapter.stopLoopbackTunnel('native-1');
 
         expect(nativeModule.stopLoopbackTunnel).toHaveBeenCalledWith('native-1');
+    });
+
+    /**
+     * §7.1: the sole production caller (`runtime.ts` -> `createDefaultSupervisor`) passes no
+     * `nativeModule`, so both prompt subscriptions were skipped and a host needing trust or
+     * credentials simply timed out. `startNativeSshLoopbackTunnel` already resolves the module
+     * itself when the caller passes `undefined`; the adapter must apply the SAME rule so the
+     * prompt bridge is registered against the module the tunnel actually starts on.
+     */
+    it('resolves the optional native module itself so prompts fire for callers that pass none', async () => {
+        let hostKeyListener: ((event: NativeSshHostKeyPromptEvent) => void) | null = null;
+        const respondToHostKeyPrompt = vi.fn(async () => undefined);
+        const nativeModule = {
+            getAvailability: () => ({
+                available: true,
+                platform: 'android',
+                engine: 'russh',
+                moduleVersion: '0.0.0',
+                supportsLoopbackTunnel: true,
+                supportsPersistentHostKeyStorage: false,
+            } as const),
+            exec: vi.fn(),
+            cancelRequest: vi.fn(async () => undefined),
+            respondToHostKeyPrompt,
+            addListener: vi.fn((eventName, listener) => {
+                if (eventName === 'hostKeyPrompt') {
+                    hostKeyListener = listener as (event: NativeSshHostKeyPromptEvent) => void;
+                }
+                return { remove: vi.fn() };
+            }),
+            startLoopbackTunnel: vi.fn(async (request) => {
+                const listener = hostKeyListener;
+                if (!listener) {
+                    throw new Error('host-key listener was not registered');
+                }
+                listener({
+                    requestId: request.requestId,
+                    promptId: 'prompt-auto',
+                    host: request.host,
+                    port: request.port,
+                    algorithm: 'ssh-ed25519',
+                    fingerprintSha256: 'SHA256:auto',
+                    status: 'unknown',
+                });
+                await vi.waitFor(() => {
+                    expect(respondToHostKeyPrompt).toHaveBeenCalledWith('prompt-auto', {
+                        decision: 'accept-once',
+                        fingerprintSha256: 'SHA256:auto',
+                    });
+                });
+                return { nativeTunnelId: 'native-auto', localPort: 49153 };
+            }),
+            stopLoopbackTunnel: vi.fn(async () => undefined),
+        } satisfies NativeSshModule;
+        resolvedNativeModule = nativeModule;
+
+        const loaded = await import('./adapter').catch(() => null);
+        expect(loaded).not.toBeNull();
+
+        const promptHostKey = vi.fn(async (event: NativeSshHostKeyPromptEvent) => ({
+            decision: 'accept-once' as const,
+            fingerprintSha256: event.fingerprintSha256,
+        }));
+        const adapter = loaded!.createNativeSshTunnelAdapter({
+            promptHostKey,
+            resolveCredentials: async () => ({ auth: { username: 'dev', password: 'secret' } }),
+        });
+
+        await expect(adapter.startLoopbackTunnel({
+            remoteHostId: 'host-a',
+            sshTarget: 'dev@10.0.0.5',
+            destinationHost: '127.0.0.1',
+            destinationPort: 3005,
+            purpose: 'server-http',
+            credentialsRef: {
+                remoteHostId: 'host-a',
+                credentialId: 'cred-a',
+                storage: 'session-memory',
+            },
+        })).resolves.toEqual({ nativeTunnelId: 'native-auto', localPort: 49153 });
+
+        expect(promptHostKey).toHaveBeenCalledWith(
+            expect.objectContaining({ promptId: 'prompt-auto' }),
+            expect.objectContaining({ remoteHostId: 'host-a' }),
+        );
     });
 });

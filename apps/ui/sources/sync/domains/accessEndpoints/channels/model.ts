@@ -1,4 +1,4 @@
-import type { AccessEndpoint } from '../model';
+import type { AccessEndpoint, AccessEndpointDiagnostic } from '../model';
 
 export type AccessChannelDirection =
     | 'make-current-server-reachable'
@@ -51,4 +51,10 @@ export type AccessChannel = Readonly<{
 
 export type AccessChannelProjectionInput = Readonly<{
     endpoints: readonly AccessEndpoint[];
+    /**
+     * Projection-level source diagnostics (`AccessEndpointProjection.diagnostics`). Native SSH
+     * runtime limitations arrive here rather than on an endpoint because the failures that matter
+     * most happen before any lease — and therefore any endpoint — exists.
+     */
+    diagnostics?: readonly AccessEndpointDiagnostic[];
 }>;

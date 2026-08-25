@@ -7,6 +7,7 @@ import type {
 import {
     EMPTY_LOCAL_SERVICE_LAUNCHER_STATE,
     getLocalServiceLauncherState,
+    invalidateLocalServiceLauncherStore,
     publishLocalServiceLauncherSnapshot,
     subscribeLocalServiceLauncherStore,
     type LocalServiceLauncherStoreKeyInput,
@@ -34,6 +35,14 @@ export type UseLocalServiceLauncherStateInput = Readonly<{
 export type LocalServiceLauncherStateController = Readonly<{
     state: LocalServiceLauncherState;
     applySnapshot: (snapshot: LocalServiceLauncherSnapshot) => void;
+    /**
+     * Re-read the daemon's launcher feed.
+     *
+     * The feed is derived from the inventory the daemon just rescanned, so it has no push producer
+     * of its own: the surface refreshes it when the inventory watch reports a change. Undefined
+     * when there is no machine to read.
+     */
+    refresh: (() => void) | undefined;
 }>;
 
 function normalizeId(value: unknown): string | null {
@@ -87,10 +96,15 @@ export function useLocalServiceLauncherStateController(
 
     const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
+    const refresh = React.useMemo(() => (
+        storeKey ? () => invalidateLocalServiceLauncherStore(storeKey) : undefined
+    ), [storeKey]);
+
     return React.useMemo(() => ({
         state,
         applySnapshot,
-    }), [applySnapshot, state]);
+        refresh,
+    }), [applySnapshot, refresh, state]);
 }
 
 export function useLocalServiceLauncherState(

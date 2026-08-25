@@ -19,9 +19,16 @@ export async function scopedSocketEmitWithAck<TAck>(params: Readonly<{
     signal?: AbortSignal;
     requestId?: string;
 }>): Promise<TAck> {
-    const emitWithAck = params.timeoutMs === null
-        ? params.socket.emitWithAck
-        : params.socket.timeout(params.timeoutMs).emitWithAck;
+    // `emitWithAck` must be invoked ON its socket. In socket.io-client it is a prototype method
+    // whose body is `this.emit(ev, ...args)`, and `timeout(ms)` returns the socket itself — so
+    // reading `.emitWithAck` off it and calling the bare reference detaches the receiver and the
+    // library throws `Cannot read properties of undefined (reading 'emit')` from inside its own
+    // Promise executor. That surfaced as an internal TypeError in user-facing error slots
+    // (`F-UI-2`). Keep the receiver and call through it.
+    const ackScope = params.timeoutMs === null
+        ? params.socket
+        : params.socket.timeout(params.timeoutMs);
+    const emitWithAck = ackScope.emitWithAck;
     if (!emitWithAck) {
         throw new Error('Scoped RPC socket does not support unbounded acknowledgements');
     }
@@ -30,7 +37,7 @@ export async function scopedSocketEmitWithAck<TAck>(params: Readonly<{
         requestId: params.requestId,
         onIssued: params.onIssued,
         issue: async () => await raceSocketIoAckTimeout(
-            emitWithAck(params.event, params.payload),
+            emitWithAck.call(ackScope, params.event, params.payload),
             params.timeoutMs ?? undefined,
         ) as TAck,
         emitCancel: (requestId) => {

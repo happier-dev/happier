@@ -20,6 +20,24 @@ function buildChange(params: {
 }
 
 describe('planSyncActionsFromChanges', () => {
+    it('plans exact SessionDraft materialization without broad Account invalidation', () => {
+        const address = { kind: 'newSession', draftId: '00000000-0000-4000-8000-000000000001' } as const;
+        const planned = planSyncActionsFromChanges([
+            buildChange({
+                cursor: 1,
+                kind: 'account',
+                hint: { v: 1, sessionDraft: true, address, revision: 2, status: 'present' },
+            }),
+        ]);
+
+        expect(planned.sessionDraftAddresses).toEqual([address]);
+        expect(planned.invalidate.settings).toBe(false);
+        expect(planned.invalidate.profile).toBe(false);
+        expect(classifyChangeForCheckpoint(planned.changes[0]!, {
+            isSessionMessagesLoaded: () => false,
+        })).toMatchObject({ plannerOwner: 'session-drafts', materializationProof: 'session-draft' });
+    });
+
     it('plans session catch-up and invalidations', () => {
         const changes: ApiChangeEntry[] = [
             buildChange({ cursor: 1, kind: 'session', entityId: 's1' }),

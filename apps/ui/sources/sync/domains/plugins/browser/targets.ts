@@ -1,7 +1,9 @@
 import {
     buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
+    PluginLocalizedStringV2Schema,
     type PluginContributionIdentityV1,
+    type PluginLocalizedStringV2,
     type PluginProjectionV2,
 } from '@happier-dev/protocol';
 import type {
@@ -17,7 +19,7 @@ type PluginBrowserTargetProjectionBase = UnknownRecord & Readonly<{
     pluginId: string;
     contributionKind: 'browserTarget';
     contributionId: string;
-    display: UnknownRecord & Readonly<{ title: string; addressLabel?: string }>;
+    display: UnknownRecord & Readonly<{ title: PluginLocalizedStringV2; addressLabel?: string }>;
 }>;
 
 export type PluginBrowserTargetProjection = PluginBrowserTargetProjectionBase & Readonly<
@@ -55,7 +57,7 @@ export type PluginBrowserActionProjection = UnknownRecord & Readonly<{
     qualifiedActionId: string;
     targetId: string;
     placement: 'toolbar' | 'detailsPanel' | 'contextMenu';
-    display: UnknownRecord & Readonly<{ title: string; iconToken?: string }>;
+    display: UnknownRecord & Readonly<{ title: PluginLocalizedStringV2; iconToken?: string }>;
     order?: number;
 }>;
 
@@ -83,6 +85,11 @@ function readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
+function readLocalizedString(value: unknown): PluginLocalizedStringV2 | null {
+    const parsed = PluginLocalizedStringV2Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+}
+
 function isBrowserTarget(entry: UnknownRecord): entry is PluginBrowserTargetProjection {
     const id = readString(entry.id);
     const pluginId = readString(entry.pluginId);
@@ -100,7 +107,7 @@ function isBrowserTarget(entry: UnknownRecord): entry is PluginBrowserTargetProj
         && targetId === id
         && targetUrl !== null
         && asRecord(entry.display) !== null
-        && readString(asRecord(entry.display)?.title) !== null
+        && readLocalizedString(asRecord(entry.display)?.title) !== null
         && currentUrl === targetUrl
         && (entry.launchMode === 'newView' || entry.launchMode === 'currentView')
         && (entry.profileMode === 'ephemeral' || entry.profileMode === 'session' || entry.profileMode === 'user' || entry.profileMode === 'plugin');
@@ -144,7 +151,7 @@ function resolveBrowserAction(
         && targetsById[targetId] !== undefined
         && (entry.placement === 'toolbar' || entry.placement === 'detailsPanel' || entry.placement === 'contextMenu')
         && asRecord(entry.display) !== null
-        && readString(asRecord(entry.display)?.title) !== null;
+        && readLocalizedString(asRecord(entry.display)?.title) !== null;
     return valid && actionIdentity
         ? Object.freeze({
             ...entry,

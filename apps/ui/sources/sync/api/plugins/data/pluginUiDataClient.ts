@@ -35,6 +35,7 @@ import { createActivePluginCollectionUiQueryPager } from './queryPluginCollectio
 
 const ACCOUNT_STORAGE_UNAVAILABLE_CODE = 'plugin_account_storage_unavailable';
 const COLLECTION_UNDECLARED_CODE = 'plugin_collection_undeclared';
+const COLLECTION_INVALID_VALUE_CODE = 'plugin_collection_invalid_value';
 const COLLECTION_PROTOCOL_INVALID_CODE = 'plugin_collection_protocol_invalid';
 const COLLECTION_CONFLICT_CODE = 'plugin_collection_conflict';
 const COLLECTION_CANCELLED_CODE = 'plugin_collection_cancelled';
@@ -98,6 +99,11 @@ function unavailableError(reason: ActivePluginCollectionUnavailableReasonV1): Pl
             return dataError(
                 COLLECTION_PROTOCOL_INVALID_CODE,
                 'Plugin Account Collection returned an invalid current-Account response',
+            );
+        case 'request-not-serializable':
+            return dataError(
+                COLLECTION_INVALID_VALUE_CODE,
+                'Collection request cannot be serialized by this runtime',
             );
         case 'transport-unavailable':
             return dataError(

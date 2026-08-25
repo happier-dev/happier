@@ -18,7 +18,7 @@ claude, code, ai, programming, developer, tools, encrypted, secure, coding, assi
 
 Happier is the secure mobile companion for Claude Code that lets you continue your AI coding sessions anywhere (not affiliated with Anthropic). Built by developers who needed to check on Claude's progress during coffee breaks, this app brings the full Claude Code experience to your phone with explicit privacy modes.
 
-**Important**: This app requires Claude Code to be installed on your computer. Happier is a companion app that connects to your existing Claude Code setup.
+**Important**: Happier drives a coding agent CLI that is already installed on your own computer - Claude Code, Codex, OpenCode, Gemini, Cursor, Copilot and more. It does not run the agent in the cloud, so you need one of those CLIs installed and signed in on a computer that stays awake.
 
 **Key Features:**
 
@@ -32,7 +32,7 @@ Happier is the secure mobile companion for Claude Code that lets you continue yo
 **How It Works:**
 1. Install the @happier-dev/cli CLI on your computer
 2. Scan a QR code to securely pair your devices
-3. Use 'happier' instead of 'claude' and select the storage mode allowed by your server
+3. Use 'happier' instead of 'claude' - or name another agent, such as 'happier codex' or 'happier opencode' - and select the storage mode allowed by your server
 4. Switch between desktop and mobile instantly
 
 Perfect for developers who:

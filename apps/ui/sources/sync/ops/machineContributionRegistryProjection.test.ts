@@ -836,101 +836,14 @@ describe('machine contribution registry projection ops', () => {
         })).resolves.toEqual({ supported: false, reason: 'not-supported' });
     });
 
-    it('routes a current grouped Composer attachment prepare request through the registry projection RPC', async () => {
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({
-            ok: true,
-            attachment: { pluginId: 'acme.issues', localId: 'issue' },
-            result: {
-                attachments: [{
-                    instanceId: 'issue-42',
-                    status: 'ready',
-                    value: { issueId: 42 },
-                    presentation: { label: 'Issue #42' },
-                }],
-            },
-        });
-        const { machinePluginComposerAttachmentPrepare } = await import('./machineContributionRegistryProjection');
-        const abortController = new AbortController();
+    it('does not expose or call the retired machine Composer attachment prepare transport', async () => {
+        const module = await import('./machineContributionRegistryProjection');
 
-        await expect(machinePluginComposerAttachmentPrepare('machine-1', {
-            serverId: 'server-a',
-            expectedGeneration: '7',
-            attachment: { pluginId: 'acme.issues', localId: 'issue' },
-            request: {
-                sessionId: 'session-1',
-                localId: 'pending-1',
-                attachments: [{
-                    instanceId: 'issue-42',
-                    key: '42',
-                    value: { issueId: 42 },
-                }],
-            },
-            signal: abortController.signal,
-        })).resolves.toEqual({
-            supported: true,
-            result: {
-                ok: true,
-                attachment: { pluginId: 'acme.issues', localId: 'issue' },
-                result: {
-                    attachments: [{
-                        instanceId: 'issue-42',
-                        status: 'ready',
-                        value: { issueId: 42 },
-                        presentation: { label: 'Issue #42' },
-                    }],
-                },
-            },
-        });
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-1',
-            serverId: 'server-a',
-            method: RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE,
-            payload: {
-                machineId: 'machine-1',
-                expectedGeneration: '7',
-                attachment: { pluginId: 'acme.issues', localId: 'issue' },
-                request: {
-                    sessionId: 'session-1',
-                    localId: 'pending-1',
-                    attachments: [{
-                        instanceId: 'issue-42',
-                        key: '42',
-                        value: { issueId: 42 },
-                    }],
-                },
-            },
-            signal: abortController.signal,
+        expect(Reflect.has(module, 'machinePluginComposerAttachmentPrepare')).toBe(false);
+        expect(Reflect.has(RPC_METHODS, 'DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE')).toBe(false);
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalledWith(expect.objectContaining({
+            method: 'daemon.plugins.composerAttachments.prepare',
         }));
-    });
-
-    it('preserves daemon-owned stale-generation failure while classifying a cancelled prepare transport', async () => {
-        machineRpcWithServerScopeMock
-            .mockResolvedValueOnce({
-                ok: false,
-                code: 'stale_generation',
-                reason: 'stale_generation',
-            })
-            .mockRejectedValueOnce(Object.assign(new Error('cancelled'), { code: 'MACHINE_RPC_ABORTED' }));
-        const { machinePluginComposerAttachmentPrepare } = await import('./machineContributionRegistryProjection');
-        const request = {
-            serverId: 'server-a',
-            expectedGeneration: '7',
-            attachment: { pluginId: 'acme.issues', localId: 'issue' },
-            request: {
-                sessionId: 'session-1',
-                localId: 'pending-1',
-                attachments: [{ instanceId: 'issue-42', key: '42', value: { issueId: 42 } }],
-            },
-        };
-
-        await expect(machinePluginComposerAttachmentPrepare('machine-1', request)).resolves.toEqual({
-            supported: true,
-            result: { ok: false, code: 'stale_generation', reason: 'stale_generation' },
-        });
-        await expect(machinePluginComposerAttachmentPrepare('machine-1', {
-            ...request,
-            signal: new AbortController().signal,
-        })).resolves.toEqual({ supported: false, reason: 'aborted' });
     });
 
     it('reads one bounded host-owned Connected Account form option result without sending purpose or service authority', async () => {

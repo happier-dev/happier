@@ -1,6 +1,7 @@
 import type {
     PackageAssetArchiveDescriptorV1,
     PluginAccountAvailabilityIntentReadResponseV1,
+    PluginMachineMaterializationSnapshotV1,
     PluginMachineMaterializationV1,
     PluginMachineMaterializationRefV1,
     PluginPortableReleaseManifestV1,
@@ -47,6 +48,8 @@ export type PluginAccountAvailabilitySnapshot = Readonly<{
      * does not itself grant execution authority or choose an execution source.
      */
     materializations: readonly PluginMachineMaterializationV1[];
+    /** Complete per-machine inventory facts, including exact empty reports. */
+    snapshots: readonly PluginMachineMaterializationSnapshotV1[];
 }>;
 
 export type PluginAccountAvailabilityIntentReadProjection = Readonly<{
@@ -126,6 +129,7 @@ export type PluginMachineMaterializationAdmission =
         kind: 'available';
         availabilityCursor: number;
         materializations: readonly PluginMachineMaterializationV1[];
+        snapshots: readonly PluginMachineMaterializationSnapshotV1[];
     }>
     | Readonly<{
         kind: 'unavailable';
@@ -145,6 +149,37 @@ export type PluginAccountAvailabilityArtifactAdmission =
             | 'account_availability_scope_mismatch'
             | 'artifact_not_current'
             | 'artifact_slot_ambiguous';
+    }>;
+
+/** The Protocol-owned declared release slot, snapshotted by this projection. */
+export type PluginAccountAvailabilityReleaseUiSlot =
+    NonNullable<PluginAccountAvailabilityIntentReadResponseV1['release']>['uiSlots'][number];
+
+/**
+ * The exact immutable coordinates one present client may publish for. The
+ * declared slot carries its portable compatibility so the publisher compares
+ * the host's own adoption facts against it instead of restating them.
+ */
+export type PluginAccountAvailabilityHostedPublicationTarget = Readonly<{
+    release: NonNullable<PluginAccountAvailabilityIntentReadResponseV1['release']>['ref'];
+    slot: PluginAccountAvailabilityReleaseUiSlot;
+}>;
+
+export type PluginAccountAvailabilityHostedPublicationAdmission =
+    | Readonly<{
+        kind: 'available';
+        availabilityCursor: number;
+        target: PluginAccountAvailabilityHostedPublicationTarget;
+    }>
+    | Readonly<{
+        kind: 'unavailable';
+        code:
+            | 'account_availability_not_loaded'
+            | 'account_availability_scope_mismatch'
+            | 'artifact_not_current'
+            | 'artifact_slot_ambiguous'
+            | 'artifact_hosting_not_admitted'
+            | 'artifact_already_hosted';
     }>;
 
 /**
@@ -279,6 +314,15 @@ export type PluginAccountAvailabilityReader = Readonly<{
     readCurrentArtifact: (
         slot: PluginAccountAvailabilityArtifactSlot,
     ) => PluginAccountAvailabilityArtifactAdmission;
+    /**
+     * Admits one exact declared slot for present-client Account-hosted
+     * publication. It is available only while the operator capability, the
+     * Account opt-in, and the current release admit hosting and no exact
+     * qualified link exists yet. It grants no byte source and no transport.
+     */
+    readCurrentHostedPublicationTarget: (
+        slot: PluginAccountAvailabilityArtifactSlot,
+    ) => PluginAccountAvailabilityHostedPublicationAdmission;
     /**
      * Current immutable package-asset declaration for one enabled release.
      * Stored-envelope access remains with the protected Account source.
@@ -439,6 +483,14 @@ function snapshotPluginAccountAvailabilitySnapshot(
             })
         ))),
         materializations: freezeAvailabilitySnapshotValue(snapshot.materializations.map(cloneMaterialization)),
+        snapshots: freezeAvailabilitySnapshotValue(snapshot.snapshots.map((machineSnapshot) => (
+            freezeAvailabilitySnapshotValue({
+                ...machineSnapshot,
+                materializations: freezeAvailabilitySnapshotValue(
+                    machineSnapshot.materializations.map(cloneMaterialization),
+                ),
+            })
+        ))),
     });
 }
 
@@ -491,6 +543,10 @@ function readMaterializationAdmission(
         kind: 'available',
         availabilityCursor: snapshot.availabilityCursor,
         materializations: Object.freeze(snapshot.materializations.map(cloneMaterialization)),
+        snapshots: Object.freeze(snapshot.snapshots.map((machineSnapshot) => Object.freeze({
+            ...machineSnapshot,
+            materializations: Object.freeze(machineSnapshot.materializations.map(cloneMaterialization)),
+        }))),
     });
 }
 
@@ -667,20 +723,33 @@ function readHostBundledArtifactAdmission(
     });
 }
 
-function readCurrentArtifactAdmission(
-    state: AvailabilityProjectionState | null,
-    scope: ServerAccountScope,
+type CurrentHostedSlotSelection =
+    | Readonly<{
+        kind: 'available';
+        releaseSlot: PluginAccountAvailabilityReleaseUiSlot;
+        /**
+         * True only when the operator capability and the present Account
+         * opt-in both admit Account hosting for this release.
+         */
+        accountHostedEnabled: boolean;
+        exactHostedLink: PluginAccountAvailabilityIntentReadResponseV1['uiArtifacts'][number] | null;
+    }>
+    | Readonly<{
+        kind: 'unavailable';
+        code: 'artifact_not_current' | 'artifact_slot_ambiguous';
+    }>;
+
+/**
+ * The single derivation of "which declared release slot does this coordinate
+ * name, and does the Account already host its exact archive". Artifact
+ * admission and hosted-publication admission are two readings of that one
+ * fact; deriving it twice would let a reader and a publisher disagree about
+ * whether a slot is already hosted.
+ */
+function selectCurrentHostedSlot(
+    current: Extract<CurrentReleaseAdmission, { kind: 'available' }>,
     slot: PluginAccountAvailabilityArtifactSlot,
-): PluginAccountAvailabilityArtifactAdmission {
-    const hostBundled = readHostBundledArtifactAdmission(state, scope, slot);
-    if (hostBundled) return hostBundled;
-    const current = readCurrentReleaseAdmission(state, scope, slot.pluginId);
-    if (current.kind !== 'available') {
-        return current;
-    }
-    if (!current.intent.enabled) {
-        return Object.freeze({ kind: 'unavailable', code: 'artifact_not_current' });
-    }
+): CurrentHostedSlotSelection {
     const releaseSlots = current.release.uiSlots.filter((candidate) => (
         candidate.contributionId === slot.contributionId
         && candidate.tier === slot.tier
@@ -705,6 +774,41 @@ function readCurrentArtifactAdmission(
             link.compatibility,
         )
     ));
+    // Availability owns the factual hosting capability and the Account intent
+    // opt-in. A disabled/malformed capability must not admit Account-hosted
+    // provenance, while the release identity remains available to the other
+    // canonical Artifact sources.
+    const accountHostedEnabled = current.hostingCapability.enabled === true
+        && current.intent.offlineUiHosting === 'enabled';
+    return Object.freeze({
+        kind: 'available',
+        releaseSlot,
+        accountHostedEnabled,
+        exactHostedLink: accountHostedEnabled && exactHostedLinks.length === 1
+            ? exactHostedLinks[0]!
+            : null,
+    });
+}
+
+function readCurrentArtifactAdmission(
+    state: AvailabilityProjectionState | null,
+    scope: ServerAccountScope,
+    slot: PluginAccountAvailabilityArtifactSlot,
+): PluginAccountAvailabilityArtifactAdmission {
+    const hostBundled = readHostBundledArtifactAdmission(state, scope, slot);
+    if (hostBundled) return hostBundled;
+    const current = readCurrentReleaseAdmission(state, scope, slot.pluginId);
+    if (current.kind !== 'available') {
+        return current;
+    }
+    if (!current.intent.enabled) {
+        return Object.freeze({ kind: 'unavailable', code: 'artifact_not_current' });
+    }
+    const hosted = selectCurrentHostedSlot(current, slot);
+    if (hosted.kind !== 'available') {
+        return Object.freeze({ kind: 'unavailable', code: hosted.code });
+    }
+    const releaseSlot = hosted.releaseSlot;
     const selected: PluginAccountAvailabilitySelectedArtifactFact = Object.freeze({
         pluginId: slot.pluginId,
         contributionId: releaseSlot.contributionId,
@@ -713,15 +817,7 @@ function readCurrentArtifactAdmission(
         digest: releaseSlot.artifactDigest,
         releaseVersion: current.release.ref.version,
     });
-    // Availability owns the factual hosting capability and the Account intent
-    // opt-in. A disabled/malformed capability must not admit Account-hosted
-    // provenance, while the release identity remains available to the other
-    // canonical Artifact sources.
-    const accountHostedEnabled = current.hostingCapability.enabled === true
-        && current.intent.offlineUiHosting === 'enabled';
-    const exactHostedLink = accountHostedEnabled && exactHostedLinks.length === 1
-        ? exactHostedLinks[0]!
-        : null;
+    const exactHostedLink = hosted.exactHostedLink;
     const artifact: PluginAccountAvailabilityArtifactFact = exactHostedLink
         ? Object.freeze({
             ...selected,
@@ -733,6 +829,50 @@ function readCurrentArtifactAdmission(
         kind: 'available',
         availabilityCursor: current.availabilityCursor,
         artifact: cloneArtifact(artifact),
+    });
+}
+
+/**
+ * Admits one exact declared slot for present-client Account-hosted
+ * publication. It is deliberately not Artifact admission: it grants no byte
+ * source and it is available only while the operator capability, the Account
+ * opt-in, and the current release all admit hosting AND no exact qualified
+ * link exists yet.
+ */
+function readCurrentHostedPublicationAdmission(
+    state: AvailabilityProjectionState | null,
+    scope: ServerAccountScope,
+    slot: PluginAccountAvailabilityArtifactSlot,
+): PluginAccountAvailabilityHostedPublicationAdmission {
+    const current = readCurrentReleaseAdmission(state, scope, slot.pluginId);
+    if (current.kind !== 'available') {
+        return Object.freeze({ kind: 'unavailable', code: current.code });
+    }
+    if (!current.intent.enabled) {
+        return Object.freeze({ kind: 'unavailable', code: 'artifact_not_current' });
+    }
+    const hosted = selectCurrentHostedSlot(current, slot);
+    if (hosted.kind !== 'available') {
+        return Object.freeze({ kind: 'unavailable', code: hosted.code });
+    }
+    if (!hosted.accountHostedEnabled) {
+        return Object.freeze({ kind: 'unavailable', code: 'artifact_hosting_not_admitted' });
+    }
+    if (hosted.exactHostedLink) {
+        return Object.freeze({ kind: 'unavailable', code: 'artifact_already_hosted' });
+    }
+    return Object.freeze({
+        kind: 'available',
+        availabilityCursor: current.availabilityCursor,
+        target: freezeAvailabilitySnapshotValue({
+            release: freezeAvailabilitySnapshotValue({ ...current.release.ref }),
+            slot: freezeAvailabilitySnapshotValue({
+                ...hosted.releaseSlot,
+                compatibility: freezeAvailabilitySnapshotValue({
+                    ...hosted.releaseSlot.compatibility,
+                }),
+            }),
+        }),
     });
 }
 
@@ -836,6 +976,11 @@ function createBoundReader(input: Readonly<{
 }>): PluginAccountAvailabilityReader {
     return Object.freeze({
         readCurrentArtifact: (slot) => readCurrentArtifactAdmission(
+            input.readState(),
+            input.scope,
+            slot,
+        ),
+        readCurrentHostedPublicationTarget: (slot) => readCurrentHostedPublicationAdmission(
             input.readState(),
             input.scope,
             slot,

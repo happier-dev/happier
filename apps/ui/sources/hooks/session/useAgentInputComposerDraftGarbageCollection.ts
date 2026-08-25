@@ -6,10 +6,6 @@ import {
     garbageCollectAgentInputLocalUiState,
 } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
 import {
-    flushSessionDraftValues,
-    garbageCollectSessionDraftValues,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
-import {
     serverAccountScopeKeySuffix,
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
@@ -39,9 +35,7 @@ function runAgentInputComposerDraftGarbageCollection(
         return;
     }
 
-    garbageCollectSessionDraftValues(scope, { now: options.now });
     garbageCollectAgentInputLocalUiState(scope, { now: options.now });
-    flushSessionDraftValues(scope);
     flushAgentInputLocalUiState(scope);
     lastGarbageCollectionAtByScopeKey.set(scopeKey, options.now);
 }

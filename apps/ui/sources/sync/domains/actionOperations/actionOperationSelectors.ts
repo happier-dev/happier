@@ -15,6 +15,11 @@ export type ActionOperationProjection = Readonly<{
 export type ActionOperationSelectors = Readonly<{
     selectAll(state: ActionOperationStoreSnapshot): readonly ActionOperationProjection[];
     selectById(state: ActionOperationStoreSnapshot, operationId: string): ActionOperationProjection | null;
+    selectSnapshotByRequestId(
+        state: ActionOperationStoreSnapshot,
+        requestId: string,
+        accountId?: string | null,
+    ): ActionOperationSnapshotV1 | null;
     selectActive(state: ActionOperationStoreSnapshot): readonly ActionOperationProjection[];
     selectForSession(state: ActionOperationStoreSnapshot, sessionId: string): readonly ActionOperationProjection[];
     selectHasUnseenTerminal(state: ActionOperationStoreSnapshot): boolean;
@@ -100,6 +105,24 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         return projectionCache.get(operationId) ?? null;
     };
 
+    const selectSnapshotByRequestId = (
+        state: ActionOperationStoreSnapshot,
+        requestId: string,
+        accountId?: string | null,
+    ): ActionOperationSnapshotV1 | null => {
+        const normalizedRequestId = requestId.trim();
+        const normalizedAccountId = typeof accountId === 'string' ? accountId.trim() : '';
+        if (!normalizedRequestId) return null;
+        let match: ActionOperationSnapshotV1 | null = null;
+        for (const snapshot of state.operationsById.values()) {
+            if (snapshot.requestId !== normalizedRequestId) continue;
+            if (normalizedAccountId && snapshot.scope.accountId !== normalizedAccountId) continue;
+            if (match) return null;
+            match = snapshot;
+        }
+        return match;
+    };
+
     const selectActive = (state: ActionOperationStoreSnapshot) => {
         selectAll(state);
         return previousActive;
@@ -125,6 +148,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     return {
         selectAll,
         selectById,
+        selectSnapshotByRequestId,
         selectActive,
         selectForSession,
         selectHasUnseenTerminal,

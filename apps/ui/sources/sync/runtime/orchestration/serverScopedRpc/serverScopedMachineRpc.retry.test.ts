@@ -9,6 +9,11 @@ const getCredentialsSpy = vi.hoisted(() => vi.fn());
 const createEncryptionSpy = vi.hoisted(() => vi.fn());
 const listServerProfilesSpy = vi.hoisted(() => vi.fn());
 const getActiveServerSnapshotSpy = vi.hoisted(() => vi.fn());
+const runtimeFetchWithServerReachabilitySpy = vi.hoisted(() => vi.fn());
+
+vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
+  runtimeFetchWithServerReachability: (...args: unknown[]) => runtimeFetchWithServerReachabilitySpy(...args),
+}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient', () => ({
   createEphemeralServerSocketClient: (...args: unknown[]) => createEphemeralSocketSpy(...args),
@@ -20,7 +25,11 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
   },
 }));
 
-vi.mock('@/auth/storage/tokenStorage', () => ({
+// Keep the real module and override only the one accessor this test drives. A
+// full-replacement factory silently drops every other export, so production code
+// reached through this graph (e.g. `isTokenOnlyAuthCredentials`) fails to resolve.
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/auth/storage/tokenStorage')>()),
   TokenStorage: {
     getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsSpy(...args),
   },
@@ -41,15 +50,20 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: (...args: unknown[]) => getActiveServerSnapshotSpy(...args),
 }));
 
+const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
+
 describe('machineRpcWithServerScope (retry)', () => {
   beforeEach(() => {
-    vi.resetModules();
     machineRpcSpy.mockReset();
     createEphemeralSocketSpy.mockReset();
     getCredentialsSpy.mockReset();
     createEncryptionSpy.mockReset();
     listServerProfilesSpy.mockReset();
     getActiveServerSnapshotSpy.mockReset();
+    runtimeFetchWithServerReachabilitySpy.mockReset();
+    runtimeFetchWithServerReachabilitySpy.mockResolvedValue(Response.json([
+      { id: 'machine-1', dataEncryptionKey: null },
+    ]));
     getActiveServerSnapshotSpy.mockReturnValue({
       serverId: 'server-a',
       serverUrl: 'https://server-a.example.test',
@@ -77,11 +91,6 @@ describe('machineRpcWithServerScope (retry)', () => {
       getMachineEncryption: vi.fn(() => machineEncryption),
     });
 
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
-    })));
-
     const emitWithAckSpy = vi
       .fn()
       .mockResolvedValueOnce({
@@ -103,13 +112,12 @@ describe('machineRpcWithServerScope (retry)', () => {
     };
     createEphemeralSocketSpy.mockResolvedValue(fakeSocket);
 
-    const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
-
     const rpcPromise = machineRpcWithServerScope({
       machineId: 'machine-1',
       method: 'method-test',
       payload: { value: 1 },
       preferScoped: true,
+      timeoutMs: 1_000,
     });
     const assertion = expect(rpcPromise).resolves.toEqual({ ok: true });
 
@@ -138,10 +146,6 @@ describe('machineRpcWithServerScope (retry)', () => {
       initializeMachines: vi.fn(async () => {}),
       getMachineEncryption: vi.fn(() => machineEncryption),
     });
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      json: async () => [{ id: 'machine-1', dataEncryptionKey: null }],
-    })));
     const emitWithAckSpy = vi.fn(async () => ({
       ok: false,
       error: 'RPC method not available',
@@ -155,12 +159,12 @@ describe('machineRpcWithServerScope (retry)', () => {
     createEphemeralSocketSpy.mockResolvedValue(fakeSocket);
     const onIssued = vi.fn();
 
-    const { machineRpcWithServerScope } = await import('./serverScopedMachineRpc');
     await expect(machineRpcWithServerScope({
       machineId: 'machine-1',
       method: 'method-test',
       payload: { value: 1 },
       preferScoped: true,
+      timeoutMs: 1_000,
       onIssued,
     })).rejects.toThrow('RPC method not available');
 

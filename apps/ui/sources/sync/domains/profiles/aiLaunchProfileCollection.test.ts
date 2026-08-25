@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     appendAiLaunchProfile,
     projectAiLaunchProfileForLegacyUi,
+    readUiAiLaunchProfileSnapshot,
     readUiAiLaunchProfilesForLegacyUi,
     readUiAiLaunchProfiles,
     removeAiLaunchProfile,
@@ -27,6 +28,12 @@ const malformed = { v: 2, id: '', malformed: true };
 describe('AI launch profile UI collection', () => {
     it('returns only executable legacy and slim rows', () => {
         expect(readUiAiLaunchProfiles([legacy, slim, future, malformed]).map((profile) => profile.id)).toEqual(['legacy', 'slim']);
+    });
+
+    it('reports retained newer-schema rows beside the executable projection', () => {
+        const snapshot = readUiAiLaunchProfileSnapshot([legacy, slim, future, malformed]);
+        expect(snapshot.profiles.map((profile) => profile.id)).toEqual(['legacy', 'slim']);
+        expect(snapshot.unreadableCount).toBe(2);
     });
 
     it('projects only current profile rows for legacy UI consumers', () => {

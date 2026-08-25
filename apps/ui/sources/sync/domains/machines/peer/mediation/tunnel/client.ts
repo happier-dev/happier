@@ -12,8 +12,12 @@ import {
     type PeerTcpTunnelRelayEnvelope,
 } from '@happier-dev/protocol';
 
+import {
+    resolveTcpTunnelRouteDecision,
+    type PeerTcpTunnelFlowKind,
+} from '@happier-dev/peer-mediation';
+
 import type { PeerLoopbackRouteAvailabilityResult } from '../loopback/resolvePeerLoopbackRouteAvailability';
-import { resolvePeerTcpTunnelAvailability } from './availability';
 import { openPeerTcpTunnelLoopbackStream, type PeerTcpTunnelWebSocketCtor } from './loopbackStream';
 import { openPeerTcpTunnelRelayStream } from './relayStream';
 
@@ -27,6 +31,11 @@ export type OpenPeerTcpTunnelClientResult =
     | Readonly<{
         ok: false;
         reasonCode: string;
+        /**
+         * Present when the direct route was attempted and failed with a reason outside this flow's
+         * disabled-reason vocabulary (a loopback probe or grant-mint code).
+         */
+        directRouteReasonCode?: string;
       }>;
 
 export type PeerTcpTunnelClientStream = Readonly<{
@@ -70,6 +79,11 @@ type PeerTcpTunnelDirectOpen = PeerTcpTunnelOpenV1 | PeerTcpTunnelOpenV2;
 
 export async function openPeerTcpTunnel(input: Readonly<{
     open: PeerTcpTunnelDirectOpen;
+    /**
+     * `tcp_tunnel` unless the caller is the voice-media transport, which rides the same tunnel but
+     * is gated by its own feature bits (`resolvePeerRouteFeatureId`). Defaults to `tcp_tunnel`.
+     */
+    flowKind?: PeerTcpTunnelFlowKind;
     directPeerDecision: FeatureDecision | null | undefined;
     serverRoutedDecision: FeatureDecision | null | undefined;
     resolveLoopback: (request: Readonly<{
@@ -98,19 +112,23 @@ export async function openPeerTcpTunnel(input: Readonly<{
         routeKind: 'loopback_direct',
         targetMachineId: input.open.targetMachineId,
     });
-    const availability = resolvePeerTcpTunnelAvailability({
+    const route = resolveTcpTunnelRouteDecision({
+        flowKind: input.flowKind ?? 'tcp_tunnel',
         directPeerDecision: input.directPeerDecision,
         serverRoutedDecision: input.serverRoutedDecision,
-        loopback,
+        directRoute: loopback.kind === 'selected'
+            ? { status: 'selected' }
+            : { status: 'unavailable', reasonCode: loopback.reasonCode },
     });
-    if (availability.kind !== 'available') {
+    if (route.kind !== 'selected') {
         return {
             ok: false,
-            reasonCode: availability.reasonCode,
+            reasonCode: route.reasonCode,
+            ...(route.directRouteReasonCode ? { directRouteReasonCode: route.directRouteReasonCode } : {}),
         };
     }
 
-    if (availability.routeKind === 'server_relay') {
+    if (route.routeKind === 'server_relay') {
         if (input.open.v === 2) return { ok: false, reasonCode: 'proof_version_route_mismatch' };
         const selectedOpen: PeerTcpTunnelOpenV1 = { ...input.open, routeKind: 'server_relay' };
         const relaySocket = input.serverRelaySocket;

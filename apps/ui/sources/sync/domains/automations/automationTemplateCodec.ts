@@ -3,6 +3,7 @@ import {
     AcpConfigOptionOverridesV1Schema,
     BackendTargetRefV2Schema,
     normalizeCodexBackendMode,
+    SessionAuthoringCheckoutCreationDraftV1Schema,
     SessionModelSelectionV1Schema,
     SessionMcpSelectionV1Schema,
     WindowsRemoteSessionLaunchModeSchema,
@@ -11,32 +12,9 @@ import {
 
 import type { AutomationTemplate } from './automationTypes';
 
-type AutomationTemplateCheckoutCreationDraft = NonNullable<AutomationTemplate['checkoutCreationDraft']>;
-
-function normalizeCheckoutCreationDraft(value: {
-    kind: 'git_worktree';
-    displayName: string;
-    baseRef?: string | null;
-    branchMode?: 'new' | 'existing';
-}): AutomationTemplateCheckoutCreationDraft {
-    return {
-        kind: value.kind,
-        displayName: value.displayName.trim(),
-        baseRef: typeof value.baseRef === 'string' ? value.baseRef.trim() : null,
-        branchMode: value.branchMode === 'existing' ? 'existing' : 'new',
-    };
-}
-
-const CheckoutCreationDraftSchema: z.ZodType<AutomationTemplateCheckoutCreationDraft> = z.object({
-    kind: z.literal('git_worktree'),
-    displayName: z.string().trim().min(1),
-    baseRef: z.string().trim().min(1).nullable().optional(),
-    branchMode: z.enum(['new', 'existing']).optional(),
-}).strict().transform(normalizeCheckoutCreationDraft);
-
 const AutomationTemplateSchema: z.ZodType<AutomationTemplate> = z.object({
     directory: z.string().trim().min(1),
-    checkoutCreationDraft: CheckoutCreationDraftSchema.optional(),
+    checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1Schema.optional(),
     prompt: z.string().optional(),
     displayText: z.string().optional(),
     agent: z.string().optional(),
@@ -97,7 +75,11 @@ function normalizeTemplate(template: AutomationTemplate): AutomationTemplate {
                     kind: 'git_worktree',
                     displayName: template.checkoutCreationDraft.displayName.trim(),
                     baseRef: normalizeOptionalString(template.checkoutCreationDraft.baseRef) ?? null,
-                    branchMode: template.checkoutCreationDraft.branchMode === 'existing' ? 'existing' : 'new',
+                    // Omission stays omitted: the checkout materialization owner
+                    // applies the single canonical branch-mode default.
+                    ...(template.checkoutCreationDraft.branchMode
+                        ? { branchMode: template.checkoutCreationDraft.branchMode }
+                        : {}),
                 },
             }
             : {}),

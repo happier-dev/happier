@@ -95,16 +95,19 @@ describe('public preview disabled subtitle — server capability reasons (P1-3)'
     });
 
     it('covers every reason code the server can emit', () => {
-        // Mirrors apps/server/sources/app/features/localServicesFeature.ts:52-110.
+        // Mirrors the `publicDisabledReasons` fold in `resolveLocalServicesFeature`
+        // (apps/server/sources/app/features/localServicesFeature.ts) — the only producer.
+        // Keep this list in step with it: an unmapped code silently degrades to the generic
+        // sentence, which is exactly the defect this vocabulary exists to remove.
         const serverCodes = [
             'disabled_by_server_policy',
             'pms_server_relay_disabled',
             'pms_allowed_ports_empty',
+            'peer_mediation_grant_signing_unavailable',
             'mode_unconfigured',
             'max_ttl_unconfigured',
             'dns_tls_unavailable',
             'audit_sink_unavailable',
-            'audit_required_disabled',
             'rate_limit_profile_unconfigured',
             'rate_limit_checker_unavailable',
         ] as const;

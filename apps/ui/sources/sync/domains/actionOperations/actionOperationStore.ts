@@ -24,6 +24,7 @@ export type ActionOperationStore = Readonly<{
     }>): void;
     retainAccountMachines(accountId: string, machineIds: ReadonlySet<string>): void;
     setMachineObservation(machineId: string, observation: ActionOperationObservation): void;
+    markTerminalSeen(operationId: string, seenAt?: number): boolean;
     markAllTerminalSeen(seenAt?: number): boolean;
     dismissRecentSucceeded(): boolean;
     dismissUnavailable(operationId: string): boolean;
@@ -229,6 +230,16 @@ export function createActionOperationStore(): ActionOperationStore {
             const machineObservationById = new Map(state.machineObservationById);
             machineObservationById.set(machineId, observation);
             publish(Object.freeze({ ...state, machineObservationById }));
+        },
+        markTerminalSeen(operationId, seenAt = Date.now()) {
+            const operation = state.operationsById.get(operationId);
+            if (!operation || !TERMINAL_STATES.has(operation.state)) return false;
+            const current = state.seenAtByOperationId.get(operationId);
+            if (current && current.revision >= operation.revision) return false;
+            const seenAtByOperationId = new Map(state.seenAtByOperationId);
+            seenAtByOperationId.set(operationId, { seenAt, revision: operation.revision });
+            publish(Object.freeze({ ...state, seenAtByOperationId }));
+            return true;
         },
         markAllTerminalSeen(seenAt = Date.now()) {
             const seenAtByOperationId = new Map(state.seenAtByOperationId);

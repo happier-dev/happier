@@ -109,6 +109,11 @@ export async function ensureAgentInstallablesBackground(
         settings: opts.settings,
         experiments,
         resumeSessionId: opts.resumeSessionId ?? '',
+        // An installed Agent's descriptor is a per-machine fact, and this whole
+        // routine is scoped to one machine, so its dependency set is read from
+        // that machine's declaration rather than from whichever machine an
+        // unscoped read happens to answer with.
+        machineId: opts.machineId,
     });
     if (relevantKeys.length === 0) return;
 

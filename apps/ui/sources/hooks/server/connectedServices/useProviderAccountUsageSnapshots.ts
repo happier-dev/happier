@@ -77,10 +77,13 @@ async function readProviderAccountUsageSnapshot(params: Readonly<{
                 expectedActiveServer: params.serverBasis,
             },
         ),
-        openSealed: (sealed) => openProviderAccountUsageSnapshot(
-            params.credentials,
-            sealed.sealed,
-        ),
+        openSealed: (response) => {
+            const snapshot = openProviderAccountUsageSnapshot(
+                params.credentials,
+                response.content,
+            );
+            return snapshot?.recordId === params.recordId ? snapshot : null;
+        },
     });
 }
 

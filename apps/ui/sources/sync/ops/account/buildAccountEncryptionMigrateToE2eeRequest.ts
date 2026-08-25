@@ -38,6 +38,10 @@ import {
 import type {
   AccountEncryptionMigrationStorageDirectives,
 } from './buildAccountEncryptionMigrationStorageDirectives';
+import {
+  buildAccountEncryptionSessionDraftsDirective,
+  type AccountEncryptionSessionDraftMigrationCandidate,
+} from './buildAccountEncryptionSessionDraftsDirective';
 
 type ConnectedServiceCredentialMetadataInput = Readonly<{
   kind: 'oauth' | 'token';
@@ -64,6 +68,7 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   qualifiedConnectedAccounts?: readonly QualifiedConnectedAccountProfileV4[];
   automations: ReadonlyArray<Readonly<{ id: string; templateVersion: number; templateCiphertext: string }>>;
+  sessionDrafts?: readonly AccountEncryptionSessionDraftMigrationCandidate[];
   storageDirectives: AccountEncryptionMigrationStorageDirectives;
   fetchConnectedServiceCredentialPlain: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<Readonly<{
     content: Readonly<{ t: 'plain'; v: unknown }>;
@@ -236,6 +241,10 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
     }
     return { action: 'migrate' as const, templates };
   })();
+  const sessionDrafts = buildAccountEncryptionSessionDraftsDirective({
+    candidates: params.sessionDrafts ?? [],
+    target: { mode: 'e2ee', material, randomBytes: getRandomBytes },
+  });
   const unsignedRequest =
     AccountEncryptionMigrateUnsignedRequestSchema.parse({
       toMode: 'e2ee',
@@ -255,6 +264,7 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
         contentPublicKeySig: params.keyProof.contentPublicKeySig,
       },
       ...params.storageDirectives,
+      ...(sessionDrafts ? { sessionDrafts } : {}),
     });
   const signature = params.keyProof.sign(
     createAccountEncryptionMigrateProofSigningInputV1({

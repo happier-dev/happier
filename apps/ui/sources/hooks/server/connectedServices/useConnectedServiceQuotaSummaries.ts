@@ -1,6 +1,9 @@
 import * as React from 'react';
 
-import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import {
+    useProjectedPluginLocalizedTextResolver,
+    useProjectedConnectedServicesRegistry,
+} from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { t } from '@/text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useProfile, useSettings } from '@/sync/store/hooks';
@@ -38,6 +41,9 @@ import type {
 import {
     resolveConnectedServiceRegistryEntryDisplayName,
 } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import {
+    type PluginLocalizedTextResolver,
+} from '@/sync/domains/plugins/ui/i18n';
 
 export type ConnectedServiceQuotaSummaryMeter = Readonly<{
     meterId: string;
@@ -96,6 +102,7 @@ function resolveQualifiedSummaryService(params: Readonly<{
     ref: Readonly<{ service: PluginContributionIdentityV1; accountId: string }>;
     settings: ReturnType<typeof useSettings>;
     registryEntries: readonly ConnectedServiceRegistryEntry[];
+    localizePluginText: PluginLocalizedTextResolver;
 }>): Readonly<{
     service: PluginContributionIdentityV1;
     legacyServiceId: ConnectedServiceId | null;
@@ -112,7 +119,7 @@ function resolveQualifiedSummaryService(params: Readonly<{
         service: params.ref.service,
         legacyServiceId,
         serviceLabel: entry
-            ? resolveConnectedServiceRegistryEntryDisplayName(entry, t)
+            ? resolveConnectedServiceRegistryEntryDisplayName(entry, t, params.localizePluginText)
             : t('connectedServices.fallbackName'),
         profileId: params.ref.accountId,
         profileLabel: resolveQualifiedConnectedAccountLabel({
@@ -128,6 +135,7 @@ function resolveLegacySummaryService(params: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
     settings: ReturnType<typeof useSettings>;
+    localizePluginText: PluginLocalizedTextResolver;
 }>): Readonly<{
     service: PluginContributionIdentityV1;
     legacyServiceId: ConnectedServiceId;
@@ -140,7 +148,7 @@ function resolveLegacySummaryService(params: Readonly<{
     return {
         service: entry.service,
         legacyServiceId: entry.legacyServiceId,
-        serviceLabel: resolveConnectedServiceRegistryEntryDisplayName(entry, t),
+        serviceLabel: resolveConnectedServiceRegistryEntryDisplayName(entry, t, params.localizePluginText),
         profileId: params.profileId,
         profileLabel: resolveConnectedServiceProfileLabel({
             labelsByKey: params.settings.connectedServicesProfileLabelByKey,
@@ -159,6 +167,7 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
     const profile = useProfile();
     const settings = useSettings();
     const connectedServicesRegistrySnapshot = useProjectedConnectedServicesRegistry();
+    const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const serverFeatures = useServerFeaturesRuntimeSnapshot({
         enabled: quotasEnabled,
     });
@@ -226,11 +235,13 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
                     ref: entry.ref,
                     settings,
                     registryEntries: connectedServicesRegistrySnapshot.entries,
+                    localizePluginText,
                 })
                 : resolveLegacySummaryService({
                     serviceId: entry.serviceId,
                     profileId: entry.profileId,
                     settings,
+                    localizePluginText,
                 });
             if (!summaryService) continue;
             const snapshot = snapshotsByKey[entry.key];
@@ -267,6 +278,7 @@ export function useConnectedServiceQuotaSummaries(): Readonly<{
         connectedServicesRegistrySnapshot,
         connectedProfiles,
         quotasEnabled,
+        localizePluginText,
         settings.connectedServicesProfileLabelByKey,
         settings.connectedServicesQuotaPinnedMeterIdsByKey,
         settings.connectedServicesQuotaSummaryStrategyByKey,

@@ -18,6 +18,9 @@ import {
 import { projectManager } from '../../runtime/orchestration/projectManager';
 import { invalidateCachedTransferRoutesForMachine } from '../../domains/transfers/runtime/transferRouteCache';
 import {
+    publishMachineContributionRegistryProjectionInvalidation,
+} from '../../ops/machineContributionRegistryProjectionRevision';
+import {
     scheduleMachineDisplayWarmCacheSave,
     scheduleMachineListDisplayWarmCacheSave,
 } from '../../domains/state/machineDisplayWarmCacheWriter';
@@ -267,6 +270,17 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         invalidateCachedTransferRoutesForMachine({
                             serverId,
                             remoteMachineId: machineId,
+                        });
+                        // A replaced or restarted daemon is a different
+                        // projection endpoint, and this is the one place that
+                        // observes that transition. Advancing the incumbent
+                        // projection revision is what makes every projection
+                        // consumer re-describe and what lets an in-flight
+                        // response recognise that it answered for the previous
+                        // endpoint.
+                        publishMachineContributionRegistryProjectionInvalidation({
+                            serverId,
+                            machineId,
                         });
                     }
                 }

@@ -736,6 +736,129 @@ describe('fetchAndApplySessionById', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it('does not claim not_found when a current-text session-by-id 404 carries route metadata', async () => {
+    const applySessions = vi.fn();
+    const request = vi.fn(async (path: string) => {
+      if (path === '/v2/sessions/s_current_text_extra_404') {
+        return new Response(JSON.stringify({
+          error: 'Session not found',
+          path: '/v2/sessions/s_current_text_extra_404',
+          method: 'GET',
+        }), { status: 404 });
+      }
+      expect(path).toBe('/v2/sessions?limit=200');
+      return new Response(JSON.stringify({
+        sessions: [],
+        nextCursor: null,
+        hasNext: false,
+      }), { status: 200 });
+    });
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_current_text_extra_404',
+      credentials: { token: 't' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      session: null,
+      errorCode: 'invalid_response',
+    });
+    expect(applySessions).not.toHaveBeenCalled();
+    expect(request.mock.calls.map(([path]) => path)).toEqual([
+      '/v2/sessions/s_current_text_extra_404',
+      '/v2/sessions?limit=200',
+    ]);
+  });
+
+  it.each([
+    ['an empty body', () => new Response(null, { status: 404 })],
+    ['a plain-text body', () => new Response('Not found', {
+      status: 404,
+      headers: { 'Content-Type': 'text/plain' },
+    })],
+  ])('does not claim not_found for session-by-id 404 with %s', async (_label, createResponse) => {
+    const applySessions = vi.fn();
+    const request = vi.fn(async () => createResponse());
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_invalid_404',
+      credentials: { token: 't' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      session: null,
+      errorCode: 'invalid_response',
+      httpStatus: 404,
+    });
+    expect(applySessions).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves compatibility fallback without claiming not_found when a missing v2 route has no matching list row', async () => {
+    const applySessions = vi.fn();
+    const request = vi.fn(async (path: string) => {
+      if (path === '/v2/sessions/s_legacy_absent') {
+        return new Response(JSON.stringify({
+          error: 'Not found',
+          path: '/v2/sessions/s_legacy_absent',
+          method: 'GET',
+        }), { status: 404 });
+      }
+      expect(path).toBe('/v2/sessions?limit=200');
+      return new Response(JSON.stringify({
+        sessions: [],
+        nextCursor: null,
+        hasNext: false,
+      }), { status: 200 });
+    });
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_legacy_absent',
+      credentials: { token: 't' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      session: null,
+      errorCode: 'invalid_response',
+      httpStatus: 404,
+    });
+    expect(applySessions).not.toHaveBeenCalled();
+    expect(request.mock.calls.map(([path]) => path)).toEqual([
+      '/v2/sessions/s_legacy_absent',
+      '/v2/sessions?limit=200',
+    ]);
+  });
+
   it.each([401, 403] as const)('throws terminal auth for session-by-id status %s', async (status) => {
     const applySessions = vi.fn();
     const request = vi.fn(async () => new Response(JSON.stringify({ error: 'auth failed' }), { status }));

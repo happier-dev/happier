@@ -4,6 +4,8 @@ import { syncSwitchServer } from '@/sync/sync';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { loadLocalSettings, saveLocalSettings } from '@/sync/domains/state/persistence';
 import { clearPersistence } from '@/sync/domains/state/persistenceLifecycle';
+import { forgetPluginAccountAvailabilityArtifacts } from '@/sync/domains/plugins/availability/projection';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { trackLogout } from '@/track';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
@@ -141,6 +143,12 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         }
         await options?.beforeMutation?.();
         trackLogout();
+        // Signing out forgets this Account on this device, so its Artifact
+        // bytes are deleted as well as retired. An Account switch or
+        // deactivation deliberately does not: it retires reachability and
+        // leaves the Account-qualified bytes inert and reusable.
+        const forgottenScope = getActiveServerAccountScope();
+        if (forgottenScope) forgetPluginAccountAvailabilityArtifacts(forgottenScope);
         // Preserve device-local flags across logout — the user is signing out of
         // an account but the device itself has still seen the brand hero and
         // still has prior auth experience. Clearing these would force returning

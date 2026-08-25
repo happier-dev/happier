@@ -548,6 +548,91 @@ describe('scoped plugin Settings adapter', () => {
         expect(writeRecord).not.toHaveBeenCalled();
     });
 
+    it('adopts one legacy server entry into the canonical identity in the existing Settings CAS', async () => {
+        const fields = [{
+            key: 'endpoint',
+            redacted: false,
+            binding: {
+                kind: 'perActiveServer' as const,
+                byServerIdSettingId: 'endpointByServer',
+                fallbackSettingId: 'endpointDefault',
+            },
+        }];
+        const target = { kind: 'account' as const, serverIdentityId: 'server-canonical' };
+        const writeRecord = vi.fn(async () => ({ status: 'updated' as const, revision: 8 }));
+        const account = createAccountScopedPluginSettingsTransport({
+            readRecord: vi.fn(async () => ({
+                status: 'present' as const,
+                revision: 7,
+                values: {
+                    endpointDefault: 'https://default.example.test',
+                    endpointByServer: { 'server-legacy': 'https://legacy.example.test' },
+                },
+            })),
+            writeRecord,
+        }, {
+            resolveLegacyServerIdentityIds: () => ['server-legacy'],
+        });
+
+        await expect(account.read({ pluginId: 'acme.settings', target, fields })).resolves.toMatchObject({
+            status: 'ready',
+            snapshot: {
+                revision: { kind: 'account', value: 8 },
+                values: {
+                    endpointByServer: { 'server-canonical': 'https://legacy.example.test' },
+                },
+            },
+        });
+        expect(writeRecord).toHaveBeenCalledWith({
+            pluginId: 'acme.settings',
+            target,
+            expectedRevision: 7,
+            values: {
+                endpointDefault: 'https://default.example.test',
+                endpointByServer: { 'server-canonical': 'https://legacy.example.test' },
+            },
+        });
+    });
+
+    it('rejects unequal canonical and legacy server values without writing', async () => {
+        const target = { kind: 'account' as const, serverIdentityId: 'server-canonical' };
+        const writeRecord = vi.fn();
+        const account = createAccountScopedPluginSettingsTransport({
+            readRecord: vi.fn(async () => ({
+                status: 'present' as const,
+                revision: 7,
+                values: {
+                    endpointByServer: {
+                        'server-canonical': 'https://canonical.example.test',
+                        'server-legacy': 'https://legacy.example.test',
+                    },
+                },
+            })),
+            writeRecord,
+        }, {
+            resolveLegacyServerIdentityIds: () => ['server-legacy'],
+        });
+
+        await expect(account.read({
+            pluginId: 'acme.settings',
+            target,
+            fields: [{
+                key: 'endpoint',
+                redacted: false,
+                binding: {
+                    kind: 'perActiveServer',
+                    byServerIdSettingId: 'endpointByServer',
+                    fallbackSettingId: 'endpointDefault',
+                },
+            }],
+        })).resolves.toEqual({
+            status: 'unavailable',
+            reason: 'plugin_settings_server_identity_conflict',
+            conflictingServerIdentityIds: ['server-canonical', 'server-legacy'],
+        });
+        expect(writeRecord).not.toHaveBeenCalled();
+    });
+
     it('merges an Account field through one CAS write while keeping raw and secret values out of the snapshot', async () => {
         const readRecord = vi.fn(async () => ({
             status: 'present' as const,

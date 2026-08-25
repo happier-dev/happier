@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-    derivePluginReactNativeBundleCacheKey,
-} from './reactNativeRuntime';
+import { deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1 } from '@happier-dev/protocol';
 
 describe('React Native runtime sync domain', () => {
     it('keys the daemon-owned cache identity without re-deciding runtime admission', () => {
@@ -22,7 +20,7 @@ describe('React Native runtime sync domain', () => {
             projectionGeneration: 12,
         } as const;
 
-        expect(derivePluginReactNativeBundleCacheKey(identity)).toContain('sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc');
-        expect(derivePluginReactNativeBundleCacheKey(identity)).toContain(':12');
+        expect(deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(identity)).toContain('sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc');
+        expect(deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(identity)).toContain(':12');
     });
 });

@@ -25,6 +25,7 @@ import {
     type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import {
+    createPluginSessionInfoSectionRendererIdV1,
     PluginUiResolvedSemanticCommandV1Schema,
     PluginUiDestinationBindingV1Schema,
     PluginUiDestinationReferenceV1Schema,
@@ -60,10 +61,10 @@ export type PluginUiSessionHeaderActionProjection = UnknownRecord & Readonly<{
     icon?: PluginUiIconTokenV1;
     /**
      * The registry resolves authored local identifiers before this projection
-     * reaches UI. Consumers retain that qualified semantic action verbatim,
+     * reaches UI. Consumers retain that qualified semantic command verbatim,
      * rather than recreating action or destination qualification locally.
      */
-    action: PluginUiResolvedSemanticCommandV1;
+    command: PluginUiResolvedSemanticCommandV1;
 }>;
 
 export type PluginUiHostedWebProjection = UnknownRecord & Readonly<{
@@ -99,7 +100,7 @@ export type PluginUiPageHeaderActionProjection = Readonly<{
     description?: PluginLocalizedStringV2;
     icon?: PluginUiIconTokenV1;
     order?: number;
-    action: PluginUiResolvedSemanticCommandV1;
+    command: PluginUiResolvedSemanticCommandV1;
 }>;
 
 export type PluginUiSurfacePlacementProjection = UnknownRecord & Readonly<{
@@ -191,6 +192,21 @@ export type PluginUiTranscriptActivityProjection = UnknownRecord & Readonly<{
     actions: readonly Readonly<{ pluginId: string; localId: string }>[];
 }>;
 
+/** One daemon-admitted, Resource-backed declarative section for Session info. */
+export type PluginUiSessionInfoSectionProjection = UnknownRecord & Readonly<{
+    id: string;
+    pluginId: string;
+    pluginVersion: string;
+    contributionKind: 'sessionInfoSection';
+    descriptorId: string;
+    order?: number;
+    resource: Readonly<{ pluginId: string; localId: string }>;
+    actions: readonly Readonly<{ pluginId: string; localId: string }>[];
+    renderer: UnknownRecord;
+    runtime?: UnknownRecord;
+    placement: PluginUiSurfacePlacementProjection;
+}>;
+
 export type PluginVoiceProviderProjection = UnknownRecord & Readonly<{
     id: string;
     pluginId: string;
@@ -216,6 +232,15 @@ export type PluginUiActionProjection = UnknownRecord & PluginProjectedActionV2;
 export type PluginUiProjectedActionResolver = (
     identity: PluginContributionIdentityV1,
 ) => PluginProjectedActionV2 | null;
+
+/** One fail-closed executability decision for every projected Action consumer. */
+export function isPluginProjectedActionExecutable<
+    TAction extends Readonly<{ available?: boolean | null }>,
+>(
+    action: TAction | null | undefined,
+): action is TAction {
+    return action?.available === true;
+}
 
 export function createPluginUiProjectedActionResolver(
     actionsById: Readonly<Record<string, PluginProjectedActionV2>> | null | undefined,
@@ -260,6 +285,7 @@ export type PluginUiProjectionModel = Readonly<{
     settingsGroupsById: Readonly<Record<string, PluginUiSettingsGroupProjection>>;
     settingsPagesById: Readonly<Record<string, PluginUiSettingsPageProjection>>;
     transcriptActivitiesById: Readonly<Record<string, PluginUiTranscriptActivityProjection>>;
+    sessionInfoSectionsById: Readonly<Record<string, PluginUiSessionInfoSectionProjection>>;
     /**
      * The three Composer maps retain only daemon-admitted static declarations.
      * Document state, picker state, effect dispatch, and surface lifecycle stay
@@ -286,6 +312,7 @@ export const EMPTY_PLUGIN_UI_PROJECTION: PluginUiProjectionModel = Object.freeze
     settingsGroupsById: Object.freeze({}),
     settingsPagesById: Object.freeze({}),
     transcriptActivitiesById: Object.freeze({}),
+    sessionInfoSectionsById: Object.freeze({}),
     composerAttachmentsById: Object.freeze({}),
     composerControlsById: Object.freeze({}),
     composerRegionsById: Object.freeze({}),
@@ -362,15 +389,15 @@ function resolveSessionHeaderAction(
     const icon = entry.icon === undefined
         ? null
         : PluginUiIconTokenV1Schema.safeParse(entry.icon);
-    const action = PluginUiResolvedSemanticCommandV1Schema.safeParse(entry.action);
-    if (!title.success || (icon !== null && !icon.success) || !action.success) {
+    const command = PluginUiResolvedSemanticCommandV1Schema.safeParse(entry.command);
+    if (!title.success || (icon !== null && !icon.success) || !command.success) {
         return null;
     }
     return Object.freeze({
         ...entry,
         title: title.data,
         ...(icon?.success ? { icon: icon.data } : {}),
-        action: action.data,
+        command: command.data,
     });
 }
 
@@ -395,14 +422,14 @@ function resolvePluginUiPageHeaderAction(
         : typeof entry.order === 'number' && Number.isInteger(entry.order)
             ? entry.order
             : false;
-    const action = PluginUiResolvedSemanticCommandV1Schema.safeParse(entry.action);
+    const command = PluginUiResolvedSemanticCommandV1Schema.safeParse(entry.command);
     if (
         !id.success
         || !title.success
         || (description !== null && !description.success)
         || (icon !== null && !icon.success)
         || order === false
-        || !action.success
+        || !command.success
     ) {
         return null;
     }
@@ -412,7 +439,7 @@ function resolvePluginUiPageHeaderAction(
         ...(description?.success ? { description: description.data } : {}),
         ...(icon?.success ? { icon: icon.data } : {}),
         ...(order === null ? {} : { order }),
-        action: action.data,
+        command: command.data,
     });
 }
 
@@ -580,6 +607,42 @@ function isTranscriptActivity(entry: UnknownRecord): entry is PluginUiTranscript
     });
 }
 
+function isSessionInfoSection(entry: UnknownRecord): entry is PluginUiSessionInfoSectionProjection {
+    const pluginId = readString(entry.pluginId);
+    const descriptorId = readString(entry.descriptorId);
+    if (
+        entry.contributionKind !== 'sessionInfoSection'
+        || readString(entry.id) !== `sessionInfoSection:${pluginId}:${descriptorId}`
+        || pluginId === null
+        || descriptorId === null
+        || readString(entry.pluginVersion) === null
+        || asRecord(entry.renderer) === null
+    ) return false;
+    const placement = asRecord(entry.placement);
+    if (!placement || !isSurfacePlacement(placement)) return false;
+    const binding = placement.binding;
+    const renderer = asRecord(entry.renderer);
+    const expectedRendererId = createPluginSessionInfoSectionRendererIdV1(descriptorId);
+    if (
+        placement.pluginId !== pluginId
+        || placement.descriptorId !== descriptorId
+        || binding.container !== 'sessionInfoSection'
+        || binding.targetKind !== 'session'
+        || binding.target.kind !== 'session'
+        || binding.destination.pluginId !== pluginId
+        || binding.destination.localId !== descriptorId
+        || binding.renderer.pluginId !== pluginId
+        || binding.renderer.localId !== expectedRendererId
+        || readString(renderer?.contributionId) !== expectedRendererId
+    ) return false;
+    const resource = PluginContributionIdentityV1Schema.safeParse(entry.resource);
+    if (!resource.success || resource.data.pluginId !== pluginId || !Array.isArray(entry.actions)) return false;
+    return entry.actions.every((action) => {
+        const parsed = PluginContributionIdentityV1Schema.safeParse(action);
+        return parsed.success && parsed.data.pluginId === pluginId;
+    });
+}
+
 function normalizeComposerAttachmentEntriesById(
     entriesById: Readonly<Record<string, PluginProjectedComposerAttachmentEntryV1>> | undefined,
 ): Readonly<Record<string, PluginUiComposerAttachmentProjection>> {
@@ -701,6 +764,7 @@ export function normalizePluginUiProjection(
     const settingsGroupsById: Record<string, PluginUiSettingsGroupProjection> = {};
     const settingsPagesById: Record<string, PluginUiSettingsPageProjection> = {};
     const transcriptActivitiesById: Record<string, PluginUiTranscriptActivityProjection> = {};
+    const sessionInfoSectionsById: Record<string, PluginUiSessionInfoSectionProjection> = {};
     const unknownEntriesById: Record<string, UnknownRecord> = {};
 
     for (const rawEntry of Object.values(family.entriesById)) {
@@ -787,6 +851,16 @@ export function normalizePluginUiProjection(
                 resource: Object.freeze({ ...entry.resource }),
                 actions: Object.freeze(entry.actions.map((action) => Object.freeze({ ...action }))),
             });
+        } else if (isSessionInfoSection(entry)) {
+            const runtime = asRecord(entry.runtime);
+            sessionInfoSectionsById[entry.id] = Object.freeze({
+                ...entry,
+                resource: Object.freeze({ ...entry.resource }),
+                actions: Object.freeze(entry.actions.map((action) => Object.freeze({ ...action }))),
+                renderer: Object.freeze({ ...(asRecord(entry.renderer) ?? {}) }),
+                placement: Object.freeze({ ...entry.placement }),
+                ...(runtime ? { runtime: Object.freeze({ ...runtime }) } : {}),
+            });
         } else {
             const id = readString(entry.id);
             if (id !== null) {
@@ -808,6 +882,7 @@ export function normalizePluginUiProjection(
         settingsGroupsById: Object.freeze(settingsGroupsById),
         settingsPagesById: Object.freeze(settingsPagesById),
         transcriptActivitiesById: Object.freeze(transcriptActivitiesById),
+        sessionInfoSectionsById: Object.freeze(sessionInfoSectionsById),
         composerAttachmentsById,
         composerControlsById,
         composerRegionsById,

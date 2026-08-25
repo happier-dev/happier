@@ -418,11 +418,9 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             });
     });
 
-    it('persists an edited attachment whose media is still transfer-staged', async () => {
+    it('persists the exact daemon-admitted SessionMedia attachment through the sole Pending writer', async () => {
         const sessionId = 's_test_pending_edit_composer_attachment_staged_media';
-        // A Pending row is Message ingress: the daemon's SessionMedia finalizer replaces this
-        // staged claim when the row is sent, so the edit must be saved, not refused.
-        const stagedAttachment = {
+        const admittedAttachment = {
             v: 1,
             instanceId: 'issue-44',
             attachment: { pluginId: 'acme.issues', localId: 'issue' },
@@ -430,25 +428,15 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             value: { issueId: 44 },
             presentation: { label: 'Issue #44', typeLabel: 'Issue' },
             content: {
-                kind: 'stagedMedia',
-                handle: {
-                    v: 1,
-                    id: 'stage-44',
-                    executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-                    owner: { pluginId: 'acme.issues', localId: 'issue' },
-                    mediaKind: 'image',
-                    mimeType: 'image/png',
-                    name: 'screenshot.png',
-                    sizeBytes: 1234,
-                    sha256: 'a'.repeat(64),
-                },
+                kind: 'sessionMedia',
+                mediaId: 'media-44',
             },
         } as const;
         const rawRecord = {
             role: 'user' as const,
             content: { type: 'text' as const, text: 'old text' },
             meta: {
-                happierStructuredInputV1: { v: 1, composerAttachments: [stagedAttachment] },
+                happierStructuredInputV1: { v: 1, composerAttachments: [admittedAttachment] },
             },
         };
         storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
@@ -462,7 +450,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             sessionId,
             pendingId: 'p1',
             text: 'edited text',
-            structuredInput: { v: 1, composerAttachments: [stagedAttachment] },
+            structuredInput: { v: 1, composerAttachments: [admittedAttachment] },
             encryption: null,
             request: async (_path, init) => {
                 body = JSON.parse(String(init?.body ?? 'null'));
@@ -472,7 +460,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
 
         expect((body as { content: { v: { meta: Record<string, unknown> } } }).content.v.meta)
             .toEqual({
-                happierStructuredInputV1: { v: 1, composerAttachments: [stagedAttachment] },
+                happierStructuredInputV1: { v: 1, composerAttachments: [admittedAttachment] },
             });
     });
 
@@ -1370,6 +1358,76 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         });
     });
 
+    it('returns the exact canonical accepted Composer fact only after the pending PATCH succeeds', async () => {
+        const sessionId = 's_test_pending_composer_accepted_fact';
+        const attachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42, prepared: true },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        } as const;
+        const stagedMediaHandle = {
+            v: 1,
+            id: 'stage-42',
+            executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
+            owner: attachment.attachment,
+            mediaKind: 'image' as const,
+            mimeType: 'image/png' as const,
+            name: 'issue.png',
+            sizeBytes: 42,
+            sha256: 'a'.repeat(64),
+        };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1',
+            localId: 'p1',
+            createdAt: 1,
+            updatedAt: 1,
+            source: 'server_pending',
+            deliveryStatus: 'accepted',
+            text: 'old text',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: 'old text' },
+                meta: {
+                    happierStructuredInputV1: {
+                        v: 1,
+                        vendorPluginMentions: [{
+                            vendorPluginRef: 'plugin://gmail@openai-curated',
+                            label: 'Gmail',
+                        }],
+                    },
+                },
+            },
+        });
+
+        const result = await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'edited text',
+            structuredInput: { v: 1, composerAttachments: [attachment] },
+            preparedComposerAdmission: { stagedMediaHandles: [stagedMediaHandle] },
+            encryption: null,
+            request: async () => new Response(null, { status: 204 }),
+        } as Parameters<typeof updatePendingMessageV2Impl>[0]);
+
+        expect(result).toEqual({
+            sessionId,
+            localId: 'p1',
+            structuredInput: {
+                v: 1,
+                vendorPluginMentions: [{
+                    vendorPluginRef: 'plugin://gmail@openai-curated',
+                    label: 'Gmail',
+                }],
+                composerAttachments: [attachment],
+            },
+            stagedMediaHandles: [stagedMediaHandle],
+        });
+    });
+
     it('does not leave an action-ack projection delivering when zero-count pruning precedes exact transcript commit', async () => {
         const sessionId = 's_test_action_patch_zero_count_before_ack';
         const localId = 'action-patch-zero-count-before-ack';
@@ -1871,7 +1929,12 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         let requestCount = 0;
 
         await expect(updatePendingMessageV2({
-            sessionId, pendingId: 'p1', text: 'edited', encryption,
+            sessionId,
+            pendingId: 'p1',
+            text: 'edited',
+            structuredInput: { v: 1 },
+            preparedComposerAdmission: { stagedMediaHandles: [] },
+            encryption,
             request: async () => {
                 requestCount += 1;
                 return new Response(null, { status: 204 });
@@ -1911,7 +1974,15 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             return new Response(null, { status: 404 });
         };
 
-        const update = updatePendingMessageV2({ sessionId, pendingId: localId, text: 'edited', encryption, request });
+        const update = updatePendingMessageV2({
+            sessionId,
+            pendingId: localId,
+            text: 'edited',
+            structuredInput: { v: 1 },
+            preparedComposerAdmission: { stagedMediaHandles: [] },
+            encryption,
+            request,
+        });
         await patchStartedGate;
         const cancellation = deletePendingMessageV2({ sessionId, pendingId: localId, request });
         expect(loadPendingOutboxForSession(sessionId, outboxScope)).toEqual([
@@ -1919,7 +1990,12 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         ]);
         releasePatch();
 
-        await expect(update).rejects.toThrow('Pending cancellation is outstanding');
+        await expect(update).resolves.toEqual({
+            sessionId,
+            localId,
+            structuredInput: { v: 1 },
+            stagedMediaHandles: [],
+        });
         await expect(cancellation).resolves.toBeUndefined();
         expect(loadPendingOutboxForSession(sessionId, outboxScope)).toEqual([]);
         expect(storage.getState().sessionPending[sessionId]?.messages ?? []).toEqual([]);

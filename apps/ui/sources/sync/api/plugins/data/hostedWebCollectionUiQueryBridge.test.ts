@@ -105,6 +105,7 @@ function createAvailabilityReader() {
         snapshot: {
             availabilityCursor: 7,
             materializations: [],
+            snapshots: [],
             intentReads: [{
                 pluginId,
                 response: {

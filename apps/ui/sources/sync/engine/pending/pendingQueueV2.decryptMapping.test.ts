@@ -88,6 +88,79 @@ describe('pendingQueueV2 decrypt mapping', () => {
         expect(messages[1]).toMatchObject({ pendingDecryptFailure: { kind: 'decrypt_failed' } });
     });
 
+    it('projects a queued attachment-only media row instead of a false decrypt failure', async () => {
+        const sessionId = 's_attachment_only_pending';
+        const encryption = await createPendingQueueEncryption({ sessionId });
+        const stagedImageAttachment = {
+            v: 1,
+            instanceId: 'attachment-media-1',
+            attachment: { pluginId: 'acme.media', localId: 'image' },
+            key: 'hero-image',
+            value: { alt: 'A mountain lake' },
+            presentation: { label: 'Hero image', typeLabel: 'Image' },
+            content: {
+                kind: 'stagedMedia',
+                handle: {
+                    v: 1,
+                    id: 'stage-1',
+                    executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+                    owner: { pluginId: 'acme.media', localId: 'image' },
+                    mediaKind: 'image',
+                    mimeType: 'image/png',
+                    name: 'hero.png',
+                    sizeBytes: 42,
+                    sha256: 'a'.repeat(64),
+                },
+            },
+        };
+
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption,
+            request: async () => Response.json({
+                pending: [
+                    {
+                        localId: 'media-only',
+                        content: {
+                            t: 'plain',
+                            v: {
+                                role: 'user',
+                                content: { type: 'text', text: '' },
+                                meta: {
+                                    happierStructuredInputV1: {
+                                        v: 1,
+                                        composerAttachments: [stagedImageAttachment],
+                                    },
+                                },
+                            },
+                        },
+                        status: 'queued', position: 0, createdAt: 1, updatedAt: 1,
+                    },
+                    {
+                        localId: 'truly-blank',
+                        content: {
+                            t: 'plain',
+                            v: { role: 'user', content: { type: 'text', text: '   ' }, meta: {} },
+                        },
+                        status: 'queued', position: 1, createdAt: 2, updatedAt: 2,
+                    },
+                ],
+            }),
+        });
+
+        const messages = storage.getState().sessionPending[sessionId]?.messages ?? [];
+        expect(messages.map((m) => m.localId)).toEqual(['media-only', 'truly-blank']);
+        // The attachment-only turn is a real queued message; losing its rawRecord loses the
+        // selected media and makes the row unsendable.
+        expect(messages[0]?.pendingDecryptFailure).toBeUndefined();
+        expect(messages[0]?.text).toBe('');
+        expect(messages[0]?.rawRecord).toMatchObject({
+            meta: { happierStructuredInputV1: { composerAttachments: [stagedImageAttachment] } },
+        });
+        // A blank row carrying no submittable selection stays an explicit failure.
+        expect(messages[1]).toMatchObject({ pendingDecryptFailure: { kind: 'decrypt_failed' } });
+    });
+
     it('maps plaintext pending rows without decrypting', async () => {
         const sessionId = 's_plain_pending';
         const encryption = await createPendingQueueEncryption({ sessionId });

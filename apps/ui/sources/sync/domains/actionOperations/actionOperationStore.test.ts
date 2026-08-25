@@ -24,6 +24,18 @@ function operation(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOp
 }
 
 describe('action operation store', () => {
+    it('marks only the requested terminal operation seen', () => {
+        const store = createActionOperationStore();
+        const first = operation({ operationId: 'operation-1', revision: 3, state: 'succeeded', settledAt: 130, result: { sessionId: 'session-1' } });
+        const second = operation({ operationId: 'operation-2', revision: 4, state: 'failed', settledAt: 140, error: { errorCode: 'failed', error: 'Failed' } });
+        store.mergeSnapshots([first, second]);
+
+        expect(store.markTerminalSeen(first.operationId, 200)).toBe(true);
+        expect(store.getSnapshot().seenAtByOperationId.get(first.operationId)).toEqual({ seenAt: 200, revision: 3 });
+        expect(store.getSnapshot().seenAtByOperationId.has(second.operationId)).toBe(false);
+        expect(store.markTerminalSeen(first.operationId, 300)).toBe(false);
+    });
+
     it('keeps one row per operation ID across global and session selectors', () => {
         const store = createActionOperationStore();
         const selectors = createActionOperationSelectors();

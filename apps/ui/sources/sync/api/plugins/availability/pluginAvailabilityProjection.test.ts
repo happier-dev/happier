@@ -119,6 +119,12 @@ describe('active Plugin Account Availability projection hydrator', () => {
                 availabilityCursor: 17,
                 intentReads: [{ pluginId, response: expect.objectContaining({ availabilityCursor: 17 }) }],
                 materializations: [expect.objectContaining({ pluginId })],
+                snapshots: [{
+                    serverIdentityId: 'srv_identity',
+                    machineId: 'machine-a',
+                    revision: 1,
+                    materializations: [expect.objectContaining({ pluginId })],
+                }],
             },
         });
         expect(request.mock.calls.map(([path]) => path)).toEqual([
@@ -143,7 +149,15 @@ describe('active Plugin Account Availability projection hydrator', () => {
                 request: async (path, init) => {
                     requestedPaths.push(path);
                     if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
-                        return jsonResponse(materializationSnapshot(23, []));
+                        return jsonResponse({
+                            availabilityCursor: 23,
+                            snapshots: [{
+                                serverIdentityId: 'srv_identity',
+                                machineId: 'machine-empty',
+                                revision: 9,
+                                materializations: [],
+                            }],
+                        });
                     }
                     if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
                         return jsonResponse({
@@ -166,13 +180,25 @@ describe('active Plugin Account Availability projection hydrator', () => {
         }])).toBe(true);
 
         await expect(hydrator.refresh()).resolves.toMatchObject({
-            snapshot: { intentReads: [expect.objectContaining({ pluginId })] },
+            snapshot: {
+                intentReads: [expect.objectContaining({ pluginId })],
+                materializations: [],
+                snapshots: [{
+                    serverIdentityId: 'srv_identity',
+                    machineId: 'machine-empty',
+                    revision: 9,
+                    materializations: [],
+                }],
+            },
         });
         expect(requestedPluginIds).toEqual([pluginId]);
 
         hydrator.reset();
         await expect(hydrator.refresh()).resolves.toMatchObject({
-            snapshot: { intentReads: [expect.objectContaining({ pluginId })] },
+            snapshot: {
+                intentReads: [expect.objectContaining({ pluginId })],
+                snapshots: [expect.objectContaining({ machineId: 'machine-empty', revision: 9 })],
+            },
         });
         expect(requestedPluginIds).toEqual([pluginId, pluginId]);
         expect(requestedPaths).toContain(

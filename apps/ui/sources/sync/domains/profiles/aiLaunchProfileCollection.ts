@@ -26,10 +26,26 @@ export function projectAiLaunchProfileForLegacyUi(profile: AiLaunchProfile): AIB
     });
 }
 
+export type UiAiLaunchProfileSnapshot = Readonly<{
+    profiles: readonly AiLaunchProfile[];
+    unreadableCount: number;
+}>;
+
+export function readUiAiLaunchProfileSnapshot(raw: unknown): UiAiLaunchProfileSnapshot {
+    const profiles: AiLaunchProfile[] = [];
+    let unreadableCount = 0;
+    for (const entry of readAiLaunchProfileCollection(raw).entries) {
+        if (entry.kind === 'opaque') {
+            unreadableCount += 1;
+        } else {
+            profiles.push(entry.profile);
+        }
+    }
+    return { profiles, unreadableCount };
+}
+
 export function readUiAiLaunchProfiles(raw: unknown): readonly AiLaunchProfile[] {
-    return readAiLaunchProfileCollection(raw).entries.flatMap((entry) => (
-        entry.kind === 'opaque' ? [] : [entry.profile]
-    ));
+    return readUiAiLaunchProfileSnapshot(raw).profiles;
 }
 
 /**

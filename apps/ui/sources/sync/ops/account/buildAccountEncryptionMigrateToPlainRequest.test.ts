@@ -53,6 +53,49 @@ function assertString(value: unknown, name: string): asserts value is string {
 }
 
 describe('buildAccountEncryptionMigrateToPlainRequest', () => {
+  it('includes Account-owned new-session drafts in the atomic plain migration request', async () => {
+    const credentials = createLegacyCredentials();
+    const address = {
+      kind: 'newSession' as const,
+      draftId: '00000000-0000-4000-8000-000000000111',
+    };
+    const document = {
+      v: 1 as const,
+      composer: {
+        text: { mutationId: '00000000-0000-4000-8000-000000000112', value: 'draft' },
+        mentions: { mutationId: '00000000-0000-4000-8000-000000000113', value: [] },
+        attachments: { mutationId: '00000000-0000-4000-8000-000000000114', value: [] },
+      },
+      target: { kind: 'newSession' as const, authoring: {} },
+      extensions: {},
+    };
+
+    const request = await buildAccountEncryptionMigrateToPlainRequest({
+      storageDirectives: EMPTY_STORAGE_DIRECTIVES,
+      ...CURRENTNESS,
+      credentials,
+      expectedSettingsVersion: 7,
+      settings: { schemaVersion: 2, backendEnabledById: {} } as any,
+      connectedServiceProfiles: [],
+      automations: [],
+      sessionDrafts: [{ address, baseRevision: 8, document }],
+      fetchConnectedServiceCredentialSealed: async () => {
+        throw new Error('unexpected fetchConnectedServiceCredentialSealed');
+      },
+      decryptAutomationTemplateRaw: async () => {
+        throw new Error('unexpected decryptAutomationTemplateRaw');
+      },
+    });
+
+    expect(request.sessionDrafts).toEqual({
+      items: [{
+        address,
+        expectedRevision: 8,
+        content: { t: 'plain', v: { v: 1, address, document } },
+      }],
+    });
+  });
+
   it('builds assert_empty directives when no connected services or automations exist', async () => {
     const credentials = createLegacyCredentials();
 
@@ -78,6 +121,7 @@ describe('buildAccountEncryptionMigrateToPlainRequest', () => {
     expect(request.connectedServices).toEqual({ action: 'assert_empty' });
     expect(request.automations).toEqual({ action: 'assert_empty' });
     expect(request.sessions).toEqual({ action: 'assert_empty' });
+    expect(request.sessionDrafts).toBeUndefined();
   });
 
   it('includes the released legacy Voice adapter projection in plain full-settings migrations', async () => {

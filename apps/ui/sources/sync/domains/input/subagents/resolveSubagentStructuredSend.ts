@@ -1,6 +1,6 @@
 import {
     SubagentCommandV1Schema,
-    SubagentLaunchV1Schema,
+    resolveSubagentLaunchStructuredSend,
     type SubagentCommandV1,
     type SubagentLaunchV1,
 } from '@happier-dev/protocol';
@@ -14,13 +14,6 @@ type ResolveSubagentStructuredSendParams =
         envelopeKind: 'subagent_command.v1';
         payload: SubagentCommandV1;
     }>;
-
-function describeLaunch(payload: SubagentLaunchV1): string {
-    if (payload.kind === 'agent_team_create') {
-        return `Create team ${payload.teamId}`;
-    }
-    return `Launch teammate ${payload.memberLabel} · ${payload.teamId}`;
-}
 
 function describeCommand(payload: SubagentCommandV1): string {
     if (payload.kind === 'agent_team_delete') {
@@ -40,18 +33,11 @@ export function resolveSubagentStructuredSend(params: ResolveSubagentStructuredS
     }>;
 }> {
     if (params.envelopeKind === 'subagent_launch.v1') {
-        const payload = SubagentLaunchV1Schema.parse(params.payload);
-        const displayText = describeLaunch(payload);
-
+        const resolved = resolveSubagentLaunchStructuredSend(params.payload);
         return {
-            text: displayText,
-            displayText,
-            metaOverrides: {
-                happier: {
-                    kind: params.envelopeKind,
-                    payload,
-                },
-            },
+            text: resolved.text,
+            displayText: resolved.displayText,
+            metaOverrides: resolved.messageMeta,
         };
     }
 

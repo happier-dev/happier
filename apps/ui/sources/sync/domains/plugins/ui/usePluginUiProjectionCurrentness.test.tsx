@@ -64,6 +64,10 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
 import {
     retireActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
+import { prepareWarmCacheEncryptionKey } from '@/sync/domains/state/warmCacheEncryptionKey';
+import {
+    forgetPluginUiProjectionAdmissionSnapshots,
+} from './projectionWarmCache';
 import {
     resolvePluginUiClientExecutablePlatform,
     resolvePluginUiProjectionPlatform,
@@ -101,8 +105,15 @@ function supportedProjection(title: string) {
 }
 
 describe('usePluginUiProjectionCurrentness', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        // Nothing reads or writes device custody until its at-rest key
+        // resolves, exactly as on a device.
+        await prepareWarmCacheEncryptionKey();
         retireActiveServerAccountScopeLifetime();
+        // The retained admission snapshot is real device custody, so it would
+        // otherwise leak between cases in this module.
+        forgetPluginUiProjectionAdmissionSnapshots({ serverId: 'server-1', accountId: 'account-a' });
+        forgetPluginUiProjectionAdmissionSnapshots({ serverId: 'server-1', accountId: 'account-b' });
         activeServerSnapshot.serverId = 'server-1';
         activeServerSnapshot.serverUrl = 'https://relay.example.test';
         activeServerSnapshot.generation = 1;
@@ -145,6 +156,303 @@ describe('usePluginUiProjectionCurrentness', () => {
 
     expect(resolvePluginUiClientExecutablePlatform()).toBe('web');
   });
+
+    it('boots a fresh process from retained device custody when every daemon is unreachable', async () => {
+        // Warm run: the server is reachable and the daemon answers once. This
+        // is the only moment admission currentness is confirmed.
+        projectionRuntime.describe.mockResolvedValueOnce(supportedProjection('Retained catalog'));
+        const warm = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(warm.getCurrent().phase).toBe('current');
+        await warm.unmount();
+
+        // Cold process: laptop asleep, phone on cellular. The Account server
+        // still answers, every daemon is unreachable, and nothing may reach
+        // for one.
+        projectionConnectionState.isOnline = false;
+        projectionRuntime.describe.mockReset();
+        projectionRuntime.describe.mockImplementation(() => {
+            throw new Error('a cold process must not need a daemon to mount');
+        });
+
+        const cold = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(cold.getCurrent().phase).toBe('retainedOffline');
+        expect(cold.getCurrent().interactionEnabled).toBe(false);
+        expect(cold.getCurrent().pluginBrowserProjection).toBeNull();
+        expect(cold.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
+            en: { title: 'Retained catalog' },
+        });
+        expect(projectionRuntime.describe).not.toHaveBeenCalled();
+        await cold.unmount();
+
+        // Falsification: empty the device custody for this exact Account and
+        // the same cold process must fail closed instead of presenting a
+        // fabricated catalog.
+        forgetPluginUiProjectionAdmissionSnapshots({ serverId: 'server-1', accountId: 'account-a' });
+        const emptied = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(emptied.getCurrent().phase).toBe('establishing');
+        expect(emptied.getCurrent().pluginUiProjection?.generation).toBeNull();
+        expect(projectionRuntime.describe).not.toHaveBeenCalled();
+    });
+
+    it('restores retained custody when a fresh process only learns the daemon is unreachable after its first describe', async () => {
+        projectionRuntime.describe.mockResolvedValueOnce(supportedProjection('Retained catalog'));
+        const warm = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(warm.getCurrent().phase).toBe('current');
+        await warm.unmount();
+
+        // Laptop asleep: the Account server still reports the machine online
+        // from its last heartbeat, so the fresh process does reach for a daemon
+        // and only learns it is unreachable afterwards. Nothing was ever
+        // confirmed in this process, so there is no in-process snapshot to keep.
+        projectionRuntime.describe.mockReset();
+        projectionRuntime.describe.mockRejectedValue(new Error('daemon unreachable'));
+        const cold = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(cold.getCurrent().phase).toBe('establishing');
+
+        projectionConnectionState.isOnline = false;
+        await act(async () => {
+            await cold.rerender();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(cold.getCurrent().phase).toBe('retainedOffline');
+        expect(cold.getCurrent().interactionEnabled).toBe(false);
+        expect(cold.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
+            en: { title: 'Retained catalog' },
+        });
+    });
+
+    it('leaves a daemon-answered unavailable target unavailable when it later goes offline', async () => {
+        projectionRuntime.describe.mockResolvedValueOnce(supportedProjection('Retained catalog'));
+        const warm = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(warm.getCurrent().phase).toBe('current');
+        await warm.unmount();
+
+        // A daemon answered for this exact target and its answer was that the
+        // machine cannot serve the projection at all. Device custody must not
+        // overturn that answer when the machine subsequently drops offline.
+        projectionRuntime.describe.mockReset();
+        projectionRuntime.describe.mockResolvedValue({ supported: false, reason: 'unsupported' });
+        const answered = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(answered.getCurrent().phase).toBe('unavailable');
+
+        projectionConnectionState.isOnline = false;
+        await act(async () => {
+            await answered.rerender();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(answered.getCurrent().phase).toBe('unavailable');
+        expect(answered.getCurrent().pluginUiProjection).toBeNull();
+    });
+
+    it('retires device custody on a definitive not-supported answer and keeps it through a transient failure', async () => {
+        projectionRuntime.describe.mockResolvedValueOnce(supportedProjection('Retained catalog'));
+        const warm = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(warm.getCurrent().phase).toBe('current');
+        await warm.unmount();
+
+        // A transport failure is not the daemon's answer. It must leave the
+        // retained snapshot in device custody for the next process.
+        projectionRuntime.describe.mockReset();
+        projectionRuntime.describe.mockResolvedValue({ supported: false, reason: 'error' });
+        const transient = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(transient.getCurrent().phase).toBe('establishing');
+        await transient.unmount();
+
+        projectionConnectionState.isOnline = false;
+        projectionRuntime.describe.mockReset();
+        projectionRuntime.describe.mockImplementation(() => {
+            throw new Error('a cold process must not need a daemon to mount');
+        });
+        const afterTransient = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(afterTransient.getCurrent().phase).toBe('retainedOffline');
+        expect(afterTransient.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
+            en: { title: 'Retained catalog' },
+        });
+        await afterTransient.unmount();
+
+        // The daemon's own definitive answer is that this machine does not
+        // serve the projection. That must survive a restart.
+        projectionConnectionState.isOnline = true;
+        projectionRuntime.describe.mockReset();
+        projectionRuntime.describe.mockResolvedValue({ supported: false, reason: 'not-supported' });
+        const answered = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(answered.getCurrent().phase).toBe('unavailable');
+        await answered.unmount();
+
+        projectionConnectionState.isOnline = false;
+        projectionRuntime.describe.mockReset();
+        projectionRuntime.describe.mockImplementation(() => {
+            throw new Error('a cold process must not need a daemon to mount');
+        });
+        const afterDefinitive = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(afterDefinitive.getCurrent().phase).toBe('establishing');
+        expect(afterDefinitive.getCurrent().pluginUiProjection?.generation).toBeNull();
+    });
+
+    it('never retains a daemon-backed contribution family in the Account admission snapshot', async () => {
+        const withComposerControl = projection('Retained catalog');
+        projectionRuntime.describe.mockResolvedValueOnce({
+            supported: true as const,
+            projection: PluginProjectionV2Schema.parse({
+                ...withComposerControl,
+                familiesById: {
+                    ...withComposerControl.familiesById,
+                    composerControls: {
+                        family: 'composerControls',
+                        entriesById: {
+                            'acme.preview/add-issue': {
+                                id: 'acme.preview/add-issue',
+                                pluginId: 'acme.preview',
+                                identity: { pluginId: 'acme.preview', localId: 'add-issue' },
+                                immutableGenerationId: 'preview-generation-42',
+                                definition: {
+                                    id: 'add-issue',
+                                    label: 'Add issue',
+                                    icon: 'add',
+                                    scopes: ['session'],
+                                    interaction: {
+                                        kind: 'attachmentPicker',
+                                        attachment: 'issue',
+                                        presentation: 'popover',
+                                        layout: 'list',
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }),
+        });
+        const warm = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(warm.getCurrent().phase).toBe('current');
+        // The live projection does admit the Composer control, so the cold
+        // assertion below discriminates retention from normalization.
+        expect(warm.getCurrent().pluginUiProjection?.composerControlsById['acme.preview/add-issue']).toBeDefined();
+        await warm.unmount();
+
+        projectionConnectionState.isOnline = false;
+        projectionRuntime.describe.mockReset();
+        projectionRuntime.describe.mockImplementation(() => {
+            throw new Error('a cold process must not need a daemon to mount');
+        });
+        const cold = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(cold.getCurrent().phase).toBe('retainedOffline');
+        expect(cold.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']).toBeDefined();
+        expect(cold.getCurrent().pluginUiProjection?.composerControlsById).toEqual({});
+    });
+
+    it('never retains a snapshot for another Account and supersedes the retained one once a daemon answers', async () => {
+        projectionRuntime.describe.mockResolvedValueOnce(supportedProjection('Account A catalog'));
+        const warm = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(warm.getCurrent().phase).toBe('current');
+        await warm.unmount();
+
+        // Account B on the same server and the same machine must not reach
+        // Account A's retained catalog.
+        storageState.profileScope = { serverId: 'server-1', accountId: 'account-b' };
+        retireActiveServerAccountScopeLifetime();
+        projectionConnectionState.isOnline = false;
+        projectionRuntime.describe.mockReset();
+
+        const otherAccount = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(otherAccount.getCurrent().phase).toBe('establishing');
+        expect(otherAccount.getCurrent().pluginUiProjection?.generation).toBeNull();
+        await otherAccount.unmount();
+
+        // Back on Account A the retained catalog is reusable, and the moment a
+        // daemon answers it is superseded by live authority.
+        storageState.profileScope = { serverId: 'server-1', accountId: 'account-a' };
+        retireActiveServerAccountScopeLifetime();
+        const restored = await renderHook(() => usePluginUiProjectionCurrentness({
+            machineId: 'machine-1',
+            serverId: 'server-1',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(restored.getCurrent().phase).toBe('retainedOffline');
+
+        projectionRuntime.describe.mockResolvedValue(supportedProjection('Live catalog'));
+        projectionConnectionState.isOnline = true;
+        await act(async () => {
+            await restored.rerender();
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+
+        expect(restored.getCurrent().phase).toBe('current');
+        expect(restored.getCurrent().interactionEnabled).toBe(true);
+        expect(restored.getCurrent().pluginUiProjection?.translationsByPluginId['acme.preview']?.bundles).toEqual({
+            en: { title: 'Live catalog' },
+        });
+    });
 
     it('reports a first describe as establishing instead of an empty unavailable projection', async () => {
         projectionRuntime.describe.mockImplementationOnce(() => new Promise(() => {}));
@@ -450,6 +758,43 @@ describe('usePluginUiProjectionCurrentness', () => {
             // The successor Account gets its one new authoritative request;
             // the retired Account's scheduled retry must not escape behind it.
             expect(projectionRuntime.describe).toHaveBeenCalledTimes(3);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('settles a persistent failure onto the app-wide projection refresh cadence instead of re-asking every five seconds', async () => {
+        vi.useFakeTimers();
+        try {
+            // A failure this owner cannot cure by asking again: a response the
+            // daemon delivered in full and this client could not parse arrives
+            // here as the same opaque `error`. Retrying it faster than the
+            // app's own 30 s projection refresh buys nothing and re-pulls the
+            // whole projection each time.
+            projectionRuntime.describe.mockResolvedValue({ supported: false, reason: 'error' });
+
+            await renderHook(() => usePluginUiProjectionCurrentness({
+                machineId: 'machine-1',
+                serverId: 'server-1',
+            }));
+            await flushHookEffects({ cycles: 2, turns: 2 });
+
+            // The transient burst is deliberately preserved: 250 ms, 1 s,
+            // 2.5 s, 5 s. Real blips live inside those first ~8.75 s.
+            await flushHookEffects({ advanceTimersMs: 250, cycles: 1, turns: 2 });
+            await flushHookEffects({ advanceTimersMs: 1_000, cycles: 1, turns: 2 });
+            await flushHookEffects({ advanceTimersMs: 2_500, cycles: 1, turns: 2 });
+            await flushHookEffects({ advanceTimersMs: 5_000, cycles: 1, turns: 2 });
+            expect(projectionRuntime.describe).toHaveBeenCalledTimes(5);
+
+            // Past that burst the failure is no longer a blip. Twenty-five more
+            // seconds must not produce five more full projection reads.
+            await flushHookEffects({ advanceTimersMs: 25_000, cycles: 1, turns: 2 });
+            expect(projectionRuntime.describe).toHaveBeenCalledTimes(5);
+
+            // It still recovers on its own — one attempt per refresh cadence.
+            await flushHookEffects({ advanceTimersMs: 5_000, cycles: 1, turns: 2 });
+            expect(projectionRuntime.describe).toHaveBeenCalledTimes(6);
         } finally {
             vi.useRealTimers();
         }

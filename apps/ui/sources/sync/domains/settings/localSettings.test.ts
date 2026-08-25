@@ -158,6 +158,28 @@ describe('localSettingsParse', () => {
         }).terminalRendererPreference).toBe('auto');
     });
 
+    it('keeps a bounded native-renderer fatal quarantine local and self-healing', () => {
+        const active = localSettingsParse({
+            terminalNativeRendererQuarantine: {
+                renderer: 'ios-ghosttykit',
+                expiresAtMs: 1_800_000_000_000,
+            },
+        }) as Record<string, unknown>;
+        const malformed = localSettingsParse({
+            terminalNativeRendererQuarantine: {
+                renderer: 'unknown-renderer',
+                expiresAtMs: 'never',
+            },
+        }) as Record<string, unknown>;
+
+        expect(active.terminalNativeRendererQuarantine).toEqual({
+            renderer: 'ios-ghosttykit',
+            expiresAtMs: 1_800_000_000_000,
+        });
+        expect(malformed.terminalNativeRendererQuarantine).toBeNull();
+        expect((localSettingsDefaults as Record<string, unknown>).terminalNativeRendererQuarantine).toBeNull();
+    });
+
     it('returns defaults for non-object input', () => {
         expect(localSettingsParse(null)).toEqual(localSettingsDefaults);
         expect(localSettingsParse(undefined)).toEqual(localSettingsDefaults);

@@ -125,14 +125,9 @@ function sameGroupRevision(
 ): boolean {
     const leftRevision = left.revision;
     const rightRevision = right.revision;
-    if (leftRevision.protocol !== rightRevision.protocol) return false;
-    if (leftRevision.generation !== rightRevision.generation) return false;
-    return leftRevision.protocol === 'legacy-v3'
-        || (
-            rightRevision.protocol === 'v4'
-            && leftRevision.incarnation === rightRevision.incarnation
-            && leftRevision.runtimeStateRevision === rightRevision.runtimeStateRevision
-        );
+    return leftRevision.generation === rightRevision.generation
+        && leftRevision.incarnation === rightRevision.incarnation
+        && leftRevision.runtimeStateRevision === rightRevision.runtimeStateRevision;
 }
 
 /**
@@ -184,13 +179,6 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
             }
             if (params.peer.transport.protocol === 'v4') {
                 return { protocol: 'v4' };
-            }
-            if (params.peer.transport.peerClass === 'revisioned-v2-v3') {
-                return {
-                    protocol: 'legacy-v3',
-                    legacyServiceId:
-                        params.peer.transport.legacyServiceId,
-                };
             }
             return null;
         },

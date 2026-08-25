@@ -2,6 +2,7 @@ import {
     terminalInputEventToPtyAction,
     type TerminalInputEvent as ProtocolTerminalInputEvent,
 } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import {
@@ -117,6 +118,14 @@ function assertLegacyMutationOk(response: LegacyTerminalMutationResponse) {
     );
 }
 
+function isPredecessorTerminalStreamRpcError(error: unknown): boolean {
+    const rpcErrorCode = readRpcErrorCode(error);
+    return (
+        rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+        || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
+    );
+}
+
 export function createMachineRpcTerminalStreamCarrier(
     options: MachineTerminalStreamCarrierOptions,
 ): TerminalStreamCarrier {
@@ -138,27 +147,11 @@ export function createMachineRpcTerminalStreamCarrier(
         );
         return mapLegacyTerminalReadResponse({
             terminalId: request.terminalId,
-            cursor: request.cursor.value,
+            cursor,
             response,
         });
     };
-    const sendInputNow = async (terminalId: string, event: TerminalInputEvent) => {
-        const protocolEvent = toProtocolTerminalInputEvent(event);
-        const response = await machineTerminalStreamSendInput(
-            options.machineId,
-            {
-                terminalId,
-                event: protocolEvent,
-            },
-            rpcOptions,
-        );
-        if (response.ok) {
-            return;
-        }
-        if (response.code !== 'terminal_byte_stream_unavailable') {
-            throw new TerminalStreamInputError(response.code, response.message);
-        }
-
+    const sendLegacyInput = async (terminalId: string, protocolEvent: ProtocolTerminalInputEvent): Promise<void> => {
         const fallbackAction = terminalInputEventToPtyAction(protocolEvent);
         if (fallbackAction.kind === 'resize') {
             const resizeResponse = await machineTerminalResize(
@@ -179,6 +172,35 @@ export function createMachineRpcTerminalStreamCarrier(
             assertLegacyMutationOk(inputResponse);
         }
     };
+    const sendInputNow = async (terminalId: string, event: TerminalInputEvent) => {
+        const protocolEvent = toProtocolTerminalInputEvent(event);
+        let response: Awaited<ReturnType<typeof machineTerminalStreamSendInput>> | null;
+        try {
+            response = await machineTerminalStreamSendInput(
+                options.machineId,
+                {
+                    terminalId,
+                    event: protocolEvent,
+                },
+                rpcOptions,
+            );
+        } catch (error) {
+            if (!isPredecessorTerminalStreamRpcError(error)) {
+                throw error;
+            }
+            response = null;
+        }
+        if (response === null) {
+            return sendLegacyInput(terminalId, protocolEvent);
+        }
+        if (response.ok) {
+            return;
+        }
+        if (response.code !== 'terminal_byte_stream_unavailable') {
+            throw new TerminalStreamInputError(response.code, response.message);
+        }
+        return sendLegacyInput(terminalId, protocolEvent);
+    };
     const enqueueInputSend = (terminalId: string, event: TerminalInputEvent): Promise<void> => {
         const task = inputSendTail.then(() => sendInputNow(terminalId, event));
         inputSendTail = task.catch(() => {
@@ -194,20 +216,31 @@ export function createMachineRpcTerminalStreamCarrier(
                 return readLegacy(request);
             }
 
-            const response = await machineTerminalStreamReadBytes(
-                options.machineId,
-                {
-                    terminalId: request.terminalId,
-                    byteOffset: request.cursor.value,
-                    ackedByteOffset: request.ackedByteOffset,
-                    creditBytes: request.creditBytes,
-                    maxBytes: request.maxBytes,
-                    maxFrames: request.maxFrames,
-                    rendererId: request.rendererId,
-                    surfaceEpoch: request.surfaceEpoch,
-                },
-                rpcOptions,
-            );
+            let response: Awaited<ReturnType<typeof machineTerminalStreamReadBytes>> | null;
+            try {
+                response = await machineTerminalStreamReadBytes(
+                    options.machineId,
+                    {
+                        terminalId: request.terminalId,
+                        byteOffset: request.cursor.value,
+                        ackedByteOffset: request.ackedByteOffset,
+                        creditBytes: request.creditBytes,
+                        maxBytes: request.maxBytes,
+                        maxFrames: request.maxFrames,
+                        rendererId: request.rendererId,
+                        surfaceEpoch: request.surfaceEpoch,
+                    },
+                    rpcOptions,
+                );
+            } catch (error) {
+                if (!isPredecessorTerminalStreamRpcError(error)) {
+                    throw error;
+                }
+                response = null;
+            }
+            if (response === null) {
+                return readLegacy(request, 0);
+            }
             if (terminalByteStreamReadRequiresLegacyFallback(response)) {
                 return readLegacy(request, 0);
             }

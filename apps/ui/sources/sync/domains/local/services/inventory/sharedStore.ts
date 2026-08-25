@@ -10,10 +10,10 @@ import {
     watchLocalServiceInventorySnapshotViaMachineRpc,
 } from './machineRpc';
 import {
+    applyLocalServiceInventoryRefreshFailed,
     applyLocalServiceInventoryRefreshStarted,
     applyLocalServiceInventorySnapshot,
     createLocalServiceInventoryState,
-    selectLocalServiceInventoryRows,
     type LocalServiceInventorySnapshot,
     type LocalServiceInventoryState,
 } from './store';
@@ -60,21 +60,6 @@ function storeKey(input: LocalServiceInventoryStoreKeyInput): string {
     return `${input.serverId ?? ''}::${input.machineId}::${input.sessionId ?? ''}`;
 }
 
-function failClosedSnapshot(
-    previous: LocalServiceInventoryState,
-    machineId: string,
-    generatedAt: number,
-): LocalServiceInventorySnapshot {
-    return {
-        v: 1,
-        machineId,
-        generatedAt,
-        refreshState: 'error',
-        entries: selectLocalServiceInventoryRows(previous),
-        diagnostics: [],
-    };
-}
-
 const store = createLocalServicesSharedSubscriptionStore<
     LocalServiceInventoryStoreKeyInput,
     LocalServiceInventoryState,
@@ -87,10 +72,10 @@ const store = createLocalServicesSharedSubscriptionStore<
     normalizeInput,
     storeKey,
     defaultSnapshotClient,
-    beginRefresh: (state, input, nowMs) => (
-        applyLocalServiceInventoryRefreshStarted(state, input.machineId, nowMs())
+    beginRefresh: (state, input) => (
+        applyLocalServiceInventoryRefreshStarted(state, input.machineId)
     ),
-    refresh: async ({ input, state, snapshotClient, nowMs, signal }) => {
+    refresh: async ({ input, state, snapshotClient, signal }) => {
         const result = await snapshotClient({
             machineId: input.machineId,
             serverId: input.serverId,
@@ -98,13 +83,12 @@ const store = createLocalServicesSharedSubscriptionStore<
             refresh: true,
             signal,
         });
-        return applyLocalServiceInventorySnapshot(
-            state,
-            result.ok ? result.snapshot : failClosedSnapshot(state, input.machineId, nowMs()),
-        );
+        return result.ok
+            ? applyLocalServiceInventorySnapshot(state, result.snapshot)
+            : applyLocalServiceInventoryRefreshFailed(state, input.machineId);
     },
-    failRefresh: (state, input, nowMs) => (
-        applyLocalServiceInventorySnapshot(state, failClosedSnapshot(state, input.machineId, nowMs()))
+    failRefresh: (state, input) => (
+        applyLocalServiceInventoryRefreshFailed(state, input.machineId)
     ),
     applySnapshot: applyLocalServiceInventorySnapshot,
     defaultWatchClient,

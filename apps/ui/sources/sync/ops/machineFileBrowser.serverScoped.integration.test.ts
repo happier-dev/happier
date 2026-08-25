@@ -142,4 +142,40 @@ describe('machineFileBrowser ops', () => {
             errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
         });
     });
+    it('never surfaces an internal exception message when the machine RPC throws', async () => {
+        // `F-UI-2`: the folder picker renders this `error` string verbatim
+        // (`FilesystemBrowser.tsx:70`), and the adapter passed `error.message` straight through — so
+        // an internal transport exception was displayed to the user. The local-services inventory
+        // adapter, one pane over, turns the very same throw into a typed reason and never lets the
+        // message out (`sync/domains/local/services/inventory/machineRpc.ts:50-52`).
+        for (const thrown of [
+            new TypeError("Cannot read properties of undefined (reading 'emit')"),
+            new Error('Socket not connected'),
+            'not even an error',
+        ]) {
+            getReadyServerFeaturesMock.mockReset();
+            machineRpcWithServerScopeMock.mockReset();
+            getReadyServerFeaturesMock.mockResolvedValue({
+                features: { machines: { transfer: { enabled: true } } },
+                capabilities: {},
+            });
+            machineRpcWithServerScopeMock.mockRejectedValue(thrown);
+
+            const { machineFilesystemListRoots, machineFilesystemListDirectory } = await import('./machineFileBrowser');
+
+            await expect(machineFilesystemListRoots('machine-1', { serverId: 'server-1' })).resolves.toEqual({
+                ok: false,
+                error: 'RPC method not available',
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            });
+            await expect(machineFilesystemListDirectory('machine-1', {
+                path: '/Users/leeroy',
+                includeFiles: false,
+            }, { serverId: 'server-1' })).resolves.toEqual({
+                ok: false,
+                error: 'RPC method not available',
+                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            });
+        }
+    });
 });

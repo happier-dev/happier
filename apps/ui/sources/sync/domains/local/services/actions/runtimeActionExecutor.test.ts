@@ -508,6 +508,9 @@ describe('UI local-services runtime action executor', () => {
         expect(registerLauncherPreview).not.toHaveBeenCalled();
     });
 
+    // Route-contract test: it asserts the RAW public URL, so it must state the surface it really
+    // models (a user driving the services pane). An unattributed caller is now treated as
+    // agent-reachable and redacted (INV-1 / DEC-2), which is a different contract, covered below.
     it('maps localServices.publicPreview actions to the injected public-preview routes', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
 
@@ -552,7 +555,7 @@ describe('UI local-services runtime action executor', () => {
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.status',
             input: { previewId: 'preview_1' },
-            context: { defaultSessionId: 'session_1', serverId: 'server_1' },
+            context: { surface: 'ui', defaultSessionId: 'session_1', serverId: 'server_1' },
         }))).resolves.toEqual(publicPreviewSnapshot);
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.create',
@@ -563,7 +566,7 @@ describe('UI local-services runtime action executor', () => {
                 ttlMs: 600_000,
                 rateLimitProfileId: 'default',
             },
-            context: { serverId: 'server_1' },
+            context: { surface: 'ui', serverId: 'server_1' },
         }))).resolves.toEqual(publicPreviewCreateResponse);
         await expect(execute(runtimeArgs({
             actionId: 'localServices.publicPreview.revoke',
@@ -572,7 +575,7 @@ describe('UI local-services runtime action executor', () => {
                 previewId: 'preview_1',
                 exposureId: 'public_preview_1',
             },
-            context: { serverId: 'server_1' },
+            context: { surface: 'ui', serverId: 'server_1' },
         }))).resolves.toEqual({
             protocolVersion: 1,
             exposureId: 'public_preview_1',
@@ -589,7 +592,7 @@ describe('UI local-services runtime action executor', () => {
                 previewId: 'preview_1',
                 exposureId: 'public_preview_1',
             },
-            context: { serverId: 'server_1' },
+            context: { surface: 'ui', serverId: 'server_1' },
         }))).resolves.toEqual({
             protocolVersion: 1,
             machineId: 'machine_1',

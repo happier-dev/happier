@@ -1,6 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     classifyChangeForCheckpoint,
+    getChangeSessionDraftHint,
     getChangeTargetMessageSeq,
     getChangeUpdatedMessageHint,
     type ChangeCheckpointBlockedReason,
@@ -8,6 +9,7 @@ import {
 } from './changesPlanner';
 import { runTasksWithLimit } from './runTasksWithLimit';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
+import { canonicalSessionDraftAddressV1, type SessionDraftAddressV1 } from '@happier-dev/protocol';
 
 export type TodoSocketUpdate = Readonly<{
     key: string;
@@ -69,6 +71,7 @@ export async function applyPlannedChangeActions(params: {
     applyTodoSocketUpdates: (changes: TodoSocketUpdate[]) => Promise<void>;
     kvBulkGet: (credentials: AuthCredentials, keys: string[]) => Promise<{ values: TodoSocketUpdate[] }>;
     convergePendingForSession?: (sessionId: string) => Promise<void>;
+    materializeSessionDraft?: (address: SessionDraftAddressV1) => Promise<void>;
 }): Promise<PlannedChangesApplyResult> {
     const { planned } = params;
 
@@ -88,6 +91,8 @@ export async function applyPlannedChangeActions(params: {
     const failedTranscriptRepairSessionIds = new Set<string>();
     const completedPendingSessionIds = new Set<string>();
     const failedPendingSessionIds = new Set<string>();
+    const completedSessionDraftAddresses = new Set<string>();
+    const failedSessionDraftAddresses = new Set<string>();
     const listHydrationSessionIds = Array.from(new Set(
         planned.sessionIdsToCatchUp
             .map((sessionId) => String(sessionId ?? '').trim())
@@ -238,6 +243,22 @@ export async function applyPlannedChangeActions(params: {
         });
     }
 
+    for (const address of planned.sessionDraftAddresses ?? []) {
+        tasks.push(async () => {
+            const key = canonicalSessionDraftAddressV1(address);
+            try {
+                if (!params.materializeSessionDraft) {
+                    failedSessionDraftAddresses.add(key);
+                    return;
+                }
+                await params.materializeSessionDraft(address);
+                completedSessionDraftAddresses.add(key);
+            } catch {
+                failedSessionDraftAddresses.add(key);
+            }
+        });
+    }
+
     if (planned.kv.type === 'refresh-feature' && planned.kv.feature === 'todos') {
         tasks.push(() => params.invalidate.todos?.() ?? Promise.resolve());
     }
@@ -282,6 +303,25 @@ export async function applyPlannedChangeActions(params: {
                 processedChanges,
                 blockedChanges: planned.changes.length - processedChanges,
             };
+        }
+
+
+        if (classification.materializationProof === 'session-draft') {
+            const hint = getChangeSessionDraftHint(change);
+            const key = hint ? canonicalSessionDraftAddressV1(hint.address) : '';
+            if (!key || !completedSessionDraftAddresses.has(key) || failedSessionDraftAddresses.has(key)) {
+                return {
+                    status: 'partial',
+                    safeAdvanceCursor,
+                    blockedCursor: classification.cursor,
+                    blockedReason: 'partial-materialization',
+                    processedChanges,
+                    blockedChanges: planned.changes.length - processedChanges,
+                };
+            }
+            safeAdvanceCursor = classification.cursor;
+            processedChanges += 1;
+            continue;
         }
 
         if (

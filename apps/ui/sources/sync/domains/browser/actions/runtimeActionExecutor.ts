@@ -43,7 +43,6 @@ export type BrowserRuntimeActionDisabledReason =
     | 'browser_context_unavailable'
     | 'browser_control_route_unavailable'
     | 'browser_control_unavailable'
-    | 'browser_control_unsupported'
     | 'browser_diagnostics_unavailable'
     | 'browser_recording_unavailable'
     | 'browser_view_unavailable'
@@ -137,8 +136,6 @@ function mapControlRejectedReason(
             return 'browser_adapter_unavailable';
         case 'view_not_found':
             return 'browser_view_unavailable';
-        case 'unsupported_command':
-            return 'browser_control_unsupported';
     }
 }
 

@@ -66,13 +66,13 @@ describe('local service public-preview store', () => {
             mod.createLocalServicePublicPreviewState(),
             snapshot,
         );
-        const refreshing = mod.applyLocalServicePublicPreviewRefreshStarted(hydrated, 2_500);
-        const failed = mod.applyLocalServicePublicPreviewRefreshFailed(refreshing, 3_000);
+        const refreshing = mod.applyLocalServicePublicPreviewRefreshStarted(hydrated);
+        const failed = mod.applyLocalServicePublicPreviewRefreshFailed(refreshing);
 
         expect(mod.selectLocalServicePublicPreviewRows(refreshing)).toEqual([exposure]);
         expect(refreshing.refreshState).toBe('refreshing');
         expect(mod.selectLocalServicePublicPreviewRows(failed)).toEqual([exposure]);
         expect(failed.refreshState).toBe('error');
-        expect(failed.generatedAt).toBe(3_000);
+        expect(failed.generatedAt).toBe(snapshot.generatedAt);
     });
 });

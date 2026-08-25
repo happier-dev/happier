@@ -22,6 +22,27 @@ const mocks = vi.hoisted(() => ({
     fetchCurrentness: vi.fn(),
     authGetToken: vi.fn(),
     readExactAttempt: vi.fn(),
+    acknowledgeSessionDrafts: vi.fn(),
+    reconfigureSessionDraftRepository: vi.fn(),
+}));
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    getActiveServerAccountScope: () => ({
+        serverId: 'server-a',
+        accountId: 'account-1',
+    }),
+}));
+
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+    acknowledgeNewSessionDraftEncryptionMigration:
+        mocks.acknowledgeSessionDrafts,
+}));
+
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        reconfigureSessionDraftRepositoryForAccountMode:
+            mocks.reconfigureSessionDraftRepository,
+    },
 }));
 
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
@@ -194,6 +215,8 @@ beforeEach(() => {
     });
     mocks.authGetToken.mockReset();
     mocks.readExactAttempt.mockReset();
+    mocks.acknowledgeSessionDrafts.mockReset();
+    mocks.reconfigureSessionDraftRepository.mockReset();
 });
 
 describe('first Account key external auth', () => {
@@ -859,6 +882,94 @@ describe('first Account key external auth', () => {
                         }),
                 }),
         });
+    });
+
+    it('activates and acknowledges atomically migrated new-session drafts before credential persistence', async () => {
+        const fixture = await createFixture();
+        const address = {
+            kind: 'newSession' as const,
+            draftId: '00000000-0000-4000-8000-000000000401',
+        };
+        const content = {
+            t: 'encrypted' as const,
+            c: 'draft-ciphertext',
+        };
+        const request = AccountEncryptionMigrateRequestSchema.parse({
+            ...fixture.request,
+            sessionDrafts: {
+                items: [{ address, expectedRevision: 4, content }],
+            },
+        });
+        const requestDigest =
+            createAccountEncryptionMigrateRequestBindingDigestV1({
+                request,
+                accountId: fixture.accountId,
+                sourceMode: 'plain',
+            });
+        mocks.readPending.mockResolvedValue({
+            serverMismatch: false,
+            value: {
+                provider: 'github',
+                proof: 'proof',
+                secret: fixture.proposedCredentials.secret,
+                returnTo: '/settings/account',
+                accountEncryptionFirstKey: {
+                    accountId: fixture.accountId,
+                    requestDigest,
+                    requestJson: JSON.stringify(request),
+                    createdAt: Date.now(),
+                    expiresAt: Date.now() + 10 * 60 * 1000,
+                },
+            },
+        });
+        const record = {
+            address,
+            revision: 5,
+            content,
+            createdAt: 1,
+            updatedAt: 2,
+        };
+        mocks.migrate.mockResolvedValue({
+            success: true,
+            mode: 'e2ee',
+            accountVersion: 9,
+            settingsVersion: 4,
+            sessionDrafts: { records: [record] },
+        });
+        const persistCredentials = vi.fn(async () => ({
+            kind: 'completed' as const,
+        }));
+
+        await resumeAccountEncryptionFirstKeyExternalAuth({
+            provider: 'github',
+            pending: 'oauth-pending',
+            currentCredentials: fixture.currentCredentials,
+            persistCredentials,
+        });
+
+        expect(
+            mocks.reconfigureSessionDraftRepository,
+        ).toHaveBeenCalledWith(
+            fixture.proposedCredentials,
+            'e2ee',
+        );
+        expect(mocks.acknowledgeSessionDrafts).toHaveBeenCalledWith(
+            { serverId: 'server-a', accountId: 'account-1' },
+            [record],
+        );
+        expect(
+            mocks.reconfigureSessionDraftRepository
+                .mock.invocationCallOrder[0],
+        ).toBeLessThan(
+            mocks.acknowledgeSessionDrafts
+                .mock.invocationCallOrder[0]!,
+        );
+        expect(
+            mocks.acknowledgeSessionDrafts
+                .mock.invocationCallOrder[0],
+        ).toBeLessThan(
+            persistCredentials.mock.invocationCallOrder[0]!,
+        );
     });
 
     it('fails closed and clears pending state on a wrong provider without posting or persisting', async () => {

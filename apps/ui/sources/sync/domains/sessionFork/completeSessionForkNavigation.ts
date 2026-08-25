@@ -2,6 +2,8 @@ import { writeForkInitialPromptV1 } from '@/sync/domains/sessionFork/forkInitial
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { sync } from '@/sync/sync';
 import { requireLocalSessionVisibleForRoute } from '@/sync/runtime/orchestration/serverScopedRpc/localSessionRouteReadiness';
 
@@ -36,9 +38,19 @@ function isExpectedForkChild(session: Session, parentSessionId: string): boolean
     return forkRecord.v === 1 && forkRecord.parentSessionId === parentSessionId;
 }
 
-function writeRestoredDraft(childSessionId: string, restoredDraftText: string): void {
+function writeRestoredDraft(childSessionId: string, restoredDraftText: string, serverId?: string | null): void {
     try {
-        storage.getState().updateSessionDraft(childSessionId, restoredDraftText);
+        const activeScope = getActiveServerAccountScope();
+        if (!activeScope) return;
+        writeExistingSessionDraft({
+            scope: {
+                serverId: normalizeServerId(serverId) ?? activeScope.serverId,
+                accountId: activeScope.accountId,
+            },
+            sessionId: childSessionId,
+            patch: { text: restoredDraftText },
+            materializationIntent: 'seeded',
+        });
     } catch {
         // The composer draft is local-only and must not make an otherwise valid fork unusable.
     }
@@ -79,7 +91,7 @@ export async function completeSessionForkNavigation(
     // A wrong or still-unhydrated child must never receive the parent's draft.
     // Keep this immediately before navigation, after the canonical route owner
     // proved the expected child and without a fork-specific polling loop.
-    if (restoredDraftText) writeRestoredDraft(params.childSessionId, restoredDraftText);
+    if (restoredDraftText) writeRestoredDraft(params.childSessionId, restoredDraftText, params.serverId);
     await params.navigate(
         params.childSessionId,
         serverId ? { serverId } : undefined,

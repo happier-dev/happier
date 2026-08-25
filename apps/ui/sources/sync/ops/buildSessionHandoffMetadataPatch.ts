@@ -17,7 +17,7 @@ import {
     type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 
-import { getAgentBehavior } from '@/agents/catalog/catalog';
+import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 
 import type { Metadata } from '../domains/state/storageTypes';
 
@@ -72,9 +72,13 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
             'identity.providerSessionId',
         ) as MetadataRecord;
 
-    const providerPatch = builtInAgentId
-        ? getAgentBehavior(builtInAgentId).sessionHandoff?.buildProviderPatch?.({
-            agentId: builtInAgentId,
+    // The Agent's own handoff declaration, read through the one machine-scoped
+    // behavior owner. The target machine owns the session after the handoff, so
+    // its descriptor is the one that decides the cleanup; an installed Agent
+    // reaches the identical interpreter a bundled one does.
+    const providerPatch = resolveAgentUiBehavior(input.agentId, input.targetMachineId)
+        .sessionHandoff?.buildProviderPatch?.({
+            agentId: input.agentId,
             metadata: projectSessionMetadataForAgentHandoff(next),
             sourceMetadataForHandoff: input.sourceMetadataForHandoff
                 ? projectSessionMetadataForAgentHandoff(input.sourceMetadataForHandoff)
@@ -82,8 +86,7 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
             targetRemoteSessionId: input.targetRemoteSessionId,
             targetDirectSource: input.targetDirectSource,
             targetRuntimeDescriptor: input.targetRuntimeDescriptor,
-        }) ?? null
-        : null;
+        }) ?? null;
 
     for (const key of providerPatch?.clearMetadataKeys ?? []) {
         delete next[key];

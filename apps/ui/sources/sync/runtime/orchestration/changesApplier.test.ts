@@ -22,6 +22,7 @@ function buildPlanned(partial: {
     unsupportedChanges?: PlannedChangeActions['unsupportedChanges'];
     invalidate?: Partial<ExtendedPlannedChangeActions['invalidate']>;
     kv?: PlannedChangeActions['kv'];
+    sessionDraftAddresses?: PlannedChangeActions['sessionDraftAddresses'];
 }): ExtendedPlannedChangeActions {
     return {
         changes: partial.changes ?? [],
@@ -44,6 +45,7 @@ function buildPlanned(partial: {
             ...(partial.invalidate ?? {}),
         },
         kv: partial.kv ?? { type: 'none' },
+        sessionDraftAddresses: partial.sessionDraftAddresses ?? [],
     };
 }
 
@@ -63,6 +65,59 @@ function buildChange(params: {
 }
 
 describe('changesApplier', () => {
+    it('materializes an exact SessionDraft before advancing its AccountChange cursor', async () => {
+        const address = { kind: 'session', sessionId: 'session-a' } as const;
+        const change = buildChange({
+            cursor: 1,
+            kind: 'account',
+            hint: { v: 1, sessionDraft: true, address, revision: 2, status: 'present' },
+        });
+        const materializeSessionDraft = vi.fn(async () => {});
+
+        const result = await applyPlannedChangeActions({
+            planned: buildPlanned({ changes: [change], sessionDraftAddresses: [address] }),
+            credentials,
+            isSessionMessagesLoaded: () => false,
+            invalidate: {},
+            materializeSessionDraft,
+            invalidateMessagesForSession: async () => {},
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+        });
+
+        expect(materializeSessionDraft).toHaveBeenCalledWith(address);
+        expect(result).toMatchObject({ status: 'complete', safeAdvanceCursor: '1' });
+    });
+
+    it('holds the cursor when exact SessionDraft materialization fails', async () => {
+        const address = { kind: 'session', sessionId: 'session-a' } as const;
+        const change = buildChange({
+            cursor: 1,
+            kind: 'account',
+            hint: { v: 1, sessionDraft: true, address, revision: 2, status: 'deleted' },
+        });
+
+        const result = await applyPlannedChangeActions({
+            planned: buildPlanned({ changes: [change], sessionDraftAddresses: [address] }),
+            credentials,
+            isSessionMessagesLoaded: () => false,
+            invalidate: {},
+            materializeSessionDraft: async () => { throw new Error('offline'); },
+            invalidateMessagesForSession: async () => {},
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+        });
+
+        expect(result).toMatchObject({
+            status: 'partial',
+            safeAdvanceCursor: null,
+            blockedCursor: '1',
+            blockedReason: 'partial-materialization',
+        });
+    });
+
     it('hands closed plugin collection invalidations to the Data-owned direct-client producer before advancing the cursor', async () => {
         const publishPluginCollectionChanges = vi.fn();
         const change = buildChange({

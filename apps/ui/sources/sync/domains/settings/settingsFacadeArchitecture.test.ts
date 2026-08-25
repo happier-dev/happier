@@ -11,6 +11,10 @@ const ALLOWED_SETTINGS_FACADE_IMPORTS = new Set([
     'Settings',
     'SettingsSchema',
     'SUPPORTED_SCHEMA_VERSION',
+    // A key projection derived from the canonical `Settings` type. It declares
+    // no schema, default, or version, so it does not reopen the superseded
+    // UI-owned persistence catalog this guard exists to keep closed.
+    'WritableSettingsKey',
     'applySettings',
     'settingsDefaults',
     'settingsParse',

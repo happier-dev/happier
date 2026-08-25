@@ -4,7 +4,9 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     AutomationApiError,
     cancelAutomationRunV3,
+    clearAutomationRunHistoryV3,
     createPluginEventAutomationDefinitionV3,
+    getAutomationSettingsV3,
     deleteAutomationDefinitionV3,
     getAutomationDefinitionV3,
     getAutomationRunDetailV3,
@@ -13,6 +15,7 @@ import {
     replaceAutomationDefinitionAssignmentsV3,
     resumeAutomationDefinitionV3,
     runAutomationDefinitionNowV3,
+    updateAutomationSettingsV3,
     runAutomationNow,
     updatePluginEventAutomationDefinitionV3,
 } from './apiAutomations';
@@ -138,6 +141,7 @@ const v3Run = {
     replyHandoffState: 'none' as const,
     replyHandoffAttempt: 0,
     replyHandoffDueAt: null,
+    contentRemovedAt: null,
     createdAt: 1_786_257_600_000,
     updatedAt: 1_786_257_600_000,
 };
@@ -148,6 +152,10 @@ const v3RunDetail = {
     executionInputEnvelope: null,
     resultEnvelope: null,
     legacySummaryCiphertext: null,
+    executionNativeRunId: null,
+    executionNativeCallId: null,
+    executionNativeSidechainId: null,
+    events: [],
 };
 
 function toUrlString(input: RequestInfo | URL): string {
@@ -272,6 +280,61 @@ describe('apiAutomations', () => {
             expect.stringContaining('/v3/automations/automation-event-1/runs/run-1'),
             expect.stringContaining('/v3/automations/runs/run-1/cancel'),
         ]);
+    });
+
+    it('reads and replaces strict account Automation settings, then clears one definition history through V3', async () => {
+        const settings = {
+            maxActiveRunsPerMachine: 4,
+            runRetention: 'thirtyDays' as const,
+        };
+        const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async (input, init) => {
+            const url = toUrlString(input);
+            if (url.endsWith('/v3/automations/settings')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => settings,
+                } as Response;
+            }
+            if (url.endsWith('/v3/automations/automation-event-1/runs/clear-history')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ clearedRuns: 3 }),
+                } as Response;
+            }
+            throw new Error(`Unexpected request: ${url} ${String(init?.method)}`);
+        });
+        vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
+
+        await expect(getAutomationSettingsV3(credentials)).resolves.toEqual(settings);
+        await expect(updateAutomationSettingsV3(credentials, settings)).resolves.toEqual(settings);
+        await expect(clearAutomationRunHistoryV3(credentials, 'automation-event-1')).resolves.toEqual({ clearedRuns: 3 });
+
+        const calls = fetchSpy.mock.calls.map(([input, init]) => ({
+            url: toUrlString(input),
+            method: init?.method,
+            body: init?.body,
+            headers: new Headers(init?.headers),
+        }));
+        expect(calls).toEqual([
+            expect.objectContaining({
+                url: expect.stringContaining('/v3/automations/settings'),
+                method: undefined,
+            }),
+            expect.objectContaining({
+                url: expect.stringContaining('/v3/automations/settings'),
+                method: 'PUT',
+                body: JSON.stringify(settings),
+            }),
+            expect.objectContaining({
+                url: expect.stringContaining('/v3/automations/automation-event-1/runs/clear-history'),
+                method: 'POST',
+            }),
+        ]);
+        expect(calls[0]?.headers.get('Authorization')).toBe('Bearer token-1');
+        expect(calls[1]?.headers.get('Content-Type')).toBe('application/json');
+        expect(calls[2]?.headers.get('Content-Type')).toBeNull();
     });
 
     it('rejects private definition content in a V3 list response instead of treating it as a summary', async () => {

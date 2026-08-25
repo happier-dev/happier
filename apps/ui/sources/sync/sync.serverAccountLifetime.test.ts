@@ -9,6 +9,7 @@ import {
     type AutomationV3DefinitionDetail,
     type AutomationV3PluginEventDefinitionCreateRequest,
     type AutomationV3PluginEventDefinitionPatchRequest,
+    type AutomationV3Settings,
 } from '@happier-dev/protocol';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -51,6 +52,9 @@ const fetchAccountEncryptionCurrentness = vi.hoisted(() => vi.fn());
 const cancelAutomationRunV3 = vi.hoisted(() => vi.fn());
 const deleteAutomationDefinitionV3 = vi.hoisted(() => vi.fn());
 const runAutomationDefinitionNowV3 = vi.hoisted(() => vi.fn());
+const getAutomationSettingsV3 = vi.hoisted(() => vi.fn());
+const updateAutomationSettingsV3 = vi.hoisted(() => vi.fn());
+const clearAutomationRunHistoryV3 = vi.hoisted(() => vi.fn());
 vi.mock('./domains/scope/activeServerAccountScope', () => ({
     getActiveServerAccountScope: () => null,
     captureActiveServerAccountScopeLifetime: () => null,
@@ -116,6 +120,9 @@ vi.mock('./api/automations/apiAutomations', async (importOriginal) => {
         cancelAutomationRunV3,
         deleteAutomationDefinitionV3,
         runAutomationDefinitionNowV3,
+        getAutomationSettingsV3,
+        updateAutomationSettingsV3,
+        clearAutomationRunHistoryV3,
     };
 });
 
@@ -143,6 +150,10 @@ type SyncResetOwnerTestSeam = {
     cancelAutomationRun(runId: string): Promise<unknown>;
     deleteAutomation(automationId: string): Promise<void>;
     runAutomationNow(automationId: string): Promise<unknown>;
+    getAutomationSettings(): Promise<AutomationV3Settings>;
+    updateAutomationSettings(input: AutomationV3Settings): Promise<AutomationV3Settings>;
+    clearAutomationRunHistory(automationId: string): Promise<unknown>;
+    fetchAutomationRuns(automationId: string, limit?: number, cursor?: string): Promise<unknown>;
 };
 
 const eventCreateRequest = AutomationV3PluginEventDefinitionCreateRequestSchema.parse({
@@ -255,6 +266,7 @@ const eventRunDetail = AutomationV3RunDetailSchema.parse({
     replyHandoffState: 'none',
     replyHandoffAttempt: 0,
     replyHandoffDueAt: null,
+    contentRemovedAt: null,
     createdAt: 1,
     updatedAt: 1,
     triggerEvidenceEnvelope: null,
@@ -313,6 +325,7 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             replyHandoffState: eventRunDetail.replyHandoffState,
             replyHandoffAttempt: eventRunDetail.replyHandoffAttempt,
             replyHandoffDueAt: eventRunDetail.replyHandoffDueAt,
+            contentRemovedAt: eventRunDetail.contentRemovedAt,
             createdAt: eventRunDetail.createdAt,
             updatedAt: eventRunDetail.updatedAt,
         });
@@ -537,6 +550,74 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             expect(cancelAutomationRunV3).toHaveBeenCalledWith(credentials, eventRunDetail.id);
         } finally {
             owner.credentials = previousCredentials;
+        }
+    });
+
+    it('keeps account Automation settings direct and refreshes the canonical Run projection after clearing history', async () => {
+        const owner = sync as unknown as SyncResetOwnerTestSeam;
+        const credentials: AuthCredentials = { token: 'token-automation-settings', secret: 'secret-automation-settings' };
+        const previousCredentials = owner.credentials;
+        const settings: AutomationV3Settings = {
+            maxActiveRunsPerMachine: 4,
+            runRetention: 'thirtyDays',
+        };
+        const fetchRuns = vi.spyOn(owner, 'fetchAutomationRuns').mockResolvedValue({ nextCursor: null });
+        getAutomationSettingsV3.mockReset();
+        getAutomationSettingsV3.mockResolvedValue(settings);
+        updateAutomationSettingsV3.mockReset();
+        updateAutomationSettingsV3.mockResolvedValue({
+            maxActiveRunsPerMachine: 2,
+            runRetention: 'keepForever',
+        });
+        clearAutomationRunHistoryV3.mockReset();
+        clearAutomationRunHistoryV3.mockResolvedValue({ clearedRuns: 3 });
+        owner.credentials = credentials;
+
+        try {
+            await expect(owner.getAutomationSettings()).resolves.toEqual(settings);
+            await expect(owner.updateAutomationSettings(settings)).resolves.toEqual({
+                maxActiveRunsPerMachine: 2,
+                runRetention: 'keepForever',
+            });
+            await expect(owner.clearAutomationRunHistory('automation-event-1')).resolves.toEqual({ clearedRuns: 3 });
+
+            expect(getAutomationSettingsV3).toHaveBeenCalledWith(credentials);
+            expect(updateAutomationSettingsV3).toHaveBeenCalledWith(credentials, settings);
+            expect(clearAutomationRunHistoryV3).toHaveBeenCalledWith(credentials, 'automation-event-1');
+            expect(fetchRuns).toHaveBeenCalledWith('automation-event-1');
+        } finally {
+            owner.credentials = previousCredentials;
+            fetchRuns.mockRestore();
+        }
+    });
+
+    it('does not refresh a different account Run projection after clear-history loses currentness', async () => {
+        const owner = sync as unknown as SyncResetOwnerTestSeam;
+        const credentials: AuthCredentials = { token: 'token-automation-clear-stale', secret: 'secret-automation-clear-stale' };
+        const previousCredentials = owner.credentials;
+        const previousGeneration = owner.serverScopeGeneration;
+        let resolveClear: (result: { clearedRuns: number }) => void = () => {
+            throw new Error('Clear-history test promise did not initialize');
+        };
+        const pendingClear = new Promise<{ clearedRuns: number }>((resolve) => {
+            resolveClear = resolve;
+        });
+        const fetchRuns = vi.spyOn(owner, 'fetchAutomationRuns').mockResolvedValue({ nextCursor: null });
+        clearAutomationRunHistoryV3.mockReset();
+        clearAutomationRunHistoryV3.mockReturnValue(pendingClear);
+        owner.credentials = credentials;
+
+        try {
+            const operation = owner.clearAutomationRunHistory('automation-event-1');
+            owner.serverScopeGeneration = previousGeneration + 1;
+            resolveClear({ clearedRuns: 3 });
+
+            await expect(operation).rejects.toThrow('Automation server-account scope changed');
+            expect(fetchRuns).not.toHaveBeenCalled();
+        } finally {
+            owner.credentials = previousCredentials;
+            owner.serverScopeGeneration = previousGeneration;
+            fetchRuns.mockRestore();
         }
     });
 

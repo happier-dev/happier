@@ -73,28 +73,40 @@ export async function authGetToken(
             timeoutMs: 800,
             force: Boolean(options),
         });
-    const serverFeatures =
-        serverFeaturesSnapshot.status === 'ready'
-            ? serverFeaturesSnapshot.features
-            : null;
-    if (serverFeatures) {
-        // Backward compatibility:
-        // - New servers explicitly advertise `features.auth.login.keyChallenge.enabled`.
-        // - Older servers don't advertise it at all. In that case we must NOT fail fast,
-        //   because key-challenge login may still be supported (the server just predates this gate).
-        const keyChallengeEnabledRaw = (serverFeatures as any)?.features?.auth?.login?.keyChallenge?.enabled;
-        if (typeof keyChallengeEnabledRaw === 'boolean' && keyChallengeEnabledRaw === false) {
-            throw new Error('Authentication failed: key-challenge login is disabled on this server.');
-        }
-    }
     if (options) {
         assertCurrentAccountStoredContentServerCompatibility(
             serverFeaturesSnapshot,
         );
     }
+    if (serverFeaturesSnapshot.status !== 'ready') {
+        throw new HappyError(
+            'Authentication failed: server capability probe did not return a valid response.',
+            true,
+            {
+                kind:
+                    serverFeaturesSnapshot.status === 'error'
+                    && serverFeaturesSnapshot.reason === 'response_status'
+                        ? 'server'
+                        : 'network',
+            },
+        );
+    }
+
+    const serverFeatures = serverFeaturesSnapshot.features;
+    // Backward compatibility:
+    // - New servers explicitly advertise `features.auth.login.keyChallenge.enabled`.
+    // - Older servers don't advertise it at all. In that case we must NOT fail fast,
+    //   because key-challenge login may still be supported (the server just predates this gate).
+    const keyChallengeEnabledRaw = (serverFeatures as any)?.features?.auth?.login?.keyChallenge?.enabled;
+    if (typeof keyChallengeEnabledRaw === 'boolean' && keyChallengeEnabledRaw === false) {
+        throw new Error('Authentication failed: key-challenge login is disabled on this server.');
+    }
 
     const supportsKeyChallengeV2 =
-        serverFeatures?.capabilities.auth.keyChallenge.v2 === true;
+        serverFeatures.capabilities.auth.keyChallenge.v2 === true;
+    if (options && !supportsKeyChallengeV2) {
+        throw new Error('Authentication failed: key-challenge v2 is required for Account-bound login.');
+    }
     let body: KeyChallengeAuthRequest;
     if (supportsKeyChallengeV2) {
         const issueResponse = await serverFetch('/v1/auth/challenge', {
@@ -143,7 +155,7 @@ export async function authGetToken(
     // Backward compatibility: only send new key fields when the server advertises support.
     // Older servers validate request bodies strictly and would reject unknown fields.
     const supportsContentKeys =
-        serverFeatures ? readServerEnabledBit(serverFeatures, 'sharing.contentKeys') === true : false;
+        readServerEnabledBit(serverFeatures, 'sharing.contentKeys') === true;
     if (supportsContentKeys || options) {
         const encryption = await Encryption.create(secret);
         const contentPublicKey = encryption.contentDataKey;

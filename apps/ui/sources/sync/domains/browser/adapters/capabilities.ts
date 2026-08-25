@@ -14,6 +14,7 @@ import {
     type BrowserAdapterUnavailableReason,
     type BrowserAdapterUnavailableReasonCode,
 } from './availability';
+import { browserNativeViewCaptureShapeSupported } from '../recording/nativeViewCaptureShape';
 import type { DesktopWebViewSupport } from './desktopWebView';
 
 type BuildBrowserAdapterCapabilitiesInput = Readonly<{
@@ -21,11 +22,15 @@ type BuildBrowserAdapterCapabilitiesInput = Readonly<{
     supportedTargetKinds: readonly BrowserViewTargetKindV1[];
     supportedRenderEngines: readonly BrowserRenderEngineKindV1[];
     desktopWebViewSupport?: DesktopWebViewSupport | null;
-    // True when a managed daemon/sidecar Chromium is live behind a `streamedBrowserSurface`
-    // adapter. It flips the surface from fail-closed unavailable to an available, navigable
-    // daemon-authoritative view whose navigation/lifecycle is driven over the daemon control
-    // transport. Only meaningful for `adapterKind === 'streamedBrowserSurface'`.
-    streamedSurfaceLive?: boolean;
+    /**
+     * SB-C: whether a desktop reverse-capture handler is registered for this view's machine. It is
+     * the runtime half of native-view-capture availability, owned by
+     * `recording/reverseCaptureAvailability.ts`; the structural half is
+     * {@link browserNativeViewCaptureShapeSupported}. Absent ⇒ the published `recording` capability
+     * stays unavailable, which is the fail-closed answer and matches the pre-SB-C behaviour for any
+     * caller that cannot supply the fact.
+     */
+    nativeViewCaptureHandlerRegistered?: boolean;
 }>;
 
 type BrowserAutomationDisabledReasonCode =
@@ -107,9 +112,17 @@ function resolveUnavailableCapabilitiesReason(
     // AVAILABLE with usable address-bar navigation — it must not dead-end as "unavailable", or
     // BrowserShell disables the address bar from `toolbar.canNavigate`. (chromiumSidecar /
     // streamedBrowserSurface still require their runtimes and fall through to unavailable below.)
+    //
+    // R-2: `nativeWebView` is the SAME story on iOS/Android, and it was missing. `selectBrowserTargetAdapter`
+    // maps an allowed external URL on ios/android to the RN `WebView`, which hosts arbitrary
+    // third-party sites outright and reports real history — yet this gate fell through and
+    // collapsed the whole set to `supportedRenderEngines: ['unavailable']`, so every mobile
+    // external-URL tab shipped a dead address bar and permanently disabled Back/Forward/Reload/Stop
+    // no matter what the engine reported. Same defect class as G17, on the native arm.
     if (
         input.adapterKind === 'externalUrl'
-        && input.supportedRenderEngines.includes('webIframe')
+        && (input.supportedRenderEngines.includes('webIframe')
+            || input.supportedRenderEngines.includes('nativeWebView'))
     ) {
         return null;
     }
@@ -120,12 +133,10 @@ function resolveUnavailableCapabilitiesReason(
     ) {
         return null;
     }
-    // A live managed daemon/sidecar Chromium backs the streamed surface: it is available (its
-    // runtime owner exists), unlike the fail-closed default and unlike `chromiumSidecar`, which
-    // still has no UI-reachable runtime here.
-    if (input.adapterKind === 'streamedBrowserSurface' && input.streamedSurfaceLive === true) {
-        return null;
-    }
+    // DEC-5: `streamedBrowserSurface` has NO escape from this gate any more. There is no producer
+    // of a streamed target and no renderer for the kind, so a reachable daemon control transport
+    // was never evidence that a surface exists — it only made this adapter publish a full navigable
+    // capability set to agents and plugins for something that could not paint.
     return resolveBrowserAdapterUnavailableReason({
         adapterKind: input.adapterKind,
         targetKind: input.supportedTargetKinds[0] ?? defaultTargetKindForAdapter(input.adapterKind),
@@ -196,15 +207,34 @@ function buildBrowserAutomationActions(
                 trustedInput: false,
                 disabledReasons: ['screenshot_reference_unavailable'],
             };
-        return {
-            ...buildUnavailableAutomationActions('desktop_webview_automation_unavailable'),
-            screenshotReference,
-            recording: {
+        // SB-C: `recording` used to be hard-coded unavailable here while
+        // `recording/reverseCaptureAvailability.ts` could return true for the same view — a false
+        // capability published to agents and plugins. Both now answer from one structural predicate
+        // plus the one runtime fact.
+        const nativeViewCaptureShapeSupported = browserNativeViewCaptureShapeSupported({
+            targetKind: input.supportedTargetKinds[0],
+            adapterKind: input.adapterKind,
+            engineKind: primaryEngine,
+        });
+        const nativeViewCaptureAvailable = nativeViewCaptureShapeSupported
+            && input.nativeViewCaptureHandlerRegistered === true;
+        const recording: BrowserAutomationActionCapabilityV1 = nativeViewCaptureAvailable
+            ? {
+                available: true,
+                fidelity: 'nativeWebView',
+                trustedInput: false,
+                disabledReasons: [],
+            }
+            : {
                 available: false,
                 fidelity: 'unavailable',
                 trustedInput: false,
                 disabledReasons: ['browser_recording_capture_adapter_missing'],
-            },
+            };
+        return {
+            ...buildUnavailableAutomationActions('desktop_webview_automation_unavailable'),
+            screenshotReference,
+            recording,
         } satisfies BrowserAutomationActionCapabilityMapV1;
     }
 
@@ -298,38 +328,33 @@ export function buildBrowserAdapterCapabilities(
     const desktopWebViewNavigation = primaryEngine === 'desktopWebView'
         ? input.desktopWebViewSupport
         : null;
-    // A live `streamedBrowserSurface` is a daemon-driven real Chromium: navigation/lifecycle is
-    // fully supported and routed over the daemon control transport (the `daemonCommand` effect),
-    // so its address bar and back/forward/reload/stop must be enabled. (We only reach this branch
-    // for a streamed surface when it is live; otherwise the unavailable gate returned above.)
-    const daemonStreamedBrowser = input.adapterKind === 'streamedBrowserSurface';
     return BrowserAdapterCapabilitiesV1Schema.parse({
         adapterKind: input.adapterKind,
         supportedTargetKinds: input.supportedTargetKinds,
         supportedRenderEngines: input.supportedRenderEngines,
         navigation: {
-            canNavigate: daemonStreamedBrowser || (!simulatorPreview && (
+            canNavigate: !simulatorPreview && (
                 primaryEngine === 'webIframe'
                 || primaryEngine === 'nativeWebView'
                 || desktopWebViewNavigation?.navigation === true
-            )),
-            canGoBack: daemonStreamedBrowser || (!simulatorPreview && (
+            ),
+            canGoBack: !simulatorPreview && (
                 primaryEngine === 'nativeWebView'
                 || desktopWebViewNavigation?.goBackForward === true
-            )),
-            canGoForward: daemonStreamedBrowser || (!simulatorPreview && (
+            ),
+            canGoForward: !simulatorPreview && (
                 primaryEngine === 'nativeWebView'
                 || desktopWebViewNavigation?.goBackForward === true
-            )),
-            canReload: daemonStreamedBrowser || (!simulatorPreview && (
+            ),
+            canReload: !simulatorPreview && (
                 primaryEngine === 'webIframe'
                 || primaryEngine === 'nativeWebView'
                 || desktopWebViewNavigation?.reload === true
-            )),
-            canStop: daemonStreamedBrowser || (!simulatorPreview && (
+            ),
+            canStop: !simulatorPreview && (
                 primaryEngine === 'nativeWebView'
                 || desktopWebViewNavigation?.stop === true
-            )),
+            ),
         },
         diagnosticsFidelityByFamily: buildDiagnosticsFidelityByFamily(input, primaryEngine),
         automationActions: buildBrowserAutomationActions(input, primaryEngine),

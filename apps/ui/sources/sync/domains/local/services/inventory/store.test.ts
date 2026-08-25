@@ -38,10 +38,35 @@ describe('local service inventory store', () => {
             entries: [entry()],
             diagnostics: [],
         });
-        const refreshing = applyLocalServiceInventoryRefreshStarted(hydrated, 'machine-a', 2_000);
+        const refreshing = applyLocalServiceInventoryRefreshStarted(hydrated, 'machine-a');
 
         expect(refreshing.refreshState).toBe('refreshing');
         expect(selectLocalServiceInventoryRows(refreshing)).toHaveLength(1);
+    });
+
+    it('does not fabricate a generation when a refresh starts', () => {
+        // `generatedAt` means "the daemon generation these rows came from". Starting a refresh
+        // produces no generation at all — the rows on screen are still the previous one's. Stamping
+        // the local clock here made every mount look like a fresh daemon scan to
+        // `LocalServicesSurfaceHost`, which re-read the launcher feed for a scan that never
+        // happened, and it made the watch's `sinceGeneratedAt` cursor a client clock reading
+        // instead of the daemon's own.
+        const hydrated = applyLocalServiceInventorySnapshot(createLocalServiceInventoryState(), {
+            v: 1,
+            machineId: 'machine-a',
+            generatedAt: 1_000,
+            refreshState: 'idle',
+            entries: [entry()],
+            diagnostics: [],
+        });
+
+        expect(applyLocalServiceInventoryRefreshStarted(hydrated, 'machine-a').generatedAt).toBe(1_000);
+        // Nothing has been read for the new machine yet, so there is no generation to report.
+        expect(applyLocalServiceInventoryRefreshStarted(hydrated, 'machine-b').generatedAt).toBeNull();
+        // The very first refresh, before any snapshot, likewise reports no generation.
+        expect(
+            applyLocalServiceInventoryRefreshStarted(createLocalServiceInventoryState(), 'machine-a').generatedAt,
+        ).toBeNull();
     });
 
     it('clears cached rows when a refresh starts for a different machine', () => {
@@ -54,7 +79,7 @@ describe('local service inventory store', () => {
             diagnostics: [{ code: 'previous_machine', severity: 'warning' }],
         });
 
-        const refreshing = applyLocalServiceInventoryRefreshStarted(hydrated, 'machine-b', 2_000);
+        const refreshing = applyLocalServiceInventoryRefreshStarted(hydrated, 'machine-b');
 
         expect(refreshing.machineId).toBe('machine-b');
         expect(refreshing.refreshState).toBe('refreshing');

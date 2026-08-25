@@ -35,7 +35,6 @@ export type ResolveMachineRpcPeerRouteDecisionInput = Readonly<{
     accountMachinePreference?: PeerDirectPreference;
     accountDefaultPreference?: PeerDirectPreference;
     productDefaultPreference?: Exclude<PeerDirectPreference, 'inherit'>;
-    topologyAvailable: boolean;
     grantStatus: PeerDirectRouteGrantStatus;
 }>;
 
@@ -67,7 +66,6 @@ export function resolveMachineRpcPeerRouteDecision(
         accountMachinePreference: input.accountMachinePreference ?? 'inherit',
         accountDefaultPreference: input.accountDefaultPreference ?? 'inherit',
         productDefaultPreference: input.productDefaultPreference ?? 'enabled',
-        topologyAvailable: input.topologyAvailable,
         grant: { status: input.grantStatus },
     });
 

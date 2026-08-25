@@ -147,6 +147,40 @@ describe('ScmStatusSync polling', () => {
     setTimeoutSpy.mockRestore();
   });
 
+  it('stores a typed unavailability when the refresh throws an internal error', async () => {
+    // `F-UI-2`: this catch wrote `error.message` straight into the snapshot-error store, and the git
+    // surface renders that string. An internal exception from the machine RPC transport therefore
+    // reached the user as `Cannot read properties of undefined (reading 'emit')`. A genuine
+    // source-control failure always arrives carrying `scmErrorCode` (set by
+    // `scmRepositoryService.ts:151-155` from the response's `errorCode`); an error without one is
+    // not a source-control result and its message is an internal fact.
+    getStateMock.mockReturnValue({
+      sessions: {
+        s1: { id: 's1', metadata: { machineId: 'machine-a', path: '/repo' } },
+      },
+      applyScmStatus: applyScmStatusMock,
+      updateSessionProjectScmSnapshot: updateSnapshotMock,
+      updateSessionProjectScmSnapshotError: updateSnapshotErrorMock,
+      getSessionProjectScmSnapshotError: getSnapshotErrorMock,
+      pruneSessionProjectScmTouchedPaths: pruneTouchedPathsMock,
+      pruneSessionProjectScmCommitSelectionPaths: pruneCommitSelectionPathsMock,
+      pruneSessionProjectScmCommitSelectionPatches: pruneCommitSelectionPatchesMock,
+    });
+    fetchSnapshotForSessionMock.mockRejectedValue(
+      new TypeError("Cannot read properties of undefined (reading 'emit')"),
+    );
+
+    const { ScmStatusSync } = await import('./scmStatusSync');
+    const syncer = new ScmStatusSync();
+    await syncer.getSync('s1').invalidateAndAwait();
+
+    expect(updateSnapshotErrorMock).toHaveBeenCalledWith('s1', expect.objectContaining({
+      errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+    }));
+    const stored = updateSnapshotErrorMock.mock.calls.at(-1)?.[1];
+    expect(JSON.stringify(stored)).not.toContain('emit');
+  });
+
   it('deduplicates snapshot publishing when signature has not changed', async () => {
     getStateMock.mockReturnValue({
       sessions: {

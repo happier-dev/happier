@@ -3,6 +3,8 @@ import type { BrowserRecordingCaptureKindV1 } from '@happier-dev/protocol';
 
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 
+import { browserNativeViewCaptureShapeSupported } from './nativeViewCaptureShape';
+
 const registeredMachineCounts = new Map<string, number>();
 const listeners = new Set<() => void>();
 
@@ -59,9 +61,11 @@ export function useDesktopBrowserRecordingReverseCaptureHandler(
 }
 
 export function browserViewCanUseNativeViewCapture(view: BrowserControlViewState): boolean {
-    return view.target.kind === 'externalUrl'
-        && view.adapterKind === 'externalUrl'
-        && view.engineKind === 'desktopWebView';
+    return browserNativeViewCaptureShapeSupported({
+        targetKind: view.target.kind,
+        adapterKind: view.adapterKind,
+        engineKind: view.engineKind,
+    });
 }
 
 export function isBrowserRecordingCaptureSourceAvailable(input: Readonly<{

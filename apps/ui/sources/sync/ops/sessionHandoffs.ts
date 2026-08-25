@@ -1258,6 +1258,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         ...(resumeConnectedServices !== undefined ? { connectedServices: resumeConnectedServices } : {}),
         transcriptStorage: preparedResponse.resume.transcriptStorage,
         ...buildBackendTransportFieldsFromUiState({
+            machineId: options.targetMachineId,
             backendTarget: { kind: 'backend', backendId: preparedResponse.resume.agent },
             providerMode: preparedResponse.resume.codexBackendMode,
             runtimeDescriptorV1: preparedRuntimeDescriptorV1,
@@ -1512,6 +1513,7 @@ export async function performSessionHandoffRecoveryAction(params: Readonly<{
         ...(sourceResume.environmentVariables ? { environmentVariables: sourceResume.environmentVariables } : {}),
         transcriptStorage: sourceResume.transcriptStorage,
         ...buildBackendTransportFieldsFromUiState({
+            machineId: sourceResume.machineId,
             backendTarget: { kind: 'backend', backendId: sourceResume.agent },
             providerMode: sourceResume.codexBackendMode,
             runtimeDescriptorV1: sourceRuntimeDescriptorV1,

@@ -32,14 +32,13 @@ export function applyLocalServiceLauncherRefreshStarted(
     input: Readonly<{
         machineId: string;
         sessionId?: string;
-        requestedAt: number;
     }>,
 ): LocalServiceLauncherState {
     if (state.machineId !== null && state.machineId !== input.machineId) {
         return {
             machineId: input.machineId,
             sessionId: input.sessionId ?? null,
-            updatedAt: input.requestedAt,
+            updatedAt: null,
             refreshStatus: 'refreshing',
             refreshError: null,
             targetIds: [],
@@ -51,7 +50,6 @@ export function applyLocalServiceLauncherRefreshStarted(
         ...state,
         machineId: input.machineId,
         sessionId: input.sessionId ?? state.sessionId,
-        updatedAt: input.requestedAt,
         refreshStatus: 'refreshing',
         refreshError: null,
     };
@@ -88,7 +86,6 @@ export function failLocalServiceLauncherRefresh(
     input: Readonly<{
         machineId: string;
         sessionId?: string;
-        failedAt: number;
         reasonCode: string;
     }>,
 ): LocalServiceLauncherState {
@@ -96,7 +93,7 @@ export function failLocalServiceLauncherRefresh(
         return {
             machineId: input.machineId,
             sessionId: input.sessionId ?? null,
-            updatedAt: input.failedAt,
+            updatedAt: null,
             refreshStatus: 'error',
             refreshError: input.reasonCode,
             targetIds: [],
@@ -108,7 +105,6 @@ export function failLocalServiceLauncherRefresh(
         ...state,
         machineId: input.machineId,
         sessionId: input.sessionId ?? state.sessionId,
-        updatedAt: input.failedAt,
         refreshStatus: 'error',
         refreshError: input.reasonCode,
     };

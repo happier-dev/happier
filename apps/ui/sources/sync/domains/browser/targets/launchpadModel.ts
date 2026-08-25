@@ -5,6 +5,7 @@ import type { LocalServicePreviewState } from '@/sync/domains/local/services/pre
 import type { LocalServiceLauncherSnapshot } from '@/sync/domains/local/services/launch';
 import type { PluginBrowserProjectionModel } from '@/sync/domains/plugins/browser/targets';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
 export type BrowserLaunchpadModel = Readonly<{
     rows: readonly BrowserLaunchpadRow[];
@@ -30,6 +31,7 @@ export function buildBrowserLaunchpadModel(input: Readonly<{
     localServicePreviewState?: LocalServicePreviewState | null;
     pluginBrowserProjection?: PluginBrowserProjectionModel | null;
     pluginBrowserPolicyContext?: PluginUiPolicyEvaluationContext;
+    localizePluginText?: PluginLocalizedTextResolver;
     recents?: readonly BrowserRecentTarget[];
     nowMs?: number;
 }>): BrowserLaunchpadModel {

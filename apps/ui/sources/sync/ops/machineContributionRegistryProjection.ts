@@ -11,8 +11,6 @@ import {
     DaemonPluginSecretSetResponseSchema,
     DaemonPluginSecretDeleteRequestSchema,
     DaemonPluginSecretDeleteResponseSchema,
-    DaemonPluginComposerAttachmentPrepareRequestSchema,
-    DaemonPluginComposerAttachmentPrepareResponseSchema,
     DaemonPluginStructuredMessageActionExecuteRequestSchema,
     DaemonPluginStructuredMessageActionExecuteResponseSchema,
     DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema,
@@ -32,8 +30,6 @@ import {
     type DaemonPluginSecretStatusResponse,
     type DaemonPluginSecretSetResponse,
     type DaemonPluginSecretDeleteResponse,
-    type DaemonPluginComposerAttachmentPrepareRequest,
-    type DaemonPluginComposerAttachmentPrepareResponse,
     type DaemonPluginStructuredMessageActionExecuteRequest,
     type DaemonPluginStructuredMessageActionExecuteResponse,
     type DaemonPluginActionFormConnectedAccountOptionsResolveRequest,
@@ -74,6 +70,24 @@ import {
     resolveReactNativeWebLoaderCapability,
 } from '@/components/plugins/reactNative/hostRuntimeIdentity';
 import { resolveHostedWebFrameCapability } from '@/components/plugins/hostedWeb/hostedWebFrameCapability';
+import { getPreferredLanguage } from '@/text';
+// The projection revision/listener registry lives in its own dependency-light
+// owner so the canonical machine-state writer can advance it without importing
+// this RPC module. It is re-exported here because this is the seam every
+// projection consumer already imports.
+import {
+    getMachineContributionRegistryProjectionRevision,
+    machineContributionRegistryProjectionScopeKey,
+    type MachineContributionRegistryProjectionScope,
+} from './machineContributionRegistryProjectionRevision';
+
+export {
+    getMachineContributionRegistryProjectionRevision,
+    publishMachineContributionRegistryProjectionInvalidation,
+    publishMachineContributionRegistryProjectionReconnect,
+    subscribeMachineContributionRegistryProjectionInvalidation,
+    type MachineContributionRegistryProjectionScope,
+} from './machineContributionRegistryProjectionRevision';
 
 export type MachineContributionRegistryProjectionDescribeResult =
     | Readonly<{
@@ -144,9 +158,6 @@ export type MachinePluginTransportReason =
 
 export type MachinePluginUiResourceTransportReason = MachinePluginTransportReason;
 
-export type MachinePluginComposerAttachmentPrepareResult =
-    | Readonly<{ supported: true; result: DaemonPluginComposerAttachmentPrepareResponse }>
-    | Readonly<{ supported: false; reason: MachinePluginTransportReason }>;
 
 export type MachinePluginUiResourceReadResult =
     | Readonly<{ supported: true; result: DaemonPluginUiResourceReadResponse }>
@@ -194,53 +205,7 @@ function classifyMachinePluginTransportError(error: unknown): MachinePluginTrans
     return 'error';
 }
 
-export type MachineContributionRegistryProjectionScope = Readonly<{
-    machineId: string;
-    serverId: string | null;
-}>;
-
-const projectionRevisionByScope = new Map<string, number>();
-const projectionListenersByScope = new Map<string, Set<() => void>>();
 const projectionDescribeInflightByKey = new Map<string, Promise<MachineContributionRegistryProjectionDescribeResult>>();
-
-function projectionScopeKey(scope: MachineContributionRegistryProjectionScope): string {
-    return JSON.stringify([scope.serverId, scope.machineId]);
-}
-
-export function getMachineContributionRegistryProjectionRevision(
-    scope: MachineContributionRegistryProjectionScope,
-): number {
-    return projectionRevisionByScope.get(projectionScopeKey(scope)) ?? 0;
-}
-
-export function subscribeMachineContributionRegistryProjectionInvalidation(
-    scope: MachineContributionRegistryProjectionScope,
-    listener: () => void,
-): () => void {
-    const key = projectionScopeKey(scope);
-    const listeners = projectionListenersByScope.get(key) ?? new Set<() => void>();
-    listeners.add(listener);
-    projectionListenersByScope.set(key, listeners);
-    return () => {
-        listeners.delete(listener);
-        if (listeners.size === 0) projectionListenersByScope.delete(key);
-    };
-}
-
-export function publishMachineContributionRegistryProjectionInvalidation(
-    scope: MachineContributionRegistryProjectionScope,
-): void {
-    const key = projectionScopeKey(scope);
-    projectionRevisionByScope.set(key, (projectionRevisionByScope.get(key) ?? 0) + 1);
-    for (const listener of projectionListenersByScope.get(key) ?? []) listener();
-}
-
-export function publishMachineContributionRegistryProjectionReconnect(): void {
-    for (const key of [...projectionListenersByScope.keys()]) {
-        projectionRevisionByScope.set(key, (projectionRevisionByScope.get(key) ?? 0) + 1);
-        for (const listener of projectionListenersByScope.get(key) ?? []) listener();
-    }
-}
 
 function projectionDescribeInflightKey(params: Readonly<{
     scope: MachineContributionRegistryProjectionScope;
@@ -250,7 +215,7 @@ function projectionDescribeInflightKey(params: Readonly<{
     payload: unknown;
 }>): string {
     return JSON.stringify([
-        projectionScopeKey(params.scope),
+        machineContributionRegistryProjectionScopeKey(params.scope),
         params.timeoutMs,
         params.revision,
         params.requestEpoch,
@@ -311,6 +276,13 @@ export async function machineContributionRegistryProjectionDescribe(
         const hostedWebFrameCapability = await resolveHostedWebFrameCapability();
         const payload = DaemonContributionRegistryProjectionDescribeRequestSchema.parse({
             machineId,
+            // The one place the describe request is built, so every caller narrows
+            // plugin translation bundles to what this client can actually render:
+            // its preferred locale merged over English. Changing the app language
+            // restarts the app (`settings/language.tsx`), and the in-flight key
+            // below already includes the payload, so a stale locale cannot be
+            // served from this client's own dedupe.
+            locale: getPreferredLanguage(),
             ...(reactNativeHostRuntimeIdentity ? { reactNativeHostRuntimeIdentity } : {}),
             ...(reactNativeWebLoaderCapability ? { reactNativeWebLoaderCapability } : {}),
             ...(hostedWebFrameCapability ? { hostedWebFrameCapability } : {}),
@@ -771,48 +743,6 @@ export async function machinePluginStructuredMessageActionExecute(
             : { supported: false, reason: issued ? 'outcomeUnknown' : 'error' };
     } catch {
         return { supported: false, reason: issued ? 'outcomeUnknown' : 'error' };
-    }
-}
-
-/**
- * Invokes one current Composer attachment contributor's pre-send callback.
- * The projection/daemon remain authoritative for contributor admission and
- * generation leases; this is only their server-scoped transport client.
- */
-export async function machinePluginComposerAttachmentPrepare(
-    machineId: string,
-    opts: Readonly<Omit<DaemonPluginComposerAttachmentPrepareRequest, 'machineId'> & {
-        serverId?: string | null;
-        timeoutMs?: number | null;
-        signal?: AbortSignal;
-    }>,
-): Promise<MachinePluginComposerAttachmentPrepareResult> {
-    if (opts.signal?.aborted) return { supported: false, reason: 'aborted' };
-    try {
-        const payload = DaemonPluginComposerAttachmentPrepareRequestSchema.parse({
-            machineId,
-            expectedGeneration: opts.expectedGeneration,
-            attachment: opts.attachment,
-            request: opts.request,
-        });
-        const response = await machineRpcWithServerScope<unknown, typeof payload>({
-            machineId: payload.machineId,
-            serverId: opts.serverId,
-            timeoutMs: typeof opts.timeoutMs === 'number' ? opts.timeoutMs : undefined,
-            signal: opts.signal,
-            method: RPC_METHODS.DAEMON_PLUGIN_COMPOSER_ATTACHMENT_PREPARE,
-            payload,
-        });
-        if (isRpcMethodNotFoundResult(response)) return { supported: false, reason: 'not-supported' };
-        const parsed = DaemonPluginComposerAttachmentPrepareResponseSchema.safeParse(response);
-        return parsed.success
-            ? { supported: true, result: parsed.data }
-            : { supported: false, reason: 'error' };
-    } catch (error) {
-        if (isRpcMethodNotFoundError(error) || isRpcMethodNotAvailableError(error)) {
-            return { supported: false, reason: 'not-supported' };
-        }
-        return { supported: false, reason: classifyMachinePluginTransportError(error) };
     }
 }
 

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import type { LocalServiceInventoryRow } from '@/sync/domains/local/services/inventory/store';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
-import type { ManagedLocalServiceRow } from '@/sync/domains/local/services/managed/store';
 
 import { buildLocalServiceRows } from './serviceRow';
 
@@ -65,7 +64,6 @@ describe('buildLocalServiceRows', () => {
     it('orders running/this-session → workspace → machine → suggestions and never filters in-scope rows', () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [inventoryRow()],
-            managedRows: [],
             launchTargets: [
                 openableTarget(),
                 packageTarget(),
@@ -86,7 +84,6 @@ describe('buildLocalServiceRows', () => {
     it('carries title, portLabel, host, workspaceLabel, status and exactly one primaryAction per row', () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [inventoryRow()],
-            managedRows: [],
             launchTargets: [openableTarget()],
             sessionId: 'session-a',
             scope: 'workspace',
@@ -113,7 +110,6 @@ describe('buildLocalServiceRows', () => {
                 },
                 port: 8443,
             })],
-            managedRows: [],
             launchTargets: [openableTarget({ id: 'inventory:entry-a', subtitle: 'localhost:8443' })],
             sessionId: 'session-a',
             scope: 'workspace',
@@ -132,7 +128,6 @@ describe('buildLocalServiceRows', () => {
                     workspace: { path: '/repo/web', association: 'process_tree' },
                 },
             })],
-            managedRows: [],
             launchTargets: [openableTarget({ actions: ['open', 'terminate_detected'] })],
             sessionId: 'session-a',
             scope: 'workspace',
@@ -156,7 +151,6 @@ describe('buildLocalServiceRows', () => {
                     workspace: { path: '/repo/web', association: 'process_tree' },
                 },
             })],
-            managedRows: [],
             launchTargets: [openableTarget({ actions: ['open', 'terminate_detected'] })],
             sessionId: 'session-a',
             scope: 'workspace',
@@ -168,7 +162,6 @@ describe('buildLocalServiceRows', () => {
     it('emits an inert (null primaryAction) suggestion row for a package script (D6)', () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [],
-            managedRows: [],
             launchTargets: [packageTarget()],
             sessionId: null,
             scope: 'workspace',
@@ -181,7 +174,6 @@ describe('buildLocalServiceRows', () => {
     it('places non-session workspace services in the workspace band', () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [inventoryRow({ id: 'entry-b' })],
-            managedRows: [],
             launchTargets: [openableTarget({ id: 'inventory:entry-b', sessionId: 'session-other' })],
             sessionId: 'session-a',
             scope: 'workspace',
@@ -192,7 +184,6 @@ describe('buildLocalServiceRows', () => {
     it('does not synthesize daemon launch targets from inventory-only rows', () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [inventoryRow({ id: 'entry-a' })],
-            managedRows: [],
             launchTargets: [],
             sessionId: 'session-a',
             scope: 'workspace',
@@ -204,7 +195,6 @@ describe('buildLocalServiceRows', () => {
     it('does not duplicate a detected entry already covered by a launch target (single ranked model, FIX-B)', () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [inventoryRow({ id: 'entry-a' })],
-            managedRows: [],
             launchTargets: [openableTarget({ id: 'inventory:entry-a' })],
             sessionId: 'session-a',
             scope: 'workspace',
@@ -215,8 +205,8 @@ describe('buildLocalServiceRows', () => {
     it('keeps referentially-equal rows across snapshots differing only in updatedAt (keep-last-good)', () => {
         const inventoryRows = [inventoryRow()];
         const launchTargets = [openableTarget()];
-        const first = buildLocalServiceRows({ inventoryRows, managedRows: [], launchTargets, sessionId: 'session-a', scope: 'workspace' });
-        const second = buildLocalServiceRows({ inventoryRows, managedRows: [], launchTargets, sessionId: 'session-a', scope: 'workspace' });
+        const first = buildLocalServiceRows({ inventoryRows, launchTargets, sessionId: 'session-a', scope: 'workspace' });
+        const second = buildLocalServiceRows({ inventoryRows, launchTargets, sessionId: 'session-a', scope: 'workspace' });
         expect(second[0]?.id).toBe(first[0]?.id);
         expect(second[0]).toEqual(first[0]);
     });

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { actionOperationStore } from './actionOperationStore';
-import { useActionOperation, useActionOperationsHaveAttention } from './useActionOperations';
+import { readAllActionOperations, useActionOperation, useActionOperationsHaveAttention } from './useActionOperations';
 
 describe('useActionOperations', () => {
     let tree: renderer.ReactTestRenderer | null = null;
@@ -14,6 +14,24 @@ describe('useActionOperations', () => {
         tree = null;
         actionOperationStore.reset();
         vi.restoreAllMocks();
+    });
+
+    it('imperatively reads the latest canonical operation snapshot at a decision point', () => {
+        expect(readAllActionOperations()).toEqual([]);
+        actionOperationStore.mergeSnapshots([{
+            version: 1,
+            operationId: 'operation-a',
+            revision: 1,
+            requestId: 'launch-attempt-a',
+            actionId: 'session.spawn_new',
+            state: 'accepted',
+            scope: { accountId: 'account-a', machineId: 'machine-a' },
+            title: 'Create session',
+            createdAt: 100,
+            cancellation: 'unsupported',
+        }]);
+        expect(readAllActionOperations()).toHaveLength(1);
+        expect(readAllActionOperations()[0]?.snapshot.requestId).toBe('launch-attempt-a');
     });
 
     it('keeps the shared attention hook bound to terminal seen state', async () => {

@@ -35,8 +35,9 @@ const PUBLIC_PREVIEW_POLICY_REASON_KEYS = {
  * This is a third reason vocabulary, separate from the two above on purpose: the two maps above
  * translate what the *daemon* reports about one preview at runtime (`LocalServicePreviewDiagnosticV1`),
  * whereas these codes come from the *server*'s feature payload and name a deployment prerequisite the
- * operator has not satisfied — see `apps/server/sources/app/features/localServicesFeature.ts:52-110`,
- * the only producer. The two nodes are keyed separately because `disabled_by_server_policy` means
+ * operator has not satisfied — see the `pmsDisabledReasons` / `publicDisabledReasons` folds in
+ * `resolveLocalServicesFeature` (`apps/server/sources/app/features/localServicesFeature.ts`), the
+ * only producer. The two nodes are keyed separately because `disabled_by_server_policy` means
  * "the private preview feature is off" under `preview` and "the public exposure feature is off"
  * under `publicPreview`; the tunnel codes mean the same thing in both and share their copy.
  *
@@ -47,16 +48,17 @@ const PUBLIC_PREVIEW_POLICY_REASON_KEYS = {
 const CAPABILITY_DISABLED_REASON_KEYS = {
     preview: {
         disabled_by_server_policy: 'localServices.publicPreview.disabledReason.previewServerDisabled',
+        peer_mediation_grant_signing_unavailable: 'localServices.publicPreview.disabledReason.tunnelSigningUnconfigured',
         pms_allowed_ports_empty: 'localServices.publicPreview.disabledReason.tunnelPortsUnconfigured',
         pms_server_relay_disabled: 'localServices.publicPreview.disabledReason.tunnelRelayDisabled',
     },
     publicPreview: {
-        audit_required_disabled: 'localServices.publicPreview.disabledReason.auditRequirementDisabled',
         audit_sink_unavailable: 'localServices.publicPreview.disabledReason.auditUnavailable',
         disabled_by_server_policy: 'localServices.publicPreview.disabledReason.serverDisabled',
         dns_tls_unavailable: 'localServices.publicPreview.disabledReason.dnsTlsUnavailable',
         max_ttl_unconfigured: 'localServices.publicPreview.disabledReason.linkLifetimeUnconfigured',
         mode_unconfigured: 'localServices.publicPreview.disabledReason.modeUnconfigured',
+        peer_mediation_grant_signing_unavailable: 'localServices.publicPreview.disabledReason.tunnelSigningUnconfigured',
         pms_allowed_ports_empty: 'localServices.publicPreview.disabledReason.tunnelPortsUnconfigured',
         pms_server_relay_disabled: 'localServices.publicPreview.disabledReason.tunnelRelayDisabled',
         rate_limit_checker_unavailable: 'localServices.publicPreview.disabledReason.rateLimitUnavailable',

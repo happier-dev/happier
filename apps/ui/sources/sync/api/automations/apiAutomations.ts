@@ -2,6 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 import {
     AutomationV3AssignmentUpdateRequestSchema,
+    AutomationV3ClearRunHistoryResponseSchema,
     AutomationV3DeleteResponseSchema,
     AutomationV3DefinitionDetailSchema,
     AutomationV3DefinitionListResponseSchema,
@@ -9,13 +10,18 @@ import {
     AutomationV3PluginEventDefinitionPatchRequestSchema,
     AutomationV3RunDetailSchema,
     AutomationV3RunMutationResponseSchema,
+    AutomationV3SettingsSchema,
+    AutomationV3SettingsUpdateRequestSchema,
     type AutomationV3AssignmentInput,
+    type AutomationV3ClearRunHistoryResponse,
     type AutomationV3DefinitionDetail,
     type AutomationV3DefinitionListItem,
     type AutomationV3PluginEventDefinitionCreateRequest,
     type AutomationV3PluginEventDefinitionPatchRequest,
     type AutomationV3RunDetail,
     type AutomationV3RunListItem,
+    type AutomationV3Settings,
+    type AutomationV3SettingsUpdateRequest,
 } from '@happier-dev/protocol';
 
 import {
@@ -65,6 +71,32 @@ export async function listAutomationDefinitionsV3(
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
     return AutomationV3DefinitionListResponseSchema.parse(raw).automations;
+}
+
+/** Account-scoped settings are read through their strict V3 owner, never inferred from definitions or runs. */
+export async function getAutomationSettingsV3(
+    credentials: AuthCredentials,
+): Promise<AutomationV3Settings> {
+    const response = await serverFetch('/v3/automations/settings', {
+        headers: getAutomationAuthHeaders(credentials),
+    }, { includeAuth: false });
+    const raw = await readAutomationJsonOrThrow(response);
+    return AutomationV3SettingsSchema.parse(raw);
+}
+
+/** A complete strict record replaces the server-owned Automation settings projection. */
+export async function updateAutomationSettingsV3(
+    credentials: AuthCredentials,
+    input: AutomationV3SettingsUpdateRequest,
+): Promise<AutomationV3Settings> {
+    const body = AutomationV3SettingsUpdateRequestSchema.parse(input);
+    const response = await serverFetch('/v3/automations/settings', {
+        method: 'PUT',
+        headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
+        body: JSON.stringify(body),
+    }, { includeAuth: false });
+    const raw = await readAutomationJsonOrThrow(response);
+    return AutomationV3SettingsSchema.parse(raw);
 }
 
 /** Direct authenticated definition read; this is the only UI API that returns private Event authoring content. */
@@ -178,6 +210,19 @@ export async function getAutomationRunDetailV3(
     );
     const raw = await readAutomationJsonOrThrow(response);
     return AutomationV3RunDetailSchema.parse(raw);
+}
+
+/** Removes only server-eligible terminal Run history for one Automation. */
+export async function clearAutomationRunHistoryV3(
+    credentials: AuthCredentials,
+    automationId: string,
+): Promise<AutomationV3ClearRunHistoryResponse> {
+    const response = await serverFetch(`/v3/automations/${encodeURIComponent(automationId)}/runs/clear-history`, {
+        method: 'POST',
+        headers: getAutomationAuthHeaders(credentials),
+    }, { includeAuth: false });
+    const raw = await readAutomationJsonOrThrow(response);
+    return AutomationV3ClearRunHistoryResponseSchema.parse(raw);
 }
 
 /** Cancellation remains one V3 Run mutation; callers receive the refreshed bounded Run projection. */

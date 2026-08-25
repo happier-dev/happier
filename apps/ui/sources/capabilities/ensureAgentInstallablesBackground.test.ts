@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { MachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
 import type { CapabilitiesDetectRequest, CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
@@ -6,6 +6,11 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import type { MachineCapabilitiesInvokeResult } from '@/sync/ops';
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import type { PluginProjectionV2 } from '@happier-dev/protocol';
+
+import {
+    clearProjectedAgentUiBehaviorDescriptors,
+    publishProjectedAgentUiBehaviorDescriptors,
+} from '@/agents/registry/agentUiBehaviorProjection';
 
 import { buildInstallablesBackgroundActionKey, ensureAgentInstallablesBackground } from './ensureAgentInstallablesBackground';
 
@@ -387,6 +392,136 @@ describe('ensureAgentInstallablesBackground', () => {
             await firstCall;
 
             expect(machineCapabilitiesInvoke).toHaveBeenCalledTimes(2);
+        });
+    });
+
+    describe('installed external Agent installable deps', () => {
+        afterEach(() => {
+            clearProjectedAgentUiBehaviorDescriptors();
+        });
+
+        it('reads the owning machine\'s declaration when two machines disagree', async () => {
+            // The declaring machine sorts AFTER the silent one, so a machine-blind
+            // read answers with the silent machine's (absent) declaration.
+            publishProjectedAgentUiBehaviorDescriptors({
+                machineId: 'machine-a',
+                descriptorsByAgentId: {
+                    'acme.agent': {
+                        kind: 'plugin.ui.v1',
+                        pluginId: 'acme',
+                        agentId: 'acme.agent',
+                        version: 1,
+                        behavior: {},
+                    },
+                },
+            });
+            publishProjectedAgentUiBehaviorDescriptors({
+                machineId: 'machine-b',
+                descriptorsByAgentId: {
+                    'acme.agent': {
+                        kind: 'plugin.ui.v1',
+                        pluginId: 'acme',
+                        agentId: 'acme.agent',
+                        version: 1,
+                        behavior: { newSession: { relevantInstallableDepKeys: ['codex-acp'] } },
+                    },
+                },
+            });
+
+            const settings = settingsParse({} as any);
+            const prefetchMachineCapabilities = vi.fn(async () => {});
+            const machineCapabilitiesInvoke = vi.fn(
+                async (): Promise<MachineCapabilitiesInvokeResult> => ({
+                    supported: true,
+                    response: { ok: true, result: null },
+                }),
+            );
+            const getMachineCapabilitiesSnapshot = vi.fn(
+                (): MachineCapabilitiesSnapshot => ({
+                    response: { protocolVersion: 1 as const, results: buildMissingCodexAcpResults() },
+                }),
+            );
+
+            await ensureAgentInstallablesBackground(
+                {
+                    agentId: 'acme.agent',
+                    machineId: 'machine-b',
+                    serverId: 's1',
+                    settings,
+                    resumeSessionId: '',
+                },
+                {
+                    prefetchMachineCapabilities,
+                    getMachineCapabilitiesSnapshot,
+                    machineCapabilitiesInvoke,
+                    loadDaemonMergedProjectionInputs,
+                },
+            );
+
+            expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
+                'machine-b',
+                expect.objectContaining({ id: 'dep.codex-acp', method: 'install' }),
+                expect.anything(),
+            );
+        });
+
+        it('withholds the deps of a machine whose Agent declares none', async () => {
+            publishProjectedAgentUiBehaviorDescriptors({
+                machineId: 'machine-a',
+                descriptorsByAgentId: {
+                    'acme.agent': {
+                        kind: 'plugin.ui.v1',
+                        pluginId: 'acme',
+                        agentId: 'acme.agent',
+                        version: 1,
+                        behavior: {},
+                    },
+                },
+            });
+            publishProjectedAgentUiBehaviorDescriptors({
+                machineId: 'machine-b',
+                descriptorsByAgentId: {
+                    'acme.agent': {
+                        kind: 'plugin.ui.v1',
+                        pluginId: 'acme',
+                        agentId: 'acme.agent',
+                        version: 1,
+                        behavior: { newSession: { relevantInstallableDepKeys: ['codex-acp'] } },
+                    },
+                },
+            });
+
+            const settings = settingsParse({} as any);
+            const prefetchMachineCapabilities = vi.fn(async () => {});
+            const machineCapabilitiesInvoke = vi.fn(
+                async (): Promise<MachineCapabilitiesInvokeResult> => ({
+                    supported: true,
+                    response: { ok: true, result: null },
+                }),
+            );
+            const getMachineCapabilitiesSnapshot = vi.fn(
+                (): MachineCapabilitiesSnapshot => ({
+                    response: { protocolVersion: 1 as const, results: buildMissingCodexAcpResults() },
+                }),
+            );
+
+            await ensureAgentInstallablesBackground(
+                {
+                    agentId: 'acme.agent',
+                    machineId: 'machine-a',
+                    serverId: 's1',
+                    settings,
+                    resumeSessionId: '',
+                },
+                {
+                    prefetchMachineCapabilities,
+                    getMachineCapabilitiesSnapshot,
+                    machineCapabilitiesInvoke,
+                    loadDaemonMergedProjectionInputs,
+                },
+            );
+
+            expect(machineCapabilitiesInvoke).not.toHaveBeenCalled();
         });
     });
 });

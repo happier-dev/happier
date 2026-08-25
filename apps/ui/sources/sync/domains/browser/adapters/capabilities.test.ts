@@ -19,6 +19,28 @@ describe('buildBrowserAdapterCapabilities', () => {
         expect(caps.disabledReasons).toEqual([]);
     });
 
+    it('makes a native external URL (externalUrl + nativeWebView) available with real history capability', () => {
+        // R-2 regression: `selectBrowserTargetAdapter` maps an allowed external URL on ios/android to
+        // the RN `WebView`, which hosts arbitrary third-party sites and reports real history — but
+        // this builder's unavailable gate only carved out `webIframe`, so the whole set collapsed to
+        // `['unavailable']` and every mobile external tab shipped a dead address bar plus permanently
+        // disabled Back/Forward/Reload/Stop. Discriminating against the "web-only carve-out"
+        // implementation: `nativeWebView` is the ONLY engine that may claim back/forward here.
+        const caps = buildBrowserAdapterCapabilities({
+            adapterKind: 'externalUrl',
+            supportedTargetKinds: ['externalUrl'],
+            supportedRenderEngines: ['nativeWebView'],
+        });
+
+        expect(caps.supportedRenderEngines).toEqual(['nativeWebView']);
+        expect(caps.disabledReasons).toEqual([]);
+        expect(caps.navigation.canNavigate).toBe(true);
+        expect(caps.navigation.canReload).toBe(true);
+        expect(caps.navigation.canStop).toBe(true);
+        expect(caps.navigation.canGoBack).toBe(true);
+        expect(caps.navigation.canGoForward).toBe(true);
+    });
+
     it('keeps a streamed browser surface fail-closed (unavailable) without its runtime', () => {
         // The web-iframe carve-out must NOT over-open: surfaces that genuinely require a runtime
         // (streamed/sidecar) still resolve unavailable.

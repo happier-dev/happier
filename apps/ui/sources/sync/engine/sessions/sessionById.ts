@@ -284,7 +284,10 @@ export async function fetchAndApplySessionById(params: Readonly<{
           sessionId,
         });
         if (!fallbackRow) {
-          return { ok: false, session: null, errorCode: 'not_found', httpStatus: 404 };
+          // A legacy route fallback cannot prove absence from the current
+          // single-session contract. Keep the existing local carrier until
+          // current-route evidence arrives.
+          return { ok: false, session: null, errorCode: 'invalid_response', httpStatus: 404 };
         }
         body = { session: fallbackRow };
       }
@@ -293,7 +296,10 @@ export async function fetchAndApplySessionById(params: Readonly<{
     if (body === null) {
       const status = responseStatus;
       const errorCode =
-        status === 404 ? 'not_found'
+        // Only the current v2 body above is authoritative absence evidence.
+        // Empty, plain-text, or otherwise unparseable 404s can be a route or
+        // version mismatch and must not retire local state.
+        status === 404 ? 'invalid_response'
           : status === 401 ? 'unauthorized'
               : status === 403 ? 'forbidden'
                   : 'http_error';

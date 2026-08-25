@@ -1107,4 +1107,44 @@ describe('active Account Collection direct client', () => {
             },
         });
     });
+
+    /**
+     * Protocol admits strict JSON iteratively and deliberately carries no depth
+     * quota, while this client still hands the body to the runtime's recursive
+     * `JSON.stringify`. Where that serializer refuses a value, the request can
+     * never succeed, so reporting it as `transport-unavailable` tells the caller
+     * to retry a permanently failing write. The daemon host classifies the same
+     * refusal as an invalid value, and the two realms must not disagree.
+     *
+     * The fixture is cyclic rather than deep on purpose. Only a recursive
+     * serializer refuses a deep body, and the engine this suite runs on is
+     * iterative — Node 26 serialized 1,000,000 nesting levels without
+     * complaint — so a deep fixture would quietly turn this into a test that
+     * cannot fail. A cycle is the one input every shipped engine refuses.
+     */
+    it('reports a body the runtime cannot serialize as a permanent failure, not a transport outage', async () => {
+        const harness = await loadClient();
+        const prepared = await harness.prepareCollectionOperation(undefined);
+        if (prepared.status !== 'ready') throw new Error('Expected a prepared Account Data operation');
+
+        const cyclic: Record<string, unknown> = {};
+        cyclic.self = cyclic;
+
+        try {
+            await expect(harness.requestCollectionOperation({
+                operation: prepared.operation,
+                path: '/v1/plugins/data/mutate',
+                body: cyclic,
+            })).resolves.toEqual({
+                status: 'unavailable',
+                reason: 'request-not-serializable',
+            });
+            expect(harness.transport).not.toHaveBeenCalledWith(
+                '/v1/plugins/data/mutate',
+                expect.anything(),
+            );
+        } finally {
+            prepared.operation.release();
+        }
+    });
 });

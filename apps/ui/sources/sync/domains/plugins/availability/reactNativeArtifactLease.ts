@@ -10,7 +10,10 @@ import {
     type PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol';
 import {
+    derivePluginUiNativeCapabilitiesDigestV1,
+    PluginUiArtifactCompatibilityKeyV1Schema,
     PluginUiArtifactsManifestEntryV1Schema,
+    type PluginUiArtifactCompatibilityKeyV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import { decodeBase64 } from '@/encryption/base64';
@@ -19,10 +22,7 @@ import {
 } from '@/sync/api/plugins/availability/activePluginAccountHostedArtifactRead';
 import type { PluginReactNativeBundleCacheIdentity } from '@/sync/domains/plugins/ui/reactNativeRuntime';
 import type {
-    PluginUiPersistentArtifactIdentity,
     PluginUiPersistentArtifactFile,
-    PluginUiPersistentArtifactRecord,
-    PluginUiPersistentArtifactStore,
 } from '@/sync/domains/plugins/ui/artifactByteCache';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -30,8 +30,18 @@ import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/acti
 import type {
     PluginAccountAvailabilityReader,
 } from './reader';
-import { acquirePluginSelectedArtifactLease } from './artifactLease';
+import {
+    acquirePluginSelectedArtifactLease,
+    createPluginArtifactPersistentSource,
+    isPluginArtifactPersistentScopeCurrent,
+    persistVerifiedPluginArtifactLease,
+    wrapPluginArtifactLeaseCurrentness,
+} from './artifactLease';
+import {
+    publishVerifiedPluginArtifactToAccountHosting,
+} from './accountHostedArtifactPublication';
 import type {
+    PluginArtifactLeasePersistentScope,
     PluginArtifactSourceCandidate,
     PluginSelectedArtifactLeaseAcquireResult,
     PluginSelectedArtifactLease,
@@ -81,12 +91,7 @@ export type PluginReactNativeExactArtifactByteFetcher = (input: Readonly<{
     identity: PluginReactNativeBundleCacheIdentity;
 }> & PluginReactNativeArtifactByteReadOwner) => Promise<DaemonPluginUiArtifactBytesReadResponse>;
 
-export type PluginReactNativeArtifactLeasePersistentScope = Readonly<{
-    scope: ServerAccountScope;
-    store: PluginUiPersistentArtifactStore;
-    /** The active Account-realm lifetime owner; required for cache use. */
-    isCurrent: () => boolean;
-}>;
+export type PluginReactNativeArtifactLeasePersistentScope = PluginArtifactLeasePersistentScope;
 
 /**
  * The renderer cache is a terminal byte-materialization sink. It receives
@@ -194,90 +199,6 @@ function isSameClientContribution(
     return left.family === right.family
         && left.action.pluginId === right.action.pluginId
         && left.action.localId === right.action.localId;
-}
-
-function persistentIdentityFor(input: Readonly<{
-    scope: ServerAccountScope;
-    artifact: PluginSelectedArtifactLease['artifact'];
-}>): PluginUiPersistentArtifactIdentity {
-    return Object.freeze({
-        accountScope: input.scope,
-        releaseVersion: input.artifact.releaseVersion,
-        pluginId: input.artifact.pluginId,
-        contributionId: input.artifact.contributionId,
-        tier: input.artifact.tier,
-        platform: input.artifact.platform,
-        artifactDigest: input.artifact.digest,
-    });
-}
-
-function persistentScopeIsCurrent(scope: PluginReactNativeArtifactLeasePersistentScope | undefined): boolean {
-    return scope ? scope.isCurrent() : true;
-}
-
-function readPersistentFile(record: PluginUiPersistentArtifactRecord, relativePath: string): Uint8Array | null {
-    // The record always carries the exact declared file graph, so its files are
-    // the only lookup; there is no entry-only record to fall back to.
-    const file = record.files.find((candidate) => candidate.relativePath === relativePath);
-    return file ? new Uint8Array(file.bytes) : null;
-}
-
-function createPersistentSource(input: Readonly<{
-    scope: PluginReactNativeArtifactLeasePersistentScope;
-    identity: PluginReactNativeBundleCacheIdentity;
-}>): PluginArtifactSourceCandidate {
-    let pending: Promise<PluginUiPersistentArtifactRecord | null> | null = null;
-    let persistentIdentityKey = '';
-    let loadedIdentity: PluginUiPersistentArtifactIdentity | null = null;
-    let loadedRecord: PluginUiPersistentArtifactRecord | null = null;
-    return Object.freeze({
-        kind: 'persistentCache',
-        readFile: async ({ artifact, relativePath }) => {
-            if (!persistentScopeIsCurrent(input.scope)) return null;
-            if (!artifactMatchesCacheIdentity({ artifact, identity: input.identity })) return null;
-            const persistentIdentity = persistentIdentityFor({ scope: input.scope.scope, artifact });
-            const currentKey = [
-                persistentIdentity.releaseVersion,
-                persistentIdentity.pluginId,
-                persistentIdentity.contributionId,
-                persistentIdentity.tier,
-                persistentIdentity.platform,
-                persistentIdentity.artifactDigest,
-            ].join('\u0000');
-            if (currentKey !== persistentIdentityKey) {
-                persistentIdentityKey = currentKey;
-                loadedIdentity = persistentIdentity;
-                loadedRecord = null;
-                pending = input.scope.store.read(persistentIdentity)
-                    .then((record) => {
-                        loadedRecord = record;
-                        return record;
-                    })
-                    .catch(() => null);
-            }
-            const record = await pending;
-            if (!record || !persistentScopeIsCurrent(input.scope)) return null;
-            return readPersistentFile(record, relativePath);
-        },
-        discardInvalid: async () => {
-            if (!persistentScopeIsCurrent(input.scope) || !loadedIdentity || !loadedRecord) return;
-            const identity = loadedIdentity;
-            loadedRecord = null;
-            pending = Promise.resolve(null);
-            await input.scope.store.remove(identity);
-        },
-        discardRevoked: async () => {
-            // An Availability withdrawal/replacement is only allowed to remove
-            // the exact identity this source read. Account retirement owns
-            // whole-account cleanup separately.
-            if (!persistentScopeIsCurrent(input.scope) || !loadedIdentity) return;
-            const identity = loadedIdentity;
-            loadedIdentity = null;
-            loadedRecord = null;
-            pending = Promise.resolve(null);
-            await input.scope.store.remove(identity);
-        },
-    });
 }
 
 function exactDaemonOriginIsCurrent(input: Readonly<{
@@ -460,105 +381,6 @@ function createDaemonSource(input: Readonly<{
     });
 }
 
-function wrapLeaseCurrentness(input: Readonly<{
-    lease: PluginSelectedArtifactLease;
-    reader: PluginAccountAvailabilityReader;
-    isAdditionalCurrent: () => boolean;
-}>): PluginSelectedArtifactLease {
-    const revokeListeners = new Set<() => void>();
-    let revoked = false;
-    let disposed = false;
-    const revoke = () => {
-        if (revoked) return;
-        revoked = true;
-        for (const listener of revokeListeners) {
-            try {
-                listener();
-            } catch {
-                // A failed listener must not hide revocation from the rest.
-            }
-        }
-        revokeListeners.clear();
-    };
-    const isCurrent = () => {
-        if (revoked || !input.lease.isCurrent() || !input.isAdditionalCurrent()) {
-            revoke();
-            return false;
-        }
-        return true;
-    };
-    const accountSubscription = input.reader.subscribe(isCurrent);
-    const leaseSubscription = input.lease.onRevoke(revoke);
-    return Object.freeze({
-        ...input.lease,
-        isCurrent,
-        readFile: async (relativePath) => {
-            if (!isCurrent()) return Object.freeze({ kind: 'unavailable' as const, code: 'artifact_lease_revoked' as const });
-            const result = await input.lease.readFile(relativePath);
-            return isCurrent()
-                ? result
-                : Object.freeze({ kind: 'unavailable' as const, code: 'artifact_lease_revoked' as const });
-        },
-        onRevoke: (listener) => {
-            if (revoked) {
-                listener();
-                return Object.freeze({ dispose: () => {} });
-            }
-            revokeListeners.add(listener);
-            return Object.freeze({ dispose: () => revokeListeners.delete(listener) });
-        },
-        dispose: () => {
-            if (disposed) return;
-            disposed = true;
-            accountSubscription();
-            leaseSubscription.dispose();
-            input.lease.dispose();
-            revoke();
-        },
-    });
-}
-
-async function persistVerifiedLease(input: Readonly<{
-    lease: PluginSelectedArtifactLease;
-    persistent: PluginReactNativeArtifactLeasePersistentScope;
-}>): Promise<void> {
-    if (!persistentScopeIsCurrent(input.persistent) || !input.lease.isCurrent()) return;
-    const files: PluginUiPersistentArtifactFile[] = [];
-    for (const declared of input.lease.files) {
-        const result = await input.lease.readFile(declared.relativePath);
-        if (result.kind !== 'available' || !persistentScopeIsCurrent(input.persistent) || !input.lease.isCurrent()) {
-            return;
-        }
-        files.push(Object.freeze({
-            relativePath: result.file.relativePath,
-            digest: result.file.digest,
-            byteSize: result.file.byteSize,
-            bytes: new Uint8Array(result.bytes),
-        }));
-    }
-    const entry = files.find((file) => file.relativePath === input.lease.artifactGraph.entry);
-    if (!entry || !persistentScopeIsCurrent(input.persistent) || !input.lease.isCurrent()) return;
-    const persistentIdentity = persistentIdentityFor({
-        scope: input.persistent.scope,
-        artifact: input.lease.artifact,
-    });
-    const record: PluginUiPersistentArtifactRecord = Object.freeze({
-        persistentIdentity,
-        bytes: new Uint8Array(entry.bytes),
-        entryRelativePath: input.lease.artifactGraph.entry,
-        files: Object.freeze(files),
-    });
-    try {
-        await input.persistent.store.write(record);
-    } catch {
-        // Cache loss must not discard a previously verified in-memory lease.
-        return;
-    }
-    if (!persistentScopeIsCurrent(input.persistent) || !input.lease.isCurrent()) {
-        await input.persistent.store.remove(persistentIdentity).catch(() => undefined);
-    }
-}
-
 function isCacheHandoffCurrent(input: Readonly<{
     lease: PluginSelectedArtifactLease;
     isCurrent: () => boolean;
@@ -612,11 +434,14 @@ export async function materializePluginReactNativeArtifactLeaseInCache(input: Re
         ) {
             return Object.freeze({ kind: 'unavailable', code: 'artifact_graph_mismatch' });
         }
+        // The lease already detached these bytes for this reader, and the cache
+        // sink below takes its own custody copy synchronously. A third copy
+        // here would establish no additional owner.
         files.push(Object.freeze({
             relativePath: read.file.relativePath,
             digest: read.file.digest,
             byteSize: read.file.byteSize,
-            bytes: new Uint8Array(read.bytes),
+            bytes: read.bytes,
         }));
     }
     const entry = files.find((file) => file.relativePath === input.lease.artifactGraph.entry);
@@ -629,7 +454,7 @@ export async function materializePluginReactNativeArtifactLeaseInCache(input: Re
     const written = input.cacheSink.writeVerifiedArtifact(Object.freeze({
         identity: input.cacheIdentity,
         accountScope: input.accountScope,
-        bytes: new Uint8Array(entry.bytes),
+        bytes: entry.bytes,
         entryRelativePath: input.lease.artifactGraph.entry,
         files: Object.freeze(files),
     }));
@@ -646,6 +471,46 @@ export async function materializePluginReactNativeArtifactLeaseInCache(input: Re
     });
 }
 
+/**
+ * The daemon admits this cache identity only after it has proved the exact
+ * Artifact graph against the reported host runtime, so it is the canonical
+ * adoption fact for these bytes. Deriving a second host-compatibility key in
+ * the UI would let the published link disagree with the identity that selected
+ * the bundle.
+ *
+ * The identity carries the host's native capability set only as a digest.
+ * Recording the empty set is truthful exactly when that digest proves the host
+ * reported no capabilities; otherwise this host cannot describe its own
+ * adoption facts and must not publish them.
+ */
+function reactNativeHostCompatibilityFromCacheIdentity(input: Readonly<{
+    identity: PluginReactNativeBundleCacheIdentity;
+    platform: 'web' | 'ios' | 'android';
+}>): PluginUiArtifactCompatibilityKeyV1 | null {
+    if (
+        derivePluginUiNativeCapabilitiesDigestV1([])
+        !== input.identity.nativeCapabilitiesDigest
+    ) {
+        return null;
+    }
+    const parsed = PluginUiArtifactCompatibilityKeyV1Schema.safeParse({
+        hostAppVersion: input.identity.hostAppVersion,
+        hostUiApiVersion: input.identity.hostUiApiVersion,
+        reactVersion: input.identity.reactVersion,
+        reactNativeVersion: input.identity.reactNativeVersion,
+        ...(input.identity.expoRuntimeVersion
+            ? { expoRuntimeVersion: input.identity.expoRuntimeVersion }
+            : {}),
+        ...(input.identity.hermesVersion
+            ? { hermesVersion: input.identity.hermesVersion }
+            : {}),
+        platform: input.platform,
+        channel: input.identity.channel,
+        nativeCapabilities: [],
+    });
+    return parsed.success ? parsed.data : null;
+}
+
 export async function acquirePluginReactNativeArtifactLease(
     input: PluginReactNativeArtifactLeaseInput,
 ): Promise<PluginSelectedArtifactLeaseAcquireResult> {
@@ -659,8 +524,12 @@ export async function acquirePluginReactNativeArtifactLease(
     const graph = PluginUiArtifactsManifestEntryV1Schema.safeParse(input.artifactGraph);
     const sources: PluginArtifactSourceCandidate[] = [];
     if (input.appExact) sources.push(input.appExact);
-    if (input.persistent && persistentScopeIsCurrent(input.persistent)) {
-        sources.push(createPersistentSource({ scope: input.persistent, identity: input.cacheIdentity }));
+    if (input.persistent && isPluginArtifactPersistentScopeCurrent(input.persistent)) {
+        sources.push(createPluginArtifactPersistentSource({
+            scope: input.persistent,
+            identity: input.cacheIdentity,
+            artifactMatchesIdentity: (artifact, identity) => artifactMatchesCacheIdentity({ artifact, identity }),
+        }));
     }
     if (input.daemon && graph.success) {
         sources.push(createDaemonSource({
@@ -705,12 +574,12 @@ export async function acquirePluginReactNativeArtifactLease(
     // Account's current Artifact admission, and Account cache custody are the
     // authorities. A daemon blip must not blank verified content.
     const requiresPersistentCurrentness = input.persistent !== undefined;
-    const lease = wrapLeaseCurrentness({
+    const lease = wrapPluginArtifactLeaseCurrentness({
         lease: acquired.lease,
         reader: input.reader,
         isAdditionalCurrent: () => (
             input.accountLifetime.isCurrent()
-            && (!requiresPersistentCurrentness || persistentScopeIsCurrent(input.persistent))
+            && (!requiresPersistentCurrentness || isPluginArtifactPersistentScopeCurrent(input.persistent))
         ),
     });
     if (!lease.isCurrent()) {
@@ -718,7 +587,22 @@ export async function acquirePluginReactNativeArtifactLease(
         return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
     }
     if (input.persistent && (lease.sourceKind === 'daemon' || lease.sourceKind === 'accountHosted')) {
-        await persistVerifiedLease({ lease, persistent: input.persistent });
+        await persistVerifiedPluginArtifactLease({ lease, persistent: input.persistent });
+    }
+    // Account hosting is the only source a new uncached client can reach while
+    // every daemon is offline, and these verified bytes are the only copy this
+    // process will ever hold beside a current Account authority.
+    const hostCompatibility = reactNativeHostCompatibilityFromCacheIdentity({
+        identity: input.cacheIdentity,
+        platform,
+    });
+    if (hostCompatibility) {
+        await publishVerifiedPluginArtifactToAccountHosting({
+            reader: input.reader,
+            accountLifetime: input.accountLifetime,
+            lease,
+            hostCompatibility,
+        });
     }
     return Object.freeze({ kind: 'available', lease });
 }

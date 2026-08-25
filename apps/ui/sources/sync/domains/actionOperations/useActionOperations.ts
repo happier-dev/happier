@@ -11,13 +11,33 @@ function useActionOperationSelector<T>(selector: () => T): T {
     );
 }
 
+/** Imperative read for decision points that must not rely on a render snapshot. */
+export function readAllActionOperations() {
+    return actionOperationSelectors.selectAll(actionOperationStore.getSnapshot());
+}
+
 export function useAllActionOperations() {
-    return useActionOperationSelector(() => actionOperationSelectors.selectAll(actionOperationStore.getSnapshot()));
+    return useActionOperationSelector(readAllActionOperations);
 }
 
 export function useActionOperation(operationId: string) {
     return useActionOperationSelector(() => (
         actionOperationSelectors.selectById(actionOperationStore.getSnapshot(), operationId)
+    ));
+}
+
+export function useActionOperationByRequestId(
+    requestId: string | null,
+    accountId?: string | null,
+) {
+    return useActionOperationSelector(() => (
+        requestId
+            ? actionOperationSelectors.selectSnapshotByRequestId(
+                actionOperationStore.getSnapshot(),
+                requestId,
+                accountId,
+            )
+            : null
     ));
 }
 

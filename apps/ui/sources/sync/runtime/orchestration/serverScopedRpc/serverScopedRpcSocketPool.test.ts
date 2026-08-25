@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 
 import type { ScopedSocketClient } from './serverScopedRpcTypes';
 import { createServerScopedRpcSocketPool } from './serverScopedRpcSocketPool';
@@ -103,10 +104,10 @@ describe('serverScopedRpcSocketPool', () => {
                 path: '/v1/updates/',
                 withCredentials: false,
                 auth: expect.objectContaining({
-                    accountStoredContentCompatibility: {
-                        v: 1,
-                        protocolVersion: 1,
-                    },
+                    // Assert the canonical declaration rather than a copied literal: the
+                    // protocol owns this version and bumping it must not fail this test.
+                    accountStoredContentCompatibility:
+                        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
                 }),
             }),
         );

@@ -4,19 +4,102 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
 const { describeProviderModels } = vi.hoisted(() => ({ describeProviderModels: vi.fn() }));
+type TestAccountLifetime = Readonly<{
+    isCurrent(): boolean;
+    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
+}>;
+const activeAccountLifetime = vi.hoisted(() => {
+    const current: { value: TestAccountLifetime | null } = { value: null };
+    return {
+        current,
+        create() {
+            let retired = false;
+            const cancellations = new Set<() => void>();
+            const lifetime: TestAccountLifetime = {
+                isCurrent: () => !retired,
+                onRetire(cancel) {
+                    if (retired) {
+                        cancel();
+                        return { dispose() {} };
+                    }
+                    cancellations.add(cancel);
+                    return { dispose: () => cancellations.delete(cancel) };
+                },
+            };
+            return {
+                lifetime,
+                retire() {
+                    if (retired) return;
+                    retired = true;
+                    for (const cancel of [...cancellations]) cancel();
+                    cancellations.clear();
+                },
+            };
+        },
+    };
+});
 vi.mock('@/providers/rpc/client', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/providers/rpc/client')>(),
     describeProviderModels,
+}));
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => activeAccountLifetime.current.value,
 }));
 
 import { useProviderModelProjection } from './useProviderModelProjection';
 
 afterEach(() => {
+    activeAccountLifetime.current.value = null;
     standardCleanup();
     describeProviderModels.mockReset();
 });
 
 describe('useProviderModelProjection', () => {
+    it('clears Account A projection and starts one Account B read when routing ids stay equal', async () => {
+        const accountA = activeAccountLifetime.create();
+        const accountB = activeAccountLifetime.create();
+        activeAccountLifetime.current.value = accountA.lifetime;
+        let resolveA!: (value: unknown) => void;
+        let resolveB!: (value: unknown) => void;
+        describeProviderModels
+            .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }))
+            .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve; }));
+        const rendered = await renderHook(() => useProviderModelProjection({
+            enabled: true,
+            machineId: 'machine-a',
+            serverId: 'server-a',
+            agentTargetKey: 'backend:codex',
+        }));
+        const refreshFromAccountA = rendered.getCurrent().refresh;
+        expect(describeProviderModels).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            activeAccountLifetime.current.value = accountB.lifetime;
+            accountA.retire();
+            await rendered.rerender();
+        });
+
+        expect(rendered.getCurrent().data).toBeNull();
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(describeProviderModels).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            resolveA({ status: 'success', agentTargetKey: 'backend:codex', groups: [{ connectionId: 'pc_a' }] });
+        });
+        expect(rendered.getCurrent().data).toBeNull();
+
+        await act(async () => {
+            resolveB({
+                status: 'success', agentTargetKey: 'backend:codex', groups: [{ connectionId: 'pc_b' }],
+            });
+        });
+        expect(rendered.getCurrent().data?.groups).toEqual([{ connectionId: 'pc_b' }]);
+
+        await act(async () => { await refreshFromAccountA(); });
+        expect(describeProviderModels).toHaveBeenCalledTimes(2);
+        expect(rendered.getCurrent().data?.groups).toEqual([{ connectionId: 'pc_b' }]);
+    });
+
     it('clears a successful projection immediately when its machine scope changes', async () => {
         let resolveB!: (value: unknown) => void;
         const observed: Array<Readonly<{ machineId: string; connectionIds: readonly string[]; status?: string }>> = [];
@@ -133,7 +216,7 @@ describe('useProviderModelProjection', () => {
         expect(rendered.getCurrent().data?.groups).toEqual([{ connectionId: 'pc_a' }]);
         expect(rendered.getCurrent().error).toMatchObject({
             v: 1,
-            code: 'provider_endpoint_unavailable',
+            code: 'provider_machine_unavailable',
             retryable: true,
             action: 'retry',
         });

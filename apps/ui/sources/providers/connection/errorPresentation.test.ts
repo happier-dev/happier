@@ -24,6 +24,19 @@ describe('provider error presentation', () => {
         }));
     });
 
+    it('keeps machine transport and managed-daemon guidance distinct from endpoint and generic runtime copy', () => {
+        expect(presentProviderError('provider_machine_unavailable')).toEqual(expect.objectContaining({
+            titleKey: 'settingsProviders.errors.machineUnavailableTitle',
+            descriptionKey: 'settingsProviders.errors.machineUnavailableDescription',
+            action: 'retry',
+        }));
+        expect(presentProviderError('provider_managed_requires_daemon')).toEqual(expect.objectContaining({
+            titleKey: 'settingsProviders.errors.managedRequiresDaemonTitle',
+            descriptionKey: 'settingsProviders.errors.managedRequiresDaemonDescription',
+            action: 'review_connection',
+        }));
+    });
+
     it('presents materialization failures as connection review rather than restart continuity', () => {
         expect(presentProviderError('provider_materialization_failed')).toEqual(expect.objectContaining({
             titleKey: 'settingsProviders.errors.connectionInvalidTitle',

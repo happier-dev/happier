@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import type { LocalServicePublicPreviewStatusClientResult } from './api';
 import {
     getLocalServicePublicPreviewState,
@@ -12,7 +13,6 @@ import {
     resetLocalServicePublicPreviewStoreForTests,
     subscribeLocalServicePublicPreviewStore,
 } from './sharedStore';
-import { expectNoWallClockPolling } from '../noPollingTestHelpers';
 import { selectLocalServicePublicPreviewRows } from './store';
 
 const exposure = {
@@ -176,9 +176,10 @@ describe('shared local-service public-preview store', () => {
 
     it('does not re-fetch the public-preview status on a wall clock while subscribed', async () => {
         const statusClient = vi.fn(async (): Promise<LocalServicePublicPreviewStatusClientResult> => ({
-            status: 'ok',
-            snapshot,
+            ok: true,
+            snapshot: snapshot({ sessionId: 'session_1' }),
         }));
+        const key = { machineId: 'machine_1', sessionId: 'session_1', serverId: 'server_1' };
 
         await expectNoWallClockPolling({
             subscribe: () => subscribeLocalServicePublicPreviewStore(key, () => {}, { statusClient }),

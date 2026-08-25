@@ -56,6 +56,8 @@ function unavailableError(reason: ActivePluginCollectionUnavailableReasonV1): Pl
     switch (reason) {
         case 'operation-cancelled':
             return kvError(CANCELLED_CODE, 'Plugin Account KV operation was cancelled');
+        case 'request-not-serializable':
+            return kvError(ACCOUNT_KV_INVALID_CODE, 'Account KV row cannot be serialized by this runtime');
         case 'transport-unavailable':
             return kvError(ACCOUNT_STORAGE_UNAVAILABLE_CODE, 'Plugin Account KV transport is unavailable', true);
         default:

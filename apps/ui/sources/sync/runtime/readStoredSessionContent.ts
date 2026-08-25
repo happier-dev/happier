@@ -1,3 +1,5 @@
+import { isMessageStructuredPresentationV1Candidate } from '@happier-dev/protocol';
+
 import type { ApiMessage } from '@/sync/api/types/apiTypes';
 import type { DecryptedMessage } from '@/sync/domains/state/storageTypes';
 import { RawRecordSchema, type RawRecord } from '@/sync/typesRaw';
@@ -30,13 +32,6 @@ function isStoredSessionPlainContent(value: unknown): value is StoredSessionPlai
     );
 }
 
-function hasReservedStructuredTranscriptRoot(value: unknown): boolean {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return false;
-    }
-    return Object.prototype.hasOwnProperty.call(value, 'profile');
-}
-
 export async function readStoredSessionRawRecord(params: Readonly<{
     content: unknown;
     decryptEncrypted?: (ciphertext: string) => Promise<unknown> | unknown;
@@ -59,8 +54,11 @@ export async function readStoredSessionRawRecord(params: Readonly<{
             ? await decryptEncrypted(decodedContent.c)
             : null;
 
+    // The reserved structured-presentation discriminator is Message-owned in
+    // Protocol; the transport reader consumes it rather than re-deriving it,
+    // so a change to the persisted profile reservation cannot diverge here.
     const candidate = rawContent ?? decodedContent;
-    if (hasReservedStructuredTranscriptRoot(candidate)) {
+    if (isMessageStructuredPresentationV1Candidate(candidate)) {
         return null;
     }
 

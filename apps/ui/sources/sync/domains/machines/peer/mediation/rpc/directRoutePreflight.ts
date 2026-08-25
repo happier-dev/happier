@@ -53,7 +53,6 @@ export function resolveMachineRpcDirectRoutePreflight(input: Readonly<{
     const policyDecision = resolveMachineRpcPeerRouteDecision({
         method: input.method,
         serverFeatures: input.serverFeatures,
-        topologyAvailable: true,
         grantStatus: 'valid',
     });
     if (policyDecision.kind !== 'direct_allowed') {

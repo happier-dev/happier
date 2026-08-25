@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const resolveVendorHandoffIdMetadataMock = vi.hoisted(() => vi.fn());
 const buildSourceRecoveryResumePatchMetadataMock = vi.hoisted(() => vi.fn());
@@ -31,6 +31,10 @@ vi.mock('@/agents/registry/registryUiBehavior', async (importOriginal) => {
 });
 
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import {
+    clearProjectedAgentUiBehaviorDescriptors,
+    publishProjectedAgentUiBehaviorDescriptors,
+} from '@/agents/registry/agentUiBehaviorProjection';
 
 import { buildSessionHandoffRecoveryPlan } from './recoveryPlan';
 
@@ -38,6 +42,11 @@ describe('buildSessionHandoffRecoveryPlan', () => {
     beforeEach(() => {
         resolveVendorHandoffIdMetadataMock.mockReset();
         buildSourceRecoveryResumePatchMetadataMock.mockReset();
+        clearProjectedAgentUiBehaviorDescriptors();
+    });
+
+    afterEach(() => {
+        clearProjectedAgentUiBehaviorDescriptors();
     });
 
     it('resolves aliased flavors and vendor resume ids through the agent registry', () => {
@@ -67,6 +76,10 @@ describe('buildSessionHandoffRecoveryPlan', () => {
                 resume: 'remote_opencode_session',
                 transcriptStorage: 'direct',
                 serverId: 'server_1',
+                // OpenCode's canonical metadata reader answers `server` for a session
+                // that declares no mode, so the recovery plan pins the mode the source
+                // session actually ran in rather than leaving it to the restart default.
+                environmentVariables: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
             },
         });
     });
@@ -205,6 +218,7 @@ describe('buildSessionHandoffRecoveryPlan', () => {
 
         const projectedMetadata = {
             path: '/repo',
+            providerSessionId: 'remote_opencode_session',
             opencodeSessionId: 'remote_opencode_session',
             opencodeBackendMode: 'server',
             opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
@@ -216,6 +230,79 @@ describe('buildSessionHandoffRecoveryPlan', () => {
         }
         expect(buildSourceRecoveryResumePatchMetadataMock)
             .toHaveBeenCalledWith(projectedMetadata);
+    });
+
+    it("derives an installed Agent's source-recovery environment from its own machine descriptor", () => {
+        const environmentVariables = (envKey: string) => ({
+            payload: {
+                environmentVariables: {
+                    providerId: 'acme.agent',
+                    backendMode: {
+                        envKey,
+                        settingKey: 'acmeBackendMode',
+                        legacyMetadataKey: 'acmeBackendMode',
+                        runtimeDescriptorField: 'backendMode',
+                        defaultValue: 'server',
+                        values: ['server', 'local'],
+                    },
+                },
+            },
+        });
+        // `machine_a` sorts before the source machine, so a machine-blind read
+        // would answer with the wrong machine's declaration.
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine_a',
+            descriptorsByAgentId: {
+                'acme.agent': {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme',
+                    agentId: 'acme.agent',
+                    version: 1,
+                    behavior: environmentVariables('OTHER_MACHINE_ACME_MODE'),
+                },
+            },
+        });
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine_source',
+            descriptorsByAgentId: {
+                'acme.agent': {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme',
+                    agentId: 'acme.agent',
+                    version: 1,
+                    behavior: environmentVariables('ACME_MODE'),
+                },
+            },
+        });
+
+        expect(
+            buildSessionHandoffRecoveryPlan({
+                handoffId: 'handoff_external_env',
+                sessionId: 'session_external_env',
+                sourceMachineId: 'machine_source',
+                sourceMetadata: {
+                    host: 'machine.local',
+                    machineId: 'machine_source',
+                    path: '/workspace',
+                    runtimeDescriptorV1: {
+                        v: 1,
+                        agentId: 'acme.agent',
+                        agent: {
+                            backendMode: 'local',
+                            providerSessionId: 'external_vendor_session',
+                        },
+                    },
+                } satisfies Metadata,
+                sessionStorageMode: 'persisted',
+            }),
+        ).toMatchObject({
+            sourceResume: {
+                agent: 'acme.agent',
+                // `local`, not the descriptor's `server` default: proof the Agent's own
+                // runtime handle was read rather than a fallback being manufactured.
+                environmentVariables: { ACME_MODE: 'local' },
+            },
+        });
     });
 
     it('normalizes legacy codex backend mode metadata onto the canonical codexBackendMode field', () => {

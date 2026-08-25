@@ -29,7 +29,10 @@ import {
 import type { DaemonPluginReactNativeCrashBindingTokenV1 } from '@happier-dev/protocol';
 
 import { encodeBase64 } from '@/encryption/base64';
-import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
+import {
+    createPluginReactNativeArtifactLeaseCacheSink,
+    createPluginReactNativeBundleCache,
+} from '@/components/plugins/reactNative/bundleCache';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type {
     PluginUiPersistentArtifactRecord,
@@ -283,6 +286,12 @@ function fixture(input: Readonly<{
                 }),
             }],
             materializations: [materialization],
+            snapshots: [{
+                serverIdentityId: materialization.serverIdentityId,
+                machineId: materialization.machineId,
+                revision: 1,
+                materializations: [materialization],
+            }],
     } satisfies PluginAccountAvailabilitySnapshot;
     const reader = createPluginAccountAvailabilityReader({ scope, snapshot });
     const cacheIdentity = {
@@ -546,7 +555,7 @@ describe('React Native Artifact lease acquisition', () => {
             reader: current.reader,
             artifactGraph: current.graph,
             cacheIdentity: current.cacheIdentity,
-            persistent: { scope, store: persistent.store, isCurrent: () => true },
+            persistent: { scope, store: persistent.store, isCurrent: () => true, removePersistentArtifact: persistent.removes },
             daemon: {
                 origin: current.origin,
                 serverId: scope.serverId,
@@ -777,7 +786,7 @@ describe('React Native Artifact lease acquisition', () => {
             reader: current.reader,
             artifactGraph: current.graph,
             cacheIdentity: current.cacheIdentity,
-            persistent: { scope, store: persistent.store, isCurrent: () => true },
+            persistent: { scope, store: persistent.store, isCurrent: () => true, removePersistentArtifact: persistent.removes },
             daemon: {
                 origin: current.origin,
                 serverId: scope.serverId,
@@ -795,7 +804,7 @@ describe('React Native Artifact lease acquisition', () => {
         expect(persistent.writes).toHaveBeenCalledTimes(1);
     });
 
-    it('removes only the exact persistent Artifact identity when Availability withdraws it', async () => {
+    it('retires the lease without deleting the retained bytes when the Account disables the plugin', async () => {
         const current = fixture();
         const readerStore = createPluginAccountAvailabilityReaderStore();
         readerStore.replace({ scope, snapshot: current.snapshot });
@@ -817,13 +826,20 @@ describe('React Native Artifact lease acquisition', () => {
         persistent.records.set(neighboringKey, {
             persistentIdentity: neighboringIdentity,
             bytes: current.entryBytes,
+            entryRelativePath: current.graph.entry,
+            files: current.daemonResponse.files.map((file) => ({
+                relativePath: file.relativePath,
+                digest: file.digest,
+                byteSize: file.byteSize,
+                bytes: file.relativePath === current.graph.entry ? current.entryBytes : current.chunkBytes,
+            })),
         });
 
         const acquired = await acquire({
             reader: readerStore.bind(scope),
             artifactGraph: current.graph,
             cacheIdentity: current.cacheIdentity,
-            persistent: { scope, store: persistent.store, isCurrent: () => true },
+            persistent: { scope, store: persistent.store, isCurrent: () => true, removePersistentArtifact: persistent.removes },
             daemon: {
                 origin: current.origin,
                 serverId: scope.serverId,
@@ -852,8 +868,17 @@ describe('React Native Artifact lease acquisition', () => {
         await Promise.resolve();
 
         expect(acquired.lease.isCurrent()).toBe(false);
-        expect(persistent.removes).toHaveBeenCalledTimes(1);
-        expect(persistent.removes).toHaveBeenCalledWith(persistentIdentity);
+        // Disable stops new use and retains the bounded archive (PEP-ARTIFACTS
+        // 10.1). Physical deletion of a superseded or withdrawn identity belongs
+        // to the Availability projection writer that holds both verified
+        // snapshots, never to a per-surface lease reacting to currentness loss.
+        // The exact identity this lease admitted is still stored, so re-enabling
+        // the plugin reuses these verified bytes instead of re-downloading them.
+        expect(
+            persistent.records.get(`${persistentIdentity.releaseVersion}:${persistentIdentity.artifactDigest}`)
+                ?.persistentIdentity,
+        ).toEqual(persistentIdentity);
+        expect(persistent.removes).not.toHaveBeenCalled();
         expect(persistent.removeAccount).not.toHaveBeenCalled();
         expect(persistent.records.has(neighboringKey)).toBe(true);
     });
@@ -892,7 +917,7 @@ describe('React Native Artifact lease acquisition', () => {
                 nativeCapabilitiesDigest: `sha256:${'d'.repeat(64)}`,
                 projectionGeneration: current.cacheIdentity.projectionGeneration + 1,
             },
-            persistent: { scope, store: persistent.store, isCurrent: () => true },
+            persistent: { scope, store: persistent.store, isCurrent: () => true, removePersistentArtifact: persistent.removes },
             daemon: {
                 origin: current.origin,
                 serverId: scope.serverId,
@@ -939,7 +964,7 @@ describe('React Native Artifact lease acquisition', () => {
             reader: current.reader,
             artifactGraph: current.graph,
             cacheIdentity: current.cacheIdentity,
-            persistent: { scope, store: persistent.store, isCurrent: () => true },
+            persistent: { scope, store: persistent.store, isCurrent: () => true, removePersistentArtifact: persistent.removes },
             daemon: {
                 origin: current.origin,
                 serverId: scope.serverId,
@@ -1006,6 +1031,54 @@ describe('React Native Artifact lease acquisition', () => {
         expect(materialized.isCurrent()).toBe(true);
         consumerCurrent = false;
         expect(materialized.isCurrent()).toBe(false);
+    });
+
+    it('leaves the cache holding its own bytes when the handed-over lease buffers are mutated afterwards', async () => {
+        // The handoff no longer copies the lease's already-detached read bytes:
+        // the cache sink is the owner that takes custody. This states that
+        // contract from the outside, so removing the cache's own copy is a
+        // failure here rather than a silent alias between the two owners.
+        const current = fixture();
+        const acquired = await acquire({
+            reader: current.reader,
+            artifactGraph: current.graph,
+            cacheIdentity: current.cacheIdentity,
+            daemon: {
+                origin: current.origin,
+                serverId: scope.serverId,
+                fetchArtifactBytes: async () => current.daemonResponse,
+            },
+        });
+        if (acquired.kind !== 'available') throw new Error('Fixture lease was unavailable.');
+        const handedOver: Uint8Array[] = [];
+        const cache = createPluginReactNativeBundleCache();
+        const cacheSink = createPluginReactNativeArtifactLeaseCacheSink({
+            cache,
+            lifetime: permanentlyCurrentLifetime,
+        });
+
+        const materialized = await materializePluginReactNativeArtifactLeaseInCache({
+            lease: Object.freeze({
+                ...acquired.lease,
+                readFile: async (relativePath: string) => {
+                    const read = await acquired.lease.readFile(relativePath);
+                    if (read.kind === 'available') handedOver.push(read.bytes);
+                    return read;
+                },
+            }),
+            cacheIdentity: current.cacheIdentity,
+            accountScope: scope,
+            cacheSink,
+            isCurrent: () => true,
+        });
+        expect(materialized).toMatchObject({ kind: 'available' });
+        expect(handedOver).toHaveLength(2);
+
+        for (const bytes of handedOver) bytes.fill(0);
+
+        const cached = cache.readInstalledArtifact(current.cacheIdentity);
+        expect(cached?.bytes).toEqual(current.entryBytes);
+        expect(cached?.files?.map((file) => file.bytes)).toEqual([current.entryBytes, current.chunkBytes]);
     });
 
     it('does not write a lease after the renderer consumer retires during its file handoff', async () => {

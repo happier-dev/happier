@@ -58,6 +58,12 @@ import {
   getSessionTranscriptForVoiceTool,
 } from '@/voice/tools/actionImpl/sessionRecentMessages';
 import { listRecentPathsForVoiceTool } from '@/voice/tools/actionImpl/pathsListRecent';
+import { listProjectsForActions } from './listProjects';
+import {
+  listPromptInvocationsForActions,
+  resolvePromptInvocationForActions,
+} from './resolvePromptInvocations';
+import { listSpawnProfilesForActions } from './listSpawnProfiles';
 import { listMachinesForVoiceTool } from '@/voice/tools/actionImpl/machinesList';
 import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
 import { listReviewEnginesForVoiceTool } from '@/voice/tools/actionImpl/reviewEnginesList';
@@ -100,6 +106,31 @@ import {
 
 function projectSessionInteractionRpcResult(result: unknown): unknown {
   return result === undefined || result === null ? { ok: true } : result;
+}
+
+/**
+ * Reuses the one exact-daemon approval decision transport for every durable
+ * approval that must be consumed by the daemon which stamped its placement.
+ * The public request carries only the artifact id and decision; daemon-side
+ * replay rehydrates the durable proof before any execution can begin.
+ */
+export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
+  artifactId: string;
+  decision: 'approve' | 'reject';
+  executionTarget: Readonly<{ serverId: string; machineId: string }>;
+  signal?: AbortSignal;
+}>): Promise<unknown> {
+  return await machineRpcWithServerScope({
+    serverId: input.executionTarget.serverId,
+    machineId: input.executionTarget.machineId,
+    method: RPC_METHODS.APPROVAL_REQUEST_DECIDE,
+    payload: {
+      artifactId: input.artifactId,
+      decision: input.decision,
+      serverId: input.executionTarget.serverId,
+    },
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+  });
 }
 
   export function createDefaultActionExecutor(opts?: Readonly<{
@@ -393,7 +424,19 @@ function projectSessionInteractionRpcResult(result: unknown): unknown {
       signal,
     }),
 
+    sessionSpawnNewDirectoryApprovalReplay: async ({ artifactId, executionTarget, signal }) =>
+      await replayApprovalRequestAtExactDaemon({
+        artifactId,
+        decision: 'approve',
+        executionTarget,
+        ...(signal === undefined ? {} : { signal }),
+      }),
+
     pathsListRecent: async ({ machineId, limit }) => await listRecentPathsForVoiceTool({ machineId, limit }),
+    projectsList: async (args) => await listProjectsForActions(args),
+    promptInvocationsList: async (args) => listPromptInvocationsForActions(args),
+    promptInvocationResolve: async (args) => await resolvePromptInvocationForActions(args),
+    spawnProfilesList: async (args) => listSpawnProfilesForActions(args),
     machinesList: async ({ limit }) => await listMachinesForVoiceTool({ limit }),
     serversList: async ({ limit }) => await listServersForVoiceTool({ limit }),
     reviewEnginesList: async ({ sessionId, includeDisabled }) => await listReviewEnginesForVoiceTool({ sessionId, includeDisabled }),

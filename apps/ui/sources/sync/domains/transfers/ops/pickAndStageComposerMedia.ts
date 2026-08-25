@@ -15,8 +15,12 @@ import {
 import {
     getComposerMediaContentAvailability,
     uploadComposerMediaStageFromReader,
+    type ComposerMediaStageUploadResult,
 } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { createTransferManifestHasher } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferManifestHasher';
+import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
+import { runTransferFinalizeRecovery } from '@/components/transfers/recovery/runTransferFinalizeRecovery';
+import { t } from '@/text';
 import { nativePickFiles, type NativePickedFile } from '@/utils/files/nativePickFiles';
 import { sanitizePickedName } from '@/utils/files/pickedFileNormalization';
 
@@ -160,6 +164,16 @@ export async function pickAndStageComposerMedia(input: Readonly<{
                 sha256,
                 signal: input.signal ?? null,
             });
+            if (isTransferFinalizeRecoveryFailure<ComposerMediaStageUploadResult>(staged)) {
+                const recoveryResult = await runTransferFinalizeRecovery({
+                    recovery: staged.recovery,
+                    title: t('transferRecovery.title'),
+                    message: t('transferRecovery.message'),
+                });
+                return recoveryResult?.status === 'finalized'
+                    ? recoveryResult.response.handle
+                    : null;
+            }
             return staged.success === true ? staged.handle : null;
         } finally {
             // The carrier closes the wrapped reader in its own finally. This

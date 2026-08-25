@@ -102,6 +102,51 @@ describe('automationTemplateCodec', () => {
         expect(decoded?.experimentalCodexAcp).toBeUndefined();
     });
 
+    it('preserves an authored existing-branch checkout draft through encode and decode', () => {
+        const encoded = encodeAutomationTemplate({
+            directory: '/tmp/project',
+            agent: 'codex',
+            checkoutCreationDraft: {
+                kind: 'git_worktree',
+                displayName: 'feature/auth',
+                baseRef: 'main',
+                branchMode: 'existing',
+            },
+        });
+
+        expect(JSON.parse(encoded).checkoutCreationDraft).toEqual({
+            kind: 'git_worktree',
+            displayName: 'feature/auth',
+            baseRef: 'main',
+            branchMode: 'existing',
+        });
+        expect(decodeAutomationTemplate(encoded)?.checkoutCreationDraft).toEqual({
+            kind: 'git_worktree',
+            displayName: 'feature/auth',
+            baseRef: 'main',
+            branchMode: 'existing',
+        });
+    });
+
+    it('leaves an omitted checkout branch mode omitted instead of writing a codec default', () => {
+        const encoded = encodeAutomationTemplate({
+            directory: '/tmp/project',
+            agent: 'codex',
+            checkoutCreationDraft: {
+                kind: 'git_worktree',
+                displayName: 'feature/auth',
+                baseRef: null,
+            },
+        });
+
+        expect(JSON.parse(encoded).checkoutCreationDraft).toEqual({
+            kind: 'git_worktree',
+            displayName: 'feature/auth',
+            baseRef: null,
+        });
+        expect(decodeAutomationTemplate(encoded)?.checkoutCreationDraft?.branchMode).toBeUndefined();
+    });
+
     it('rejects workspace-linked template payloads', () => {
         const decoded = decodeAutomationTemplate(JSON.stringify({
             directory: '/tmp/project',

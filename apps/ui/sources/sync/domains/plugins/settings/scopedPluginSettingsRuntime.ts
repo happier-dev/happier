@@ -19,6 +19,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import {
     areServerProfileIdentifiersEquivalent,
+    getServerProfileLegacyServerIds,
     getServerProfileById,
     resolveServerProfileForPortableIdentity,
 } from '@/sync/domains/server/serverProfiles';
@@ -465,7 +466,9 @@ const accountRecordBoundary: ScopedPluginSettingsAccountRecordBoundary = Object.
     writeRecord: writeAccountRecord,
 });
 
-const accountTransport = createAccountScopedPluginSettingsTransport(accountRecordBoundary);
+const accountTransport = createAccountScopedPluginSettingsTransport(accountRecordBoundary, {
+    resolveLegacyServerIdentityIds: (target) => getServerProfileLegacyServerIds(target.serverIdentityId),
+});
 
 /** The single live owner consumed by all host-rendered plugin Settings. */
 const runtimeScopedPluginSettingsAdapter = createScopedPluginSettingsAdapter({

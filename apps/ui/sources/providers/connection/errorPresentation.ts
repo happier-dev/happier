@@ -94,6 +94,10 @@ const PRESENTATIONS = Object.freeze({
         titleKey: 'settingsProviders.errors.unreachableTitle',
         descriptionKey: 'settingsProviders.errors.unreachableDescription',
     },
+    provider_machine_unavailable: {
+        titleKey: 'settingsProviders.errors.machineUnavailableTitle',
+        descriptionKey: 'settingsProviders.errors.machineUnavailableDescription',
+    },
     provider_probe_capacity_exhausted: {
         titleKey: 'settingsProviders.errors.probeCapacityTitle',
         descriptionKey: 'settingsProviders.errors.probeCapacityDescription',
@@ -133,6 +137,10 @@ const PRESENTATIONS = Object.freeze({
     provider_agent_runtime_unsupported: {
         titleKey: 'settingsProviders.errors.connectionInvalidTitle',
         descriptionKey: 'settingsProviders.errors.connectionInvalidDescription',
+    },
+    provider_managed_requires_daemon: {
+        titleKey: 'settingsProviders.errors.managedRequiresDaemonTitle',
+        descriptionKey: 'settingsProviders.errors.managedRequiresDaemonDescription',
     },
     provider_materialization_failed: {
         titleKey: 'settingsProviders.errors.connectionInvalidTitle',

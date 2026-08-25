@@ -17,6 +17,10 @@ import type {
     EmbeddedTerminalWriteCompleteEvent,
 } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { resolveTerminalHyperlinkAction } from '@/components/terminal/interaction/links';
+import {
+    applyEmbeddedTerminalBellPolicy,
+    applyEmbeddedTerminalTitlePolicy,
+} from '@/components/terminal/interaction/title';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
     createMachineRpcTerminalStreamCarrier,
@@ -39,6 +43,7 @@ const embeddedTerminalRendererId = 'embedded-terminal';
 
 type PendingRendererWrite = EmbeddedTerminalWriteCompleteEvent & Readonly<{
     previewText: string;
+    nextCursor: TerminalStreamCursor;
 }>;
 
 export function useMachineTerminalSession(params: Readonly<{
@@ -178,6 +183,14 @@ export function useMachineTerminalSession(params: Readonly<{
             suggestOpen: action.kind === 'allow',
         });
     }, [syncDetectedUrl]);
+
+    const onTitle = React.useCallback((title: string) => {
+        void applyEmbeddedTerminalTitlePolicy(title);
+    }, []);
+
+    const onBell = React.useCallback((label: string) => {
+        void applyEmbeddedTerminalBellPolicy(label);
+    }, []);
 
     React.useEffect(() => {
         return () => {
@@ -382,6 +395,10 @@ export function useMachineTerminalSession(params: Readonly<{
                     return;
                 }
 
+                if (read.mode === 'legacy-event-cursor') {
+                    terminalCreditStateRef.current = null;
+                }
+
                 if (readClearNonce !== clearNonceRef.current) {
                     const priorCursor = cursorRef.current;
                     cursorRef.current = read.nextCursor;
@@ -415,6 +432,12 @@ export function useMachineTerminalSession(params: Readonly<{
                     pendingRendererWriteRef.current = {
                         ...applied.queuedWrite,
                         previewText: pendingWritePreviewTextRef.current.get(previewKey) ?? '',
+                        nextCursor: read.mode === 'legacy-event-cursor'
+                            ? { mode: 'legacy-event-cursor', value: applied.queuedWrite.seq + 1 }
+                            : {
+                                mode: 'byte-offset',
+                                value: Math.min(read.nextCursor, applied.queuedWrite.ackedByteOffset),
+                            },
                     };
                     pendingWritePreviewTextRef.current.delete(previewKey);
                     idleCount = Math.min(10, idleCount + 1);
@@ -512,10 +535,9 @@ export function useMachineTerminalSession(params: Readonly<{
 
     const onWriteComplete = React.useCallback((event: EmbeddedTerminalWriteCompleteEvent) => {
         const pendingWrite = pendingRendererWriteRef.current;
-        if (pendingWrite && isMatchingRendererWrite(event, pendingWrite)) {
-            if (event.ackedByteOffset < pendingWrite.ackedByteOffset) {
-                pendingRendererWriteRef.current = null;
-                pendingWritePreviewTextRef.current.delete(getRendererWriteKey(pendingWrite));
+        if (pendingWrite) {
+            if (!isMatchingRendererWrite(event, pendingWrite)
+                || event.ackedByteOffset !== pendingWrite.ackedByteOffset) {
                 return;
             }
             if (pendingWrite.previewText) {
@@ -523,7 +545,8 @@ export function useMachineTerminalSession(params: Readonly<{
             }
             pendingRendererWriteRef.current = null;
             pendingWritePreviewTextRef.current.delete(getRendererWriteKey(pendingWrite));
-            const nextCursor = Math.max(cursorRef.current, event.ackedByteOffset);
+            const nextCursor = pendingWrite.nextCursor.value;
+            cursorModeRef.current = pendingWrite.nextCursor.mode;
             if (nextCursor !== cursorRef.current) {
                 cursorRef.current = nextCursor;
                 updateSurfaceState((current) => ({
@@ -561,6 +584,8 @@ export function useMachineTerminalSession(params: Readonly<{
         onInput,
         onPaste,
         onLink,
+        onTitle,
+        onBell,
         onResize,
         onReady,
         clearTerminal,

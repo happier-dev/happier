@@ -4159,6 +4159,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         }));
         expect((sync as any).getExternalSessionTailCursor(sessionId)).toBe(initialCursor);
         expect(machineExternalSessionTranscriptRefreshReadAfterMock).toHaveBeenCalledTimes(1);
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toBeNull();
     });
 
     it('does not secure-refresh when exact hydration still cannot prove the invalidation binding', async () => {
@@ -4641,7 +4642,12 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             item => item.type === 'session' && item.sessionId === sessionId && (item.storageKind ?? 'persisted') === 'direct',
         )).toBe(true);
 
-        await (sync as any).handleEphemeralUpdate(firstInvalidation);
+        storage.getState().setSessionTranscriptLoadIssue(sessionId, {
+            kind: 'read_failed',
+            errorCode: 'agent_unavailable',
+        });
+
+        await (sync as any).handleExternalSessionTranscriptEphemeralUpdate(firstInvalidation);
 
         expect((storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionAttentionV1).toEqual({
             v: 1,
@@ -4662,6 +4668,23 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             .filter((message) => message.kind === 'user-text')
             .map((message) => message.text);
         expect(orderedTexts).toEqual(['hello direct', 'followed direct']);
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toBeNull();
+
+        storage.getState().setSessionTranscriptLoadIssue(sessionId, {
+            kind: 'read_failed',
+            errorCode: 'internal_error',
+        });
+        const alreadyCurrentInvalidation = createTranscriptInvalidation(
+            sessionId,
+            'happier_external_cursor_v1:Y3Vyc29yLTI',
+        );
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockResolvedValueOnce({
+            v: 1,
+            binding: alreadyCurrentInvalidation.binding,
+            result: { outcome: 'already_current' },
+        });
+        await (sync as any).handleExternalSessionTranscriptEphemeralUpdate(alreadyCurrentInvalidation);
+        expect(storage.getState().getSessionTranscriptLoadIssue(sessionId)).toBeNull();
 
         await (sync as any).refreshSessionMessages(sessionId);
 

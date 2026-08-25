@@ -51,7 +51,15 @@ const group = Object.freeze(
     state: { status: 'ready' },
     createdAt: 1,
     updatedAt: 1,
-    members: [],
+    members: [{
+      v: 1,
+      connectedAccountId: 'work',
+      priority: 1,
+      enabled: true,
+      state: {},
+      createdAt: 1,
+      updatedAt: 1,
+    }],
   }),
 );
 
@@ -112,6 +120,44 @@ describe('buildConnectedAccountPurposeTargetChoices', () => {
     expect(choices.some((choice) => choice.target === null)).toBe(false);
   });
 
+  it('uses the active enabled current account as the sole passive group-resolvability authority', () => {
+    const groupWithoutRuntimeStatus = Object.freeze({
+      ...group,
+      state: Object.freeze({}),
+    });
+    const input = {
+      declaration: { purpose: 'request-auth', service, required: true },
+      selectedTarget: null,
+      accounts: [connectedAccount],
+      groups: [groupWithoutRuntimeStatus],
+      labelsByKey: {},
+      serviceTitle: 'Acme Gateway',
+      resolveAuthenticationMode,
+    };
+
+    expect(buildConnectedAccountPurposeTargetChoices(input))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'group', selectable: true }),
+      ]));
+
+    expect(buildConnectedAccountPurposeTargetChoices({
+      ...input,
+      groups: [{
+        ...groupWithoutRuntimeStatus,
+        members: groupWithoutRuntimeStatus.members.map((member) => ({ ...member, enabled: false })),
+      }],
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'group', selectable: false }),
+    ]));
+
+    expect(buildConnectedAccountPurposeTargetChoices({
+      ...input,
+      accounts: [unavailableAccount],
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'group', selectable: false }),
+    ]));
+  });
+
   it('uses the qualified Connected Accounts label for menu and saved-target presentation without exposing opaque ids', () => {
     const opaqueAccount = Object.freeze({
       ...connectedAccount,
@@ -129,6 +175,11 @@ describe('buildConnectedAccountPurposeTargetChoices', () => {
         groupId: '633c2d12-7055-4e2a-8a81-35f1d8ecb4da',
       }),
       displayName: null,
+      activeConnectedAccountId: opaqueAccount.ref.accountId,
+      members: group.members.map((member) => Object.freeze({
+        ...member,
+        connectedAccountId: opaqueAccount.ref.accountId,
+      })),
     });
     const accountTarget = Object.freeze({
       kind: 'account' as const,

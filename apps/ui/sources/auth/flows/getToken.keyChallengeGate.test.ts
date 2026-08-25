@@ -3,11 +3,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => {
     return {
         serverFetch: vi.fn(),
+        ServerFetchAbortedForServerSwitchError: class ServerFetchAbortedForServerSwitchError extends Error {},
+        StaleServerGenerationError: class StaleServerGenerationError extends Error {},
     };
 });
 
 vi.mock('@/sync/http/client', () => ({
     serverFetch: mocks.serverFetch,
+    ServerFetchAbortedForServerSwitchError: mocks.ServerFetchAbortedForServerSwitchError,
+    StaleServerGenerationError: mocks.StaleServerGenerationError,
 }));
 
 import { authGetToken } from './getToken';
@@ -83,6 +87,81 @@ describe('authGetToken key-challenge gate', () => {
         expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
         expect(mocks.serverFetch.mock.calls[0]?.[0]).toBe('/v1/features');
         expect(mocks.serverFetch.mock.calls[1]?.[0]).toBe('/v1/auth');
+    });
+
+    it.each([
+        {
+            name: 'network failure',
+            prepare: () => {
+                mocks.serverFetch
+                    .mockRejectedValueOnce(new Error('network unavailable'))
+                    .mockResolvedValueOnce(jsonResponse({ token: 'must-not-redeem' }));
+            },
+        },
+        {
+            name: 'server failure',
+            prepare: () => {
+                mocks.serverFetch
+                    .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
+                    .mockResolvedValueOnce(jsonResponse({ token: 'must-not-redeem' }));
+            },
+        },
+        {
+            name: 'malformed response',
+            prepare: () => {
+                mocks.serverFetch
+                    .mockResolvedValueOnce(new Response('not-json', {
+                        headers: { 'Content-Type': 'application/json' },
+                    }))
+                    .mockResolvedValueOnce(jsonResponse({ token: 'must-not-redeem' }));
+            },
+        },
+        {
+            name: 'missing endpoint',
+            prepare: () => {
+                mocks.serverFetch
+                    .mockResolvedValueOnce(new Response(null, { status: 404 }))
+                    .mockResolvedValueOnce(jsonResponse({ token: 'must-not-redeem' }));
+            },
+        },
+    ])('fails closed and leaves the auth endpoint untouched when the feature probe has a $name', async ({ prepare }) => {
+        prepare();
+
+        await expect(authGetToken(new Uint8Array(32))).rejects.toMatchObject({
+            name: 'HappyError',
+            canTryAgain: true,
+        } satisfies Partial<HappyError>);
+        expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual([
+            '/v1/features',
+        ]);
+    });
+
+    it('fails closed and leaves the auth endpoint untouched when the feature probe times out', async () => {
+        mocks.serverFetch
+            .mockImplementationOnce((_url: string, init?: RequestInit) => {
+                return new Promise<Response>((_resolve, reject) => {
+                    const signal = init?.signal;
+                    if (!signal) {
+                        reject(new Error('missing feature-probe abort signal'));
+                        return;
+                    }
+                    signal.addEventListener('abort', () => {
+                        const error = Object.assign(new Error('feature probe timed out'), {
+                            name: 'AbortError',
+                        });
+                        reject(error);
+                    }, { once: true });
+                });
+            })
+            .mockResolvedValueOnce(jsonResponse({ token: 'must-not-redeem' }));
+
+        await expect(authGetToken(new Uint8Array(32))).rejects.toMatchObject({
+            name: 'HappyError',
+            canTryAgain: true,
+        } satisfies Partial<HappyError>);
+        expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual([
+            '/v1/features',
+        ]);
     });
 
     it('continues when server enables key-challenge login', async () => {
@@ -170,7 +249,81 @@ describe('authGetToken key-challenge gate', () => {
         } satisfies Partial<HappyError>);
     });
 
-    it('sends the signed expected Account id only for Account-bound login', async () => {
+    it('sends the signed expected Account id through negotiated v2 Account-bound login', async () => {
+        const profile = upsertServerProfile({
+            serverUrl: 'https://selected.example.test/api',
+            name: 'Selected test server',
+        });
+        setActiveServerId(profile.id);
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    features: {
+                        auth: {
+                            login: {
+                                keyChallenge: {
+                                    enabled: true,
+                                },
+                            },
+                        },
+                        sharing: {
+                            contentKeys: {
+                                enabled: true,
+                            },
+                        },
+                    },
+                    capabilities: {
+                        ...keyChallengeV2Capabilities('srv_selected'),
+                        accountStoredContentCompatibility: {
+                            v: 1,
+                            minimumProtocolVersion:
+                                CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                            currentProtocolVersion:
+                                CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                            declarationTransport:
+                                'http-header-and-socket-auth-v1',
+                        },
+                    },
+                }),
+            )
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    challengeId: 'challenge-account-expected',
+                    nonce: 'nonce-account-expected',
+                    issuedAt: '2026-08-22T12:00:00.000Z',
+                    expiresAt: '2026-08-22T12:05:00.000Z',
+                    audience: {
+                        origin: 'https://selected.example.test',
+                        serverIdentityId: 'srv_selected',
+                    },
+                }),
+            )
+            .mockResolvedValueOnce(
+                jsonResponse({ token: 'recovery-token' }),
+            );
+
+        await expect(authGetToken(
+            new Uint8Array(32).fill(9),
+            { expectedAccountId: 'account-expected' },
+        )).resolves.toBe('recovery-token');
+
+        const request = mocks.serverFetch.mock.calls[2]?.[1] as
+            | RequestInit
+            | undefined;
+        const body = JSON.parse(String(request?.body)) as Record<string, unknown>;
+        expect(body).toMatchObject({
+            expectedAccountId: 'account-expected',
+            challengeId: 'challenge-account-expected',
+            publicKey: expect.any(String),
+            signature: expect.any(String),
+            contentPublicKey: expect.any(String),
+            contentPublicKeySig: expect.any(String),
+        });
+        expect(body).not.toHaveProperty('challenge');
+    });
+
+    it('does not fall back to v1 for Account-bound login when a ready server lacks the v2 capability', async () => {
         mocks.serverFetch
             .mockResolvedValueOnce(
                 jsonResponse({
@@ -201,26 +354,15 @@ describe('authGetToken key-challenge gate', () => {
                     },
                 }),
             )
-            .mockResolvedValueOnce(
-                jsonResponse({ token: 'recovery-token' }),
-            );
+            .mockResolvedValueOnce(jsonResponse({ token: 'must-not-redeem' }));
 
         await expect(authGetToken(
             new Uint8Array(32).fill(9),
             { expectedAccountId: 'account-expected' },
-        )).resolves.toBe('recovery-token');
-
-        const request = mocks.serverFetch.mock.calls[1]?.[1] as
-            | RequestInit
-            | undefined;
-        expect(JSON.parse(String(request?.body))).toMatchObject({
-            expectedAccountId: 'account-expected',
-            publicKey: expect.any(String),
-            challenge: expect.any(String),
-            signature: expect.any(String),
-            contentPublicKey: expect.any(String),
-            contentPublicKeySig: expect.any(String),
-        });
+        )).rejects.toThrow(/v2/i);
+        expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual([
+            '/v1/features',
+        ]);
     });
 
     it.each([

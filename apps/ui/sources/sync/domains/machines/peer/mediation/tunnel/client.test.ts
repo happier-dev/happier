@@ -127,6 +127,60 @@ describe('openPeerTcpTunnel', () => {
         }));
     });
 
+    it('reports the direct route failure reason on denial instead of a blanket server-policy code', async () => {
+        const mod = await loadModule('./client');
+        const openPeerTcpTunnel = mod.openPeerTcpTunnel;
+        expect(openPeerTcpTunnel).toBeTypeOf('function');
+        if (typeof openPeerTcpTunnel !== 'function') return;
+
+        await expect(openPeerTcpTunnel({
+            open,
+            directPeerDecision: featureDecision('machines.tunnel.directPeer', true),
+            serverRoutedDecision: featureDecision('machines.tunnel.serverRouted', false),
+            resolveLoopback: vi.fn(async () => ({
+                kind: 'fallback' as const,
+                receipt: 'peer.route.fallback' as const,
+                reasonCode: 'grant_expired',
+            })),
+            postOpen: vi.fn(),
+        })).resolves.toEqual({
+            ok: false,
+            reasonCode: 'grant_expired',
+            directRouteReasonCode: 'grant_expired',
+        });
+
+        await expect(openPeerTcpTunnel({
+            open,
+            directPeerDecision: featureDecision('machines.tunnel.directPeer', true),
+            serverRoutedDecision: featureDecision('machines.tunnel.serverRouted', false),
+            resolveLoopback: vi.fn(async () => ({
+                kind: 'fallback' as const,
+                receipt: 'peer.route.fallback' as const,
+                reasonCode: 'destination_port_not_allowed',
+            })),
+            postOpen: vi.fn(),
+        })).resolves.toEqual({
+            ok: false,
+            reasonCode: 'destination_port_not_allowed',
+            directRouteReasonCode: 'destination_port_not_allowed',
+        });
+
+        await expect(openPeerTcpTunnel({
+            open,
+            directPeerDecision: featureDecision('machines.tunnel.directPeer', false),
+            serverRoutedDecision: featureDecision('machines.tunnel.serverRouted', false),
+            resolveLoopback: vi.fn(async () => ({
+                kind: 'fallback' as const,
+                receipt: 'peer.route.fallback' as const,
+                reasonCode: 'grant_expired',
+            })),
+            postOpen: vi.fn(),
+        })).resolves.toEqual({
+            ok: false,
+            reasonCode: 'relay_disabled_by_server_policy',
+        });
+    });
+
     it('uses the server relay stream path and preserves the negotiated binary encoding', async () => {
         const mod = await loadModule('./client');
         const openPeerTcpTunnel = mod.openPeerTcpTunnel;

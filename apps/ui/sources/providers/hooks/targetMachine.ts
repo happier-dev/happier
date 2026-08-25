@@ -12,6 +12,9 @@ import {
     useMachineAdministrationTargetSelection,
     type MachineAdministrationTargetSelectionV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
+import {
+    captureActiveServerAccountScopeLifetime,
+} from '@/sync/domains/scope/activeServerAccountScope';
 
 /**
  * One machine a Provider route may address, carrying the full Administration
@@ -42,9 +45,12 @@ export type ProviderSettingsTargetV1 = Readonly<{
     machineRows: readonly ProviderSettingsMachineRowV1[];
     /**
      * Re-resolves the selected target immediately before an effect, so a
-     * rendered snapshot can never authorize work against a different machine.
-     * Returns `null` once the selection has moved away from the target the
-     * calling render was built for.
+     * rendered snapshot can never authorize work against a different machine
+     * or a different Account. Returns `null` once the selection has moved away
+     * from the target the calling render was built for, or once the Account
+     * lifetime that render belonged to has retired — a machine id and server
+     * identity are both reused by the next Account on the same server, so only
+     * that lifetime can refuse an Account-A callback resolved after the switch.
      */
     resolveCurrentTarget: () => Readonly<{ machineId: string; serverId: string }> | null;
 }>;
@@ -98,7 +104,12 @@ export function useProviderSettingsTarget(): ProviderSettingsTargetV1 {
     // mutation scope — discarding the result of a write already in flight.
     const expectedMachineId = executionTarget?.machine.id ?? null;
     const resolveExecutionTarget = selection.resolveExecutionTarget;
+    // The sole active-Account lifetime, not a Provider-owned epoch. It is
+    // stable while one Account is mounted, so binding the resolver to it does
+    // not restart an in-flight mutation scope.
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
     const resolveCurrentTarget = React.useCallback(() => {
+        if (accountLifetime && !accountLifetime.isCurrent()) return null;
         const resolvedTarget = resolveExecutionTarget();
         if (
             !selectedServerIdentityId
@@ -113,7 +124,7 @@ export function useProviderSettingsTarget(): ProviderSettingsTargetV1 {
             machineId: resolvedTarget.machine.id,
             serverId: resolvedTarget.serverId,
         };
-    }, [expectedMachineId, resolveExecutionTarget, selectedServerIdentityId]);
+    }, [accountLifetime, expectedMachineId, resolveExecutionTarget, selectedServerIdentityId]);
 
     return React.useMemo(() => ({
         selection,

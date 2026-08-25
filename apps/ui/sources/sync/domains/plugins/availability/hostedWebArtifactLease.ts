@@ -4,11 +4,14 @@ import {
     isPluginMachineMaterializationOnServerIdentityV1,
     type DaemonPluginHostedWebArtifactCacheIdentityV1,
     type DaemonPluginUiArtifactBytesReadResponse,
+    type DaemonReactNativeHostRuntimeIdentityV1,
     type PluginMachineExecutionOriginV1,
 } from '@happier-dev/protocol';
 import {
+    PluginUiArtifactCompatibilityKeyV1Schema,
     PluginUiArtifactsManifestEntryV1Schema,
     type HostedWebAssetPolicyInput,
+    type PluginUiArtifactCompatibilityKeyV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import { decodeBase64 } from '@/encryption/base64';
@@ -23,23 +26,29 @@ import {
     type PluginReactNativeBundleCache,
 } from '@/components/plugins/reactNative/bundleCache';
 import {
+    resolveNativeReactNativeHostRuntimeIdentity,
+} from '@/components/plugins/reactNative/hostRuntimeIdentity';
+import {
     areServerAccountScopesEqual,
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type {
-    PluginUiPersistentArtifactIdentity,
-    PluginUiPersistentArtifactFile,
-    PluginUiPersistentArtifactRecord,
-    PluginUiPersistentArtifactStore,
-} from '@/sync/domains/plugins/ui/artifactByteCache';
-
-import type {
+    PluginArtifactLeasePersistentScope,
     PluginArtifactSourceCandidate,
     PluginSelectedArtifactLease,
     PluginSelectedArtifactLeaseAcquireResult,
 } from './artifactLease';
-import { acquirePluginSelectedArtifactLease } from './artifactLease';
+import {
+    acquirePluginSelectedArtifactLease,
+    createPluginArtifactPersistentSource,
+    isPluginArtifactPersistentScopeCurrent,
+    persistVerifiedPluginArtifactLease,
+    wrapPluginArtifactLeaseCurrentness,
+} from './artifactLease';
+import {
+    publishVerifiedPluginArtifactToAccountHosting,
+} from './accountHostedArtifactPublication';
 import type {
     PluginNativeArtifactResourceAcquireResult,
     PluginNativeArtifactResourceHandle,
@@ -55,18 +64,7 @@ export type PluginHostedWebExactArtifactByteFetcher = (input: Readonly<{
     identity: DaemonPluginHostedWebArtifactCacheIdentityV1;
 }>) => Promise<DaemonPluginUiArtifactBytesReadResponse>;
 
-export type PluginHostedWebArtifactLeasePersistentScope = Readonly<{
-    scope: ServerAccountScope;
-    store: PluginUiPersistentArtifactStore;
-    /** The active Account-realm lifetime owner; required for cache use. */
-    isCurrent: () => boolean;
-    /**
-     * Cache-owner exact-entry cleanup for every persistent invalidation. This
-     * preserves per-key delete/read/write ordering, Account quarantine, and
-     * native-resource invalidation even after acquisition has drained.
-     */
-    removePersistentArtifact: (identity: PluginUiPersistentArtifactIdentity) => Promise<void>;
-}>;
+export type PluginHostedWebArtifactLeasePersistentScope = PluginArtifactLeasePersistentScope;
 
 /**
  * Artifact-owned input for one renderer's already-admitted hosted-web slot.
@@ -109,97 +107,6 @@ function artifactMatchesCacheIdentity(input: Readonly<{
         && input.artifact.tier === 'hostedWeb'
         && input.artifact.platform === 'web'
         && input.artifact.digest === input.identity.artifactDigest;
-}
-
-function persistentIdentityFor(input: Readonly<{
-    scope: ServerAccountScope;
-    artifact: PluginSelectedArtifactLease['artifact'];
-}>): PluginUiPersistentArtifactIdentity {
-    return Object.freeze({
-        accountScope: input.scope,
-        releaseVersion: input.artifact.releaseVersion,
-        pluginId: input.artifact.pluginId,
-        contributionId: input.artifact.contributionId,
-        tier: input.artifact.tier,
-        platform: input.artifact.platform,
-        artifactDigest: input.artifact.digest,
-    });
-}
-
-function persistentScopeIsCurrent(scope: PluginHostedWebArtifactLeasePersistentScope | undefined): boolean {
-    return scope ? scope.isCurrent() : true;
-}
-
-function readPersistentFile(record: PluginUiPersistentArtifactRecord, relativePath: string): Uint8Array | null {
-    // The record always carries the exact declared file graph, so its files are
-    // the only lookup; there is no entry-only record to fall back to.
-    const file = record.files.find((candidate) => candidate.relativePath === relativePath);
-    return file ? new Uint8Array(file.bytes) : null;
-}
-
-function createPersistentSource(input: Readonly<{
-    scope: PluginHostedWebArtifactLeasePersistentScope;
-    identity: DaemonPluginHostedWebArtifactCacheIdentityV1;
-}>): PluginArtifactSourceCandidate {
-    let pending: Promise<PluginUiPersistentArtifactRecord | null> | null = null;
-    let persistentIdentityKey = '';
-    let loadedIdentity: PluginUiPersistentArtifactIdentity | null = null;
-    let loadedRecord: PluginUiPersistentArtifactRecord | null = null;
-    return Object.freeze({
-        kind: 'persistentCache',
-        readFile: async ({ artifact, relativePath }) => {
-            if (!persistentScopeIsCurrent(input.scope)) return null;
-            if (!artifactMatchesCacheIdentity({ artifact, identity: input.identity })) return null;
-            const persistentIdentity = persistentIdentityFor({ scope: input.scope.scope, artifact });
-            const currentKey = [
-                persistentIdentity.releaseVersion,
-                persistentIdentity.pluginId,
-                persistentIdentity.contributionId,
-                persistentIdentity.tier,
-                persistentIdentity.platform,
-                persistentIdentity.artifactDigest,
-            ].join('\u0000');
-            if (currentKey !== persistentIdentityKey) {
-                persistentIdentityKey = currentKey;
-                loadedIdentity = persistentIdentity;
-                loadedRecord = null;
-                pending = input.scope.store.read(persistentIdentity)
-                    .then((record) => {
-                        loadedRecord = record;
-                        return record;
-                    })
-                    .catch(() => null);
-            }
-            const record = await pending;
-            if (!record || !persistentScopeIsCurrent(input.scope)) return null;
-            return readPersistentFile(record, relativePath);
-        },
-        discardInvalid: async () => {
-            if (!persistentScopeIsCurrent(input.scope) || !loadedIdentity || !loadedRecord) return;
-            const identity = loadedIdentity;
-            loadedIdentity = null;
-            loadedRecord = null;
-            pending = Promise.resolve(null);
-            await input.scope.removePersistentArtifact(identity);
-        },
-        discardRevoked: async () => {
-            // Availability withdrawal/replacement revokes only the exact
-            // admitted persistent identity. Clear this source's lookup before
-            // awaiting physical cleanup so a failed delete stays outside its
-            // cache-adoption path while the incumbent cache owner quarantines
-            // and retries storage cleanup.
-            if (!loadedIdentity) return;
-            const identity = loadedIdentity;
-            loadedIdentity = null;
-            loadedRecord = null;
-            pending = Promise.resolve(null);
-            // The source operation is intentionally released after admission;
-            // a later Availability revocation re-enters the one cache owner
-            // rather than treating the drained source-operation store as a
-            // second deletion authority.
-            await input.scope.removePersistentArtifact(identity);
-        },
-    });
 }
 
 function exactDaemonOriginIsCurrent(input: Readonly<{
@@ -335,105 +242,6 @@ function createDaemonSource(input: Readonly<{
     });
 }
 
-function wrapLeaseCurrentness(input: Readonly<{
-    lease: PluginSelectedArtifactLease;
-    reader: PluginAccountAvailabilityReader;
-    isAdditionalCurrent: () => boolean;
-}>): PluginSelectedArtifactLease {
-    const revokeListeners = new Set<() => void>();
-    let revoked = false;
-    let disposed = false;
-    const revoke = () => {
-        if (revoked) return;
-        revoked = true;
-        for (const listener of revokeListeners) {
-            try {
-                listener();
-            } catch {
-                // A failed listener must not hide revocation from the rest.
-            }
-        }
-        revokeListeners.clear();
-    };
-    const isCurrent = () => {
-        if (revoked || !input.lease.isCurrent() || !input.isAdditionalCurrent()) {
-            revoke();
-            return false;
-        }
-        return true;
-    };
-    const accountSubscription = input.reader.subscribe(isCurrent);
-    const leaseSubscription = input.lease.onRevoke(revoke);
-    return Object.freeze({
-        ...input.lease,
-        isCurrent,
-        readFile: async (relativePath) => {
-            if (!isCurrent()) return Object.freeze({ kind: 'unavailable' as const, code: 'artifact_lease_revoked' as const });
-            const result = await input.lease.readFile(relativePath);
-            return isCurrent()
-                ? result
-                : Object.freeze({ kind: 'unavailable' as const, code: 'artifact_lease_revoked' as const });
-        },
-        onRevoke: (listener) => {
-            if (revoked) {
-                listener();
-                return Object.freeze({ dispose: () => {} });
-            }
-            revokeListeners.add(listener);
-            return Object.freeze({ dispose: () => revokeListeners.delete(listener) });
-        },
-        dispose: () => {
-            if (disposed) return;
-            disposed = true;
-            accountSubscription();
-            leaseSubscription.dispose();
-            input.lease.dispose();
-            revoke();
-        },
-    });
-}
-
-async function persistVerifiedLease(input: Readonly<{
-    lease: PluginSelectedArtifactLease;
-    persistent: PluginHostedWebArtifactLeasePersistentScope;
-}>): Promise<void> {
-    if (!persistentScopeIsCurrent(input.persistent) || !input.lease.isCurrent()) return;
-    const files: PluginUiPersistentArtifactFile[] = [];
-    for (const declared of input.lease.files) {
-        const result = await input.lease.readFile(declared.relativePath);
-        if (result.kind !== 'available' || !persistentScopeIsCurrent(input.persistent) || !input.lease.isCurrent()) {
-            return;
-        }
-        files.push(Object.freeze({
-            relativePath: result.file.relativePath,
-            digest: result.file.digest,
-            byteSize: result.file.byteSize,
-            bytes: new Uint8Array(result.bytes),
-        }));
-    }
-    const entry = files.find((file) => file.relativePath === input.lease.artifactGraph.entry);
-    if (!entry || !persistentScopeIsCurrent(input.persistent) || !input.lease.isCurrent()) return;
-    const persistentIdentity = persistentIdentityFor({
-        scope: input.persistent.scope,
-        artifact: input.lease.artifact,
-    });
-    const record: PluginUiPersistentArtifactRecord = Object.freeze({
-        persistentIdentity,
-        bytes: new Uint8Array(entry.bytes),
-        entryRelativePath: input.lease.artifactGraph.entry,
-        files: Object.freeze(files),
-    });
-    try {
-        await input.persistent.store.write(record);
-    } catch {
-        // Cache loss must not discard a previously verified in-memory lease.
-        return;
-    }
-    if (!persistentScopeIsCurrent(input.persistent) || !input.lease.isCurrent()) {
-        await input.persistent.removePersistentArtifact(persistentIdentity).catch(() => undefined);
-    }
-}
-
 /**
  * Resolves one hosted-web Artifact through the canonical source order. It is
  * deliberately renderer-specific: the exact daemon cache identity and family
@@ -446,8 +254,12 @@ export async function acquirePluginHostedWebArtifactLease(
     const graph = PluginUiArtifactsManifestEntryV1Schema.safeParse(input.artifactGraph);
     const sources: PluginArtifactSourceCandidate[] = [];
     if (input.appExact) sources.push(input.appExact);
-    if (input.persistent && persistentScopeIsCurrent(input.persistent)) {
-        sources.push(createPersistentSource({ scope: input.persistent, identity: input.cacheIdentity }));
+    if (input.persistent && isPluginArtifactPersistentScopeCurrent(input.persistent)) {
+        sources.push(createPluginArtifactPersistentSource({
+            scope: input.persistent,
+            identity: input.cacheIdentity,
+            artifactMatchesIdentity: (artifact, identity) => artifactMatchesCacheIdentity({ artifact, identity }),
+        }));
     }
     if (input.daemon && graph.success) {
         sources.push(createDaemonSource({
@@ -490,10 +302,10 @@ export async function acquirePluginHostedWebArtifactLease(
     // already looking at.
     const requiresPersistentCurrentness = input.persistent !== undefined;
     const lease = requiresPersistentCurrentness
-        ? wrapLeaseCurrentness({
+        ? wrapPluginArtifactLeaseCurrentness({
             lease: acquired.lease,
             reader: input.reader,
-            isAdditionalCurrent: () => persistentScopeIsCurrent(input.persistent),
+            isAdditionalCurrent: () => isPluginArtifactPersistentScopeCurrent(input.persistent),
         })
         : acquired.lease;
     if (!lease.isCurrent()) {
@@ -501,7 +313,7 @@ export async function acquirePluginHostedWebArtifactLease(
         return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
     }
     if (input.persistent && (lease.sourceKind === 'daemon' || lease.sourceKind === 'accountHosted')) {
-        await persistVerifiedLease({ lease, persistent: input.persistent });
+        await persistVerifiedPluginArtifactLease({ lease, persistent: input.persistent });
     }
     return Object.freeze({ kind: 'available', lease });
 }
@@ -576,6 +388,15 @@ export type PluginHostedWebArtifactAvailabilityProducer = Readonly<{
 export type PluginHostedWebArtifactAvailabilityProducerDependencies = Readonly<{
     /** Native-only composed Artifact resources; a web caller gets typed unavailable. */
     getNativeResources: () => InstalledPluginNativeArtifactResources | null;
+    /**
+     * This host's own runtime identity — the SAME probe the daemon projection is
+     * given, so the adoption facts a published link records cannot disagree with
+     * the ones this host reports anywhere else. It is required rather than
+     * defaulted: a caller that cannot name its identity source would otherwise
+     * silently publish under whatever the ambient native probe happened to
+     * answer.
+     */
+    getHostRuntimeIdentity: () => DaemonReactNativeHostRuntimeIdentityV1 | null;
     /** Existing Artifact-cache lifecycle/currentness owner; never a hosted-web-local fence. */
     getCache: () => Pick<
         PluginReactNativeBundleCache,
@@ -698,6 +519,39 @@ export async function projectSelectedHostedWebArtifactAvailability(
 }
 
 /**
+ * The publishing host's adoption facts for one hosted-web archive.
+ *
+ * A hosted-web renderer is a frame, not a second React runtime: its signed
+ * graph declares NO framework compatibility, and the one version that decides
+ * whether a stored link may serve a host is the host UI API version the graph
+ * itself carries. Reading it from the verified graph rather than inventing one
+ * here is what keeps the published link and the archive the publication Action
+ * re-derives from the same bytes in agreement.
+ *
+ * Which app and which channel published it remain this host's own facts and
+ * are recorded, not matched — `isPluginUiReleaseSlotCompatibleWithArtifactLinkV1`
+ * ignores them for this tier, so a link stays reachable by every other host.
+ * A host that cannot describe itself publishes nothing rather than a guess.
+ */
+function hostedWebHostCompatibility(input: Readonly<{
+    artifactGraph: unknown;
+    hostRuntimeIdentity: DaemonReactNativeHostRuntimeIdentityV1 | null;
+}>): PluginUiArtifactCompatibilityKeyV1 | null {
+    const graph = PluginUiArtifactsManifestEntryV1Schema.safeParse(input.artifactGraph);
+    const identity = input.hostRuntimeIdentity;
+    if (!graph.success || graph.data.tier !== 'hostedWeb') return null;
+    if (!identity || !identity.appVersion) return null;
+    const parsed = PluginUiArtifactCompatibilityKeyV1Schema.safeParse({
+        hostAppVersion: identity.appVersion,
+        hostUiApiVersion: graph.data.hostUiApiVersion,
+        platform: 'web',
+        channel: identity.channel,
+        nativeCapabilities: [],
+    });
+    return parsed.success ? parsed.data : null;
+}
+
+/**
  * The one production Artifact producer for a hosted native frame. It supplies
  * the shared native-token-gated persistent store to source selection, binds
  * the incumbent Account lifetime, and then projects the selected lease into
@@ -765,6 +619,26 @@ export function createPluginHostedWebArtifactAvailabilityProducer(
                     selected.lease.dispose();
                     return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
                 }
+                // Account hosting is the only source a new uncached client can
+                // reach while every daemon is offline, and this frame's tier is
+                // no exception: these verified bytes are the only copy this
+                // process holds beside a current Account authority.
+                const hostCompatibility = hostedWebHostCompatibility({
+                    artifactGraph: input.artifactGraph,
+                    hostRuntimeIdentity: dependencies.getHostRuntimeIdentity(),
+                });
+                if (hostCompatibility) {
+                    await publishVerifiedPluginArtifactToAccountHosting({
+                        reader: input.reader,
+                        accountLifetime: input.accountLifetime,
+                        lease: selected.lease,
+                        hostCompatibility,
+                    });
+                }
+                if (!operation.isCurrent()) {
+                    selected.lease.dispose();
+                    return Object.freeze({ kind: 'unavailable', code: 'artifact_lease_revoked' });
+                }
                 const result = await materializeSelectedHostedWebArtifactAvailability({
                     selected: {
                         lease: selected.lease,
@@ -791,6 +665,7 @@ export function createPluginHostedWebArtifactAvailabilityProducer(
 const installedHostedWebArtifactAvailabilityProducer = createPluginHostedWebArtifactAvailabilityProducer({
     getNativeResources: getInstalledPluginNativeArtifactResources,
     getCache: getInstalledPluginReactNativeBundleCache,
+    getHostRuntimeIdentity: () => resolveNativeReactNativeHostRuntimeIdentity(),
 });
 
 /** Production host entry point; consumer code receives only its typed result. */

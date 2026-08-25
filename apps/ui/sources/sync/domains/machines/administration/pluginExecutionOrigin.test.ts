@@ -306,6 +306,53 @@ describe('resolvePluginMachineExecutionOriginState', () => {
         });
     });
 
+    it('reports a vanished install epoch as missing instead of relocating to a healthy replica', () => {
+        // Reinstalling mints a new installation epoch, so the stored epoch can
+        // disappear while another admitted replica is present. Relocating there
+        // silently would move execution to a machine the user never chose.
+        const replacement = candidate({
+            serverIdentityId: 'srv_one',
+            machineId: 'machine-b',
+            materializationId: 'mat-b',
+        });
+        const storedOrigin = {
+            serverIdentityId: 'srv_one',
+            materializationRef: {
+                machineId: 'machine-a',
+                materializationId: 'mat-a-retired',
+                pluginId: 'acme.plugin',
+            },
+        } as const;
+
+        expect(resolvePluginMachineExecutionOriginState({
+            pluginId: 'acme.plugin',
+            storedOrigin,
+            candidates: [replacement],
+        })).toEqual({
+            kind: 'unavailable',
+            storedOrigin,
+            candidates: [replacement],
+            reasons: ['missing'],
+        });
+
+        // Positive twin: once the stored epoch is reported again it is selected,
+        // so the result above is the no-relocation rule and not a dead branch.
+        const restored = candidate({
+            serverIdentityId: 'srv_one',
+            machineId: 'machine-a',
+            materializationId: 'mat-a-retired',
+        });
+        expect(resolvePluginMachineExecutionOriginState({
+            pluginId: 'acme.plugin',
+            storedOrigin,
+            candidates: [replacement, restored],
+        })).toMatchObject({
+            kind: 'selected',
+            origin: storedOrigin,
+            selectionSource: 'stored',
+        });
+    });
+
     it('rejects a stored origin for another plugin instead of borrowing it', () => {
         const current = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'mat-a' });
 

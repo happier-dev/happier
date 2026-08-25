@@ -182,6 +182,12 @@ function fixture() {
             }),
         }],
         materializations: [materialization],
+        snapshots: [{
+            serverIdentityId: materialization.serverIdentityId,
+            machineId: materialization.machineId,
+            revision: 1,
+            materializations: [materialization],
+        }],
     } satisfies PluginAccountAvailabilitySnapshot;
     const reader = createPluginAccountAvailabilityReader({ scope, snapshot });
     const cacheIdentity = {

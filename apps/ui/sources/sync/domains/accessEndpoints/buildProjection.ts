@@ -26,6 +26,7 @@ import {
 } from './sources/desktopSshTunnelSource';
 import {
     buildNativeSshTunnelAccessEndpoints,
+    buildNativeSshTunnelDiagnostics,
     type NativeSshTunnelAccessEndpointInput,
 } from './sources/nativeSshTunnelSource';
 
@@ -173,5 +174,8 @@ export function buildAccessEndpointProjection(
             ...buildRemoteHostAccessEndpointRemediations(params.remoteHosts ?? []),
             ...endpointRemediationActions,
         ],
+        diagnostics: buildNativeSshTunnelDiagnostics({
+            snapshot: params.nativeSshTunnelSnapshot,
+        }),
     };
 }

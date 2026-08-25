@@ -124,11 +124,19 @@ export function scmFallbackError<T extends { success: boolean; error?: string; e
             } as T;
         }
     }
-    const message = error instanceof Error ? error.message : 'Unknown error';
+    // Everything reaching here threw out of the machine RPC, which means no answer came back at
+    // all: the transport failed, timed out, or the machine is unreachable. No source-control
+    // command ran, so `COMMAND_FAILED` was the wrong domain and its raw `error.message` put an
+    // internal exception (`Cannot read properties of undefined (reading 'emit')`) into the user
+    // error slot. A well-formed git failure never lands here — `assertScmResponse` returns it as a
+    // `{ success: false, error, errorCode }` response without throwing. This is the same
+    // classification the no-machine-target path already makes (`sessionScm.ts:81-86`), and the same
+    // discipline the local-services inventory adapter applies to its own catch: a typed reason, and
+    // the exception text never reaches the surface.
     return {
         success: false,
-        error: message,
-        errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+        error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+        errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
     } as T;
 }
 

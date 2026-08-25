@@ -5,10 +5,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { DesktopWebViewNativeAvailability } from '../adapters/desktopWebView';
-import {
-    selectBrowserTargetAdapter,
-    type StreamedBrowserSurfaceAvailability,
-} from '../adapters/selection';
+import { selectBrowserTargetAdapter } from '../adapters/selection';
 import { LOCAL_BROWSER_PROFILE_ID } from '../profiles/localBrowserProfile';
 import { isClientRenderedBrowserEngine } from './lifecycle';
 import { applyBrowserControlEvent } from './reducer';
@@ -45,7 +42,7 @@ export type BrowserControlCommandEffect =
     | Readonly<{
         kind: 'commandRejected';
         command: BrowserCommandV1;
-        reasonCode: 'adapter_unavailable' | 'view_not_found' | 'unsupported_command';
+        reasonCode: 'adapter_unavailable' | 'view_not_found';
       }>;
 
 export type BrowserControlCommandDispatchResult = Readonly<{
@@ -59,40 +56,13 @@ export type BrowserControlCommandDispatchOptions = Readonly<{
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
 }>;
 
-function isNavigationCommand(command: BrowserCommandV1): command is BrowserNavigationCommand {
-    return command.kind === 'navigate'
-        || command.kind === 'goBack'
-        || command.kind === 'goForward'
-        || command.kind === 'reload'
-        || command.kind === 'stop';
-}
-
 function isFocusViewCommand(command: BrowserCommandV1): command is BrowserFocusViewCommand {
     return command.kind === 'focusView';
-}
-
-function isViewLifecycleCommand(command: BrowserCommandV1): command is BrowserViewLifecycleCommand {
-    return command.kind === 'openView'
-        || command.kind === 'closeView'
-        || command.kind === 'setTarget';
 }
 
 function isDaemonAuthoritativeView(state: BrowserControlState, viewId: string): boolean {
     const view = state.viewsById[viewId];
     return view?.adapterKind === 'chromiumSidecar' || view?.adapterKind === 'streamedBrowserSurface';
-}
-
-/**
- * A streamed browser surface is daemon-authoritative: its render + control both live on the daemon.
- * It is selectable only when a daemon control transport is wired here, because that is the SAME
- * transport its navigation/lifecycle commands are routed over (`sendDaemonCommand`). Gating
- * availability on the transport's presence keeps the seam honest — no daemon-authoritative view is
- * ever opened without a reachable control plane to drive it.
- */
-function resolveStreamedBrowserSurfaceAvailability(
-    options: BrowserControlCommandDispatchOptions,
-): StreamedBrowserSurfaceAvailability {
-    return { daemonControlReachable: options.sendDaemonCommand !== undefined };
 }
 
 function supportsNavigationCommand(
@@ -198,7 +168,6 @@ function dispatchOpenViewCommand(
         platform: command.platform,
         targetPolicyDecision: options.targetPolicyDecision,
         desktopWebViewAvailability: options.desktopWebViewAvailability,
-        streamedBrowserSurfaceAvailability: resolveStreamedBrowserSurfaceAvailability(options),
     });
     // `openExternalTab` is a side-effect OS-tab handoff (the host opens it via the canonical
     // opener before dispatch); it is not a renderable in-app view, so opening one is rejected here.
@@ -262,7 +231,6 @@ function applyLocalSetTargetIntent(
         platform: view.platform,
         targetPolicyDecision: options.targetPolicyDecision,
         desktopWebViewAvailability: options.desktopWebViewAvailability,
-        streamedBrowserSurfaceAvailability: resolveStreamedBrowserSurfaceAvailability(options),
     });
     // `openExternalTab` is an OS-tab handoff, not an in-app render target — reject retargeting to it.
     if (!selectedAdapter.ok || selectedAdapter.outcome === 'openExternalTab') {
@@ -316,13 +284,6 @@ export function dispatchBrowserControlCommand(
     command: BrowserCommandV1,
     options: BrowserControlCommandDispatchOptions = {},
 ): BrowserControlCommandDispatchResult {
-    if (!isNavigationCommand(command) && !isFocusViewCommand(command) && !isViewLifecycleCommand(command)) {
-        return {
-            state,
-            effects: [{ kind: 'commandRejected', command, reasonCode: 'unsupported_command' }],
-        };
-    }
-
     if (command.kind === 'openView') {
         return dispatchOpenViewCommand(state, command, options);
     }

@@ -1,5 +1,9 @@
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import {
+  RPC_ERROR_CODES,
+  SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
+  resolveSocketRpcSessionWriteAuthorizationMethod,
+} from '@happier-dev/protocol/rpc';
 
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { apiSocket } from '@/sync/api/session/apiSocket';
@@ -63,6 +67,12 @@ async function callScopedSessionRpc<R, A>(params: Readonly<{
     token: params.context.token,
     timeoutMs: params.context.timeoutMs,
   });
+  const authorization = resolveSocketRpcSessionWriteAuthorizationMethod(params.method)
+    ? {
+        kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+        sessionId: params.sessionId,
+      } as const
+    : undefined;
   try {
     if (params.signal?.aborted) throw createSocketRpcAbortError();
     const requestId = params.signal ? createSocketRpcRequestId() : undefined;
@@ -78,6 +88,7 @@ async function callScopedSessionRpc<R, A>(params: Readonly<{
             ? {}
             : { timeoutMs: params.operationTimeoutMs }),
           ...(requestId ? { requestId } : {}),
+          ...(authorization ? { authorization } : {}),
         },
         onIssued: params.onIssued,
         signal: params.signal,
@@ -125,6 +136,7 @@ async function callScopedSessionRpc<R, A>(params: Readonly<{
           ? {}
           : { timeoutMs: params.operationTimeoutMs }),
         ...(requestId ? { requestId } : {}),
+        ...(authorization ? { authorization } : {}),
       },
       onIssued: params.onIssued,
       signal: params.signal,

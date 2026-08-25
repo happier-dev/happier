@@ -36,6 +36,10 @@ import {
 import type {
   AccountEncryptionMigrationStorageDirectives,
 } from './buildAccountEncryptionMigrationStorageDirectives';
+import {
+  buildAccountEncryptionSessionDraftsDirective,
+  type AccountEncryptionSessionDraftMigrationCandidate,
+} from './buildAccountEncryptionSessionDraftsDirective';
 
 type ConnectedServiceCredentialMetadataInput = Readonly<{
   kind: 'oauth' | 'token';
@@ -54,6 +58,7 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   qualifiedConnectedAccounts?: readonly QualifiedConnectedAccountProfileV4[];
   automations: ReadonlyArray<Readonly<{ id: string; templateVersion: number; templateCiphertext: string }>>;
+  sessionDrafts?: readonly AccountEncryptionSessionDraftMigrationCandidate[];
   storageDirectives: AccountEncryptionMigrationStorageDirectives;
   fetchConnectedServiceCredentialSealed: (args: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) => Promise<Readonly<{
     sealed: Readonly<{ format: string; ciphertext: string }>;
@@ -209,6 +214,10 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
     }
     return { action: 'migrate' as const, templates };
   })();
+  const sessionDrafts = buildAccountEncryptionSessionDraftsDirective({
+    candidates: params.sessionDrafts ?? [],
+    target: { mode: 'plain' },
+  });
   return AccountEncryptionMigrateRequestSchema.parse({
     toMode: 'plain',
     expectedAccountVersion: params.expectedAccountVersion,
@@ -221,5 +230,6 @@ export async function buildAccountEncryptionMigrateToPlainRequest(params: Readon
     connectedServices,
     automations,
     ...params.storageDirectives,
+    ...(sessionDrafts ? { sessionDrafts } : {}),
   });
 }

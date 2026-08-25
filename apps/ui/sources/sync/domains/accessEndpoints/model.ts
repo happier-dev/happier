@@ -95,4 +95,11 @@ export type AccessEndpointClientContext =
 export type AccessEndpointProjection = Readonly<{
     endpoints: readonly AccessEndpoint[];
     remediationActions: readonly AccessEndpointRemediationAction[];
+    /**
+     * Source-level conditions that exist independently of any endpoint. A native SSH tunnel whose
+     * authentication or host-key check fails never produces a lease, therefore never produces an
+     * endpoint — so a limitation carried only inside an endpoint is dropped in exactly the failure
+     * case the user needs to see.
+     */
+    diagnostics: readonly AccessEndpointDiagnostic[];
 }>;

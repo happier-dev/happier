@@ -1,4 +1,5 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionForkPoint } from '@happier-dev/protocol';
 import {
   isProviderBoundSessionMetadata,
@@ -10,10 +11,9 @@ import {
 } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
-export type SessionForkSupportSource = Pick<
-  Session,
-  'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'serverId'
->;
+export type SessionForkSupportSource =
+  | Pick<Session, 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'serverId'>
+  | (Pick<SessionListRenderableSession, 'metadata'> & Readonly<{ serverId?: string | null }>);
 
 /**
  * Why the Native route is closed for this exact Session + cutoff.
@@ -93,7 +93,9 @@ export function resolveSessionForkStrategyAvailability(params: Readonly<{
   if (!session) return UNAVAILABLE;
   if (!isUsableForkPoint(params.forkPoint)) return UNAVAILABLE;
 
-  const metadata = readSessionOwnerMetadataView(session);
+  const metadata = 'ownerMetadataView' in session
+    ? readSessionOwnerMetadataView(session)
+    : session.metadata;
   const agentId = resolveAgentIdFromSessionMetadata(metadata);
   const supportsNative = (capability: 'sessionFork.conversation' | 'sessionFork.fromMessage'): boolean => (
     supportsAgentLifecycleCapability({

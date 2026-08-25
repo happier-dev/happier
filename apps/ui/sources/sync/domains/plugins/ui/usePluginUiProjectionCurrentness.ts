@@ -18,6 +18,12 @@ import {
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
 import {
+    forgetPluginUiProjectionAdmissionSnapshot,
+    pluginUiProjectionAdmissionTargetKey,
+    readPluginUiProjectionAdmissionSnapshot,
+    savePluginUiProjectionAdmissionSnapshot,
+} from '@/sync/domains/plugins/ui/projectionWarmCache';
+import {
     getMachineContributionRegistryProjectionRevision,
     machineContributionRegistryProjectionDescribe,
     subscribeMachineContributionRegistryProjectionInvalidation,
@@ -32,7 +38,18 @@ import {
 } from '@/sync/domains/scope/activeServerAccountScope';
 
 const PLUGIN_UI_PROJECTION_TIMEOUT_MS = 5_000;
-const PLUGIN_UI_PROJECTION_RETRY_BACKOFF_MS = [250, 1_000, 2_500, 5_000] as const;
+/**
+ * The first rungs cover a transport blip around mount or reconnect. The final
+ * rung is the steady state and repeats for as long as the failure lasts, so it
+ * is bounded by the cadence the app already pays for this same RPC: the app
+ * shell re-describes every online machine's projection every 30 s
+ * (`CONNECTED_ACCOUNT_PROJECTION_REFRESH_INTERVAL_MS`). Asking faster than that
+ * cannot surface a change sooner and re-pulls the whole projection each time —
+ * a failure the daemon answers deterministically (a response this client cannot
+ * parse arrives here as the same opaque `error`) would otherwise re-read it
+ * twelve times a minute forever.
+ */
+const PLUGIN_UI_PROJECTION_RETRY_BACKOFF_MS = [250, 1_000, 2_500, 5_000, 30_000] as const;
 
 type ProjectionConnectionState = Readonly<{
     targetKey: string | null;
@@ -61,7 +78,11 @@ type LoadedProjectionState = Readonly<{
      */
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     authorityKey: string | null;
-    /** `retainedOffline` is derived only when this current snapshot loses authority. */
+    /**
+     * `retainedOffline` is derived, never stored: a `current` snapshot with no
+     * live authority is retained-offline whether it was confirmed earlier in
+     * this process or restored from this Account's device custody.
+     */
     phase: Exclude<PluginUiProjectionPhase, 'retainedOffline'>;
     pluginUiProjection: PluginUiProjectionModel;
     pluginBrowserProjection: PluginBrowserProjectionModel;
@@ -134,6 +155,36 @@ function createEmptyLoadedProjectionState(
     };
 }
 
+/**
+ * A fresh process with no reachable daemon has no in-process snapshot to
+ * retain, so it restores this Account's last-confirmed admission snapshot from
+ * device custody and presents it read-only. Restoring is deliberately
+ * conditional on there being no live authority: when a daemon is reachable the
+ * fresh describe is one RPC away and remains the only thing worth showing.
+ */
+function createRestoredLoadedProjectionState(input: Readonly<{
+    targetKey: string;
+    machineId: string;
+    accountLifetime: ActiveServerAccountScopeLifetime | null;
+}>): LoadedProjectionState {
+    const restored = input.accountLifetime && input.accountLifetime.isCurrent()
+        ? readPluginUiProjectionAdmissionSnapshot({
+            scope: input.accountLifetime.scope,
+            targetKey: input.targetKey,
+            machineId: input.machineId,
+        })
+        : null;
+    if (!restored) return createEmptyLoadedProjectionState(input.targetKey, input.accountLifetime);
+    return {
+        targetKey: input.targetKey,
+        accountLifetime: input.accountLifetime,
+        authorityKey: null,
+        phase: 'current',
+        pluginUiProjection: restored,
+        pluginBrowserProjection: EMPTY_PLUGIN_BROWSER_PROJECTION,
+    };
+}
+
 function createUnavailableLoadedProjectionState(
     targetKey: string,
     accountLifetime: ActiveServerAccountScopeLifetime | null,
@@ -175,7 +226,9 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         ? params.serverId
         : null;
     const enabled = params.enabled !== false;
-    const targetKey = enabled && machineId ? `${serverId ?? 'default'}:${machineId}` : null;
+    const targetKey = enabled && machineId
+        ? pluginUiProjectionAdmissionTargetKey({ serverId, machineId })
+        : null;
     // This is the one incumbent ServerAccountScope lifetime. Its identity is
     // deliberately owner-local currentness, not an Account id or UI epoch.
     const accountLifetime = targetKey ? captureActiveServerAccountScopeLifetime() : null;
@@ -266,11 +319,27 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             return;
         }
 
-        setLoadedProjection((previous) => (
-            previous.targetKey === targetKey && previous.accountLifetime === accountLifetime
-                ? previous
-                : createEmptyLoadedProjectionState(targetKey, accountLifetime)
-        ));
+        const restoreRetained = (): LoadedProjectionState => createRestoredLoadedProjectionState({
+            targetKey,
+            machineId: target.machineId,
+            accountLifetime,
+        });
+        setLoadedProjection((previous) => {
+            if (previous.targetKey !== targetKey || previous.accountLifetime !== accountLifetime) {
+                return authorityKey
+                    ? createEmptyLoadedProjectionState(targetKey, accountLifetime)
+                    : restoreRetained();
+            }
+            // Losing live authority before this process confirmed anything is
+            // the same cold state as booting without it: the Account server's
+            // last daemon heartbeat outlives a sleeping machine, so the first
+            // describe is attempted and only then fails. `current` already
+            // derives `retainedOffline`, and `unavailable` is a daemon's own
+            // answer — neither may be replaced by device custody.
+            if (authorityKey || previous.phase !== 'establishing') return previous;
+            const restored = restoreRetained();
+            return restored.phase === 'current' ? restored : previous;
+        });
 
         if (!authorityKey) {
             return;
@@ -316,6 +385,14 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                         scheduleRetry();
                         return;
                     }
+                    // The daemon itself answered that this machine does not
+                    // serve the projection. That answer must survive a restart,
+                    // so the retained snapshot is retired here rather than
+                    // being restored by the next fresh process.
+                    forgetPluginUiProjectionAdmissionSnapshot({
+                        scope: accountLifetime?.scope ?? null,
+                        targetKey,
+                    });
                     setLoadedProjection((previous) => {
                         if (
                             previous.targetKey !== targetKey
@@ -329,6 +406,15 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                     return;
                 }
                 retryAttempts = 0;
+                // This is the one moment admission currentness is confirmed,
+                // so it is the only moment the Account-qualified snapshot is
+                // recorded for the next fresh process.
+                savePluginUiProjectionAdmissionSnapshot({
+                    scope: accountLifetime?.scope ?? null,
+                    targetKey,
+                    machineId: target.machineId,
+                    projection: result.projection,
+                });
                 setLoadedProjection((previous) => {
                     if (
                         previous.targetKey !== targetKey

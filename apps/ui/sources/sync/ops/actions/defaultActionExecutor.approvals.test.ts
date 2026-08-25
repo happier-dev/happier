@@ -637,4 +637,70 @@ describe('createDefaultActionExecutor approvals', () => {
         expect((res as any).result?.status).toBe('executed');
         expect(sessionStopWithServerScope).toHaveBeenCalledWith('s1', { serverId: undefined });
     });
+
+    it('routes deferred session directory approval replay to the target daemon without serializing the host proof as spawn input', async () => {
+        const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+        const targetDecisionResult = {
+            ok: true,
+            status: 'executed' as const,
+            execution: {
+                executedAtMs: 3,
+                ok: true as const,
+                result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' },
+            },
+        };
+        vi.mocked(machineRpcWithServerScope).mockReset();
+        vi.mocked(machineRpcWithServerScope).mockResolvedValueOnce(targetDecisionResult);
+        state.artifacts['artifact-directory-spawn'] = {
+            id: 'artifact-directory-spawn',
+            body: JSON.stringify({
+                v: 1,
+                status: 'open',
+                createdAtMs: 1,
+                updatedAtMs: 1,
+                createdBy: { surface: 'mcp' },
+                requestedSurface: 'mcp',
+                actionId: 'session.spawn_new',
+                actionArgs: {
+                    creationKey: 'api:directory-approval-1',
+                    executionTarget: { serverId: 'srv-target', machineId: 'machine-target' },
+                    directory: '/repo/new-directory',
+                    organizationPlacement: { folderId: null, tagIds: [] },
+                    agentTarget: {
+                        kind: 'agent',
+                        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                    },
+                    initialMessage: 'Inspect this repository.',
+                },
+                sessionCreationDirectoryApproval: {
+                    v: 1,
+                    executionTarget: { serverId: 'srv-target', machineId: 'machine-target' },
+                    directory: '/repo/new-directory',
+                },
+                summary: 'Create session',
+                serverId: 'srv-target',
+            }),
+        };
+
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+
+        await expect(executor.execute(
+            'approval.request.decide' as any,
+            { artifactId: 'artifact-directory-spawn', decision: 'approve' },
+            { surface: 'ui', serverId: 'srv-target' },
+        )).resolves.toEqual({ ok: true, result: targetDecisionResult });
+
+        expect(machineRpcWithServerScope).toHaveBeenCalledExactlyOnceWith({
+            serverId: 'srv-target',
+            machineId: 'machine-target',
+            method: RPC_METHODS.APPROVAL_REQUEST_DECIDE,
+            payload: {
+                artifactId: 'artifact-directory-spawn',
+                decision: 'approve',
+                serverId: 'srv-target',
+            },
+        });
+        expect(updateArtifactWithHeader).not.toHaveBeenCalled();
+    });
 });

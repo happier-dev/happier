@@ -8,14 +8,6 @@ const addMemberV4Mock = vi.hoisted(() => vi.fn());
 const patchMemberV4Mock = vi.hoisted(() => vi.fn());
 const removeMemberV4Mock = vi.hoisted(() => vi.fn());
 const activeV4Mock = vi.hoisted(() => vi.fn());
-const listV3Mock = vi.hoisted(() => vi.fn());
-const createV3Mock = vi.hoisted(() => vi.fn());
-const patchV3Mock = vi.hoisted(() => vi.fn());
-const deleteV3Mock = vi.hoisted(() => vi.fn());
-const addMemberV3Mock = vi.hoisted(() => vi.fn());
-const patchMemberV3Mock = vi.hoisted(() => vi.fn());
-const removeMemberV3Mock = vi.hoisted(() => vi.fn());
-const activeV3Mock = vi.hoisted(() => vi.fn());
 const generatedLegacyCompatibility = vi.hoisted(() => ({
     github: {
         service: {
@@ -76,16 +68,6 @@ vi.mock('@/sync/api/account/apiQualifiedConnectedAccountsV4', () => ({
     patchQualifiedConnectedAccountGroupV4: patchV4Mock,
     removeQualifiedConnectedAccountGroupMemberV4: removeMemberV4Mock,
     setQualifiedConnectedAccountGroupActiveAccountV4: activeV4Mock,
-}));
-vi.mock('@/sync/api/account/apiConnectedServiceAuthGroupsV3', () => ({
-    addConnectedServiceAuthGroupMemberV3: addMemberV3Mock,
-    createConnectedServiceAuthGroupV3: createV3Mock,
-    deleteConnectedServiceAuthGroupV3: deleteV3Mock,
-    listConnectedServiceAuthGroupsV3: listV3Mock,
-    patchConnectedServiceAuthGroupMemberV3: patchMemberV3Mock,
-    patchConnectedServiceAuthGroupV3: patchV3Mock,
-    removeConnectedServiceAuthGroupMemberV3: removeMemberV3Mock,
-    setConnectedServiceAuthGroupActiveProfileV3: activeV3Mock,
 }));
 vi.mock('@happier-dev/protocol', async (importOriginal) => ({
     ...await importOriginal<typeof import('@happier-dev/protocol')>(),
@@ -162,31 +144,6 @@ const qualifiedGroup = {
         updatedAt: 1,
     }],
 };
-const legacyGroup = {
-    v: 1 as const,
-    serviceId: 'github' as const,
-    groupId: 'team',
-    displayName: 'Team',
-    policy,
-    activeProfileId: 'account-a',
-    generation: 4,
-    runtimeStateRevision: 7,
-    state: {},
-    createdAt: 1,
-    updatedAt: 1,
-    members: [{
-        v: 1 as const,
-        serviceId: 'github' as const,
-        groupId: 'team',
-        profileId: 'account-a',
-        priority: 100,
-        enabled: true,
-        state: {},
-        createdAt: 1,
-        updatedAt: 1,
-    }],
-};
-
 describe('createQualifiedConnectedAccountGroupsClient', () => {
     beforeEach(() => {
         listV4Mock.mockReset();
@@ -197,14 +154,6 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
         patchMemberV4Mock.mockReset();
         removeMemberV4Mock.mockReset();
         activeV4Mock.mockReset();
-        listV3Mock.mockReset();
-        createV3Mock.mockReset();
-        patchV3Mock.mockReset();
-        deleteV3Mock.mockReset();
-        addMemberV3Mock.mockReset();
-        patchMemberV3Mock.mockReset();
-        removeMemberV3Mock.mockReset();
-        activeV3Mock.mockReset();
     });
 
     it('retains exact qualified refs and threads only V4 revision semantics', async () => {
@@ -268,67 +217,6 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
             expectedRuntimeStateRevision: 7,
             overrideRuntimeCooldown: true,
         });
-        expect(listV3Mock).not.toHaveBeenCalled();
-    });
-
-    it('translates only the validated built-in boundary and threads V3 generation', async () => {
-        listV3Mock.mockResolvedValueOnce({ groups: [legacyGroup] });
-        patchV3Mock.mockResolvedValueOnce({
-            group: {
-                ...legacyGroup,
-                policy: { ...policy, autoSwitch: true },
-                generation: 5,
-            },
-        });
-        activeV3Mock.mockResolvedValueOnce({
-            group: {
-                ...legacyGroup,
-                generation: 5,
-            },
-        });
-        const client = createQualifiedConnectedAccountGroupsClient({
-            credentials,
-            service,
-            source: {
-                protocol: 'legacy-v3',
-                legacyServiceId: 'github',
-            },
-        });
-
-        const [group] = await client.list();
-        expect(group).toEqual(expect.objectContaining({
-            ref: { service, groupId: 'team' },
-            revision: {
-                protocol: 'legacy-v3',
-                generation: 4,
-            },
-        }));
-        await client.patch({
-            group: group!,
-            policy: { autoSwitch: true },
-        });
-        await client.setActiveAccount({
-            group: group!,
-            account: { service, accountId: 'account-a' },
-            overrideRuntimeCooldown: true,
-        });
-
-        expect(patchV3Mock).toHaveBeenCalledWith(credentials, {
-            serviceId: 'github',
-            groupId: 'team',
-            patch: {
-                policy: { ...policy, autoSwitch: true },
-                expectedGeneration: 4,
-            },
-        });
-        expect(activeV3Mock).toHaveBeenCalledWith(credentials, {
-            serviceId: 'github',
-            groupId: 'team',
-            profileId: 'account-a',
-            expectedGeneration: 4,
-            overrideRuntimeCooldown: true,
-        });
-        expect(listV4Mock).not.toHaveBeenCalled();
     });
 
     it('keeps V4 create/delete/member CRUD on exact qualified refs and runtime revisions', async () => {
@@ -411,84 +299,4 @@ describe('createQualifiedConnectedAccountGroupsClient', () => {
         });
     });
 
-    it('keeps revisioned V3 CRUD at the validated legacy boundary with native generation', async () => {
-        createV3Mock.mockResolvedValueOnce({ group: legacyGroup });
-        deleteV3Mock.mockResolvedValueOnce(true);
-        addMemberV3Mock.mockResolvedValueOnce({ group: legacyGroup });
-        patchMemberV3Mock.mockResolvedValueOnce({ group: legacyGroup });
-        removeMemberV3Mock.mockResolvedValueOnce({ group: legacyGroup });
-        const client = createQualifiedConnectedAccountGroupsClient({
-            credentials,
-            service,
-            source: {
-                protocol: 'legacy-v3',
-                legacyServiceId: 'github',
-            },
-        });
-        const group = {
-            ref: { service, groupId: 'team' },
-            displayName: 'Team',
-            policy,
-            activeAccountId: 'account-a',
-            revision: {
-                protocol: 'legacy-v3' as const,
-                generation: 4,
-            },
-            state: {},
-            members: [{
-                ref: { service, accountId: 'account-a' },
-                priority: 100,
-                enabled: true,
-                state: {},
-            }],
-        };
-        const account = { service, accountId: 'account-b' };
-
-        await client.create({ groupId: 'team', displayName: 'Team' });
-        await client.addMember({ group, account });
-        await client.patchMember({
-            group,
-            account,
-            enabled: false,
-            priority: 200,
-        });
-        await client.removeMember({ group, account });
-        await client.delete(group);
-
-        expect(createV3Mock).toHaveBeenCalledWith(credentials, {
-            serviceId: 'github',
-            groupId: 'team',
-            displayName: 'Team',
-            members: [],
-            activeProfileId: null,
-        });
-        expect(addMemberV3Mock).toHaveBeenCalledWith(credentials, {
-            serviceId: 'github',
-            groupId: 'team',
-            profileId: 'account-b',
-            priority: 200,
-            enabled: true,
-            expectedGeneration: 4,
-        });
-        expect(patchMemberV3Mock).toHaveBeenCalledWith(credentials, {
-            serviceId: 'github',
-            groupId: 'team',
-            profileId: 'account-b',
-            patch: {
-                enabled: false,
-                priority: 200,
-                expectedGeneration: 4,
-            },
-        });
-        expect(removeMemberV3Mock).toHaveBeenCalledWith(credentials, {
-            serviceId: 'github',
-            groupId: 'team',
-            profileId: 'account-b',
-            expectedGeneration: 4,
-        });
-        expect(deleteV3Mock).toHaveBeenCalledWith(credentials, {
-            serviceId: 'github',
-            groupId: 'team',
-        });
-    });
 });

@@ -1,5 +1,11 @@
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { ChangeKindSchema, type ChangeKind } from '@happier-dev/protocol/changes';
+import {
+    SessionDraftChangeHintV1Schema,
+    canonicalSessionDraftAddressV1,
+    type SessionDraftAddressV1,
+    type SessionDraftChangeHintV1,
+} from '@happier-dev/protocol';
 
 export type PlannedKvAction =
     | { type: 'none' }
@@ -96,6 +102,7 @@ export type PlannedChangeActions = {
         pets: boolean;
     };
     kv: PlannedKvAction;
+    sessionDraftAddresses?: SessionDraftAddressV1[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -127,6 +134,12 @@ function hasSessionFolderAssignmentHint(change: ApiChangeEntry): boolean {
 function hasSessionOrganizationHint(change: ApiChangeEntry): boolean {
     const hint = change.hint;
     return isRecord(hint) && hint.sessionOrganization === true;
+}
+
+export function getChangeSessionDraftHint(change: ApiChangeEntry): SessionDraftChangeHintV1 | null {
+    if (change.kind !== 'account') return null;
+    const parsed = SessionDraftChangeHintV1Schema.safeParse(change.hint);
+    return parsed.success ? parsed.data : null;
 }
 
 function readHintStringArray(change: ApiChangeEntry, key: string): string[] {
@@ -199,6 +212,18 @@ export function classifyChangeForCheckpoint(
     }
 
     const coverage = CHANGE_CHECKPOINT_COVERAGE[kind];
+
+    if (getChangeSessionDraftHint(change)) {
+        return {
+            kind,
+            cursor,
+            entityId,
+            decision: 'critical',
+            plannerOwner: 'session-drafts',
+            snapshotDomain: 'session-drafts',
+            materializationProof: 'session-draft',
+        };
+    }
 
     if ((kind === 'account' || kind === 'session') && hasSessionOrganizationHint(change)) {
         return {
@@ -288,6 +313,7 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
 
     let kvFull = false;
     const kvKeys = new Set<string>();
+    const sessionDraftAddresses = new Map<string, SessionDraftAddressV1>();
 
     for (const change of changes) {
         const kind = change.kind;
@@ -297,6 +323,12 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
                 kind: String(kind),
                 entityId: String(change.entityId ?? ''),
             });
+            continue;
+        }
+
+        const sessionDraftHint = getChangeSessionDraftHint(change);
+        if (sessionDraftHint) {
+            sessionDraftAddresses.set(canonicalSessionDraftAddressV1(sessionDraftHint.address), sessionDraftHint.address);
             continue;
         }
 
@@ -482,5 +514,8 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
             pets: invalidatePets,
         },
         kv,
+        sessionDraftAddresses: [...sessionDraftAddresses.values()].sort((left, right) => (
+            canonicalSessionDraftAddressV1(left).localeCompare(canonicalSessionDraftAddressV1(right))
+        )),
     };
 }

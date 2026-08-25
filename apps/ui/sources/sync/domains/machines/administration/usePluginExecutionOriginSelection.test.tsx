@@ -15,6 +15,16 @@ const fixture = vi.hoisted(() => ({
     mutateAccountSettings: vi.fn(),
 }));
 
+vi.mock('@/sync/domains/state/storageStore', () => ({
+    storage: {
+        getState: () => ({
+            settings: {
+                machineAdministrationSelectionsV1: fixture.selections,
+            },
+        }),
+    },
+}));
+
 const selectedOrigin: PluginMachineExecutionOriginV1 = {
     serverIdentityId: 'srv_one',
     materializationRef: {
@@ -75,7 +85,15 @@ vi.mock('@/sync/runtime/getSyncSingleton', () => ({
 }));
 
 vi.mock('./useTargetSelection', () => ({
-    resolveFreshMachineAdministrationExecutionTarget: () => null,
+    resolveFreshMachineAdministrationExecutionTarget: (target: { serverIdentityId: string; machineId: string } | null) => (
+        target
+            ? {
+                target,
+                serverId: 'local-one',
+                machine: { id: target.machineId, daemonStateVersion: 1 },
+            }
+            : null
+    ),
 }));
 
 describe('usePluginMachineExecutionOriginSelection', () => {
@@ -150,6 +168,21 @@ describe('usePluginMachineExecutionOriginSelection', () => {
                 },
             },
         });
+        await hook.unmount();
+    });
+
+    it('re-reads the execution-origin preference when the callback is invoked', async () => {
+        const { usePluginMachineExecutionOriginSelection } = await import('./usePluginExecutionOriginSelection');
+        const hook = await renderHook(() => usePluginMachineExecutionOriginSelection({
+            pluginId: 'acme.plugin',
+            classifyRelease: () => ({ releaseContent: 'matched', validation: { kind: 'admitted' } }),
+        }));
+        fixture.selections = {
+            ...fixture.selections!,
+            pluginExecutionOriginsByPluginId: {},
+        };
+
+        expect(hook.getCurrent().resolveExecutionOrigin()).toBeNull();
         await hook.unmount();
     });
 });

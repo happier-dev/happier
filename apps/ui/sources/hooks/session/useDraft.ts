@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { storage } from '@/sync/domains/state/storage';
 import { useIsFocused } from '@react-navigation/native';
@@ -10,10 +10,16 @@ import {
     readSessionInitialPromptV1,
     type SessionInitialPromptV1,
 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';
-import type { SessionComposerTextMutationToken } from '@/sync/domains/input/draftValues/sessionDraftValueStore';
 import { containsLikelyNonWhitespace, isLargeTextInputValueLength } from '@/components/ui/forms/largeTextInputPolicy';
 import { useWebLifecycleFlush } from './useWebLifecycleFlush';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import {
+    flushSessionDraft,
+    getSessionDraftSnapshot,
+    subscribeSessionDraft,
+    writeExistingSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 interface UseDraftOptions {
     autoSaveInterval?: number; // in milliseconds, default 2000
@@ -25,7 +31,7 @@ interface UseDraftOptions {
     onTextMutation?: (input: Readonly<{
         sessionId: string;
         text: string;
-    }>) => SessionComposerTextMutationToken | null;
+    }>) => unknown;
 }
 
 export type SessionDraftTextSnapshot = Readonly<{
@@ -45,20 +51,21 @@ export function useDraft(
     options: UseDraftOptions = {}
 ) {
     const { autoSaveInterval = 2000 } = options;
-    const onTextMutation = options.onTextMutation;
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastSavedValue = useRef<string>('');
     const lastSessionId = useRef<string | null>(null);
     const latestValue = useRef<string>(value);
     const autosaveSkip = useRef<Readonly<{ sessionId: string; value: string }> | null>(null);
-    const textMutationTokensBySessionIdRef = useRef(new Map<string, Readonly<{
-        text: string;
-        token: SessionComposerTextMutationToken;
-    }>>());
     const isFocused = useIsFocused();
+    const draftScope = useActiveServerAccountScope();
     const resolvedSessionId = normalizeSessionId(sessionId);
     const session = resolvedSessionId ? storage.getState().sessions[resolvedSessionId] : null;
-    const storedDraft = typeof session?.draft === 'string' ? session.draft : null;
+    const repositoryDraft = resolvedSessionId && draftScope
+        ? getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: resolvedSessionId })
+        : null;
+    const storedDraft = typeof repositoryDraft?.document.composer.text.value === 'string'
+        ? repositoryDraft.document.composer.text.value
+        : null;
     const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
     const forkInitialPrompt = readForkInitialPromptV1(ownerMetadata);
     const forkInitialPromptText = forkInitialPrompt?.text ?? null;
@@ -79,31 +86,25 @@ export function useDraft(
         ? sessionInitialPrompt
         : null;
 
-    latestValue.current = value;
-
-    const recordVisibleTextMutation = useCallback((targetSessionId: string, text: string) => {
-        const token = onTextMutation?.({ sessionId: targetSessionId, text }) ?? null;
-        if (token) {
-            textMutationTokensBySessionIdRef.current.set(targetSessionId, { text, token });
-        } else {
-            textMutationTokensBySessionIdRef.current.delete(targetSessionId);
-        }
-    }, [onTextMutation]);
+    // Do not let a render that React later abandons become the imperative draft authority.
+    // Input handlers and draft lifecycle operations update this ref synchronously; controlled
+    // values are reconciled only once their render commits.
+    useLayoutEffect(() => {
+        latestValue.current = value;
+    }, [value]);
 
     const saveDraftForSession = useCallback((targetSessionId: string, draft: string) => {
-        const textMutation = textMutationTokensBySessionIdRef.current.get(targetSessionId);
-        if (textMutation?.text === draft) {
-            storage.getState().updateSessionDraft(targetSessionId, draft, {
-                composerTextMutationToken: textMutation.token,
-            });
-            textMutationTokensBySessionIdRef.current.delete(targetSessionId);
-        } else {
-            storage.getState().updateSessionDraft(targetSessionId, draft);
-        }
+        if (!draftScope) return;
+        writeExistingSessionDraft({
+            scope: draftScope,
+            sessionId: targetSessionId,
+            patch: { text: draft },
+            materializationIntent: 'userEdit',
+        });
         if (lastSessionId.current === targetSessionId) {
             lastSavedValue.current = draft;
         }
-    }, []);
+    }, [draftScope]);
 
     // Save draft to storage
     const saveDraft = useCallback((draft: string) => {
@@ -111,29 +112,65 @@ export function useDraft(
         saveDraftForSession(resolvedSessionId, draft);
     }, [resolvedSessionId, saveDraftForSession]);
 
+    const flushDraftForSession = useCallback((targetSessionId: string) => {
+        if (!draftScope) return;
+        fireAndForget(
+            flushSessionDraft({
+                scope: draftScope,
+                address: { kind: 'session', sessionId: targetSessionId },
+            }),
+            { tag: 'useDraft.flushSessionDraft' },
+        );
+    }, [draftScope]);
+
     const flushLatestDraftIfChanged = useCallback(() => {
         if (!resolvedSessionId) return;
         const currentValue = latestValue.current;
-        if (currentValue === lastSavedValue.current) return;
+        const hasScheduledFlush = saveTimeoutRef.current !== null;
+        const hasUnpublishedValue = currentValue !== lastSavedValue.current;
+        if (!hasScheduledFlush && !hasUnpublishedValue) return;
 
         if (saveTimeoutRef.current) {
             clearTimeout(saveTimeoutRef.current);
             saveTimeoutRef.current = null;
         }
 
-        saveDraft(currentValue);
-    }, [resolvedSessionId, saveDraft]);
+        if (hasUnpublishedValue) saveDraft(currentValue);
+        flushDraftForSession(resolvedSessionId);
+    }, [flushDraftForSession, resolvedSessionId, saveDraft]);
+
+    const scheduleDraftFlush = useCallback((previousDraft: string, draft: string) => {
+        if (!resolvedSessionId) return;
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+        }
+
+        const wasEmpty = !containsLikelyNonWhitespace(previousDraft);
+        const isEmpty = !containsLikelyNonWhitespace(draft);
+        const shouldDebounceForLargeDraft = isLargeTextInputValueLength(draft.length);
+        if ((wasEmpty !== isEmpty && !shouldDebounceForLargeDraft) || isEmpty) {
+            flushDraftForSession(resolvedSessionId);
+            return;
+        }
+        saveTimeoutRef.current = setTimeout(() => {
+            saveTimeoutRef.current = null;
+            flushDraftForSession(resolvedSessionId);
+        }, autoSaveInterval);
+    }, [autoSaveInterval, flushDraftForSession, resolvedSessionId]);
 
     const setDraftValue = useCallback((nextValueOrUpdater: string | ((currentValue: string) => string)) => {
         const nextValue = typeof nextValueOrUpdater === 'function'
             ? nextValueOrUpdater(latestValue.current)
             : nextValueOrUpdater;
-        if (nextValue !== latestValue.current && resolvedSessionId) {
-            recordVisibleTextMutation(resolvedSessionId, nextValue);
-        }
+        const previousSavedValue = lastSavedValue.current;
         latestValue.current = nextValue;
         onChange(nextValue);
-    }, [onChange, recordVisibleTextMutation, resolvedSessionId]);
+        if (nextValue === previousSavedValue) return;
+
+        saveDraft(nextValue);
+        scheduleDraftFlush(previousSavedValue, nextValue);
+    }, [onChange, saveDraft, scheduleDraftFlush]);
 
     const clearForkInitialPrompt = useCallback((tag: string) => {
         if (!resolvedSessionId || !forkInitialPromptText) return;
@@ -163,20 +200,32 @@ export function useDraft(
         return `${trimmedBase}\n\n${prompt.text}`;
     }, []);
 
-    const adoptDraftText = useCallback((draft: string) => {
-        if (resolvedSessionId && latestValue.current !== draft) {
-            recordVisibleTextMutation(resolvedSessionId, draft);
+    const adoptPersistedDraftText = useCallback((draft: string) => {
+        if (latestValue.current !== draft) {
+            latestValue.current = draft;
+            onChange(draft);
         }
-        latestValue.current = draft;
-        onChange(draft);
+        lastSavedValue.current = draft;
+    }, [onChange]);
+
+    const persistSeededDraftText = useCallback((draft: string) => {
+        if (latestValue.current !== draft) {
+            latestValue.current = draft;
+            onChange(draft);
+        }
         saveDraft(draft);
         lastSavedValue.current = draft;
-    }, [onChange, recordVisibleTextMutation, resolvedSessionId, saveDraft]);
+    }, [onChange, saveDraft]);
 
     // Load draft on mount and when focused. When switching sessions, always sync the composer
     // to the target session (draft or empty) to avoid leaking the previous session's text.
     useEffect(() => {
         if (!resolvedSessionId) return;
+
+        const currentStoredDraft = draftScope
+            ? getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: resolvedSessionId })
+                ?.document.composer.text.value ?? null
+            : null;
 
         const previousSessionId = lastSessionId.current;
         lastSessionId.current = resolvedSessionId;
@@ -188,15 +237,22 @@ export function useDraft(
             if (previousSessionId && currentValue !== lastSavedValue.current) {
                 saveDraftForSession(previousSessionId, currentValue);
             }
+            if (previousSessionId) {
+                flushDraftForSession(previousSessionId);
+            }
             autosaveSkip.current = { sessionId: resolvedSessionId, value: currentValue };
-            const baseStoredDraft = storedDraft && storedDraft.trim() ? storedDraft : null;
+            const baseStoredDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
             const baseText = baseStoredDraft ?? forkInitialPromptText ?? null;
             const nextDraft = baseText !== null && activeSessionInitialPrompt
                 ? composeSessionInitialPromptText(baseText, activeSessionInitialPrompt)
                 : baseText ?? (activeSessionInitialPrompt ? composeSessionInitialPromptText('', activeSessionInitialPrompt) : null);
 
             if (nextDraft !== null) {
-                adoptDraftText(nextDraft);
+                if (activeSessionInitialPrompt || baseStoredDraft === null) {
+                    persistSeededDraftText(nextDraft);
+                } else {
+                    adoptPersistedDraftText(nextDraft);
+                }
                 if (baseStoredDraft !== null) {
                     clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.sessionChange.storedDraft');
             } else if (forkInitialPromptText) {
@@ -204,7 +260,6 @@ export function useDraft(
                 }
                 clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.sessionChange');
             } else if (currentValue.trim()) {
-                recordVisibleTextMutation(resolvedSessionId, '');
                 latestValue.current = '';
                 onChange('');
                 lastSavedValue.current = '';
@@ -216,7 +271,7 @@ export function useDraft(
 
         if (!isFocused) return;
 
-        const externalDraft = storedDraft && storedDraft.trim() ? storedDraft : null;
+        const externalDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
         if (externalDraft != null && externalDraft === currentValue && lastSavedValue.current !== externalDraft && !activeSessionInitialPrompt) {
             lastSavedValue.current = externalDraft;
             clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus.syncedDraft');
@@ -231,34 +286,50 @@ export function useDraft(
             const nextDraft = activeSessionInitialPrompt
                 ? composeSessionInitialPromptText(externalDraft, activeSessionInitialPrompt)
                 : externalDraft;
-            adoptDraftText(nextDraft);
+            if (activeSessionInitialPrompt) {
+                persistSeededDraftText(nextDraft);
+            } else {
+                adoptPersistedDraftText(nextDraft);
+            }
             clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus.storedDraft');
             clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus.storedDraft');
         } else if (forkInitialPromptText && !currentValue.trim()) {
             const nextDraft = activeSessionInitialPrompt
                 ? composeSessionInitialPromptText(forkInitialPromptText, activeSessionInitialPrompt)
                 : forkInitialPromptText;
-            adoptDraftText(nextDraft);
+            persistSeededDraftText(nextDraft);
             clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus');
             clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus.forkPrompt');
         } else if (activeSessionInitialPrompt && canAdoptWithoutExternalDraft) {
             const nextDraft = composeSessionInitialPromptText(currentValue, activeSessionInitialPrompt);
-            adoptDraftText(nextDraft);
+            persistSeededDraftText(nextDraft);
             clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus');
-        } else if (!storedDraft) {
+        } else if (!currentStoredDraft) {
             // Ensure lastSavedValue is empty if there's no draft
             lastSavedValue.current = '';
         }
-    }, [activeSessionInitialPrompt, adoptDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, forkInitialPromptText, isFocused, onChange, recordVisibleTextMutation, resolvedSessionId, saveDraftForSession, storedDraft]);
+    }, [activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, draftScope, flushDraftForSession, forkInitialPromptText, isFocused, onChange, persistSeededDraftText, resolvedSessionId, saveDraftForSession, storedDraft]);
+
+    useEffect(() => {
+        if (!draftScope || !resolvedSessionId) return;
+        return subscribeSessionDraft(draftScope, { kind: 'session', sessionId: resolvedSessionId }, () => {
+            const next = getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: resolvedSessionId })
+                ?.document.composer.text.value;
+            if (typeof next !== 'string' || next === latestValue.current) return;
+            latestValue.current = next;
+            lastSavedValue.current = next;
+            onChange(next);
+        });
+    }, [draftScope, onChange, resolvedSessionId]);
 
     // Auto-save with smart debouncing
     useEffect(() => {
         if (!resolvedSessionId) return;
 
-        // Clear any existing timeout
-        if (saveTimeoutRef.current) {
-            clearTimeout(saveTimeoutRef.current);
-        }
+        // A later input/lifecycle operation can supersede this committed render before passive
+        // effects run. Its closed-over value is then historical and must not be persisted back
+        // over the canonical replica after an outbound handoff clear.
+        if (value !== latestValue.current) return;
 
         // Only save if value has changed
         const skip = autosaveSkip.current;
@@ -268,30 +339,18 @@ export function useDraft(
         }
 
         if (value !== lastSavedValue.current) {
-            const wasEmpty = !containsLikelyNonWhitespace(lastSavedValue.current);
-            const isEmpty = !containsLikelyNonWhitespace(value);
-            const shouldDebounceForLargeDraft = isLargeTextInputValueLength(value.length);
-
-            if (wasEmpty !== isEmpty && !shouldDebounceForLargeDraft) {
-                // State transition: empty <-> non-empty
-                // Save immediately for instant feedback on normal-sized drafts.
-                saveDraft(value);
-            } else if (!isEmpty) {
-                // Text is being modified (or is too large for synchronous first-transition persistence).
-                // Debounce to avoid excessive synchronous storage writes while the composer is active.
-                saveTimeoutRef.current = setTimeout(() => {
-                    saveDraft(value);
-                }, autoSaveInterval);
-            }
-            // If both are empty, no need to save
+            const previousSavedValue = lastSavedValue.current;
+            saveDraft(value);
+            scheduleDraftFlush(previousSavedValue, value);
         }
+    }, [resolvedSessionId, saveDraft, scheduleDraftFlush, value]);
 
-        return () => {
-            if (saveTimeoutRef.current) {
-                clearTimeout(saveTimeoutRef.current);
-            }
-        };
-    }, [autoSaveInterval, resolvedSessionId, saveDraft, value]);
+    useEffect(() => () => {
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+        }
+    }, [draftScope, resolvedSessionId]);
 
     // Save on app state change (background/inactive)
     useEffect(() => {
@@ -320,8 +379,9 @@ export function useDraft(
             if (currentSessionId && currentValue !== lastSavedValue.current) {
                 saveDraftForSession(currentSessionId, currentValue);
             }
+            if (currentSessionId) flushDraftForSession(currentSessionId);
         };
-    }, [saveDraftForSession]);
+    }, [flushDraftForSession, saveDraftForSession]);
 
     // Clear draft (used after message is sent)
     const clearDraft = useCallback(() => {
@@ -332,22 +392,24 @@ export function useDraft(
             saveTimeoutRef.current = null;
         }
 
-        if (latestValue.current !== '') {
-            recordVisibleTextMutation(resolvedSessionId, '');
-        }
         saveDraftForSession(resolvedSessionId, '');
+        flushDraftForSession(resolvedSessionId);
         latestValue.current = '';
         lastSavedValue.current = '';
-    }, [recordVisibleTextMutation, resolvedSessionId, saveDraftForSession]);
+    }, [flushDraftForSession, resolvedSessionId, saveDraftForSession]);
 
     const clearDraftForSessionIfCurrentValueMatches = useCallback((snapshot: SessionDraftTextSnapshot) => {
         const targetSessionId = normalizeSessionId(snapshot.sessionId);
         if (!targetSessionId) return false;
 
         if (lastSessionId.current !== targetSessionId) {
-            const targetDraft = storage.getState().sessions[targetSessionId]?.draft;
+            const targetDraft = draftScope
+                ? getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: targetSessionId })
+                    ?.document.composer.text.value
+                : undefined;
             if (targetDraft !== snapshot.text) return false;
-            storage.getState().updateSessionDraft(targetSessionId, null);
+            saveDraftForSession(targetSessionId, '');
+            flushDraftForSession(targetSessionId);
             return true;
         }
 
@@ -363,16 +425,14 @@ export function useDraft(
             saveTimeoutRef.current = null;
         }
 
-        if (latestValue.current !== '') {
-            recordVisibleTextMutation(targetSessionId, '');
-        }
         saveDraftForSession(targetSessionId, '');
+        flushDraftForSession(targetSessionId);
         onChange('');
         latestValue.current = '';
         lastSavedValue.current = '';
         autosaveSkip.current = { sessionId: targetSessionId, value: '' };
         return true;
-    }, [onChange, recordVisibleTextMutation, saveDraftForSession]);
+    }, [draftScope, flushDraftForSession, onChange, saveDraftForSession]);
 
     const clearDraftIfCurrentValueMatches = useCallback((expectedValue: string) => {
         if (!resolvedSessionId) return false;
@@ -395,15 +455,12 @@ export function useDraft(
             saveTimeoutRef.current = null;
         }
 
-        if (latestValue.current !== draft) {
-            recordVisibleTextMutation(resolvedSessionId, draft);
-        }
         onChange(draft);
         saveDraftForSession(resolvedSessionId, draft);
         latestValue.current = draft;
         lastSavedValue.current = draft;
         autosaveSkip.current = { sessionId: resolvedSessionId, value: draft };
-    }, [onChange, recordVisibleTextMutation, resolvedSessionId, saveDraftForSession]);
+    }, [onChange, resolvedSessionId, saveDraftForSession]);
 
     const restoreComposerSnapshot = useCallback((snapshot: SessionDraftTextSnapshot) => {
         const targetSessionId = normalizeSessionId(snapshot.sessionId);
@@ -419,15 +476,12 @@ export function useDraft(
             saveTimeoutRef.current = null;
         }
 
-        if (latestValue.current !== snapshot.text) {
-            recordVisibleTextMutation(targetSessionId, snapshot.text);
-        }
         onChange(snapshot.text);
         saveDraftForSession(targetSessionId, snapshot.text);
         latestValue.current = snapshot.text;
         lastSavedValue.current = snapshot.text;
         autosaveSkip.current = { sessionId: targetSessionId, value: snapshot.text };
-    }, [onChange, recordVisibleTextMutation, saveDraftForSession]);
+    }, [onChange, saveDraftForSession]);
 
     const restoreDraftForSessionIfCurrentValueMatches = useCallback((
         snapshot: SessionDraftTextSnapshot,
@@ -437,7 +491,10 @@ export function useDraft(
         if (!targetSessionId) return false;
 
         if (lastSessionId.current !== targetSessionId) {
-            const targetDraft = storage.getState().sessions[targetSessionId]?.draft;
+            const targetDraft = draftScope
+                ? getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: targetSessionId })
+                    ?.document.composer.text.value
+                : undefined;
             const currentDraft = typeof targetDraft === 'string' ? targetDraft : '';
             if (currentDraft !== expectedCurrentValue) return false;
             saveDraftForSession(targetSessionId, snapshot.text);
@@ -456,16 +513,13 @@ export function useDraft(
             saveTimeoutRef.current = null;
         }
 
-        if (latestValue.current !== snapshot.text) {
-            recordVisibleTextMutation(targetSessionId, snapshot.text);
-        }
         onChange(snapshot.text);
         saveDraftForSession(targetSessionId, snapshot.text);
         latestValue.current = snapshot.text;
         lastSavedValue.current = snapshot.text;
         autosaveSkip.current = { sessionId: targetSessionId, value: snapshot.text };
         return true;
-    }, [onChange, recordVisibleTextMutation, saveDraftForSession]);
+    }, [draftScope, onChange, saveDraftForSession]);
 
     return {
         clearDraft,

@@ -47,22 +47,11 @@ export type BrowserAdapterSelection =
         reason: BrowserAdapterUnavailableReason;
       }>;
 
-/**
- * Liveness of the managed daemon/sidecar control plane backing a streamed browser surface. When
- * `daemonControlReachable` is true a daemon-authoritative Chromium view is live and its control
- * transport (navigate/click/lifecycle over the daemon command RPC) is reachable, so the
- * streamed-browser adapter is available. Absent/false ⇒ fail-closed unavailable.
- */
-export type StreamedBrowserSurfaceAvailability = Readonly<{
-    daemonControlReachable: boolean;
-}>;
-
 export type SelectBrowserTargetAdapterInput = Readonly<{
     target: BrowserViewTargetV1;
     platform: BrowserAdapterPlatform;
     targetPolicyDecision?: BrowserTargetPolicyDecisionV1 | null;
     desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
-    streamedBrowserSurfaceAvailability?: StreamedBrowserSurfaceAvailability | null;
 }>;
 
 function success(
@@ -71,7 +60,6 @@ function success(
     engineKind: Exclude<BrowserRenderEngineKindV1, 'unavailable'>,
     options: Readonly<{
         desktopWebViewAvailability?: DesktopWebViewNativeAvailability | null;
-        streamedSurfaceLive?: boolean;
     }> = {},
 ): BrowserAdapterSelection {
     return {
@@ -84,10 +72,21 @@ function success(
             supportedTargetKinds: [targetKind],
             supportedRenderEngines: [engineKind],
             desktopWebViewSupport: options.desktopWebViewAvailability?.supports,
-            ...(options.streamedSurfaceLive ? { streamedSurfaceLive: true } : {}),
         }),
     };
 }
+
+/**
+ * The semantic adapter each target kind resolves to. Used to describe a target that never reaches
+ * its branch — a policy denial refuses it before any engine is chosen.
+ */
+const ADAPTER_KIND_BY_TARGET_KIND = {
+    localServicePreview: 'localPreview',
+    hostedPluginWeb: 'hostedPlugin',
+    externalUrl: 'externalUrl',
+    streamedBrowser: 'streamedBrowserSurface',
+    simulatorPreview: 'simulatorPreview',
+} as const satisfies Record<BrowserViewTargetKindV1, BrowserSemanticAdapterKindV1>;
 
 /**
  * Build the `openExternalTab` selection outcome — the explicit, fulfilled non-framable web
@@ -152,6 +151,23 @@ function selectExternalSiteFrameEngine(
 }
 
 export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInput): BrowserAdapterSelection {
+    // The policy owner's decision is the authority for EVERY target kind (E2-F6). It used to be
+    // read only inside the `externalUrl` branch, so `evaluateBrowserTargetPolicy` could deny a
+    // hosted-plugin or streamed target and this selector would still hand back a fully renderable
+    // engine — the policy owner and the selector disagreeing about the same question. Denial is a
+    // refusal to select anything, so it belongs before any engine is chosen. An ABSENT decision
+    // still means "not evaluated here" and is not treated as a denial; callers that must enforce
+    // policy pass one.
+    const policyDecision = input.targetPolicyDecision;
+    if (policyDecision && policyDecision.state !== 'allowed') {
+        const adapterKind = ADAPTER_KIND_BY_TARGET_KIND[input.target.kind];
+        return unavailable(
+            adapterKind,
+            input.target.kind === 'externalUrl'
+                ? resolveExternalUrlPolicyDeniedReason(input.target.kind)
+                : resolveBrowserAdapterUnavailableReason({ adapterKind, targetKind: input.target.kind }),
+        );
+    }
     switch (input.target.kind) {
         case 'localServicePreview': {
             const engineKind = selectEmbeddedFrameEngine(input.platform);
@@ -172,9 +188,6 @@ export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInpu
                 }));
         }
         case 'externalUrl': {
-            if (input.targetPolicyDecision && input.targetPolicyDecision.state !== 'allowed') {
-                return unavailable('externalUrl', resolveExternalUrlPolicyDeniedReason(input.target.kind));
-            }
             if (input.targetPolicyDecision?.state === 'allowed' && input.platform === 'desktop') {
                 if (desktopWebViewAvailabilitySupportsBrowsing(input.desktopWebViewAvailability)) {
                     return success('externalUrl', input.target.kind, 'desktopWebView', {
@@ -206,8 +219,8 @@ export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInpu
             // ios/android: mobile WebViews can host arbitrary third-party sites, so an allowed
             // external URL renders inline through the native WebView engine.
             if (input.targetPolicyDecision?.state !== 'denied') {
-                const engineKind = selectFrameEngine(input.platform);
-                if (engineKind === 'webIframe' || engineKind === 'nativeWebView') {
+                const engineKind = selectExternalSiteFrameEngine(input.platform);
+                if (engineKind) {
                     return success('externalUrl', input.target.kind, engineKind);
                 }
             }
@@ -216,20 +229,17 @@ export function selectBrowserTargetAdapter(input: SelectBrowserTargetAdapterInpu
                 targetKind: input.target.kind,
             }));
         }
-        case 'streamedBrowser': {
-            // A streamed browser is rendered by a managed daemon/sidecar Chromium. It is only
-            // selectable once that daemon-authoritative view is live and its control transport is
-            // reachable; otherwise it fails closed (no inert daemon-authoritative seam, per MC-6).
-            if (input.streamedBrowserSurfaceAvailability?.daemonControlReachable === true) {
-                return success('streamedBrowserSurface', input.target.kind, 'streamedSurface', {
-                    streamedSurfaceLive: true,
-                });
-            }
+        case 'streamedBrowser':
+            // DEC-5: CONTRACTED, and now unconditional. Nothing in production produces a
+            // `streamedBrowser` target, no renderer for the kind exists, and the server excludes it
+            // outright — so a reachable daemon control transport is not evidence of a surface. The
+            // old success branch published a full navigable capability set to agents and plugins
+            // for something that could never paint. The `streamedSurface` ENGINE kind is retained;
+            // only this adapter branch is gone.
             return unavailable('streamedBrowserSurface', resolveBrowserAdapterUnavailableReason({
                 adapterKind: 'streamedBrowserSurface',
                 targetKind: input.target.kind,
             }));
-        }
         case 'simulatorPreview':
             return success('simulatorPreview', input.target.kind, 'streamedSurface');
     }

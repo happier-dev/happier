@@ -1,9 +1,12 @@
-import type {
-  PluginConnectedAccountAuthenticationModeV2,
-  PluginContributionIdentityV1,
-  QualifiedConnectedAccountGroupV4,
-  QualifiedConnectedAccountProfileV4,
-  QualifiedConnectedAccountPurposeBindingTargetV1,
+import {
+  isQualifiedConnectedAccountProfileActiveV4,
+  resolveQualifiedConnectedAccountGroupActiveAccountV4,
+  sameQualifiedConnectedAccountRef,
+  type PluginConnectedAccountAuthenticationModeV2,
+  type PluginContributionIdentityV1,
+  type QualifiedConnectedAccountGroupV4,
+  type QualifiedConnectedAccountProfileV4,
+  type QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
 
 import { isConnectedAccountConfigurationBlocked } from './configurationReadiness';
@@ -34,31 +37,45 @@ export function resolveConnectedAccountPurposeTargetEligibility(input: Readonly<
   ) => PluginConnectedAccountAuthenticationModeV2 | null;
 }>): ConnectedAccountPurposeTargetEligibility {
   const target = input.target;
-  if (target.kind === 'account') {
-    const accountTarget = target.account;
-    if (!input.declaredServices.some((candidate) => sameService(candidate, accountTarget.service))) {
-      return 'unusable';
-    }
-    const account = input.accounts.find((candidate) => (
-      sameService(candidate.ref.service, accountTarget.service)
-      && candidate.ref.accountId === accountTarget.accountId
-    ));
-    if (
-      account?.status !== 'connected'
-      || account.revisionSemantics !== 'revisioned'
-    ) return 'unusable';
+  const now = Date.now();
+  // One account readiness rule for both target kinds. A group resolves to an
+  // exact account, so offering the group without applying the same
+  // descriptor/configuration test would persist a target the daemon rejects at
+  // materialization time.
+  const resolveAccountEligibility = (
+    account: QualifiedConnectedAccountProfileV4,
+  ): ConnectedAccountPurposeTargetEligibility => {
     const authenticationMode = input.resolveAuthenticationMode(account);
     if (!authenticationMode) return 'unknown';
     return isConnectedAccountConfigurationBlocked({ account, authenticationMode })
       ? 'unusable'
       : 'usable';
+  };
+  if (target.kind === 'account') {
+    const accountTarget = target.account;
+    if (!input.declaredServices.some((candidate) => sameService(candidate, accountTarget.service))) {
+      return 'unusable';
+    }
+    const account = input.accounts.find((candidate) => sameQualifiedConnectedAccountRef(
+      candidate.ref,
+      accountTarget,
+    ));
+    if (!account || !isQualifiedConnectedAccountProfileActiveV4(account, now)) return 'unusable';
+    return resolveAccountEligibility(account);
   }
   const service = target.service;
   const groupId = target.groupId;
   if (!input.declaredServices.some((candidate) => sameService(candidate, service))) return 'unusable';
-  return input.groups.some((group) => (
-    sameService(group.ref.service, service)
-    && group.ref.groupId === groupId
-    && group.state.status === 'ready'
-  )) ? 'usable' : 'unusable';
+  const group = input.groups.find((candidate) => (
+    sameService(candidate.ref.service, service)
+    && candidate.ref.groupId === groupId
+  ));
+  if (!group) return 'unusable';
+  // The protocol resolver stays the sole owner of member/active/expiry policy.
+  const activeAccount = resolveQualifiedConnectedAccountGroupActiveAccountV4({
+    group,
+    accounts: input.accounts,
+    now,
+  });
+  return activeAccount ? resolveAccountEligibility(activeAccount) : 'unusable';
 }

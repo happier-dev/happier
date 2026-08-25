@@ -76,7 +76,7 @@ async function requestProviderRpcResponse<TSchema extends z.ZodType>(
         if (operation === 'mutation') {
             throw createProviderErrorV1('provider_rpc_mutation_outcome_unknown', context);
         }
-        throw caught;
+        throw providerErrorFromRpcFailure(caught, context);
     }
 }
 
@@ -113,7 +113,7 @@ export function providerErrorFromRpcFailure(
     const typed = ProviderErrorV1Schema.safeParse(caught);
     return typed.success
         ? typed.data
-        : createProviderErrorV1('provider_endpoint_unavailable', context);
+        : createProviderErrorV1('provider_machine_unavailable', context);
 }
 
 export async function describeProviderConnections(input: Readonly<{

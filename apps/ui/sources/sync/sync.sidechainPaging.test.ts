@@ -75,8 +75,17 @@ vi.mock('@/sync/api/session/apiSocket', () => ({
     },
 }));
 
+const machineExternalSessionTranscriptPageMock = vi.hoisted(() => vi.fn());
+const machineExternalSessionTranscriptReadAfterMock = vi.hoisted(() => vi.fn());
+const machineExternalSessionTranscriptRefreshReadAfterMock = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/ops/machineExternalSessions', () => ({
+    machineExternalSessionTranscriptPage: machineExternalSessionTranscriptPageMock,
+    machineExternalSessionTranscriptReadAfter: machineExternalSessionTranscriptReadAfterMock,
+    machineExternalSessionTranscriptRefreshReadAfter: machineExternalSessionTranscriptRefreshReadAfterMock,
+}));
+
 import { storage } from './domains/state/storage';
-import type { Session } from './domains/state/storageTypes';
+import type { Machine, Session } from './domains/state/storageTypes';
 
 const initialStorageState = storage.getState();
 
@@ -98,6 +107,89 @@ function createSession(params: { sessionId: string }): Session {
         presence: 'online',
         optimisticThinkingAt: null,
     };
+}
+
+function createOnlineMachine(machineId: string): Machine {
+    const now = Date.now();
+    return {
+        id: machineId,
+        seq: 0,
+        createdAt: now,
+        updatedAt: now,
+        active: true,
+        activeAt: now,
+        revokedAt: null,
+        metadata: null,
+        metadataVersion: 0,
+        daemonState: null,
+        daemonStateVersion: 0,
+    };
+}
+
+function createLiveAgentSession(sessionId: string): Session {
+    return {
+        ...createSession({ sessionId }),
+        currentStorageState: 'machine_only',
+        metadata: {
+            path: '',
+            host: '',
+            machineId: 'machine-1',
+            externalSessionV1: {
+                v: 1,
+                agentId: 'codex',
+                machineId: 'machine-1',
+                remoteSessionId: 'vendor-session-1',
+                source: { kind: 'codexHome', home: 'user' },
+                linkedAtMs: 1,
+                qualifiedIdentity: {
+                    v: 1,
+                    agent: { pluginId: 'happier.codex', localId: 'codex' },
+                    source: { kind: 'codexHome', contractVersion: 1 },
+                },
+            },
+        },
+    };
+}
+
+function agentToolCallItem(id: string, callId: string) {
+    return {
+        id,
+        createdAtMs: 10,
+        raw: {
+            role: 'agent',
+            content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: { type: 'tool-call', callId, name: 'SubAgent', id },
+            },
+        },
+    };
+}
+
+function agentChildMessageItem(id: string, sidechainId: string, message: string) {
+    return {
+        id,
+        createdAtMs: 5,
+        sidechainId,
+        raw: {
+            role: 'agent',
+            content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: { type: 'message', message },
+            },
+        },
+    };
+}
+
+/** `fetchMessages` is Sync-private; this narrow alias reaches it without a broad `any`. */
+type SyncTranscriptFetchTestAccess = Readonly<{
+    fetchMessages: (sessionId: string) => Promise<void>;
+}>;
+
+function readSidechainRowCount(sessionId: string, sidechainId: string): number {
+    const sidechains = storage.getState().sessionMessages[sessionId]?.reducerState?.sidechains;
+    return sidechains?.get(sidechainId)?.length ?? 0;
 }
 
 describe('sync sidechain paging', () => {
@@ -282,5 +374,103 @@ describe('sync sidechain paging', () => {
         expect(olderPath).toContain('scope=sidechain');
         expect(olderPath).toContain('sidechainId=tool_task_1');
         expect(olderPath).toContain('beforeSeq=51');
+    });
+});
+
+describe('sync live-Agent sidechain demand', () => {
+    beforeEach(async () => {
+        storage.setState(initialStorageState, true);
+        kvStore.clear();
+        appStateAddListener.mockClear();
+        requestMock.mockReset();
+        machineExternalSessionTranscriptPageMock.mockReset();
+        machineExternalSessionTranscriptReadAfterMock.mockReset();
+        machineExternalSessionTranscriptRefreshReadAfterMock.mockReset();
+
+        const { sync } = await import('./sync');
+        sync.disconnectServer();
+
+        storage.getState().applyMachines([createOnlineMachine('machine-1')], false);
+        storage.getState().applySessions([createLiveAgentSession('s-live')]);
+        storage.getState().resetSessionMessages('s-live');
+        (sync as any).encryption = { getSessionEncryption: () => null };
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('hydrates a sidechain from the Agent global cursor instead of the server sidechain scope', async () => {
+        // The parent SubAgent tool call is in the bounded latest Agent page; its child rows
+        // are one older Agent page back. This is the ordinary Codex root-family layout.
+        machineExternalSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [agentToolCallItem('parent-1', 'tool_task_1')],
+                nextCursor: 'older-1',
+                tailCursor: 'tail-1',
+                hasMore: true,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [agentChildMessageItem('child-1', 'tool_task_1', 'child output')],
+                nextCursor: null,
+                hasMore: false,
+            });
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValue({
+            ok: true,
+            items: [],
+            nextCursor: 'tail-1',
+        });
+
+        const { sync } = await import('./sync');
+        await (sync as unknown as SyncTranscriptFetchTestAccess).fetchMessages('s-live');
+        expect(readSidechainRowCount('s-live', 'tool_task_1')).toBe(0);
+
+        let status = await sync.ensureSidechainMessagesLoaded('s-live', 'tool_task_1');
+        for (let attempt = 0; attempt < 5 && status !== 'loaded'; attempt += 1) {
+            status = await sync.ensureSidechainMessagesLoaded('s-live', 'tool_task_1');
+        }
+
+        expect(status).toBe('loaded');
+        // The server `/messages` sidechain scope is not peer authority for a live Agent:
+        // its persisted rows are filtered out, so calling it can only report a false empty.
+        expect(requestMock.mock.calls.map((call) => String(call[0]))
+            .filter((path) => path.includes('scope=sidechain'))).toEqual([]);
+        expect(readSidechainRowCount('s-live', 'tool_task_1')).toBeGreaterThan(0);
+    });
+
+    it('routes older sidechain paging through the one Agent global cursor', async () => {
+        machineExternalSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [agentToolCallItem('parent-1', 'tool_task_1')],
+                nextCursor: 'older-1',
+                tailCursor: 'tail-1',
+                hasMore: true,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [agentChildMessageItem('child-1', 'tool_task_1', 'older child output')],
+                nextCursor: 'older-2',
+                hasMore: true,
+            });
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValue({
+            ok: true,
+            items: [],
+            nextCursor: 'tail-1',
+        });
+
+        const { sync } = await import('./sync');
+        await (sync as unknown as SyncTranscriptFetchTestAccess).fetchMessages('s-live');
+
+        const result = await sync.loadOlderSidechainMessages('s-live', 'tool_task_1');
+
+        expect(result).toMatchObject({ loaded: 1, hasMore: true, status: 'loaded' });
+        expect(machineExternalSessionTranscriptPageMock.mock.calls[1]?.[0])
+            .toMatchObject({ direction: 'older', cursor: 'older-1' });
+        expect(requestMock.mock.calls.map((call) => String(call[0]))
+            .filter((path) => path.includes('scope=sidechain'))).toEqual([]);
+        expect(readSidechainRowCount('s-live', 'tool_task_1')).toBeGreaterThan(0);
     });
 });

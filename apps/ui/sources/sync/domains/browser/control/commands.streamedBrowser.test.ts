@@ -24,38 +24,27 @@ function openStreamedView(options: Parameters<typeof dispatchBrowserControlComma
     return { openCommand, result: dispatchBrowserControlCommand(createBrowserControlState(), openCommand, options) };
 }
 
+/**
+ * DEC-5: the streamed-browser adapter is contracted.
+ *
+ * These cases previously asserted the opposite — that supplying a daemon control transport made a
+ * streamed view open and navigate. That was a seam asserting its own reachability: nothing in
+ * production can produce a `streamedBrowser` target, no renderer for the kind exists, and the
+ * server excludes it outright, so "the transport is reachable" was never evidence that a surface
+ * could paint. The contract now is that the kind is unselectable, whatever the transport says.
+ */
 describe('streamed browser surface control seam', () => {
-    it('opens a daemon-authoritative streamed browser view when the daemon control transport is supplied', () => {
+    it('refuses to open a streamed browser view even when a daemon control transport is supplied', () => {
         const sendDaemonCommand = vi.fn();
-        const { result } = openStreamedView({ sendDaemonCommand });
+        const { openCommand, result } = openStreamedView({ sendDaemonCommand });
 
-        // The view is no longer rejected as adapter_unavailable: a reachable control transport
-        // makes the streamed surface available and daemon-authoritative.
-        expect(result.effects.some((effect) => effect.kind === 'commandRejected')).toBe(false);
-        expect(result.state.viewsById.view_streamed).toMatchObject({
-            adapterKind: 'streamedBrowserSurface',
-            engineKind: 'streamedSurface',
-        });
-        expect(result.state.viewsById.view_streamed?.adapterCapabilities.navigation.canNavigate).toBe(true);
-    });
-
-    it('routes navigation on a streamed browser view through the daemon control transport (the seam)', () => {
-        const sendDaemonCommand = vi.fn();
-        const { result: opened } = openStreamedView({ sendDaemonCommand });
-
-        const navigateCommand = {
-            kind: 'navigate',
-            commandId: 'command_navigate',
-            browserSessionId: 'browser_session_streamed',
-            viewId: 'view_streamed',
-            url: 'https://app.happier.test/dashboard',
-        } satisfies BrowserCommandV1;
-
-        const result = dispatchBrowserControlCommand(opened.state, navigateCommand, { sendDaemonCommand });
-
-        // Navigation is NOT rejected and NOT applied locally; it rides the SEAM-FINISH-2 transport.
-        expect(result.effects).toEqual([{ kind: 'daemonCommand', command: navigateCommand }]);
-        expect(sendDaemonCommand).toHaveBeenCalledWith(navigateCommand);
+        expect(result.effects).toEqual([{
+            kind: 'commandRejected',
+            command: openCommand,
+            reasonCode: 'adapter_unavailable',
+        }]);
+        expect(result.state.viewsById.view_streamed).toBeUndefined();
+        expect(sendDaemonCommand).not.toHaveBeenCalled();
     });
 
     it('fails closed (adapter_unavailable) when no daemon control transport is reachable', () => {

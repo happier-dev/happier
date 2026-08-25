@@ -21,7 +21,11 @@ describe('default browser profile identity (SB-H)', () => {
             commandId: 'command_open',
             browserSessionId: 'browser_session_default_profile',
             viewId: 'view_default_profile',
-            target: { kind: 'externalUrl', url: 'https://example.test/' },
+            target: {
+                kind: 'externalUrl',
+                targetId: 'external_default_profile',
+                url: 'https://example.test/',
+            },
             platform: 'web',
             currentUrl: 'https://example.test/',
             focus: true,

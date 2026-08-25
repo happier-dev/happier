@@ -2,10 +2,12 @@ import { MMKV } from 'react-native-mmkv';
 import {
     ExternalSessionsSourceSchema,
     parseSessionRuntimeActivityProjectionFields,
+    PluginProjectionV2Schema,
     PrimaryTurnStatusV1Schema,
     SessionRuntimeActivityStateSchema,
     SessionRuntimeIssueV1Schema,
 } from '@happier-dev/protocol';
+import { PluginUiTargetedContributionsV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { z } from 'zod';
 
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
@@ -195,6 +197,13 @@ function getWarmCacheStorage(): MMKV | null {
 const SESSION_LIST_WARM_CACHE_PREFIX = 'session-list-warm-cache-v1';
 const MACHINE_DISPLAY_WARM_CACHE_PREFIX = 'machine-display-warm-cache-v1';
 /**
+ * The Account-qualified last-confirmed plugin UI admission snapshot, one entry
+ * per described machine. It is deliberately absent from the legacy plaintext
+ * purge list below: no shipped build ever wrote this family into the shared
+ * unencrypted instance, so there is nothing there to retire.
+ */
+const PLUGIN_UI_PROJECTION_WARM_CACHE_PREFIX = 'plugin-ui-projection-warm-cache-v1';
+/**
  * The prefixes older native builds wrote into the shared unencrypted instance. Moving to a new id
  * would only orphan those bytes; the plaintext titles and paths would still be sitting in the old
  * memory-mapped file. First use deletes them by prefix — surgically, because the instance holds
@@ -207,6 +216,10 @@ const LEGACY_PLAINTEXT_WARM_CACHE_PREFIXES: readonly string[] = [
 const EMPTY_WARM_CACHE_ENTRIES: Record<string, never> = {};
 const EMPTY_SESSION_LIST_WARM_CACHE_ENTRIES = EMPTY_WARM_CACHE_ENTRIES as Record<string, SessionListCacheEntryV1>;
 const EMPTY_MACHINE_DISPLAY_WARM_CACHE_ENTRIES = EMPTY_WARM_CACHE_ENTRIES as Record<string, MachineDisplayCacheEntryV1>;
+const EMPTY_PLUGIN_UI_PROJECTION_WARM_CACHE_ENTRIES = EMPTY_WARM_CACHE_ENTRIES as Record<
+    string,
+    PluginUiProjectionCacheEntryV1
+>;
 
 export const SessionListCacheEntryV1Schema = z.object({
     sessionId: z.string().min(1),
@@ -293,8 +306,33 @@ export const MachineDisplayCacheEntryV1Schema = z.object({
 
 export type MachineDisplayCacheEntryV1 = z.infer<typeof MachineDisplayCacheEntryV1Schema>;
 
+/**
+ * One machine's last-confirmed plugin UI admission snapshot. The stored
+ * `projection` is a strict subset of the canonical daemon projection built by
+ * `plugins/ui/projectionWarmCache.ts`; it is validated here with the canonical
+ * Protocol schema so a restored snapshot can never be a looser local shape.
+ *
+ * `targetedContributionsByPluginId` holds the last-confirmed target-scoped
+ * admission that accompanied a successful describe for a plugin the same
+ * `projection` still admits. It lives inside this one entry so the presentation
+ * slice and the target admission that proves it are written and restored
+ * together; a fresh offline process can therefore never hold one without the
+ * other.
+ */
+export const PluginUiProjectionCacheEntryV1Schema = z.object({
+    machineId: z.string().min(1),
+    projection: PluginProjectionV2Schema,
+    targetedContributionsByPluginId: z.record(
+        z.string().min(1),
+        PluginUiTargetedContributionsV1Schema,
+    ).optional(),
+});
+
+export type PluginUiProjectionCacheEntryV1 = z.infer<typeof PluginUiProjectionCacheEntryV1Schema>;
+
 const SessionListCacheEntriesSchema = z.record(z.string(), SessionListCacheEntryV1Schema);
 const MachineDisplayCacheEntriesSchema = z.record(z.string(), MachineDisplayCacheEntryV1Schema);
+const PluginUiProjectionCacheEntriesSchema = z.record(z.string(), PluginUiProjectionCacheEntryV1Schema);
 
 function normalizeScopePart(value: string | null | undefined): string {
     const normalized = String(value ?? '').trim();
@@ -492,6 +530,26 @@ export function saveMachineDisplayWarmCacheEntries(
     entries: Record<string, MachineDisplayCacheEntryV1>,
 ): void {
     saveScopedRecord(buildScopedKey(MACHINE_DISPLAY_WARM_CACHE_PREFIX, serverId, accountId), entries);
+}
+
+export function loadPluginUiProjectionWarmCacheEntries(
+    serverId: string | null | undefined,
+    accountId: string | null | undefined,
+): Record<string, PluginUiProjectionCacheEntryV1> {
+    const loaded = loadScopedRecord(
+        buildScopedKey(PLUGIN_UI_PROJECTION_WARM_CACHE_PREFIX, serverId, accountId),
+        PluginUiProjectionCacheEntriesSchema,
+    );
+    if (!loaded) return EMPTY_PLUGIN_UI_PROJECTION_WARM_CACHE_ENTRIES;
+    return normalizeEmptyWarmCacheRecord(loaded);
+}
+
+export function savePluginUiProjectionWarmCacheEntries(
+    serverId: string | null | undefined,
+    accountId: string | null | undefined,
+    entries: Record<string, PluginUiProjectionCacheEntryV1>,
+): void {
+    saveScopedRecord(buildScopedKey(PLUGIN_UI_PROJECTION_WARM_CACHE_PREFIX, serverId, accountId), entries);
 }
 
 type PendingMachineDisplayWarmCacheSave = Readonly<{

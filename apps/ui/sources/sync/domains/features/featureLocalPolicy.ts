@@ -23,8 +23,9 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'app.ui.storeReviewPrompts': () => true,
     'app.ui.sessionGettingStartedGuidance': () => true,
     'app.ui.changelog': () => true,
-    'app.ui.onboardingTour': () =>
-        parseBooleanEnv(process.env.EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED, false),
+    // The unfinished demo journey is intentionally paused. Keep its implementation available for
+    // future work, but do not let legacy rollout configuration mount or load it in pre-auth flows.
+    'app.ui.onboardingTour': () => false,
     'app.ui.liveActivities': (settings) => resolveUiFeatureToggleEnabled(settings, 'app.ui.liveActivities'),
     'app.ui.homeScreenWidgets': (settings) => resolveUiFeatureToggleEnabled(settings, 'app.ui.homeScreenWidgets'),
     bugReports: () => true,

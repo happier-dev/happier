@@ -132,6 +132,7 @@ function createDetail(params: Readonly<{
         replyHandoffState: 'none',
         replyHandoffAttempt: 0,
         replyHandoffDueAt: null,
+        contentRemovedAt: null,
         createdAt: EVENT_EVIDENCE.occurredAt,
         updatedAt: EVENT_EVIDENCE.occurredAt + 1,
         triggerEvidenceEnvelope: params.triggerEvidenceEnvelope

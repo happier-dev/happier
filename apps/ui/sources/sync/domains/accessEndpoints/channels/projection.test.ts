@@ -93,13 +93,13 @@ describe('access channel projection', () => {
                     hostedHttpsCompatibility: 'not-applicable',
                     durability: 'session',
                     httpBaseUrl: 'http://127.0.0.1:49152',
-                    diagnostics: [{
-                        id: 'native-ssh.platform-suspended',
-                        severity: 'warning',
-                        message: 'settings.accessEndpoints.limitation.platform-suspended',
-                    }],
                 }),
             ],
+            diagnostics: [{
+                id: 'native-ssh.platform-suspended',
+                severity: 'warning',
+                message: 'settings.accessEndpoints.limitation.platform-suspended',
+            }],
         });
 
         expect(channels[0]?.limitations).toContainEqual(expect.objectContaining({
@@ -122,44 +122,44 @@ describe('access channel projection', () => {
                     hostedHttpsCompatibility: 'not-applicable',
                     durability: 'session',
                     httpBaseUrl: 'http://127.0.0.1:49152',
-                    diagnostics: [
-                        {
-                            id: 'native-ssh.authentication-failed',
-                            severity: 'error',
-                            message: 'settings.accessEndpoints.limitation.authentication-failed',
-                        },
-                        {
-                            id: 'native-ssh.host-key-untrusted',
-                            severity: 'warning',
-                            message: 'settings.accessEndpoints.limitation.host-key-untrusted',
-                        },
-                        {
-                            id: 'native-ssh.host-key-rejected',
-                            severity: 'error',
-                            message: 'settings.accessEndpoints.limitation.host-key-rejected',
-                        },
-                        {
-                            id: 'native-ssh.host-key-mismatch',
-                            severity: 'error',
-                            message: 'settings.accessEndpoints.limitation.host-key-mismatch',
-                        },
-                        {
-                            id: 'native-ssh.remote-service-unreachable',
-                            severity: 'error',
-                            message: 'settings.accessEndpoints.limitation.remote-service-unreachable',
-                        },
-                        {
-                            id: 'native-ssh.loopback-bind-failed',
-                            severity: 'error',
-                            message: 'settings.accessEndpoints.limitation.loopback-bind-failed',
-                        },
-                        {
-                            id: 'native-ssh.network-captive-portal',
-                            severity: 'error',
-                            message: 'settings.accessEndpoints.limitation.network-captive-portal',
-                        },
-                    ],
                 }),
+            ],
+            diagnostics: [
+                {
+                    id: 'native-ssh.authentication-failed',
+                    severity: 'error',
+                    message: 'settings.accessEndpoints.limitation.authentication-failed',
+                },
+                {
+                    id: 'native-ssh.host-key-untrusted',
+                    severity: 'warning',
+                    message: 'settings.accessEndpoints.limitation.host-key-untrusted',
+                },
+                {
+                    id: 'native-ssh.host-key-rejected',
+                    severity: 'error',
+                    message: 'settings.accessEndpoints.limitation.host-key-rejected',
+                },
+                {
+                    id: 'native-ssh.host-key-mismatch',
+                    severity: 'error',
+                    message: 'settings.accessEndpoints.limitation.host-key-mismatch',
+                },
+                {
+                    id: 'native-ssh.remote-service-unreachable',
+                    severity: 'error',
+                    message: 'settings.accessEndpoints.limitation.remote-service-unreachable',
+                },
+                {
+                    id: 'native-ssh.loopback-bind-failed',
+                    severity: 'error',
+                    message: 'settings.accessEndpoints.limitation.loopback-bind-failed',
+                },
+                {
+                    id: 'native-ssh.network-captive-portal',
+                    severity: 'error',
+                    message: 'settings.accessEndpoints.limitation.network-captive-portal',
+                },
             ],
         });
 
@@ -172,6 +172,55 @@ describe('access channel projection', () => {
             expect.objectContaining({ reason: 'loopback-bind-failed', severity: 'error' }),
             expect.objectContaining({ reason: 'network-captive-portal', severity: 'error' }),
         ]));
+    });
+
+    /**
+     * §7.1: an SSH auth or host-key failure aborts before a lease exists, so there is no endpoint
+     * to hang the limitation on. Without an endpoint-less channel the user is told nothing at all.
+     */
+    it('surfaces a native SSH failure as its own channel when no lease produced an endpoint', async () => {
+        const loaded = await import('./buildProjection').catch(() => null);
+        expect(loaded).not.toBeNull();
+
+        const channels = loaded!.buildAccessChannelProjection({
+            endpoints: [],
+            diagnostics: [
+                {
+                    id: 'native-ssh.foreground-only',
+                    severity: 'info',
+                    message: 'settings.accessEndpoints.limitation.foreground-only',
+                },
+                {
+                    id: 'native-ssh.authentication-failed',
+                    severity: 'error',
+                    message: 'settings.accessEndpoints.limitation.authentication-failed',
+                },
+            ],
+        });
+
+        expect(channels).toHaveLength(1);
+        expect(channels[0]?.kind).toBe('ssh-tunnel-native');
+        expect(channels[0]?.endpointIds).toEqual([]);
+        expect(channels[0]?.limitations).toContainEqual(expect.objectContaining({
+            reason: 'authentication-failed',
+            severity: 'error',
+        }));
+    });
+
+    it('does not invent a native channel from ambient informational notes alone', async () => {
+        const loaded = await import('./buildProjection').catch(() => null);
+        expect(loaded).not.toBeNull();
+
+        const channels = loaded!.buildAccessChannelProjection({
+            endpoints: [],
+            diagnostics: [{
+                id: 'native-ssh.foreground-only',
+                severity: 'info',
+                message: 'settings.accessEndpoints.limitation.foreground-only',
+            }],
+        });
+
+        expect(channels).toEqual([]);
     });
 
     it('maps hyphenated direction ids to stable translation keys', async () => {

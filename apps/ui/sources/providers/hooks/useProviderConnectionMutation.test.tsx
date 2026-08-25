@@ -116,25 +116,31 @@ describe('useProviderConnectionMutation', () => {
         expect(refresh).toHaveBeenCalledOnce();
     });
 
-    it('keeps a captured mutation callback stable and invokes it against the current exact scope', async () => {
+    it('keeps a captured mutation callback stable across re-renders of one target scope', async () => {
+        // Unrelated re-renders must not restart the write path: the callback a
+        // modal captured stays the current one, its request coalesces with an
+        // identical concurrent one, and the write follows the routing id the
+        // target resolves to at effect time rather than the rendered snapshot.
         const deferred = createDeferred<Readonly<{
             status: 'success';
             action: 'delete';
             deletedConnectionId: string;
         }>>();
         machineRpcWithServerScope.mockReturnValueOnce(deferred.promise);
-        const refreshA = vi.fn(async () => undefined);
-        const refreshB = vi.fn(async () => undefined);
+        const selected = { current: { machineId: 'machine-a', serverId: 'server-a' } };
+        const resolveTarget = () => selected.current;
+        const refresh = vi.fn(async () => undefined);
         const hook = await renderHook(
-            ({ resolveTarget, refresh }: Readonly<{
-                resolveTarget: () => Readonly<{ machineId: string; serverId: string }> | null;
-                refresh: () => Promise<void>;
-            }>) => useProviderConnectionMutation({ resolveTarget, refresh }),
-            { initialProps: { resolveTarget: resolveTargetOnServerA, refresh: refreshA } },
+            ({ unrelated }: Readonly<{ unrelated: number }>) => {
+                void unrelated;
+                return useProviderConnectionMutation({ resolveTarget, refresh });
+            },
+            { initialProps: { unrelated: 0 } },
         );
         const capturedUnderA = hook.getCurrent().run;
 
-        await hook.rerender({ resolveTarget: resolveTargetOnServerB, refresh: refreshB });
+        selected.current = { machineId: 'machine-a', serverId: 'server-a-reconnected' };
+        await hook.rerender({ unrelated: 1 });
         const currentRun = hook.getCurrent().run;
 
         const request = {
@@ -157,10 +163,11 @@ describe('useProviderConnectionMutation', () => {
 
         expect(fromCurrentCallback).toBe(fromCapturedCallback);
         expect(machineRpcWithServerScope).toHaveBeenCalledOnce();
-        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'server-b' }));
+        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server-a-reconnected',
+        }));
         expect(currentRun).toBe(capturedUnderA);
-        expect(refreshA).not.toHaveBeenCalled();
-        expect(refreshB).toHaveBeenCalledOnce();
+        expect(refresh).toHaveBeenCalledOnce();
     });
 
     it('refuses a modal-delayed write once the selection has moved to another machine', async () => {
@@ -180,6 +187,61 @@ describe('useProviderConnectionMutation', () => {
                 machineId: 'machine-a',
                 connectionId: 'pc_a',
             });
+        });
+
+        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+        expect(refresh).not.toHaveBeenCalled();
+        expect(hook.getCurrent().error).toEqual(createProviderErrorV1('provider_authorization_changed', {
+            machineId: 'machine-a',
+            connectionId: 'pc_a',
+        }));
+    });
+
+    it('refuses a modal-delayed write once the selection has moved to the same machine id on another server profile', async () => {
+        // A machine id is unique only inside one server identity. The user
+        // confirmed a destructive action while srv_a/machine-a was the target;
+        // the selection then moved to a DIFFERENT Account's machine that
+        // happens to carry the same id. The captured request names machine-a,
+        // so a machine-id-only check still matches — and the write would be
+        // issued against the other server's daemon.
+        const live = {
+            current: { serverIdentityId: 'srv_a', machineId: 'machine-a', serverId: 'server-a' },
+        };
+        // Mirrors the Provider target owner's `resolveCurrentTarget`: it
+        // re-resolves the live selection and returns null once that selection
+        // moved away from the target the calling render was built for.
+        const resolverForRenderedTarget = (
+            expected: Readonly<{ serverIdentityId: string; machineId: string }>,
+        ) => () => (
+            live.current.serverIdentityId === expected.serverIdentityId
+                && live.current.machineId === expected.machineId
+                ? { machineId: live.current.machineId, serverId: live.current.serverId }
+                : null
+        );
+        const resolveOnIdentityA = resolverForRenderedTarget({
+            serverIdentityId: 'srv_a', machineId: 'machine-a',
+        });
+        const resolveOnIdentityB = resolverForRenderedTarget({
+            serverIdentityId: 'srv_b', machineId: 'machine-a',
+        });
+        const refresh = vi.fn(async () => undefined);
+        const hook = await renderHook(
+            ({ resolveTarget }: Readonly<{
+                resolveTarget: () => Readonly<{ machineId: string; serverId: string }> | null;
+            }>) => useProviderConnectionMutation({ resolveTarget, refresh }),
+            { initialProps: { resolveTarget: resolveOnIdentityA } },
+        );
+        const capturedWhileTargetingIdentityA = hook.getCurrent().run;
+
+        live.current = { serverIdentityId: 'srv_b', machineId: 'machine-a', serverId: 'server-b' };
+        await hook.rerender({ resolveTarget: resolveOnIdentityB });
+
+        await act(async () => {
+            await capturedWhileTargetingIdentityA({
+                action: 'delete',
+                machineId: 'machine-a',
+                connectionId: 'pc_a',
+            }, 'delete');
         });
 
         expect(machineRpcWithServerScope).not.toHaveBeenCalled();
@@ -534,7 +596,7 @@ describe('useProviderConnectionMutation', () => {
                 result = await hook.getCurrent().run(testCase.request);
             });
             expect(result).toEqual(testCase.response);
-            expect(hook.getCurrent().error).toEqual(createProviderErrorV1('provider_endpoint_unavailable', {
+            expect(hook.getCurrent().error).toEqual(createProviderErrorV1('provider_machine_unavailable', {
                 connectionId: 'pc_a',
                 machineId: 'machine-a',
             }));

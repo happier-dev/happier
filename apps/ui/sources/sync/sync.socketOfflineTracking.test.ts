@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { SessionOrganizationSnapshot } from '@happier-dev/protocol';
 
 type FetchChanges = typeof import('./api/session/apiChanges').fetchChanges;
@@ -174,6 +174,21 @@ function stubSnapshotRefreshFetch(): ReturnType<typeof vi.fn> {
           : 'url' in input
             ? String(input.url)
             : input.toString();
+    if (url.includes('/v2/session-organization')) {
+      return new Response(JSON.stringify({
+        snapshot: {
+          schemaVersion: 1,
+          version: 0,
+          pins: [],
+          folders: [],
+          folderAssignments: [],
+          tags: [],
+          tagAssignments: [],
+          orderEntries: [],
+          labels: [],
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
     if (url.includes('/v2/sessions')) {
       return new Response(
         JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }),
@@ -260,6 +275,9 @@ describe('sync socket offline tracking', () => {
   const initialStorageState = storage.getState();
 
   beforeEach(() => {
+    // `sync` is a shared singleton, so clear server-scoped private state before
+    // restoring this test's storage fixture.
+    sync.disconnectServer();
     storage.setState(initialStorageState, true);
     kvStore.clear();
     statusListeners.clear();
@@ -782,6 +800,133 @@ describe('sync socket offline tracking', () => {
     expect(storage.getState().sessionListRenderables[sessionId]).toBeUndefined();
   });
 
+  it('does not restore a Voice History carrier from an older session snapshot when exact hydration reports it absent', async () => {
+    upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+    stubSnapshotRefreshFetch();
+
+    const sessionId = 'voice-history-carrier-absent-during-snapshot';
+    const ownerMetadata = {
+      path: '/tmp/voice-history',
+      host: 'test-host',
+      systemSessionV1: {
+        v: 1,
+        key: 'voice_transcript_history',
+        hidden: true,
+      },
+    } as const;
+    storage.getState().applySessions([{
+      id: sessionId,
+      seq: 4,
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 2,
+      encryptionMode: 'plain',
+      metadata: ownerMetadata,
+      metadataVersion: 1,
+      agentState: {},
+      agentStateVersion: 1,
+      thinking: false,
+      thinkingAt: 0,
+      presence: 2,
+    } satisfies Session]);
+
+    let releaseOlderSnapshot!: () => void;
+    const olderSnapshotReleased = new Promise<void>((resolve) => {
+      releaseOlderSnapshot = resolve;
+    });
+    const staleListRow = {
+      id: sessionId,
+      seq: 4,
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 2,
+      archivedAt: null,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify(ownerMetadata),
+      metadataVersion: 1,
+      agentState: JSON.stringify({}),
+      agentStateVersion: 1,
+      dataEncryptionKey: null,
+      share: null,
+    };
+    let activeSnapshotCalls = 0;
+    apiSocketRequestMock.mockImplementation(async (path) => {
+      if (path.startsWith('/v2/sessions/active')) {
+        const snapshotCall = ++activeSnapshotCalls;
+        if (snapshotCall === 1) {
+          await olderSnapshotReleased;
+        }
+        return new Response(JSON.stringify({
+          sessions: snapshotCall === 1 ? [staleListRow] : [],
+          nextCursor: null,
+          hasNext: false,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (path === `/v2/sessions/${sessionId}`) {
+        return new Response(JSON.stringify({ error: 'Session not found' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (path.startsWith('/v2/sessions?')) {
+        return new Response(JSON.stringify({
+          sessions: [],
+          nextCursor: null,
+          hasNext: false,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ error: `unexpected path ${path}` }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ2b2ljZS1oaXN0b3J5In0.sig', secret: 'secret' };
+    (sync as any).encryption = {
+      decryptEncryptionKey: async () => null,
+      decryptEncryptionKeys: async () => [],
+      initializeSessions: async () => {},
+      removeSessionEncryption: vi.fn(),
+      getSessionEncryption: () => null,
+    };
+
+    const originalSyncTuning = (sync as any).syncTuning;
+    (sync as any).syncTuning = {
+      ...originalSyncTuning,
+      // The stale list response is the thing under test. Do not let optional
+      // list hydration issue a second exact read that masks its resurrection.
+      sessionListEagerHydrationCount: 0,
+      sessionListBackgroundHydrationMaxRows: 0,
+    };
+    onTestFinished(() => {
+      (sync as any).syncTuning = originalSyncTuning;
+    });
+
+    const olderSnapshot = (sync as any).fetchSessions();
+    await expect.poll(() => activeSnapshotCalls).toBe(1);
+
+    const exactHydration = (sync as any).fetchSessions({
+      requiredHydrationSessionIds: [sessionId],
+      prioritizeSessionIds: [sessionId],
+      awaitSessionListHydration: true,
+    });
+    await expect.poll(() => apiSocketRequestMock.mock.calls.some(([path]) => (
+      path === `/v2/sessions/${sessionId}`
+    ))).toBe(true);
+    await exactHydration;
+
+    expect(storage.getState().sessions[sessionId]).toBeUndefined();
+    expect(storage.getState().sessionListRenderables[sessionId]).toBeUndefined();
+
+    releaseOlderSnapshot();
+    await olderSnapshot;
+    await (sync as any).sessionsSync.awaitQueue({ timeoutMs: 2_000 });
+
+    expect(storage.getState().sessions[sessionId]).toBeUndefined();
+    expect(storage.getState().sessionListRenderables[sessionId]).toBeUndefined();
+  });
+
   it('fetches and hydrates cold hidden Voice attention rows when session-list attention placement is off', async () => {
     upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
     storage.setState((state) => ({
@@ -1082,6 +1227,119 @@ describe('sync socket offline tracking', () => {
     );
     expect(storage.getState().sessions.s_deleted_while_offline).toBeUndefined();
     expect((sync as any).encryption.removeSessionEncryption).toHaveBeenCalledWith('s_deleted_while_offline');
+  });
+
+  it('keeps a required changed session when exact hydration receives an unparseable 404', async () => {
+    upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+    const snapshotRefreshFetch = stubSnapshotRefreshFetch();
+    storage.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        s_compatibility_404: {
+          id: 's_compatibility_404',
+          seq: 7,
+          encryptionMode: 'plain',
+          metadata: {},
+          agentState: null,
+        } as any,
+      },
+    }), true);
+    apiSocketRequestMock.mockImplementation(async (path) => {
+      if (path === '/v2/sessions/s_compatibility_404') {
+        return new Response('Not found', {
+          status: 404,
+          headers: { 'Content-Type': 'text/plain' },
+        });
+      }
+      return snapshotRefreshFetch(path);
+    });
+    (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ0ZXN0In0.sig', secret: 'secret' };
+    (sync as any).encryption = {
+      decryptEncryptionKey: async () => null,
+      initializeSessions: async () => {},
+      removeSessionEncryption: vi.fn(),
+      getSessionEncryption: () => null,
+    };
+
+    await expect((sync as any).fetchSessions({
+      requiredHydrationSessionIds: ['s_compatibility_404'],
+      prioritizeSessionIds: ['s_compatibility_404'],
+      awaitSessionListHydration: true,
+      hydrationTelemetrySource: 'changesCatchUp',
+    })).rejects.toThrow(
+      'Required session shell hydration failed for s_compatibility_404: invalid_response',
+    );
+
+    expect(apiSocketRequestMock).toHaveBeenCalledWith(
+      '/v2/sessions/s_compatibility_404',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(storage.getState().sessions.s_compatibility_404).toEqual(expect.objectContaining({
+      id: 's_compatibility_404',
+    }));
+    expect((sync as any).encryption.removeSessionEncryption).not.toHaveBeenCalled();
+  });
+
+  it('keeps a required changed session when a current-text hydration 404 carries route metadata', async () => {
+    upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+    const snapshotRefreshFetch = stubSnapshotRefreshFetch();
+    storage.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        s_current_text_extra_404: {
+          id: 's_current_text_extra_404',
+          seq: 7,
+          encryptionMode: 'plain',
+          metadata: {},
+          agentState: null,
+        } as any,
+      },
+    }), true);
+    apiSocketRequestMock.mockImplementation(async (path) => {
+      if (path === '/v2/sessions/s_current_text_extra_404') {
+        return new Response(JSON.stringify({
+          error: 'Session not found',
+          path: '/v2/sessions/s_current_text_extra_404',
+          method: 'GET',
+        }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return snapshotRefreshFetch(path);
+    });
+    (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ0ZXN0In0.sig', secret: 'secret' };
+    (sync as any).encryption = {
+      decryptEncryptionKey: async () => null,
+      initializeSessions: async () => {},
+      removeSessionEncryption: vi.fn(),
+      getSessionEncryption: () => null,
+    };
+
+    const hydrationError = await (sync as any).fetchSessions({
+      requiredHydrationSessionIds: ['s_current_text_extra_404'],
+      prioritizeSessionIds: ['s_current_text_extra_404'],
+      awaitSessionListHydration: true,
+      hydrationTelemetrySource: 'changesCatchUp',
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(apiSocketRequestMock).toHaveBeenCalledWith(
+      '/v2/sessions/s_current_text_extra_404',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(storage.getState().sessions.s_current_text_extra_404).toEqual(expect.objectContaining({
+      id: 's_current_text_extra_404',
+    }));
+    expect((sync as any).encryption.removeSessionEncryption).not.toHaveBeenCalled();
+    expect(hydrationError).toBeInstanceOf(Error);
+    expect(hydrationError).toMatchObject({
+      message: 'Required session shell hydration failed for s_current_text_extra_404: invalid_response',
+    });
   });
 
   it('waits for settings before bootstrapping sessions so pinned ids are available on first load', async () => {

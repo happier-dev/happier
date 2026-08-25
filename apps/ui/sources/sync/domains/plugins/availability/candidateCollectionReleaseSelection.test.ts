@@ -151,6 +151,7 @@ function createReader(input: Readonly<{ noIncumbent?: boolean }> = {}) {
         availabilityCursor: 4,
         intentReads: [{ pluginId, response }],
         materializations: [],
+        snapshots: [],
     };
     return createPluginAccountAvailabilityReader({
         scope: accountLifetime.scope,
