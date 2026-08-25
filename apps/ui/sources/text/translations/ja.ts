@@ -1047,7 +1047,6 @@ export const ja = {
       schedule: "スケジュール",
       event: ({ eventId }: { eventId: string }) => `イベント: ${eventId}`,
       manual: "手動",
-      conversationTrigger: "会話トリガー",
       noNextRun: "次回の実行なし",
       nextRun: ({ time }: { time: string }) => `次回: ${time}`,
       nextRunPending: "次回の実行は保留中",

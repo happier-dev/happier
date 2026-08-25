@@ -1,6 +1,6 @@
 import type {
-    AutomationV3DefinitionDetail,
-    AutomationV3DefinitionListItem,
+    AutomationDefinitionDetail,
+    AutomationDefinitionListItem,
 } from '@happier-dev/protocol';
 
 import type {
@@ -13,12 +13,10 @@ import type {
 type ScheduleSummary = AutomationDefinitionListItemForTrigger<'schedule'>;
 type ManualSummary = AutomationDefinitionListItemForTrigger<'manual'>;
 type PluginEventSummary = AutomationDefinitionListItemForTrigger<'pluginEvent'>;
-type ConversationSummary = AutomationDefinitionListItemForTrigger<'conversation'>;
 
 type ScheduleDetail = AutomationDefinitionDetailForTrigger<'schedule'>;
 type ManualDetail = AutomationDefinitionDetailForTrigger<'manual'>;
 type PluginEventDetail = AutomationDefinitionDetailForTrigger<'pluginEvent'>;
-type ConversationDetail = AutomationDefinitionDetailForTrigger<'conversation'>;
 
 type ScheduleDefinition = Extract<AutomationDefinition, Readonly<{
     trigger: Readonly<{ kind: 'schedule' }>;
@@ -29,19 +27,16 @@ type ManualDefinition = Extract<AutomationDefinition, Readonly<{
 type PluginEventDefinition = Extract<AutomationDefinition, Readonly<{
     trigger: Readonly<{ kind: 'pluginEvent' }>;
 }>>;
-type ConversationDefinition = Extract<AutomationDefinition, Readonly<{
-    trigger: Readonly<{ kind: 'conversation' }>;
-}>>;
 
-function isScheduleDetail(detail: AutomationV3DefinitionDetail): detail is ScheduleDetail {
+function isScheduleDetail(detail: AutomationDefinitionDetail): detail is ScheduleDetail {
     return detail.trigger.kind === 'schedule';
 }
 
-function isManualDetail(detail: AutomationV3DefinitionDetail): detail is ManualDetail {
+function isManualDetail(detail: AutomationDefinitionDetail): detail is ManualDetail {
     return detail.trigger.kind === 'manual';
 }
 
-function isPluginEventDetail(detail: AutomationV3DefinitionDetail): detail is PluginEventDetail {
+function isPluginEventDetail(detail: AutomationDefinitionDetail): detail is PluginEventDetail {
     return detail.trigger.kind === 'pluginEvent';
 }
 
@@ -57,15 +52,10 @@ function isPluginEventDefinition(definition: AutomationDefinition): definition i
     return definition.trigger.kind === 'pluginEvent';
 }
 
-function isConversationDefinition(definition: AutomationDefinition): definition is ConversationDefinition {
-    return definition.trigger.kind === 'conversation';
-}
-
 function summaryFromDetail(detail: ScheduleDetail): ScheduleSummary;
 function summaryFromDetail(detail: ManualDetail): ManualSummary;
 function summaryFromDetail(detail: PluginEventDetail): PluginEventSummary;
-function summaryFromDetail(detail: ConversationDetail): ConversationSummary;
-function summaryFromDetail(detail: AutomationV3DefinitionDetail): AutomationV3DefinitionListItem {
+function summaryFromDetail(detail: AutomationDefinitionDetail): AutomationDefinitionListItem {
     const {
         triggerDefinitionEnvelope: _triggerDefinitionEnvelope,
         executionRecipe: _executionRecipe,
@@ -78,9 +68,8 @@ function summaryFromDetail(detail: AutomationV3DefinitionDetail): AutomationV3De
 function currentSummaryFromDefinition(definition: ScheduleDefinition): ScheduleSummary;
 function currentSummaryFromDefinition(definition: ManualDefinition): ManualSummary;
 function currentSummaryFromDefinition(definition: PluginEventDefinition): PluginEventSummary;
-function currentSummaryFromDefinition(definition: ConversationDefinition): ConversationSummary;
-function currentSummaryFromDefinition(definition: AutomationDefinition): AutomationV3DefinitionListItem;
-function currentSummaryFromDefinition(definition: AutomationDefinition): AutomationV3DefinitionListItem {
+function currentSummaryFromDefinition(definition: AutomationDefinition): AutomationDefinitionListItem;
+function currentSummaryFromDefinition(definition: AutomationDefinition): AutomationDefinitionListItem {
     const {
         detail: _detail,
         linkedExistingSessionId: _linkedExistingSessionId,
@@ -90,26 +79,26 @@ function currentSummaryFromDefinition(definition: AutomationDefinition): Automat
 }
 
 function hasConsistentAutomationDefinitionExecutionRecipe(
-    detail: AutomationV3DefinitionDetail,
+    detail: AutomationDefinitionDetail,
 ): boolean {
     const executionRecipe = detail.executionRecipe;
     return !executionRecipe || executionRecipe.templateVersion === detail.templateVersion;
 }
 
 /**
- * The definition owner projects the existing-Session association on every V3
+ * The definition owner projects the existing-Session association on every
  * response, so summaries and direct reads share one source instead of the
  * summary path re-deriving it. Current direct recipes are still correlated to
  * their enclosing definition revision before the association is used.
  */
 export function readAutomationDefinitionExistingSessionId(
-    detail: AutomationV3DefinitionDetail,
+    detail: AutomationDefinitionDetail,
 ): string | null {
     if (!hasConsistentAutomationDefinitionExecutionRecipe(detail)) return null;
     return detail.existingSessionId;
 }
 
-function linkedExistingSessionId(detail: AutomationV3DefinitionDetail): string | null {
+function linkedExistingSessionId(detail: AutomationDefinitionDetail): string | null {
     return readAutomationDefinitionExistingSessionId(detail);
 }
 
@@ -177,8 +166,6 @@ export function hasMatchingAutomationDefinitionSummary(
         case 'pluginEvent':
             return right.trigger.kind === 'pluginEvent'
                 && samePluginEventTrigger(left.trigger, right.trigger);
-        case 'conversation':
-            return right.trigger.kind === 'conversation';
     }
 
     return false;
@@ -211,19 +198,6 @@ function createManualDefinition(detail: ManualDetail): AutomationDefinitionAvail
 }
 
 function createPluginEventDefinition(detail: PluginEventDetail): AutomationDefinitionAvailable<'pluginEvent'> {
-    const summary = summaryFromDetail(detail);
-    return {
-        ...summary,
-        detail: {
-            kind: 'available',
-            templateVersion: detail.templateVersion,
-            value: detail,
-        },
-        linkedExistingSessionId: linkedExistingSessionId(detail),
-    };
-}
-
-function createConversationDefinition(detail: ConversationDetail): AutomationDefinitionAvailable<'conversation'> {
     const summary = summaryFromDetail(detail);
     return {
         ...summary,
@@ -293,26 +267,6 @@ function attachPluginEventDetail(
     };
 }
 
-function attachConversationDetail(
-    summary: ConversationDefinition,
-    detail: ConversationDetail,
-): AutomationDefinitionAvailable<'conversation'> {
-    const currentSummary = currentSummaryFromDefinition(summary);
-    const currentDetail = {
-        ...detail,
-        ...currentSummary,
-    };
-    return {
-        ...currentSummary,
-        detail: {
-            kind: 'available',
-            templateVersion: detail.templateVersion,
-            value: currentDetail,
-        },
-        linkedExistingSessionId: linkedExistingSessionId(currentDetail),
-    };
-}
-
 /**
  * Creates one safe, content-free store record from the list projection. The
  * bounded list already carries the owner-projected existing-Session
@@ -320,7 +274,7 @@ function attachConversationDetail(
  * definition detail to answer an association question.
  */
 export function createAutomationDefinitionSummary(
-    summary: AutomationV3DefinitionListItem,
+    summary: AutomationDefinitionListItem,
 ): AutomationDefinition {
     return {
         ...summary,
@@ -332,14 +286,18 @@ export function createAutomationDefinitionSummary(
     };
 }
 
-/** Projects a V3 mutation/direct-read result into the same canonical store record. */
+/** Projects a mutation/direct-read result into the same canonical store record. */
 export function createAutomationDefinitionFromDetail(
-    detail: AutomationV3DefinitionDetail,
+    detail: AutomationDefinitionDetail,
 ): AutomationDefinition {
-    if (isScheduleDetail(detail)) return createScheduleDefinition(detail);
-    if (isManualDetail(detail)) return createManualDefinition(detail);
-    if (isPluginEventDetail(detail)) return createPluginEventDefinition(detail);
-    return createConversationDefinition(detail);
+    switch (detail.trigger.kind) {
+        case 'schedule':
+            return createScheduleDefinition(detail);
+        case 'manual':
+            return createManualDefinition(detail);
+        case 'pluginEvent':
+            return createPluginEventDefinition(detail);
+    }
 }
 
 /** A direct 409 must revoke the cached private content rather than reinterpret it as plaintext. */
@@ -366,7 +324,7 @@ export function markAutomationDefinitionContentUnavailable(
  */
 export function applyAutomationDefinitionDetail(
     current: AutomationDefinition | null | undefined,
-    detail: AutomationV3DefinitionDetail,
+    detail: AutomationDefinitionDetail,
     options: Readonly<{ replaceEqualRevision?: boolean }> = {},
 ): AutomationDefinition {
     if (!current) {
@@ -397,7 +355,7 @@ export function applyAutomationDefinitionDetail(
  */
 export function attachAutomationDefinitionDetail(
     summary: AutomationDefinition,
-    detail: AutomationV3DefinitionDetail,
+    detail: AutomationDefinitionDetail,
 ): AutomationDefinition | null {
     if (
         detail.id !== summary.id
@@ -408,22 +366,18 @@ export function attachAutomationDefinitionDetail(
         return null;
     }
 
-    if (isScheduleDetail(detail)) {
-        return isScheduleDefinition(summary) && sameScheduleTrigger(summary.trigger, detail.trigger)
-            ? attachScheduleDetail(summary, detail)
-            : null;
+    switch (detail.trigger.kind) {
+        case 'schedule':
+            return isScheduleDefinition(summary) && sameScheduleTrigger(summary.trigger, detail.trigger)
+                ? attachScheduleDetail(summary, detail)
+                : null;
+        case 'manual':
+            return isManualDefinition(summary)
+                ? attachManualDetail(summary, detail)
+                : null;
+        case 'pluginEvent':
+            return isPluginEventDefinition(summary) && samePluginEventTrigger(summary.trigger, detail.trigger)
+                ? attachPluginEventDetail(summary, detail)
+                : null;
     }
-    if (isManualDetail(detail)) {
-        return isManualDefinition(summary)
-            ? attachManualDetail(summary, detail)
-            : null;
-    }
-    if (isPluginEventDetail(detail)) {
-        return isPluginEventDefinition(summary) && samePluginEventTrigger(summary.trigger, detail.trigger)
-            ? attachPluginEventDetail(summary, detail)
-            : null;
-    }
-    return isConversationDefinition(summary)
-        ? attachConversationDetail(summary, detail)
-        : null;
 }

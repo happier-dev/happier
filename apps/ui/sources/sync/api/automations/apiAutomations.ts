@@ -1,23 +1,23 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 import {
-    AutomationV3AssignmentUpdateRequestSchema,
+    AutomationAssignmentUpdateRequestSchema,
     AutomationV3ClearRunHistoryResponseSchema,
-    AutomationV3DeleteResponseSchema,
-    AutomationV3DefinitionDetailSchema,
-    AutomationV3DefinitionListResponseSchema,
-    AutomationV3PluginEventDefinitionCreateRequestSchema,
-    AutomationV3PluginEventDefinitionPatchRequestSchema,
+    AutomationDeleteResponseSchema,
+    AutomationDefinitionDetailSchema,
+    AutomationDefinitionListResponseSchema,
+    AutomationPluginEventDefinitionCreateRequestSchema,
+    AutomationPluginEventDefinitionPatchRequestSchema,
     AutomationV3RunDetailSchema,
     AutomationV3RunMutationResponseSchema,
     AutomationV3SettingsSchema,
     AutomationV3SettingsUpdateRequestSchema,
-    type AutomationV3AssignmentInput,
+    type AutomationAssignmentInput,
     type AutomationV3ClearRunHistoryResponse,
-    type AutomationV3DefinitionDetail,
-    type AutomationV3DefinitionListItem,
-    type AutomationV3PluginEventDefinitionCreateRequest,
-    type AutomationV3PluginEventDefinitionPatchRequest,
+    type AutomationDefinitionDetail,
+    type AutomationDefinitionListItem,
+    type AutomationPluginEventDefinitionCreateRequest,
+    type AutomationPluginEventDefinitionPatchRequest,
     type AutomationV3RunDetail,
     type AutomationV3RunListItem,
     type AutomationV3Settings,
@@ -65,12 +65,12 @@ export type AutomationPatchInput = Readonly<Partial<AutomationCreateInput>>;
  */
 export async function listAutomationDefinitions(
     credentials: AuthCredentials,
-): Promise<AutomationV3DefinitionListItem[]> {
+): Promise<AutomationDefinitionListItem[]> {
     const response = await serverFetch('/v3/automations', {
         headers: getAutomationAuthHeaders(credentials),
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
-    return AutomationV3DefinitionListResponseSchema.parse(raw).automations;
+    return AutomationDefinitionListResponseSchema.parse(raw).automations;
 }
 
 /** Account-scoped settings are read through their strict owner, never inferred from definitions or runs. */
@@ -103,12 +103,12 @@ export async function updateAutomationSettings(
 export async function getAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
-): Promise<AutomationV3DefinitionDetail> {
+): Promise<AutomationDefinitionDetail> {
     const response = await serverFetch(`/v3/automations/${encodeURIComponent(automationId)}`, {
         headers: getAutomationAuthHeaders(credentials),
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
-    return AutomationV3DefinitionDetailSchema.parse(raw);
+    return AutomationDefinitionDetailSchema.parse(raw);
 }
 
 /**
@@ -117,72 +117,72 @@ export async function getAutomationDefinition(
  */
 export async function createPluginEventAutomationDefinition(
     credentials: AuthCredentials,
-    input: AutomationV3PluginEventDefinitionCreateRequest,
-): Promise<AutomationV3DefinitionDetail> {
-    const body = AutomationV3PluginEventDefinitionCreateRequestSchema.parse(input);
+    input: AutomationPluginEventDefinitionCreateRequest,
+): Promise<AutomationDefinitionDetail> {
+    const body = AutomationPluginEventDefinitionCreateRequestSchema.parse(input);
     const response = await serverFetch('/v3/automations', {
         method: 'POST',
         headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
         body: JSON.stringify(body),
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
-    return AutomationV3DefinitionDetailSchema.parse(raw);
+    return AutomationDefinitionDetailSchema.parse(raw);
 }
 
 /** Event edits are full replacement requests guarded by the displayed current template version. */
 export async function updatePluginEventAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
-    input: AutomationV3PluginEventDefinitionPatchRequest,
-): Promise<AutomationV3DefinitionDetail> {
-    const body = AutomationV3PluginEventDefinitionPatchRequestSchema.parse(input);
+    input: AutomationPluginEventDefinitionPatchRequest,
+): Promise<AutomationDefinitionDetail> {
+    const body = AutomationPluginEventDefinitionPatchRequestSchema.parse(input);
     const response = await serverFetch(`/v3/automations/${encodeURIComponent(automationId)}`, {
         method: 'PATCH',
         headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
         body: JSON.stringify(body),
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
-    return AutomationV3DefinitionDetailSchema.parse(raw);
+    return AutomationDefinitionDetailSchema.parse(raw);
 }
 
 /** Lifecycle mutations remain on the definition owner for Event Automations. */
 export async function pauseAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
-): Promise<AutomationV3DefinitionDetail> {
+): Promise<AutomationDefinitionDetail> {
     const response = await serverFetch(`/v3/automations/${encodeURIComponent(automationId)}/pause`, {
         method: 'POST',
         headers: getAutomationAuthHeaders(credentials),
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
-    return AutomationV3DefinitionDetailSchema.parse(raw);
+    return AutomationDefinitionDetailSchema.parse(raw);
 }
 
 export async function resumeAutomationDefinition(
     credentials: AuthCredentials,
     automationId: string,
-): Promise<AutomationV3DefinitionDetail> {
+): Promise<AutomationDefinitionDetail> {
     const response = await serverFetch(`/v3/automations/${encodeURIComponent(automationId)}/resume`, {
         method: 'POST',
         headers: getAutomationAuthHeaders(credentials),
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
-    return AutomationV3DefinitionDetailSchema.parse(raw);
+    return AutomationDefinitionDetailSchema.parse(raw);
 }
 
 export async function replaceAutomationDefinitionAssignments(
     credentials: AuthCredentials,
     automationId: string,
-    assignments: ReadonlyArray<AutomationV3AssignmentInput>,
-): Promise<AutomationV3DefinitionDetail> {
-    const body = AutomationV3AssignmentUpdateRequestSchema.parse({ assignments });
+    assignments: ReadonlyArray<AutomationAssignmentInput>,
+): Promise<AutomationDefinitionDetail> {
+    const body = AutomationAssignmentUpdateRequestSchema.parse({ assignments });
     const response = await serverFetch(`/v3/automations/${encodeURIComponent(automationId)}/assignments`, {
         method: 'POST',
         headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
         body: JSON.stringify(body),
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
-    return AutomationV3DefinitionDetailSchema.parse(raw);
+    return AutomationDefinitionDetailSchema.parse(raw);
 }
 
 export async function runAutomationDefinitionNow(
@@ -247,7 +247,7 @@ export async function deleteAutomationDefinition(
         headers: getAutomationAuthHeaders(credentials),
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
-    AutomationV3DeleteResponseSchema.parse(raw);
+    AutomationDeleteResponseSchema.parse(raw);
 }
 
 export async function listAutomations(credentials: AuthCredentials): Promise<ApiAutomation[]> {

@@ -1,17 +1,17 @@
 import {
     AutomationEventSourceStatusV1Schema,
-    AutomationV3EventSourceCatalogStatusSchema,
+    AutomationEventSourceCatalogStatusSchema,
     type AutomationEventSourceStatusV1,
-    type AutomationV3EventSourceCatalogStatus,
+    type AutomationEventSourceCatalogStatus,
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 
 import type { AutomationListItem } from "./automationTypes";
 
-export type AutomationV3EventStatusProjection = Readonly<{
+export type AutomationEventStatusProjection = Readonly<{
     sourceStatus: AutomationEventSourceStatusV1 | null;
-    sourceCatalogStatus: AutomationV3EventSourceCatalogStatus | null;
+    sourceCatalogStatus: AutomationEventSourceCatalogStatus | null;
 }>;
 
 type PluginEventAutomation = AutomationListItem & Readonly<{
@@ -99,8 +99,8 @@ function catalogStatusFromRow(row: Readonly<{
     state: "current" | "reconciling" | "reconciliationLate";
     scanStartedAt: Date | null;
     nextRetryAt: Date | null;
-}>): AutomationV3EventSourceCatalogStatus {
-    return AutomationV3EventSourceCatalogStatusSchema.parse({
+}>): AutomationEventSourceCatalogStatus {
+    return AutomationEventSourceCatalogStatusSchema.parse({
         observedRevision: row.observedRevision.toString(),
         adoptedRevision: row.adoptedRevision?.toString() ?? null,
         state: row.state,
@@ -130,15 +130,15 @@ function checkpointedPullCatalogLookup(automation: PluginEventAutomation): Catal
 }
 
 /**
- * Batch V3 reader for the one current Event source row and catalog status.
+ * Batch definition reader for the one current Event source row and catalog status.
  * The persisted catalog key is never exposed: every row is joined back to the
  * current Automation watcher or durable-push endpoint target before it is
  * projected into the list/detail-safe DTO.
  */
-export async function loadAutomationV3EventStatusProjections(params: Readonly<{
+export async function loadAutomationEventStatusProjections(params: Readonly<{
     automations: readonly AutomationListItem[];
-}>): Promise<ReadonlyMap<string, AutomationV3EventStatusProjection>> {
-    const projections = new Map<string, AutomationV3EventStatusProjection>();
+}>): Promise<ReadonlyMap<string, AutomationEventStatusProjection>> {
+    const projections = new Map<string, AutomationEventStatusProjection>();
     for (const automation of params.automations) {
         projections.set(automation.id, { sourceStatus: null, sourceCatalogStatus: null });
     }
@@ -317,7 +317,7 @@ export async function loadAutomationV3EventStatusProjections(params: Readonly<{
                 nextRetryAt: true,
             },
         });
-    const catalogStatusByLookupKey = new Map<string, AutomationV3EventSourceCatalogStatus>();
+    const catalogStatusByLookupKey = new Map<string, AutomationEventSourceCatalogStatus>();
     for (const row of catalogRows) {
         catalogStatusByLookupKey.set(catalogStatusLookupKey({
             accountId: row.accountId,

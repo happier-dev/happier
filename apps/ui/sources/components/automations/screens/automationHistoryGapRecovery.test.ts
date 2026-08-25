@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     AutomationSourceSelectorIdV1Schema,
-    AutomationV3DefinitionListItemSchema,
+    AutomationDefinitionListItemSchema,
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
     PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
     PluginMachineMaterializationV1Schema,
@@ -96,7 +96,7 @@ vi.mock('@/components/plugins/surfaces/pluginSurfaceActionDispatch', () => ({
 }));
 
 function automation(input: Partial<PluginEventAutomationDefinition> = {}): PluginEventAutomationDefinition {
-    const parsed = AutomationV3DefinitionListItemSchema.parse({
+    const parsed = AutomationDefinitionListItemSchema.parse({
         id: AUTOMATION_ID,
         name: 'Repository triage',
         description: null,
@@ -335,7 +335,7 @@ describe('automation history-gap recovery status', () => {
         expect(isPluginEventAutomationDefinition(event)).toBe(true);
 
         const { sourceStatus: _eventSourceStatus, ...base } = event;
-        const scheduled = AutomationV3DefinitionListItemSchema.parse({
+        const scheduled = AutomationDefinitionListItemSchema.parse({
             ...base,
             trigger: {
                 kind: 'schedule',

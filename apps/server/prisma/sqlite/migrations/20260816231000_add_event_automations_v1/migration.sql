@@ -218,24 +218,6 @@ CREATE TABLE "new_Automation" (
                         AND "watcherMaterializationId" IS NULL
                     )
                 )
-            )
-            OR
-            (
-                "triggerKind" = 'conversation'
-                AND "scheduleKind" IS NULL
-                AND "triggerEventPluginId" IS NULL
-                AND "triggerEventLocalId" IS NULL
-                AND "triggerSourceSelectorId" IS NULL
-                AND "triggerSourceContractVersion" IS NULL
-                AND "triggerObservationTransport" IS NULL
-                AND "triggerWebhookEndpointId" IS NULL
-                AND "triggerObservationStartsAt" IS NULL
-                AND "watcherMachineId" IS NULL
-                AND "watcherMachineInstallationId" IS NULL
-                AND "watcherPluginId" IS NULL
-                AND "watcherMaterializationId" IS NULL
-                AND "triggerDefinitionEnvelope" IS NOT NULL
-            )
         ),
     CONSTRAINT "Automation_accountId_fkey"
         FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE

@@ -1,4 +1,4 @@
-CREATE TYPE "AutomationTriggerKind" AS ENUM ('schedule', 'manual', 'pluginEvent', 'conversation');
+CREATE TYPE "AutomationTriggerKind" AS ENUM ('schedule', 'manual', 'pluginEvent');
 CREATE TYPE "AutomationObservationTransport" AS ENUM ('checkpointedPull', 'durablePush');
 CREATE TYPE "AutomationRunOriginKind" AS ENUM ('scheduled', 'manual', 'pluginEvent', 'conversation');
 CREATE TYPE "AutomationExecutionDispatchState" AS ENUM ('notStarted', 'dispatchPermitted', 'retryWaiting', 'started', 'settled', 'outcomeUnknown');
@@ -91,7 +91,7 @@ ALTER TABLE "AutomationRun"
         FOREIGN KEY ("automationId") REFERENCES "Automation"("id")
         ON DELETE RESTRICT ON UPDATE CASCADE;
 
--- The trigger and Run origin arms are one physical union. Keep impossible
+-- The definition-trigger and Run-origin unions are physical constraints. Keep impossible
 -- combinations out of the database even if a future caller bypasses an
 -- application-level validator.
 ALTER TABLE "Automation"
@@ -171,24 +171,6 @@ ALTER TABLE "Automation"
                     AND "watcherMaterializationId" IS NULL
                 )
             )
-        )
-        OR
-        (
-            "triggerKind" = 'conversation'
-            AND "scheduleKind" IS NULL
-            AND "triggerEventPluginId" IS NULL
-            AND "triggerEventLocalId" IS NULL
-            AND "triggerSourceSelectorId" IS NULL
-            AND "triggerSourceContractVersion" IS NULL
-            AND "triggerObservationTransport" IS NULL
-            AND "triggerWebhookEndpointId" IS NULL
-            AND "triggerObservationStartsAt" IS NULL
-            AND "watcherMachineId" IS NULL
-            AND "watcherMachineInstallationId" IS NULL
-            AND "watcherPluginId" IS NULL
-            AND "watcherMaterializationId" IS NULL
-            AND "triggerDefinitionEnvelope" IS NOT NULL
-        )
     );
 
 ALTER TABLE "AutomationRun"

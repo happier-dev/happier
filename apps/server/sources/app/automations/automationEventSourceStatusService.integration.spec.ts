@@ -20,7 +20,7 @@ import {
     reportAutomationEventSourceStatusV1,
 } from "./automationEventSourceStatusService";
 import { getAutomation } from "./automationCrudService";
-import { loadAutomationV3EventStatusProjections } from "./automationV3EventStatusProjection";
+import { loadAutomationEventStatusProjections } from "./automationV3EventStatusProjection";
 
 const ACCOUNT_ID = "account-automation-source-status";
 const MACHINE_ID = "machine-automation-source-status";
@@ -400,7 +400,7 @@ describe("Automation Event source status", () => {
         });
         if (!automation) throw new Error("Expected seeded Automation");
 
-        const current = await loadAutomationV3EventStatusProjections({ automations: [automation] });
+        const current = await loadAutomationEventStatusProjections({ automations: [automation] });
         expect(current.get(AUTOMATION_ID)).toMatchObject({
             sourceStatus: {
                 state: "observing",
@@ -424,7 +424,7 @@ describe("Automation Event source status", () => {
             automationId: AUTOMATION_ID,
         });
         if (!staleAutomation) throw new Error("Expected stale Automation");
-        const staleMaterialization = await loadAutomationV3EventStatusProjections({
+        const staleMaterialization = await loadAutomationEventStatusProjections({
             automations: [staleAutomation],
         });
         // The retired reporter can no longer write this row (the writer rejects
@@ -462,7 +462,7 @@ describe("Automation Event source status", () => {
             automationId: AUTOMATION_ID,
         });
         if (!scopeAutomation) throw new Error("Expected scope Automation");
-        const staleScope = await loadAutomationV3EventStatusProjections({
+        const staleScope = await loadAutomationEventStatusProjections({
             automations: [scopeAutomation],
         });
         expect(staleScope.get(AUTOMATION_ID)?.sourceCatalogStatus).toBeNull();
@@ -521,7 +521,7 @@ describe("Automation Event source status", () => {
         });
         if (!automation) throw new Error("Expected durable-push Automation");
 
-        const current = await loadAutomationV3EventStatusProjections({ automations: [automation] });
+        const current = await loadAutomationEventStatusProjections({ automations: [automation] });
         expect(current.get(AUTOMATION_ID)?.sourceCatalogStatus).toEqual({
             observedRevision: "7",
             adoptedRevision: null,
@@ -538,7 +538,7 @@ describe("Automation Event source status", () => {
             where: { id: DURABLE_PUSH_ENDPOINT_ID },
             data: { targetMaterializationId: "materialization-moved" },
         });
-        const stale = await loadAutomationV3EventStatusProjections({ automations: [automation] });
+        const stale = await loadAutomationEventStatusProjections({ automations: [automation] });
         // The retargeted endpoint means the row's reporter is no longer the
         // Automation's delivery target, so neither summary is current.
         expect(stale.get(AUTOMATION_ID)).toEqual({

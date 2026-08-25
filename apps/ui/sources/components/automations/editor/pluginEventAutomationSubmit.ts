@@ -2,7 +2,7 @@ import {
     AutomationRunExecutionTargetV1Schema,
     SessionServerStartSpawnDraftV1Schema,
     arePluginMachineExecutionOriginsEqual,
-    type AutomationV3AssignmentInput,
+    type AutomationAssignmentInput,
     type ExecutionRunDetachedStartRequestV1,
     type MentionRefV1,
     type SessionServerStartSpawnDraftV1,
@@ -111,7 +111,7 @@ function readCurrentNewSessionSpawn(definition: AutomationDefinition | null): Se
     return parsed.success ? parsed.data : null;
 }
 
-function readCurrentAssignments(definition: AutomationDefinition | null): readonly AutomationV3AssignmentInput[] | null {
+function readCurrentAssignments(definition: AutomationDefinition | null): readonly AutomationAssignmentInput[] | null {
     if (
         !definition
         || definition.trigger.kind !== 'pluginEvent'

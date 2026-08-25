@@ -60,7 +60,6 @@ export const AutomationTriggerKind = {
     schedule: "schedule",
     manual: "manual",
     pluginEvent: "pluginEvent",
-    conversation: "conversation",
 } as const;
 
 export type AutomationTriggerKind = (typeof AutomationTriggerKind)[keyof typeof AutomationTriggerKind];

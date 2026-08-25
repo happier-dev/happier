@@ -1,4 +1,4 @@
-import type { AutomationV3DefinitionDetail } from '@happier-dev/protocol';
+import type { AutomationDefinitionDetail } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { createAutomationDefinitionFromDetail } from './automationDefinitionProjection';
@@ -34,7 +34,7 @@ describe('readLegacyScheduleAutomationDefinition', () => {
         const retained = createAutomationDefinitionFromDetail({
             ...scheduleDefinition,
             templateCiphertext: '{"kind":"happier_automation_template_plain_v1","payload":{"directory":"/repo"}}',
-        } satisfies AutomationV3DefinitionDetail);
+        } satisfies AutomationDefinitionDetail);
         const strict = createAutomationDefinitionFromDetail({
             ...scheduleDefinition,
             executionRecipe: {
@@ -44,7 +44,7 @@ describe('readLegacyScheduleAutomationDefinition', () => {
                 triggerEvidence: null,
                 target: { kind: 'existingSession', sessionId: 'session-1' },
             },
-        } satisfies AutomationV3DefinitionDetail);
+        } satisfies AutomationDefinitionDetail);
 
         expect(readLegacyScheduleAutomationDefinition(retained)).toEqual({
             id: 'legacy-schedule-definition',
@@ -74,7 +74,7 @@ describe('readLegacyScheduleAutomationDefinition', () => {
         const retained = createAutomationDefinitionFromDetail({
             ...scheduleDefinition,
             templateCiphertext: '{"kind":"happier_automation_template_plain_v1","payload":{"directory":"/repo"}}',
-        } satisfies AutomationV3DefinitionDetail);
+        } satisfies AutomationDefinitionDetail);
         const malformed = { ...retained };
         if (malformed.detail.kind !== 'available') {
             throw new Error('Expected a direct retained detail');
@@ -91,7 +91,7 @@ describe('readLegacyScheduleAutomationDefinition', () => {
                     observation: { kind: 'checkpointedPull', watcher: null },
                 },
                 triggerDefinitionEnvelope: '{"t":"plain","v":{}}',
-            } satisfies AutomationV3DefinitionDetail,
+            } satisfies AutomationDefinitionDetail,
         });
 
         expect(readLegacyScheduleAutomationDefinition(malformed)).toBeNull();

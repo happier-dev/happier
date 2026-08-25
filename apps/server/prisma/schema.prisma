@@ -1166,7 +1166,6 @@ enum AutomationTriggerKind {
     schedule
     manual
     pluginEvent
-    conversation
 }
 
 enum AutomationObservationTransport {

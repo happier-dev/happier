@@ -36,7 +36,7 @@ const definition = {
 } as const;
 
 describe('Automation trigger-definition stored content', () => {
-  it('keeps the retained Conversation binding arm sealed against replay onto another row', () => {
+  it('rejects the retired Conversation definition binding arm', () => {
     const conversationBinding = {
       v: 1,
       automationId: 'automation-trigger-definition-2',
@@ -45,42 +45,8 @@ describe('Automation trigger-definition stored content', () => {
       eventRef: null,
       sourceSelectorId: null,
     } as const;
-    const conversationDefinition = {
-      v: 1,
-      bindingId: 'binding-1',
-      owner: { pluginId: 'com.acme.slack-bridge', localId: 'slack/observation-ingest-v1' },
-    } as const;
-
-    // The Conversation arm publishes no trigger columns; the physical row
-    // check constraint keeps them null.
     expect(AutomationTriggerDefinitionBindingV1Schema.safeParse(conversationBinding).success)
-      .toBe(true);
-    expect(AutomationTriggerDefinitionBindingV1Schema.safeParse({
-      ...conversationBinding,
-      eventRef: { pluginId: 'com.acme.slack-bridge', localId: 'slack/observation-ingest-v1' },
-    }).success).toBe(false);
-
-    const envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({
-      mode: 'plain',
-      binding: conversationBinding,
-      definition: conversationDefinition,
-    });
-    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({
-      mode: 'plain',
-      binding: conversationBinding,
-      envelope,
-    })).toEqual({ kind: 'available', definition: conversationDefinition });
-    // The sealed owner cannot be moved onto another Automation or revision.
-    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({
-      mode: 'plain',
-      binding: { ...conversationBinding, automationId: 'automation-trigger-definition-3' },
-      envelope,
-    })).toEqual({ kind: 'bindingMismatch' });
-    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({
-      mode: 'plain',
-      binding: { ...conversationBinding, templateVersion: 2 },
-      envelope,
-    })).toEqual({ kind: 'bindingMismatch' });
+      .toBe(false);
   });
 
   it('uses the dedicated byte-20 domain and binds an Event definition to its record identity and version', () => {

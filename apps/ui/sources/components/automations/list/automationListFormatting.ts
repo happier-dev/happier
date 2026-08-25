@@ -35,8 +35,6 @@ export function formatAutomationTriggerLabel(trigger: AutomationDefinition['trig
             return formatAutomationScheduleLabel({ schedule: trigger.schedule });
         case 'pluginEvent':
             return t('automations.list.event', { eventId: trigger.eventRef.localId });
-        case 'conversation':
-            return t('automations.list.conversationTrigger');
     }
 }
 

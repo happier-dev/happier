@@ -1,6 +1,6 @@
 ALTER TABLE `Automation`
     ADD COLUMN `deletedAt` DATETIME(3) NULL,
-    ADD COLUMN `triggerKind` ENUM('schedule', 'manual', 'pluginEvent', 'conversation') NOT NULL DEFAULT 'schedule',
+    ADD COLUMN `triggerKind` ENUM('schedule', 'manual', 'pluginEvent') NOT NULL DEFAULT 'schedule',
     ADD COLUMN `triggerEventPluginId` VARCHAR(191) NULL,
     ADD COLUMN `triggerEventLocalId` VARCHAR(191) NULL,
     ADD COLUMN `triggerSourceSelectorId` VARCHAR(191) NULL,
@@ -75,7 +75,7 @@ ALTER TABLE `AutomationRun`
         FOREIGN KEY (`automationId`) REFERENCES `Automation`(`id`)
         ON DELETE RESTRICT ON UPDATE CASCADE;
 
--- The trigger and Run origin arms are one physical union. Keep impossible
+-- The definition-trigger and Run-origin unions are physical constraints. Keep impossible
 -- combinations out of the database even if a future caller bypasses an
 -- application-level validator.
 ALTER TABLE `Automation`
@@ -155,24 +155,6 @@ ALTER TABLE `Automation`
                     AND `watcherMaterializationId` IS NULL
                 )
             )
-        )
-        OR
-        (
-            `triggerKind` = 'conversation'
-            AND `scheduleKind` IS NULL
-            AND `triggerEventPluginId` IS NULL
-            AND `triggerEventLocalId` IS NULL
-            AND `triggerSourceSelectorId` IS NULL
-            AND `triggerSourceContractVersion` IS NULL
-            AND `triggerObservationTransport` IS NULL
-            AND `triggerWebhookEndpointId` IS NULL
-            AND `triggerObservationStartsAt` IS NULL
-            AND `watcherMachineId` IS NULL
-            AND `watcherMachineInstallationId` IS NULL
-            AND `watcherPluginId` IS NULL
-            AND `watcherMaterializationId` IS NULL
-            AND `triggerDefinitionEnvelope` IS NOT NULL
-        )
     );
 
 ALTER TABLE `AutomationRun`

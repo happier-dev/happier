@@ -881,8 +881,8 @@ function transitionInventoryItemEncodedBytes(
 
 function automationTriggerRetainsDefinitionContent(
     triggerKind: AutomationTriggerKind,
-): triggerKind is "pluginEvent" | "conversation" {
-    return triggerKind === "pluginEvent" || triggerKind === "conversation";
+): triggerKind is "pluginEvent" {
+    return triggerKind === "pluginEvent";
 }
 
 function assertAutomationDefinitionStoredContentForAccountMode(params: Readonly<{
@@ -898,7 +898,7 @@ function assertAutomationDefinitionStoredContentForAccountMode(params: Readonly<
     } else {
         if (params.row.triggerDefinitionEnvelope === null) {
             throw new AutomationValidationError(
-                "Event and Conversation Automation definitions require retained trigger-definition content",
+                "Event Automation definitions require retained trigger-definition content",
             );
         }
         const definition = validateAutomationTriggerDefinitionEnvelopeOuterForMode({

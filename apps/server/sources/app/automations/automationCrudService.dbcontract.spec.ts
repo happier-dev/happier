@@ -18,7 +18,7 @@ import {
     setAutomationEnabled,
     updateAutomation,
 } from "./automationCrudService";
-import { toAutomationV3DefinitionListItemApiDto } from "./automationApiProjection";
+import { toAutomationDefinitionListItemApiDto } from "./automationApiProjection";
 import { AutomationStoredContentReadError } from "./automationStoredContentRead";
 
 const EVENT_PLUGIN_ID = "com.happier.event-crud-dbcontract";
@@ -324,7 +324,7 @@ describe("Automation Event CRUD database contract", () => {
                 sourceConfig: { repositoryId: firstSource },
             },
         });
-        const listItem = toAutomationV3DefinitionListItemApiDto(created);
+        const listItem = toAutomationDefinitionListItemApiDto(created);
         expect(listItem).not.toHaveProperty("triggerDefinitionEnvelope");
         expect(JSON.stringify(listItem)).not.toContain(privateDisplayLabel);
 

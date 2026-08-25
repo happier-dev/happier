@@ -4,7 +4,7 @@ import {
     AutomationRunExecutionTargetV1Schema,
     AutomationRunTemplateV1Schema,
     AutomationSourceSelectorIdV1Schema,
-    AutomationV3DefinitionDetailSchema,
+    AutomationDefinitionDetailSchema,
     PluginEventAutomationSetupResultV1Schema,
     PluginWebhookEndpointIdV1Schema,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
@@ -87,7 +87,7 @@ export type PluginEventAutomationEditSeed = Readonly<{
 function isPluginEventDefinitionDetail(
     detail: unknown,
 ): detail is AutomationDefinitionDetailForTrigger<'pluginEvent'> {
-    const parsed = AutomationV3DefinitionDetailSchema.safeParse(detail);
+    const parsed = AutomationDefinitionDetailSchema.safeParse(detail);
     return parsed.success && parsed.data.trigger.kind === 'pluginEvent';
 }
 

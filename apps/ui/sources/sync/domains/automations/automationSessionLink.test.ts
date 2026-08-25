@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    AutomationV3DefinitionDetailSchema,
-    type AutomationV3DefinitionDetail,
+    AutomationDefinitionDetailSchema,
+    type AutomationDefinitionDetail,
 } from '@happier-dev/protocol';
 
 import type { Automation, AutomationDefinition } from './automationTypes';
@@ -265,7 +265,7 @@ describe('automationSessionLink', () => {
             assignments: [],
             triggerDefinitionEnvelope: null,
             templateCiphertext,
-        } satisfies AutomationV3DefinitionDetail;
+        } satisfies AutomationDefinitionDetail;
 
         const resolved = await projectAutomationDefinitionSessionLink({
             automation: createAutomationDefinitionFromDetail(detail),
@@ -302,7 +302,7 @@ describe('automationSessionLink', () => {
             updatedAt: 1_786_257_600_000,
             assignments: [],
             triggerDefinitionEnvelope: null,
-        } satisfies AutomationV3DefinitionDetail;
+        } satisfies AutomationDefinitionDetail;
 
         const resolved = await projectAutomationDefinitionSessionLink({
             automation: {
@@ -316,7 +316,7 @@ describe('automationSessionLink', () => {
     });
 
     it('does not restore a session link or count from a schema-valid mismatched direct recipe revision', async () => {
-        const detail = AutomationV3DefinitionDetailSchema.parse({
+        const detail = AutomationDefinitionDetailSchema.parse({
             id: 'mismatched-recipe-revision',
             name: 'Revision mismatch',
             description: null,

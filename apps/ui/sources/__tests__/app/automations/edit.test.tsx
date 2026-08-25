@@ -7,10 +7,10 @@ import { renderScreen } from '@/dev/testkit';
 import { installAutomationAppRouteCommonModuleMocks } from './automationAppRouteTestHelpers';
 import {
     AutomationSourceSelectorIdV1Schema,
-    AutomationV3DefinitionDetailSchema,
+    AutomationDefinitionDetailSchema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
 } from '@happier-dev/protocol';
-import type { AutomationV3DefinitionDetail } from '@happier-dev/protocol';
+import type { AutomationDefinitionDetail } from '@happier-dev/protocol';
 import { createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
 import type { Automation } from '@/sync/domains/automations/automationTypes';
 import type { NewSessionData } from '@/utils/sessions/tempDataStore';
@@ -114,7 +114,7 @@ function toLegacyDirectDefinition(automation: LegacyAutomationFixture) {
     const templateVersion = typeof automation.templateVersion === 'number' ? automation.templateVersion : 1;
     const trigger = { kind: 'schedule' as const, schedule: automation.schedule };
     const targetType = automation.targetType === 'existing_session' ? 'existingSession' as const : 'newSession' as const;
-    const definition = createAutomationDefinitionFromDetail(AutomationV3DefinitionDetailSchema.parse({
+    const definition = createAutomationDefinitionFromDetail(AutomationDefinitionDetailSchema.parse({
         id: automation.id,
         name: automation.name,
         description: automation.description,
@@ -153,7 +153,7 @@ function directEventDefinition(params: Readonly<{
 }> = {}) {
     const templateVersion = 7;
     const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse('11111111-1111-4111-8111-111111111111');
-    const detail = AutomationV3DefinitionDetailSchema.parse({
+    const detail = AutomationDefinitionDetailSchema.parse({
         id: 'a1',
         name: 'Repository triage',
         description: 'Review repository activity',

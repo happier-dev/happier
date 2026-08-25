@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AutomationV3DefinitionDetailSchema } from '@happier-dev/protocol';
+import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol';
 
 import {
     applyAutomationDefinitionDetail,
@@ -58,7 +58,7 @@ const executionRecipe = {
 
 describe('Automation V3 definition projection', () => {
     it('keeps a manual definition correlated without inventing schedule or event state', () => {
-        const detail = AutomationV3DefinitionDetailSchema.parse({
+        const detail = AutomationDefinitionDetailSchema.parse({
             ...eventSummary,
             name: 'On demand',
             trigger: { kind: 'manual' },
@@ -132,7 +132,7 @@ describe('Automation V3 definition projection', () => {
 
     it('rejects a schema-valid direct recipe whose template revision does not match its definition', () => {
         const summary = createAutomationDefinitionSummary(eventSummary);
-        const mismatchedDetail = AutomationV3DefinitionDetailSchema.parse({
+        const mismatchedDetail = AutomationDefinitionDetailSchema.parse({
             ...eventSummary,
             executionRecipe: {
                 ...executionRecipe,
@@ -146,7 +146,7 @@ describe('Automation V3 definition projection', () => {
     });
 
     it('does not derive an existing-session link from a schema-valid mismatched recipe revision', () => {
-        const mismatchedDetail = AutomationV3DefinitionDetailSchema.parse({
+        const mismatchedDetail = AutomationDefinitionDetailSchema.parse({
             ...eventSummary,
             executionRecipe: {
                 ...executionRecipe,

@@ -3,9 +3,9 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     AutomationSourceSelectorIdV1Schema,
-    AutomationV3DefinitionDetailSchema,
+    AutomationDefinitionDetailSchema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
-    type AutomationV3DefinitionDetail,
+    type AutomationDefinitionDetail,
 } from '@happier-dev/protocol';
 import {
     createCapturingLegendListMock,
@@ -20,7 +20,7 @@ type AutomationScreenFixture = {
     name: string;
     enabled: boolean;
     description: string | null;
-    trigger: AutomationV3DefinitionDetail['trigger'];
+    trigger: AutomationDefinitionDetail['trigger'];
     targetType: 'newSession' | 'existingSession' | 'executionRun';
     existingSessionId: string | null;
     templateVersion: number;
@@ -406,7 +406,7 @@ describe('AutomationDetailScreen', () => {
                     ioMode: 'request_response' as const,
                 },
             };
-        const detail = AutomationV3DefinitionDetailSchema.parse({
+        const detail = AutomationDefinitionDetailSchema.parse({
             id: 'a1',
             name: 'Nightly',
             description: null,
@@ -888,7 +888,7 @@ describe('AutomationDetailScreen', () => {
             detail: {
                 kind: 'available',
                 templateVersion: 3,
-                value: AutomationV3DefinitionDetailSchema.parse({
+                value: AutomationDefinitionDetailSchema.parse({
                     id: 'a1',
                     name: 'Nightly',
                     description: null,
@@ -1113,7 +1113,7 @@ describe('AutomationDetailScreen', () => {
             updatedAt: 1,
             assignments: [],
         };
-        expect(AutomationV3DefinitionDetailSchema.safeParse(strictV3ScheduleDetail).success).toBe(true);
+        expect(AutomationDefinitionDetailSchema.safeParse(strictV3ScheduleDetail).success).toBe(true);
         automationState.automation = {
             ...automationState.automation,
             targetType: 'executionRun',

@@ -763,7 +763,6 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             schedule: '排程',
             event: ({ eventId }: { eventId: string }) => `事件：${eventId}`,
             manual: '手動',
-            conversationTrigger: '對話觸發器',
             noNextRun: '沒有下次執行',
             nextRun: ({ time }: { time: string }) => `下次：${time}`,
             nextRunPending: '下次執行待定',

@@ -2,8 +2,8 @@ import {
     AutomationEventFilterV1Schema,
     AutomationRunExecutionRecipeV1Schema,
     AutomationRunExecutionTargetV1Schema,
-    AutomationV3PluginEventDefinitionCreateRequestSchema,
-    AutomationV3PluginEventDefinitionPatchRequestSchema,
+    AutomationPluginEventDefinitionCreateRequestSchema,
+    AutomationPluginEventDefinitionPatchRequestSchema,
     ExecutionRunDetachedStartRequestV1Schema,
     PluginMachineExecutionOriginV1Schema,
     PluginWebhookEndpointIdV1Schema,
@@ -11,10 +11,10 @@ import {
     type AutomationEventFilterV1,
     type AutomationRunExecutionRecipeV1,
     type AutomationRunExecutionTargetV1,
-    type AutomationV3AssignmentInput,
-    type AutomationV3PluginEventDefinitionCreateRequest,
-    type AutomationV3PluginEventDefinitionPatchRequest,
-    type AutomationV3PluginEventObservationTransportInput,
+    type AutomationAssignmentInput,
+    type AutomationPluginEventDefinitionCreateRequest,
+    type AutomationPluginEventDefinitionPatchRequest,
+    type AutomationPluginEventObservationTransportInput,
     type BackendTargetRefV2,
     type ConnectedServiceBindingsV1,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
@@ -133,7 +133,7 @@ function normalizeObservationDraft(
 }
 
 /**
- * Projects the authored transport into the strict V3 writer input. Both arms
+ * Projects the authored transport into the strict writer input. Both arms
  * name the same selected origin, and the push arm reuses the setup result's
  * own source instance as the endpoint routing instance, so the request can
  * never disagree with the endpoint the composer ensured.
@@ -141,7 +141,7 @@ function normalizeObservationDraft(
 function buildObservationTransportInput(
     draft: PluginEventAutomationAuthoringDraft,
     origin: PluginMachineExecutionOriginV1,
-): AutomationV3PluginEventObservationTransportInput {
+): AutomationPluginEventObservationTransportInput {
     return draft.observation.kind === 'checkpointedPull'
         ? { kind: 'checkpointedPull', watcherMaterializationRef: origin.materializationRef }
         : {
@@ -326,8 +326,8 @@ export function buildPluginEventAutomationDefinitionCreateRequest(params: Readon
     draft: PluginEventAutomationAuthoringDraft;
     watcherOrigin: PluginMachineExecutionOriginV1;
     executionRecipe: AutomationRunExecutionRecipeV1;
-    assignments: readonly AutomationV3AssignmentInput[];
-}>): AutomationV3PluginEventDefinitionCreateRequest | null {
+    assignments: readonly AutomationAssignmentInput[];
+}>): AutomationPluginEventDefinitionCreateRequest | null {
     const eligibleEvent = resolveCurrentPluginEventAutomationEligibleEvent({
         eligibleEvents: params.eligibleEvents,
         draft: params.draft,
@@ -344,7 +344,7 @@ export function buildPluginEventAutomationDefinitionCreateRequest(params: Readon
         return null;
     }
 
-    const request = AutomationV3PluginEventDefinitionCreateRequestSchema.safeParse({
+    const request = AutomationPluginEventDefinitionCreateRequestSchema.safeParse({
         name: params.name,
         description: params.description,
         enabled: params.enabled,
@@ -379,8 +379,8 @@ export function buildPluginEventAutomationDefinitionPatchRequest(params: Readonl
     draft: PluginEventAutomationAuthoringDraft;
     watcherOrigin: PluginMachineExecutionOriginV1;
     executionRecipe: AutomationRunExecutionRecipeV1;
-    assignments: readonly AutomationV3AssignmentInput[];
-}>): AutomationV3PluginEventDefinitionPatchRequest | null {
+    assignments: readonly AutomationAssignmentInput[];
+}>): AutomationPluginEventDefinitionPatchRequest | null {
     if (
         !Number.isSafeInteger(params.expectedTemplateVersion)
         || params.expectedTemplateVersion < 0
@@ -405,7 +405,7 @@ export function buildPluginEventAutomationDefinitionPatchRequest(params: Readonl
         assignments: params.assignments,
     });
     if (!createRequest) return null;
-    const patch = AutomationV3PluginEventDefinitionPatchRequestSchema.safeParse({
+    const patch = AutomationPluginEventDefinitionPatchRequestSchema.safeParse({
         ...createRequest,
         expectedTemplateVersion: params.expectedTemplateVersion,
     });

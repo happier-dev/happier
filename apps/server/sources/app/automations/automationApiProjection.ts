@@ -5,8 +5,8 @@ import {
     parseAutomationRunFailureDetailStoredEnvelopeV1,
     normalizeAutomationTemplateEnvelopeStoredRead,
     parseAutomationRunExecutionRecipeV1,
-    AutomationV3DefinitionDetailSchema,
-    AutomationV3DefinitionListItemSchema,
+    AutomationDefinitionDetailSchema,
+    AutomationDefinitionListItemSchema,
     AutomationV3RunOriginSchema,
     AutomationV3RunDetailSchema,
     AutomationV3RunListItemSchema,
@@ -24,7 +24,7 @@ import type {
     AutomationRunItem,
     AutomationTargetType,
 } from "./automationTypes";
-import type { AutomationV3EventStatusProjection } from "./automationV3EventStatusProjection";
+import type { AutomationEventStatusProjection } from "./automationV3EventStatusProjection";
 import {
     assertAutomationExecutionInputEnvelopeOuterForMode,
     assertAutomationStoredContentEnvelopeOuterForMode,
@@ -183,7 +183,7 @@ export function toAutomationRunV2ApiDto(item: AutomationRunItem) {
     });
 }
 
-function toAutomationV3Trigger(item: AutomationListItem) {
+function toAutomationDefinitionTrigger(item: AutomationListItem) {
     if (item.triggerKind === "schedule") {
         return {
             kind: "schedule" as const,
@@ -198,10 +198,6 @@ function toAutomationV3Trigger(item: AutomationListItem) {
 
     if (item.triggerKind === "manual") {
         return { kind: "manual" as const };
-    }
-
-    if (item.triggerKind === "conversation") {
-        return { kind: "conversation" as const };
     }
 
     const observation = item.triggerObservationTransport === "checkpointedPull"
@@ -265,16 +261,16 @@ function readAutomationDefinitionExistingSessionId(item: AutomationListItem): st
     return target.kind === "existingSession" ? target.sessionId : null;
 }
 
-function toAutomationV3DefinitionCommon(
+function toAutomationDefinitionCommon(
     item: AutomationListItem,
-    eventStatusProjection?: AutomationV3EventStatusProjection,
+    eventStatusProjection?: AutomationEventStatusProjection,
 ) {
     return {
         id: item.id,
         name: item.name,
         description: item.description,
         enabled: item.enabled,
-        trigger: toAutomationV3Trigger(item),
+        trigger: toAutomationDefinitionTrigger(item),
         targetType: toAutomationTargetTypeV3(item.targetType),
         existingSessionId: readAutomationDefinitionExistingSessionId(item),
         templateVersion: item.templateVersion,
@@ -297,7 +293,7 @@ function toAutomationV3DefinitionCommon(
     };
 }
 
-function projectAutomationV3DefinitionDetailContent(params: Readonly<{
+function projectAutomationDefinitionDetailContent(params: Readonly<{
     item: AutomationListItem;
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
 }>) {
@@ -336,22 +332,22 @@ function projectAutomationV3DefinitionDetailContent(params: Readonly<{
 }
 
 /** Current bounded list projection; it never carries private source/configuration bytes. */
-export function toAutomationV3DefinitionListItemApiDto(
+export function toAutomationDefinitionListItemApiDto(
     item: AutomationListItem,
-    eventStatusProjection?: AutomationV3EventStatusProjection,
+    eventStatusProjection?: AutomationEventStatusProjection,
 ) {
-    return AutomationV3DefinitionListItemSchema.parse(
-        toAutomationV3DefinitionCommon(item, eventStatusProjection),
+    return AutomationDefinitionListItemSchema.parse(
+        toAutomationDefinitionCommon(item, eventStatusProjection),
     );
 }
 
 /** Current authenticated definition detail; no synthetic schedule fields. */
-export function toAutomationV3DefinitionDetailApiDto(
+export function toAutomationDefinitionDetailApiDto(
     item: AutomationListItem,
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
-    eventStatusProjection?: AutomationV3EventStatusProjection,
+    eventStatusProjection?: AutomationEventStatusProjection,
 ) {
-    if (item.triggerKind === "pluginEvent" || item.triggerKind === "conversation") {
+    if (item.triggerKind === "pluginEvent") {
         const binding = readAutomationTriggerDefinitionBinding({
             automationId: item.id,
             templateVersion: item.templateVersion,
@@ -369,9 +365,9 @@ export function toAutomationV3DefinitionDetailApiDto(
             binding,
         });
     }
-    return AutomationV3DefinitionDetailSchema.parse({
-        ...toAutomationV3DefinitionCommon(item, eventStatusProjection),
-        ...projectAutomationV3DefinitionDetailContent({ item, accountCurrentness }),
+    return AutomationDefinitionDetailSchema.parse({
+        ...toAutomationDefinitionCommon(item, eventStatusProjection),
+        ...projectAutomationDefinitionDetailContent({ item, accountCurrentness }),
         triggerDefinitionEnvelope: item.triggerKind === "schedule" || item.triggerKind === "manual"
             ? null
             : required(item.triggerDefinitionEnvelope, "triggerDefinitionEnvelope"),

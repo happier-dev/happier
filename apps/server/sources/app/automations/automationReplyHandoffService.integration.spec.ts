@@ -117,8 +117,10 @@ describe("Automation reply handoff service", () => {
                     payload: { prompt: "reply" },
                 }),
                 templateVersion: 1,
-                triggerKind: "conversation",
-                triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                triggerDefinitionEnvelope: null,
             },
         });
         await db.automationRun.create({
@@ -395,8 +397,10 @@ describe("Automation reply handoff service", () => {
                         payloadCiphertext: "private-inconsistent-template-sentinel",
                     }),
                     templateVersion: 1,
-                    triggerKind: "conversation",
-                    triggerDefinitionEnvelope: JSON.stringify({ t: "encrypted", c: "private-inconsistent-trigger-sentinel" }),
+                    triggerKind: "schedule",
+                    scheduleKind: "interval",
+                    everyMs: 60_000,
+                    triggerDefinitionEnvelope: null,
                 },
                 {
                     id: healthyAutomationId,
@@ -409,8 +413,10 @@ describe("Automation reply handoff service", () => {
                         payload: { prompt: "healthy reply" },
                     }),
                     templateVersion: 1,
-                    triggerKind: "conversation",
-                    triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                    triggerKind: "schedule",
+                    scheduleKind: "interval",
+                    everyMs: 60_000,
+                    triggerDefinitionEnvelope: null,
                 },
             ],
         });

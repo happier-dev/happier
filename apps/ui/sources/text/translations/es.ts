@@ -1065,7 +1065,6 @@ export const es = {
       schedule: "Programación",
       event: ({ eventId }: { eventId: string }) => `Evento: ${eventId}`,
       manual: "manuales",
-      conversationTrigger: "Disparador de conversación",
       noNextRun: "Sin próxima ejecución",
       nextRun: ({ time }: { time: string }) => `Próxima: ${time}`,
       nextRunPending: "Próxima ejecución pendiente",

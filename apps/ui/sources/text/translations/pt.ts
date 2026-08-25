@@ -1113,7 +1113,6 @@ export const pt = {
       schedule: "Agendamento",
       event: ({ eventId }: { eventId: string }) => `Evento: ${eventId}`,
       manual: "Manuais",
-      conversationTrigger: "Gatilho de conversa",
       noNextRun: "Sem próxima execução",
       nextRun: ({ time }: { time: string }) => `Próxima: ${time}`,
       nextRunPending: "Próxima execução pendente",

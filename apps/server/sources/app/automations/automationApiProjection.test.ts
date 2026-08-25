@@ -10,8 +10,8 @@ import {
     isAutomationDefinitionRepresentableInV2,
     isAutomationRunV2Compatible,
     toAutomationV2ApiDto,
-    toAutomationV3DefinitionDetailApiDto,
-    toAutomationV3DefinitionListItemApiDto,
+    toAutomationDefinitionDetailApiDto,
+    toAutomationDefinitionListItemApiDto,
     toAutomationRunV2ApiDto,
     toAutomationRunV3DetailApiDto,
     toAutomationRunV3ListApiDto,
@@ -363,7 +363,7 @@ describe("Automation API projections", () => {
             "scheduleExpr",
             "timezone",
         ]);
-        expect(toAutomationV3DefinitionDetailApiDto(
+        expect(toAutomationDefinitionDetailApiDto(
             event,
             ACCOUNT_CURRENTNESS,
             eventStatusProjection(),
@@ -403,8 +403,8 @@ describe("Automation API projections", () => {
                 nextRetryAt: DATE.getTime() + 60_000,
             },
         }));
-        expect(toAutomationV3DefinitionDetailApiDto(event, ACCOUNT_CURRENTNESS)).not.toHaveProperty("schedule");
-        const listItem = toAutomationV3DefinitionListItemApiDto(event, eventStatusProjection());
+        expect(toAutomationDefinitionDetailApiDto(event, ACCOUNT_CURRENTNESS)).not.toHaveProperty("schedule");
+        const listItem = toAutomationDefinitionListItemApiDto(event, eventStatusProjection());
         expect(listItem).toMatchObject({
             sourceStatus: { state: "attention", code: "historyGap", revision: 7 },
             sourceCatalogStatus: { observedRevision: "9", adoptedRevision: "7" },
@@ -500,31 +500,31 @@ describe("Automation API projections", () => {
             templateCiphertext: serialized.serialized,
         };
 
-        const listItem = toAutomationV3DefinitionListItemApiDto(current);
+        const listItem = toAutomationDefinitionListItemApiDto(current);
         expect(listItem.existingSessionId).toBe("session-77");
         expect(listItem).not.toHaveProperty("templateCiphertext");
         expect(listItem).not.toHaveProperty("executionRecipe");
-        expect(toAutomationV3DefinitionDetailApiDto(current, ACCOUNT_CURRENTNESS).existingSessionId)
+        expect(toAutomationDefinitionDetailApiDto(current, ACCOUNT_CURRENTNESS).existingSessionId)
             .toBe("session-77");
 
         // A stale recipe revision and a retained predecessor template are both
         // undisclosed: only a reader that can open the template may trust them.
-        expect(toAutomationV3DefinitionListItemApiDto({
+        expect(toAutomationDefinitionListItemApiDto({
             ...current,
             templateVersion: 3,
         }).existingSessionId).toBeNull();
-        expect(toAutomationV3DefinitionListItemApiDto({
+        expect(toAutomationDefinitionListItemApiDto({
             ...current,
             templateCiphertext: V2_TEMPLATE_CIPHERTEXT,
         }).existingSessionId).toBeNull();
-        expect(toAutomationV3DefinitionListItemApiDto(scheduleAutomation()).existingSessionId)
+        expect(toAutomationDefinitionListItemApiDto(scheduleAutomation()).existingSessionId)
             .toBeNull();
     });
 
     it("does not manufacture Event status without the batch projection owner", () => {
         const event = eventAutomation();
 
-        expect(toAutomationV3DefinitionListItemApiDto(event)).toMatchObject({
+        expect(toAutomationDefinitionListItemApiDto(event)).toMatchObject({
             sourceStatus: null,
             sourceCatalogStatus: null,
         });

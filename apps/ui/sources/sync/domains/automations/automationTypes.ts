@@ -1,7 +1,7 @@
 import type {
     AcpConfigOptionOverridesV1,
-    AutomationV3DefinitionDetail,
-    AutomationV3DefinitionListItem,
+    AutomationDefinitionDetail,
+    AutomationDefinitionListItem,
     AutomationV3RunListItem,
     BackendTargetRefV2,
     SessionMcpSelectionV1,
@@ -51,7 +51,7 @@ export type Automation = Readonly<{
 }>;
 
 /**
- * The current V3 definition projection is deliberately separate from the
+ * The current definition projection is deliberately separate from the
  * retained V2 shape above while the released schedule editor completes its
  * migration. It holds one safe summary plus, when directly requested, the
  * matching private detail in the same Automation store record.
@@ -64,7 +64,7 @@ export type AutomationDefinitionDetail =
     | Readonly<{
         kind: 'available';
         templateVersion: number;
-        value: AutomationV3DefinitionDetail;
+        value: AutomationDefinitionDetail;
     }>
     | Readonly<{
         kind: 'unavailable';
@@ -72,24 +72,24 @@ export type AutomationDefinitionDetail =
         code: 'automation_stored_content_unavailable';
     }>;
 
-type AutomationDefinitionTriggerKind = AutomationV3DefinitionListItem['trigger']['kind'];
+type AutomationDefinitionTriggerKind = AutomationDefinitionListItem['trigger']['kind'];
 
 export type AutomationDefinitionListItemForTrigger<
     TTriggerKind extends AutomationDefinitionTriggerKind,
-> = Extract<AutomationV3DefinitionListItem, Readonly<{
+> = Extract<AutomationDefinitionListItem, Readonly<{
     trigger: Readonly<{ kind: TTriggerKind }>;
 }>>;
 
 export type AutomationDefinitionDetailForTrigger<
     TTriggerKind extends AutomationDefinitionTriggerKind,
-> = Extract<AutomationV3DefinitionDetail, Readonly<{
+> = Extract<AutomationDefinitionDetail, Readonly<{
     trigger: Readonly<{ kind: TTriggerKind }>;
 }>>;
 
 type AutomationDefinitionWithDetail<
-    TSummary extends AutomationV3DefinitionListItem,
+    TSummary extends AutomationDefinitionListItem,
     TDetail extends AutomationDefinitionDetail,
-> = TSummary extends AutomationV3DefinitionListItem
+> = TSummary extends AutomationDefinitionListItem
     ? Readonly<TSummary & {
         detail: TDetail;
         linkedExistingSessionId: string | null;
@@ -97,12 +97,12 @@ type AutomationDefinitionWithDetail<
     : never;
 
 type AutomationDefinitionUnloaded = AutomationDefinitionWithDetail<
-    AutomationV3DefinitionListItem,
+    AutomationDefinitionListItem,
     Extract<AutomationDefinitionDetail, Readonly<{ kind: 'unloaded' }>>
 >;
 
 type AutomationDefinitionUnavailable = AutomationDefinitionWithDetail<
-    AutomationV3DefinitionListItem,
+    AutomationDefinitionListItem,
     Extract<AutomationDefinitionDetail, Readonly<{ kind: 'unavailable' }>>
 >;
 
@@ -131,17 +131,16 @@ export type AutomationDefinition =
     | AutomationDefinitionUnavailable
     | AutomationDefinitionAvailable<'schedule'>
     | AutomationDefinitionAvailable<'manual'>
-    | AutomationDefinitionAvailable<'pluginEvent'>
-    | AutomationDefinitionAvailable<'conversation'>;
+    | AutomationDefinitionAvailable<'pluginEvent'>;
 
 /** Event-only consumers must retain the source-status/trigger correlation. */
 export type PluginEventAutomationDefinition = Extract<
-    AutomationV3DefinitionListItem,
+    AutomationDefinitionListItem,
     Readonly<{ trigger: Readonly<{ kind: 'pluginEvent' }> }>
 >;
 
 export function isPluginEventAutomationDefinition(
-    definition: AutomationV3DefinitionListItem | null | undefined,
+    definition: AutomationDefinitionListItem | null | undefined,
 ): definition is PluginEventAutomationDefinition {
     return definition?.trigger.kind === 'pluginEvent';
 }

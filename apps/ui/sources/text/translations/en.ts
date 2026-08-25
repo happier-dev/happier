@@ -1025,7 +1025,6 @@ export const en = {
             schedule: 'Schedule',
             event: ({ eventId }: { eventId: string }) => `Event: ${eventId}`,
             manual: 'Manual',
-            conversationTrigger: 'Conversation trigger',
             noNextRun: 'No next run',
             nextRun: ({ time }: { time: string }) => `Next: ${time}`,
             nextRunPending: 'Next run pending',

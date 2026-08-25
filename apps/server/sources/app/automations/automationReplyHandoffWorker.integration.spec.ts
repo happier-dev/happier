@@ -79,8 +79,12 @@ describe("Automation reply handoff worker", () => {
                     payload: { prompt: "reply" },
                 }),
                 templateVersion: 1,
-                triggerKind: "conversation",
-                triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
+                // Channel admission supplies the Conversation Run origin; the
+                // Definition itself remains a normal schedule.
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                triggerDefinitionEnvelope: null,
             },
         });
         await db.automationRun.create({

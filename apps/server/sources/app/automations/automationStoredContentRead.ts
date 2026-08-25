@@ -39,7 +39,7 @@ export type AutomationExecutionInputOuterValidation =
 /**
  * Projects the durable public definition identity into the one private
  * trigger-definition binding. A schedule has no private definition; null also
- * means malformed Event/Conversation row so callers must use their trigger
+ * means a malformed Event row so callers must use their trigger
  * kind to distinguish those cases.
  */
 export function readAutomationTriggerDefinitionBinding(params: Readonly<{
@@ -68,16 +68,7 @@ export function readAutomationTriggerDefinitionBinding(params: Readonly<{
                 }
                 : null
         )
-        : params.triggerKind === "conversation"
-            ? {
-                v: 1,
-                automationId: params.automationId,
-                templateVersion: params.templateVersion,
-                triggerKind: "conversation" as const,
-                eventRef: null,
-                sourceSelectorId: null,
-            }
-            : null;
+        : null;
     if (candidate === null) return null;
     const parsed = AutomationTriggerDefinitionBindingV1Schema.safeParse(candidate);
     return parsed.success ? parsed.data : null;

@@ -29,39 +29,28 @@ const NONNEGATIVE_SAFE_INTEGER_SCHEMA = z.number().int().nonnegative().safe();
 /**
  * Durable definition binding. Event source identity remains public on the
  * Automation row, while this exact tuple prevents its private definition from
- * being replayed onto another definition or revision. A Conversation trigger
- * publishes no trigger columns at all: its owning plugin travels inside the
- * private definition below, bound to this same tuple.
+ * being replayed onto another definition or revision.
  */
 export const AutomationTriggerDefinitionBindingV1Schema = z.object({
   v: z.literal(1),
   automationId: z.string().min(1).max(256),
   templateVersion: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
-  triggerKind: z.enum(['pluginEvent', 'conversation']),
+  triggerKind: z.literal('pluginEvent'),
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema).nullable(),
   sourceSelectorId: AutomationSourceSelectorIdV1Schema.nullable(),
 }).strict().superRefine((value, context) => {
-  if (value.triggerKind === 'pluginEvent') {
-    if (value.eventRef === null) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['eventRef'],
-        message: 'Plugin Event definitions require an Event reference binding',
-      });
-    }
-    if (value.sourceSelectorId === null) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['sourceSelectorId'],
-        message: 'Plugin Event definitions require a source selector binding',
-      });
-    }
-    return;
-  }
-  if (value.eventRef !== null || value.sourceSelectorId !== null) {
+  if (value.eventRef === null) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'Conversation definitions must not carry Event binding facts',
+      path: ['eventRef'],
+      message: 'Plugin Event definitions require an Event reference binding',
+    });
+  }
+  if (value.sourceSelectorId === null) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['sourceSelectorId'],
+      message: 'Plugin Event definitions require a source selector binding',
     });
   }
 });

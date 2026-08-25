@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import {
-    AutomationV3AssignmentUpdateRequestSchema,
+    AutomationAssignmentUpdateRequestSchema,
     AutomationV3SettingsSchema,
     AutomationV3SettingsUpdateRequestSchema,
     AutomationV3WorkerClaimRequestSchema,
@@ -15,19 +15,19 @@ import {
     AutomationV3WorkerStartResponseSchema,
     AutomationV3WorkerSucceedRequestSchema,
     AutomationV3ClearRunHistoryResponseSchema,
-    AutomationV3DeleteResponseSchema,
-    AutomationV3DefinitionListResponseSchema,
+    AutomationDeleteResponseSchema,
+    AutomationDefinitionListResponseSchema,
     AutomationV3RunMutationResponseSchema,
     AutomationV3RunListResponseSchema,
-    AutomationV3PluginEventDefinitionCreateRequestSchema,
-    AutomationV3PluginEventDefinitionPatchRequestSchema,
-    AutomationV3ManualDefinitionCreateRequestSchema,
-    AutomationV3ManualDefinitionPatchRequestSchema,
-    AutomationV3ScheduleDefinitionCreateRequestSchema,
-    AutomationV3ScheduleDefinitionPatchRequestSchema,
+    AutomationPluginEventDefinitionCreateRequestSchema,
+    AutomationPluginEventDefinitionPatchRequestSchema,
+    AutomationManualDefinitionCreateRequestSchema,
+    AutomationManualDefinitionPatchRequestSchema,
+    AutomationScheduleDefinitionCreateRequestSchema,
+    AutomationScheduleDefinitionPatchRequestSchema,
     AutomationManualIdempotencyKeyV1Schema,
     type AutomationAccountCurrentnessWitnessV1,
-    type AutomationV3ScheduleTrigger,
+    type AutomationScheduleTrigger,
 } from "@happier-dev/protocol";
 import { type Fastify } from "../../types";
 import { db } from "@/storage/db";
@@ -62,10 +62,10 @@ import {
     toAutomationRunV3DetailApiDto,
     toAutomationRunV3ListApiDto,
     toAutomationRunV3OriginApiDto,
-    toAutomationV3DefinitionDetailApiDto,
-    toAutomationV3DefinitionListItemApiDto,
+    toAutomationDefinitionDetailApiDto,
+    toAutomationDefinitionListItemApiDto,
 } from "@/app/automations/automationApiProjection";
-import { loadAutomationV3EventStatusProjections } from "@/app/automations/automationV3EventStatusProjection";
+import { loadAutomationEventStatusProjections } from "@/app/automations/automationV3EventStatusProjection";
 import { AutomationStoredContentReadError } from "@/app/automations/automationStoredContentRead";
 import {
     AutomationValidationError,
@@ -100,7 +100,7 @@ function sendStoredContentFailure(reply: { code(code: number): { send(body: unkn
 }
 
 function toAutomationServiceSchedule(
-    schedule: AutomationV3ScheduleTrigger["schedule"],
+    schedule: AutomationScheduleTrigger["schedule"],
 ): AutomationScheduleInput {
     return parseAutomationScheduleInput(schedule.kind === "interval"
         ? {
@@ -115,41 +115,41 @@ function toAutomationServiceSchedule(
         });
 }
 
-function isAutomationV3ValidationError(error: unknown): error is AutomationValidationError | z.ZodError {
+function isAutomationDefinitionValidationError(error: unknown): error is AutomationValidationError | z.ZodError {
     return error instanceof AutomationValidationError || error instanceof z.ZodError;
 }
 
-async function toAutomationV3DefinitionDetailWithCurrentEventStatus(
+async function toAutomationDefinitionDetailWithCurrentEventStatus(
     automation: AutomationListItem,
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
 ) {
-    const projections = await loadAutomationV3EventStatusProjections({
+    const projections = await loadAutomationEventStatusProjections({
         automations: [automation],
     });
-    return toAutomationV3DefinitionDetailApiDto(
+    return toAutomationDefinitionDetailApiDto(
         automation,
         accountCurrentness,
         projections.get(automation.id),
     );
 }
 
-function automationV3ValidationMessage(error: AutomationValidationError | z.ZodError): string {
+function automationDefinitionValidationMessage(error: AutomationValidationError | z.ZodError): string {
     if (error instanceof AutomationValidationError) return error.message;
     const issue = error.issues[0];
     const path = issue?.path.join(".") || "payload";
     return `${path}: ${issue?.message ?? "Invalid automation payload"}`;
 }
 
-const AutomationV3DefinitionCreateRequestSchema = z.union([
-    AutomationV3ScheduleDefinitionCreateRequestSchema,
-    AutomationV3ManualDefinitionCreateRequestSchema,
-    AutomationV3PluginEventDefinitionCreateRequestSchema,
+const AutomationDefinitionCreateRequestSchema = z.union([
+    AutomationScheduleDefinitionCreateRequestSchema,
+    AutomationManualDefinitionCreateRequestSchema,
+    AutomationPluginEventDefinitionCreateRequestSchema,
 ]);
 
-const AutomationV3DefinitionPatchRequestSchema = z.union([
-    AutomationV3ScheduleDefinitionPatchRequestSchema,
-    AutomationV3ManualDefinitionPatchRequestSchema,
-    AutomationV3PluginEventDefinitionPatchRequestSchema,
+const AutomationDefinitionPatchRequestSchema = z.union([
+    AutomationScheduleDefinitionPatchRequestSchema,
+    AutomationManualDefinitionPatchRequestSchema,
+    AutomationPluginEventDefinitionPatchRequestSchema,
 ]);
 
 const AutomationRunNowHeadersSchema = z.object({
@@ -164,9 +164,9 @@ export function registerAutomationV3Routes(
         preHandler: [app.authenticate, requirePresentUser],
     }, async (request) => {
         const rows = await listAutomations({ accountId: request.userId });
-        const projections = await loadAutomationV3EventStatusProjections({ automations: rows });
-        return AutomationV3DefinitionListResponseSchema.parse({
-            automations: rows.map((row) => toAutomationV3DefinitionListItemApiDto(
+        const projections = await loadAutomationEventStatusProjections({ automations: rows });
+        return AutomationDefinitionListResponseSchema.parse({
+            automations: rows.map((row) => toAutomationDefinitionListItemApiDto(
                 row,
                 projections.get(row.id),
             )),
@@ -212,13 +212,13 @@ export function registerAutomationV3Routes(
     app.post("/v3/automations", {
         preHandler: [app.authenticate, requirePresentUser],
         schema: {
-            body: AutomationV3DefinitionCreateRequestSchema,
+            body: AutomationDefinitionCreateRequestSchema,
         },
     }, async (request, reply) => {
         const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
         if (!accountCurrentness) return sendStoredContentFailure(reply);
         try {
-            const body = AutomationV3DefinitionCreateRequestSchema.parse(request.body);
+            const body = AutomationDefinitionCreateRequestSchema.parse(request.body);
             if (accountCurrentness.mode !== "plain") return sendStoredContentFailure(reply);
             const automation = await createAutomation({
                 accountId: request.userId,
@@ -235,7 +235,7 @@ export function registerAutomationV3Routes(
                     ...(body.assignments !== undefined ? { assignments: body.assignments } : {}),
                 },
             });
-            return reply.send(await toAutomationV3DefinitionDetailWithCurrentEventStatus(
+            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
                 automation,
                 accountCurrentness,
             ));
@@ -243,8 +243,8 @@ export function registerAutomationV3Routes(
             if (error instanceof AutomationStoredContentReadError) {
                 return sendStoredContentFailure(reply);
             }
-            if (!isAutomationV3ValidationError(error)) throw error;
-            return reply.code(400).send({ error: automationV3ValidationMessage(error) });
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
         }
     });
 
@@ -252,13 +252,13 @@ export function registerAutomationV3Routes(
         preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
-            body: AutomationV3DefinitionPatchRequestSchema,
+            body: AutomationDefinitionPatchRequestSchema,
         },
     }, async (request, reply) => {
         const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
         if (!accountCurrentness) return sendStoredContentFailure(reply);
         try {
-            const body = AutomationV3DefinitionPatchRequestSchema.parse(request.body);
+            const body = AutomationDefinitionPatchRequestSchema.parse(request.body);
             if (body.executionRecipe !== undefined && accountCurrentness.mode !== "plain") {
                 return sendStoredContentFailure(reply);
             }
@@ -294,7 +294,7 @@ export function registerAutomationV3Routes(
                     : {}),
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
-            return reply.send(await toAutomationV3DefinitionDetailWithCurrentEventStatus(
+            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
                 automation,
                 accountCurrentness,
             ));
@@ -305,8 +305,8 @@ export function registerAutomationV3Routes(
             if (error instanceof AutomationTemplateMutationConflictError) {
                 return reply.code(409).send({ error: "automation_template_version_conflict" });
             }
-            if (!isAutomationV3ValidationError(error)) throw error;
-            return reply.code(400).send({ error: automationV3ValidationMessage(error) });
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
         }
     });
 
@@ -319,7 +319,7 @@ export function registerAutomationV3Routes(
             automationId: request.params.id,
         });
         if (!deleted) return reply.code(404).send({ error: "automation_not_found" });
-        return reply.send(AutomationV3DeleteResponseSchema.parse({ ok: true }));
+        return reply.send(AutomationDeleteResponseSchema.parse({ ok: true }));
     });
 
     app.post("/v3/automations/:id/pause", {
@@ -334,7 +334,7 @@ export function registerAutomationV3Routes(
             enabled: false,
         });
         if (!automation) return reply.code(404).send({ error: "automation_not_found" });
-        return reply.send(await toAutomationV3DefinitionDetailWithCurrentEventStatus(
+        return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
             automation,
             accountCurrentness,
         ));
@@ -352,7 +352,7 @@ export function registerAutomationV3Routes(
             enabled: true,
         });
         if (!automation) return reply.code(404).send({ error: "automation_not_found" });
-        return reply.send(await toAutomationV3DefinitionDetailWithCurrentEventStatus(
+        return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
             automation,
             accountCurrentness,
         ));
@@ -362,26 +362,26 @@ export function registerAutomationV3Routes(
         preHandler: [app.authenticate, requirePresentUser],
         schema: {
             params: z.object({ id: z.string() }),
-            body: AutomationV3AssignmentUpdateRequestSchema,
+            body: AutomationAssignmentUpdateRequestSchema,
         },
     }, async (request, reply) => {
         const accountCurrentness = await getCurrentAutomationAccountCurrentness(request.userId);
         if (!accountCurrentness) return sendStoredContentFailure(reply);
         try {
-            const body = AutomationV3AssignmentUpdateRequestSchema.parse(request.body);
+            const body = AutomationAssignmentUpdateRequestSchema.parse(request.body);
             const automation = await updateAutomation({
                 accountId: request.userId,
                 automationId: request.params.id,
                 input: { assignments: body.assignments },
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });
-            return reply.send(await toAutomationV3DefinitionDetailWithCurrentEventStatus(
+            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
                 automation,
                 accountCurrentness,
             ));
         } catch (error) {
-            if (!isAutomationV3ValidationError(error)) throw error;
-            return reply.code(400).send({ error: automationV3ValidationMessage(error) });
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
         }
     });
 
@@ -409,8 +409,8 @@ export function registerAutomationV3Routes(
             if (error instanceof AutomationDisabledError) {
                 return reply.code(409).send({ error: "automation_disabled" });
             }
-            if (!isAutomationV3ValidationError(error)) throw error;
-            return reply.code(400).send({ error: automationV3ValidationMessage(error) });
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
         }
     });
 
@@ -680,7 +680,7 @@ export function registerAutomationV3Routes(
             return sendStoredContentFailure(reply);
         }
         try {
-            return reply.send(await toAutomationV3DefinitionDetailWithCurrentEventStatus(
+            return reply.send(await toAutomationDefinitionDetailWithCurrentEventStatus(
                 row,
                 accountCurrentness,
             ));

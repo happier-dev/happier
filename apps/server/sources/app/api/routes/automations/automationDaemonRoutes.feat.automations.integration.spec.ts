@@ -65,7 +65,8 @@ function buildStrictV3Recipe(templateVersion: number): string {
     return recipe.serialized;
 }
 
-type UnsupportedV2TriggerKind = "pluginEvent" | "conversation";
+type UnsupportedV2DefinitionTriggerKind = "pluginEvent";
+type UnsupportedV2RunOriginKind = "pluginEvent" | "conversation";
 
 async function snapshotAutomationPersistence(accountId: string) {
     const [account, automations, assignments, runs, runEvents, accountChanges] =
@@ -99,10 +100,11 @@ async function snapshotAutomationPersistence(accountId: string) {
 async function seedUnsupportedV2Automation(params: Readonly<{
     accountId: string;
     machineId: string;
-    triggerKind: UnsupportedV2TriggerKind;
+    triggerKind: UnsupportedV2DefinitionTriggerKind;
+    originKind: UnsupportedV2RunOriginKind;
 }>) {
     const now = Date.now();
-    const isPluginEvent = params.triggerKind === "pluginEvent";
+    const isConversationRun = params.originKind === "conversation";
     const automation = await db.automation.create({
         data: {
             accountId: params.accountId,
@@ -113,17 +115,13 @@ async function seedUnsupportedV2Automation(params: Readonly<{
             templateCiphertext: buildPlainTemplateEnvelope(),
             templateVersion: 1,
             triggerDefinitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
-            ...(isPluginEvent
-                ? {
-                    triggerEventPluginId: "test.plugin",
-                    triggerEventLocalId: "event-1",
-                    triggerSourceSelectorId: "selector-1",
-                    triggerSourceContractVersion: 1,
-                    triggerObservationTransport: "durablePush" as const,
-                    triggerWebhookEndpointId: "endpoint-1",
-                    triggerObservationStartsAt: new Date(now - 120_000),
-                }
-                : {}),
+            triggerEventPluginId: "test.plugin",
+            triggerEventLocalId: "event-1",
+            triggerSourceSelectorId: "selector-1",
+            triggerSourceContractVersion: 1,
+            triggerObservationTransport: "durablePush" as const,
+            triggerWebhookEndpointId: "endpoint-1",
+            triggerObservationStartsAt: new Date(now - 120_000),
         },
         select: { id: true },
     });
@@ -139,12 +137,12 @@ async function seedUnsupportedV2Automation(params: Readonly<{
     const runInput = (suffix: string) => ({
         automationId: automation.id,
         accountId: params.accountId,
-        originKind: params.triggerKind,
+        originKind: params.originKind,
         originOccurredAt: new Date(now - 60_000),
-        occurrenceKey: `${params.triggerKind}-${suffix}`,
-        ...(isPluginEvent ? { originSourceSelectorId: "selector-1" } : {}),
+        occurrenceKey: `${params.originKind}-${suffix}`,
+        ...(isConversationRun ? {} : { originSourceSelectorId: "selector-1" }),
         triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
-        ...(!isPluginEvent
+        ...(isConversationRun
             ? {
                 replyContextEnvelope: JSON.stringify({
                     t: "plain",
@@ -153,12 +151,12 @@ async function seedUnsupportedV2Automation(params: Readonly<{
                         correspondence: {
                             accountId: params.accountId,
                             automationId: automation.id,
-                            runId: `${params.triggerKind}-${suffix}`,
+                            runId: `${params.originKind}-${suffix}`,
                             handoffId: `handoff-${suffix}`,
                         },
                         source: {
                             kind: "automationResult",
-                            automationRunId: `${params.triggerKind}-${suffix}`,
+                            automationRunId: `${params.originKind}-${suffix}`,
                             resultId: `handoff-${suffix}`,
                             automationId: automation.id,
                             templateVersion: 1,
@@ -1088,7 +1086,7 @@ describe("automation daemon routes (integration)", () => {
         );
     });
 
-    it("keeps Plugin Event and Conversation definitions and Runs out of every V2 mutation before effects, while V3 reaches the schedule owner", async () => {
+    it("keeps Plugin Event definitions and Plugin Event or Conversation Runs out of every V2 mutation before effects, while V3 reaches the schedule owner", async () => {
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
@@ -1110,11 +1108,12 @@ describe("automation daemon routes (integration)", () => {
         await withAuthenticatedTestApp(
             (app) => automationRoutes(app as any),
             async (app) => {
-                for (const triggerKind of ["pluginEvent", "conversation"] as const) {
+                for (const originKind of ["pluginEvent", "conversation"] as const) {
                     const fixture = await seedUnsupportedV2Automation({
                         accountId: account.id,
                         machineId,
-                        triggerKind,
+                        triggerKind: "pluginEvent",
+                        originKind,
                     });
 
                     const definitionMutations = [
@@ -1167,12 +1166,12 @@ describe("automation daemon routes (integration)", () => {
                                 },
                             ...(operation.payload ? { payload: operation.payload } : {}),
                         });
-                        expect(known.statusCode, `${triggerKind} ${operation.name}`).toBe(404);
+                        expect(known.statusCode, `${originKind} ${operation.name}`).toBe(404);
                         expect(await snapshotAutomationPersistence(account.id)).toEqual(before);
 
                         const absent = await app.inject({
                             method: operation.method,
-                            url: operation.path(`missing-${triggerKind}-${operation.name}`),
+                            url: operation.path(`missing-${originKind}-${operation.name}`),
                             headers: operation.payload
                                 ? headers
                                 : {
@@ -1229,12 +1228,12 @@ describe("automation daemon routes (integration)", () => {
                                 },
                             ...(operation.payload ? { payload: operation.payload } : {}),
                         });
-                        expect(known.statusCode, `${triggerKind} ${operation.name}`).toBe(404);
+                        expect(known.statusCode, `${originKind} ${operation.name}`).toBe(404);
                         expect(await snapshotAutomationPersistence(account.id)).toEqual(before);
 
                         const absent = await app.inject({
                             method: "POST",
-                            url: operation.path(`missing-${triggerKind}-${operation.name}`),
+                            url: operation.path(`missing-${originKind}-${operation.name}`),
                             headers: operation.payload
                                 ? headers
                                 : {

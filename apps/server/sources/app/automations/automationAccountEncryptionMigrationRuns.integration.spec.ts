@@ -37,47 +37,31 @@ const TRIGGER_DEFINITION_MATERIAL = {
     machineKey: new Uint8Array(32).fill(9),
 };
 
-const CONVERSATION_OWNER_REF = {
-    pluginId: "happier.channels",
-    localId: "provider/observation-ingest-v1",
-} as const;
-
 function buildTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
     templateVersion: number;
-    triggerKind: "pluginEvent" | "conversation";
+    triggerKind: "pluginEvent";
     mode: "plain" | "e2ee";
 }>): string {
-    const binding = params.triggerKind === "pluginEvent"
-        ? {
-            v: 1 as const,
-            automationId: params.automationId,
-            templateVersion: params.templateVersion,
-            triggerKind: "pluginEvent" as const,
-            eventRef: {
-                pluginId: "com.example.github",
-                localId: "repository-event",
-            },
-            sourceSelectorId: SOURCE_SELECTOR_ID,
-        }
-        : {
-            v: 1 as const,
-            automationId: params.automationId,
-            templateVersion: params.templateVersion,
-            triggerKind: "conversation" as const,
-            eventRef: null,
-            sourceSelectorId: null,
-        };
-    const definition: PluginJsonValueV2 = params.triggerKind === "pluginEvent"
-        ? {
-            v: 1,
-            sourceInstanceId: "migration-repository",
-            sourceConfig: { repositoryId: 42 },
-            displayLabel: "Migration repository",
-            filter: null,
-            maximumObservationAgeMs: null,
-        }
-        : { v: 1, bindingId: "migration-conversation", owner: CONVERSATION_OWNER_REF };
+    const binding = {
+        v: 1 as const,
+        automationId: params.automationId,
+        templateVersion: params.templateVersion,
+        triggerKind: "pluginEvent" as const,
+        eventRef: {
+            pluginId: "com.example.github",
+            localId: "repository-event",
+        },
+        sourceSelectorId: SOURCE_SELECTOR_ID,
+    };
+    const definition: PluginJsonValueV2 = {
+        v: 1,
+        sourceInstanceId: "migration-repository",
+        sourceConfig: { repositoryId: 42 },
+        displayLabel: "Migration repository",
+        filter: null,
+        maximumObservationAgeMs: null,
+    };
     return JSON.stringify(params.mode === "plain"
         ? sealAutomationTriggerDefinitionStoredEnvelopeV1({
             mode: "plain",
@@ -316,13 +300,11 @@ async function seedAutomationRuns() {
             accountId: account.id,
             name: "Conversation evidence migration",
             enabled: false,
-            triggerKind: "conversation",
-            triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                automationId: conversationAutomationId,
-                templateVersion: 6,
-                triggerKind: "conversation",
-                mode: "plain",
-            }),
+            // Conversation is retained as the Run origin below, not a definition trigger.
+            triggerKind: "schedule",
+            scheduleKind: "interval",
+            everyMs: 60_000,
+            triggerDefinitionEnvelope: null,
             targetType: "new_session",
             templateCiphertext: buildPlainTemplate("migrate Conversation Run"),
             templateVersion: 6,
@@ -636,12 +618,6 @@ function buildMigrationDirectiveForSeed(
                 automationId: seeded.conversationAutomation.id,
                 expectedTemplateVersion:
                     seeded.conversationAutomation.templateVersion,
-                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                    automationId: seeded.conversationAutomation.id,
-                    templateVersion: seeded.conversationAutomation.templateVersion + 1,
-                    triggerKind: "conversation",
-                    mode: "e2ee",
-                }),
             },
         ],
         runs: [
@@ -1623,13 +1599,11 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 accountId: account.id,
                 name: "Current Conversation source page",
                 enabled: false,
-                triggerKind: "conversation",
-                triggerDefinitionEnvelope: buildTriggerDefinitionEnvelope({
-                    automationId: "automation-encryption-transition-current-pages-conversation",
-                    templateVersion: 1,
-                    triggerKind: "conversation",
-                    mode: "e2ee",
-                }),
+                // The retained Conversation Run witnesses use this scheduled definition.
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                triggerDefinitionEnvelope: null,
                 targetType: "new_session",
                 templateCiphertext: buildEncryptedTemplate("current-page-conversation-template"),
                 templateVersion: 1,

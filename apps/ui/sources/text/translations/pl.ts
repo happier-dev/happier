@@ -1085,7 +1085,6 @@ export const pl = {
       schedule: "Harmonogram",
       event: ({ eventId }: { eventId: string }) => `Zdarzenie: ${eventId}`,
       manual: "Ręczne",
-      conversationTrigger: "Wyzwalacz konwersacji",
       noNextRun: "Brak następnego uruchomienia",
       nextRun: ({ time }: { time: string }) => `Następne: ${time}`,
       nextRunPending: "Następne uruchomienie oczekuje",

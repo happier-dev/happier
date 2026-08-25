@@ -1026,7 +1026,6 @@ export const de: TranslationStructure = {
             schedule: 'Zeitplan',
             event: ({ eventId }: { eventId: string }) => `Ereignis: ${eventId}`,
             manual: 'Manuell',
-            conversationTrigger: 'Gesprächs-Trigger',
             noNextRun: 'Kein nächster Lauf',
             nextRun: ({ time }: { time: string }) => `Nächster: ${time}`,
             nextRunPending: 'Nächster Lauf steht aus',

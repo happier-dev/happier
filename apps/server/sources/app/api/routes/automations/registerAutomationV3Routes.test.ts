@@ -169,7 +169,7 @@ const automationSettings: AutomationV3Settings = {
 };
 const getAutomationSettings = vi.fn(async (): Promise<AutomationV3Settings | null> => automationSettings);
 const updateAutomationSettings = vi.fn(async (): Promise<AutomationV3Settings | null> => automationSettings);
-const loadAutomationV3EventStatusProjections = vi.fn(async () => new Map());
+const loadAutomationEventStatusProjections = vi.fn(async () => new Map());
 // The route observes the real service contract; this mocked system boundary
 // only needs to carry the fixture supplied by each test.
 const claimAutomationRun = vi.fn(async (): Promise<{
@@ -206,7 +206,7 @@ vi.mock("@/app/automations/automationSettingsService", () => ({
     updateAutomationSettings,
 }));
 vi.mock("@/app/automations/automationV3EventStatusProjection", () => ({
-    loadAutomationV3EventStatusProjections,
+    loadAutomationEventStatusProjections,
 }));
 vi.mock("@/app/automations/automationClaimService", () => ({
     claimAutomationRun,
@@ -438,7 +438,7 @@ describe("registerAutomationV3Routes", () => {
         };
         listAutomations.mockResolvedValueOnce([eventAutomation] as any);
         getAutomation.mockResolvedValueOnce(eventAutomation as any);
-        loadAutomationV3EventStatusProjections
+        loadAutomationEventStatusProjections
             .mockResolvedValueOnce(new Map([[eventAutomation.id, projection]]))
             .mockResolvedValueOnce(new Map([[eventAutomation.id, projection]]));
         const { registerAutomationV3Routes } = await import("./registerAutomationV3Routes");
@@ -463,10 +463,10 @@ describe("registerAutomationV3Routes", () => {
             automations: [expect.objectContaining({ sourceCatalogStatus })],
         });
         expect(detailResponse).toEqual(expect.objectContaining({ sourceCatalogStatus }));
-        expect(loadAutomationV3EventStatusProjections).toHaveBeenNthCalledWith(1, {
+        expect(loadAutomationEventStatusProjections).toHaveBeenNthCalledWith(1, {
             automations: [eventAutomation],
         });
-        expect(loadAutomationV3EventStatusProjections).toHaveBeenNthCalledWith(2, {
+        expect(loadAutomationEventStatusProjections).toHaveBeenNthCalledWith(2, {
             automations: [eventAutomation],
         });
     });

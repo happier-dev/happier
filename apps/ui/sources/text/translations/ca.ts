@@ -1049,7 +1049,6 @@ export const ca = {
             schedule: 'Programació',
             event: ({ eventId }: { eventId: string }) => `Esdeveniment: ${eventId}`,
             manual: 'Manual',
-            conversationTrigger: 'Activador de conversa',
             noNextRun: 'Sense propera execució',
             nextRun: ({ time }: { time: string }) => `Propera: ${time}`,
             nextRunPending: 'Propera execució pendent',

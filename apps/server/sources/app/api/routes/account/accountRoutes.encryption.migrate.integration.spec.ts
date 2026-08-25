@@ -113,44 +113,6 @@ function encodePlainStoredJson(value: unknown): string {
     ).toString("base64");
 }
 
-const CONVERSATION_OWNER_REF = {
-    pluginId: "happier.channels",
-    localId: "provider/observation-ingest-v1",
-} as const;
-
-function encodeConversationTriggerDefinitionEnvelope(params: Readonly<{
-    automationId: string;
-    templateVersion: number;
-    mode: "plain" | "e2ee";
-}>): string {
-    const binding = {
-        v: 1 as const,
-        automationId: params.automationId,
-        templateVersion: params.templateVersion,
-        triggerKind: "conversation" as const,
-        eventRef: null,
-        sourceSelectorId: null,
-    };
-    const definition = {
-        v: 1,
-        bindingId: "route-account-encryption-conversation",
-        owner: CONVERSATION_OWNER_REF,
-    };
-    return JSON.stringify(params.mode === "plain"
-        ? sealAutomationTriggerDefinitionStoredEnvelopeV1({
-            mode: "plain",
-            binding,
-            definition,
-        })
-        : sealAutomationTriggerDefinitionStoredEnvelopeV1({
-            mode: "e2ee",
-            binding,
-            definition,
-            material: AUTOMATION_TRIGGER_DEFINITION_MATERIAL,
-            randomBytes: (length) => new Uint8Array(length).fill(3),
-        }));
-}
-
 function encodePluginEventTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
     templateVersion: number;
@@ -1707,12 +1669,11 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                 accountId: account.id,
                 name: "Conversation Run receipt migration",
                 enabled: false,
-                triggerKind: "conversation",
-                triggerDefinitionEnvelope: encodeConversationTriggerDefinitionEnvelope({
-                    automationId,
-                    templateVersion: 3,
-                    mode: "e2ee",
-                }),
+                // Conversation remains a Run origin; this definition is scheduled.
+                triggerKind: "schedule",
+                scheduleKind: "interval",
+                everyMs: 60_000,
+                triggerDefinitionEnvelope: null,
                 targetType: "new_session",
                 templateCiphertext: sourceTemplate,
                 templateVersion: 3,
@@ -1887,12 +1848,6 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                             automationId: automation.id,
                             expectedTemplateVersion: automation.templateVersion,
                             templateCiphertext: targetTemplate,
-                            triggerDefinitionEnvelope:
-                                encodeConversationTriggerDefinitionEnvelope({
-                                    automationId: automation.id,
-                                    templateVersion: automation.templateVersion + 1,
-                                    mode: "plain",
-                                }),
                         }],
                         runs: [{
                             runId,

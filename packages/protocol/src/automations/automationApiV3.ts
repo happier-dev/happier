@@ -47,15 +47,15 @@ const UTF8_ENCODER = new TextEncoder();
  * List/detail-safe catalog reconciliation facts for the current Event source.
  * Routing, Account, source, and materialization identity remain server-owned.
  */
-export const AutomationV3EventSourceCatalogStatusSchema = z.object({
+export const AutomationEventSourceCatalogStatusSchema = z.object({
   observedRevision: UNSIGNED_DECIMAL_BIGINT_SCHEMA,
   adoptedRevision: UNSIGNED_DECIMAL_BIGINT_SCHEMA.nullable(),
   state: AutomationEventSourceCatalogStatusStateV1Schema,
   scanStartedAt: TIMESTAMP_SCHEMA.nullable(),
   nextRetryAt: TIMESTAMP_SCHEMA.nullable(),
 }).strict();
-export type AutomationV3EventSourceCatalogStatus = z.infer<
-  typeof AutomationV3EventSourceCatalogStatusSchema
+export type AutomationEventSourceCatalogStatus = z.infer<
+  typeof AutomationEventSourceCatalogStatusSchema
 >;
 
 export const AutomationTargetTypeV2Schema = z.enum(['new_session', 'existing_session']);
@@ -156,28 +156,28 @@ export const AutomationV2RunMutationResponseSchema = z.object({
 }).strict();
 export type AutomationV2RunMutationResponse = z.infer<typeof AutomationV2RunMutationResponseSchema>;
 
-export const AutomationV3AssignmentSchema = z.object({
+export const AutomationAssignmentSchema = z.object({
   machineId: IDENTIFIER_SCHEMA,
   enabled: z.boolean(),
   priority: z.number().int(),
   updatedAt: TIMESTAMP_SCHEMA.nullable(),
 }).strict();
-export type AutomationV3Assignment = z.infer<typeof AutomationV3AssignmentSchema>;
+export type AutomationAssignment = z.infer<typeof AutomationAssignmentSchema>;
 
 /** Input form for the one existing Automation-assignment owner. */
-export const AutomationV3AssignmentInputSchema = z.object({
+export const AutomationAssignmentInputSchema = z.object({
   machineId: IDENTIFIER_SCHEMA,
   enabled: z.boolean().optional(),
   priority: z.number().int().min(-100).max(100).optional(),
 }).strict();
-export type AutomationV3AssignmentInput = z.infer<typeof AutomationV3AssignmentInputSchema>;
+export type AutomationAssignmentInput = z.infer<typeof AutomationAssignmentInputSchema>;
 
-export const AutomationV3AssignmentUpdateRequestSchema = z.object({
-  assignments: z.array(AutomationV3AssignmentInputSchema).max(50),
+export const AutomationAssignmentUpdateRequestSchema = z.object({
+  assignments: z.array(AutomationAssignmentInputSchema).max(50),
 }).strict();
-export type AutomationV3AssignmentUpdateRequest = z.infer<typeof AutomationV3AssignmentUpdateRequestSchema>;
+export type AutomationAssignmentUpdateRequest = z.infer<typeof AutomationAssignmentUpdateRequestSchema>;
 
-const AutomationV3ScheduleSchema = z.discriminatedUnion('kind', [
+const AutomationScheduleSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('cron'),
     scheduleExpr: z.string(),
@@ -192,73 +192,73 @@ const AutomationV3ScheduleSchema = z.discriminatedUnion('kind', [
   }).strict(),
 ]);
 
-export const AutomationV3ScheduleTriggerSchema = z.object({
+export const AutomationScheduleTriggerSchema = z.object({
   kind: z.literal('schedule'),
-  schedule: AutomationV3ScheduleSchema,
+  schedule: AutomationScheduleSchema,
 }).strict();
-export type AutomationV3ScheduleTrigger = z.infer<typeof AutomationV3ScheduleTriggerSchema>;
+export type AutomationScheduleTrigger = z.infer<typeof AutomationScheduleTriggerSchema>;
 
-export const AutomationV3ManualTriggerSchema = z.object({
+export const AutomationManualTriggerSchema = z.object({
   kind: z.literal('manual'),
 }).strict();
-export type AutomationV3ManualTrigger = z.infer<typeof AutomationV3ManualTriggerSchema>;
+export type AutomationManualTrigger = z.infer<typeof AutomationManualTriggerSchema>;
 
 /**
  * A schedule definition has no immutable occurrence evidence yet. The same
  * strict Run recipe becomes frozen on each scheduled/manual Run, while Event
- * and Conversation admission later replace this null arm with their one
+ * admission later replaces this null arm with its one
  * authoritative occurrence-evidence envelope. The rule itself belongs to the
  * recipe owner so every definition-authoring surface shares it.
  */
-const AutomationV3DefinitionExecutionRecipeSchema =
+const AutomationDefinitionExecutionRecipeSchema =
   AutomationStoredDefinitionExecutionRecipeV1Schema;
 
-export const AutomationV3ScheduleDefinitionCreateRequestSchema = z.object({
+export const AutomationScheduleDefinitionCreateRequestSchema = z.object({
   name: z.string().trim().min(1).max(128),
   description: z.string().max(2_000).nullable().optional(),
   enabled: z.boolean(),
-  trigger: AutomationV3ScheduleTriggerSchema,
-  executionRecipe: AutomationV3DefinitionExecutionRecipeSchema,
-  assignments: z.array(AutomationV3AssignmentInputSchema).max(50).optional(),
+  trigger: AutomationScheduleTriggerSchema,
+  executionRecipe: AutomationDefinitionExecutionRecipeSchema,
+  assignments: z.array(AutomationAssignmentInputSchema).max(50).optional(),
 }).strict();
-export type AutomationV3ScheduleDefinitionCreateRequest = z.infer<
-  typeof AutomationV3ScheduleDefinitionCreateRequestSchema
+export type AutomationScheduleDefinitionCreateRequest = z.infer<
+  typeof AutomationScheduleDefinitionCreateRequestSchema
 >;
 
-export const AutomationV3ScheduleDefinitionPatchRequestSchema = z.object({
+export const AutomationScheduleDefinitionPatchRequestSchema = z.object({
   name: z.string().trim().min(1).max(128).optional(),
   description: z.string().max(2_000).nullable().optional(),
   enabled: z.boolean().optional(),
-  trigger: AutomationV3ScheduleTriggerSchema.optional(),
-  executionRecipe: AutomationV3DefinitionExecutionRecipeSchema.optional(),
-  assignments: z.array(AutomationV3AssignmentInputSchema).max(50).optional(),
+  trigger: AutomationScheduleTriggerSchema.optional(),
+  executionRecipe: AutomationDefinitionExecutionRecipeSchema.optional(),
+  assignments: z.array(AutomationAssignmentInputSchema).max(50).optional(),
 }).strict();
-export type AutomationV3ScheduleDefinitionPatchRequest = z.infer<
-  typeof AutomationV3ScheduleDefinitionPatchRequestSchema
+export type AutomationScheduleDefinitionPatchRequest = z.infer<
+  typeof AutomationScheduleDefinitionPatchRequestSchema
 >;
 
-export const AutomationV3ManualDefinitionCreateRequestSchema = z.object({
+export const AutomationManualDefinitionCreateRequestSchema = z.object({
   name: z.string().trim().min(1).max(128),
   description: z.string().max(2_000).nullable().optional(),
   enabled: z.boolean(),
-  trigger: AutomationV3ManualTriggerSchema,
-  executionRecipe: AutomationV3DefinitionExecutionRecipeSchema,
-  assignments: z.array(AutomationV3AssignmentInputSchema).max(50).optional(),
+  trigger: AutomationManualTriggerSchema,
+  executionRecipe: AutomationDefinitionExecutionRecipeSchema,
+  assignments: z.array(AutomationAssignmentInputSchema).max(50).optional(),
 }).strict();
-export type AutomationV3ManualDefinitionCreateRequest = z.infer<
-  typeof AutomationV3ManualDefinitionCreateRequestSchema
+export type AutomationManualDefinitionCreateRequest = z.infer<
+  typeof AutomationManualDefinitionCreateRequestSchema
 >;
 
-export const AutomationV3ManualDefinitionPatchRequestSchema = z.object({
+export const AutomationManualDefinitionPatchRequestSchema = z.object({
   name: z.string().trim().min(1).max(128).optional(),
   description: z.string().max(2_000).nullable().optional(),
   enabled: z.boolean().optional(),
-  trigger: AutomationV3ManualTriggerSchema,
-  executionRecipe: AutomationV3DefinitionExecutionRecipeSchema.optional(),
-  assignments: z.array(AutomationV3AssignmentInputSchema).max(50).optional(),
+  trigger: AutomationManualTriggerSchema,
+  executionRecipe: AutomationDefinitionExecutionRecipeSchema.optional(),
+  assignments: z.array(AutomationAssignmentInputSchema).max(50).optional(),
 }).strict();
-export type AutomationV3ManualDefinitionPatchRequest = z.infer<
-  typeof AutomationV3ManualDefinitionPatchRequestSchema
+export type AutomationManualDefinitionPatchRequest = z.infer<
+  typeof AutomationManualDefinitionPatchRequestSchema
 >;
 
 /**
@@ -270,7 +270,7 @@ export type AutomationV3ManualDefinitionPatchRequest = z.infer<
  * contribution and the delivery-time observation boundary are server-owned and
  * are never accepted from an authoring client.
  */
-export const AutomationV3PluginEventObservationTransportInputSchema = z.discriminatedUnion('kind', [
+export const AutomationPluginEventObservationTransportInputSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('checkpointedPull'),
     watcherMaterializationRef: PluginMachineMaterializationRefV1Schema,
@@ -283,11 +283,11 @@ export const AutomationV3PluginEventObservationTransportInputSchema = z.discrimi
     setup: PluginWebhookEndpointSetupV1Schema,
   }).strict(),
 ]);
-export type AutomationV3PluginEventObservationTransportInput = z.infer<
-  typeof AutomationV3PluginEventObservationTransportInputSchema
+export type AutomationPluginEventObservationTransportInput = z.infer<
+  typeof AutomationPluginEventObservationTransportInputSchema
 >;
 
-export const AutomationV3PluginEventDefinitionTriggerInputSchema = z.object({
+export const AutomationPluginEventDefinitionTriggerInputSchema = z.object({
   kind: z.literal('pluginEvent'),
   eventRef: z.object({
     pluginId: IDENTIFIER_SCHEMA,
@@ -297,41 +297,41 @@ export const AutomationV3PluginEventDefinitionTriggerInputSchema = z.object({
   sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
   sourceConfig: asProtocolZod(AutomationEventSourceConfigV1Schema),
   displayLabel: AutomationEventSourceDisplayLabelV1Schema,
-  observationTransport: AutomationV3PluginEventObservationTransportInputSchema,
+  observationTransport: AutomationPluginEventObservationTransportInputSchema,
   filter: AutomationEventFilterV1Schema.nullable(),
   maximumObservationAgeMs: z.number().int().nonnegative().safe().nullable(),
 }).strict();
-export type AutomationV3PluginEventDefinitionTriggerInput = z.infer<
-  typeof AutomationV3PluginEventDefinitionTriggerInputSchema
+export type AutomationPluginEventDefinitionTriggerInput = z.infer<
+  typeof AutomationPluginEventDefinitionTriggerInputSchema
 >;
 
-export const AutomationV3PluginEventDefinitionCreateRequestSchema = z.object({
+export const AutomationPluginEventDefinitionCreateRequestSchema = z.object({
   name: z.string().trim().min(1).max(128),
   description: z.string().max(2_000).nullable().optional(),
   enabled: z.boolean(),
-  trigger: AutomationV3PluginEventDefinitionTriggerInputSchema,
-  executionRecipe: AutomationV3DefinitionExecutionRecipeSchema,
-  assignments: z.array(AutomationV3AssignmentInputSchema).max(50).optional(),
+  trigger: AutomationPluginEventDefinitionTriggerInputSchema,
+  executionRecipe: AutomationDefinitionExecutionRecipeSchema,
+  assignments: z.array(AutomationAssignmentInputSchema).max(50).optional(),
 }).strict();
-export type AutomationV3PluginEventDefinitionCreateRequest = z.infer<
-  typeof AutomationV3PluginEventDefinitionCreateRequestSchema
+export type AutomationPluginEventDefinitionCreateRequest = z.infer<
+  typeof AutomationPluginEventDefinitionCreateRequestSchema
 >;
 
-export const AutomationV3PluginEventDefinitionPatchRequestSchema =
-  AutomationV3PluginEventDefinitionCreateRequestSchema.extend({
+export const AutomationPluginEventDefinitionPatchRequestSchema =
+  AutomationPluginEventDefinitionCreateRequestSchema.extend({
     expectedTemplateVersion: z.number().int().nonnegative().safe(),
   }).strict();
-export type AutomationV3PluginEventDefinitionPatchRequest = z.infer<
-  typeof AutomationV3PluginEventDefinitionPatchRequestSchema
+export type AutomationPluginEventDefinitionPatchRequest = z.infer<
+  typeof AutomationPluginEventDefinitionPatchRequestSchema
 >;
 
-export const AutomationV3PluginEventRefSchema = z.object({
+export const AutomationPluginEventRefSchema = z.object({
   pluginId: IDENTIFIER_SCHEMA,
   localId: IDENTIFIER_SCHEMA,
 }).strict();
-export type AutomationV3PluginEventRef = z.infer<typeof AutomationV3PluginEventRefSchema>;
+export type AutomationPluginEventRef = z.infer<typeof AutomationPluginEventRefSchema>;
 
-export const AutomationV3CheckpointedPullObservationSchema = z.object({
+export const AutomationCheckpointedPullObservationSchema = z.object({
   kind: z.literal('checkpointedPull'),
   watcher: z.object({
     machineId: IDENTIFIER_SCHEMA,
@@ -340,37 +340,32 @@ export const AutomationV3CheckpointedPullObservationSchema = z.object({
     materializationId: IDENTIFIER_SCHEMA,
   }).strict().nullable(),
 }).strict();
-export type AutomationV3CheckpointedPullObservation = z.infer<
-  typeof AutomationV3CheckpointedPullObservationSchema
+export type AutomationCheckpointedPullObservation = z.infer<
+  typeof AutomationCheckpointedPullObservationSchema
 >;
 
-export const AutomationV3DurablePushObservationSchema = z.object({
+export const AutomationDurablePushObservationSchema = z.object({
   kind: z.literal('durablePush'),
   webhookEndpointId: IDENTIFIER_SCHEMA,
   observationStartsAt: TIMESTAMP_SCHEMA,
 }).strict();
-export type AutomationV3DurablePushObservation = z.infer<
-  typeof AutomationV3DurablePushObservationSchema
+export type AutomationDurablePushObservation = z.infer<
+  typeof AutomationDurablePushObservationSchema
 >;
 
-export const AutomationV3PluginEventTriggerSchema = z.object({
+export const AutomationPluginEventTriggerSchema = z.object({
   kind: z.literal('pluginEvent'),
-  eventRef: AutomationV3PluginEventRefSchema,
+  eventRef: AutomationPluginEventRefSchema,
   sourceSelectorId: IDENTIFIER_SCHEMA,
   sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
   observation: z.union([
-    AutomationV3CheckpointedPullObservationSchema,
-    AutomationV3DurablePushObservationSchema,
+    AutomationCheckpointedPullObservationSchema,
+    AutomationDurablePushObservationSchema,
   ]),
 }).strict();
-export type AutomationV3PluginEventTrigger = z.infer<typeof AutomationV3PluginEventTriggerSchema>;
+export type AutomationPluginEventTrigger = z.infer<typeof AutomationPluginEventTriggerSchema>;
 
-export const AutomationV3ConversationTriggerSchema = z.object({
-  kind: z.literal('conversation'),
-}).strict();
-export type AutomationV3ConversationTrigger = z.infer<typeof AutomationV3ConversationTriggerSchema>;
-
-const AutomationV3DefinitionBaseSchema = z.object({
+const AutomationDefinitionBaseSchema = z.object({
   id: IDENTIFIER_SCHEMA,
   name: z.string(),
   description: z.string().nullable(),
@@ -388,7 +383,7 @@ const AutomationV3DefinitionBaseSchema = z.object({
   lastRunAt: TIMESTAMP_SCHEMA.nullable(),
   createdAt: TIMESTAMP_SCHEMA,
   updatedAt: TIMESTAMP_SCHEMA,
-  assignments: z.array(AutomationV3AssignmentSchema),
+  assignments: z.array(AutomationAssignmentSchema),
 }).strict();
 
 function requireExactlyOneDefinitionContent(
@@ -403,7 +398,7 @@ function requireExactlyOneDefinitionContent(
   }
 }
 
-const AutomationV3DefinitionDetailContentShape = {
+const AutomationDefinitionDetailContentShape = {
   /** Direct-reader-only predecessor bytes. Current writers never send this field. */
   templateCiphertext: z.string().min(1).optional(),
   /** Direct-reader-only current recipe; definition lists never disclose it. */
@@ -411,58 +406,50 @@ const AutomationV3DefinitionDetailContentShape = {
 };
 
 /** Bounded definition list item; no private source/configuration envelope. */
-export const AutomationV3DefinitionListItemSchema = z.union([
-  AutomationV3DefinitionBaseSchema.extend({
-    trigger: AutomationV3ManualTriggerSchema,
+export const AutomationDefinitionListItemSchema = z.union([
+  AutomationDefinitionBaseSchema.extend({
+    trigger: AutomationManualTriggerSchema,
   }).strict(),
-  AutomationV3DefinitionBaseSchema.extend({
-    trigger: AutomationV3ScheduleTriggerSchema,
+  AutomationDefinitionBaseSchema.extend({
+    trigger: AutomationScheduleTriggerSchema,
   }).strict(),
-  AutomationV3DefinitionBaseSchema.extend({
-    trigger: AutomationV3PluginEventTriggerSchema,
+  AutomationDefinitionBaseSchema.extend({
+    trigger: AutomationPluginEventTriggerSchema,
     sourceStatus: AutomationEventSourceStatusV1Schema.nullable().optional(),
-    sourceCatalogStatus: AutomationV3EventSourceCatalogStatusSchema.nullable().optional(),
-  }).strict(),
-  AutomationV3DefinitionBaseSchema.extend({
-    trigger: AutomationV3ConversationTriggerSchema,
+    sourceCatalogStatus: AutomationEventSourceCatalogStatusSchema.nullable().optional(),
   }).strict(),
 ]);
-export type AutomationV3DefinitionListItem = z.infer<typeof AutomationV3DefinitionListItemSchema>;
+export type AutomationDefinitionListItem = z.infer<typeof AutomationDefinitionListItemSchema>;
 
 /**
  * Direct authenticated definition detail. The private trigger envelope is
  * never returned from list/status/source projections.
  */
-export const AutomationV3DefinitionDetailSchema = z.union([
-  AutomationV3DefinitionBaseSchema.extend({
-    trigger: AutomationV3ManualTriggerSchema,
+export const AutomationDefinitionDetailSchema = z.union([
+  AutomationDefinitionBaseSchema.extend({
+    trigger: AutomationManualTriggerSchema,
     triggerDefinitionEnvelope: z.null(),
-    ...AutomationV3DefinitionDetailContentShape,
+    ...AutomationDefinitionDetailContentShape,
   }).strict().superRefine(requireExactlyOneDefinitionContent),
-  AutomationV3DefinitionBaseSchema.extend({
-    trigger: AutomationV3ScheduleTriggerSchema,
+  AutomationDefinitionBaseSchema.extend({
+    trigger: AutomationScheduleTriggerSchema,
     triggerDefinitionEnvelope: z.null(),
-    ...AutomationV3DefinitionDetailContentShape,
+    ...AutomationDefinitionDetailContentShape,
   }).strict().superRefine(requireExactlyOneDefinitionContent),
-  AutomationV3DefinitionBaseSchema.extend({
-    trigger: AutomationV3PluginEventTriggerSchema,
+  AutomationDefinitionBaseSchema.extend({
+    trigger: AutomationPluginEventTriggerSchema,
     sourceStatus: AutomationEventSourceStatusV1Schema.nullable().optional(),
-    sourceCatalogStatus: AutomationV3EventSourceCatalogStatusSchema.nullable().optional(),
+    sourceCatalogStatus: AutomationEventSourceCatalogStatusSchema.nullable().optional(),
     triggerDefinitionEnvelope: z.string().min(1),
-    ...AutomationV3DefinitionDetailContentShape,
-  }).strict().superRefine(requireExactlyOneDefinitionContent),
-  AutomationV3DefinitionBaseSchema.extend({
-    trigger: AutomationV3ConversationTriggerSchema,
-    triggerDefinitionEnvelope: z.string().min(1),
-    ...AutomationV3DefinitionDetailContentShape,
+    ...AutomationDefinitionDetailContentShape,
   }).strict().superRefine(requireExactlyOneDefinitionContent),
 ]);
-export type AutomationV3DefinitionDetail = z.infer<typeof AutomationV3DefinitionDetailSchema>;
+export type AutomationDefinitionDetail = z.infer<typeof AutomationDefinitionDetailSchema>;
 
-export const AutomationV3DefinitionListResponseSchema = z.object({
-  automations: z.array(AutomationV3DefinitionListItemSchema),
+export const AutomationDefinitionListResponseSchema = z.object({
+  automations: z.array(AutomationDefinitionListItemSchema),
 }).strict();
-export type AutomationV3DefinitionListResponse = z.infer<typeof AutomationV3DefinitionListResponseSchema>;
+export type AutomationDefinitionListResponse = z.infer<typeof AutomationDefinitionListResponseSchema>;
 
 export const DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE = 4;
 export const DEFAULT_AUTOMATION_V3_RUN_RETENTION = 'thirtyDays';
@@ -887,5 +874,5 @@ export const AutomationV3RunMutationResponseSchema = z.object({
 }).strict();
 export type AutomationV3RunMutationResponse = z.infer<typeof AutomationV3RunMutationResponseSchema>;
 
-export const AutomationV3DeleteResponseSchema = z.object({ ok: z.literal(true) }).strict();
-export type AutomationV3DeleteResponse = z.infer<typeof AutomationV3DeleteResponseSchema>;
+export const AutomationDeleteResponseSchema = z.object({ ok: z.literal(true) }).strict();
+export type AutomationDeleteResponse = z.infer<typeof AutomationDeleteResponseSchema>;

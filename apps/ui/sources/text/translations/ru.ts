@@ -1091,7 +1091,6 @@ export const ru = {
       schedule: "Расписание",
       event: ({ eventId }: { eventId: string }) => `Событие: ${eventId}`,
       manual: "Вручную",
-      conversationTrigger: "Триггер разговора",
       noNextRun: "Следующий запуск не запланирован",
       nextRun: ({ time }: { time: string }) => `Следующий запуск: ${time}`,
       nextRunPending: "Следующий запуск ожидается",

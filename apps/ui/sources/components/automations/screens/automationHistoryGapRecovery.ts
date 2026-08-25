@@ -1,6 +1,6 @@
 import {
     type AutomationEventSourceStatusV1,
-    type AutomationV3DefinitionListItem,
+    type AutomationDefinitionListItem,
     type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
 } from '@happier-dev/protocol';
 import { reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
@@ -50,8 +50,8 @@ function sameCurrentSourceStatus(
 }
 
 function sameAutomationEventSource(
-    left: AutomationV3DefinitionListItem,
-    right: AutomationV3DefinitionListItem,
+    left: AutomationDefinitionListItem,
+    right: AutomationDefinitionListItem,
 ): boolean {
     if (!isPluginEventAutomationDefinition(left) || !isPluginEventAutomationDefinition(right)) return false;
     return left.id === right.id
@@ -66,7 +66,7 @@ function sameAutomationEventSource(
  * action is meaningful only for the definition's exact current pull source.
  */
 export function readAutomationHistoryGapRecoveryStatus(
-    automation: AutomationV3DefinitionListItem | null | undefined,
+    automation: AutomationDefinitionListItem | null | undefined,
 ): AutomationEventSourceStatusV1 | null {
     if (!automation || !automation.enabled || !isPluginEventAutomationDefinition(automation)) return null;
     if (automation.trigger.observation.kind !== 'checkpointedPull') return null;
@@ -89,7 +89,7 @@ export function readAutomationHistoryGapRecoveryStatus(
 /** The cold catalog is the one Action binding source; this only reads its exact Event entry. */
 export function readAutomationHistoryGapRecoveryEligibleEvent(params: Readonly<{
     inputs: DaemonMergedProjectionInputs | null | undefined;
-    automation: AutomationV3DefinitionListItem | null | undefined;
+    automation: AutomationDefinitionListItem | null | undefined;
 }>): DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null {
     const status = readAutomationHistoryGapRecoveryStatus(params.automation);
     const automation = params.automation;
@@ -126,7 +126,7 @@ function sameRecoveryEligibleEvent(
 }
 
 type CurrentRecoverySnapshot = Readonly<{
-    automation: AutomationV3DefinitionListItem;
+    automation: AutomationDefinitionListItem;
     status: AutomationEventSourceStatusV1;
     inputs: DaemonMergedProjectionInputs;
     event: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
@@ -140,7 +140,7 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
     inputs: DaemonMergedProjectionInputs | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal: AbortSignal;
-    resolveCurrentAutomation: () => AutomationV3DefinitionListItem | null;
+    resolveCurrentAutomation: () => AutomationDefinitionListItem | null;
     resolveExecutionOrigin: () => FreshPluginMachineExecutionOriginV1 | null;
     actionSnapshotRef: MutableRefObject<PluginContributedActionCurrentSnapshot | null>;
 }>): CurrentRecoverySnapshot | HistoryGapRecoveryOutcome {
@@ -228,7 +228,7 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal?: AbortSignal;
-    resolveCurrentAutomation: () => AutomationV3DefinitionListItem | null;
+    resolveCurrentAutomation: () => AutomationDefinitionListItem | null;
     resolveExecutionOrigin: () => FreshPluginMachineExecutionOriginV1 | null;
     loadCurrentProjection: (params: Readonly<{
         machineId: string;

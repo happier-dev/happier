@@ -1,6 +1,6 @@
 import {
     AutomationSourceSelectorIdV1Schema,
-    AutomationV3DefinitionDetailSchema,
+    AutomationDefinitionDetailSchema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
@@ -74,7 +74,7 @@ function eventDefinition(params: Readonly<{
     const envelopeSourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(
         params.envelopeSourceSelectorId ?? sourceSelectorId,
     );
-    const detail = AutomationV3DefinitionDetailSchema.parse({
+    const detail = AutomationDefinitionDetailSchema.parse({
         id: 'automation-event-1',
         name: 'Repository triage',
         description: 'Review repository updates',

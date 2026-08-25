@@ -1058,7 +1058,6 @@ export const zhHans = {
       schedule: "计划",
       event: ({ eventId }: { eventId: string }) => `事件：${eventId}`,
       manual: "手动",
-      conversationTrigger: "对话触发器",
       noNextRun: "没有下次运行",
       nextRun: ({ time }: { time: string }) => `下次：${time}`,
       nextRunPending: "下次运行待定",

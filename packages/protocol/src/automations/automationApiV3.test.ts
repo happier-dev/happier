@@ -6,12 +6,12 @@ import {
   AutomationApiV2Schema,
   AutomationRunApiV2Schema,
   AutomationRunExecutionInputV1Schema,
-  AutomationV3DefinitionDetailSchema,
-  AutomationV3DefinitionListItemSchema,
+  AutomationDefinitionDetailSchema,
+  AutomationDefinitionListItemSchema,
   AutomationV3ClearRunHistoryResponseSchema,
-  AutomationV3ManualDefinitionCreateRequestSchema,
-  AutomationV3PluginEventDefinitionCreateRequestSchema,
-  AutomationV3PluginEventDefinitionPatchRequestSchema,
+  AutomationManualDefinitionCreateRequestSchema,
+  AutomationPluginEventDefinitionCreateRequestSchema,
+  AutomationPluginEventDefinitionPatchRequestSchema,
   AutomationV3SettingsSchema,
   AutomationV3SettingsUpdateRequestSchema,
   AutomationV3WorkerClaimResponseSchema,
@@ -23,7 +23,7 @@ import {
   AutomationV3WorkerStartResponseSchema,
   AutomationV3WorkerSucceedRequestSchema,
   AutomationV3RunDetailSchema,
-  AutomationV3ScheduleDefinitionCreateRequestSchema,
+  AutomationScheduleDefinitionCreateRequestSchema,
   AutomationV3RunListItemSchema,
   DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
   DEFAULT_AUTOMATION_V3_RUN_RETENTION,
@@ -193,7 +193,7 @@ describe('Automation versioned API schemas', () => {
       executionRecipe: currentScheduleRecipe,
     };
 
-    expect(AutomationV3ManualDefinitionCreateRequestSchema.parse(input)).toEqual(
+    expect(AutomationManualDefinitionCreateRequestSchema.parse(input)).toEqual(
       expect.objectContaining({ name: input.name, trigger: input.trigger }),
     );
     const {
@@ -201,7 +201,7 @@ describe('Automation versioned API schemas', () => {
       triggerDefinitionEnvelope: _triggerDefinitionEnvelope,
       ...listItem
     } = v3CurrentScheduleDefinition;
-    expect(AutomationV3DefinitionListItemSchema.parse({
+    expect(AutomationDefinitionListItemSchema.parse({
       ...listItem,
       trigger: { kind: 'manual' },
       nextRunAt: null,
@@ -237,11 +237,11 @@ describe('Automation versioned API schemas', () => {
       },
       assignments: [{ machineId: 'machine-1' }],
     };
-    expect(AutomationV3PluginEventDefinitionCreateRequestSchema.parse(create)).toMatchObject({
+    expect(AutomationPluginEventDefinitionCreateRequestSchema.parse(create)).toMatchObject({
       ...create,
       executionRecipe: expect.objectContaining({ templateVersion: 1 }),
     });
-    expect(AutomationV3PluginEventDefinitionPatchRequestSchema.parse({
+    expect(AutomationPluginEventDefinitionPatchRequestSchema.parse({
       ...create,
       expectedTemplateVersion: 1,
     })).toMatchObject({ ...create, expectedTemplateVersion: 1,
@@ -256,16 +256,16 @@ describe('Automation versioned API schemas', () => {
       'catalogRevision',
       'providerPayload',
     ]) {
-      expect(AutomationV3PluginEventDefinitionCreateRequestSchema.safeParse({
+      expect(AutomationPluginEventDefinitionCreateRequestSchema.safeParse({
         ...create,
         trigger: { ...create.trigger, [forbidden]: 'caller-controlled' },
       }).success).toBe(false);
     }
-    expect(AutomationV3PluginEventDefinitionCreateRequestSchema.safeParse({
+    expect(AutomationPluginEventDefinitionCreateRequestSchema.safeParse({
       ...create,
       unknown: true,
     }).success).toBe(false);
-    expect(AutomationV3PluginEventDefinitionPatchRequestSchema.safeParse(create).success).toBe(false);
+    expect(AutomationPluginEventDefinitionPatchRequestSchema.safeParse(create).success).toBe(false);
   });
 
   it('accepts the durable-push authoring arm without any server-owned endpoint fact', () => {
@@ -299,9 +299,9 @@ describe('Automation versioned API schemas', () => {
       assignments: [{ machineId: 'machine-1' }],
     };
     expect(
-      AutomationV3PluginEventDefinitionCreateRequestSchema.parse(create).trigger.observationTransport,
+      AutomationPluginEventDefinitionCreateRequestSchema.parse(create).trigger.observationTransport,
     ).toEqual(pushTrigger.observationTransport);
-    expect(AutomationV3PluginEventDefinitionPatchRequestSchema.parse({
+    expect(AutomationPluginEventDefinitionPatchRequestSchema.parse({
       ...create,
       expectedTemplateVersion: 1,
     }).trigger.observationTransport).toEqual(pushTrigger.observationTransport);
@@ -319,7 +319,7 @@ describe('Automation versioned API schemas', () => {
         },
       },
     ]) {
-      expect(AutomationV3PluginEventDefinitionCreateRequestSchema.safeParse({
+      expect(AutomationPluginEventDefinitionCreateRequestSchema.safeParse({
         ...create,
         trigger: {
           ...pushTrigger,
@@ -330,7 +330,7 @@ describe('Automation versioned API schemas', () => {
 
     // The endpoint scalar keeps its canonical 128-bit identity shape, and the
     // push arm may not omit the routing source or setup identity.
-    expect(AutomationV3PluginEventDefinitionCreateRequestSchema.safeParse({
+    expect(AutomationPluginEventDefinitionCreateRequestSchema.safeParse({
       ...create,
       trigger: {
         ...pushTrigger,
@@ -339,7 +339,7 @@ describe('Automation versioned API schemas', () => {
     }).success).toBe(false);
     for (const omitted of ['webhookRoutingSourceInstanceId', 'setup'] as const) {
       const { [omitted]: _dropped, ...rest } = pushTrigger.observationTransport;
-      expect(AutomationV3PluginEventDefinitionCreateRequestSchema.safeParse({
+      expect(AutomationPluginEventDefinitionCreateRequestSchema.safeParse({
         ...create,
         trigger: { ...pushTrigger, observationTransport: rest },
       }).success).toBe(false);
@@ -368,11 +368,11 @@ describe('Automation versioned API schemas', () => {
       ...currentListItem
     } = v3CurrentScheduleDefinition;
 
-    expect(AutomationV3DefinitionListItemSchema.parse(listItem)).toEqual(listItem);
-    expect(AutomationV3DefinitionListItemSchema.safeParse(v3EventDefinition).success).toBe(false);
-    expect(AutomationV3DefinitionDetailSchema.parse(v3EventDefinition)).toEqual(v3EventDefinition);
-    expect(AutomationV3DefinitionListItemSchema.parse(currentListItem)).toEqual(currentListItem);
-    expect(AutomationV3DefinitionDetailSchema.parse(v3CurrentScheduleDefinition)).toMatchObject({
+    expect(AutomationDefinitionListItemSchema.parse(listItem)).toEqual(listItem);
+    expect(AutomationDefinitionListItemSchema.safeParse(v3EventDefinition).success).toBe(false);
+    expect(AutomationDefinitionDetailSchema.parse(v3EventDefinition)).toEqual(v3EventDefinition);
+    expect(AutomationDefinitionListItemSchema.parse(currentListItem)).toEqual(currentListItem);
+    expect(AutomationDefinitionDetailSchema.parse(v3CurrentScheduleDefinition)).toMatchObject({
       ...v3CurrentScheduleDefinition,
       executionRecipe: {
         ...currentScheduleRecipe,
@@ -389,10 +389,26 @@ describe('Automation versioned API schemas', () => {
         },
       },
     });
-    expect(AutomationV3DefinitionDetailSchema.safeParse({
+    expect(AutomationDefinitionDetailSchema.safeParse({
       ...v3EventDefinition,
       schedule: v2Definition.schedule,
     }).success).toBe(false);
+  });
+
+  it('rejects the retired Conversation definition from both list and detail contracts', () => {
+    const conversationDetail = {
+      ...v3CurrentScheduleDefinition,
+      trigger: { kind: 'conversation' as const },
+      triggerDefinitionEnvelope: '{"t":"plain","v":{"private":"conversation"}}',
+    };
+    const {
+      executionRecipe: _executionRecipe,
+      triggerDefinitionEnvelope: _triggerDefinitionEnvelope,
+      ...conversationListItem
+    } = conversationDetail;
+
+    expect(AutomationDefinitionListItemSchema.safeParse(conversationListItem).success).toBe(false);
+    expect(AutomationDefinitionDetailSchema.safeParse(conversationDetail).success).toBe(false);
   });
 
   it('projects only the current Event source-status row through the incumbent definition contracts', () => {
@@ -430,13 +446,13 @@ describe('Automation versioned API schemas', () => {
       ...listItem
     } = event;
 
-    expect(AutomationV3DefinitionListItemSchema.parse(listItem)).toMatchObject({
+    expect(AutomationDefinitionListItemSchema.parse(listItem)).toMatchObject({
       sourceStatus: { state: 'attention', code: 'historyGap', revision: 7 },
     });
-    expect(AutomationV3DefinitionDetailSchema.parse(event)).toMatchObject({
+    expect(AutomationDefinitionDetailSchema.parse(event)).toMatchObject({
       sourceStatus: { reporterMaterializationRef: { materializationId: 'materialization-1' } },
     });
-    expect(AutomationV3DefinitionListItemSchema.safeParse({
+    expect(AutomationDefinitionListItemSchema.safeParse({
       ...listItem,
       sourceStatus: { ...event.sourceStatus, providerCursor: 'must-not-leak' },
     }).success).toBe(false);
@@ -460,10 +476,10 @@ describe('Automation versioned API schemas', () => {
       ...listItem
     } = event;
 
-    expect(AutomationV3DefinitionListItemSchema.parse(listItem)).toMatchObject({
+    expect(AutomationDefinitionListItemSchema.parse(listItem)).toMatchObject({
       sourceCatalogStatus,
     });
-    expect(AutomationV3DefinitionDetailSchema.parse(event)).toMatchObject({
+    expect(AutomationDefinitionDetailSchema.parse(event)).toMatchObject({
       sourceCatalogStatus,
     });
 
@@ -475,13 +491,13 @@ describe('Automation versioned API schemas', () => {
       { providerCursor: 'must-not-leak' },
       { sourceConfig: { repository: 'private' } },
     ]) {
-      expect(AutomationV3DefinitionListItemSchema.safeParse({
+      expect(AutomationDefinitionListItemSchema.safeParse({
         ...listItem,
         sourceCatalogStatus: { ...sourceCatalogStatus, ...privateField },
       }).success).toBe(false);
     }
 
-    expect(AutomationV3DefinitionListItemSchema.safeParse({
+    expect(AutomationDefinitionListItemSchema.safeParse({
       ...v3CurrentScheduleDefinition,
       sourceCatalogStatus,
     }).success).toBe(false);
@@ -612,8 +628,8 @@ describe('Automation versioned API schemas', () => {
       },
       assignments: [{ machineId: 'machine-1', enabled: true, priority: 0 }],
     };
-    expect(AutomationV3ScheduleDefinitionCreateRequestSchema.parse(create)).toEqual(create);
-    expect(AutomationV3ScheduleDefinitionCreateRequestSchema.safeParse({
+    expect(AutomationScheduleDefinitionCreateRequestSchema.parse(create)).toEqual(create);
+    expect(AutomationScheduleDefinitionCreateRequestSchema.safeParse({
       ...create,
       trigger: {
         kind: 'schedule',
@@ -623,7 +639,7 @@ describe('Automation versioned API schemas', () => {
         },
       },
     }).success).toBe(false);
-    expect(AutomationV3ScheduleDefinitionCreateRequestSchema.safeParse({
+    expect(AutomationScheduleDefinitionCreateRequestSchema.safeParse({
       ...create,
       trigger: {
         kind: 'schedule',
@@ -635,12 +651,12 @@ describe('Automation versioned API schemas', () => {
         },
       },
     }).success).toBe(false);
-    expect(AutomationV3ScheduleDefinitionCreateRequestSchema.safeParse({
+    expect(AutomationScheduleDefinitionCreateRequestSchema.safeParse({
       ...create,
       targetType: 'newSession',
       templateCiphertext: v2Definition.templateCiphertext,
     }).success).toBe(false);
-    expect(AutomationV3ScheduleDefinitionCreateRequestSchema.safeParse({
+    expect(AutomationScheduleDefinitionCreateRequestSchema.safeParse({
       ...create,
       executionRecipe: {
         ...create.executionRecipe,

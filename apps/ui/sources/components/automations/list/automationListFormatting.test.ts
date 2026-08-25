@@ -47,7 +47,6 @@ describe('formatAutomationTriggerLabel', () => {
             sourceContractVersion: 1,
             observation: { kind: 'checkpointedPull', watcher: null },
         })).toBe('Evento: repository-event-v1');
-        expect(formatAutomationTriggerLabel({ kind: 'conversation' })).toBe('Disparador de conversación');
         expect(formatAutomationNextRun(null)).toBe('Sin próxima ejecución');
         expect(formatAutomationNextRun(1_700_000_000_000)).toBe('Próxima: fecha-localizada');
     });

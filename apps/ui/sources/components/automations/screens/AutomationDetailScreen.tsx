@@ -7,7 +7,7 @@ import {
     MAX_AUTOMATION_RESULT_TEXT_UTF8_BYTES,
     type AutomationEventSourceStatusV1,
     type AutomationRunExecutionRecipeV1,
-    type AutomationV3EventSourceCatalogStatus,
+    type AutomationEventSourceCatalogStatus,
 } from '@happier-dev/protocol';
 
 import { Modal } from '@/modal';
@@ -99,7 +99,7 @@ const automationSourceCatalogStatusStateLabels = {
     current: () => t('settingsPlugins.eventAutomationComposer.sourceCatalogStatusState.current'),
     reconciling: () => t('settingsPlugins.eventAutomationComposer.sourceCatalogStatusState.reconciling'),
     reconciliationLate: () => t('settingsPlugins.eventAutomationComposer.sourceCatalogStatusState.reconciliationLate'),
-} satisfies Record<AutomationV3EventSourceCatalogStatus['state'], () => string>;
+} satisfies Record<AutomationEventSourceCatalogStatus['state'], () => string>;
 
 /**
  * The state label alone says how the source feels, not whether it is still
@@ -138,7 +138,7 @@ function formatAutomationSourceStatusSubtitle(
 }
 
 function formatAutomationSourceCatalogStatusSubtitle(
-    status: AutomationV3EventSourceCatalogStatus,
+    status: AutomationEventSourceCatalogStatus,
     unknownDate: string,
 ): string {
     const details = [

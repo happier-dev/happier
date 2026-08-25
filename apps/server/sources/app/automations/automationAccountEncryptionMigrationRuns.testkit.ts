@@ -4,7 +4,6 @@ import {
     AutomationSourceSelectorIdV1Schema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     serializeAutomationRunExecutionRecipeV1,
-    type PluginJsonValueV2,
 } from "@happier-dev/protocol";
 import { expect } from "vitest";
 
@@ -37,46 +36,29 @@ const runContentSelect = {
     summaryCiphertext: true,
 } as const;
 
-const conversationOwnerRef = {
-    pluginId: "happier.channels",
-    localId: "provider/observation-ingest-v1",
-} as const;
-
-function triggerDefinitionEnvelope(params: Readonly<{
+function eventTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
     templateVersion: number;
-    triggerKind: "pluginEvent" | "conversation";
 }>): string {
-    const binding = params.triggerKind === "pluginEvent"
-        ? {
-            v: 1 as const,
-            automationId: params.automationId,
-            templateVersion: params.templateVersion,
-            triggerKind: "pluginEvent" as const,
-            eventRef: {
-                pluginId: "com.example.github",
-                localId: "repository-event",
-            },
-            sourceSelectorId,
-        }
-        : {
-            v: 1 as const,
-            automationId: params.automationId,
-            templateVersion: params.templateVersion,
-            triggerKind: "conversation" as const,
-            eventRef: null,
-            sourceSelectorId: null,
-        };
-    const definition: PluginJsonValueV2 = params.triggerKind === "pluginEvent"
-        ? {
-            v: 1,
-            sourceInstanceId: "migration-repository",
-            sourceConfig: { repositoryId: 42 },
-            displayLabel: "Migration repository",
-            filter: null,
-            maximumObservationAgeMs: null,
-        }
-        : { v: 1, bindingId: "migration-conversation", owner: conversationOwnerRef };
+    const binding = {
+        v: 1 as const,
+        automationId: params.automationId,
+        templateVersion: params.templateVersion,
+        triggerKind: "pluginEvent" as const,
+        eventRef: {
+            pluginId: "com.example.github",
+            localId: "repository-event",
+        },
+        sourceSelectorId,
+    };
+    const definition = {
+        v: 1,
+        sourceInstanceId: "migration-repository",
+        sourceConfig: { repositoryId: 42 },
+        displayLabel: "Migration repository",
+        filter: null,
+        maximumObservationAgeMs: null,
+    };
     return JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
         mode: "plain",
         binding,
@@ -288,10 +270,9 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             triggerSourceSelectorId: sourceSelectorId,
             triggerSourceContractVersion: 1,
             triggerObservationTransport: "checkpointedPull",
-            triggerDefinitionEnvelope: triggerDefinitionEnvelope({
+            triggerDefinitionEnvelope: eventTriggerDefinitionEnvelope({
                 automationId: eventAutomationId,
                 templateVersion: 4,
-                triggerKind: "pluginEvent",
             }),
             targetType: "new_session",
             templateCiphertext: plainTemplate("migrate Event Run"),
@@ -306,12 +287,12 @@ async function seedAllOriginRuns(onAccountCreated?: (accountId: string) => void)
             accountId: account.id,
             name: "Conversation evidence migration",
             enabled: false,
-            triggerKind: "conversation",
-            triggerDefinitionEnvelope: triggerDefinitionEnvelope({
-                automationId: conversationAutomationId,
-                templateVersion: 6,
-                triggerKind: "conversation",
-            }),
+            // Conversation is the Run origin below; this Automation keeps a
+            // normal schedule definition so Channel admission is an additive
+            // invocation source rather than a definition trigger.
+            triggerKind: "schedule",
+            scheduleKind: "interval",
+            everyMs: 60_000,
             targetType: "new_session",
             templateCiphertext: plainTemplate("migrate Conversation Run"),
             templateVersion: 6,
@@ -558,26 +539,6 @@ function buildDirective(seeded: Awaited<ReturnType<typeof seedAllOriginRuns>>) {
                 templateCiphertext: encryptedTemplate(
                     "replacement-encrypted-template-" + seeded.conversationAutomation.id,
                 ),
-                triggerDefinitionEnvelope: JSON.stringify(
-                    sealAutomationTriggerDefinitionStoredEnvelopeV1({
-                        mode: "e2ee",
-                        binding: {
-                            v: 1,
-                            automationId: seeded.conversationAutomation.id,
-                            templateVersion: seeded.conversationAutomation.templateVersion + 1,
-                            triggerKind: "conversation",
-                            eventRef: null,
-                            sourceSelectorId: null,
-                        },
-                        definition: {
-                            v: 1,
-                            bindingId: "migration-conversation",
-                            owner: conversationOwnerRef,
-                        },
-                        material: triggerDefinitionMaterial,
-                        randomBytes: (length) => new Uint8Array(length).fill(6),
-                    }),
-                ),
             },
         ],
         runs: [
@@ -704,7 +665,7 @@ export async function assertAllOriginAutomationRunMigrationToE2ee(params?: Reado
     })).resolves.toEqual({
         templateCiphertext: directive.templates[1]!.templateCiphertext,
         templateVersion: seeded.conversationAutomation.templateVersion + 1,
-        triggerDefinitionEnvelope: directive.templates[1]!.triggerDefinitionEnvelope,
+        triggerDefinitionEnvelope: null,
     });
     await expect(inTx(async (tx) =>
         await matchAutomationAccountEncryptionMigrationPostStateInTx({

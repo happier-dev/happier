@@ -4,9 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
     normalizePluginReleaseFactsV1,
-    sealAutomationTriggerDefinitionStoredEnvelopeV1,
     serializeAutomationRunExecutionRecipeV1,
-    type PluginJsonValueV2,
 } from "@happier-dev/protocol";
 
 import { db, initDbPostgres } from "@/storage/db";
@@ -69,29 +67,6 @@ function strictConversationDefinitionRecipe(): string {
         throw new Error("PostgreSQL Conversation admission fixture must use a strict recipe");
     }
     return serialized.serialized;
-}
-
-function triggerDefinitionEnvelope(params: Readonly<{
-    automationId: string;
-    bindingId: string;
-}>): string {
-    const definition: PluginJsonValueV2 = {
-        v: 1,
-        bindingId: params.bindingId,
-        owner: { pluginId: PLUGIN_ID, localId: CONTRIBUTION_LOCAL_ID },
-    };
-    return JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
-        mode: "plain",
-        binding: {
-            v: 1,
-            automationId: params.automationId,
-            templateVersion: 1,
-            triggerKind: "conversation",
-            eventRef: null,
-            sourceSelectorId: null,
-        },
-        definition,
-    }));
 }
 
 describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
@@ -201,15 +176,16 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                     accountId: account.id,
                     name: "PostgreSQL Conversation admission contract",
                     enabled: true,
-                    scheduleKind: null,
+                    scheduleKind: "interval",
+                    everyMs: 60_000,
                     targetType: "execution_run",
                     templateCiphertext: strictConversationDefinitionRecipe(),
                     templateVersion: 1,
-                    triggerKind: "conversation",
-                    triggerDefinitionEnvelope: triggerDefinitionEnvelope({
-                        automationId,
-                        bindingId,
-                    }),
+                    // Channels binds to this existing Automation and creates
+                    // a Conversation Run; it does not replace the definition
+                    // trigger.
+                    triggerKind: "schedule",
+                    triggerDefinitionEnvelope: null,
                 },
             });
 

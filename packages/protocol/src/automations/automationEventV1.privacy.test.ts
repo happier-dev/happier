@@ -6,7 +6,7 @@ import {
   AutomationEventSourceStatusReportV1Schema,
   AutomationEventSourceStatusV1Schema,
 } from './automationEventV1.js';
-import { AutomationV3EventSourceCatalogStatusSchema } from './automationApiV3.js';
+import { AutomationEventSourceCatalogStatusSchema } from './automationApiV3.js';
 
 const sourceSelectorId = '9d5af559-2c82-4c22-b6a0-ecabce38a631';
 const materializationRef = {
@@ -138,7 +138,7 @@ describe('Automation event V1 privacy projections', () => {
       nextRetryAt: 11,
     } as const;
 
-    expect(AutomationV3EventSourceCatalogStatusSchema.safeParse(projection).success).toBe(true);
+    expect(AutomationEventSourceCatalogStatusSchema.safeParse(projection).success).toBe(true);
     for (const privateField of [
       { accountId: 'account-1' },
       { eventPluginId: 'com.acme.github' },
@@ -149,7 +149,7 @@ describe('Automation event V1 privacy projections', () => {
       { providerCursor: 'cursor-1' },
       { payload: { action: 'opened' } },
     ]) {
-      expect(AutomationV3EventSourceCatalogStatusSchema.safeParse({
+      expect(AutomationEventSourceCatalogStatusSchema.safeParse({
         ...projection,
         ...privateField,
       }).success).toBe(false);

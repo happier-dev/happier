@@ -4,7 +4,7 @@ import {
     type AutomationReplyHandoffStateV1,
     type AutomationExecutionDispatchStateV3,
     type AutomationRunStateV3,
-    type AutomationV3PluginEventDefinitionTriggerInput,
+    type AutomationPluginEventDefinitionTriggerInput,
 } from '@happier-dev/protocol';
 
 export type AutomationScheduleKind = 'cron' | 'interval';
@@ -37,7 +37,7 @@ export function isTerminalAutomationRunState(
     return AUTOMATION_RUN_TERMINAL_STATES.some((terminalState) => terminalState === state);
 }
 
-export type AutomationTriggerKind = 'schedule' | 'manual' | 'pluginEvent' | 'conversation';
+export type AutomationTriggerKind = 'schedule' | 'manual' | 'pluginEvent';
 export type AutomationObservationTransport = 'checkpointedPull' | 'durablePush';
 export type AutomationRunOriginKind = 'scheduled' | 'manual' | 'pluginEvent' | 'conversation';
 /** The canonical execution-dispatch vocabulary; the Protocol schema is its one owner. */
@@ -123,7 +123,7 @@ type AutomationDefinitionTriggerInput =
     }>
     | Readonly<{
         schedule?: never;
-        pluginEvent: AutomationV3PluginEventDefinitionTriggerInput;
+        pluginEvent: AutomationPluginEventDefinitionTriggerInput;
         manual?: never;
     }>
     | Readonly<{
@@ -168,7 +168,7 @@ type AutomationPatchCommon = Readonly<{
     description?: string | null;
     enabled?: boolean;
     schedule?: AutomationScheduleInput;
-    pluginEvent?: AutomationV3PluginEventDefinitionTriggerInput;
+    pluginEvent?: AutomationPluginEventDefinitionTriggerInput;
     manual?: true;
     assignments?: ReadonlyArray<AutomationAssignmentInput>;
 }>;
