@@ -17,6 +17,7 @@ vi.mock('./claudeRemoteLauncher', () => ({
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
+    infoFile: vi.fn(),
   },
 }));
 

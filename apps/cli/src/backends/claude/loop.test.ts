@@ -28,6 +28,7 @@ vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
     debugLargeJson: vi.fn(),
+    infoFile: vi.fn(),
     warn: vi.fn(),
     logFilePath: '/tmp/happier-cli-test.log',
   },
