@@ -79,6 +79,30 @@ function createBinding(overrides: Partial<Parameters<typeof bindClaudeUnifiedTer
 }
 
 describe('bindClaudeUnifiedTerminalSession', () => {
+  it('does not acknowledge a transcript row before the owning publisher settles', async () => {
+    let acknowledge!: () => void;
+    const publisherAcknowledgement = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const { binding } = createBinding({
+      onMessage: async () => {
+        await publisherAcknowledgement;
+      },
+    });
+
+    let settled = false;
+    const observation = Promise.resolve(binding.sessionOptions.onMessage?.(assistantMessage('committed'))).then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    acknowledge();
+    await observation;
+    expect(settled).toBe(true);
+  });
+
   it('uses the configured accepted-prompt echo window for injected UI prompts', async () => {
     const { binding, consumedMessages, observedMessages } = createBinding();
 

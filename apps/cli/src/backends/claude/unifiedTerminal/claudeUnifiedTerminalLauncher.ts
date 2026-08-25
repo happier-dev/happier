@@ -370,9 +370,9 @@ export async function claudeUnifiedTerminalLauncher(
     session: session.client,
     logPrefix: '[unified]',
     acceptedPromptEchoWindowMs: configuration.claudeUnifiedTerminalAcceptedPromptEchoWindowMs,
-      onMessage: (message) => {
-        transcriptProjector.observe(message);
-      },
+    onMessage: async (message) => {
+      await transcriptProjector.observe(message);
+    },
     onReady: (context) => {
       readyHandler(context);
     },

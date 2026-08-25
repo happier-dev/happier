@@ -203,7 +203,7 @@ export async function claudeLocalLauncher(
             if (observation?.historicalReplay) {
                 await transcriptProjector.observeCommitted(message);
             } else {
-                transcriptProjector.observe(message);
+                await transcriptProjector.observe(message);
                 lifecycleTracker.observeTranscript(message);
             }
         },

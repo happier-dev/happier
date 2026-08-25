@@ -103,6 +103,7 @@ function createSessionFixture(): Readonly<{
       sessionId: 'happy-session-id',
       getMetadataSnapshot: () => metadata,
       sendClaudeSessionMessage: vi.fn(),
+      sendClaudeSessionMessageCommittedExact: vi.fn(async () => {}),
       sendClaudeSessionMessageCommitted: vi.fn(async () => ({
         persisted: true,
         delivered: true,
@@ -198,6 +199,36 @@ describe('createClaudeSessionTranscriptProjector compaction events', () => {
 });
 
 describe('createClaudeSessionTranscriptProjector model adoption', () => {
+  it('does not finish a live observation before exact transcript custody is acknowledged', async () => {
+    const fixture = createSessionFixture();
+    let acknowledge!: () => void;
+    const acknowledgement = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    vi.mocked(fixture.session.client.sendClaudeSessionMessageCommittedExact!).mockReturnValueOnce(acknowledgement);
+    const projector = createClaudeSessionTranscriptProjector({
+      session: fixture.session,
+      logPrefix: '[test]',
+    });
+
+    let settled = false;
+    const observation = Promise.resolve(projector.observe(buildAssistantRow({
+      uuid: 'live-assistant-awaiting-custody',
+      model: 'claude-fable-5',
+    }))).then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(fixture.session.client.sendClaudeSessionMessageCommittedExact).toHaveBeenCalledTimes(1);
+    expect(fixture.session.client.sendClaudeSessionMessage).not.toHaveBeenCalled();
+    expect(settled).toBe(false);
+
+    acknowledge();
+    await observation;
+    expect(settled).toBe(true);
+  });
+
   it('durably projects historical rows without adopting stale live runtime state', async () => {
     const fixture = createSessionFixture();
     const projector = createClaudeSessionTranscriptProjector({

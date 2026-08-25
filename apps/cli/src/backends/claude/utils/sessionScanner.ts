@@ -338,7 +338,9 @@ export async function createSessionScanner(opts: {
             }
             try {
                 shapeLogger.log('emit:sidechain-import', body);
-                opts.onMessage(body);
+                void Promise.resolve(opts.onMessage(body)).catch((err) => {
+                    logger.debug('[SESSION_SCANNER] onMessage callback rejected (sidechain import):', err);
+                });
             } catch (err) {
                 logger.debug('[SESSION_SCANNER] onMessage callback threw (sidechain import):', err);
             }
@@ -370,7 +372,9 @@ export async function createSessionScanner(opts: {
             }
             try {
                 shapeLogger.log('emit:team-inbox', body);
-                opts.onMessage(body);
+                void Promise.resolve(opts.onMessage(body)).catch((err) => {
+                    logger.debug('[SESSION_SCANNER] onMessage callback rejected (team inbox):', err);
+                });
             } catch (err) {
                 logger.debug('[SESSION_SCANNER] onMessage callback threw (team inbox):', err);
             }
@@ -566,17 +570,19 @@ export async function createSessionScanner(opts: {
         if (processedMessageKeys.has(key)) {
             return false;
         }
-        processedMessageKeys.add(key);
         if (isFilteredSystemMessage(file)) {
+            processedMessageKeys.add(key);
             return false;
         }
         if (isReplaySuppressedRow(file, replayOpts?.suppressBeforeMs)) {
+            processedMessageKeys.add(key);
             return false;
         }
         logger.debug(`[SESSION_SCANNER] Sending new message: type=${file.type}, uuid=${file.type === 'summary' ? file.leafUuid : file.uuid}`);
         try {
             const action = rewriteTaskNotificationToToolResult(file);
             if (action?.type === 'drop') {
+                processedMessageKeys.add(key);
                 return false;
             }
             if (action?.type === 'rewrite') {
@@ -586,10 +592,10 @@ export async function createSessionScanner(opts: {
                 shapeLogger.log(`emit:${String((file as any)?.type ?? 'unknown')}`, file);
                 await opts.onMessage(file, { historicalReplay: replayOpts?.suppressSideEffects === true });
             }
+            processedMessageKeys.add(key);
             return true;
         } catch (err) {
             if (replayOpts?.suppressSideEffects === true) {
-                processedMessageKeys.delete(key);
                 throw err;
             }
             logger.debug('[SESSION_SCANNER] onMessage callback threw:', err);
