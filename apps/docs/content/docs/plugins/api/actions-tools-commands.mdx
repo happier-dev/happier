@@ -282,11 +282,12 @@ Tools expose plugin actions to tool-capable surfaces. The manifest owns tool met
 
 Use tools when the operation is meant to be called by agents or MCP-compatible tool clients.
 
-> **Development status:** Tool declarations remain deferred, conformance-only
-> authoring. Their source and MCP bridge are implemented, but the installed
-> external Tool lifecycle still needs packed replacement, disable, and
-> uninstall proof before the capability matrix can advertise Tools as
-> available.
+> **Development status:** Tools remain deferred. They are not supported or
+> advertised for ordinary author use; do not rely on them. A maintained external
+> development-source plugin must invoke its Tool Action through the real daemon
+> MCP catalog in the current loaded development stack and prove lifecycle, real
+> invocation, and replacement, disable, and uninstall currentness before the
+> capability matrix can advertise Tools as available.
 
 ### Worked tool example
 
@@ -350,10 +351,13 @@ export const { manifest, activate } = definePlugin({
 Commands expose CLI-facing entries. Command declarations specify their path, visibility, availability, and canonical action reference; they do not register a parallel command handler.
 
 > **Development status:** Command declarations and canonical host-catalog
-> wiring exist in current source, but Commands remain deferred for external
-> authors. Exact packed external proof must cover Action invocation,
-> replacement, disable, and uninstall currentness before a published capability
-> matrix or this guide can advertise Commands as available.
+> wiring exist in current source, but Commands remain deferred. They are not
+> supported or advertised for ordinary author use; do not rely on them. A
+> maintained external development-source plugin must invoke its Command Action
+> through the canonical plugin command catalog in the current loaded development
+> stack and prove lifecycle, real invocation, and replacement, disable, and
+> uninstall currentness before a published capability matrix or this guide can
+> advertise Commands as available.
 
 ### Current-UI commands
 
@@ -369,11 +373,8 @@ generation, or unknown id produces no effect. This preserves the existing
 Action and navigation owners instead of creating a screen-specific Voice
 handler or callback registry.
 
-> **Development status:** This current-UI Developer Preview capability is still
-> under implementation, as is packaged web/iOS/Android certification. The
-> public package surface is not yet released for supported use. The
-> mounted publication contract is documented under
-> [Plugin UI](/plugins/ui#publish-mounted-semantic-context).
+The mounted publication contract is documented under
+[Plugin UI](/plugins/ui#publish-mounted-semantic-context).
 
 ## Approvals
 

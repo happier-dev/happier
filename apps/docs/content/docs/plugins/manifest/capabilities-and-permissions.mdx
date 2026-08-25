@@ -39,14 +39,21 @@ capability-specific and strict. Only `connectedAccounts`, `sessions`,
 `storage.account`, and `mcp` may be optional.
 
 `terminal` is available only through the host-owned Agent-session terminal lifecycle.
-`requestInterceptors` is a trusted installation-wide declaration, not a generic
-`hostAccess` permission. The installer reviews and displays each declaration's exact
-origins and methods before the canonical host policy chain registers it.
+`requestInterceptors` is available to ordinary public authors as a trusted
+installation-wide declaration, not a generic `hostAccess` permission. The installer
+reviews and displays each declaration's exact origins and methods before the canonical
+host policy chain registers it.
 `network.intercept` is not a public HostAccess capability; no public `hostAccess`
 request is required for a request interceptor. The canonical host policy chain can
 deny a matching request or continue it with an in-scope URL, method, or
 non-protected-header rewrite; it does not rewrite bodies, inject provider
 authentication, or add a second fetch or interception chain.
+
+When the host has attached a Connected Account credential to the request, the
+chain may still deny it or rewrite its non-protected headers, but it may not
+change the URL or method. That credential is authorized for one exact request,
+so a retargeted call would carry the secret to a destination its owner never
+approved; the host refuses the rewrite instead.
 
 Credential, identity, cookie, token, signature, and API-key headers require an
 explicit closed policy rather than name heuristics. The host always hides and

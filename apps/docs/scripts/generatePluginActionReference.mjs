@@ -29,6 +29,7 @@ export async function renderPluginActionReferenceMarkdown({
   loadRenderer = async (path) => await import(pathToFileURL(path).href),
 } = {}) {
   await ensureWorkspacePackagesBuiltByName(REPO, ['@happier-dev/protocol'], {
+    force: true,
     includeDevDependencies: false,
     publicationMode: 'live',
     quiet: true,

@@ -36,8 +36,12 @@ happier plugins create my-hosted-plugin --ui hostedWeb
 
 The React Native scaffold declares web, iOS, and Android artifacts through the
 public build contract. The hosted scaffold emits its isolated artifact and
-bootstrap client, but its packaged browser/desktop, iOS, and Android runtime
-paths remain unavailable until their respective frame adapters are verified.
+bootstrap client. Its packaged runtime availability is not one global claim:
+each host reports the single frame adapter it can construct, so the browser,
+iOS, and Android hosts admit the artifact today while every packaged-desktop
+host reports a typed unavailable reason. Read the per-host state from
+[Hosted web UI](/plugins/ui/hosted-web#build-and-runtime-availability) rather
+than assuming either answer.
 
 `plugins dev` is the automatic watcher flow: after trust, the CLI observes the
 source closure and submits each captured batch to the daemon. After submission,
@@ -57,10 +61,9 @@ example and verify imports against the maintained
 [SDK entrypoint map](/plugins/api/sdk-entrypoints). Before selecting a
 contribution or service family, read the installed
 `node_modules/@happier-dev/plugin-sdk/capability-matrix.json`: it is the sole
-availability authority. A `deferred` row remains conformance-only reference
-material even when its declaration or example is present; it is not a
-supported product lifecycle. This does not change the current prepublication
-hold.
+availability authority. A `deferred` row is not supported or advertised for
+ordinary author use; do not rely on it; consult its unblock condition. This
+does not change the current prepublication hold.
 
 For a custom Session Agent, that activation entry is not the runner entry. The
 runner imports only the exact named factory leaf in the Agent's
@@ -77,6 +80,10 @@ again.
 
 ```text
 my-plugin/
+  .agents/
+    skills/
+      happier-plugin-authoring/
+        SKILL.md
   src/
     index.ts
   test/
@@ -85,30 +92,40 @@ my-plugin/
   tsconfig.json
 ```
 
+`.agents/skills/happier-plugin-authoring/SKILL.md` is a generated workflow
+guide for the coding agent you author with, not an API reference. It is a real
+source artifact: the scaffold's `files` inventory ships it alongside `dist`, so
+it travels in the packed archive.
+
 During development, `src/index.ts` is the authoring source of truth. Packing
 evaluates that module once, validates the canonical projection, and writes
 `.happier-plugin/plugin.json` into the archive. Installed and marketplace
 discovery read that generated JSON without executing author code.
 
-The generated entry uses the code-defined authoring helper and exports the
+`happier plugins create my-plugin --id com.example.my-plugin` generates exactly
+this `src/index.ts`. It uses the code-defined authoring helper and exports the
 ordinary named `manifest` and `activate` ABI:
 
 ```ts
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import {
-  defineProtocolObject,
-  defineProtocolString,
-} from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 
 export const { manifest, activate } = definePlugin({
-  id: 'com.example.my-plugin',
-  version: '0.1.0',
-  entrypoints: { daemon: './dist/index.js' },
-  displayName: 'My plugin',
+  id: "com.example.my-plugin",
+  version: "0.1.0",
+  displayName: "My plugin",
+  description: "Local Happier plugin scaffold for My plugin.",
+  runtime: { apiVersion: 1 },
+  entrypoints: { daemon: './dist/index.js', development: './src/index.ts' },
   actions: {
     'save-note': {
       title: 'Save note',
+      description: 'Returns the supplied note from one minimal plugin action.',
+      scopes: ['global'],
+      surfaces: ['agent', 'cli', 'mcp'],
       execution: { target: 'daemon' },
+      placementBindings: ['commandPalette'],
+      dangerLevel: 'safe',
       inputSchema: defineProtocolObject({
         note: defineProtocolString(),
       }, { policy: 'closed' }),
@@ -116,12 +133,18 @@ export const { manifest, activate } = definePlugin({
         note: defineProtocolString(),
       }, { policy: 'closed' }),
       async run(input) {
-        return { note: (input as Readonly<{ note: string }>).note };
+        return { note: input.note };
       },
     },
   },
 });
 ```
+
+Without `--id`, the id is derived from the directory name as
+`local.my-plugin`. Adding `--ui reactNative` or `--ui hostedWeb` also emits
+`pluginUiBuild.ts` and `src/ui/`, re-exports `mainSurface` from this entry,
+adds `'ui'` to the action's surfaces, and adds the `ui` declaration with its
+translations to the same call.
 
 The action id is local to the plugin. Happier owns its structured global
 identity and renders it as `com.example.my-plugin/actions/save-note` only where
@@ -141,28 +164,29 @@ happier plugins pack .
 
 You can also use `npm run typecheck`, `npm test`, `npm run build`, and
 `npm run pack:plugin` from the scaffold. `plugins test .` runs the generated
-`test/index.test.mjs` suite through Happier's managed JavaScript runtime. It
-loads `dist/index.js`, passes its exported `manifest` and `activate` through the
-public testkit, and invokes the declared
-`save-note` action without starting a daemon or mutating installed plugin
-state. The reserved
+`test/index.test.mjs` suite through Happier's managed JavaScript runtime. The
+generated `save-note` contract already passes and gives you the pattern for the
+first behavior your plugin must preserve; the adjacent example loads
+`dist/index.js`, passes its exported `manifest` and `activate` through the public
+testkit, and invokes the declared `save-note` Action without starting a daemon
+or mutating installed plugin state. The reserved
 `happier plugins test . --packed` mode packs the project, installs and trusts
 it through an authenticated disposable daemon home, invokes a safe CLI action
 that accepts empty input when one is declared, restarts the daemon, and invokes
 the action again. It never reads or mutates the user's installed plugin state.
 
 `plugins pack` writes an npm-compatible `.tgz` and a SHA-256 sidecar. Install
-the emitted archive through the same reviewed daemon path used by other plugin
-sources:
+the archive path printed by `plugins pack` through the same reviewed daemon
+path used by other plugin sources:
 
 ```bash
-happier plugins install ./happier-plugin-com-example-my-plugin-0.1.0.tgz --kind archive
+happier plugins install <printed-archive-path> --kind archive
 ```
 
 In an interactive terminal, Happier shows the exact package, manifest,
 executable realms, contributions, requested host integration, and source facts
-before asking for **Install & Trust**. Use the archive path printed by
-`plugins pack`; the example filename above is illustrative.
+before asking for **Install & Trust**. `plugins pack` writes its default archive
+outside the plugin root; use the printed path rather than constructing one.
 
 ## Development without a watcher
 

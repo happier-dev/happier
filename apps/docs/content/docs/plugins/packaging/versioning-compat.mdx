@@ -46,9 +46,9 @@ public version is established by the current source tree.
 No package in the current private `0.0.0` source state has a released SemVer
 contract. When an SDK package is prepared for publication, its package API is
 reviewed separately from the manifest schema, host range, and runtime ABI. The
-release preparation compares the exact candidate's public API inventory and
-reachable declaration report with the previous published tarball, rather than
-with Git history or a prior source-tree record.
+release preparation compares the release source's public API inventory and
+reachable declaration report with the previous published release, rather than
+with Git history or an unrelated prior source-tree record.
 
 That comparison reports mechanical facts—added, removed, changed, deprecated,
 or unchanged declarations—and a human classifies the SemVer impact. Removing a

@@ -8,6 +8,15 @@ endpoint, compatibility, credential-requirement, and connection-facing facts.
 The host owns connections, account selection, grants, model selection, and
 credential materialization.
 
+## Availability
+
+Provider declarations, managed runtimes, and the `/providers` type entrypoint
+are available in the current source contract. `context.services.providers`
+remains deferred in the [capability matrix](/plugins/manifest/availability)
+until a maintained external development-source plugin proves lifecycle and real
+invocation in the current loaded development stack, including currentness. It
+is not supported or advertised for ordinary author use while deferred.
+
 ## Descriptor-only Provider
 
 Choose this for a remotely reachable or otherwise host-consumed model source.

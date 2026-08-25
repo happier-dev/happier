@@ -19,6 +19,7 @@ The goal is that both surfaces:
   - A **bundled first-party** Agent keeps its unqualified released identifier (`claude`, `codex`, `ohMyPi`, …); those ids already travel in persisted Sessions, CLI subcommands and wire targets, and the bundled set is generated and collision-free.
   - An **installed** Agent is routed by its qualified key `"<pluginId>/<localId>"`, so its catalog entry, engine resolution, runtime lease, CLI subcommand and execution target are all plugin-scoped. Two plugins declaring `assistant` therefore both project and activate; neither displaces the other.
   - Consumers that need the author's local id read `contribution.identity.localId`. Never re-derive a local id from a routing id.
+  - The inverse direction has one owner too: a consumer holding a durable identity resolves the routing id through the registry index `agentRoutingIdentity.ts#indexAgentRoutingIdsByContributionIdentity` / `#readAgentRoutingIdForContributionIdentity` (External Sessions durable records use `apps/cli/src/api/session/external/linking/qualifiedLinkIdentityRegistry.ts#resolveCurrentExternalSessionAgentRoutingId`). Never compare a routing id against a bare `localId`: that comparison only ever matches bundled Agents and silently rejects every installed one.
 - **detectKey**: CLI executable name used for detection UX and `command -v <detectKey>`-style probes.
   - Source of truth: `@happier-dev/agents` (`AGENTS_CORE[agentId].detectKey`).
 - **cliSubcommand**: the primary CLI subcommand for this agent (usually the same as `AgentId`).
@@ -352,7 +353,7 @@ These rows describe registered source capabilities, not a promise that the Agent
 | Codex | Supported | `watch_file_changes` | Supported | Supported |
 | OpenCode | Supported | `observe_resource` | Supported | Not registered |
 | Oh My Pi | Supported | `reconcile_only`; no live follow | Supported | Not registered |
-| Pi | Supported | `reconcile_only`; no live follow | Not registered | Not registered |
+| Pi | Supported | `reconcile_only`; no live follow | Supported for persisted takeover; linked takeover remains unavailable because writer safety is `unsupported` | Not registered |
 | Antigravity CLI | Supported | `watch_file_changes` over CLI print transcripts | Not registered | Not registered |
 
 Auggie exposes no External Sessions registration in the current release and is intentionally reported unsupported until a stable vendor history/page/read-after contract exists. Cursor and Copilot also expose no External Sessions registration in the current source tree; do not present them as supported until their feasibility decisions and consumed implementations land. Absence of an auxiliary registration fails closed and must not be replaced by Agent-id branches or inferred from generic resume/ACP capability.

@@ -51,6 +51,11 @@ const FAMILIES = [
     lede: 'A periodic snapshot of what the runtime is doing, rather than a discrete thing that happened.',
     kinds: ['runtime-activity-snapshot'],
   },
+  {
+    title: 'Available commands',
+    lede: 'The commands the current agent runtime can accept. This lets the host refresh command discovery without treating that catalog as transcript output.',
+    kinds: ['available-commands'],
+  },
 ];
 
 /** Walk a zod discriminated union without depending on one library version's internals. */

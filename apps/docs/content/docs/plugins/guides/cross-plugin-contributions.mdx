@@ -13,6 +13,16 @@ or build a second Action map.
 Use a feature-owned protocol value in ordinary plugin code. Only a package that
 defines a reusable feature protocol imports the generic constructors.
 
+The feature protocol is its own versioned package dependency; it is not hidden
+inside `@happier-dev/plugin-sdk`. Use the exact package and `/v1` entrypoint the
+target feature documents, then verify that `pluginContributionPoints` and
+`targetedPluginContributions` are **Available** in the installed SDK's
+`capability-matrix.json`. Do not guess a package name from a feature label or
+copy its declarations into your plugin. The installed
+`examples/action-contract-producer` and `examples/action-contract-consumer`
+pair shows package discovery, target observation, and contributor binding from
+public entrypoints.
+
 ## Everyday target and contributor authors
 
 Channels publishes its provider protocol as a feature-owned value. An ordinary
@@ -24,7 +34,7 @@ import {
   ConversationProvidersContributionProtocolV1,
 } from '@happier-dev/channels-protocol/v1';
 
-export const { manifest, activate } = definePlugin({
+export const targetPlugin = definePlugin({
   id: 'com.example.channels-target',
   version: '0.1.0',
   entrypoints: { daemon: './dist/index.js' },
@@ -32,6 +42,8 @@ export const { manifest, activate } = definePlugin({
     providers: ConversationProvidersContributionProtocolV1.point(),
   },
 });
+
+export const { manifest, activate } = targetPlugin;
 ```
 
 A provider plugin imports that same feature protocol, derives each ordinary
@@ -175,26 +187,61 @@ admitted for that exact target point; do not decode a second manifest view or
 derive a competing catalog.
 
 ```ts
-const observation = context.services.targetedContributions.observeForSelf(
-  targetPlugin.contributionPoints.sources,
-  { onInvalidated: () => refreshSourceList() },
-);
+async function readSelectedSource(context, selectedSource) {
+  const observation = context.services.targetedContributions.observeForSelf(
+    targetPlugin.contributionPoints.providers,
+    { onInvalidated: () => refreshSourceList() },
+  );
 
-try {
-  const snapshot = await observation.readCurrent({ signal: context.signal });
-  const detailSurface = snapshot.contributions[0]?.surfaces.detail;
-  // Use the exact admitted surface handle when one is present.
-} finally {
-  observation.dispose();
+  try {
+    const snapshot = await observation.readCurrent({ signal: context.signal });
+    const admitted = snapshot.contributions.find((contribution) => (
+      contribution.contributor.pluginId === selectedSource.pluginId
+        && contribution.contributor.contributionId === selectedSource.contributionId
+    ));
+    if (!admitted) return undefined;
+
+    return admitted;
+  } finally {
+    observation.dispose();
+  }
 }
 ```
+
+A point may admit several contributors, so select the one your own domain
+chose. Taking the first entry silently binds an unrelated contributor's surface
+to your row as soon as a second plugin contributes.
+
+Inside a mounted UI surface the same selection is a pure lookup over the
+host-stamped `SurfaceContext` snapshot — no observation lifecycle is involved,
+because the host already filtered it to your target and its current generation:
+
+```ts
+import {
+  selectTargetedContributionSurface,
+} from '@happier-dev/plugin-sdk/ui';
+
+const surface = selectTargetedContributionSurface(context.targetedContributions, {
+  pointId: 'sources',
+  protocol: { id: sourcesProtocol.id, version: sourcesProtocol.version },
+  contributor: {
+    pluginId: selectedSource.pluginId,
+    contributionId: selectedSource.contributionId,
+  },
+  role: 'detail',
+});
+```
+
+`selectTargetedContribution` and `selectTargetedContributionOperation` are the
+contribution and operation-role counterparts. All three return the exact
+admitted object, or `undefined` when the current snapshot has no single match.
 
 For a React target, pass that exact handle to the public `TargetedSurface`
 component. The component delegates to the existing host surface owner; it does
 not create a target-local renderer, lifecycle, or currentness path.
 
 ```tsx
-import { TargetedSurface } from '@happier-dev/plugin-ui';
+import { TargetedSurface, Text } from '@happier-dev/plugin-ui';
 import type { ContributionSurfaceHandle } from '@happier-dev/plugin-sdk/contributions';
 
 type DetailSurface = ContributionSurfaceHandle<Readonly<{ entryId: string }>>;
@@ -205,7 +252,7 @@ export function SourceDetail({ surface }: Readonly<{ surface: DetailSurface }>) 
       surface={surface}
       input={{ entryId: 'issue-42' }}
       instanceKey="issue-42"
-      fallback={<span>Loading source detail</span>}
+      fallback={<Text>Loading source detail</Text>}
     />
   );
 }
@@ -217,17 +264,26 @@ role's typed input. The helper creates a symbolic `targetedSurface` node; the
 host rematches the current admitted surface when it renders the node.
 
 ```ts
-const node = externalReviewersV1.surfaces.detail.node({
-  pointId: detailSurface.point.pointId,
-  contributor: {
-    pluginId: detailSurface.contributor.pluginId,
-    contributionId: detailSurface.contributor.contributionId,
-  },
-  input: { entryId: 'issue-42' },
-  instanceKey: 'issue-42',
-  fallback: { kind: 'state', state: 'loading', title: 'Loading source detail' },
-});
+function createDetailNode(detailSurface) {
+  if (!detailSurface) return undefined;
+
+  return externalReviewersV1.surfaces.detail.node({
+    pointId: detailSurface.point.pointId,
+    contributor: {
+      pluginId: detailSurface.contributor.pluginId,
+      contributionId: detailSurface.contributor.contributionId,
+    },
+    input: { entryId: 'issue-42' },
+    instanceKey: 'issue-42',
+    fallback: { kind: 'state', state: 'loading', title: 'Loading source detail' },
+  });
+}
 ```
+
+The absence guards are part of the contract. A contributor can be disabled,
+replaced, or withdrawn between snapshots; do not assert that a selected
+contribution or surface exists, reconstruct a handle from ids, or keep an old
+handle as a fallback.
 
 ## Trust and ownership
 

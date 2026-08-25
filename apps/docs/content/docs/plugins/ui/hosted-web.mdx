@@ -82,7 +82,7 @@ claim.
 | Host | Frame adapter | Reported runtime status |
 | --- | --- | --- |
 | Browser | DOM iframe | `{ platform: 'web', adapter: 'domIframe' }` |
-| Packaged desktop — macOS | Direct Wry child (`WKWebView` subview) | `{ platform: 'desktop', adapter: 'wry' }` |
+| Packaged desktop — macOS | Direct Wry child (`WKWebView` subview), implemented but not yet proved | `desktop_hosted_artifact_platform_frame_unproved` |
 | Packaged desktop — Windows | Direct Wry child (child `HWND` + WebView2), implemented but not yet proved | `desktop_hosted_artifact_platform_frame_unproved` |
 | Packaged desktop — Linux/X11 | Direct Wry child (native X11 container window), implemented but not yet proved | `desktop_hosted_artifact_platform_frame_unproved` |
 | Packaged desktop — Linux/Wayland | None | `desktop_hosted_artifact_wayland_gtk_container_unimplemented` |
@@ -90,9 +90,9 @@ claim.
 | iOS | `WKWebView` | `{ platform: 'ios', adapter: 'WKWebView' }` |
 | Android | `WebViewAssetLoader` | `{ platform: 'android', adapter: 'WebViewAssetLoader' }` |
 
-macOS is the one proved packaged-desktop cell. The Windows and Linux/X11
+No packaged-desktop cell is proved yet. The macOS, Windows and Linux/X11
 direct-Wry children are implemented, selectable and unit-tested in the shell,
-but no hosted-Artifact loaded run has been recorded on either platform, so both
+but no hosted-Artifact loaded run has been recorded on any of them, so all three
 report `desktop_hosted_artifact_platform_frame_unproved` instead of advertising
 an adapter. That reason names the missing proof rather than claiming the adapter
 does not exist, and it is withdrawn per platform when that platform's own

@@ -141,9 +141,10 @@ presentation path; it does not fall back to the notification service.
 
 Use `context.services.availability(serviceId)` when a host or lifetime may not
 provide a service. The normal roster includes logging, storage, settings,
-secrets, events, HTTP, filesystem, execution, managed services, providers,
-sessions, resources, MCP, notifications, connected accounts, actions, and
-interactions. Import each service contract from its final domain path, such as
+secrets, HTTP, execution, managed services, sessions, MCP, notifications,
+connected accounts, actions, and interactions. Events, filesystem, Providers,
+and Resources remain declared but deferred invocation services in the current
+capability matrix. Import each service contract from its final domain path, such as
 `@happier-dev/plugin-sdk/actions`, `@happier-dev/plugin-sdk/http`, or
 `@happier-dev/plugin-sdk/interactions`.
 

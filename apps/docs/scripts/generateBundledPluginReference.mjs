@@ -28,8 +28,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
 const PLUGINS_DIR = join(REPO, 'packages', 'plugins');
 const REGISTRY = join(
-  REPO, 'apps', 'cli', 'src', 'plugins', 'projection', 'registry', 'sources', 'generatedBundledPlugins.ts',
+  REPO, 'apps', 'cli', 'src', 'plugins', 'projection', 'registry', 'sources', 'generatedBundledPluginManifests.ts',
 );
+export const BUNDLED_PLUGIN_REGISTRY_PATH = REGISTRY;
 export const OUTPUT_PATH = join(HERE, '..', 'content', 'docs', 'plugins', 'bundled.mdx');
 
 /**

@@ -503,6 +503,18 @@ sequenceDiagram
 - Each domain using KV owns its content contract. For example, Todo owns its explicit
   plain/encrypted envelope; KV must not guess by attempting decryption.
 
+Session drafts reserve a typed `UserKVStore` key prefix instead of exposing their rows through the
+generic KV API. The draft routes carry an explicit content envelope and enforce its owner:
+
+- a new-Session draft follows the Account encryption mode and uses Account-scoped key material;
+- an existing-Session draft follows that Session's fixed encryption mode and, in E2EE mode, uses
+  the Session data-encryption key;
+- raw attachment bytes, local file handles and URIs, credentials, secret values, and local
+  presentation state are not part of synchronized draft content.
+
+This keeps one draft document and synchronization contract without weakening the different key
+ownership of Account-scoped and Session-scoped data.
+
 ## On-wire formats (mode-aware fields)
 
 ```mermaid
@@ -898,6 +910,12 @@ Account mode and Session transcript mode are separate: an Account transition doe
 re-encrypt Session messages or change a Session's persisted `encryptionMode`.
 Layout-1 owner metadata is different because its owner envelope is Account-scoped and
 must match the Account mode.
+
+Every active new-Session draft participates in the incumbent atomic Account mode-transition
+request. Existing-Session drafts do not participate: their envelope remains bound to the owning
+Session. A missing or incomplete draft census, a revision mismatch, or a wrong target envelope
+aborts the Account transition without partially changing the mode. The partially adopted staged
+transition is not a second draft owner and has no draft-specific staging table.
 
 Approved amendment `PLAINTEXT-ACCOUNTS-2026-07-30.7` adds one bounded
 `sessions: assert_empty | migrate` directive to the existing Account transition.

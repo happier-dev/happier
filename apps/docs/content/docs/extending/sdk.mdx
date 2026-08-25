@@ -8,12 +8,10 @@ Use the SDK or HTTP API to drive Happier Actions from a trusted developer tool.
 <Callout>
   **Developer Preview:** `@happier-dev/sdk` is a private `0.0.0` workspace
   package, not a package-registry install. It remains private until its
-  first-publication gates pass and release work is explicitly authorized. A
-  release pipeline can produce a
-  candidate tarball for its proof workflow, but no candidate is currently
-  published. The Action API is also development source only. Neither is
-  released or publicly available; the server origin has not completed
-  composed/live proof.
+  first-publication gates pass and release work is explicitly authorized. The
+  Action API is also development source only. Neither is released or publicly
+  available; validate and use the current workspace source with a development
+  stack.
 </Callout>
 
 ## What you need first
@@ -32,35 +30,23 @@ enable CORS, and no same-origin browser delivery is proven in this preview. Do
 not put an API Token in browser code or expect an arbitrary browser origin to
 call either Action endpoint.
 
-## Install and run a candidate
+## Run the workspace example
 
-When the release workflow provides an exact candidate tarball, install that
-local file—not a registry version. The pipeline output is a `.tgz` under its
-SDK candidate directory; replace the placeholder with the absolute path you
-received.
+From the repository root, launch the SDK's TypeScript example directly against
+the development stack:
 
 ```bash
-mkdir happier-sdk-consumer && cd happier-sdk-consumer
-npm init --yes
-SDK_TARBALL='/absolute/path/to/sdk-candidate.tgz'
-npm install --ignore-scripts --no-audit --no-fund "$SDK_TARBALL"
-```
-
-The candidate includes a TypeScript end-to-end example. Install its development
-runner and launch it with Node.js:
-
-```bash
-npm install --save-dev --no-audit --no-fund tsx
 HAPPIER_API_ENDPOINT='https://configured-server.example' \
 HAPPIER_TOKEN='hap_v1_…' \
 HAPPIER_ENDPOINT_MODE=server \
-node --import tsx ./node_modules/@happier-dev/sdk/examples/basic/index.ts
+yarn tsx packages/sdk/examples/basic/index.ts
 ```
 
 Set `HAPPIER_ENDPOINT_MODE=server` for a configured server endpoint. The
-example uses the authenticated machine-list bootstrap and binds every Action to
-the selected machine. Set `HAPPIER_MACHINE_ID` only when you already know the
-exact server machine to use.
+example uses the authenticated machine-list bootstrap and auto-selects only
+when exactly one active, non-revoked, non-replaced machine is eligible. With
+several eligible machines, set `HAPPIER_MACHINE_ID` to the intended candidate;
+the example never silently selects the first row.
 
 For a daemon-local endpoint, read the daemon's current HTTP port, then run the
 same example in `daemon` mode. The daemon uses its current machine, so do not
@@ -71,12 +57,12 @@ DAEMON_PORT="$(happier daemon status --json | jq -er '.daemon.httpPort')"
 HAPPIER_API_ENDPOINT="http://127.0.0.1:$DAEMON_PORT" \
 HAPPIER_TOKEN='hap_v1_…' \
 HAPPIER_ENDPOINT_MODE=daemon \
-node --import tsx ./node_modules/@happier-dev/sdk/examples/basic/index.ts
+yarn tsx packages/sdk/examples/basic/index.ts
 ```
 
 The example performs spawn, wait, bounded transcript follow with iterator
-cleanup, send, snapshot transcript read, and stop. This is candidate proof
-guidance, not a published installation method.
+cleanup, send, snapshot transcript read, and stop. This is a development-source
+workflow, not a published installation method.
 
 ## Connect with an explicit endpoint and token
 
@@ -118,7 +104,9 @@ try {
 The SDK offers three capabilities over the same Action API:
 
 - **Raw:** `actions.execute(actionId, input, options)` is useful when the
-  Action id is selected at runtime.
+  Action id is selected at runtime. Its generated types follow the registry's
+  current public Action classification rather than a separately maintained SDK
+  allowlist.
 - **Typed Action methods:** use the matching path under `actions` when the
   Action is known in your code.
 - **Session helpers:** use `sessions` for daemon-local work, or
@@ -132,11 +120,10 @@ unbound `happier.sessions.spawn(...)` rejects with `HappierActionError` whose
 `code` is `target_required`, so select an exact id and use
 `happier.machine(machineId).sessions`.
 
+`machine(id)` returns a target-bound view that shares the root client's
+lifecycle. Calling `close()` on either view aborts outstanding work for both.
+
 This is an admitted Action failure, not a transport failure.
-`HappierTransportError` instead reports that the SDK could not complete or
-validate the HTTP exchange, such as a network failure, non-success HTTP status,
-invalid JSON, or an invalid response envelope. These errors reject the SDK
-promise; they are not returned as successful values.
 
 ```ts
 const target = { kind: 'machine', machineId: 'machine-id' } as const;
@@ -157,10 +144,17 @@ await created.waitForIdle();
 
 // A selected machine and an existing Session
 const existingSession = happier.machine('machine-id').sessions.get('session-id');
-await existingSession.send('Please inspect the failure.');
-await existingSession.waitForIdle();
+await existingSession.sendAndWait('Please inspect the failure.', {
+  localId: 'inspect-failure',
+  timeoutSeconds: 300,
+});
 await existingSession.stop();
 ```
+
+`sendAndWait(message, input?, executionOptions?)` uses the canonical
+`session.message.send` Action with `wait: true`. Use `input.localId` to safely
+retry an uncertain send and `input.timeoutSeconds` to bound only the
+observation; it does not make a second idle-wait call.
 
 ### Recover when the initial message is not admitted
 
@@ -213,7 +207,7 @@ that selected machine and enabled for the API surface.
 
 ```ts
 const machine = happier.machine('machine-id');
-const matches = await machine.actions.action.spec.search({
+const matches = await machine.actions.search({
   query: 'save note',
   limit: 10,
 });
@@ -222,7 +216,7 @@ const match = matches.actionSpecs.find(
 );
 if (!match) throw new Error('The contributed Action is not available.');
 
-const { actionSpec } = await machine.actions.action.spec.get({ id: match.id });
+const { actionSpec } = await machine.actions.get({ id: match.id });
 console.log(actionSpec.inputSchema);
 
 const result = await machine.actions.invoke(
@@ -247,13 +241,17 @@ supports. Those settings cannot elevate a PAT or trusted plugin above
 plugin uninstall, Agent session-hook changes, and security-policy changes return
 `present_user_required`.
 
-The generated [SDK API inventory](https://github.com/happier-dev/happier/blob/dev/packages/sdk/API.md)
-is an export census, not a complete Action method reference. Use the generated
-[Host Actions reference](/plugins/api/host-actions) for built-in Action
-contracts. At runtime, use `actions.search(...)` and
-`actions.action.spec.get(...)` to inspect available Actions, then call the raw
-`actions.execute(...)` primitive when the Action id is selected dynamically.
-Do not copy a method list into an integration.
+Use the types exported by `@happier-dev/sdk` as the canonical static contract
+for SDK methods, inputs, and results. The generated
+[SDK API inventory](https://github.com/happier-dev/happier/blob/dev/packages/sdk/API.md)
+and [exported declarations](https://github.com/happier-dev/happier/blob/dev/packages/sdk/api-declarations.md)
+show that public surface. At runtime, use `actions.search(...)` and
+`actions.get(...)` to inspect the Actions available from the selected machine,
+then call the raw `actions.execute(...)` primitive when the Action id is
+selected dynamically.
+The generated raw `actions.action.spec.search(...)` and
+`actions.action.spec.get(...)` methods remain available. Do not copy a method
+list into an integration.
 
 For raw `session.spawn_new`, pass a machine target once in the outer
 `options.target` when targeting a server or remote machine; omit it at a
@@ -261,9 +259,9 @@ daemon-local endpoint to use that daemon's current machine. The public input
 deliberately omits `executionTarget`; the daemon supplies its local placement
 after resolving the target. Supplying `executionTarget` in a public request is
 rejected as invalid input. The server relay forwards the exact machine target
-without receiving or inventing a daemon-local server id. Use
-the SDK types and the Action reference for the remaining spawn fields, such as
-`directory`, `agentTarget`, and an optional `creationKey`.
+without receiving or inventing a daemon-local server id. Use the SDK types for
+the remaining spawn fields, such as `directory`, `agentTarget`, and an optional
+`creationKey`.
 
 ## Call the HTTP API
 
@@ -287,8 +285,7 @@ Use a direct daemon origin when the caller can reach that daemon. Use the
 configured server origin when the target daemon is connected to that server:
 the server authenticates and relays over the daemon's existing connection, so
 the daemon does not need an inbound public address. This remains a Developer
-Preview contract, not a published integration surface. The server origin has
-not completed composed/live proof.
+Preview contract, not a published integration surface.
 
 The request envelope is strict. `target` is routing metadata, never action
 input or caller authority.
@@ -326,9 +323,39 @@ remapping:
 ```
 
 Failed Actions use the same `execution` field with `ok: false`, an error code,
-an error string, and optional details. Authentication failures are HTTP `401`
-with `invalid_token`; malformed outer envelopes and unknown Action ids are HTTP
-`400` with `invalid_request` and a typed code.
+an error string, and optional details.
+
+## Handle Action outcomes and transport failures
+
+A syntactically valid Action request can reach the selected daemon and still be
+unable to run. Those are admitted Action outcomes, so raw HTTP clients receive
+HTTP `200` and inspect `execution`; the SDK rejects them as
+`HappierActionError` with the Action error code. For example,
+`action_disabled`, `present_user_required`, and `target_required` are Action
+outcomes, not proof that the HTTP transport failed.
+
+An **Ask first** setting creates an approval request instead of running the
+Action. Raw clients receive that admitted approval result; the SDK surfaces it
+as `HappierActionError` with code `approval_required`. Complete the approval
+from a signed-in app. An API Token cannot approve its own work.
+
+Transport admission failures have a different shape and status:
+
+- Both origins return HTTP `401` with `invalid_token` for a malformed, expired,
+  unknown, or revoked API Token.
+- Both origins return HTTP `400` with
+  `{ "error": "invalid_request", "code": "invalid_action" | "invalid_envelope" }`
+  for an unknown Action id or malformed outer envelope. A request body over 32
+  MiB returns the same shape with `request_too_large` and HTTP `413`.
+- The daemon-local origin can return HTTP `503` with `auth_unavailable` once a
+  positive token validation cache has expired and its configured server cannot
+  verify the token. This is an availability failure, not `invalid_token`.
+
+The SDK raises `HappierTransportError` for these non-success HTTP responses,
+network errors, invalid JSON, or an invalid response envelope. It does not
+automatically retry a mutation or move it to another origin: after an
+interrupted mutation, inspect the Action's current state and use its own
+idempotency contract when one exists.
 
 ## Try the HTTP API with curl
 
@@ -342,9 +369,10 @@ curl --fail-with-body \
   "$HAPPIER_API_ENDPOINT/v1/machines"
 ```
 
-Then use the safe, read-only Action discovery operation. The same request also
-works against a daemon-local endpoint when `machine-id` is that daemon's
-current machine.
+Then use the safe, read-only Action discovery operation with that selected
+machine. The bootstrap route is server-origin only; a daemon-local client does
+not need it because omitting an Action target uses that daemon's current
+machine.
 
 ```bash
 curl --fail-with-body --request POST \
@@ -356,6 +384,29 @@ curl --fail-with-body --request POST \
     "input": { "query": "session", "limit": 5 }
   }' \
   "$HAPPIER_API_ENDPOINT/v1/actions/action.spec.search"
+```
+
+For a contributed Action, use its qualified discovery id
+`<plugin-id>/actions/<local-id>` to obtain the two identity fields. For
+`acme.notes/actions/save-note`, send `pluginId: "acme.notes"` and
+`localId: "save-note"`; do not include the literal `/actions/` delimiter in
+`localId`. Inspect the declared input, then invoke it through the same target.
+This example uses a placeholder contributed Action and input; replace both with
+the discovered contract.
+
+```bash
+curl --fail-with-body --request POST \
+  --header "Authorization: Bearer $HAPPIER_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "v": 1,
+    "target": { "kind": "machine", "machineId": "machine-id" },
+    "input": {
+      "action": { "pluginId": "acme.notes", "localId": "save-note" },
+      "input": { "note": "Remember this" }
+    }
+  }' \
+  "$HAPPIER_API_ENDPOINT/v1/actions/action.invoke"
 ```
 
 If you already have a Session id, this safe status lookup is a real operation

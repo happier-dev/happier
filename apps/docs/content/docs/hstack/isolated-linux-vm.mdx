@@ -65,6 +65,24 @@ Override if needed:
 LIMA_MEMORY=12GiB ./scripts/provision/macos-lima-vm.sh happy-test
 ```
 
+For a headless development worker whose repository will live on the guest disk,
+create a bounded VM without host filesystem mounts or containerd:
+
+```bash
+LIMA_VM_TYPE=vz \
+LIMA_CPUS=10 \
+LIMA_MEMORY=24GiB \
+LIMA_DISK=160 \
+LIMA_MOUNT_NONE=1 \
+LIMA_CONTAINERD=none \
+  ./scripts/provision/macos-lima-vm.sh happier-dev-worker
+```
+
+`LIMA_DISK`, `LIMA_MOUNT_NONE`, and `LIMA_CONTAINERD` are creation-time
+settings. Recreate an existing instance if you need to change them. Keep the
+hot repository inside the guest filesystem; a host-mounted checkout measures
+the host filesystem plus mount translation rather than guest-local Linux I/O.
+
 Port ranges note:
 - `review-pr` runs in a **fully isolated sandbox** (separate hstack home dir), so VM defaults written to
   `~/.happier-stack/env.local` inside the VM won’t be read automatically.

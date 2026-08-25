@@ -19,7 +19,11 @@ spawn. Attach accepts only `none`, and plugin code receives neither the raw
 generated `hostBasic` password nor its encoded `Authorization` header. A
 request timeout covers establishment through validated response headers only;
 it does not limit the streaming body after headers. The caller signal, exact
-scope/currentness, hard retirement, and explicit disposal own that body. The
+scope/currentness, hard retirement, and explicit disposal own that body.
+Cancelling through your own signal fails the request with
+`plugin_operation_aborted`; `plugin_managed_service_unavailable` is reserved for
+the service, handle, scope, credentials, or transport being gone, so retry and
+recovery can tell the two apart. The
 snapshot retains `baseUrl` for absolute-endpoint contracts but exposes no
 separate host or port. The returned handle is the lifecycle owner for the
 supervised instance; use `context.services.managedServices` and its exact-handle

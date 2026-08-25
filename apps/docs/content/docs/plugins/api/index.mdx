@@ -25,8 +25,9 @@ The plugin runtime has three principal public contexts:
 - activation cleanup returned from the code-defined `setup` callback
 
 This list describes source-level ABI families. Consult the installed
-`capability-matrix.json` before author use: a `deferred` family is conformance
-reference material until a maintained plugin proves its canonical lifecycle.
+`capability-matrix.json` before author use: a `deferred` family is not
+supported or advertised for ordinary author use; do not rely on it; consult its
+unblock condition.
 
 ## Runtime context
 
@@ -35,7 +36,7 @@ Use the services and `context.ui` on `PluginInvocationContext` from invoked hand
 - `context.services.storage`
 - `context.services.settings`
 - `context.services.logger`
-- `context.services.events`
+- `context.services.events` (deferred in the current capability matrix)
 - `context.services.availability(serviceId)`
 
 ## Rule of thumb

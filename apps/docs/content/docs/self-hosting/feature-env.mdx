@@ -4,8 +4,8 @@ description: Every HAPPIER_FEATURE_* variable the server reads, generated from t
 ---
 
 This is the complete list of environment variables the server reads to decide
-what it advertises and how much of it a client may use. There are **158**, of
-which **52** are on/off switches and the rest are limits, timeouts,
+what it advertises and how much of it a client may use. There are **159**, of
+which **54** are on/off switches and the rest are limits, timeouts,
 policies and header names.
 
 Two kinds of variable are mixed together here on purpose, because the server
@@ -98,6 +98,7 @@ Grouped and ordered as the server's schema declares them.
 | `HAPPIER_FEATURE_SESSIONS_HANDOFF__ENABLED` | Switch |
 | `HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED` | Switch |
 | `HAPPIER_FEATURE_SESSIONS_FOLDERS__ENABLED` | Switch |
+| `HAPPIER_FEATURE_SESSIONS_DRAFTS__ENABLED` | Switch |
 | `HAPPIER_FEATURE_SESSIONS_USAGE_LIMIT_RECOVERY__ENABLED` | Switch |
 
 ### Machines
@@ -106,6 +107,7 @@ Grouped and ordered as the server's schema declares them.
 | --- | --- |
 | `HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED` | Switch |
 | `HAPPIER_FEATURE_MACHINES_RPC_DIRECT_PEER__ENABLED` | Switch |
+| `HAPPIER_FEATURE_MACHINES_PEER_MEDIATION_OBSERVABILITY__ENABLED` | Switch |
 | `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__ENABLED` | Switch |
 | `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES` | Setting |
 | `HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_ACTIVE_TRANSFERS_PER_SOCKET` | Setting |
@@ -191,7 +193,7 @@ Core plugin platform + UI projection gates (server-represented + default-allow).
 | `HAPPIER_FEATURE_PLUGINS__ENABLED` | Switch |
 | `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED` | Switch |
 | `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__PROCESS_MAX_REQUESTS` | Setting |
-| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__PROCESS_MAX_RAW_BODY_BYTES` | Setting |
+| `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__PROCESS_MAX_WORKING_BYTES` | Setting |
 | `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ROUTE_RATE_PER_MINUTE` | Setting |
 | `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ROUTE_CONCURRENCY` | Setting |
 | `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENDPOINT_RATE_PER_MINUTE` | Setting |

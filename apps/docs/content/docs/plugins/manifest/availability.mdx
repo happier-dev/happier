@@ -1,24 +1,175 @@
 ---
-title: What you can build today
-description: Every contribution family, service, host-access capability and SDK entrypoint, with its current availability — generated from capability-matrix.json.
+title: Developer Preview availability
+description: Every contribution family, service, host-access capability and SDK entrypoint, with its current Developer Preview availability — generated from capability-matrix.json.
 ---
 
-The Plugin SDK ships ahead of its own surface: some of what the manifest schema
-accepts is not yet wired end to end. `capability-matrix.json` in
+The Plugin SDK has one package-level **Developer Preview** posture. That posture
+does not create a separate stability tier for each symbol. Some declarations the
+manifest schema accepts are not yet wired end to end. `capability-matrix.json` in
 `packages/plugin-sdk` is the authority on which is which, and this page is a
 projection of it — so it cannot disagree with the artifact the rest of the
 corridor cites.
 
-**Available** means there is a proving consumer: a real plugin registering
-through that path today. **Deferred** means the schema accepts the declaration
-but the host does not complete the lifecycle — conformance only. Build against a
-deferred family and it will validate, then do nothing.
+**Available in Developer Preview** means the current Preview lifecycle has a
+maintained proving consumer through that path. **Deferred** means it is not
+supported or advertised for ordinary author use; do not rely on it; consult its
+unblock condition.
 
-At the time this page was generated: **33 of 44 contribution families**,
-**15 of 19 services**, **9 of 13 host-access capabilities**
-and **45 of 45 SDK entrypoints** are available.
+Product availability is distinct from source API availability, source consumer,
+loaded-platform proof, and release availability. The evidence fields record
+only what the matrix has established: a source declaration or consumer does not
+by itself prove that the current platform loaded it or that it was published.
+Likewise, `not-recorded` does not infer the opposite state.
 
-## Contribution families you can use
+At the time this page was generated: **29 of 45 contribution families**,
+**13 of 19 services**, **9 of 13 host-access capabilities**
+and **43 of 45 SDK entrypoints** are available.
+
+## Evidence recorded by the capability matrix
+
+### Contribution family evidence
+
+| Name | Source API | Source consumer | Loaded-platform proof | Release availability |
+| --- | --- | --- | --- | --- |
+| `accountCollections` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `actions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `agents` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `backgroundServices` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `browserActions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `browserTargets` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `commands` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `composerAttachments` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `composerControls` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `composerReferences` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `composerRegions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `connectedAccountDescriptors` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `daemonDatabases` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `events` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `executionRunProfiles` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `hooks` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `managedDependencies` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `mcp.discoverySources` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `mcp.servers` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `notificationChannels` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `notifications` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `openableContentViewers` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `pluginContributionPoints` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `promptAssets` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `providers` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `requestInterceptors` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `resources` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `scmBackends` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `scmHostingProviders` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `sessionHeaderActions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `sessionInfoSections` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `settings` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `settings.fields` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `systemTools` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `targetedPluginContributions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `tools` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `transcriptActivities` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `ui.renderers` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `ui.settingsGroups` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `ui.settingsPages` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `ui.translations` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `ui.views` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `voiceModelPacks` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `voiceProviders` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `webhooks` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+
+### Service evidence
+
+| Name | Source API | Source consumer | Loaded-platform proof | Release availability |
+| --- | --- | --- | --- | --- |
+| `actions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `composerContent` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `connectedAccounts` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `events` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `exec` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `fs` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `http` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `interactions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `logger` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `managedServices` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `mcp` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `notifications` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `providers` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `resources` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `secrets` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `sessions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `settings` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `storage` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `targetedContributions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+
+### Host-access evidence
+
+| Name | Source API | Source consumer | Loaded-platform proof | Release availability |
+| --- | --- | --- | --- | --- |
+| `browser` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `clipboard` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `connectedAccounts` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `environment` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `externalLinks` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `filesystem` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `mcp` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `network` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `network.client` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `process` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `sessions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `storage.account` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `terminal` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+
+### SDK entrypoint evidence
+
+| Name | Source API | Source consumer | Loaded-platform proof | Release availability |
+| --- | --- | --- | --- | --- |
+| `.` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./actions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./agents` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./agents/runtime` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./async` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./automations` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./background-services` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./browser` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./collections` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./connected-accounts` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./contributions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./events` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./exec` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./exec/protocol-clients` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./fs` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./hooks` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./http` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./interactions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./managed-services` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./manifest` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./mcp` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./notifications` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./protocol` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./providers` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./resources` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./reviews` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./scm` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./scm/backend` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./scm/hosting` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./secrets` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./sessions` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./sessions/external` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./sessions/file-stores` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./sessions/subagents` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./sessions/work-state` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./settings` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./storage` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./testing` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./ui` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./ui/build` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./ui/client` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./voice` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./voice/client` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./voice/speech` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+| `./webhooks` | `not-recorded` | — | `not-recorded` | `not-recorded` |
+
+## Contribution families available in Developer Preview
 
 `definePlugin(...)` key and the entrypoint that exports its types.
 
@@ -28,23 +179,19 @@ and **45 of 45 SDK entrypoints** are available.
 | `actions` | `actions` | `.` | any |
 | `agents` | `agents` | `.` | any |
 | `backgroundServices` | `backgroundServices` | `.` | any |
-| `browserActions` | `browserActions` | `.` | any |
-| `browserTargets` | `browserTargets` | `.` | any |
 | `connectedAccountDescriptors` | `connectedAccountDescriptors` | `.` | any |
 | `events` | `events` | `.` | any |
 | `executionRunProfiles` | `executionRunProfiles` | `.` | any |
 | `hooks` | `hooks` | `.` | any |
 | `managedDependencies` | `managedDependencies` | `.` | any |
 | `mcp.discoverySources` | `mcp` | `.` | any |
-| `notificationChannels` | `notificationChannels` | `.` | any |
-| `notifications` | `notifications` | `.` | any |
 | `pluginContributionPoints` | `contributionPoints` | `.` | any |
 | `promptAssets` | `promptAssets` | `.` | any |
 | `providers` | `providers` | `.` | any |
-| `requestInterceptors` | `requestInterceptors` | `.` | any |
 | `resources` | `resources` | `.` | any |
 | `scmBackends` | `scmBackends` | `.` | any |
 | `scmHostingProviders` | `scmHostingProviders` | `.` | any |
+| `sessionInfoSections` | `sessionInfoSections` | `.` | any |
 | `settings` | `settings` | `.` | any |
 | `settings.fields` | `settings` | `.` | any |
 | `systemTools` | `systemTools` | `.` | any |
@@ -62,19 +209,24 @@ and **45 of 45 SDK entrypoints** are available.
 
 | Name | What would unblock it |
 | --- | --- |
-| `commands` | An exact packed external Command invokes its Action through the canonical plugin command catalog and proves replacement, disable, and uninstall currentness. |
+| `browserActions` | A maintained external development-source plugin proves browser Action authoring through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
+| `browserTargets` | A maintained external development-source plugin proves browser target authoring through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
+| `commands` | A maintained external development-source plugin invokes its Command Action through the canonical plugin command catalog in the current loaded development stack and proves lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
 | `composerAttachments` | A maintained plugin author declares composer.attachments and proves preparation, Message admission, dispatch resolution, and fallback lifecycle. |
 | `composerControls` | A maintained plugin author declares composer.controls and proves canonical control projection and interaction lifecycle. |
 | `composerReferences` | A maintained plugin author declares composer.references and proves the canonical picker, search, and resolution lifecycle. |
 | `composerRegions` | A maintained plugin author declares composer.regions and proves canonical before/after composer mount lifecycle. |
 | `daemonDatabases` | A maintained plugin author declares a daemon database and proves its canonical migration and lifecycle owner. |
 | `mcp.servers` | A maintained plugin author declares and registers an MCP server through the canonical MCP lifecycle. |
+| `notificationChannels` | A maintained external development-source plugin proves notification channel authoring through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
+| `notifications` | A maintained external development-source plugin proves notification category authoring through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
 | `openableContentViewers` | A maintained plugin author declares an openable-content viewer and proves the canonical host read lifecycle. |
+| `requestInterceptors` | A maintained external development-source plugin proves request-interceptor authoring through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
 | `sessionHeaderActions` | A maintained plugin author declares a session header Action and proves the canonical Session UI lifecycle. |
-| `tools` | An exact packed external Tool invokes its Action through the real daemon MCP catalog and proves replacement, disable, and uninstall currentness. |
+| `tools` | A maintained external development-source plugin invokes its Tool Action through the real daemon MCP catalog in the current loaded development stack and proves lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
 | `voiceModelPacks` | A maintained Voice plugin author declares a model pack and proves the canonical Voice lifecycle. |
 
-## Services you can use
+## Services available in Developer Preview
 
 Reached through `context.services` inside a plugin invocation.
 
@@ -89,8 +241,6 @@ Reached through `context.services` inside a plugin invocation.
 | `context.services.logger` | `LoggerService` | `.` | invocation-scoped |
 | `context.services.managedServices` | `ManagedServices` | `./managed-services` | invocation-scoped |
 | `context.services.mcp` | `McpService` | `./mcp` | invocation-scoped |
-| `context.services.notifications` | `NotificationsService` | `./notifications` | invocation-scoped |
-| `context.services.secrets` | `SecretsService` | `./secrets` | invocation-scoped |
 | `context.services.sessions` | `SessionsService` | `./sessions` | invocation-scoped |
 | `context.services.settings` | `SettingsService` | `./settings` | invocation-scoped |
 | `context.services.storage` | `StorageService` | `./storage` | invocation-scoped |
@@ -100,12 +250,14 @@ Reached through `context.services` inside a plugin invocation.
 
 | Name | What would unblock it |
 | --- | --- |
-| `events` | A maintained plugin author invokes the canonical EventsService through an invocation lifecycle. |
-| `fs` | A maintained plugin author invokes the canonical FileSystemService through an invocation lifecycle. |
-| `providers` | A maintained plugin author invokes the canonical ProvidersService through an invocation lifecycle. |
-| `resources` | A maintained plugin author invokes the canonical ResourcesService through an invocation lifecycle. |
+| `events` | A maintained external development-source plugin proves the EventsService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
+| `fs` | A maintained external development-source plugin proves the FileSystemService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
+| `notifications` | A maintained external development-source plugin proves the NotificationsService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
+| `providers` | A maintained external development-source plugin proves the ProvidersService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
+| `resources` | A maintained external development-source plugin proves the ResourcesService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
+| `secrets` | A maintained external development-source plugin proves the SecretsService through the current loaded development stack: lifecycle, real invocation, and replacement, disable, and uninstall currentness. |
 
-## Host-access capabilities
+## Host-access capabilities available in Developer Preview
 
 What each authorization class actually enforces is on
 [Host access](/plugins/security/permissions) — the classes differ more than the

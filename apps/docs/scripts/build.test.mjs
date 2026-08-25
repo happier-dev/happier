@@ -12,6 +12,7 @@ test('makes explicit Fumadocs generation authoritative after Next route type gen
   const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 
   assert.deepEqual(packageJson.scripts['types:check'].split(' && '), [
+    'node scripts/prepareNextTypegen.mjs',
     'next typegen',
     'fumadocs-mdx',
     'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit',

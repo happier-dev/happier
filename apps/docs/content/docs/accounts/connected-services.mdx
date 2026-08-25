@@ -16,7 +16,7 @@ See [Agent authentication](/agents/provider-authentication) and [Provider integr
 They exist so you can:
 
 - connect subscriptions and API keys without manually re-entering them for every backend
-- keep credentials encrypted in Happier Cloud and decrypt them only on the client / daemon
+- store credentials once instead of re-entering them, with what the server can read following your account's encryption mode (see [Security model](#security-model) below)
 - choose per-service auth at session start instead of relying only on each Agent's native auth
 - monitor usage / quota snapshots for supported services
 - make multi-machine workflows easier when the target machine should reuse the same Happier-managed credential
@@ -263,7 +263,14 @@ Instead:
 
 This keeps provider secrets, including server-side OAuth client secrets, out of the UI bundle.
 
-Token-based services, including GitHub token profiles when enabled, are stored as connected-service credentials and decrypted only where the client/daemon needs to use them.
+Token-based services, including GitHub token profiles when enabled, are stored as connected-service credentials and opened where the client/daemon needs to use them.
+
+How the stored record is protected then follows your **account encryption mode**, exactly as it does for Saved Secrets:
+
+- on an **E2EE account**, the record is stored as ciphertext that only your devices hold key material for;
+- on a **plaintext account**, the record is stored in a form the live server can read. That is intentional — plaintext accounts have no account encryption material by design — and the record is protected by authentication, authorization, TLS and server-side at-rest sealing rather than by encryption the operator cannot undo.
+
+See [Security](/security) for what the server can and cannot read under each mode.
 
 When a session starts, the daemon decrypts the selected records locally and materializes only the backend-specific auth it needs for that spawn.
 

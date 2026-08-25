@@ -3,7 +3,14 @@ title: Filesystem service
 description: Use typed, scoped paths for plugin runtime files.
 ---
 
-Use `context.services.fs` for host-mediated file access. A `PluginPath` names a supported root plus a relative path:
+The `/fs` type entrypoint and `filesystem` HostAccess declaration are available
+in the current source contract. `context.services.fs` remains deferred in the
+[capability matrix](/plugins/manifest/availability) until a maintained external
+development-source plugin proves lifecycle and real invocation in the current
+loaded development stack, including currentness. It is not supported or
+advertised for ordinary author use while deferred.
+
+A `PluginPath` names a supported root plus a relative path:
 
 - `pluginData`
 - `workspace`

@@ -19,7 +19,7 @@ separately from your signed-in sessions.
 
 ## Create a token
 
-1. Open **Settings → Account**, then choose **API tokens**.
+1. Open **Settings → Account → API tokens**.
 2. Choose **Create token**, give it a label you will recognize, and select its
    expiry (30 days, 90 days, one year, or no expiry).
 3. Copy the token when it is shown and store it in your secret manager or the
@@ -90,8 +90,8 @@ be exposed.
 The daemon-local Action API has a bounded positive validation cache. After a
 token is revoked, a daemon that already validated it can accept it for up to
 60 seconds; it never extends that cached authorization while the server cannot
-be reached. Once the cache expires, an unreachable server produces
-`auth_unavailable` rather than an offline exception.
+be reached. Once the cache expires, an unreachable server produces HTTP `503`
+with `auth_unavailable` rather than extending access offline.
 
 ## Keep the boundary clear
 
@@ -106,7 +106,7 @@ configured server while it forwards the request to the exact connected daemon.
 That relay works without an inbound public daemon address. Choose the
 daemon-local transport when direct local delivery is required. Both origins are
 implemented only in the current Developer Preview source; neither is published
-or shipped, and the server origin is not live-proven yet.
+or shipped.
 
 ## When it goes wrong
 
@@ -116,9 +116,17 @@ or shipped, and the server origin is not live-proven yet.
   while signed in rather than widening the token's authority.
 - If the **API** target is **Off**, or is **Ask first** without a completed
   approval, adjust the Action setting or complete the approval from the app.
+- At either HTTP origin, a malformed, expired, unknown, or revoked API Token
+  receives the same opaque HTTP `401` `invalid_token` response. Create a
+  replacement only when you actually need a new credential; a lost token
+  cannot be recovered.
 - If a just-revoked token still works through a local daemon, wait up to one
   minute for its positive validation cache to expire. A server-origin request
   is checked on its next verification.
+- If a daemon-local request returns HTTP `503` `auth_unavailable` after that
+  minute, restore the daemon's connection to its configured server and retry.
+  Treat it as an unavailable verification service, not proof that the token is
+  invalid.
 
 ## Related
 

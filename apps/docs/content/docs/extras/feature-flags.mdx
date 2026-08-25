@@ -18,8 +18,8 @@ clear answer about whether a feature is available, it treats it as unavailable.
 That is why a feature can seem to vanish when a server is unreachable, and why
 a misconfigured self-hosted server hides features rather than half-enabling them.
 
-There are 128 features in the catalog. 23 of them have a switch you can
-reach; the other 105 are decided before you get there.
+There are 129 features in the catalog. 23 of them have a switch you can
+reach; the other 106 are decided before you get there.
 
 ## Features you can turn on yourself
 
@@ -121,7 +121,7 @@ behaviour but still needs the server to advertise the capability.
 | `machines.liveStream.directPeer` | Direct peer machine live stream capability. | server | `machines.liveStream` | `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_DIRECT_PEER__ENABLED` |
 | `machines.liveStream.serverRouted` | Server-routed machine live stream fallback capability. | server | `machines.liveStream` | `HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__ENABLED` |
 | `machines.peerMediation` | Peer mediation substrate for machine tunnels, live streams, grants, and relay-owned flows. | client | `machines` | — |
-| `machines.peerMediation.observability` | Scoped peer mediation flow observability for tunnels, streams, preview requests, and relay diagnostics. | server | `machines.peerMediation` | — |
+| `machines.peerMediation.observability` | Scoped peer mediation flow observability for tunnels, streams, preview requests, and relay diagnostics. | server | `machines.peerMediation` | `HAPPIER_FEATURE_MACHINES_PEER_MEDIATION_OBSERVABILITY__ENABLED` |
 | `machines.rpc` | Machine RPC direct-route control plane. | client | `machines` | — |
 | `machines.rpc.directPeer` | Direct peer machine RPC capability. | server | `machines.rpc` | `HAPPIER_FEATURE_MACHINES_RPC_DIRECT_PEER__ENABLED` |
 | `machines.transfer` | Same-account machine transfer control plane. | client | `machines` | — |
@@ -148,6 +148,7 @@ behaviour but still needs the server to advertise the capability.
 | `remoteHosts.secretMaterial` | Remote host secret material persistence (passwords/private keys) for saved SSH profiles. | server | `remoteHosts.management` | — |
 | `sessions` | Session-level product surfaces and control-plane capabilities. | client | — | — |
 | `sessions.agentSwitching` | Continue one Session in place with another coding Agent, and create configurable Sessions from a typed source-context recipe. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED` |
+| `sessions.drafts` | Cross-device composer and new-session draft synchronization. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_DRAFTS__ENABLED` |
 | `sessions.handoff` | Session handoff between machines. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_HANDOFF__ENABLED` |
 | `sessions.usageLimitRecovery` | Session usage-limit recovery, wait/resume intents, and usage-limit retry controls. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_USAGE_LIMIT_RECOVERY__ENABLED` |
 | `setup.machine.allowLocalMachineSetup` | Build-time policy gate: whether local machine setup surfaces are allowed. | client | — | — |

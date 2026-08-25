@@ -17,5 +17,5 @@ activity, permissions, install state, or process lifecycle.
 - Use narrow keys and versioned values for data you may migrate.
 - Handle write failures without deleting the previous value.
 - Dispose dynamic watches/subscriptions when their owner ends.
-- Treat synced storage as a host-owned resource whose availability and access
-  can differ from machine-local storage.
+- Storage is host-scoped at the scope exposed by the invocation context. The
+  SDK does not provide a separate "synced storage" service.

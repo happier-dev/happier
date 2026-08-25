@@ -1,5 +1,7 @@
 # Release process
 
+This page describes an explicitly authorized release operation only. Its immutable source/output identities and publication checks must not be imported into feature implementation, review, or QA: those validate the current moving source and existing development stack without creating or installing a separate release representation.
+
 This repo uses a simple three-branch model:
 
 - `dev` is the integration branch where changes land first (default branch; can be unstable).
@@ -53,7 +55,7 @@ When you want to ship what’s currently in `preview` to production:
 
 1. Prepare the already-validated preview candidate through `hmaint`, including
    stable-only compatibility review and preview-equivalence evidence.
-2. After explicit approval of the exact candidate, the workflow promotes
+2. After explicit approval of the preview source, the workflow promotes
    `preview` → `main`, then deploys/publishes the verified immutable outputs.
 3. After post-promotion verification, the workflow advances its pre-promotion
    snapshot of `stage:preview` issues to `stage:stable`.
@@ -169,9 +171,9 @@ Passing preparation is not a release go-ahead. A human must explicitly dispatch
 the hosted release with its confirmation phrase. A Qualified V4 activation is
 an irreversible migration and requires its own explicit approval; the ordinary
 branch-promotion confirmation does not authorize it. The workflow resolves and
-records one exact candidate source SHA before it publishes or promotes release
-outputs; operators must review that SHA and the selected profile evidence, not
-infer identity from a moving branch name.
+records the release source SHA before it publishes or promotes release outputs;
+operators must review that SHA and the selected profile evidence, not infer
+identity from a moving branch name.
 
 ### Local execution and phase recovery
 
@@ -202,8 +204,7 @@ official-release privilege boundary.
 For hosted failures, first rerun failed jobs when no workflow/control change is
 needed. When control code changed but candidate bytes did not, a new release
 attempt may reuse only individually verified immutable candidates from the
-named completed origin run. Candidate-reachable byte changes require a new
-candidate. One failed sibling product does not invalidate independently
+named completed origin run. Release-output-affecting byte changes require new release outputs. One failed sibling product does not invalidate independently
 verified immutable candidates from successful products.
 
 Self-hosted relays upgrade independently. The release contract never holds a
@@ -285,7 +286,7 @@ Repository variables used for exact hosted-server completion proof:
 
 Each value must be the public `https://.../v1/version` endpoint for that
 environment. A selected server deployment fails release verification unless
-the endpoint reports the exact candidate `source_sha`; webhook acceptance alone
+the endpoint reports the approved release `source_sha`; webhook acceptance alone
 is not deployment completion.
 
 The `HAPPIER_*_DEPLOY_WEBHOOKS` values can be either:

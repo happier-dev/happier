@@ -35,13 +35,15 @@ happier plugins dev typecheck .
 happier plugins dev build .
 happier plugins test .
 happier plugins pack .
-happier plugins install <archive-path> --kind archive
+happier plugins install <printed-archive-path> --kind archive
 ```
 
 The author commands use Happier's managed toolchain. `plugins test` runs the
 scaffold's focused `test/index.test.mjs` suite, activates the built module with
-the public testkit, and invokes its declared action without starting a daemon
-or mutating installed plugin state. `plugins test . --packed` creates that
+the public testkit, and runs the author-owned contracts without starting a daemon
+or mutating installed plugin state. The untouched scaffold intentionally fails
+one placeholder test until the author replaces it with a real contract.
+`plugins test . --packed` creates that
 selected-file archive, installs and trusts it in an authenticated disposable
 daemon home, verifies currentness across daemon restart, and invokes a safe
 empty-input CLI action when available. It never reads or mutates the user's

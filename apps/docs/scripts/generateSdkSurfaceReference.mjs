@@ -4,7 +4,7 @@
  * `sdk-entrypoints.mdx` answers "which import path does this capability live
  * behind", and a test already holds it to every entry in the package's
  * `exports`. What nothing covered was the other half of the question: whether a
- * given symbol exists at all, and which of the 48 entrypoints exports it. That
+ * given symbol exists at all, and which current entrypoint exports it. That
  * is 2,000-plus symbols, and the honest answer is a generated index rather than
  * a hand-kept selection — a hand-kept one silently becomes a list of the symbols
  * somebody happened to use in 2026.

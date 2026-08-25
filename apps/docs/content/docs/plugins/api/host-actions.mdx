@@ -110,7 +110,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -148,7 +148,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `agents.backends.list`
 
-**List agent backends** — List available agent backends (providers) for spawning sessions.
+**List agent backends** — List available Agent backends for spawning sessions.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -2072,54 +2072,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 No field hints are published. Use the typed input accepted by `execute`.
 
-## `plugins.author.build`
-
-**Build plugin author source** — Build an external plugin-author source through the managed runtime.
-
-- Safety: `danger`; side effect: `write`.
-- Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
-
-### Input guidance
-
-No field hints are published. Use the typed input accepted by `execute`.
-
-## `plugins.author.install`
-
-**Prepare plugin author dependencies** — Prepare external plugin-author dependencies through the managed runtime.
-
-- Safety: `danger`; side effect: `write`.
-- Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
-
-### Input guidance
-
-No field hints are published. Use the typed input accepted by `execute`.
-
-## `plugins.author.test`
-
-**Test plugin author source** — Run the external plugin-author test command through the managed runtime.
-
-- Safety: `danger`; side effect: `write`.
-- Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
-
-### Input guidance
-
-No field hints are published. Use the typed input accepted by `execute`.
-
-## `plugins.author.typecheck`
-
-**Typecheck plugin author source** — Run the managed TypeScript check for an external plugin-author source.
-
-- Safety: `danger`; side effect: `write`.
-- Approval: `optional` result; `deferred` flow.
-- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
-
-### Input guidance
-
-No field hints are published. Use the typed input accepted by `execute`.
-
 ## `plugins.change.status`
 
 **Get plugin change status** — Read one daemon-issued pending plugin change without creating or deciding it.
@@ -2132,9 +2084,57 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 No field hints are published. Use the typed input accepted by `execute`.
 
-## `plugins.dev`
+## `plugins.dev.build`
+
+**Build plugin author source** — Build an external plugin-author source through the managed runtime.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.dev.install`
+
+**Prepare plugin author dependencies** — Prepare external plugin-author dependencies through the managed runtime.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.dev.submit`
 
 **Submit plugin development snapshot** — Inspect a local plugin source and submit its current snapshot to the daemon-owned development cycle without starting a watcher.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.dev.test`
+
+**Test plugin author source** — Run the external plugin-author test command through the managed runtime.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `plugins.dev.typecheck`
+
+**Typecheck plugin author source** — Run the managed TypeScript check for an external plugin-author source.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
@@ -2444,6 +2444,19 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 No field hints are published. Use the typed input accepted by `execute`.
 
+## `projects.list`
+
+**List projects** — List the account's persisted projects with each one's resolved hosting provider and worktrees.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `api`.
+
+### Input guidance
+
+- `machineId` (text): Machine id
+- `limit` (text): Limit
+
 ## `prompt_asset.export`
 
 **Export prompt asset** — Export a prompt doc or skill bundle from the Happier library to a provider-native asset.
@@ -2515,6 +2528,31 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `installTarget.targetName` (text): Target skill name
 - `installTarget.installMode` (select): Install mode
 
+## `prompts.invocation.resolve`
+
+**Resolve a prompt invocation** — Resolve one Prompt Library invocation, by its stable id, to the prompt text it produces.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `api`.
+
+### Input guidance
+
+- `invocationId` (text, required): Invocation id
+- `argsText` (text): Arguments
+
+## `prompts.invocations.list`
+
+**List prompt invocations** — List the account's Prompt Library invocations by stable id, without expanding any prompt body.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `ui`, `api`.
+
+### Input guidance
+
+- `limit` (text): Limit
+
 ## `review.engines.list`
 
 **List review engines** — List review engines currently available for the active session.
@@ -2560,6 +2598,18 @@ No field hints are published. Use the typed input accepted by `execute`.
 ## `reviews.comments.bulkTransition`
 
 **Bulk transition review comments** — Operate on durable review comments through the shared review-comment substrate.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: `ui`, `rpc`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `reviews.comments.claimPublicationDispatch`
+
+**Claim review comment publication dispatch** — Operate on durable review comments through the shared review-comment substrate.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
@@ -2878,6 +2928,21 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `cwd` (text, required): Repository directory
 - `confirmed` (boolean, required): Confirm stale index-lock removal
 - `confirmationToken` (text, required): Confirmation token
+
+## `scm.reviewWorkspace.materializePrepared`
+
+**Materialize prepared review workspace** — Materialize prepared checkout facts in one exact selected workspace.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+- `cwd` (text, required): Selected workspace root
+- `displayName` (text, required): Branch name
+- `baseRef` (text): Prepared base ref
+- `branchMode` (select, required): Branch mode
 
 ## `servers.list`
 
@@ -3221,6 +3286,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionId` (text, required): Session id
 - `sourceRef` (text, required): Source reference
 - `sourceRevisionOrEpoch` (text, required): Source revision
+- `cursor` (text): Continuation cursor
 
 ## `session.permission.remote.respond`
 
@@ -3242,6 +3308,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `actor.principalId` (text, required): External principal id
 - `decision` (select, required): Decision
 - `scope` (select, required): Scope
+
+## `session.permission.respond`
+
+**Respond to permission request** — Approve or deny an active permission request in a session.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `optional` result; `deferred` flow.
+- Also surfaced on: `ui`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `decision` (select, required): Decision
+- `requestId` (text): Request id
 
 ## `session.permission_mode.set`
 
@@ -3297,7 +3377,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.spawn_new`
 
-**Create session** — No additional description is published.
+**Create session** — Create a new coding session in a directory on the requested machine, using the selected Agent.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
@@ -3503,6 +3583,23 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `decision` (select): Decision — Use approve or reject for general user actions, or request_changes when you need the coding assistant to revise something first.
 - `reason` (textarea): Reason — Required when requesting changes. Optional extra context for a rejection.
 - `answers` (json): Answers — Structured answers for question-style user-action requests such as AskUserQuestion.
+
+## `session.user_action.remote.answer`
+
+**Answer a remotely mediated user-action request** — Submit bounded indexed answers for one current source-bound AskUserQuestion request.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Also surfaced on: none.
+
+### Input guidance
+
+- `sessionId` (text, required): Session id
+- `turnId` (text, required): Turn id
+- `requestId` (text, required): Request id
+- `sourceRef` (text, required): Source reference
+- `sourceRevisionOrEpoch` (text, required): Source revision
+- `answers` (json, required): Indexed answers
 
 ## `session.vendor_plugin_catalog.list`
 
@@ -3718,49 +3815,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `agentId` (text): Runtime agent id
-- `backendTargetKey` (text): Backend target key
+- `agentId` (text): Runtime agent id (optional filter)
+- `backendTargetKey` (text): Backend target key (optional filter)
 - `limit` (text): Max results
-
-## `sessions.subagents.get`
-
-**Get session subagent** — Return one provider-neutral subagent projection by id.
-
-- Safety: `safe`; side effect: `read`.
-- Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`, `api`.
-
-### Input guidance
-
-- `id` (text, required): Subagent id
-- `parentSessionId` (text): Parent session id
-
-## `sessions.subagents.list`
-
-**List session subagents** — Return bounded provider-neutral subagent projections for a session.
-
-- Safety: `safe`; side effect: `read`.
-- Approval: `required` result; `blocking` flow.
-- Also surfaced on: `agent`, `rpc`, `api`.
-
-### Input guidance
-
-- `parentSessionId` (text): Parent session id
-- `groupId` (text): Group id
-- `limit` (text): Limit
-
-## `sessions.subagents.watch`
-
-**Watch session subagents** — Register the bounded host subagent watcher path and return its initial typed projection snapshot.
-
-- Safety: `safe`; side effect: `read`.
-- Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`, `api`.
-
-### Input guidance
-
-- `parentSessionId` (text): Parent session id
-- `id` (text): Subagent id
 
 ## `subagents.delegate.start`
 
@@ -3772,7 +3829,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `backendTargetKeys` (multiselect, required): Provider/backend targets — Select provider/backend targets for Happier-managed runs; use repeated launches or provider-native subagents for homogeneous parallelism capacity.
+- `backendTargetKeys` (multiselect, required): Agent backend targets — Select Agent backend targets for Happier-managed runs; use repeated launches or Agent-native subagents for homogeneous parallelism capacity, not parallelism capacity in this field.
 - `instructions` (textarea, required): Instructions — What you want the delegate(s) to do.
 - `permissionMode` (select): Permission mode — Permission mode. Allowed values: read_only | default | workspace_write | yolo.
 - `modelId` (text): Model id — Optional model applied to every started run (same vocabulary as session spawn). Omit for the backend default.
@@ -3789,7 +3846,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `backendTargetKeys` (multiselect, required): Provider/backend targets — Select provider/backend targets for Happier-managed runs; use repeated launches or provider-native subagents for homogeneous parallelism capacity.
+- `backendTargetKeys` (multiselect, required): Agent backend targets — Select Agent backend targets for Happier-managed runs; use repeated launches or Agent-native subagents for homogeneous parallelism capacity, not parallelism capacity in this field.
 - `instructions` (textarea, required): Instructions — What you want the planner(s) to do.
 - `modelId` (text): Model id — Optional model applied to every started run (same vocabulary as session spawn). Omit for the backend default.
 - `configOptions` (json): Config options (e.g. reasoning effort) — Optional agent config-option overrides applied to every started run, e.g. &#123;"reasoning_effort":"high"&#125;. Merged canonically; a conflict with sessionConfigOptionOverrides fails.
@@ -3801,7 +3858,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
-- Also surfaced on: `rpc`, `api`.
+- Also surfaced on: `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -3880,7 +3937,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Also surfaced on: `rpc`, `api`.
+- Also surfaced on: `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -3957,5 +4014,5 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `backendTargetKeys` (multiselect, required): Provider/backend targets — Select provider/backend targets for the Happier-managed voice agent run; this is not parallelism capacity.
+- `backendTargetKeys` (multiselect, required): Agent backend targets — Select Agent backend targets for the Happier-managed voice agent run; this is not parallelism capacity.
 - `instructions` (textarea, required): Instructions — Initial instructions for the voice agent run.

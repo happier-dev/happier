@@ -15,8 +15,13 @@ or a detailed session workflow.
   **Developer Preview:** the top-level `spawn`, `list`/`ls`, `send`, `history`,
   `wait`, `stop`, and `delegate` commands described here are implemented in the
   current development source but are not released yet. They are first-class CLI
-  commands, not aliases maintained outside the command registry.
+  commands registered alongside the established `happier session ...` family,
+  which remains supported for detailed and existing scripted workflows.
 </Callout>
+
+These are complete commands. For the same operation, a first-class command and
+its `happier session ...` form use the same request and produce the same JSON
+envelope; choose the form that keeps your command or existing script clearest.
 
 | Top-level command | Session command |
 | --- | --- |
@@ -34,6 +39,22 @@ Most Session-targeting commands accept a full Session id, an unambiguous id
 prefix, or a Session tag. This page uses `<session-id-or-prefix-or-tag>` for
 that shared selector. If a prefix matches multiple Sessions, the command fails
 and prints candidates (use `--json` for structured output).
+
+### Choose a machine explicitly
+
+The first-class session commands accept `--machine-id <machine-id>`. Use it
+when automation must target a known machine rather than rely on the CLI's
+current-machine selection:
+
+```bash
+happier spawn "Fix the failing tests" --agent <agent-id> --machine-id <machine-id>
+happier history <session-id-or-prefix-or-tag> --machine-id <machine-id> --follow --jsonl
+```
+
+With an API Token, the CLI can use its configured current machine or a sole
+current machine. If more than one current machine is available and no target
+can be resolved, it returns `machine_selection_required` with candidates;
+provide `--machine-id` to make the target explicit.
 
 ## Attach vs resume
 
@@ -216,6 +237,8 @@ stream: each emitted line is one compact history row. `--follow --json` is
 rejected because it cannot represent a multi-line stream.
 
 Use `compact` when you want a simpler text-focused view.
+Human compact output limits each long row to 24 lines or 2,000 characters and
+marks it as truncated; use `--json` when you need the full text.
 Use `raw` when you need provider payloads, metadata, or structured tool/message records.
 
 ## Session control

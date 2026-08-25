@@ -59,14 +59,14 @@ The public release profiles treat self-hosted relay upgrades as independent
 component upgrades, not as a fleet migration protocol. For a stable release,
 prioritize these directions:
 
-- candidate UI, CLI, and daemon core flows against a supported older
+- current UI, CLI, and daemon core flows against a supported older
   self-hosted relay;
-- bounded core flows from a supported older client or daemon to the candidate
+- bounded core flows from a supported older client or daemon to the current
   relay, preserving unaffected operations and returning a typed update
   requirement only for an unsafe operation;
-- persisted state written by the supported prior release read by candidate
+- persisted state written by the supported prior release read by current
   readers; and
-- candidate-writer to supported old-reader only when rollback or coexistence
+- current-writer to supported old-reader only when rollback or coexistence
   can actually make that direction reachable.
 
 The release agent derives the affected, reachable directions from the actual
@@ -82,15 +82,37 @@ regressions or a `docker-release-assets` published-channel → local-build
 upgrade—but none of them issues a general compatibility verdict. The Docker
 upgrade suite runs in a normal profile only when the diff affects relay
 storage/schema, startup/runtime dependencies, authentication persistence,
-encryption storage, or upgrade behavior, the exact release contains a server
-candidate, and a supported published relay predecessor exists. Candidate
-presence alone is insufficient. Broader installer, platform, and
+encryption storage, or upgrade behavior, the release changes the server, and a
+supported published relay predecessor exists. A server version change alone is
+insufficient. Broader installer, platform, and
 historical-version exploration remains risk-selected deep certification.
 Release orchestration does not wait for every
 self-hosted process, impose a mandatory client floor, orchestrate a database
 migration, or coordinate a global cutover.
 If a concrete migration has a writer-drain or maintenance-window requirement,
 its dedicated migration procedure owns that external operation.
+
+### Session draft rollout
+
+Synchronized Session drafts are negotiated through the `sessions.drafts` server feature bit. A new
+client fails closed when that bit or the typed routes are unavailable and retains the incumbent
+local-only behavior; it does not send draft records through generic Account KV routes. A capable
+server reserves the draft KV prefix so old generic-KV clients cannot read or overwrite typed draft
+rows.
+
+The first capable client imports the retired local existing-Session text/semantic stores and the
+singleton new-Session draft into the canonical draft repository. It removes each legacy value only
+after the corresponding canonical record is durably acknowledged, so an interrupted import remains
+recoverable. The legacy readers are migration adapters, not parallel writers, and may be removed
+when supported persisted local state no longer requires them.
+
+Draft documents preserve bounded unknown extension fields as JSON. This lets a client without a
+newer composer contribution edit fields it understands without deleting newer semantic data; it
+does not authorize that client to execute the unknown contribution. Raw generic-file bytes, local
+file handles and URIs, credentials, secret values, and local presentation state remain outside the
+compatibility shape. Plugin semantic attachments, mentions, fallback presentation, and opaque
+execution-target-bound staged-media handles may round-trip; execution still fails closed when the
+owning plugin or target is unavailable.
 
 ## SDK protocol evolution
 

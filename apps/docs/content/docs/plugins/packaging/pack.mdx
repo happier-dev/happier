@@ -6,7 +6,7 @@ description: Create a selected-file npm-compatible Plugin Platform archive.
 Packing creates an installable archive from a local plugin directory.
 
 ```bash
-happier plugins pack /absolute/path/to/plugin --out ./plugin.happier-plugin.tgz
+happier plugins pack /absolute/path/to/plugin --out /absolute/path/to/plugin-output.happier-plugin.tgz
 ```
 
 The package metadata identifies the generated cold manifest in `package.json`:
@@ -24,6 +24,10 @@ Use a deliberate `files` inventory. The pack owner stages
 archive even though authors do not keep that file in the source tree. Packing
 includes only selected regular files and rejects unsafe archive paths and
 package lifecycle assumptions.
+
+The archive output must be outside the plugin package root and must not already
+exist (including its `.sha256` sidecar). When no `--out` is supplied, use the
+archive path printed by `plugins pack`.
 
 The same pack step writes generated `happier.compatibilityProjection` and
 `happier.marketplaceDiscovery` data into the staged `package.json`. Do not add

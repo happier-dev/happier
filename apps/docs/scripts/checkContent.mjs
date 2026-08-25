@@ -190,10 +190,34 @@ export function checkUiLabels({
   agentDefinitionsFile = DEFAULT_AGENT_DEFINITIONS,
   allow = UI_LABEL_ALLOWLIST,
 } = {}) {
-  let translations;
-  try {
-    translations = readFileSync(translationsFile, 'utf8');
-  } catch {
+  function readTranslationSourceGraph(file, visited = new Set()) {
+    const normalized = resolve(file);
+    if (visited.has(normalized)) return '';
+    visited.add(normalized);
+
+    let source;
+    try {
+      source = readFileSync(normalized, 'utf8');
+    } catch {
+      return '';
+    }
+
+    const importedSources = [];
+    for (const match of source.matchAll(/\bfrom\s+['"](\.[^'"]+)['"]/g)) {
+      const base = resolve(dirname(normalized), match[1]);
+      for (const candidate of [base, `${base}.ts`, join(base, 'index.ts')]) {
+        const imported = readTranslationSourceGraph(candidate, visited);
+        if (imported) {
+          importedSources.push(imported);
+          break;
+        }
+      }
+    }
+    return [source, ...importedSources].join('\n');
+  }
+
+  const translations = readTranslationSourceGraph(translationsFile);
+  if (!translations) {
     // The client workspace is not always checked out beside the docs (docs-only
     // deploys, for one). Skipping is correct: a missing sibling is not evidence
     // that a label is wrong, and failing here would block a legitimate build.

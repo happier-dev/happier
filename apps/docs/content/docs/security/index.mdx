@@ -53,12 +53,42 @@ Under the default policy:
 - The device push token needed to deliver notifications.
 - Identity records and any stored OAuth or refresh tokens for connected
   services, plus certificate identities where mTLS is in use.
-- Account settings, credentials and artifacts, sealed with server-owned key
-  material (`server_sealed`) rather than your device key. Sealed is not the same
-  as end-to-end encrypted: an operator holding the master secret can open these.
+- Not your account settings. Under the default policy your account is
+  end-to-end encrypted, so its settings — including the API keys you store as
+  **Saved Secrets** — are encrypted on your device before they sync, and the
+  server holds ciphertext it cannot open.
 
 Under `optional` or `plaintext_only`, add session content itself to that list
 for anything stored in plain mode.
+
+## Where your API keys actually live
+
+An API key you save in Happier is stored as a **Saved Secret** in your account
+settings. That is account data, not machine-local data: it syncs to your other
+signed-in devices. What the server can do with it follows the account's
+encryption mode.
+
+- On an **E2EE account**, the value is encrypted on your device with key
+  material only your devices hold. The server stores ciphertext.
+- On a **plaintext account**, the value is sent and stored in a form the live
+  server can read. That is intentional for plaintext accounts — they have no
+  account encryption material by design — and the value is protected by
+  authentication, authorization and TLS rather than by encryption the operator
+  cannot undo.
+
+Server-side at-rest sealing (`server_sealed`, the default for plain accounts;
+see [Encryption and plaintext storage](/self-hosting/encryption)) applies only
+to that second case. It reduces exposure of database files and backups, but an
+operator holding the master secret can open those values, and the live server
+opens them for authorized use. It is not end-to-end encryption, and it is never
+what protects an E2EE account's secrets.
+
+Connected-service credentials work differently again: the server performs the
+OAuth exchange and returns a bundle sealed to your client key, and your client
+or daemon opens it locally at the point of use.
+
+If you would rather not store a provider key as account data at all, put it in a
+machine environment variable on the execution machine instead.
 
 ## API tokens and Action API traffic
 

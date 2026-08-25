@@ -72,12 +72,12 @@ export const { manifest, activate } = definePlugin({
       tickets: defineComposerReference({
         title: 'Tickets',
         icon: 'search',
-        async search(query, signal) {
-          const found = await findTickets(query, signal);
+        async search(query, context) {
+          const found = await findTickets(query, context.signal);
           return found.map((ticket) => ({ id: ticket.id, label: ticket.title }));
         },
-        async resolve(candidateId, signal) {
-          const [ticket] = await findTickets(candidateId, signal);
+        async resolve(candidateId, context) {
+          const [ticket] = await findTickets(candidateId, context.signal);
           return {
             id: candidateId,
             label: ticket?.title ?? candidateId,

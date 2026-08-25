@@ -23,8 +23,8 @@ internet — which is off by default and, as of this release, should stay off.
 Private previews are the normal path and the rest of this page is mostly about them.
 
 <Callout type="warn">
-  **Public exposure is not ready to run.** The code is complete and it is not switched on,
-  and it should not be switched on until its security review has landed. Leave
+  **Public exposure is not ready to run.** It is not switched on, and it should not be
+  switched on until its independent security review has completed. Leave
   `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED` unset. Everything below about it
   is here so you can recognise it, not so you can turn it on.
 </Callout>
@@ -63,18 +63,18 @@ The private key is a **32-byte Ed25519 seed, base64url-encoded without padding**
 relay derives the public key from it.
 
 <Tabs items={['macOS / Linux', 'PowerShell']}>
-  <Tab value="macOS / Linux">
+<Tab value="macOS / Linux">
 ```bash
 openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
 ```
-  </Tab>
-  <Tab value="PowerShell">
+</Tab>
+<Tab value="PowerShell">
 ```powershell
 $bytes = New-Object byte[] 32
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
 ```
-  </Tab>
+</Tab>
 </Tabs>
 
 Padding characters and `+` / `/` are rejected, so do not skip the substitution.
@@ -168,19 +168,31 @@ Two more that look alike and are not:
 ## Public exposure, and why it is off
 
 Public exposure takes a private preview and gives it a URL anyone on the internet can open,
-with no sign-in, for a limited time. It exists, it is feature-complete, and it is gated
-behind `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED`, which defaults to off.
+with no sign-in, for a limited time. It is gated behind
+`HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED`, which defaults to off.
 
 **Leave it off.** It has not completed the independent security review that this kind of
 surface requires, and a relay that enables it is exposing a port on someone's laptop to the
 open internet on the strength of code that has not been signed off for that job. This is not
 a limitation of your deployment; it is the current state of the feature.
 
-If you enable it anyway, the relay will refuse to actually mint links until several further
-prerequisites are configured — an exposure mode, a maximum link lifetime, a DNS/TLS host
-origin, an audit sink, and a rate limit profile — and the app will name whichever one is
-missing on the service row. That is a completeness check, not a security review, and passing
-it does not make the feature ready.
+If you enable it anyway, the relay still refuses to mint links until six further prerequisites
+are all satisfied, and the app names whichever ones are missing on the service row:
+
+- an allowed exposure mode,
+- a maximum link lifetime,
+- a host origin base domain **and** an `https:` canonical server URL — each exposure is served
+  from its own origin, so there is no path-mode fallback here,
+- a durable audit sink,
+- a rate limit profile,
+- a working rate limiter behind that profile.
+
+The last one used to be advisory and is now required, because abuse control on an
+unauthenticated public URL is not an optional extra. There is no switch to turn the audit
+requirement off.
+
+That list is a completeness check, not a security review. Satisfying all six does not make the
+feature ready, and the default stays off regardless.
 
 ## Related
 

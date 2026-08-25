@@ -96,12 +96,6 @@ Collection-query entry.
 
 ## Publish mounted semantic context
 
-> **Development status:** `publishCurrentUiContext` belongs to a Developer
-> Preview capability whose implementation and packaged web/iOS/Android
-> certification remain in progress. The public package surface is not yet
-> released for supported use, and no released build currently provides this
-> capability.
-
 The host automatically supplies a privacy-safe, parameter-free navigation
 baseline. A mounted surface can optionally enrich that baseline with bounded
 semantic data and contextual commands for the lifetime of that exact mount:
@@ -153,10 +147,10 @@ before any effect. Plugins do not generate or persist those ids.
 This publication does not itself send data to a Voice provider. The active
 Voice client's privacy mode decides whether current-UI data leaves that client,
 and automatic mode sends navigation metadata only; semantic detail and
-commands remain on demand. The source contract and prepared packed-external
+commands remain on demand. The source contract and external-plugin development
 fixture exercise this same public Host API and mount-retirement contract.
-Exact packed and loaded parity remains unverified pending the candidate proof
-called out above; package code remains trusted executable code.
+Loaded development-stack parity remains the deciding live proof; package code
+remains trusted executable code.
 
 ## Destinations and form factors
 

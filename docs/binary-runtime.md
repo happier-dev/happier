@@ -41,7 +41,7 @@ Their `prepack` scripts run `scripts/bundleWorkspaceDeps.mjs`, which delegates t
 
 Publication has two explicit modes. Live source-dev refreshes keep each package directory mounted, publish complete files with `package.json` last, retain prior targets for in-flight module resolvers, and roll back already-published files if a later replacement fails. Artifact publication is selected by npm `prepack` or `--artifact`; it bypasses live freshness shortcuts and prunes retained targets so obsolete generations cannot enter a tarball. Health checks require every current source runtime file to match but deliberately allow extra retained targets in live trees.
 
-All workspace/package publication that shares the CLI dist path uses the canonical cli-common lock implementation. Nested build processes inherit an owner-authenticated lease containing both the normalized path and a random owner token; a path alone never proves ownership and cannot bypass a successor process. Dependency builds preserve that lease but remove the parent package's staged-output override so one workspace cannot compile into another workspace's publication directory. If compiled cli-common helpers are unavailable during bootstrap, the repository sync script stages and vendors a complete package off-path before publishing it, and propagates failures without modifying the previous live package.
+All workspace/package publication that shares the CLI dist path uses the canonical cli-common lock implementation. Nested build processes inherit an owner-authenticated lease containing both the normalized path and a random owner token; a path alone never proves ownership and cannot bypass a successor process. Publication and the prepared consumer that reads the published graph are one locked transaction: reconciliation replaces the dependency tree entry by entry, so a compiler, API-surface, or prepack reader released early could resolve one module from the new generation and its import target from the previous one. The prepared consumer therefore runs inside the same held lock and receives that lock's lease, which is what lets a prepared script that republishes the graph itself — `prepack` — reenter instead of waiting for its own owner. Dependency builds preserve that lease but remove the parent package's staged-output override so one workspace cannot compile into another workspace's publication directory. If compiled cli-common helpers are unavailable during bootstrap, the repository sync script stages and vendors a complete package off-path before publishing it, and propagates failures without modifying the previous live package.
 
 The stack pack sandbox copies the shared workspace scripts, materializes the complete internal build-tool workspace closure, and links the repository's installed root dependency tree for external build-tool resolution. Build-time workspaces remain separate from the package's declared runtime bundle closure, so tooling-only packages cannot leak into the tarball. The root dependency link is outside the packed package root and is removed with the sandbox.
 
@@ -88,7 +88,7 @@ When introducing a new `packages/<name>` that must ship with a published package
 3. Add it to the package's `scripts/bundleWorkspaceDeps.mjs` bundle list.
 4. Update bundling and published-dependency tests.
 
-For `packages/plugin-sdk`, the acceptance rule is stricter than an in-repo build: `npm pack` the SDK, install that tarball in an out-of-repo project, and compile consumers without separately publishing `@happier-dev/protocol`, `@happier-dev/agents`, or other internal workspaces.
+For `packages/plugin-sdk`, source and integration validation must prove through the canonical governance and consumer fixtures that external consumers resolve only the supported public surface and do not require independently published internal workspaces. Do not create a local archive/install gate for feature completion; release automation owns the archive it publishes.
 
 ## Missing `dist` / invalid exports
 
@@ -102,6 +102,6 @@ yarn workspace @happier-dev/protocol build
 
 Stack builds should fail fast or build missing internal workspace outputs through the stack build helpers.
 
-## Packaging sanity checks
+## Bundling sanity checks
 
-When touching bundling/dependencies, run the relevant script tests and validate tarball contents. For CLI changes, the check should prove that protocol dependencies appear under the bundled protocol workspace path, not duplicated at the host root unless the host imports them directly.
+When touching bundling or dependencies, run the relevant source-level script and dependency-closure tests. For CLI changes, the check should prove that protocol dependencies are projected under the bundled protocol workspace path, not duplicated at the host root unless the host imports them directly. Feature QA does not produce or install a local release archive.

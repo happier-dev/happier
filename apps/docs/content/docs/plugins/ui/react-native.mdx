@@ -22,6 +22,11 @@ source, compatible build dependencies, and a public SDK build configuration.
 The release-owned toolchain packet supplies those versions; do not copy a
 separate version matrix into the project.
 
+Before choosing a component or hook, open the shipped [Plugin UI API
+inventory](https://github.com/happier-dev/happier/blob/dev/packages/plugin-ui/API.md):
+`node_modules/@happier-dev/plugin-ui/API.md` in the generated project is the
+exact installed inventory. Do not guess exports from examples or app source.
+
 ## Host API
 
 Export a semantic surface. `@happier-dev/plugin-ui`'s `defineUiSurface` owns
@@ -263,10 +268,31 @@ The manifest declares the direct view and artifact references.
 `ui-artifacts.json` describes the emitted files and digests. Authors do not
 hand-author the final content digest.
 
+## Crash disable and reset
+
+Repeated renderer crashes can cause the daemon-owned crash watchdog to disable
+the exact destination and renderer binding. The plugin does not choose the
+threshold, persist a competing disabled flag, or reset itself. When the current
+binding is disabled and the host can reset it, Happier's unavailable-surface
+card shows **Reset**. A successful request does not remount the stale tree: the
+client waits for the daemon to publish a newer crash-state projection before it
+mounts that binding again.
+
+For loaded-runtime QA, the same unavailable-surface diagnostics identify
+`crash_threshold_reached`. After a reset request they also carry a structured
+`crash_reset_context:...` diagnostic with the binding identity, request status,
+projected epoch, and bounded result. Use those structured diagnostics instead
+of localized copy, and do not expose crash details or credentials in plugin UI.
+Exercise the real sequence: crash the loaded renderer until the host disables
+it, observe the unavailable card and its diagnostics, choose **Reset**, and
+verify that a newer daemon projection admits a fresh mount.
+
 ## Boundary
 
 The host owns navigation, permissions, app state, session lifecycle, and native services. Use the Plugin UI host API for supported interactions. Whole-package Install & Trust covers this client code, daemon code, dependencies, and build artifacts together.
 
-Cross-plugin composition currently supports feature-owned operation roles only.
-Keep this renderer as a same-plugin direct view; do not add a target renderer
-relationship or navigation path around it.
+Cross-plugin contribution points and targeted contributions are available in
+Developer Preview where the generated capability matrix marks both rows
+`available`. Keep a direct view same-plugin unless a documented protocol package
+defines the target relationship; do not copy another plugin's declaration or
+invent a target renderer or navigation contract.

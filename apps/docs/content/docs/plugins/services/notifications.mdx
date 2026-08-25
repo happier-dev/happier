@@ -8,6 +8,16 @@ notifications through `context.services.notifications` from invoked handlers.
 The installed SDK's `capability-matrix.json` stays the availability authority
 for every contribution family.
 
+## Availability
+
+Deferred for external authors. It is not supported or advertised for ordinary
+author use; do not rely on it; consult its matrix unblock condition. The
+capability does not become externally available until a maintained external
+development-source plugin proves lifecycle and real invocation in the current
+loaded development stack, including replacement, disable, and uninstall
+currentness. The bundled action-contract pair is a first-party Preview
+reference, not that loaded-stack proof.
+
 ## Declare a category and a channel
 
 `notifications` is a descriptor family: each category names its kind, the
@@ -55,9 +65,10 @@ notificationChannels: {
 },
 ```
 
-`examples/action-contract-producer` in the SDK package is the maintained proof
-for this flow: it declares the category and the channel, registers the sender
-through normal activation, and sends through the service from an Action.
+`examples/action-contract-producer` in the SDK package is a conformance
+reference for this flow. It declares the category and channel, registers the
+sender through normal activation, and sends through the service from an Action,
+but it is not the external development-source loaded-stack proof.
 
 ## Send from an invoked handler
 

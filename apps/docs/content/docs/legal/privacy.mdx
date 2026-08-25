@@ -42,10 +42,10 @@ We use PostHog for product analytics. It runs in PostHog's **EU region (Frankfur
 - **Opt-Out Available**: You can disable analytics collection at any time in the app settings
 
 **On happier.dev, docs.happier.dev and guides.happier.dev**
-- **No cookies and no visitor ID**: The websites run PostHog in cookieless mode. We set no cookie, store no identifier, and build no profile that follows you between visits or between pages.
+- **No cookies and nothing stored on your device**: The websites run PostHog in cookieless mode. We set no cookie and write no identifier to your browser. PostHog's ingest servers instead derive a temporary identifier by hashing attributes of the request — your IP address and browser user agent — with a salt that changes every day and is discarded once that day's events are processed. It exists so that visits can be counted: page views from the same browser are counted together while that salt lasts, and nothing connects them once it rotates. No person profile is created, and we cannot resolve the identifier back to you or join it to your Happier account.
 - **Global Privacy Control is honoured**: If your browser sends the GPC signal — Brave and DuckDuckGo do by default — analytics never start at all.
 - **First-party only**: Analytics requests go to a path on the site you are already reading and are forwarded to PostHog from our own server. The pages make no third-party requests.
-- **No IP addresses**: Client IP addresses are discarded on arrival. A coarse country and region derived from the address is kept; the address itself is never stored.
+- **No stored IP addresses**: Your address is used at ingestion to derive the temporary identifier above and a coarse country and region. Those are kept; the address itself is discarded and never stored.
 - **What is recorded**: which pages were viewed, in which language, and which links and buttons were clicked. Never the contents of a form, and never anything you type.
 - **Opt-Out Available**: There is a switch in the footer of every page. The record of that choice is the only thing these sites ever write to your device.
 

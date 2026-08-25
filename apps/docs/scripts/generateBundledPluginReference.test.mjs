@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  BUNDLED_PLUGIN_REGISTRY_PATH,
   categorize,
   contributedFamilies,
   readBundledPluginIds,
@@ -57,8 +59,13 @@ test('a bundled id with no built manifest is a broken build, not a shorter page'
   );
 });
 
-test('the registry is parsed from the compiled bundled list', () => {
+test('the registry is parsed from the bundled manifest projection', () => {
   const ids = readBundledPluginIds('{ "pluginId": "happier.agent.claude" }, { "pluginId": "happier.triage" }');
   assert.deepEqual([...ids].sort(), ['happier.agent.claude', 'happier.triage']);
   assert.throws(() => readBundledPluginIds('{}'), /parsed to zero ids/);
+});
+
+test('the configured bundled registry source contains projected plugin ids', () => {
+  const ids = readBundledPluginIds(readFileSync(BUNDLED_PLUGIN_REGISTRY_PATH, 'utf8'));
+  assert.ok(ids.has('happier.channels'));
 });

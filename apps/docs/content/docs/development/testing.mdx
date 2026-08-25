@@ -30,7 +30,7 @@ Note: the UI workspace package name is `@happier-dev/app` and its directory is `
 yarn test:plugin-workspaces
 ```
 
-This discovers plugin workspaces from the root workspace metadata and runs each package's declared `test` script. It fails if no plugin workspaces are selected or if a plugin workspace lacks an executable `test` or `typecheck` script. Run the same derived package set through typechecking with `yarn typecheck:plugin-workspaces`. CI runs the test and typecheck lanes separately from the ordinary unit lane; it still executes plugin typechecks after a test failure so both results are visible.
+This discovers plugin workspaces from the root workspace metadata and runs each package's declared `test` script with at most two Plugin workspaces active at once. It fails if no plugin workspaces are selected or if a plugin workspace lacks an executable `test` or `typecheck` script. Run the same derived package set through typechecking with `yarn typecheck:plugin-workspaces`. CI runs the test and typecheck lanes separately from the ordinary unit lane; it still executes plugin typechecks after a test failure so both results are visible.
 
 ### 1c) Plugin Platform contract tests
 

@@ -99,6 +99,25 @@ test('accepts a navigation path whose segments all ship', () => {
   assert.deepEqual(checkUiLabels({ contentRoot: root, translationsFile: translations }), []);
 });
 
+test('accepts a navigation label supplied by an imported translation module', () => {
+  const root = fixture({
+    'p.mdx': 'Open **Settings → Account → API tokens**.\n',
+  });
+  const translationsRoot = fixture({
+    'en.ts': [
+      "import { accountTranslations } from './accountTranslations';",
+      "  account: 'Account',",
+      '  ...accountTranslations,',
+    ].join('\n'),
+    'accountTranslations.ts': "export const accountTranslations = { apiTokens: 'API tokens' };\n",
+  });
+
+  assert.deepEqual(
+    checkUiLabels({ contentRoot: root, translationsFile: join(translationsRoot, 'en.ts') }),
+    [],
+  );
+});
+
 test('finds a label declared in an inline multi-property object', () => {
   // The end-anchored extractor this replaced only saw a value at the end of a
   // line, so a label written alongside a sibling property was invisible and the

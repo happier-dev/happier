@@ -232,9 +232,9 @@ because the remote worker is connected.
 When the server or Expo is remote, SSH local forwards preserve the selected local ports. When the
 server stays local but Expo or a daemon is remote, an SSH reverse forward gives the remote process
 the same server endpoint. Browsers, local tools, and installed development clients therefore keep
-using the local URL. For phones, the tunnel listens on the configured LAN bind and Expo advertises a
-LAN-reachable URL; set `HAPPIER_STACK_LAN_IP` when automatic interface selection is not the address
-the device should use.
+using the local URL. For phones, the tunnel's LAN bind accepts both IPv4 and IPv6 connections and
+Expo advertises a LAN-reachable URL. Set `HAPPIER_STACK_LAN_IP` to the machine's Tailscale IPv4
+address when a phone should connect through Tailscale instead of the selected LAN interface.
 
 Other named stacks can borrow that Expo endpoint by setting
 `HAPPIER_STACK_EXPO_SOURCE_STACK=<producer-stack>`. The producer remains the only process owner:

@@ -623,8 +623,17 @@ longer available.
 `resolveInstallation(request, context)` is read-only and is the only callback
 that receives `PluginInvocationContext`. It selects a declared variant,
 returns every concrete absolute target path, and reports either `ready`,
-generic `needs_attention`, or a typed unsupported result. On an installed
-configuration, the request may contain a host-derived `custody` projection.
+generic `needs_attention`, or a typed unsupported result. A returned path is an
+input, not the custody identity: the host resolves it to the physical file it
+names, so the install preview, the durable record, and every later comparison
+use that physical path even when the Agent declares an aliased or symlinked
+one. Two declared targets that resolve to the same physical file are rejected
+as duplicates, and an alias retargeted between planning and the configuration
+write fails the whole action with `concurrent_edit` instead of writing a file
+the Agent no longer reads. A final alias that cannot be physically resolved is
+rejected rather than treated as a missing configuration file, so an atomic
+write cannot replace the alias itself. On an installed configuration, the
+request may contain a host-derived `custody` projection.
 Each owned event-array occurrence includes its verified zero-based
 `entryIndex`; immediately before invoking the callback, the host rereads every
 target and rejects stale custody whose current input identity differs from the

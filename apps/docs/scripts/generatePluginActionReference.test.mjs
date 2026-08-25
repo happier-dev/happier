@@ -20,8 +20,9 @@ test('the docs generator registry owns the published Plugin host Action referenc
 test('the Action reference prepares the canonical built Protocol owner before loading it', async () => {
   const events = [];
   const rendered = await renderPluginActionReferenceMarkdown({
-    ensureWorkspacePackagesBuiltByName: async (_root, packageNames) => {
+    ensureWorkspacePackagesBuiltByName: async (_root, packageNames, options) => {
       events.push(`prepare:${packageNames.join(',')}`);
+      assert.equal(options.force, true, 'the published reference must render from a fresh Protocol build');
     },
     loadRenderer: async () => {
       events.push('load');

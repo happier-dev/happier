@@ -21,8 +21,11 @@ happier plugins dev
 `happier plugins create <name> [--id <plugin.id>] [--name <display name>]
 [--ui hostedWeb|reactNative]` creates the normal code-defined TypeScript
 package. React Native is the executable UI option with supported client
-realms. A hosted-web scaffold is a source/build reference only while its
-Artifact-backed runtime adapter remains unavailable.
+realms. A hosted-web scaffold emits a real packaged artifact whose runtime
+availability is reported per host rather than as a single global answer: a host
+either names the one frame adapter it constructed or reports a typed
+unavailable reason. See
+[Hosted web UI](/plugins/ui/hosted-web#build-and-runtime-availability).
 
 `happier plugins dev [path] [--sdk-registry <origin>]` is the normal edit
 loop. The CLI observes the source closure and submits each captured batch to the
@@ -53,7 +56,9 @@ happier plugins test . --packed
 - `happier plugins dev typecheck <path>`,
   `happier plugins dev build <path>`, and
   `happier plugins dev test <path>` run the managed focused check named by
-  the subcommand.
+  the subcommand. They prepare a missing author package tree once and otherwise
+  reuse it; run `plugins dev install` when declared dependencies change or the
+  tree needs an explicit refresh.
 - `happier plugins test [path]` runs the plugin's daemon-independent suite.
   Its `--packed` mode packs, trusts, installs, restarts, and invokes the
   package through a disposable daemon; it never reads or mutates the author's
@@ -61,7 +66,8 @@ happier plugins test . --packed
   explicitly composed companion for that packed proof.
 - `happier plugins doctor [path]` evaluates the code-defined author module once
   and reports import or top-level evaluation diagnostics. It does not prove
-  repeated evaluation is pure.
+  repeated evaluation is pure. Like the focused checks, it prepares a missing
+  package tree but does not reinstall an already materialized one.
 - `happier plugins doctor --installed [<pluginId>]` inspects installed plugins
   instead of author source. It reads the immutable generation this machine
   currently commits and reports declared files that are missing, escaped
@@ -76,15 +82,16 @@ these owner-level checks from an admitted candidate or a loaded client surface.
 ## Pack and install
 
 ```bash
-happier plugins pack . --out ./my-plugin.tgz
-happier plugins install ./my-plugin.tgz --kind archive
+happier plugins pack . --out ../my-plugin.tgz
+happier plugins install ../my-plugin.tgz --kind archive
 ```
 
 `happier plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>]`
 validates the package and writes its selected-file npm-compatible archive.
 Packing derives the cold manifest from `definePlugin(...)`; authors do not keep
 a second checked-in manifest. See [Pack plugins](/plugins/packaging/pack) for
-archive contents.
+archive contents. The output must be outside the plugin package root and must
+not already exist (including its `.sha256` sidecar).
 
 `happier plugins install <path|archive|package> [--kind path|archive|npm]
 [--selector <version>] [--integrity <sha256-SRI>] [--dev [--trust]] [--dry-run]`

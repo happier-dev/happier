@@ -10,11 +10,11 @@ description: Contribution families that a plugin can declare for projection and 
 | Family | Purpose | Code-defined author field |
 | --- | --- | --- |
 | `actions` | User, CLI, MCP, and session-agent operations | daemon root: `actions.<id>.run`; client leaf: `activate(api)` → `api.actions.register(...)`. See [Actions, tools, and commands](/plugins/api/actions-tools-commands#invocation-surface-and-execution-target). |
-| `tools` | **Deferred — conformance only.** Declarative tool-facing wrappers around actions | manifest action reference |
-| `commands` | **Deferred — conformance only.** Declarative CLI entries around actions | manifest action reference |
+| `tools` | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Declarative tool-facing wrappers around actions | manifest action reference |
+| `commands` | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Declarative CLI entries around actions | manifest action reference |
 | `hooks` | Host extension points | `hooks.<id>.handler` |
 | activation cleanup | Plugin-owned resources from a successful activation | cleanup function returned by `setup` |
-| `events` | Plugin-authored event ids and payload schemas | `context.services.events` in invoked handlers |
+| `events` | Plugin-authored event ids and payload schemas | `context.services.events` remains deferred in the current capability matrix |
 | `agents` | AI agent declarations and runtime metadata | custom Agents: `agents.<id>.factory`; declarative ACP: host-owned |
 | `providers` | Model-provider declarations, catalogs, connection facts, and an optional cold managed-runtime facet | ordinary Providers are descriptor-only; a managed Provider uses `providers.<id>.runtime` |
 | `connectedAccountDescriptors` | A plugin-produced account service and authentication modes | `connectedAccountDescriptors.<id>.runtime` |
@@ -22,28 +22,30 @@ description: Contribution families that a plugin can declare for projection and 
 | `scmHostingProviders` | Remote forge and hosting-service integration | `scmHostingProviders.<id>.runtime` |
 | `scmBackends` | Local repository and working-tree integration | `scmBackends.<id>.runtime` |
 | `settings` | Typed settings descriptors | `context.services.settings` in invoked handlers |
-| `openableContentViewers` | **Deferred — conformance only.** Declarative matching for host-opened content and its plugin-owned viewer | direct same-plugin `contributes.ui.views` destination |
-| MCP servers | **Deferred — conformance only.** Hosted or managed MCP server descriptors | `mcp.servers.<id>.runtime` when dynamic |
+| `openableContentViewers` | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Declarative matching for host-opened content and its plugin-owned viewer | direct same-plugin `contributes.ui.views` destination |
+| MCP servers | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Hosted or managed MCP server descriptors | `mcp.servers.<id>.runtime` when dynamic |
 | MCP discovery | Runtime MCP discovery | `mcp.discoverySources.<id>.discover` |
 | UI | Host-rendered descriptors or React Native surfaces; hosted web availability is reported per host, and an unavailable host reports a typed reason | generated artifact tree where executable UI is declared |
 | `managedDependencies` | Host-managed tool/runtime dependencies | dependency installer/validator |
 | `voiceModelPacks` | Immutable STT/TTS model and voice assets for host-owned engines | none; declarative data only |
-| `voiceProviders` | Conversation, STT, and TTS providers with strict settings, catalogs, limits, and credential declarations (supported preview) | `voiceProviders.<id>.runtime` when the declared realm needs one |
-| `sessionHeaderActions` | **Deferred — conformance only.** Declarative Session-header actions | manifest action reference |
+| `voiceProviders` | Conversation, STT, and TTS providers with strict settings, catalogs, limits, and credential declarations | `voiceProviders.<id>.runtime` when the declared realm needs one |
+| `sessionHeaderActions` | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Declarative Session-header actions | manifest action reference |
 
 The generated `capability-matrix.json` in a proven published SDK artifact is the
 availability authority for that exact artifact. This catalog describes shapes
 and author fields; it does not create a second availability list. A `deferred`
-row is conformance-only reference material, not a supported product lifecycle.
+row is not supported or advertised for ordinary author use; do not rely on it;
+consult its unblock condition.
 Runtime demand is derived from the contribution declarations; Manifest V2 has
 no separate `uses[]` owner.
 
-**Deferred — conformance only:** `composer.references`,
-`composer.attachments`, `composer.controls`, and `composer.regions` remain
-visible in the author surface for conformance, but are not product availability
-claims. `tools` and `commands` have source declarations and host wiring, but
-both remain externally deferred until exact packed lifecycle proof covers
-invocation, replacement, disable, and uninstall currentness.
+**Deferred:** `composer.references`, `composer.attachments`,
+`composer.controls`, and `composer.regions` remain visible only as documented
+schema shape, not as product availability claims. `tools` and `commands` have
+source declarations and host wiring, but both remain deferred until a
+maintained external development-source plugin proves their lifecycle and real
+invocation in the current loaded development stack, including replacement,
+disable, and uninstall currentness.
 `sessionHeaderActions`, `openableContentViewers`, and `mcp.servers` likewise
 remain deferred until their named matrix unblock conditions are proven.
 
@@ -80,7 +82,7 @@ the ordinary target and contributor workflow.
 
 Settings, UI surfaces, managed dependencies, notification categories, agent runtime capabilities, and projected display metadata should be descriptor-first. The manifest describes them; executable code only handles the dynamic behavior the descriptor references.
 
-## Openable content viewers (deferred — conformance only)
+## Openable content viewers (deferred)
 
 `contributes.openableContentViewers` declares a plugin-owned viewer for content
 the host can open. Each row has a local `id`, a required `destination`, and one
@@ -135,7 +137,7 @@ The host independently checks installed-plugin trust and source digest, signatur
 
 This family can add data for an inference family already compiled into Happier. It cannot register a voice provider, connection factory, protocol parser, transcript mapper, credential callback, native module, daemon worker, codec, server adapter, UI callback, or executable inference engine. Use the existing generic `contributes.settings` for plugin-local host-rendered settings and the existing documented voice hook ids for lifecycle/transcript observation; there is no `voiceSettings` family.
 
-## Voice providers (supported preview)
+## Voice providers
 
 `contributes.voiceProviders` is one strict discriminated family for browser or
 mobile conversations and daemon speech. Every row has one plugin-local `id`;
@@ -148,9 +150,11 @@ nested provider id.
 | `conversation` | `roles`, client `platforms`, turn `capabilities`, and a required `client` leaf | generated client leaf; `RealtimeVoiceProviderRuntime` from `@happier-dev/plugin-sdk/voice/client` |
 | `speech` | STT/TTS `roles`, `platforms`, optional bounded settings/catalogs/limits | daemon leaf; `SpeechProviderRuntime` from `@happier-dev/plugin-sdk/voice/speech` |
 
-Realm-neutral declarations, credential access, and the discriminated
-`VoiceProviderRuntime` live at `@happier-dev/plugin-sdk/voice`. Voice code does
-not import Voice contracts from `/runtime` or `/ui/client`.
+Realm-neutral declarations, credential access, and the single
+`VoiceProvidersRegistrationApi` transaction live at
+`@happier-dev/plugin-sdk/voice`. Runtime and wire types stay on the client or
+speech leaf named in the table; authors can derive the union accepted by
+`register` as `Parameters<PluginApi['voiceProviders']['register']>[1]`.
 
 ### Credentials and readiness
 
@@ -287,11 +291,10 @@ Conversation client leaf:
 
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';
-import type { VoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice';
 import type { RealtimeVoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice/client';
 
 declare const browserConversation: RealtimeVoiceProviderRuntime;
-const runtime: VoiceProviderRuntime = browserConversation;
+const runtime: Parameters<PluginApi['voiceProviders']['register']>[1] = browserConversation;
 
 export function activate(api: Pick<PluginApi, 'voiceProviders'>): void {
   api.voiceProviders.register(
@@ -305,8 +308,9 @@ Daemon speech leaf with independently selectable STT and TTS contributions:
 
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';
-import type { VoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice';
 import type { SpeechProviderRuntime } from '@happier-dev/plugin-sdk/voice/speech';
+
+type RegisteredVoiceProviderRuntime = Parameters<PluginApi['voiceProviders']['register']>[1];
 
 const stt = {
   kind: 'speech',
@@ -326,7 +330,7 @@ const tts = {
       mimeType: 'audio/wav',
     };
   },
-} satisfies VoiceProviderRuntime;
+} satisfies RegisteredVoiceProviderRuntime;
 
 export function bindSpeech(api: Pick<PluginApi, 'voiceProviders'>): void {
   api.voiceProviders.register('speech-stt', stt);

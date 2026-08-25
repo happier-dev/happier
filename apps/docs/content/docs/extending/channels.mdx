@@ -39,9 +39,12 @@ channel at it.
 | Telegram | `telegram-bot-credential` | The Telegram bot API |
 
 Connecting a conversation runs a **pairing challenge** that you then finalize —
-or cancel. Pairing exists so that connecting a conversation is something
-somebody in that conversation has to agree to, rather than something you can do
-to a channel from the outside.
+or cancel. You choose the conversation to connect; whoever claims it proves who
+they are by sending the challenge token to the bot in a **private message**, and
+is answered there once the request has been recorded. That keeps the token out
+of a group everyone can read while still connecting the group you picked.
+Pairing exists so that connecting a conversation is something somebody has to
+agree to, rather than something you can do to a channel from the outside.
 
 ### The history baseline
 

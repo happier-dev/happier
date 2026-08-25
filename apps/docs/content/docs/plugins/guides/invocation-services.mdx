@@ -10,19 +10,23 @@ presentation-only `context.ui`. Use the service that owns the capability:
 | Task | Owner |
 | --- | --- |
 | Invoke a declared action or inspect action availability | `context.services.actions` |
-| Emit or subscribe to declared plugin/host events | `context.services.events` |
+| Emit or subscribe to declared plugin/host events | `context.services.events` (deferred) |
 | Make a host-authorized HTTP request | `context.services.http` |
 | Ask a question, request approval, or confirm with a present user | `context.services.interactions` |
-| Work with Provider connections, catalogs, or model selection | `context.services.providers` |
-| Discover/read plugin resources or prompt assets | `context.services.resources` |
+| Work with Provider connections, catalogs, or model selection | `context.services.providers` (deferred) |
+| Discover/read plugin resources or prompt assets | `context.services.resources` (deferred) |
 | Use MCP server/client and discovery capabilities | `context.services.mcp` |
 
-The context also supplies filesystem, exec, settings, storage, secrets,
+The context also declares filesystem (currently deferred), exec, settings, storage, secrets,
 notifications, sessions, managed services, and Connected Accounts where their
 declarations and current availability permit them. Check
 `context.services.availability(...)` when an owner can be absent, pass the
 invocation signal to asynchronous calls, and treat typed unavailable/denial
-results as outcomes—not as prompts to rebuild the host facility locally.
+results as outcomes—not as prompts to rebuild the host facility locally. The
+[capability matrix](/plugins/manifest/availability) is the availability owner;
+a published type or declaration family does not by itself make its invocation
+service available. A deferred service is not supported or advertised for
+ordinary author use; do not rely on it; consult its unblock condition.
 
 Use `context.ui` only for invocation-local presentation such as status and
 notifications. Interactions belong to `context.services.interactions`; neither

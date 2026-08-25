@@ -107,12 +107,12 @@ Advanced:
 
 User guide: [Features → Device linking & restore](/accounts/device-linking-and-restore)
 
-## API Tokens (Developer Preview source)
+## API Tokens (Developer Preview)
 
-The development source includes API Token authentication for automation. It is
-not a released CLI feature yet. Create the token from **Settings → Account**,
-then choose **API tokens**. Supply it for one invocation without changing your
-saved CLI credential:
+API Token authentication for automation is available in the current Developer
+Preview source; it is not a released CLI feature yet. Create a token from
+**Settings → Account → API tokens**. Supply it for one invocation without
+changing your saved CLI credential:
 
 ```bash
 happier --api-token 'hap_v1_…' list
@@ -454,13 +454,19 @@ happier list --json
 
 ## Session control (non-interactive)
 
-Use the top-level commands for everyday session work. The `happier session ...`
-family remains available for its advanced and administrative commands.
+Use the first-class top-level commands for everyday session work:
+`spawn`, `list` (or `ls`), `send`, `history`, `wait`, `stop`, and `delegate`.
+The established `happier session ...` family remains available for advanced,
+administrative, and existing scripted workflows.
 
 These top-level commands are first-class entries in the current development
 CLI command registry. They are not released yet; existing released CLI
 capabilities such as `attach`, `resume`, session status, archive, metadata
 updates, and Action discovery remain under their established commands.
+
+Use `--machine-id <machine-id>` when an automated command must target a known
+machine. It is available on these first-class session commands and is especially
+useful with an API Token when more than one current machine is available.
 
 Deep reference: [CLI sessions](/apps/cli-sessions), including the shared full-id,
 prefix, or tag selector.

@@ -3,11 +3,21 @@ title: Events
 description: Publish and observe manifest-declared plugin events.
 ---
 
-The public events service is live daemon pub/sub for declared plugin events. It is not a hook, transcript store, history API, or Agent session event stream.
+## Availability
 
-## Declare events
+The `events` declaration family and `/events` type entrypoint are source-level
+public API. `context.services.events` remains deferred in the
+[capability matrix](/plugins/manifest/availability). It is not supported or
+advertised for ordinary author use; do not rely on it; consult its unblock
+condition. The examples below describe the deferred contract, not a current
+ordinary-author workflow.
 
-Declare published events and subscriptions in the cold manifest. Each event has a plugin-local id and an optional payload schema. The host combines the trusted plugin id and local id into structured `{ pluginId, localId }` identity.
+## Deferred contract reference
+
+The following shapes are what a maintained external development-source proof
+must exercise through the current loaded development stack. Each event has a
+plugin-local id and an optional payload schema. The host combines the trusted
+plugin id and local id into structured `{ pluginId, localId }` identity.
 
 ## Emit an owned event
 
@@ -46,6 +56,10 @@ the publisher's event id.
 
 Strict semantic host lifecycle events use `context.services.events.host.subscribe(...)` with a catalog-defined event id and either a current-session or explicit-session target. Raw Agent/provider messages are not exposed through this service.
 
-## Delivery
+## Delivery semantics if enabled
 
-The event service has bounded live delivery. It does not promise replay, history, global ordering across publishers, or transcript persistence. Dispose dynamic subscriptions with their owner and isolate subscriber failures from publisher correctness.
+The typed contract has bounded delivery: it does not promise replay, history,
+global ordering across publishers, or transcript persistence. Dispose dynamic
+subscriptions with their owner and isolate subscriber failures from publisher
+correctness. Those semantics do not make the service supported or advertised
+for ordinary authors while its matrix row remains deferred.

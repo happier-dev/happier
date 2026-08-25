@@ -12,8 +12,10 @@ happier plugins test .
 
 The default delegates to the plugin author-test owner and runs
 `test/index.test.mjs`. The generated suite imports `dist/index.js`, passes its
-exported `manifest` and `activate` through `createPluginTestkit`, and invokes
-the declared `save-note` action.
+exported `manifest` and `activate` through `createPluginTestkit`, and includes an
+example invocation of the declared `save-note` Action. The untouched scaffold
+therefore has a meaningful passing test. Use that test as the pattern for your
+first domain-specific contract before changing plugin behavior.
 It does not start a daemon or mutate installed plugin state. Plugin manifests
 have no reserved test target; the package's source-controlled test suite owns
 which declared contributions it exercises. Use

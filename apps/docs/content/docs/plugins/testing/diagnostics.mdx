@@ -87,3 +87,20 @@ For a review or mutation that returns a pending change ID, use
 `happier plugins change status <pendingChangeId> --json` to inspect that same
 daemon-lifetime operation. Do not create a second request merely to learn its
 state.
+
+## React Native crash recovery
+
+Repeated React Native renderer failures may disable one exact destination and
+renderer binding through the daemon-owned crash watchdog. The host's
+unavailable-surface card exposes the current state through
+`crash_threshold_reached`; when reset recovery is available, the card also
+offers **Reset**. Reset requests wait for a newer daemon projection instead of
+reloading a tree from the disabled epoch.
+
+The same diagnostic channel reports bounded `crash_reset_context:...` facts for
+the binding identity, reset status, projected epoch, and result. Tests and QA
+should assert those structured diagnostics rather than localized messages. To
+validate the live contract, crash the loaded renderer until it is disabled,
+observe the unavailable card, request **Reset**, and verify that the later
+projection permits a fresh mount. A source test or a successful reset request
+alone does not prove that loaded-runtime recovery completed.
