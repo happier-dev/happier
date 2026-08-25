@@ -32,6 +32,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [],
     "systemTools": [],
     "targetedPluginContributions": [],
@@ -229,7 +230,7 @@
           "fields": [
             {
               "default": {
-                "id": "grok-voice-think-fast-1.0",
+                "id": "grok-voice-think-fast-2.0",
                 "kind": "pinned"
               },
               "id": "model",

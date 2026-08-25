@@ -592,10 +592,6 @@ type CodexProviderAccountUsageSourceContext = Awaited<
   ReturnType<CodexAppServerAccountUsageService['resolveSourceContext']>
 >;
 
-type CodexProviderAccountUsageRecordKey = Parameters<
-  CodexAppServerAccountUsageService['adoptProvisionalRecord']
->[0]['adoption']['stableRecordKey'];
-
 type RecordProviderAccountUsageSnapshotOptions = Readonly<{
   operationIdentity: CodexConnectedServiceRuntimeIdentity | null;
   includeLiveAccountIdentity?: boolean;
@@ -902,6 +898,7 @@ export function createCodexAppServerRuntime(
   );
   let latestConnectedServiceRuntimeIdentity: CodexConnectedServiceRuntimeIdentity | null =
     resolveCodexInitialConnectedServiceRuntimeIdentity(readRuntimeProcessEnv());
+  let publishedProvisionalProviderAccountUsageRecordId: string | null = null;
   const pendingProviderPrompts = new Set<PendingProviderPrompt>();
   const runtimeSubscribers = new Set<(event: CodexAppServerEvent) => void>();
   const resolveCurrentPolicy = (): CodexAppServerPolicy | null =>
@@ -1207,33 +1204,29 @@ export function createCodexAppServerRuntime(
         });
         return;
       }
-      if (subject.kind === 'providerSubject' && typeof service.adoptProvisionalRecord === 'function') {
-        const provisionalSubject = resolveCodexUsageSubjectRef({ provisionalDiscriminator });
-        if (provisionalSubject.kind === 'provisionalLocalSubject') {
-          const provisionalRecordKey: CodexProviderAccountUsageRecordKey = {
-            providerId: 'openai-codex',
-            accountSubjectId: provisionalSubject.accountSubjectId,
-            subjectKind: 'unknown',
-            quotaScope: 'account',
-          };
-          const adoptionResult = await service.adoptProvisionalRecord({
-            adoption: {
-              fromRecordId: buildAgentAccountUsageRecordId(provisionalRecordKey),
-              toRecordId: buildAgentAccountUsageRecordId(snapshot.recordKey),
-              stableRecordKey: snapshot.recordKey,
-              proof: subject.proof === 'auth_store_chatgpt_account_id'
-                ? { kind: 'id_token_account_id', issuer: 'chatgpt' }
-                : { kind: 'provider_account_id_match' },
-              observedAtMs,
-            },
-          });
-          if (adoptionResult.status !== 'adopted' && adoptionResult.status !== 'already_adopted') {
-            params.host.logger.debug('Codex app-server provider-account usage adoption was not applied', {
-              status: adoptionResult.status,
-              reason: 'reason' in adoptionResult ? adoptionResult.reason : null,
-            });
-          }
-        }
+      if (subject.kind === 'provisionalLocalSubject') {
+        publishedProvisionalProviderAccountUsageRecordId = buildAgentAccountUsageRecordId(snapshot.recordKey);
+        return;
+      }
+      const provisionalRecordId = publishedProvisionalProviderAccountUsageRecordId;
+      if (!provisionalRecordId || typeof service.adoptProvisionalRecord !== 'function') return;
+      publishedProvisionalProviderAccountUsageRecordId = null;
+      const adoptionResult = await service.adoptProvisionalRecord({
+        adoption: {
+          fromRecordId: provisionalRecordId,
+          toRecordId: buildAgentAccountUsageRecordId(snapshot.recordKey),
+          stableRecordKey: snapshot.recordKey,
+          proof: subject.proof === 'auth_store_chatgpt_account_id'
+            ? { kind: 'id_token_account_id', issuer: 'chatgpt' }
+            : { kind: 'provider_account_id_match' },
+          observedAtMs,
+        },
+      });
+      if (adoptionResult.status !== 'adopted' && adoptionResult.status !== 'already_adopted') {
+        params.host.logger.debug('Codex app-server provider-account usage adoption was not applied', {
+          status: adoptionResult.status,
+          reason: 'reason' in adoptionResult ? adoptionResult.reason : null,
+        });
       }
     } catch (error) {
       params.host.logger.debug('Codex app-server provider-account usage recording failed (ignored)', {
@@ -2208,7 +2201,8 @@ export function createCodexAppServerRuntime(
       }
     };
     const resumeThread = async (nextThreadId: string): Promise<unknown> => {
-      const resumeRequestOptions = options?.importHistory === true
+      const resumeRequestOptions = { timeoutMs: null } as const;
+      const recoveryReadRequestOptions = options?.importHistory === true
         ? undefined
         : { timeoutMs: readCodexAppServerResumeRecoveryTimeoutMs(readRuntimeProcessEnv()) };
       try {
@@ -2216,12 +2210,13 @@ export function createCodexAppServerRuntime(
           threadId: nextThreadId,
           ...commonFields,
           persistExtendedHistory: true,
+          excludeTurns: options?.importHistory !== true,
         }, 'thread', resumeRequestOptions);
       } catch (error) {
         if (options?.importHistory === true || !isCodexAppServerOversizedJsonFrameError(error)) {
           throw error;
         }
-        return await readResumedThreadMetadata(nextThreadId, resumeRequestOptions);
+        return await readResumedThreadMetadata(nextThreadId, recoveryReadRequestOptions);
       }
     };
     const response = requestedThreadId

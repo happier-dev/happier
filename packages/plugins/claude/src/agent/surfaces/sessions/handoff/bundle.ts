@@ -6,7 +6,9 @@ import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import type { HandoffExportSessionMetadata } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { resolveClaudeConfigDir, resolveClaudeConfigDirOverride } from '../../../environment.js';
+import { resolveClaudeConfigDir } from '../../../environment.js';
+import { resolveClaudeJsonlSessionFile } from '../external/files.js';
+import type { ClaudeExternalSessionSource } from '../external/source.js';
 import { getClaudeProjectPath, resolveClaudeProjectId } from './path.js';
 import {
     ClaudeSessionBundleSchema,
@@ -21,39 +23,30 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
         : new Error('Claude handoff operation was cancelled');
 }
 
-function resolveExternalSessionSourceTranscriptPath(params: Readonly<{
+/**
+ * The linked source as this leaf may act on it: a `claudeConfig` source that
+ * actually names a config root and/or a project. A source naming neither is
+ * indistinguishable from having no source at all, so it stays on the
+ * environment-derived path rather than widening the search across every project
+ * of the environment root.
+ */
+function resolveExternalSessionSource(params: Readonly<{
     metadata: HandoffExportSessionMetadata;
-    remoteSessionId: string;
-}>): string | null {
+}>): ClaudeExternalSessionSource | null {
     const source = params.metadata.externalSessionSource;
     if (source?.kind !== 'claudeConfig') {
         return null;
     }
     const configDir = typeof source.configDir === 'string' ? source.configDir.trim() : '';
     const projectId = typeof source.projectId === 'string' ? source.projectId.trim() : '';
-    if (!configDir || !projectId) {
+    if (!configDir && !projectId) {
         return null;
     }
-    return resolveClaudeTranscriptPath(join(configDir, 'projects', projectId), params.remoteSessionId);
-}
-
-function resolveTranscriptPath(params: Readonly<{
-    metadata: HandoffExportSessionMetadata;
-    remoteSessionId: string;
-    env: NodeJS.ProcessEnv;
-}>): string {
-    const externalSessionTranscriptPath = resolveExternalSessionSourceTranscriptPath(params);
-    if (externalSessionTranscriptPath) return externalSessionTranscriptPath;
-
-    const workingDirectory = typeof params.metadata.path === 'string' ? params.metadata.path.trim() : '';
-    if (!workingDirectory) {
-        throw new Error('Missing Claude working directory for handoff export');
-    }
-
-    return resolveClaudeTranscriptPath(
-        getClaudeProjectPath(workingDirectory, resolveClaudeConfigDirOverride(params.env)),
-        params.remoteSessionId,
-    );
+    return {
+        kind: 'claudeConfig',
+        ...(configDir ? { configDir } : {}),
+        ...(projectId ? { projectId } : {}),
+    };
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -69,14 +62,30 @@ async function resolveReadableTranscriptPath(params: Readonly<{
     metadata: HandoffExportSessionMetadata;
     remoteSessionId: string;
     env: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
 }>): Promise<string> {
-    const candidatePaths = [resolveExternalSessionSourceTranscriptPath(params)]
-        .filter((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0);
+    assertSafeClaudeHandoffRemoteSessionId(params.remoteSessionId);
 
-    for (const candidatePath of candidatePaths) {
-        if (await fileExists(candidatePath)) {
-            return candidatePath;
-        }
+    // An explicit linked source is EXCLUSIVE custody, not a ranked preference.
+    // The session id alone does not identify bytes: the same id can exist under
+    // a second Claude config root, so continuing to the environment-derived
+    // project after a linked miss lets an unrelated root's same-id transcript be
+    // exported as this session's -- while the bundle still describes the linked
+    // source. A linked source that cannot produce the transcript is a typed
+    // export failure, never a substituted source. The environment-derived path
+    // is the authority only when the session carries no linked source at all.
+    const linkedSource = resolveExternalSessionSource(params);
+    if (linkedSource) {
+        const linked = await resolveClaudeJsonlSessionFile({
+            source: linkedSource,
+            env: params.env,
+            remoteSessionId: params.remoteSessionId,
+            ...(params.signal ? { signal: params.signal } : {}),
+        });
+        if (linked) return linked.filePath;
+        throw new Error(
+            `Claude handoff transcript for ${params.remoteSessionId} is unavailable or unauthorized in its linked source`,
+        );
     }
 
     const fakeTranscriptLog = [
@@ -87,18 +96,35 @@ async function resolveReadableTranscriptPath(params: Readonly<{
         return fakeTranscriptLog;
     }
 
-    const resolved = resolveTranscriptPath(params);
-    if (resolved && (await fileExists(resolved))) {
-        return resolved;
+    const workingDirectory = typeof params.metadata.path === 'string' ? params.metadata.path.trim() : '';
+    if (!workingDirectory) {
+        throw new Error('Missing Claude working directory for handoff export');
     }
+    const derived = await resolveClaudeJsonlSessionFile({
+        source: {
+            kind: 'claudeConfig',
+            configDir: resolveClaudeConfigDir(params.env),
+            projectId: resolveClaudeProjectId(workingDirectory),
+        },
+        env: params.env,
+        remoteSessionId: params.remoteSessionId,
+        ...(params.signal ? { signal: params.signal } : {}),
+    });
+    if (derived) return derived.filePath;
 
-    return resolved;
+    throw new Error(
+        `Claude handoff transcript for ${params.remoteSessionId} is unavailable or unauthorized`,
+    );
 }
 
-function resolveClaudeTranscriptPath(projectDir: string, remoteSessionId: string): string {
+function assertSafeClaudeHandoffRemoteSessionId(remoteSessionId: string): void {
     if (!remoteSessionId || remoteSessionId.includes('/') || remoteSessionId.includes('\\')) {
         throw new Error(`Invalid remoteSessionId for Claude handoff: ${remoteSessionId}`);
     }
+}
+
+function resolveClaudeTranscriptPath(projectDir: string, remoteSessionId: string): string {
+    assertSafeClaudeHandoffRemoteSessionId(remoteSessionId);
     return join(projectDir, `${remoteSessionId}.jsonl`);
 }
 

@@ -19,7 +19,10 @@
           },
           "surfaces": [
             "externalSessions"
-          ]
+          ],
+          "tools": {
+            "delivery": "native_mcp"
+          }
         },
         "cli": {
           "auth": {
@@ -259,6 +262,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [
       {
         "actions": [],

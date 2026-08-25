@@ -76,8 +76,6 @@ vi.mock('./client.js', () => ({
   createCodexAppServerClient: vi.fn(async () => ({
     launchFeatures: {
       realtimeConversationAdvertised: false,
-      codexCliVersion: '0.145.0',
-      realtimeConversationVersionSupported: false,
     },
     request: clientState.request,
     notify: clientState.notify,

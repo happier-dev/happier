@@ -90,7 +90,8 @@ export function readOpenCodeToolPart(value: unknown): OpenCodeToolPart | null {
   const sessionID = normalizeString(record.sessionID);
   const callID = normalizeString(record.callID);
   const tool = normalizeString(record.tool);
-  const status = normalizeString(asRecord(record.state)?.status);
+  const state = asRecord(record.state);
+  const status = normalizeString(state?.status);
   if (!sessionID || !callID || !tool || !status) return null;
   const messageID = normalizeString(record.messageID);
   return {
@@ -100,10 +101,10 @@ export function readOpenCodeToolPart(value: unknown): OpenCodeToolPart | null {
     ...(messageID ? { messageID } : {}),
     state: {
       status,
-      input: asRecord(record.state)?.input,
-      output: asRecord(record.state)?.output,
-      title: normalizeString(asRecord(record.state)?.title) || undefined,
-      metadata: asRecord(record.state)?.metadata,
+      input: state?.input,
+      output: state?.output,
+      title: normalizeString(state?.title) || undefined,
+      metadata: state?.metadata,
     },
   };
 }

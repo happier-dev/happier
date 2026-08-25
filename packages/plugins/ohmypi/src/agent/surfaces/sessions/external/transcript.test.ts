@@ -405,6 +405,291 @@ describe('pageOhMyPiSessionTranscript', () => {
     })).rejects.toMatchObject({ name: 'OhMyPiExternalSessionIncompleteBranchError' });
   });
 
+  it('continues an outstanding older cursor across ordinary appends', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-page-append-'));
+    tempDirs.add(agentDir);
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const transcriptPath = join(sessionRoot, '2026-04-10T10-00-00-000Z_append-session.jsonl');
+    await writeFile(transcriptPath, [
+      jsonlLine({ type: 'session', id: 'append-session' }),
+      jsonlLine({
+        type: 'message',
+        id: 'root',
+        parentId: null,
+        message: { role: 'user', content: 'root' },
+      }),
+      jsonlLine({
+        type: 'message',
+        id: 'mid',
+        parentId: 'root',
+        message: { role: 'assistant', content: 'mid' },
+      }),
+      jsonlLine({
+        type: 'message',
+        id: 'leaf',
+        parentId: 'mid',
+        message: { role: 'assistant', content: 'leaf' },
+      }),
+    ].join(''), 'utf8');
+
+    const first = await pageOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'append-session',
+      direction: 'older',
+      maxBytes: 1024,
+      maxItems: 1,
+    });
+    expect(first.items.map((item) => item.id)).toEqual([expect.stringContaining(':leaf:text:0')]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    if (!first.nextCursor) return;
+
+    // An ordinary append writes only beyond the byte range this cursor addresses, so the
+    // older prefix it is walking is untouched and MUST still be servable. Pinning size and
+    // mtime made every normal write a permanent, unrecoverable discontinuity.
+    await appendFile(transcriptPath, jsonlLine({
+      type: 'message',
+      id: 'continued',
+      parentId: 'leaf',
+      message: { role: 'assistant', content: 'continued' },
+    }), 'utf8');
+
+    const second = await pageOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'append-session',
+      direction: 'older',
+      cursor: first.nextCursor,
+      maxBytes: 1024,
+      maxItems: 1,
+    });
+    expect(second.items.map((item) => item.id)).toEqual([expect.stringContaining(':mid:text:0')]);
+    expect(second.truncated).toBe(false);
+    expect(second.hasMore).toBe(true);
+    expect(second.nextCursor).toEqual(expect.any(String));
+    if (!second.nextCursor) return;
+
+    const third = await pageOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'append-session',
+      direction: 'older',
+      cursor: second.nextCursor,
+      maxBytes: 1024,
+      maxItems: 1,
+    });
+    // The user root row carries no per-block suffix; matching the exact tail also proves the
+    // appended sibling branch never contaminated the accepted walk.
+    expect(third.items.map((item) => item.id)).toEqual([expect.stringMatching(/:root$/u)]);
+  });
+
+  it('serves a page whose source was appended to during the read', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-page-concurrent-append-'));
+    tempDirs.add(agentDir);
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const transcriptPath = join(sessionRoot, '2026-04-10T10-00-00-000Z_concurrent-session.jsonl');
+    await writeFile(transcriptPath, [
+      jsonlLine({ type: 'session', id: 'concurrent-session' }),
+      jsonlLine({
+        type: 'message',
+        id: 'root',
+        parentId: null,
+        message: { role: 'user', content: 'root' },
+      }),
+      jsonlLine({
+        type: 'message',
+        id: 'leaf',
+        parentId: 'root',
+        message: { role: 'assistant', content: 'leaf' },
+      }),
+    ].join(''), 'utf8');
+
+    // A live Oh My Pi session appends while the page is being read. The backward scan
+    // ends at or below the size observed before the read, so an append cannot disturb a
+    // single scanned byte — it must not become a discontinuity.
+    let appended = false;
+    const fileSystem = {
+      async stat(path: string) {
+        return await stat(path);
+      },
+      async read(path: string, position: number, length: number) {
+        const handle = await open(path, 'r');
+        try {
+          const buffer = Buffer.alloc(length);
+          const result = await handle.read(buffer, 0, length, position);
+          if (!appended) {
+            appended = true;
+            await appendFile(transcriptPath, jsonlLine({
+              type: 'message',
+              id: 'concurrent',
+              parentId: 'leaf',
+              message: { role: 'assistant', content: 'concurrent' },
+            }), 'utf8');
+          }
+          return buffer.subarray(0, result.bytesRead);
+        } finally {
+          await handle.close();
+        }
+      },
+    };
+
+    const page = await pageOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'concurrent-session',
+      direction: 'older',
+      maxBytes: 1024,
+      maxItems: 1,
+      scannerFileSystem: fileSystem,
+    });
+    expect(appended).toBe(true);
+    expect(page.items.map((item) => item.id)).toEqual([expect.stringContaining(':leaf:text:0')]);
+    expect(page.tailCursor).toEqual(expect.any(String));
+    if (!page.tailCursor) return;
+
+    // The returned tail describes the accepted pre-read prefix, not the file as
+    // it looked after the append. The appended child must therefore be read on
+    // the next pass, then never replayed from its returned cursor.
+    const appendedAfterPage = await readAfterOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'concurrent-session',
+      cursor: page.tailCursor,
+      maxBytes: 1024,
+      maxItems: 1,
+    });
+    expect(appendedAfterPage.items.map((item) => item.id)).toEqual([
+      expect.stringContaining(':concurrent:text:0'),
+    ]);
+
+    const reread = await readAfterOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'concurrent-session',
+      cursor: appendedAfterPage.nextCursor,
+      maxBytes: 1024,
+      maxItems: 1,
+    });
+    expect(reread.items).toEqual([]);
+  });
+
+  it('rejects a page whose source shrank during the read', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-page-concurrent-shrink-'));
+    tempDirs.add(agentDir);
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const transcriptPath = join(sessionRoot, '2026-04-10T10-00-00-000Z_shrink-session.jsonl');
+    const header = jsonlLine({ type: 'session', id: 'shrink-session' });
+    await writeFile(transcriptPath, [
+      header,
+      jsonlLine({
+        type: 'message',
+        id: 'root',
+        parentId: null,
+        message: { role: 'user', content: 'root' },
+      }),
+      jsonlLine({
+        type: 'message',
+        id: 'leaf',
+        parentId: 'root',
+        message: { role: 'assistant', content: 'leaf' },
+      }),
+    ].join(''), 'utf8');
+
+    // The dangerous direction: the bytes this scan accepted no longer exist, so the page
+    // stays a typed discontinuity even though the physical generation is unchanged.
+    let shrank = false;
+    const fileSystem = {
+      async stat(path: string) {
+        return await stat(path);
+      },
+      async read(path: string, position: number, length: number) {
+        const handle = await open(path, 'r');
+        try {
+          const buffer = Buffer.alloc(length);
+          const result = await handle.read(buffer, 0, length, position);
+          if (!shrank) {
+            shrank = true;
+            const writable = await open(transcriptPath, 'r+');
+            try {
+              await writable.truncate(header.length);
+            } finally {
+              await writable.close();
+            }
+          }
+          return buffer.subarray(0, result.bytesRead);
+        } finally {
+          await handle.close();
+        }
+      },
+    };
+
+    await expect(pageOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'shrink-session',
+      direction: 'older',
+      maxBytes: 1024,
+      maxItems: 1,
+      scannerFileSystem: fileSystem,
+    })).rejects.toMatchObject({ name: 'OhMyPiExternalSessionSourceChangedError' });
+    expect(shrank).toBe(true);
+  });
+
+  it('rejects a page cursor whose prefix was truncated in place', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-page-truncation-'));
+    tempDirs.add(agentDir);
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const transcriptPath = join(sessionRoot, '2026-04-10T10-00-00-000Z_truncated-session.jsonl');
+    await writeFile(transcriptPath, [
+      jsonlLine({ type: 'session', id: 'truncated-session' }),
+      jsonlLine({
+        type: 'message',
+        id: 'root',
+        parentId: null,
+        message: { role: 'user', content: 'root' },
+      }),
+      jsonlLine({
+        type: 'message',
+        id: 'leaf',
+        parentId: 'root',
+        message: { role: 'assistant', content: 'leaf' },
+      }),
+    ].join(''), 'utf8');
+    const first = await pageOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'truncated-session',
+      direction: 'older',
+      maxBytes: 1024,
+      maxItems: 1,
+    });
+    expect(first.nextCursor).toEqual(expect.any(String));
+    if (!first.nextCursor) return;
+
+    // Same inode, fewer bytes: the byte offsets this cursor holds no longer address the
+    // records it accepted, so continuation stays a typed discontinuity.
+    const handle = await open(transcriptPath, 'r+');
+    try {
+      await handle.truncate(jsonlLine({ type: 'session', id: 'truncated-session' }).length);
+    } finally {
+      await handle.close();
+    }
+
+    await expect(pageOhMyPiSessionTranscript({
+      source: { kind: 'ohMyPiAgentDir', agentDir },
+      env: {},
+      providerSessionId: 'truncated-session',
+      direction: 'older',
+      cursor: first.nextCursor,
+      maxBytes: 1024,
+      maxItems: 1,
+    })).rejects.toMatchObject({ name: 'OhMyPiExternalSessionSourceChangedError' });
+  });
+
   it('rejects a page cursor after atomic source replacement', async () => {
     const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-page-replacement-'));
     tempDirs.add(agentDir);
@@ -437,6 +722,9 @@ describe('pageOhMyPiSessionTranscript', () => {
     expect(first.nextCursor).toEqual(expect.any(String));
     if (!first.nextCursor) return;
 
+    // A newly appended sibling branch does not disturb the byte prefix this cursor walks,
+    // so the accepted branch keeps paging. Only physical replacement below is a
+    // discontinuity.
     await appendFile(transcriptPath, jsonlLine({
       type: 'message',
       id: 'new-branch',
@@ -451,7 +739,9 @@ describe('pageOhMyPiSessionTranscript', () => {
       cursor: first.nextCursor,
       maxBytes: 1024,
       maxItems: 1,
-    })).rejects.toMatchObject({ name: 'OhMyPiExternalSessionSourceChangedError' });
+    })).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: expect.stringMatching(/:root$/u) })],
+    });
 
     const replacementPath = `${transcriptPath}.replacement`;
     await writeFile(replacementPath, [

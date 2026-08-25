@@ -636,7 +636,7 @@ function collectTranscriptStreams(params: Readonly<{
 
 async function resolveBestHomeWithFiles(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   remoteSessionId: string;
 }> & CodexExternalSessionInvocationBounds): Promise<BestCodexHomeWithFiles | null> {
@@ -673,7 +673,7 @@ async function resolveBestHomeWithFiles(params: Readonly<{
 
 async function resolveCodexExternalSessionAppServerMetadata(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   remoteSessionId: string;
   env: NodeJS.ProcessEnv;
   exec: ExecService;
@@ -703,7 +703,7 @@ async function resolveCodexExternalSessionAppServerMetadata(params: Readonly<{
 
 async function resolveTranscriptStreams(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   remoteSessionId: string;
 }> & CodexExternalSessionInvocationBounds): Promise<Readonly<{
@@ -736,7 +736,7 @@ async function resolveTranscriptStreams(params: Readonly<{
 
 export async function pageCodexExternalSessionTranscript(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   exec?: ExecService;
   remoteSessionId: string;
@@ -934,7 +934,7 @@ export async function pageCodexExternalSessionTranscript(params: Readonly<{
 
 export async function readAfterCodexExternalSessionTranscript(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   exec?: ExecService;
   remoteSessionId: string;

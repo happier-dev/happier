@@ -1,6 +1,8 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
+  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
   CLAUDE_SUBSCRIPTION_OAUTH_PROFILE,
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
@@ -40,6 +42,53 @@ const resolveClaudeDaemonSpawnPrerequisitesHook: HookHandler = (event, context) 
 
 const augmentClaudeDaemonSpawnEnvHook: HookHandler = (event) =>
   augmentClaudeDaemonSpawnEnv(event);
+
+const CLAUDE_SUBAGENT_LAUNCH_VIEW_ID = 'subagent-launch';
+const CLAUDE_SUBAGENT_DETAILS_VIEW_ID = 'subagent-details';
+const CLAUDE_SUBAGENT_LAUNCH_RENDERER_ID = 'subagent-launch-renderer';
+const CLAUDE_SUBAGENT_DETAILS_RENDERER_ID = 'subagent-details-renderer';
+
+function readActionString(input: unknown, key: string): string {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return '';
+  const value = (input as Readonly<Record<string, unknown>>)[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+async function launchClaudeTeam(input: unknown, context: PluginInvocationContext) {
+  const current = context.services.sessions.current;
+  const teamId = readActionString(input, 'teamId');
+  if (!current || !teamId) throw new TypeError('claude_subagent_team_launch_input_invalid');
+  return await current.send({
+    kind: 'sessionSubagentLaunch',
+    launch: {
+      kind: 'agent_team_create',
+      teamId,
+      ...(readActionString(input, 'description') ? { description: readActionString(input, 'description') } : {}),
+    },
+    idempotencyKey: `team:${teamId}`,
+  });
+}
+
+async function launchClaudeTeammate(input: unknown, context: PluginInvocationContext) {
+  const current = context.services.sessions.current;
+  const teamId = readActionString(input, 'teamId');
+  const memberLabel = readActionString(input, 'memberLabel');
+  const instructions = readActionString(input, 'instructions');
+  if (!current || !teamId || !memberLabel || !instructions) {
+    throw new TypeError('claude_subagent_member_launch_input_invalid');
+  }
+  return await current.send({
+    kind: 'sessionSubagentLaunch',
+    launch: {
+      kind: 'agent_team_member_create',
+      teamId,
+      memberLabel,
+      instructions,
+      runInBackground: true,
+    },
+    idempotencyKey: `member:${teamId}:${memberLabel}`,
+  });
+}
 
 function toClaudeMcpEndpoint(
   server: Awaited<ReturnType<typeof readClaudeMcpConfigServers>>['servers'][number],
@@ -111,7 +160,7 @@ export const CLAUDE_PLUGIN = definePlugin({
         id: 'claude-session-runtime-control',
         capability: 'sessions',
         reason: 'Read Claude lifecycle events and control authenticated hooks for the current Agent session.',
-        scope: { access: ['read', 'control'] },
+        scope: { access: ['read', 'write', 'control'] },
       },
       {
         id: 'claude-subscription-oauth',
@@ -150,9 +199,10 @@ export const CLAUDE_PLUGIN = definePlugin({
       declaration: {
         title: 'Claude',
         authentication: {
-          defaultModeId: 'setup-token',
+          defaultModeId: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1
+            .setupToken.authenticationModeId,
           modes: [{
-            id: 'setup-token',
+            id: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.authenticationModeId,
             kind: 'manual',
             title: 'Setup token',
             outcomeReconciliation: 'none',
@@ -163,7 +213,7 @@ export const CLAUDE_PLUGIN = definePlugin({
               secret: true,
             }],
           }, {
-            id: 'oauth',
+            id: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth.authenticationModeId,
             kind: 'oauthAuthorizationCode',
             callbackUrl: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.callbackUrl,
             scopes: [...CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES],
@@ -312,7 +362,7 @@ export const CLAUDE_PLUGIN = definePlugin({
               'ANTHROPIC_API_KEY',
               'ANTHROPIC_AUTH_TOKEN',
               'ANTHROPIC_OAUTH_TOKEN',
-              'CLAUDE_CODE_OAUTH_TOKEN',
+              CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey,
               'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
               'CLAUDE_CODE_OAUTH_SCOPES',
               'CLAUDE_CODE_SETUP_TOKEN',
@@ -406,8 +456,95 @@ export const CLAUDE_PLUGIN = definePlugin({
       },
     },
   },
+  actions: {
+    'subagent-team-launch': {
+      title: 'Create agent team',
+      description: 'Creates one Claude agent team in the current Session.',
+      execution: { target: 'daemon' },
+      scopes: ['session'],
+      surfaces: ['ui'],
+      placementBindings: ['primary'],
+      dangerLevel: 'safe',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          teamId: { type: 'string', minLength: 1, maxLength: 80 },
+          description: { type: 'string', minLength: 1, maxLength: 2000 },
+        },
+        required: ['teamId'],
+      },
+      run: launchClaudeTeam,
+    },
+    'subagent-member-launch': {
+      title: 'Launch teammate',
+      description: 'Launches one Claude teammate in the current Session.',
+      execution: { target: 'daemon' },
+      scopes: ['session'],
+      surfaces: ['ui'],
+      placementBindings: ['primary'],
+      dangerLevel: 'safe',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          teamId: { type: 'string', minLength: 1, maxLength: 80 },
+          memberLabel: { type: 'string', minLength: 1, maxLength: 80 },
+          instructions: { type: 'string', minLength: 1, maxLength: 20000 },
+        },
+        required: ['teamId', 'memberLabel', 'instructions'],
+      },
+      run: launchClaudeTeammate,
+    },
+  },
   ui: {
     translations: CLAUDE_UI_TRANSLATION_BUNDLES,
+    views: [{
+      id: CLAUDE_SUBAGENT_LAUNCH_VIEW_ID,
+      container: 'sessionSubagentLaunch',
+      target: { kind: 'session' },
+      renderer: CLAUDE_SUBAGENT_LAUNCH_RENDERER_ID,
+    }, {
+      id: CLAUDE_SUBAGENT_DETAILS_VIEW_ID,
+      container: 'sessionSubagentDetails',
+      target: { kind: 'session' },
+      renderer: CLAUDE_SUBAGENT_DETAILS_RENDERER_ID,
+    }],
+    renderers: [{
+      id: CLAUDE_SUBAGENT_LAUNCH_RENDERER_ID,
+      kind: 'declarative',
+      root: {
+        kind: 'actionPanel',
+        children: [{
+          kind: 'action',
+          action: 'subagent-team-launch',
+          label: 'Create team',
+          variant: 'primary',
+        }, {
+          kind: 'action',
+          action: 'subagent-member-launch',
+          label: 'Launch teammate',
+        }],
+      },
+    }, {
+      id: CLAUDE_SUBAGENT_DETAILS_RENDERER_ID,
+      kind: 'declarative',
+      root: {
+        kind: 'stack',
+        children: [{
+          kind: 'text',
+          text: 'Launch a Claude teammate in an agent team.',
+        }, {
+          kind: 'actionPanel',
+          children: [{
+            kind: 'action',
+            action: 'subagent-member-launch',
+            label: 'Launch teammate',
+            variant: 'primary',
+          }],
+        }],
+      },
+    }],
   },
   settings: {
     [CLAUDE_AGENT_SETTINGS_CONTRIBUTION_ID]: CLAUDE_AGENT_SETTINGS_DECLARATION,

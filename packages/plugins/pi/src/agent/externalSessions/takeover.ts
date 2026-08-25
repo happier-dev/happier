@@ -61,8 +61,11 @@ export const piExternalSessionTakeoverContribution:
         return { ok: false, code: 'timeout', retryable: true };
       }
       const plan = resolvePiExternalSessionTakeoverPlan(request);
-      return plan
-        ? { ok: true, value: plan }
-        : { ok: false, code: 'source_invalid' };
+      const nativeResumeReference = readNonEmptyString(request.source.sessionFile);
+      if (!plan || !nativeResumeReference) {
+        return { ok: false, code: 'source_invalid' };
+      }
+      const result = { ok: true as const, value: plan, nativeResumeReference };
+      return result;
     },
   });

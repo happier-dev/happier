@@ -11,6 +11,7 @@ export type CodexAppServerNativeForkClient = Readonly<{
     params: Readonly<{
       threadId: string;
       persistExtendedHistory: true;
+      excludeTurns?: true;
     }>,
     options?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null }>,
   ): Promise<unknown>;
@@ -88,6 +89,7 @@ async function attemptCodexNativeAppServerConversationFork(params: Readonly<{
       response = await params.client.request(method, {
         threadId: parentCodexSessionId,
         persistExtendedHistory: true,
+        ...(method === 'thread/fork' ? { excludeTurns: true } : {}),
       }, {
         ...NATIVE_FORK_REQUEST_OPTIONS,
         ...(params.signal ? { signal: params.signal } : {}),

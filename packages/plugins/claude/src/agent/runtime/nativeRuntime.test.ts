@@ -260,6 +260,12 @@ describe('createClaudeNativeRuntime', () => {
         service: purpose === 'model_upstream'
           ? { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }
           : { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+        account: {
+          service: purpose === 'model_upstream'
+            ? { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }
+            : { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+          accountId: purpose === 'model_upstream' ? 'subscription-account' : 'anthropic-account',
+        },
         target: { kind: 'account' as const, displayName: 'Claude account' },
       })),
       materialize: vi.fn(async (purpose: string, request: { kind: string }) => {
@@ -315,7 +321,13 @@ describe('createClaudeNativeRuntime', () => {
       1,
       'model_upstream',
       { kind: 'files', fileIds: ['.credentials.json'] },
-      expect.objectContaining({ signal: sessionContext.signal }),
+      expect.objectContaining({
+        signal: sessionContext.signal,
+        expectedAccount: {
+          service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+          accountId: 'subscription-account',
+        },
+      }),
     );
     expect(connectedAccounts.materialize).toHaveBeenCalledTimes(1);
     expect(openSession.mock.calls[0]?.[0].request.launchEnvironment?.values).toMatchObject({
@@ -331,6 +343,66 @@ describe('createClaudeNativeRuntime', () => {
     await listeners.get('model_upstream')?.({ kind: 'resync' });
     await vi.waitFor(() => expect(disposeWatch).toHaveBeenCalledTimes(2));
     await session.dispose();
+  });
+
+  it('does not open Claude after a qualified account invalidates between materialization and the external opener', async () => {
+    const openSession = vi.fn<ClaudeNativeSessionFactory>(
+      ({ request }) => createNativeOperations(request.sessionId).runtime,
+    );
+    const account = {
+      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+      accountId: 'subscription-account',
+    } as const;
+    const listeners = new Map<string, (event: { kind: 'resync' }) => unknown>();
+    const connectedAccounts = {
+      getBinding: vi.fn(async (purpose: string) => purpose === 'model_upstream'
+        ? {
+            purpose,
+            service: account.service,
+            account,
+            target: { kind: 'account' as const, displayName: 'Claude account' },
+          }
+        : null),
+      materialize: vi.fn(async () => ({
+        kind: 'files' as const,
+        files: {
+          '.credentials.json': new TextEncoder().encode(JSON.stringify({
+            claudeAiOauth: { accessToken: 'setup-token' },
+          })),
+        },
+      })),
+      requestSelection: vi.fn(),
+      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
+        listeners.set(purpose, listener);
+        queueMicrotask(() => { void listener({ kind: 'resync' }); });
+        return { dispose() {} };
+      }),
+    };
+    const runtime = createTestClaudeNativeRuntime({
+      openSession,
+      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
+      resolveSupportsEffort: async () => {
+        await listeners.get('model_upstream')?.({ kind: 'resync' });
+        return true;
+      },
+    });
+
+    await expect(runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'invalidated-before-open',
+      cwd: '/repo',
+    }, {
+      signal: new AbortController().signal,
+      services: { connectedAccounts },
+      session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
+    } as unknown as AgentSessionRuntimeContext)).rejects.toThrow('invalidated before opening');
+
+    expect(connectedAccounts.materialize).toHaveBeenCalledWith(
+      'model_upstream',
+      { kind: 'files', fileIds: ['.credentials.json'] },
+      expect.objectContaining({ expectedAccount: account }),
+    );
+    expect(openSession).not.toHaveBeenCalled();
   });
 
   it('writes qualified Claude OAuth material for create and removes it on dispose', async () => {
@@ -795,6 +867,7 @@ describe('createClaudeNativeRuntime', () => {
     const prepareLaunchEnvironment = vi.fn(async ({ request }) => Object.freeze({
       launchEnvironment: request.launchEnvironment
         ?? Object.freeze({ values: Object.freeze({}), unset: Object.freeze([]) }),
+      isInvalidated: () => false,
       armInvalidation() {},
       async dispose() {},
     }));

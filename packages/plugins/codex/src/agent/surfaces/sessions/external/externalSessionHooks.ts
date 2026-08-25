@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import type {
   AgentExternalSessionHookMapEventRequest,
   AgentExternalSessionHookMapEventResult,
@@ -17,6 +18,7 @@ import {
   type DisposableCodexAppServerClient,
 } from '../../../runtime/appServer/client.js';
 import { resolveConfiguredCodexHomePath } from '../../../rollout/discovery/homeEntries.js';
+import { resolveCodexRuntimeHomeEnvironment } from '../../../auth/services/state/sharing/files.js';
 
 export const CODEX_EXTERNAL_SESSION_HOOK_VERSION = '0.145.0';
 export const CODEX_EXTERNAL_SESSION_HOOK_VARIANT_ID =
@@ -401,6 +403,19 @@ function resolveCodexHome(
   return resolveConfiguredCodexHomePath(options.env);
 }
 
+function resolveCodexHooksProcessEnv(options: CodexExternalSessionHooksOptions) {
+  const codexHome = resolveCodexHome(options);
+  return resolveCodexRuntimeHomeEnvironment({
+    env: options.env,
+    codexHome,
+    cwd: process.cwd(),
+    expandHomePath: (rawPath) => expandHomePath(
+      rawPath,
+      resolveHomeDirFromEnvironment(options.env),
+    ),
+  });
+}
+
 function supportedValue(
   request: AgentExternalSessionHookResolveInstallationRequest,
   options: CodexExternalSessionHooksOptions,
@@ -441,6 +456,7 @@ function mapHookEvent(
   if (!remoteSessionId) return ignored();
 
   if (request.eventId === SESSION_START_EVENT_ID) {
+    if (request.nativePayload.hook_event_name !== 'SessionStart') return ignored();
     return {
       ok: true,
       value: {
@@ -453,6 +469,7 @@ function mapHookEvent(
   }
 
   if (request.eventId !== STOP_EVENT_ID
+    || request.nativePayload.hook_event_name !== 'Stop'
     || request.nativePayload.stop_hook_active !== false) {
     return ignored();
   }
@@ -513,7 +530,7 @@ export function createCodexExternalSessionHooksContribution(
       try {
         client = await createCodexNativeAppServerClient({
           exec: context.services.exec,
-          processEnv: { CODEX_HOME: resolveCodexHome(options) },
+          processEnv: resolveCodexHooksProcessEnv(options),
           signal: context.signal,
         });
         const response = await client.request('hooks/list', { cwds: [] });

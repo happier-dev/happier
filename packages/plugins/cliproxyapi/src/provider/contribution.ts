@@ -12,9 +12,18 @@ const CLIPROXYAPI_LOCAL_ORIGINS = [
 
 const CLIPROXYAPI_OPENAI_BASE_URLS = CLIPROXYAPI_LOCAL_ORIGINS.map((origin) => `${origin}/v1`);
 
+/**
+ * The one Provider local id for this plugin. It is the `definePlugin`
+ * `providers` record key, the projected manifest row id, the activation
+ * registration id, and the Connected Account consumer local id the managed
+ * child is configured with. Every one of those is derived from this constant so
+ * a rename cannot register one Provider while requesting credentials for another.
+ */
+export const CLIPROXYAPI_PROVIDER_LOCAL_ID = 'cliproxyapi';
+
 export const CLIPROXYAPI_PROVIDER_CONTRIBUTION = {
   v: 1,
-  id: 'cliproxyapi',
+  id: CLIPROXYAPI_PROVIDER_LOCAL_ID,
   name: 'CLIProxyAPI',
   websiteUrl: 'https://github.com/router-for-me/CLIProxyAPI',
   kind: 'aggregator',

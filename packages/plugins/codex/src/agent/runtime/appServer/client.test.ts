@@ -36,7 +36,6 @@ function createCapturingExec(
     featureListResult: PluginProcessResult | Error = processResult(
         'realtime_conversation                under development  false\n',
     ),
-    versionResult: PluginProcessResult | Error = processResult('codex-cli 0.145.0\n'),
 ): Readonly<{
     exec: ExecService;
     specs: PluginProtocolClientSpec[];
@@ -90,10 +89,6 @@ function createCapturingExec(
         },
         exec: {
             run: vi.fn(async (request: Parameters<ExecService['run']>[0]) => {
-                if (request.args.length === 1 && request.args[0] === '--version') {
-                    if (versionResult instanceof Error) throw versionResult;
-                    return versionResult;
-                }
                 if (featureListResult instanceof Error) throw featureListResult;
                 return featureListResult;
             }),
@@ -128,9 +123,7 @@ describe('createCodexAppServerClient', () => {
             if (request.executable !== resolvedExecutable) {
                 throw new Error('Codex capability probe bypassed the resolved system-tool grant');
             }
-            return request.args.length === 1 && request.args[0] === '--version'
-                ? processResult('codex-cli 0.145.0\n')
-                : processResult('realtime_conversation                under development  false\n');
+            return processResult('realtime_conversation                under development  false\n');
         });
         const spawn = vi.fn(async (
             spec: Parameters<ExecService['clients']['spawn']>[0],
@@ -155,7 +148,7 @@ describe('createCodexAppServerClient', () => {
             toolId: 'codex-cli',
             purpose: 'Launch the Codex native app-server',
         });
-        expect(run).toHaveBeenCalledTimes(2);
+        expect(run).toHaveBeenCalledOnce();
         expect(spawn).toHaveBeenCalledOnce();
     });
 
@@ -190,12 +183,8 @@ describe('createCodexAppServerClient', () => {
             dispose: async () => undefined,
         };
         const exec = {
-            run: vi.fn(async (request: Parameters<ExecService['run']>[0]) => (
-                request.args.length === 1 && request.args[0] === '--version'
-                    ? processResult('codex-cli 0.145.0\n')
-                    : processResult(
-                        'realtime_conversation                under development  false\n',
-                    )
+            run: vi.fn(async (_request: Parameters<ExecService['run']>[0]) => (
+                processResult('realtime_conversation                under development  false\n')
             )),
             systemTools: {
                 resolve: vi.fn(async () => ({
@@ -342,25 +331,49 @@ describe('createCodexAppServerClient', () => {
                     experimentalApi: true,
                 },
             },
-            timeoutMs: 45_000,
+            timeoutMs: 60_000,
         });
         expect(capture.notifications).toContainEqual({ method: 'initialized', params: {} });
     });
 
-    it('disables local request timers only while creating a fork-only app-server client', async () => {
+    it('keeps the shared startup timeout when initialization is operation-cancellable', async () => {
         const capture = createCapturingExec();
+        const controller = new AbortController();
 
         const client = await createCodexNativeAppServerClient({
             exec: capture.exec,
             processEnv: {},
-            forkOnly: true,
+            signal: controller.signal,
         });
         await client.dispose();
 
         expect(capture.requests).toContainEqual(expect.objectContaining({
             method: 'initialize',
-            timeoutMs: null,
+            timeoutMs: 60_000,
         }));
+    });
+
+    it('allows an operation owner to disable only the initialization timeout while retaining cancellation', async () => {
+        const request = vi.fn(async () => ({ ok: true }));
+        const capture = createCapturingExec({ request });
+        const controller = new AbortController();
+
+        const client = await createCodexNativeAppServerClient({
+            exec: capture.exec,
+            processEnv: {},
+            signal: controller.signal,
+            initializeRequestOptions: {
+                signal: controller.signal,
+                timeoutMs: null,
+            },
+        });
+        await client.dispose();
+
+        expect(request).toHaveBeenCalledWith(
+            'initialize',
+            expect.objectContaining({ capabilities: { experimentalApi: true } }),
+            { signal: controller.signal, timeoutMs: null },
+        );
     });
 
     it('forwards a caller AbortSignal to the native protocol client request', async () => {
@@ -386,16 +399,29 @@ describe('createCodexAppServerClient', () => {
         );
     });
 
-    it.each([
-        '0.145.0',
-        '0.146.0',
-    ] as const)('validates Codex %s and realtime capability on the same resolved system tool', async (
-        codexCliVersion,
-    ) => {
+    it('disables the wrapped protocol deadline for every thread/resume request', async () => {
+        const capture = createCapturingExec();
+        const client = await createCodexNativeAppServerClient({
+            exec: capture.exec,
+            processEnv: {
+                HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '250',
+                HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '250',
+            },
+        });
+
+        await client.request('thread/resume', { threadId: 'thread-slow' });
+        await client.dispose();
+
+        expect(capture.requests).toContainEqual(expect.objectContaining({
+            method: 'thread/resume',
+            timeoutMs: null,
+        }));
+    });
+
+    it('enables an advertised realtime feature without probing an exact Codex CLI version', async () => {
         const capture = createCapturingExec(
             {},
             processResult('realtime_conversation                under development  false\n'),
-            processResult(`codex-cli ${codexCliVersion}\n`),
         );
 
         const client = await createCodexNativeAppServerClient({
@@ -407,19 +433,12 @@ describe('createCodexAppServerClient', () => {
 
         expect(capture.exec.run).toHaveBeenCalledWith({
             executable: { kind: 'systemTool', id: 'codex-cli' },
-            args: ['--version'],
-            cwd: { root: 'workspace', relativePath: '' },
-            env: {},
-            timeoutMs: 15_000,
-        });
-        expect(capture.exec.run).toHaveBeenCalledWith({
-            executable: { kind: 'systemTool', id: 'codex-cli' },
             args: ['features', 'list'],
             cwd: { root: 'workspace', relativePath: '' },
             env: {},
             timeoutMs: 15_000,
         });
-        expect(capture.exec.run).toHaveBeenCalledTimes(2);
+        expect(capture.exec.run).toHaveBeenCalledTimes(1);
         expect(capture.specs[0]?.launch.args).toEqual([
             'app-server',
             '--listen',
@@ -429,12 +448,10 @@ describe('createCodexAppServerClient', () => {
         ]);
         expect(client.launchFeatures).toEqual({
             realtimeConversationAdvertised: true,
-            codexCliVersion,
-            realtimeConversationVersionSupported: true,
         });
     });
 
-    it('makes exact Codex 0.146.0 realtime available through the loaded client', async () => {
+    it('makes a feature-enabled Codex runtime available through the loaded client', async () => {
         const capture = createCapturingExec(
             {
                 request: vi.fn(async (method) => method === 'experimentalFeature/list'
@@ -445,7 +462,6 @@ describe('createCodexAppServerClient', () => {
                     : {}),
             },
             processResult('realtime_conversation                under development  false\n'),
-            processResult('codex-cli 0.146.0\n'),
         );
         const client = await createCodexNativeAppServerClient({
             exec: capture.exec,
@@ -472,85 +488,6 @@ describe('createCodexAppServerClient', () => {
     });
 
     it.each([
-        ['older supported-provider line', 'codex-cli 0.144.9\n', '0.144.9'],
-        ['unvalidated patch release', 'codex-cli 0.145.1\n', '0.145.1'],
-        ['unvalidated newer patch', 'codex-cli 0.146.1\n', '0.146.1'],
-        ['newer release line', 'codex-cli 0.147.0\n', '0.147.0'],
-        ['prerelease', 'codex-cli 0.145.0-alpha.1\n', null],
-        [
-            'extraneous prerelease output',
-            'notice: prior stable 0.145.0\ncodex-cli 0.145.0-alpha.1\n',
-            null,
-        ],
-    ] as const)('keeps ordinary app-server available without enabling realtime on %s', async (
-        _label,
-        versionOutput,
-        expectedParsedVersion,
-    ) => {
-        const capture = createCapturingExec(
-            {},
-            processResult('realtime_conversation                under development  false\n'),
-            processResult(versionOutput),
-        );
-
-        const client = await createCodexNativeAppServerClient({
-            exec: capture.exec,
-            processEnv: {},
-        });
-        await client.dispose();
-
-        expect(capture.exec.run).toHaveBeenCalledTimes(2);
-        expect(capture.specs[0]?.launch.args).toEqual([
-            'app-server',
-            '--listen',
-            'stdio://',
-        ]);
-        expect(client.launchFeatures).toEqual({
-            realtimeConversationAdvertised: true,
-            codexCliVersion: expectedParsedVersion,
-            realtimeConversationVersionSupported: false,
-        });
-    });
-
-    it.each([
-        ['malformed output', processResult('codex-cli unknown\n')],
-        ['nonzero exit', processResult('codex-cli 0.145.0\n', { exitCode: 2 })],
-        ['truncated stdout', processResult('codex-cli 0.145.0\n', { stdoutTruncated: true })],
-        ['truncated stderr', processResult('codex-cli 0.145.0\n', { stderrTruncated: true })],
-        ['timed-out process', processResult('codex-cli 0.145.0\n', {
-            requestedBy: { kind: 'timeout' },
-        })],
-        ['thrown version probe', new Error('version probe failed: sk-private-version-probe')],
-    ])('keeps ordinary app-server available but fails realtime version support closed for %s', async (
-        _label,
-        versionResult,
-    ) => {
-        const capture = createCapturingExec(
-            {},
-            processResult('realtime_conversation                under development  false\n'),
-            versionResult,
-        );
-
-        const client = await createCodexNativeAppServerClient({
-            exec: capture.exec,
-            processEnv: {},
-        });
-        await client.dispose();
-
-        expect(capture.exec.run).toHaveBeenCalledTimes(2);
-        expect(capture.specs[0]?.launch.args).toEqual([
-            'app-server',
-            '--listen',
-            'stdio://',
-        ]);
-        expect(client.launchFeatures).toEqual({
-            realtimeConversationAdvertised: true,
-            codexCliVersion: null,
-            realtimeConversationVersionSupported: false,
-        });
-    });
-
-    it.each([
         ['missing feature', processResult('apps stable true\n')],
         ['failed feature probe', processResult('', { exitCode: 2 })],
         ['truncated feature probe', processResult(
@@ -566,7 +503,7 @@ describe('createCodexAppServerClient', () => {
             { requestedBy: { kind: 'timeout' } },
         )],
         ['thrown feature probe', new Error('feature probe failed: sk-private-feature-probe')],
-    ])('does not enable realtime when the exact executable probe is unusable: %s', async (
+    ])('does not enable realtime when the feature probe is unusable: %s', async (
         _label,
         featureListResult,
     ) => {
@@ -578,7 +515,7 @@ describe('createCodexAppServerClient', () => {
         });
         await client.dispose();
 
-        expect(capture.exec.run).toHaveBeenCalledTimes(2);
+        expect(capture.exec.run).toHaveBeenCalledTimes(1);
         expect(capture.specs[0]?.launch.args).toEqual([
             'app-server',
             '--listen',
@@ -586,8 +523,6 @@ describe('createCodexAppServerClient', () => {
         ]);
         expect(client.launchFeatures).toEqual({
             realtimeConversationAdvertised: false,
-            codexCliVersion: '0.145.0',
-            realtimeConversationVersionSupported: true,
         });
     });
 
@@ -649,11 +584,7 @@ describe('createCodexAppServerClient', () => {
     });
 
     it('does not classify ordinary or aborted app-server launch failures as realtime enablement failures', async () => {
-        const ordinaryCapture = createCapturingExec(
-            {},
-            processResult('realtime_conversation                under development  false\n'),
-            processResult('codex-cli 0.146.1\n'),
-        );
+        const ordinaryCapture = createCapturingExec({}, processResult('apps stable true\n'));
         vi.spyOn(ordinaryCapture.exec.clients, 'spawn')
             .mockRejectedValueOnce(new Error('ordinary app-server launch failed'));
 

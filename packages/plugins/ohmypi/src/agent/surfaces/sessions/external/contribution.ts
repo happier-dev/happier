@@ -27,6 +27,7 @@ import { resolveOhMyPiSessionFile } from './files.js';
 import {
   OhMyPiExternalSessionIncompleteBranchError,
   OhMyPiExternalSessionInvalidCursorError,
+  OhMyPiExternalSessionUnsupportedRecordError,
   OhMyPiExternalSessionSourceChangedError,
   OhMyPiExternalSessionSourceUnavailableError,
   pageOhMyPiSessionTranscript,
@@ -205,6 +206,7 @@ function mapReadAfterPage(
 ): AgentExternalSessionsResult<AgentExternalSessionsReadAfterTranscriptResult> {
   const mapped = mapTranscriptPage(page);
   if (!mapped.ok) return mapped;
+  if (mapped.value.truncated) return ok({ outcome: 'gap_or_cursor_expired' });
   const positionsByCode = new Map<string, number[]>();
   for (const skipped of page.skippedRecords ?? []) {
     const positions = positionsByCode.get(skipped.code) ?? [];
@@ -230,7 +232,6 @@ function mapReadAfterPage(
     });
   }
   if (mapped.value.items.length === 0) {
-    if (mapped.value.truncated) return ok({ outcome: 'gap_or_cursor_expired' });
     return ok({
       outcome: mapped.value.nextCursor === inputCursor ? 'already_current' : 'read_failed',
     });
@@ -261,6 +262,9 @@ function transcriptFailure(error: unknown): AgentExternalSessionsResult<never> {
   }
   // Not retryable: the source is intact and its branch is genuinely rootless.
   if (error instanceof OhMyPiExternalSessionIncompleteBranchError) {
+    return failed('agent_error', error.message, false);
+  }
+  if (error instanceof OhMyPiExternalSessionUnsupportedRecordError) {
     return failed('agent_error', error.message, false);
   }
   return failed(

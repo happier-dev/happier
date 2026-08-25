@@ -122,7 +122,6 @@ describe('Codex public Agent External Sessions contribution', () => {
       const requests: string[] = [];
       const contribution = createCodexExternalSessionsContribution({
         env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
-        activeServerDir: join(root, 'active-server'),
       });
 
       await expect(contribution.listCandidates({
@@ -159,7 +158,6 @@ describe('Codex public Agent External Sessions contribution', () => {
       await mkdir(codexHome, { recursive: true });
       const contribution = createCodexExternalSessionsContribution({
         env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
-        activeServerDir: join(root, 'active-server'),
       });
 
       await expect(contribution.readAfterTranscript({
@@ -197,7 +195,6 @@ describe('Codex public Agent External Sessions contribution', () => {
       ].join(''), 'utf8');
       const contribution = createCodexExternalSessionsContribution({
         env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
-        activeServerDir: join(root, 'active-server'),
       });
       const source = { kind: 'codexHome', home: 'user', homePath: codexHome } as const;
 
@@ -258,6 +255,52 @@ describe('Codex public Agent External Sessions contribution', () => {
     }
   });
 
+  it('returns typed unsupported rather than an authoritative empty page for newer paging', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-public-newer-unsupported-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      const sessionsDir = join(codexHome, 'sessions', '2026', '07', '23');
+      const remoteSessionId = '44444444-4444-4444-4444-444444444444';
+      await mkdir(sessionsDir, { recursive: true });
+      await writeFile(
+        join(sessionsDir, `rollout-2026-07-23T09-00-00-${remoteSessionId}.jsonl`),
+        [
+          jsonl({
+            type: 'session_meta',
+            payload: { id: remoteSessionId, cwd: '/repo' },
+          }),
+          jsonl({
+            type: 'response_item',
+            payload: {
+              type: 'message',
+              role: 'assistant',
+              content: [{ type: 'output_text', text: 'older-only history' }],
+            },
+          }),
+        ].join(''),
+        'utf8',
+      );
+      const contribution = createCodexExternalSessionsContribution({
+        env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      });
+
+      await expect(contribution.pageTranscript({
+        source: { kind: 'codexHome', home: 'user', homePath: codexHome },
+        remoteSessionId,
+        direction: 'newer',
+        maxItems: 10,
+        ...invocation(),
+      })).resolves.toEqual({
+        ok: false,
+        code: 'unsupported',
+        message: 'Codex external-session newer paging is not supported.',
+        retryable: false,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('preserves the rollout owners candidate, link identity, transcript, and cursor semantics', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-public-external-'));
     try {
@@ -295,7 +338,7 @@ describe('Codex public Agent External Sessions contribution', () => {
 
       const env = { CODEX_HOME: codexHome } as NodeJS.ProcessEnv;
       const activeServerDir = join(root, 'active-server');
-      const contribution = createCodexExternalSessionsContribution({ env, activeServerDir });
+      const contribution = createCodexExternalSessionsContribution({ env });
       const source = { kind: 'codexHome', home: 'user' } as const;
       const resolvedSource = await contribution.resolveSource({ source, ...invocation() });
       expect(resolvedSource).toEqual({
@@ -445,6 +488,84 @@ describe('Codex public Agent External Sessions contribution', () => {
     }
   });
 
+  it('reports a bounded nonempty appended suffix as a gap instead of accepting a partial cursor', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-public-read-after-bound-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      const sessionsDir = join(codexHome, 'sessions', '2026', '07', '23');
+      const remoteSessionId = '44444444-4444-4444-4444-444444444444';
+      const rolloutPath = join(
+        sessionsDir,
+        `rollout-2026-07-23T08-00-00-${remoteSessionId}.jsonl`,
+      );
+      await mkdir(sessionsDir, { recursive: true });
+      await writeFile(rolloutPath, [
+        jsonl({
+          type: 'session_meta',
+          timestamp: '2026-07-23T08:00:00.000Z',
+          payload: { id: remoteSessionId, cwd: '/repo' },
+        }),
+        jsonl({
+          type: 'response_item',
+          timestamp: '2026-07-23T08:01:00.000Z',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'initial' }],
+          },
+        }),
+      ].join(''), 'utf8');
+      const contribution = createCodexExternalSessionsContribution({
+        env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      });
+      const source = { kind: 'codexHome', home: 'user', homePath: codexHome } as const;
+      const initial = await contribution.pageTranscript({
+        source,
+        remoteSessionId,
+        direction: 'older',
+        maxItems: 10,
+        ...invocation(),
+      });
+      if (!initial.ok || !initial.value.tailCursor) {
+        throw new Error('Expected a Codex tail cursor');
+      }
+
+      await appendFile(rolloutPath, [
+        jsonl({
+          type: 'response_item',
+          timestamp: '2026-07-23T08:02:00.000Z',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'first appended item' }],
+          },
+        }),
+        jsonl({
+          type: 'response_item',
+          timestamp: '2026-07-23T08:03:00.000Z',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'second appended item' }],
+          },
+        }),
+      ].join(''), 'utf8');
+
+      await expect(contribution.readAfterTranscript({
+        source,
+        remoteSessionId,
+        cursor: initial.value.tailCursor,
+        maxItems: 1,
+        ...invocation(),
+      })).resolves.toEqual({
+        ok: true,
+        value: { outcome: 'gap_or_cursor_expired' },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('advances malformed UTF-8 diagnostics through the public read-after result', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-public-malformed-'));
     try {
@@ -474,7 +595,6 @@ describe('Codex public Agent External Sessions contribution', () => {
       ].join(''), 'utf8');
       const contribution = createCodexExternalSessionsContribution({
         env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
-        activeServerDir: join(root, 'active-server'),
       });
       const source = { kind: 'codexHome', home: 'user', homePath: codexHome } as const;
       const page = await contribution.pageTranscript({
@@ -526,7 +646,6 @@ describe('Codex public Agent External Sessions contribution', () => {
     controller.abort();
     const contribution = createCodexExternalSessionsContribution({
       env: { CODEX_HOME: '/tmp/codex-public-bounds' } as NodeJS.ProcessEnv,
-      activeServerDir: '/tmp/active-server',
     });
     const source = { kind: 'codexHome', home: 'user' } as const;
 
@@ -587,7 +706,6 @@ describe('Codex public Agent External Sessions contribution', () => {
       );
       const contribution = createCodexExternalSessionsContribution({
         env: {} as NodeJS.ProcessEnv,
-        activeServerDir,
       });
       const source = {
         kind: 'codexHome',
@@ -637,14 +755,7 @@ describe('Codex public Agent External Sessions contribution', () => {
     }
   });
 
-  /**
-   * The media read roots a source grants are the homes this Agent actually
-   * resolves for it, never the value the request carried. A connected-service
-   * request names an entry in a host-owned home namespace, and only the home
-   * resolver decides which concrete directory that is, so a request cannot
-   * hand itself a read root the active server root never contained.
-   */
-  it('grants media read roots only for homes the connected-service namespace verifies', async () => {
+  it('requires the host-admitted connected-service home before granting media read roots', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-media-read-roots-'));
     try {
       const activeServerDir = join(root, 'active-server');
@@ -659,37 +770,23 @@ describe('Codex public Agent External Sessions contribution', () => {
         'codex-home',
       );
       await mkdir(join(verifiedHome, 'sessions'), { recursive: true });
-      const rogueHome = join(root, 'rogue-codex-home');
-      await mkdir(join(rogueHome, 'sessions'), { recursive: true });
       const contribution = createCodexExternalSessionsContribution({
         env: {} as NodeJS.ProcessEnv,
-        activeServerDir,
       });
-      const rogueSource = {
+      const unstampedSource = {
         kind: 'codexHome',
         home: 'connectedService',
         connectedServiceId: 'openai-codex',
         connectedServiceProfileId: 'profile-1',
-        homePath: rogueHome,
       } as const;
 
-      const resolvedRogue = await contribution.resolveSource({
-        source: rogueSource,
+      await expect(contribution.resolveSource({
+        source: unstampedSource,
         ...invocation(),
-      });
-      if (!resolvedRogue.ok) throw new Error('Expected a resolved Codex source');
-      expect(resolvedRogue.value.transcriptMediaReadRoots ?? []).not.toContain(rogueHome);
-
-      const rogueIdentity = await contribution.resolveLinkIdentity({
-        source: rogueSource,
-        remoteSessionId: '33333333-3333-3333-3333-333333333333',
-        ...invocation(),
-      });
-      if (!rogueIdentity.ok) throw new Error('Expected a resolved Codex link identity');
-      expect(rogueIdentity.value.transcriptMediaReadRoots ?? []).not.toContain(rogueHome);
+      })).resolves.toMatchObject({ ok: false, code: 'source_invalid' });
 
       const resolvedVerified = await contribution.resolveSource({
-        source: { ...rogueSource, homePath: verifiedHome },
+        source: { ...unstampedSource, homePath: verifiedHome },
         ...invocation(),
       });
       if (!resolvedVerified.ok) throw new Error('Expected a resolved Codex source');

@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -235,6 +235,52 @@ describe('Claude native External Sessions contribution', () => {
             },
         });
         expect(JSON.stringify(after)).toContain('live project B answer');
+    });
+
+    it('fails candidate discovery and transcript reads closed when projects escapes the admitted config root', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-native-projects-root-escape-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const outsideProjectsDir = join(root, 'outside', 'tree');
+        const projectId = 'project-a';
+        const remoteSessionId = 'escaped-session';
+        await mkdir(join(outsideProjectsDir, projectId), { recursive: true });
+        await writeFile(
+            join(outsideProjectsDir, projectId, `${remoteSessionId}.jsonl`),
+            JSON.stringify({
+                type: 'user',
+                uuid: 'outside-user',
+                message: { content: 'must not be read' },
+            }) + '\n',
+            'utf8',
+        );
+        await mkdir(configDir, { recursive: true });
+        await symlink(outsideProjectsDir, join(configDir, 'projects'), 'dir');
+
+        const contribution = createClaudeExternalSessionsContribution({
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+        const source = { kind: 'claudeConfig' as const, configDir, projectId };
+
+        await expect(contribution.listCandidates({
+            ...invocation(),
+            source,
+            maxItems: 10,
+        })).resolves.toMatchObject({ ok: true, value: { candidates: [] } });
+        await expect(contribution.pageTranscript({
+            ...invocation(),
+            source,
+            remoteSessionId,
+            direction: 'older',
+            maxItems: 10,
+        })).resolves.toMatchObject({ ok: true, value: { items: [], tailCursor: null } });
+        await expect(contribution.readAfterTranscript({
+            ...invocation(),
+            source,
+            remoteSessionId,
+            cursor: 'tail',
+            maxItems: 10,
+        })).resolves.toEqual({ ok: true, value: { outcome: 'source_unavailable' } });
     });
 
     it('pages a Claude transcript forward in chronological order for hosted catch-up', async () => {

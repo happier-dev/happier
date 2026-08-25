@@ -104,7 +104,10 @@
           "surfaces": [
             "terminal",
             "externalSessions"
-          ]
+          ],
+          "tools": {
+            "delivery": "native_mcp"
+          }
         },
         "cli": {
           "auth": {
@@ -500,6 +503,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [
       {
         "actions": [],
@@ -727,11 +731,7 @@
         },
         "execution": {
           "agent": "codex",
-          "kind": "experimental_agent_session_realtime",
-          "supportedRuntimeVersions": [
-            "0.145.0",
-            "0.146.0"
-          ]
+          "kind": "experimental_agent_session_realtime"
         },
         "id": "realtime-codex",
         "kind": "conversation",
@@ -800,7 +800,8 @@
         "reason": "Run the declared Codex executable.",
         "scope": {
           "envKeys": [
-            "CODEX_HOME"
+            "CODEX_HOME",
+            "CODEX_SQLITE_HOME"
           ],
           "executables": [
             {

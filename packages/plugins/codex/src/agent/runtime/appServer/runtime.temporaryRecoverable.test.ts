@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { buildAgentAccountUsageRecordId } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
+  AgentAccountUsageSnapshot,
   AgentSessionConversationRollbackRequest,
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -16,7 +18,11 @@ const clientState = vi.hoisted(() => {
   const handlers = new Map<string, (params: unknown) => void | Promise<void>>();
   const exitHandlers = new Set<(result: Readonly<{ exitCode: number | null; signal: string | null; stdout: string; stderr: string }>) => void>();
   const requestHandlers = new Map<string, (params: unknown) => unknown | Promise<unknown>>();
-  const requests: Array<{ method: string; params: unknown }> = [];
+  const requests: Array<{
+    method: string;
+    params: unknown;
+    options?: Readonly<{ timeoutMs?: number | null }>;
+  }> = [];
   let turnStartCount = 0;
   let failNextSteer = false;
   let rejectNextInterrupt: Error | null = null;
@@ -180,8 +186,12 @@ const clientState = vi.hoisted(() => {
       deferredLoginStart.resolve({ ok: true });
       deferredLoginStart = null;
     },
-    async request(method: string, params?: unknown): Promise<unknown> {
-      requests.push({ method, params });
+    async request(
+      method: string,
+      params?: unknown,
+      options?: Readonly<{ timeoutMs?: number | null }>,
+    ): Promise<unknown> {
+      requests.push({ method, params, ...(options ? { options } : {}) });
       if (method === 'account/rateLimits/read') {
         if (deferNextRateLimitsRead) {
           deferNextRateLimitsRead = false;
@@ -312,8 +322,6 @@ vi.mock('./client.js', () => ({
   createCodexAppServerClient: vi.fn(async () => ({
     launchFeatures: {
       realtimeConversationAdvertised: true,
-      codexCliVersion: '0.145.0',
-      realtimeConversationVersionSupported: true,
     },
     request: clientState.request,
     notify: clientState.notify,
@@ -721,6 +729,41 @@ describe('Codex app-server temporary recoverable turn failures', () => {
           developerInstructions: 'Global Voice developer instructions.',
         }),
       });
+  });
+
+  it.each([
+    ['metadata-only', false, true],
+    ['history import', true, false],
+  ] as const)('requests a %s resume without duplicating provider turns', async (_label, importHistory, excludeTurns) => {
+    const runtime = createRuntime();
+
+    await startCodexAppServerRuntime(runtime, {
+      resumeId: 'thread-existing',
+      preserveRequestedThreadId: true,
+      importHistory,
+    });
+
+    expect(clientState.requests.find((request) => request.method === 'thread/resume'))
+      .toMatchObject({
+        params: expect.objectContaining({ excludeTurns }),
+      });
+  });
+
+  it('keeps thread/resume unbounded while bounding oversized-response recovery reads', async () => {
+    const runtime = createRuntime();
+    const oversizedResumeFailure = new Error('oversized resume response');
+    clientState.rejectNextThreadResume(oversizedResumeFailure);
+    vi.mocked(isCodexAppServerOversizedJsonFrameError).mockReturnValueOnce(true);
+
+    await startCodexAppServerRuntime(runtime, {
+      resumeId: 'thread-existing',
+      preserveRequestedThreadId: true,
+    });
+
+    expect(clientState.requests.find((request) => request.method === 'thread/resume'))
+      .toMatchObject({ options: { timeoutMs: null } });
+    expect(clientState.requests.find((request) => request.method === 'thread/read'))
+      .toMatchObject({ options: { timeoutMs: 120_000 } });
   });
 
   it('rejects a strict native resume that returns a different thread without publishing either id', async () => {
@@ -2173,7 +2216,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     await runtime.dispose();
   });
 
-  it('records plugin-native app-server rate-limit reads with stable Codex auth-store account identity', async () => {
+  it('does not adopt a provisional usage record after a stable-first Codex auth-store read', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-usage-'));
     const records: unknown[] = [];
     const adoptions: unknown[] = [];
@@ -2215,24 +2258,119 @@ describe('Codex app-server temporary recoverable turn failures', () => {
           ],
         },
       });
-      expect(adoptions).toHaveLength(1);
-      expect(adoptions[0]).toMatchObject({
-        adoption: {
-          proof: { kind: 'id_token_account_id', issuer: 'chatgpt' },
-          stableRecordKey: {
-            providerId: 'openai-codex',
-            accountSubjectId: 'acct_plugin_native',
-            subjectKind: 'account',
-            quotaScope: 'account',
-          },
-        },
-      });
+      expect(adoptions).toHaveLength(0);
     } finally {
       await rm(codexHome, { recursive: true, force: true });
     }
   });
 
-  it('records app-server rate-limit reads with one provider-owned applied group identity', async () => {
+  it('adopts one recorded provisional usage record once a later Codex auth-store read becomes stable', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-usage-adoption-'));
+    const records: unknown[] = [];
+    const adoptions: unknown[] = [];
+    try {
+      const runtime = createRuntime({
+        processEnv: { CODEX_HOME: codexHome },
+        accountUsage: createAccountUsageService({
+          recordSnapshot: async (input: unknown) => {
+            records.push(input);
+            return { status: 'recorded' };
+          },
+          adoptProvisionalRecord: async (input: unknown) => {
+            adoptions.push(input);
+            return { status: 'adopted' };
+          },
+        }),
+      });
+
+      await startCodexAppServerRuntime(runtime);
+      await waitForUsageRecordCount(records, 1);
+      expect(records[0]).toMatchObject({
+        snapshot: { accountSubject: { kind: 'provisionalLocalSubject' } },
+      });
+
+      await writeFile(
+        join(codexHome, 'auth.json'),
+        JSON.stringify({ tokens: { id_token: { chatgpt_account_id: 'acct_adopted' } } }),
+      );
+      emitNotification('account/rateLimits/updated', {
+        rateLimits: { primary: { used_percent: 42, resets_at: 1779019200000 } },
+      });
+      await waitForUsageRecordCount(records, 2);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(records.at(-1)).toMatchObject({
+        snapshot: { accountSubject: { kind: 'providerSubject', id: 'acct_adopted' } },
+      });
+      const provisionalSnapshot = (records[0] as Readonly<{
+        snapshot: AgentAccountUsageSnapshot;
+      }>).snapshot;
+      expect(adoptions).toHaveLength(1);
+      expect(adoptions[0]).toMatchObject({
+        adoption: {
+          fromRecordId: buildAgentAccountUsageRecordId(provisionalSnapshot.recordKey),
+          proof: { kind: 'id_token_account_id', issuer: 'chatgpt' },
+          stableRecordKey: {
+            providerId: 'openai-codex',
+            accountSubjectId: 'acct_adopted',
+            subjectKind: 'account',
+            quotaScope: 'account',
+          },
+        },
+      });
+
+      emitNotification('account/rateLimits/updated', {
+        rateLimits: { primary: { used_percent: 43, resets_at: 1779019200000 } },
+      });
+      await waitForUsageRecordCount(records, 3);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(adoptions).toHaveLength(1);
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('does not adopt a provisional usage record that the host did not record', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-usage-unavailable-'));
+    const records: unknown[] = [];
+    const adoptions: unknown[] = [];
+    try {
+      const runtime = createRuntime({
+        processEnv: { CODEX_HOME: codexHome },
+        accountUsage: createAccountUsageService({
+          recordSnapshot: async (input: unknown) => {
+            records.push(input);
+            return records.length === 1
+              ? { status: 'unavailable', reason: 'daemon_unavailable' }
+              : { status: 'recorded' };
+          },
+          adoptProvisionalRecord: async (input: unknown) => {
+            adoptions.push(input);
+            return { status: 'adopted' };
+          },
+        }),
+      });
+
+      await startCodexAppServerRuntime(runtime);
+      await waitForUsageRecordCount(records, 1);
+      await writeFile(
+        join(codexHome, 'auth.json'),
+        JSON.stringify({ tokens: { id_token: { chatgpt_account_id: 'acct_unavailable' } } }),
+      );
+      emitNotification('account/rateLimits/updated', {
+        rateLimits: { primary: { used_percent: 42, resets_at: 1779019200000 } },
+      });
+      await waitForUsageRecordCount(records, 2);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(adoptions).toHaveLength(0);
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('does not adopt a provisional usage record after a stable-first applied group read', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-usage-group-'));
     const records: unknown[] = [];
     const adoptions: unknown[] = [];
@@ -2297,11 +2435,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         serviceId: 'openai-codex',
       });
       expect(records[0]).not.toHaveProperty('appliedIdentity');
-      expect(adoptions[0]).toMatchObject({
-        adoption: {
-          proof: { kind: 'provider_account_id_match' },
-        },
-      });
+      expect(adoptions).toHaveLength(0);
     } finally {
       await rm(codexHome, { recursive: true, force: true });
     }

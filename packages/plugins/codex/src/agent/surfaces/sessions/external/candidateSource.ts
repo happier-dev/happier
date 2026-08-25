@@ -26,11 +26,14 @@ import {
   readCodexSessionTitleFromRollout,
 } from '../../../rollout/discovery/rolloutTitle.js';
 import {
+  createInitialCodexExternalSessionIndexCursor,
   decodeCodexExternalSessionIndexCursor,
   decodeCodexExternalSessionCandidateCursor,
   encodeCodexExternalSessionCandidateCursor,
   encodeCodexExternalSessionIndexCursor,
   resolveCodexExternalSessionAppServerListBudgetMs,
+  type CodexExternalSessionIndexCursor,
+  type CodexExternalSessionNativeCandidateCursorState,
 } from './candidates.js';
 import type {
   CodexExternalSessionCandidate,
@@ -92,89 +95,156 @@ function asThreadArray(value: unknown): CodexAppServerThread[] {
   });
 }
 
+type CodexAppServerCandidatePage = Readonly<{
+  candidates: readonly CodexExternalSessionCandidate[];
+  nextCursor: string | null;
+  requestCursor: string | null;
+  /**
+   * `thread/list` is requested in descending `updated_at` order. When a
+   * continuation exists, its last raw row is the highest timestamp any later
+   * page may carry; null means the provider gave no usable frontier.
+   */
+  continuationFrontierUpdatedAtMs: number | null;
+}>;
+
+type CodexAppServerCandidatePages = Readonly<{
+  active: CodexAppServerCandidatePage | null;
+  archived: CodexAppServerCandidatePage | null;
+  incomplete: boolean;
+}>;
+
+function readNextCursor(raw: unknown): string | null {
+  return typeof raw === 'string' && raw.trim().length > 0 ? raw : null;
+}
+
+function toCodexAppServerCandidate(
+  thread: CodexAppServerThread,
+  archived: boolean,
+  processEnv: NodeJS.ProcessEnv,
+): CodexExternalSessionCandidate {
+  const createdAtMs = Number.isFinite(thread.createdAt)
+    ? Math.trunc((thread.createdAt as number) * 1000)
+    : Number.isFinite(thread.updatedAt)
+      ? Math.trunc((thread.updatedAt as number) * 1000)
+      : 0;
+  const updatedAtMs = Number.isFinite(thread.updatedAt)
+    ? Math.trunc((thread.updatedAt as number) * 1000)
+    : createdAtMs;
+  const title = typeof thread.name === 'string' && thread.name.trim()
+    ? thread.name.trim()
+    : typeof thread.preview === 'string' && thread.preview.trim()
+      ? thread.preview.trim()
+      : undefined;
+  const runtimeDescriptorV1 = buildCodexAgentRuntimeDescriptorV1({
+    backendMode: 'appServer',
+    providerSessionId: thread.id,
+  });
+  return {
+    remoteSessionId: thread.id,
+    ...(title ? { title } : {}),
+    createdAtMs,
+    updatedAtMs,
+    activity: deriveExternalSessionActivity({ updatedAtMs, env: processEnv }),
+    archived,
+    details: {
+      ...(typeof thread.cwd === 'string' && thread.cwd.trim() ? { cwd: thread.cwd.trim() } : {}),
+      runtimeDescriptorV1,
+      codexBackendMode: 'appServer',
+    },
+  };
+}
+
+function compareCodexAppServerCandidates(
+  left: CodexExternalSessionCandidate,
+  right: CodexExternalSessionCandidate,
+): number {
+  return right.updatedAtMs - left.updatedAtMs
+    || compareCodexRolloutCandidateCodeUnits(left.remoteSessionId, right.remoteSessionId);
+}
+
 async function listThreadsForArchiveStateWithClient(params: Readonly<{
   client: CodexAppServerClient;
   processEnv: NodeJS.ProcessEnv;
   archived: boolean;
-}> & CodexExternalSessionInvocationBounds): Promise<CodexAppServerThread[]> {
+  cursor: string | null;
+}> & CodexExternalSessionInvocationBounds): Promise<CodexAppServerCandidatePage> {
   const pageSize = readThreadListPageSize(params.processEnv);
-  const out: CodexAppServerThread[] = [];
-  let cursor: string | null | undefined = undefined;
-  while (true) {
-    throwIfCodexExternalSessionInvocationStopped(params);
-    const result = await params.client.request('thread/list', {
-      limit: pageSize,
-      sortKey: 'updated_at',
-      archived: params.archived,
-      ...(cursor ? { cursor } : {}),
-    }) as ThreadListResult;
-    throwIfCodexExternalSessionInvocationStopped(params);
-    out.push(...asThreadArray(result?.data));
-    cursor = typeof result?.nextCursor === 'string' && result.nextCursor.trim()
-      ? result.nextCursor
-      : null;
-    if (!cursor) break;
-  }
-  return out;
+  throwIfCodexExternalSessionInvocationStopped(params);
+  const result = await params.client.request('thread/list', {
+    limit: pageSize,
+    sortKey: 'updated_at',
+    archived: params.archived,
+    ...(params.cursor ? { cursor: params.cursor } : {}),
+  }) as ThreadListResult;
+  throwIfCodexExternalSessionInvocationStopped(params);
+  const nextCursor = readNextCursor(result?.nextCursor);
+  const candidates = asThreadArray(result?.data)
+    .map((thread) => toCodexAppServerCandidate(thread, params.archived, params.processEnv))
+    .sort(compareCodexAppServerCandidates);
+  return Object.freeze({
+    candidates,
+    nextCursor,
+    requestCursor: params.cursor,
+    continuationFrontierUpdatedAtMs: nextCursor
+      ? candidates.at(-1)?.updatedAtMs ?? null
+      : null,
+  });
 }
 
+async function listCodexExternalSessionCandidatePagesWithClient(params: Readonly<{
+  client: CodexAppServerClient;
+  processEnv: NodeJS.ProcessEnv;
+  active: CodexExternalSessionNativeCandidateCursorState;
+  archived: CodexExternalSessionNativeCandidateCursorState;
+}> & CodexExternalSessionInvocationBounds): Promise<CodexAppServerCandidatePages> {
+  throwIfCodexExternalSessionInvocationStopped(params);
+  const [active, archived] = await Promise.all([
+    params.active.done
+      ? Promise.resolve(null)
+      : listThreadsForArchiveStateWithClient({
+        ...params,
+        archived: false,
+        cursor: params.active.cursor,
+      }),
+    params.archived.done
+      ? Promise.resolve(null)
+      : listThreadsForArchiveStateWithClient({
+        ...params,
+        archived: true,
+        cursor: params.archived.cursor,
+      }),
+  ]);
+  throwIfCodexExternalSessionInvocationStopped(params);
+  return Object.freeze({ active, archived, incomplete: false });
+}
+
+/**
+ * Retained as the small client-boundary probe used by cancellation coverage.
+ * It intentionally reads exactly one native page per archive state; paging is
+ * owned by the v5 candidate cursor below, never by a leaf-local drain loop.
+ */
 export async function listCodexExternalSessionCandidatesViaExistingAppServerClient(params: Readonly<{
   client: CodexAppServerClient;
   processEnv: NodeJS.ProcessEnv;
 }> & CodexExternalSessionInvocationBounds): Promise<CodexExternalSessionCandidate[]> {
-  throwIfCodexExternalSessionInvocationStopped(params);
-  const [nonArchivedThreads, archivedThreads] = await Promise.all([
-    listThreadsForArchiveStateWithClient({ ...params, archived: false }),
-    listThreadsForArchiveStateWithClient({ ...params, archived: true }),
-  ]);
-  throwIfCodexExternalSessionInvocationStopped(params);
-
-  const toCandidate = (thread: CodexAppServerThread, archived: boolean): CodexExternalSessionCandidate => {
-    const createdAtMs = Number.isFinite(thread.createdAt)
-      ? Math.trunc((thread.createdAt as number) * 1000)
-      : Number.isFinite(thread.updatedAt)
-        ? Math.trunc((thread.updatedAt as number) * 1000)
-        : 0;
-    const updatedAtMs = Number.isFinite(thread.updatedAt)
-      ? Math.trunc((thread.updatedAt as number) * 1000)
-      : createdAtMs;
-    const title = typeof thread.name === 'string' && thread.name.trim()
-      ? thread.name.trim()
-      : typeof thread.preview === 'string' && thread.preview.trim()
-        ? thread.preview.trim()
-        : undefined;
-    const runtimeDescriptorV1 = buildCodexAgentRuntimeDescriptorV1({
-      backendMode: 'appServer',
-      providerSessionId: thread.id,
-    });
-    return {
-      remoteSessionId: thread.id,
-      ...(title ? { title } : {}),
-      createdAtMs,
-      updatedAtMs,
-      activity: deriveExternalSessionActivity({ updatedAtMs, env: params.processEnv }),
-      archived,
-      details: {
-        ...(typeof thread.cwd === 'string' && thread.cwd.trim() ? { cwd: thread.cwd.trim() } : {}),
-        runtimeDescriptorV1,
-        codexBackendMode: 'appServer',
-      },
-    };
-  };
-
-  return [
-    ...nonArchivedThreads.map((thread) => toCandidate(thread, false)),
-    ...archivedThreads.map((thread) => toCandidate(thread, true)),
-  ];
+  const cursor = createInitialCodexExternalSessionIndexCursor();
+  const pages = await listCodexExternalSessionCandidatePagesWithClient({
+    ...params,
+    active: cursor.active,
+    archived: cursor.archived,
+  });
+  return [...(pages.active?.candidates ?? []), ...(pages.archived?.candidates ?? [])];
 }
 
 async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   exec: ExecService;
   searchTerm?: string;
-}> & CodexExternalSessionInvocationBounds): Promise<Readonly<{ candidates: CodexExternalSessionCandidate[]; incomplete: boolean }>> {
+  active: CodexExternalSessionNativeCandidateCursorState;
+  archived: CodexExternalSessionNativeCandidateCursorState;
+}> & CodexExternalSessionInvocationBounds): Promise<CodexAppServerCandidatePages> {
   throwIfCodexExternalSessionInvocationStopped(params);
   const budgetMs = resolveCodexExternalSessionAppServerListBudgetMs(params.env);
   const homeEntries = await resolveHomeEntries({
@@ -186,62 +256,65 @@ async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly
   });
   throwIfCodexExternalSessionInvocationStopped(params);
 
-  const listed: CodexExternalSessionCandidate[] = [];
-  let incomplete = false;
+  const [homeEntry] = homeEntries;
+  if (!homeEntry) {
+    return Object.freeze({ active: null, archived: null, incomplete: false });
+  }
+  let incomplete = homeEntries.length > 1;
   const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
-  for (const homeEntry of homeEntries) {
-    throwIfCodexExternalSessionInvocationStopped(params);
-    const processEnv = {
-      ...process.env,
-      ...params.env,
-      CODEX_HOME: homeEntry.codexHome,
-    } as NodeJS.ProcessEnv;
-    const abortController = new AbortController();
-    const signal = params.signal
-      ? AbortSignal.any([params.signal, abortController.signal])
-      : abortController.signal;
-    let client: Awaited<ReturnType<typeof createCodexNativeAppServerClient>> | null = null;
+  const processEnv = {
+    ...process.env,
+    ...params.env,
+    CODEX_HOME: homeEntry.codexHome,
+  } as NodeJS.ProcessEnv;
+  const abortController = new AbortController();
+  const signal = params.signal
+    ? AbortSignal.any([params.signal, abortController.signal])
+    : abortController.signal;
+  let client: Awaited<ReturnType<typeof createCodexNativeAppServerClient>> | null = null;
 
-    const listPromise = (async (): Promise<CodexExternalSessionCandidate[] | null> => {
-      try {
-        client = await createCodexNativeAppServerClient({
-          exec: params.exec,
-          processEnv,
-          signal,
-        });
-        return await listCodexExternalSessionCandidatesViaExistingAppServerClient({
-          client,
-          processEnv,
-          signal,
-          deadlineAtMs: params.deadlineAtMs,
-        });
-      } catch (error) {
-        throwIfCodexExternalSessionInvocationStopped(params);
-        return null;
-      } finally {
-        await disposeCodexAppServerClientBestEffort(client);
-      }
-    })();
-
-    const budgetedResult = await raceWithTimeout(listPromise, budgetMs);
-    throwIfCodexExternalSessionInvocationStopped(params);
-    const result = budgetedResult.type === 'resolved' ? budgetedResult.value : null;
-    if (budgetedResult.type === 'timeout') {
-      abortController.abort();
-      void disposeCodexAppServerClientBestEffort(client);
-      void listPromise.catch(() => null);
+  const listPromise = (async (): Promise<CodexAppServerCandidatePages | null> => {
+    try {
+      client = await createCodexNativeAppServerClient({
+        exec: params.exec,
+        processEnv,
+        signal,
+      });
+      return await listCodexExternalSessionCandidatePagesWithClient({
+        client,
+        processEnv,
+        active: params.active,
+        archived: params.archived,
+        signal,
+        deadlineAtMs: params.deadlineAtMs,
+      });
+    } catch (error) {
+      throwIfCodexExternalSessionInvocationStopped(params);
+      return null;
+    } finally {
+      await disposeCodexAppServerClientBestEffort(client);
     }
+  })();
 
-    if (!result) {
-      incomplete = true;
-      continue;
-    }
-    listed.push(...result.map((candidate) => ({
+  const budgetedResult = await raceWithTimeout(listPromise, budgetMs);
+  throwIfCodexExternalSessionInvocationStopped(params);
+  const result = budgetedResult.type === 'resolved' ? budgetedResult.value : null;
+  if (budgetedResult.type === 'timeout') {
+    abortController.abort();
+    void disposeCodexAppServerClientBestEffort(client);
+    void listPromise.catch(() => null);
+  }
+  if (!result) {
+    return Object.freeze({ active: null, archived: null, incomplete: true });
+  }
+
+  const applySourceAndSearch = (
+    page: CodexAppServerCandidatePage | null,
+  ): CodexAppServerCandidatePage | null => page && Object.freeze({
+    ...page,
+    candidates: page.candidates.map((candidate) => ({
       ...candidate,
-      details: {
-        ...(candidate.details ?? {}),
-        source: homeEntry.source,
-      },
+      details: { ...(candidate.details ?? {}), source: homeEntry.source },
     })).filter((candidate) => {
       if (!searchTerm) return true;
       const details = candidate.details as Record<string, unknown> | undefined;
@@ -249,10 +322,13 @@ async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly
       const title = candidate.title;
       const haystack = `${candidate.remoteSessionId}${title ? ` ${title}` : ''}${cwd ? ` ${cwd}` : ''}`.toLowerCase();
       return haystack.includes(searchTerm);
-    }));
-  }
-
-  return { candidates: listed, incomplete };
+    }),
+  });
+  return Object.freeze({
+    active: applySourceAndSearch(result.active),
+    archived: applySourceAndSearch(result.archived),
+    incomplete,
+  });
 }
 
 async function buildRolloutCandidate(params: Readonly<{
@@ -355,7 +431,7 @@ function toCodexMergedOrderingCandidateRow(
  */
 async function listRolloutCandidateOrdering(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   searchTerm?: string;
   searchMode?: 'fast' | 'full';
@@ -477,7 +553,7 @@ function buildRolloutScanCandidate(params: Readonly<{
  */
 async function scanBoundedRolloutCandidateChunk(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   cursor?: string;
   limit: number;
@@ -513,9 +589,200 @@ async function scanBoundedRolloutCandidateChunk(params: Readonly<{
   };
 }
 
+function terminalNativeCandidateCursorState(): CodexExternalSessionNativeCandidateCursorState {
+  return Object.freeze({ cursor: null, previousCursor: null, offset: 0, done: true });
+}
+
+function advanceNativeCandidateCursorState(params: Readonly<{
+  state: CodexExternalSessionNativeCandidateCursorState;
+  page: CodexAppServerCandidatePage | null;
+  offset: number;
+}>): CodexExternalSessionNativeCandidateCursorState {
+  if (!params.page) return params.state;
+  if (params.offset < 0 || params.offset > params.page.candidates.length) {
+    throw new CodexExternalSessionCandidateSourceChangedError();
+  }
+  if (params.offset < params.page.candidates.length) {
+    return Object.freeze({ ...params.state, offset: params.offset });
+  }
+  const nextCursor = params.page.nextCursor;
+  if (!nextCursor) return terminalNativeCandidateCursorState();
+  if (
+    nextCursor === params.page.requestCursor
+    || nextCursor === params.state.previousCursor
+  ) {
+    throw new CodexExternalSessionCandidateSourceChangedError();
+  }
+  return Object.freeze({
+    cursor: nextCursor,
+    previousCursor: params.page.requestCursor,
+    offset: 0,
+    done: false,
+  });
+}
+
+function chooseNextMergedCandidateRow(params: Readonly<{
+  rollout: CodexMergedOrderingRow | null;
+  active: CodexMergedOrderingRow | null;
+  archived: CodexMergedOrderingRow | null;
+}>): Readonly<{ stream: 'rollout' | 'active' | 'archived'; row: CodexMergedOrderingRow }> | null {
+  const choices = (['rollout', 'active', 'archived'] as const).flatMap((stream) => {
+    const row = params[stream];
+    return row ? [{ stream, row }] : [];
+  });
+  choices.sort((left, right) =>
+    compareCodexMergedOrderingRows(left.row, right.row)
+    || left.stream.localeCompare(right.stream),
+  );
+  return choices[0] ?? null;
+}
+
+function selectBoundedCodexMergedCandidatePage(params: Readonly<{
+  rolloutRows: readonly CodexMergedOrderingRow[];
+  cursor: CodexExternalSessionIndexCursor;
+  activePage: CodexAppServerCandidatePage | null;
+  archivedPage: CodexAppServerCandidatePage | null;
+  limit: number;
+}>): Readonly<{
+  rows: readonly CodexMergedOrderingRow[];
+  cursor: CodexExternalSessionIndexCursor;
+  hasMore: boolean;
+  hasPendingNativeContinuation: boolean;
+}> {
+  if (params.cursor.rolloutOffset > params.rolloutRows.length) {
+    throw new CodexExternalSessionCandidateSourceChangedError();
+  }
+  let rolloutOffset = params.cursor.rolloutOffset;
+  let activeOffset = params.cursor.active.offset;
+  let archivedOffset = params.cursor.archived.offset;
+  const emittedIds = new Set<string>();
+  const rolloutRowsById = new Map(
+    params.rolloutRows.map((row) => [row.remoteSessionId, row] as const),
+  );
+  /**
+   * A native row owns an overlap only when it is at least as new as the
+   * rollout row. The opposite direction is essential for bounded paging: a
+   * rollout row released above the native continuation frontier can safely
+   * remain canonical when its older native twin arrives later, with no
+   * historical-id cache in the cursor.
+   */
+  const nativeOwnsIdentity = (candidate: CodexExternalSessionCandidate): boolean => {
+    const rollout = rolloutRowsById.get(candidate.remoteSessionId);
+    return !rollout || candidate.updatedAtMs >= rollout.updatedAtMs;
+  };
+  const nativeIds = new Set([
+    ...(params.activePage?.candidates ?? []),
+    ...(params.archivedPage?.candidates ?? []),
+  ].filter(nativeOwnsIdentity).map((candidate) => candidate.remoteSessionId));
+
+  let nativeContinuationFrontierUpdatedAtMs: number | null = null;
+  let nativeContinuationUnknown = false;
+  for (const [state, page] of [
+    [params.cursor.active, params.activePage],
+    [params.cursor.archived, params.archived],
+  ] as const) {
+    if (state.done) continue;
+    if (!page) {
+      nativeContinuationUnknown = true;
+      continue;
+    }
+    if (!page.nextCursor) continue;
+    if (page.continuationFrontierUpdatedAtMs === null) {
+      nativeContinuationUnknown = true;
+      continue;
+    }
+    nativeContinuationFrontierUpdatedAtMs = Math.max(
+      nativeContinuationFrontierUpdatedAtMs ?? page.continuationFrontierUpdatedAtMs,
+      page.continuationFrontierUpdatedAtMs,
+    );
+  }
+  const selected: CodexMergedOrderingRow[] = [];
+
+  const nextRollout = (): CodexMergedOrderingRow | null => {
+    while (rolloutOffset < params.rolloutRows.length) {
+      const row = params.rolloutRows[rolloutOffset]!;
+      if (nativeIds.has(row.remoteSessionId) || emittedIds.has(row.remoteSessionId)) {
+        rolloutOffset += 1;
+        continue;
+      }
+      // A later native page can only carry rows at or below this frontier.
+      // Equality stays withheld because an equal-timestamp native twin wins;
+      // strict precedence lets a released rollout row remain canonical when a
+      // later, older native twin arrives.
+      if (
+        nativeContinuationUnknown
+        || (
+          nativeContinuationFrontierUpdatedAtMs !== null
+          && row.updatedAtMs <= nativeContinuationFrontierUpdatedAtMs
+        )
+      ) {
+        return null;
+      }
+      return row;
+    }
+    return null;
+  };
+  const nextNative = (
+    page: CodexAppServerCandidatePage | null,
+    stream: 'active' | 'archived',
+  ): CodexMergedOrderingRow | null => {
+    if (!page) return null;
+    let offset = stream === 'active' ? activeOffset : archivedOffset;
+    while (offset < page.candidates.length) {
+      const candidate = page.candidates[offset]!;
+      if (!emittedIds.has(candidate.remoteSessionId) && nativeOwnsIdentity(candidate)) {
+        break;
+      }
+      offset += 1;
+    }
+    if (stream === 'active') activeOffset = offset;
+    else archivedOffset = offset;
+    const candidate = page.candidates[offset];
+    return candidate ? toCodexMergedOrderingCandidateRow(candidate) : null;
+  };
+
+  while (selected.length < params.limit) {
+    const next = chooseNextMergedCandidateRow({
+      rollout: nextRollout(),
+      active: nextNative(params.activePage, 'active'),
+      archived: nextNative(params.archivedPage, 'archived'),
+    });
+    if (!next) break;
+    selected.push(next.row);
+    emittedIds.add(next.row.remoteSessionId);
+    if (next.stream === 'rollout') rolloutOffset += 1;
+    if (next.stream === 'active') activeOffset += 1;
+    if (next.stream === 'archived') archivedOffset += 1;
+  }
+
+  const active = advanceNativeCandidateCursorState({
+    state: params.cursor.active,
+    page: params.activePage,
+    offset: activeOffset,
+  });
+  const archived = advanceNativeCandidateCursorState({
+    state: params.cursor.archived,
+    page: params.archivedPage,
+    offset: archivedOffset,
+  });
+  const hasMore = rolloutOffset < params.rolloutRows.length || !active.done || !archived.done;
+  return Object.freeze({
+    rows: Object.freeze(selected),
+    cursor: Object.freeze({
+      v: 5,
+      kind: 'codexMergedCandidatePage',
+      rolloutOffset,
+      active,
+      archived,
+    }),
+    hasMore,
+    hasPendingNativeContinuation: !active.done || !archived.done,
+  });
+}
+
 export async function listCodexSessionCandidates(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   exec: ExecService;
   cursor?: string;
@@ -548,11 +815,10 @@ export async function listCodexSessionCandidates(params: Readonly<{
       deadlineAtMs: params.deadlineAtMs,
     });
   }
-  const offset = decodeCodexExternalSessionIndexCursor(params.cursor);
-  // The index cursor has exactly ONE owner: the canonical merged ordering built
-  // below. Both halves are resolved COMPLETE before the cursor is applied, so
-  // the ordering a page slices is the same ordering every other page slices —
-  // the only way an offset cursor can be sound.
+  const cursor = params.cursor
+    ? decodeCodexExternalSessionIndexCursor(params.cursor)
+    : createInitialCodexExternalSessionIndexCursor();
+  if (!cursor) throw new CodexExternalSessionCandidateSourceChangedError();
   const rolloutOrdering = await listRolloutCandidateOrdering({
     source: params.source,
     activeServerDir: params.activeServerDir,
@@ -562,13 +828,23 @@ export async function listCodexSessionCandidates(params: Readonly<{
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
   });
-  const servePage = async (ordering: readonly CodexMergedOrderingRow[]) => {
-    const pageRows = ordering.slice(offset, offset + limit);
-    const nextOffset = offset + pageRows.length;
+  const serveRolloutOnlyPage = async (ordering: readonly CodexMergedOrderingRow[]) => {
+    if (cursor.rolloutOffset > ordering.length) {
+      throw new CodexExternalSessionCandidateSourceChangedError();
+    }
+    const pageRows = ordering.slice(cursor.rolloutOffset, cursor.rolloutOffset + limit);
+    const nextOffset = cursor.rolloutOffset + pageRows.length;
+    const hasMore = nextOffset < ordering.length;
     return {
       candidates: await buildCodexMergedOrderingPage(pageRows, params),
-      nextCursor: nextOffset < ordering.length
-        ? encodeCodexExternalSessionIndexCursor(nextOffset)
+      nextCursor: hasMore
+        ? encodeCodexExternalSessionIndexCursor(Object.freeze({
+          v: 5 as const,
+          kind: 'codexMergedCandidatePage' as const,
+          rolloutOffset: nextOffset,
+          active: terminalNativeCandidateCursorState(),
+          archived: terminalNativeCandidateCursorState(),
+        }))
         : null,
     };
   };
@@ -576,12 +852,13 @@ export async function listCodexSessionCandidates(params: Readonly<{
     && rolloutOrdering.rows.some((row) => row.remoteSessionId.toLowerCase() === searchTerm)
     && rolloutOrdering.searchIncomplete !== true;
   if (exactRolloutIdMatch) {
-    return await servePage([...rolloutOrdering.rows].sort(compareCodexMergedOrderingRows));
+    return await serveRolloutOnlyPage([...rolloutOrdering.rows].sort(compareCodexMergedOrderingRows));
   }
 
   const appServerListing = params.searchMode === 'fast'
     ? {
-      candidates: [] as CodexExternalSessionCandidate[],
+      active: null,
+      archived: null,
       incomplete: false,
     }
     : await listCodexSessionCandidatesViaAppServerWithBudget({
@@ -590,24 +867,35 @@ export async function listCodexSessionCandidates(params: Readonly<{
       env: params.env,
       exec: params.exec,
       searchTerm,
+      active: cursor.active,
+      archived: cursor.archived,
       signal: params.signal,
       deadlineAtMs: params.deadlineAtMs,
     });
   throwIfCodexExternalSessionInvocationStopped(params);
-  const searchIncomplete = rolloutOrdering.searchIncomplete === true || appServerListing.incomplete === true;
-
-  // The app-server row owns the merged row for an identity both halves report:
-  // it is the more authoritative one, carrying the live thread's archive state
-  // and `runtimeDescriptorV1`, which takeover turns into link data.
-  const merged = new Map<string, CodexMergedOrderingRow>();
-  for (const row of rolloutOrdering.rows) merged.set(row.remoteSessionId, row);
-  for (const candidate of appServerListing.candidates) {
-    merged.set(candidate.remoteSessionId, toCodexMergedOrderingCandidateRow(candidate));
-  }
-  const ordering = Array.from(merged.values()).sort(compareCodexMergedOrderingRows);
+  const nativeCursor = params.searchMode === 'fast'
+    ? Object.freeze({
+      ...cursor,
+      active: terminalNativeCandidateCursorState(),
+      archived: terminalNativeCandidateCursorState(),
+    })
+    : cursor;
+  const page = selectBoundedCodexMergedCandidatePage({
+    rolloutRows: [...rolloutOrdering.rows].sort(compareCodexMergedOrderingRows),
+    cursor: nativeCursor,
+    activePage: appServerListing.active,
+    archivedPage: appServerListing.archived,
+    limit,
+  });
+  const searchIncomplete = rolloutOrdering.searchIncomplete === true
+    || appServerListing.incomplete === true
+    || (Boolean(searchTerm) && page.hasPendingNativeContinuation);
 
   return {
-    ...(await servePage(ordering)),
+    candidates: await buildCodexMergedOrderingPage(page.rows, params),
+    nextCursor: page.hasMore
+      ? encodeCodexExternalSessionIndexCursor(page.cursor)
+      : null,
     ...(searchIncomplete ? { searchIncomplete: true } : {}),
   };
 }

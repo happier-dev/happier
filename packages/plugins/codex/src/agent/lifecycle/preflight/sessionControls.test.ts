@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   ExecService } from '@happier-dev/plugin-sdk/exec';
 import type {
@@ -31,11 +31,21 @@ describe('resolveCodexPreflightSessionControlsPolicy', () => {
     };
   }
 
-  function createPreflightExecFixture() {
+  function createPreflightExecFixture(options?: Readonly<{
+    request?: (method: string, params: unknown, requestOptions: unknown) => Promise<unknown>;
+    realtimeAdvertised?: boolean;
+  }>) {
     const specs: PluginProtocolClientSpec[] = [];
+    const requests: Array<Readonly<{
+      method: string;
+      params: unknown;
+      options: unknown;
+    }>> = [];
     let disposeCount = 0;
     const client: PluginJsonRpcClient = {
-      request: async (method) => {
+      request: async (method, params, requestOptions) => {
+        requests.push({ method, params, options: requestOptions });
+        if (options?.request) return await options.request(method, params, requestOptions);
         if (method === 'initialize') {
           return {};
         }
@@ -81,6 +91,21 @@ describe('resolveCodexPreflightSessionControlsPolicy', () => {
       },
     };
     const exec = {
+      run: async (_request: Readonly<{ args: readonly string[] }>) => {
+        const stdout = options?.realtimeAdvertised
+          ? 'realtime_conversation                under development  false\n'
+          : '';
+        return {
+          termination: {
+            requestedBy: { kind: 'none' },
+            observed: { kind: 'exit', exitCode: 0 },
+          },
+          stdout: new TextEncoder().encode(stdout),
+          stderr: new Uint8Array(),
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      },
       systemTools: {
         resolve: async () => ({
           executable: { kind: 'systemTool' as const, id: 'codex-cli' },
@@ -98,6 +123,7 @@ describe('resolveCodexPreflightSessionControlsPolicy', () => {
     return {
       exec,
       specs,
+      readRequests: () => requests,
       readDisposeCount: () => disposeCount,
     };
   }
@@ -150,7 +176,166 @@ describe('resolveCodexPreflightSessionControlsPolicy', () => {
       probeModelsRaw: expect.any(Function),
       probeModesRaw: expect.any(Function),
       probeConfigOptionsRaw: expect.any(Function),
+      probePassiveRealtimeSetupRaw: expect.any(Function),
     }));
+  });
+
+  it('checks passive realtime setup through a cold no-thread app-server probe', async () => {
+    const fixture = createPreflightExecFixture({
+      realtimeAdvertised: true,
+      request: async (method) => {
+        if (method === 'initialize') return {};
+        if (method === 'account/read') {
+          return {
+            requiresOpenaiAuth: true,
+            account: { type: 'chatgpt', email: 'voice@example.test', planType: 'plus' },
+          };
+        }
+        if (method === 'experimentalFeature/list') {
+          return {
+            data: [{ name: 'realtime_conversation', enabled: true }],
+            nextCursor: null,
+          };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    });
+    const probe = (
+      sessionControls.codexPreflightSessionControlsProbeConfig as Readonly<Record<string, unknown>>
+    ).probePassiveRealtimeSetupRaw;
+
+    expect(probe).toBeTypeOf('function');
+    if (typeof probe !== 'function') return;
+
+    await expect(probe({
+      exec: fixture.exec,
+      cwd: '/workspace',
+      timeoutMs: 2_000,
+      accountSettings: null,
+      env: await makeAuthEnv({ OPENAI_API_KEY: 'sk-test' }),
+    })).resolves.toEqual({ v: 1, status: 'ready' });
+    expect(fixture.specs[0]).toMatchObject({
+      launch: {
+        args: ['app-server', '--listen', 'stdio://', '--enable', 'realtime_conversation'],
+      },
+    });
+    const passiveRequests = fixture.readRequests().filter((request) => request.method !== 'initialize');
+    expect(passiveRequests).toEqual([
+      {
+        method: 'account/read',
+        params: { refreshToken: false },
+        options: { timeoutMs: 2_000 },
+      },
+      {
+        method: 'experimentalFeature/list',
+        params: { cursor: null, limit: 100 },
+        options: { timeoutMs: 2_000 },
+      },
+    ]);
+    expect(passiveRequests.every((request) => (
+      !request.method.startsWith('thread/') && !request.method.startsWith('realtime/')
+    ))).toBe(true);
+    expect(fixture.readDisposeCount()).toBe(1);
+  });
+
+  it.each([
+    [
+      'accepts a supported Codex account',
+      {
+        requiresOpenaiAuth: true,
+        account: { type: 'chatgpt', email: 'voice@example.test', planType: 'plus' },
+      },
+      { v: 1, status: 'ready' },
+      ['account/read', 'experimentalFeature/list'],
+    ],
+    [
+      'reports a missing required OpenAI account',
+      { requiresOpenaiAuth: true, account: null },
+      { v: 1, status: 'authentication_required' },
+      ['account/read'],
+    ],
+    [
+      'does not treat a no-auth local account state as selected Codex authentication',
+      { requiresOpenaiAuth: false, account: null },
+      { v: 1, status: 'authentication_required' },
+      ['account/read'],
+    ],
+    [
+      'fails closed for an invalid account shape',
+      { requiresOpenaiAuth: true, account: { type: 42 } },
+      { v: 1, status: 'unavailable' },
+      ['account/read'],
+    ],
+  ] as const)('%s', async (_label, accountResponse, expected, expectedMethods) => {
+    const fixture = createPreflightExecFixture({
+      realtimeAdvertised: true,
+      request: async (method) => {
+        if (method === 'initialize') return {};
+        if (method === 'account/read') return accountResponse;
+        if (method === 'experimentalFeature/list') {
+          return {
+            data: [{ name: 'realtime_conversation', enabled: true }],
+            nextCursor: null,
+          };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    });
+
+    await expect(sessionControls.probeCodexPassiveRealtimeSetupRaw({
+      exec: fixture.exec,
+      cwd: '/workspace',
+      timeoutMs: 2_000,
+      accountSettings: null,
+      env: await makeAuthEnv({ OPENAI_API_KEY: 'sk-test' }),
+    })).resolves.toEqual(expected);
+    expect(fixture.readRequests().map((request) => request.method).filter((method) => method !== 'initialize'))
+      .toEqual(expectedMethods);
+    expect(fixture.readDisposeCount()).toBe(1);
+  });
+
+  it('cancels an in-flight cold setup probe without issuing a feature or realtime request', async () => {
+    let settleAccountRead: ((value: unknown) => void) | null = null;
+    const accountRead = new Promise<unknown>((resolve) => {
+      settleAccountRead = resolve;
+    });
+    const fixture = createPreflightExecFixture({
+      realtimeAdvertised: true,
+      request: async (method) => {
+        if (method === 'initialize') return {};
+        if (method === 'account/read') return await accountRead;
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    });
+    const controller = new AbortController();
+
+    const probe = sessionControls.probeCodexPassiveRealtimeSetupRaw({
+      exec: fixture.exec,
+      cwd: '/workspace',
+      timeoutMs: 2_000,
+      accountSettings: null,
+      env: await makeAuthEnv({ OPENAI_API_KEY: 'sk-test' }),
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(
+      fixture.readRequests().find((request) => request.method === 'account/read'),
+    ).toEqual({
+      method: 'account/read',
+      params: { refreshToken: false },
+      options: { signal: controller.signal, timeoutMs: 2_000 },
+    }));
+    controller.abort();
+
+    await expect(probe).resolves.toEqual({ v: 1, status: 'unavailable' });
+    expect(fixture.readRequests().map((request) => request.method)).not.toContain('experimentalFeature/list');
+    expect(fixture.readRequests().some((request) => (
+      request.method.startsWith('thread/') || request.method.startsWith('realtime/')
+    ))).toBe(false);
+    expect(fixture.readDisposeCount()).toBe(1);
+    settleAccountRead?.({
+      requiresOpenaiAuth: true,
+      account: { type: 'chatgpt', email: 'late@example.test', planType: 'plus' },
+    });
   });
 
   it('probes Codex app-server session controls through the exec-client runtime', async () => {

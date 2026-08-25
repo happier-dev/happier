@@ -8,6 +8,7 @@ import type {
   AgentExternalSessionsResult,
   AgentExternalSessionsTranscriptPage,
 } from '@happier-dev/plugin-sdk/sessions/external';
+import { getAgentExternalSessionsInvocationFailure } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   canonicalizeCodexHomePath,
@@ -24,7 +25,6 @@ import {
   type CodexExternalSessionLinkIdentity,
 } from './identity.js';
 import {
-  inferCodexExternalSessionsActiveServerDir,
   validateCodexExternalSessionsSourcePolicy,
 } from './sourceValidation.js';
 import {
@@ -57,21 +57,6 @@ function failed(
     message,
     ...(typeof retryable === 'boolean' ? { retryable } : {}),
   };
-}
-
-function invocationFailure(
-  invocation: AgentExternalSessionsInvocation,
-): AgentExternalSessionsResult<never> | null {
-  if (invocation.signal.aborted) {
-    return failed('cancelled', 'Codex external-session operation was cancelled.');
-  }
-  if (Date.now() >= invocation.deadlineAtMs) {
-    return failed('timeout', 'Codex external-session operation exceeded its deadline.', true);
-  }
-  if (!Number.isFinite(invocation.maxSerializedBytes) || invocation.maxSerializedBytes < 1) {
-    return failed('invalid_request', 'Codex external-session result byte bound must be positive.');
-  }
-  return null;
 }
 
 function isSafeConnectedServiceId(raw: unknown): raw is string {
@@ -107,30 +92,26 @@ function validateSource(params: Readonly<{
 /**
  * The media read roots a source grants are the homes this Agent actually
  * resolves for it, never the value the request carried. `homeEntries` is that
- * single owner: it builds a connected-service home from the host-owned home
- * namespace under the active server root and verifies any requested path
- * against it, so the directories the host is asked to read media from are
- * exactly the directories this Agent reads rollouts from. Taking the root from
- * the request instead would let a caller name a directory neither that
- * namespace nor the machine environment ever contained.
+ * single owner: for a connected source, the host has already admitted and
+ * stamped the exact materialized home. The leaf only verifies that exact home
+ * is readable, so it never turns a source path back into a daemon-root
+ * authority.
  */
 async function transcriptMediaReadRootsFor(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
   env: NodeJS.ProcessEnv;
   invocation: AgentExternalSessionsInvocation;
 }>): Promise<AgentExternalSessionsResult<readonly string[]>> {
   try {
     const entries = await homeEntries({
       source: params.source,
-      activeServerDir: params.activeServerDir,
       env: params.env,
       signal: params.invocation.signal,
       deadlineAtMs: params.invocation.deadlineAtMs,
     });
     return ok(entries.map((entry) => entry.codexHome));
   } catch (error) {
-    const stopped = invocationFailure(params.invocation);
+    const stopped = getAgentExternalSessionsInvocationFailure(params.invocation);
     if (stopped) return stopped;
     return failed(
       'agent_unavailable',
@@ -181,9 +162,10 @@ function mapReadAfterPage(
   if (page.readAfterOutcome) return ok({ outcome: page.readAfterOutcome });
   const mapped = mapTranscriptPage(page);
   if (!mapped.ok) return ok({ outcome: 'read_failed' });
+  if (mapped.value.truncated) return ok({ outcome: 'gap_or_cursor_expired' });
   if (mapped.value.items.length === 0) {
     if (!page.diagnostics?.length || !mapped.value.nextCursor) {
-      return ok({ outcome: mapped.value.truncated ? 'gap_or_cursor_expired' : 'already_current' });
+      return ok({ outcome: 'already_current' });
     }
     return ok({
       outcome: 'advanced',
@@ -227,13 +209,8 @@ function buildIdentityLinkData(params: Readonly<{
 
 export function createCodexExternalSessionsContribution(params: Readonly<{
   env?: NodeJS.ProcessEnv;
-  activeServerDir?: string;
 }> = {}): AgentExternalSessionsContribution {
   const readEnv = () => params.env ?? process.env;
-  const activeServerDirFor = (source: AgentExternalSessionSource) =>
-    params.activeServerDir?.trim()
-    || inferCodexExternalSessionsActiveServerDir(source)
-    || '';
 
   const resolveIdentity = async (
     request: Readonly<{
@@ -242,7 +219,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       linkData?: AgentExternalSessionLinkData;
     }> & AgentExternalSessionsInvocation,
   ) => {
-    const stopped = invocationFailure(request);
+    const stopped = getAgentExternalSessionsInvocationFailure(request);
     if (stopped) return stopped;
     const remoteSessionId = request.remoteSessionId.trim();
     if (!remoteSessionId) return failed('invalid_request', 'Codex remote session id must be non-empty.');
@@ -270,7 +247,6 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       : null;
     const mediaReadRoots = await transcriptMediaReadRootsFor({
       source: identity.source,
-      activeServerDir: activeServerDirFor(source),
       env,
       invocation: request,
     });
@@ -289,14 +265,13 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
 
   return Object.freeze({
     async resolveSource(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       const env = readEnv();
       const validation = validateSource({ source: request.source, env });
       if (!validation.ok) return validation;
       const mediaReadRoots = await transcriptMediaReadRootsFor({
         source: validation.value.codexSource,
-        activeServerDir: activeServerDirFor(validation.value.publicSource),
         env,
         invocation: request,
       });
@@ -312,7 +287,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
     },
 
     async listCandidates(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) {
         return failed('invalid_request', 'Codex external-session candidate limit must be positive.');
@@ -323,7 +298,6 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       try {
         const listed = await listCodexSessionCandidates({
           source: validation.value.codexSource,
-          activeServerDir: activeServerDirFor(validation.value.publicSource),
           env,
           cursor: request.cursor,
           limit: request.maxItems,
@@ -333,7 +307,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
           deadlineAtMs: request.deadlineAtMs,
           exec: request.exec,
         });
-        const after = invocationFailure(request);
+        const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) return after;
         return bounded({
           candidates: listed.candidates.map(projectCodexExternalSessionCandidateToAgent),
@@ -342,7 +316,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
           ...(listed.preparation !== undefined ? { preparation: listed.preparation } : {}),
         }, request.maxSerializedBytes, 'Codex candidate page cannot fit the result byte bound.');
       } catch (error) {
-        const after = invocationFailure(request);
+        const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) return after;
         if (error instanceof CodexExternalSessionCandidateSourceChangedError) {
           return failed('source_invalid', error.message);
@@ -364,7 +338,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
     },
 
     async pageTranscript(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) {
         return failed('invalid_request', 'Codex external-session transcript limit must be positive.');
@@ -372,10 +346,12 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       const env = readEnv();
       const validation = validateSource({ source: request.source, env });
       if (!validation.ok) return validation;
+      if (request.direction === 'newer') {
+        return failed('unsupported', 'Codex external-session newer paging is not supported.', false);
+      }
       try {
         const page = await pageCodexExternalSessionTranscript({
           source: validation.value.codexSource,
-          activeServerDir: activeServerDirFor(validation.value.publicSource),
           env,
           remoteSessionId: request.remoteSessionId,
           direction: request.direction,
@@ -385,14 +361,14 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
           signal: request.signal,
           deadlineAtMs: request.deadlineAtMs,
         });
-        const after = invocationFailure(request);
+        const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) return after;
         const mapped = mapTranscriptPage(page);
         return fitsResult(mapped, request.maxSerializedBytes)
           ? mapped
           : failed('agent_error', 'Codex transcript page cannot fit the result byte bound.', false);
       } catch (error) {
-        const after = invocationFailure(request);
+        const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) return after;
         if (error instanceof CodexExternalSessionUnsupportedRolloutRecordError) {
           return failed('agent_error', error.message, false);
@@ -406,7 +382,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
     },
 
     async readAfterTranscript(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) {
         return failed('invalid_request', 'Codex external-session transcript limit must be positive.');
@@ -417,7 +393,6 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       try {
         const page = await readAfterCodexExternalSessionTranscript({
           source: validation.value.codexSource,
-          activeServerDir: activeServerDirFor(validation.value.publicSource),
           env,
           remoteSessionId: request.remoteSessionId,
           cursor: request.cursor,
@@ -426,14 +401,14 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
           signal: request.signal,
           deadlineAtMs: request.deadlineAtMs,
         });
-        const after = invocationFailure(request);
+        const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) return after;
         const mapped = mapReadAfterPage(page);
         return fitsResult(mapped, request.maxSerializedBytes)
           ? mapped
           : failed('agent_error', 'Codex transcript page cannot fit the result byte bound.', false);
       } catch (error) {
-        const after = invocationFailure(request);
+        const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) return after;
         if (error instanceof CodexExternalSessionUnsupportedRolloutRecordError) {
           return failed('agent_error', error.message, false);

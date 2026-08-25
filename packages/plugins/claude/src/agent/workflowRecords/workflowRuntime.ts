@@ -1,14 +1,14 @@
-import type {
-  SessionSystemRecordReadRequestV1,
-  SessionSystemRecordReadResultV1,
-  SessionSystemRecordWriteRequestV1,
-} from '@happier-dev/agents';
 import {
   AgentRuntimeJsonValueSchema,
   type AgentTranscriptFileFollowService,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { SessionHandle } from '@happier-dev/plugin-sdk/sessions';
+import type {
+  SessionHandle,
+  SessionSystemRecordReadRequestV1,
+  SessionSystemRecordReadResultV1,
+  SessionSystemRecordWriteRequestV1,
+} from '@happier-dev/plugin-sdk/sessions';
 import {
   ACTIVITY_SESSION_SYSTEM_RECORD_KINDS,
   SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,

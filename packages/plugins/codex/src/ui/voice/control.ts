@@ -5,7 +5,7 @@ import type {
 import type {
   VoiceRealtimeJsonValue,
   VoiceRealtimeToolResult,
-} from '@happier-dev/plugin-sdk/voice';
+} from '@happier-dev/plugin-sdk/voice/client';
 import {
   VoiceRealtimeJsonValueSchema,
   VoiceRealtimeToolCallV1Schema,

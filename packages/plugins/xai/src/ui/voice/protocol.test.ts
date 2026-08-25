@@ -22,7 +22,7 @@ describe('xAI Realtime protocol adapter', () => {
         prefixPaddingMs: 333, idleTimeoutMs: null,
       },
       resumptionEnabled: true,
-      model: { kind: 'pinned', id: 'grok-voice-think-fast-1.0' },
+      model: { kind: 'pinned', id: 'grok-voice-think-fast-2.0' },
     }, [{
       name: 'sendSessionMessage',
       description: 'Send a message to the selected coding session.',
@@ -76,7 +76,7 @@ describe('xAI Realtime protocol adapter', () => {
       transcription: { languageHint: null, keyterms: [] },
       turnDetection: { mode: 'server_vad', threshold: null, silenceDurationMs: null, prefixPaddingMs: null, idleTimeoutMs: null },
       resumptionEnabled: false,
-      model: { kind: 'pinned', id: 'grok-voice-think-fast-1.0' },
+      model: { kind: 'pinned', id: 'grok-voice-think-fast-2.0' },
     }, actionSpecs.map((spec) => ({
       name: String(spec.bindings?.voiceClientToolName ?? '').trim(),
       description: describeActionForVoiceTool(spec),
@@ -251,6 +251,37 @@ describe('xAI Realtime protocol adapter', () => {
       .not.toContainEqual(expect.objectContaining({ type: 'tool_calls' }));
   });
 
+  it.each(['cancelled', 'failed', 'incomplete'] as const)(
+    'drops a buffered tool batch when xAI explicitly reports the response as %s',
+    (status) => {
+      const adapter = createXaiRealtimeProtocolAdapter({
+        prepare: async () => ({ kind: 'declined', code: 'unused' }),
+      });
+      expect(adapter.decodeControl({
+        type: 'response.function_call_arguments.done',
+        event_id: `call-${status}`,
+        response_id: `response-${status}`,
+        call_id: `call-${status}`,
+        name: 'happier_noop',
+        arguments: '{}',
+      })).not.toContainEqual(expect.objectContaining({ type: 'tool_calls' }));
+
+      expect(adapter.decodeControl({
+        type: 'response.done',
+        event_id: `done-${status}`,
+        response: { id: `response-${status}`, status },
+      })).not.toContainEqual(expect.objectContaining({ type: 'tool_calls' }));
+
+      // A stale duplicate cannot revive a batch from a response the provider
+      // has already declared unsuccessful.
+      expect(adapter.decodeControl({
+        type: 'response.done',
+        event_id: `duplicate-${status}`,
+        response: { id: `response-${status}`, status: 'completed' },
+      })).not.toContainEqual(expect.objectContaining({ type: 'tool_calls' }));
+    },
+  );
+
   it('keeps xAI force-message and error semantics in the provider leaf', () => {
     const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
     expect(adapter.encodeTurnControl('send_exact_message', { text: 'Recorded.', interruptible: false })).toEqual({
@@ -320,5 +351,18 @@ describe('xAI Realtime protocol adapter', () => {
     })).not.toContainEqual({ type: 'assistant_output_stopped' });
     expect(adapter.decodeControl({ type: 'response.done', event_id: 'audio-7', response: { id: 'response-2' } }))
       .toContainEqual({ type: 'assistant_output_stopped' });
+  });
+
+  it('normalizes both documented JSON output-audio delta spellings at the xAI leaf', () => {
+    for (const type of ['response.output_audio.delta', 'response.audio.delta']) {
+      const adapter = createXaiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
+      expect(adapter.decodeControl({
+        type,
+        event_id: `${type}-event`,
+        response_id: 'response-1',
+        item_id: 'assistant-1',
+        delta: 'AA==',
+      })).toContainEqual({ type: 'assistant_output_started', itemId: 'assistant-1' });
+    }
   });
 });

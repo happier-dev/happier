@@ -106,7 +106,6 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
             ],
           },
           runtimeDescriptorFromCandidate: {
-            providerId: 'codex',
             runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
             legacyModeOutputKey: 'codexBackendMode',
             backendMode: {
@@ -147,7 +146,6 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
     },
     workState: {
       editableGoals: {
-        providerId: 'codex',
         modeValues: ['acp', 'appServer'],
         activeModeValues: ['appServer'],
         activeWhenNoPersistedMode: true,
@@ -205,12 +203,10 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
     },
     payload: {
       sessionExtras: {
-        providerId: 'codex',
         outputKey: 'codexBackendMode',
         values: ['acp', 'appServer'],
       },
       backendTransport: {
-        providerId: 'codex',
         runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
         legacyModeOutputKey: 'codexBackendMode',
         backendMode: {

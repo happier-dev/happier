@@ -13,7 +13,10 @@ import {
   CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES,
   CLIPROXYAPI_MANAGED_SERVICE,
 } from './managedContract.js';
-import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './contribution.js';
+import {
+  CLIPROXYAPI_PROVIDER_CONTRIBUTION,
+  CLIPROXYAPI_PROVIDER_LOCAL_ID,
+} from './contribution.js';
 
 const MANAGED_HEALTH_IDENTITY_KEYS = Object.freeze([
   'v',
@@ -245,7 +248,7 @@ async function resolveManagedPurposeSnapshot(
   const healthPurposes = Object.freeze(boundFamilies.map((family) => Object.freeze({
     consumer: Object.freeze({
       pluginId: PLUGIN_MANIFEST.id,
-      localId: CLIPROXYAPI_PROVIDER_CONTRIBUTION.id,
+      localId: CLIPROXYAPI_PROVIDER_LOCAL_ID,
     }),
     purpose: family.purpose,
   })));
@@ -261,7 +264,7 @@ async function resolveManagedPurposeSnapshot(
         provider: family.authEntry.provider,
         consumer: {
           pluginId: PLUGIN_MANIFEST.id,
-          localId: CLIPROXYAPI_PROVIDER_CONTRIBUTION.id,
+          localId: CLIPROXYAPI_PROVIDER_LOCAL_ID,
         },
         purpose: family.purpose,
         allowedHttpsOrigin: family.requestAuth.materialization.origin,

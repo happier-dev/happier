@@ -1,6 +1,9 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
-import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
+import {
+  CLIPROXYAPI_PROVIDER_CONTRIBUTION,
+  CLIPROXYAPI_PROVIDER_LOCAL_ID,
+} from './provider/contribution.js';
 import { CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME } from './provider/publicManagedRuntime.js';
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
@@ -12,7 +15,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [], optional: [] },
   providers: {
-    cliproxyapi: {
+    [CLIPROXYAPI_PROVIDER_LOCAL_ID]: {
       declaration: CLIPROXYAPI_PROVIDER_CONTRIBUTION,
       runtime: CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME,
     },

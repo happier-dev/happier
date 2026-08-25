@@ -90,6 +90,63 @@ describe('readAfterOpenCodeTranscript', () => {
     }));
   });
 
+  it('advances through every supported tool call and terminal result without exposing reasoning', async () => {
+    sessionMessagesList.mockResolvedValueOnce({
+      items: [{
+        info: { id: 'msg-tools', role: 'assistant', time: { created: 1 } },
+        parts: [
+          { type: 'reasoning', text: 'do not disclose this' },
+          {
+            id: 'part-tools',
+            type: 'tool',
+            sessionID: 'sess-1',
+            messageID: 'msg-tools',
+            callID: 'call-tools',
+            tool: 'bash',
+            state: {
+              status: 'completed',
+              input: { command: 'pwd' },
+              output: '/repo\\n',
+            },
+          },
+        ],
+      }],
+      nextCursor: null,
+    });
+
+    const result = await readAfterOpenCodeTranscript({
+      source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4099' },
+      providerSessionId: 'sess-1',
+      cursor: encodeOpenCodeExternalAfterCursor({
+        v: 3,
+        kind: 'opencodeAfter',
+        messageId: null,
+        sessionCreatedAtMs: 100,
+      }),
+      maxBytes: 100_000,
+      maxItems: 2,
+    });
+
+    expect(result).toMatchObject({ outcome: 'advanced' });
+    if (result.outcome !== 'advanced') throw new Error('Expected advanced OpenCode tools');
+    expect(result.items.map((item) => (item.raw.content as Readonly<{ data: unknown }>).data)).toEqual([
+      {
+        type: 'tool-call',
+        id: expect.stringMatching(/:tool-call:/u),
+        callId: 'call-tools',
+        name: 'bash',
+        input: { command: 'pwd' },
+      },
+      {
+        type: 'tool-result',
+        id: expect.stringMatching(/:tool-result:/u),
+        callId: 'call-tools',
+        output: '/repo\\n',
+      },
+    ]);
+    expect(JSON.stringify(result)).not.toContain('do not disclose this');
+  });
+
   it.each([
     {
       name: 'known internal',

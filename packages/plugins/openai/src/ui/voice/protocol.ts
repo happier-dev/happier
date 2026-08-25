@@ -3,12 +3,13 @@ import {
   createVoiceTranscriptLadderMapper,
   VoiceRealtimeJsonValueSchema,
   VoiceRealtimeToolCallV1Schema,
-  VoiceRealtimeToolResultV1Schema } from '@happier-dev/plugin-sdk/voice/client';
+  VoiceRealtimeToolResultV1Schema,
+  type VoiceRealtimeJsonValue,
+  type VoiceRealtimeToolResult as VoiceRealtimeToolResultV1,
+} from '@happier-dev/plugin-sdk/voice/client';
 import {
   createVoiceRecordSchema,
   withVoiceSchemaField,
-  type VoiceRealtimeJsonValue,
-  type VoiceRealtimeToolResult as VoiceRealtimeToolResultV1,
 } from '@happier-dev/plugin-sdk/voice';
 import { z } from 'zod';
 import type {
@@ -44,17 +45,18 @@ const OpenAiSpeechStoppedEventSchema = z.object({
   type: z.literal('input_audio_buffer.speech_stopped'),
   event_id: OpenAiIdSchema,
 });
-const OpenAiResponseAudioDeltaEventSchema = z.object({
-  type: z.literal('response.output_audio.delta'),
+const OpenAiOutputAudioBufferStartedEventSchema = z.object({
+  type: z.literal('output_audio_buffer.started'),
   event_id: OpenAiIdSchema,
-  response_id: OpenAiIdSchema,
-  item_id: OpenAiIdSchema,
-  delta: z.string().min(1),
+  response_id: OpenAiIdSchema.optional(),
 });
-const OpenAiResponseAudioDoneEventSchema = z.object({
-  type: z.literal('response.output_audio.done'),
+const OpenAiOutputAudioBufferStoppedEventSchema = z.object({
+  type: z.literal('output_audio_buffer.stopped'),
   event_id: OpenAiIdSchema,
-  item_id: OpenAiIdSchema,
+});
+const OpenAiOutputAudioBufferClearedEventSchema = z.object({
+  type: z.literal('output_audio_buffer.cleared'),
+  event_id: OpenAiIdSchema,
 });
 const OpenAiInputTranscriptionDeltaEventSchema = z.object({
   type: z.literal('conversation.item.input_audio_transcription.delta'),
@@ -71,12 +73,14 @@ const OpenAiInputTranscriptionCompletedEventSchema = z.object({
 const OpenAiOutputTranscriptDeltaEventSchema = z.object({
   type: z.literal('response.output_audio_transcript.delta'),
   event_id: OpenAiIdSchema,
+  response_id: OpenAiIdSchema.optional(),
   item_id: OpenAiIdSchema,
   delta: z.string(),
 });
 const OpenAiOutputTranscriptDoneEventSchema = z.object({
   type: z.literal('response.output_audio_transcript.done'),
   event_id: OpenAiIdSchema,
+  response_id: OpenAiIdSchema.optional(),
   item_id: OpenAiIdSchema,
   transcript: z.string(),
 });
@@ -96,12 +100,11 @@ const OpenAiResponseFunctionCallSchema = z.object({
 });
 const OpenAiResponseBaseSchema = z.object({
   id: OpenAiIdSchema,
-  // Terminality is a semantic fact this adapter acts on, not a shape check: a
-  // `response.done` carrying a nonterminal status must not close output, but an
-  // omitted status (the pinned SDK types it optional) must not annihilate the
-  // event and its tool calls. Output entries are likewise admitted per item —
-  // one unrecognized entry must not cost the response its stop edge or its
-  // sibling tool calls.
+  // Completion is a semantic fact, not a shape check: only an explicitly
+  // completed `response.done` may initiate tool effects. The pinned SDK type
+  // keeps this optional, so the parser still accepts missing status while the
+  // effect path fails closed. Output lifecycle is carried independently by
+  // output-audio-buffer events.
   status: z.string().optional(),
   output: z.unknown().optional(),
 });
@@ -120,20 +123,17 @@ const OpenAiResponseDoneEventSchema = withVoiceSchemaField(
   'response',
   OpenAiResponseSchema,
 );
-const OPENAI_TERMINAL_RESPONSE_STATUSES: ReadonlySet<string> = new Set([
-  'completed',
-  'cancelled',
-  'failed',
-  'incomplete',
-]);
+const OPENAI_SUCCESSFUL_RESPONSE_STATUS = 'completed';
+const MAX_OUTPUT_ITEM_RESPONSE_IDENTITIES = 4_096;
 
 const OpenAiServerEventSchemaByType = Object.freeze({
   'session.created': OpenAiSessionCreatedEventSchema,
   'error': OpenAiErrorEventSchema,
   'input_audio_buffer.speech_started': OpenAiSpeechStartedEventSchema,
   'input_audio_buffer.speech_stopped': OpenAiSpeechStoppedEventSchema,
-  'response.output_audio.delta': OpenAiResponseAudioDeltaEventSchema,
-  'response.output_audio.done': OpenAiResponseAudioDoneEventSchema,
+  'output_audio_buffer.started': OpenAiOutputAudioBufferStartedEventSchema,
+  'output_audio_buffer.stopped': OpenAiOutputAudioBufferStoppedEventSchema,
+  'output_audio_buffer.cleared': OpenAiOutputAudioBufferClearedEventSchema,
   'conversation.item.input_audio_transcription.delta': OpenAiInputTranscriptionDeltaEventSchema,
   'conversation.item.input_audio_transcription.completed': OpenAiInputTranscriptionCompletedEventSchema,
   'response.output_audio_transcript.delta': OpenAiOutputTranscriptDeltaEventSchema,
@@ -150,8 +150,9 @@ type OpenAiRecognizedServerEvent =
   | z.infer<typeof OpenAiErrorEventSchema>
   | z.infer<typeof OpenAiSpeechStartedEventSchema>
   | z.infer<typeof OpenAiSpeechStoppedEventSchema>
-  | z.infer<typeof OpenAiResponseAudioDeltaEventSchema>
-  | z.infer<typeof OpenAiResponseAudioDoneEventSchema>
+  | z.infer<typeof OpenAiOutputAudioBufferStartedEventSchema>
+  | z.infer<typeof OpenAiOutputAudioBufferStoppedEventSchema>
+  | z.infer<typeof OpenAiOutputAudioBufferClearedEventSchema>
   | z.infer<typeof OpenAiInputTranscriptionDeltaEventSchema>
   | z.infer<typeof OpenAiInputTranscriptionCompletedEventSchema>
   | z.infer<typeof OpenAiOutputTranscriptDeltaEventSchema>
@@ -318,7 +319,9 @@ export function createOpenAiRealtimeProtocolAdapter(input: Readonly<{
   const transcriptLadder = createVoiceTranscriptLadderMapper();
   const seenEventIds = new Set<string>();
   const seenEventOrder: string[] = [];
-  const activeOutputItems = new Map<string, string>();
+  const outputItemByResponseId = new Map<string, string | null>();
+  let activeOutputResponseId: string | null = null;
+  let activeOutputItemId: string | null = null;
 
   const rememberEventId = (eventId: string): boolean => {
     if (seenEventIds.has(eventId)) return false;
@@ -337,6 +340,38 @@ export function createOpenAiRealtimeProtocolAdapter(input: Readonly<{
     return event ? { type: 'transcript', event } : null;
   };
 
+  const rememberOutputItem = (responseId: string | undefined, itemId: string): string | null => {
+    if (!responseId) return null;
+    const existing = outputItemByResponseId.get(responseId);
+    const identity = existing === undefined
+      ? itemId
+      : existing === itemId
+        ? itemId
+        : null;
+    outputItemByResponseId.set(responseId, identity);
+    while (outputItemByResponseId.size > MAX_OUTPUT_ITEM_RESPONSE_IDENTITIES) {
+      const oldest = outputItemByResponseId.keys().next().value;
+      if (oldest === undefined) break;
+      outputItemByResponseId.delete(oldest);
+    }
+    return identity;
+  };
+
+  const publishOutputItemIdentity = (
+    responseId: string | undefined,
+    itemId: string,
+    result: VoiceRealtimeCanonicalEvent[],
+  ): void => {
+    const identity = rememberOutputItem(responseId, itemId);
+    if (!responseId || responseId !== activeOutputResponseId || identity === activeOutputItemId) {
+      return;
+    }
+    activeOutputItemId = identity;
+    result.push(identity
+      ? { type: 'assistant_output_started', itemId: identity }
+      : { type: 'assistant_output_started' });
+  };
+
   return Object.freeze({
     preflight: input.preflight,
     prepare: input.prepare,
@@ -352,7 +387,9 @@ export function createOpenAiRealtimeProtocolAdapter(input: Readonly<{
         transcriptLadder.beginConversation();
         seenEventIds.clear();
         seenEventOrder.length = 0;
-        activeOutputItems.clear();
+        outputItemByResponseId.clear();
+        activeOutputResponseId = null;
+        activeOutputItemId = null;
       }
       rememberEventId(providerEventId);
       const eventId = providerEventId;
@@ -367,17 +404,26 @@ export function createOpenAiRealtimeProtocolAdapter(input: Readonly<{
       } else if (event.type === 'input_audio_buffer.speech_stopped') {
         result.push({ type: 'input_speech_stopped' });
       }
-      if (event.type === 'response.output_audio.delta' && !activeOutputItems.has(event.item_id)) {
-        const wasIdle = activeOutputItems.size === 0;
-        activeOutputItems.set(event.item_id, event.response_id);
-        result.push(wasIdle
-          ? { type: 'assistant_output_started', itemId: event.item_id }
+      if (event.type === 'output_audio_buffer.started') {
+        // WebRTC carries output audio on the remote media track. This semantic
+        // edge marks assistant output for shared playback coordination. The
+        // provider names the response here but only names its transcript item
+        // on the later transcript event, so preserve that narrow codec-local
+        // correlation and upgrade the existing barge-in owner once known.
+        activeOutputResponseId = event.response_id ?? null;
+        const knownItemId = event.response_id
+          ? outputItemByResponseId.get(event.response_id)
+          : undefined;
+        activeOutputItemId = typeof knownItemId === 'string' ? knownItemId : null;
+        result.push(activeOutputItemId
+          ? { type: 'assistant_output_started', itemId: activeOutputItemId }
           : { type: 'assistant_output_started' });
       } else if (
-        event.type === 'response.output_audio.done'
-        && activeOutputItems.delete(event.item_id)
-        && activeOutputItems.size === 0
+        event.type === 'output_audio_buffer.stopped'
+        || event.type === 'output_audio_buffer.cleared'
       ) {
+        activeOutputResponseId = null;
+        activeOutputItemId = null;
         result.push({ type: 'assistant_output_stopped' });
       }
       if (event.type === 'conversation.item.input_audio_transcription.delta') {
@@ -393,27 +439,23 @@ export function createOpenAiRealtimeProtocolAdapter(input: Readonly<{
         if (mapped) result.push(mapped);
       } else if (event.type === 'response.output_audio_transcript.delta') {
         const mapped = transcriptEvent({ itemId: event.item_id, eventId, role: 'assistant', incoming: event.delta, mode: 'delta' });
-        if (mapped) result.push(mapped);
+        if (mapped) {
+          publishOutputItemIdentity(event.response_id, event.item_id, result);
+          result.push(mapped);
+        }
       } else if (event.type === 'response.output_audio_transcript.done') {
         const mapped = transcriptEvent({ itemId: event.item_id, eventId, role: 'assistant', incoming: text(event.transcript), mode: 'final' });
-        if (mapped) result.push(mapped);
+        if (mapped) {
+          publishOutputItemIdentity(event.response_id, event.item_id, result);
+          result.push(mapped);
+        }
       }
       if (
         event.type === 'response.done'
-        && (
-          event.response.status === undefined
-          || OPENAI_TERMINAL_RESPONSE_STATUSES.has(event.response.status)
-        )
+        && event.response.status === OPENAI_SUCCESSFUL_RESPONSE_STATUS
       ) {
         const response = event.response;
         const responseId = response.id;
-        let stopped = false;
-        for (const [activeItemId, activeResponseId] of activeOutputItems) {
-          if (activeResponseId !== responseId) continue;
-          activeOutputItems.delete(activeItemId);
-          stopped = true;
-        }
-        if (stopped && activeOutputItems.size === 0) result.push({ type: 'assistant_output_stopped' });
         const calls = (response.output ?? []).flatMap((rawCall, order) => {
           const parsedCall = OpenAiResponseFunctionCallSchema.safeParse(rawCall);
           if (!parsedCall.success) return [];

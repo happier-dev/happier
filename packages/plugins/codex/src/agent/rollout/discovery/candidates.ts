@@ -326,7 +326,7 @@ async function resolveRolloutCandidateSessionId(
 
 export async function collectCodexRolloutCandidateEntries(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   filenameIncludes?: string;
 }> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutCandidateEntry[]> {
@@ -381,7 +381,7 @@ export async function collectCodexRolloutCandidateEntries(params: Readonly<{
 
 export async function selectCodexRolloutCandidateEntries(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   offset?: number;
   limit?: number;
@@ -582,7 +582,7 @@ async function resolveResumeContainerGeneration(params: Readonly<{
 
 async function listCandidateCorpusContainers(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
 }> & CodexExternalSessionInvocationBounds): Promise<CandidateContainer[]> {
   throwIfCodexExternalSessionInvocationStopped(params);
@@ -666,7 +666,7 @@ async function withRolloutCandidateTitles(params: Readonly<{
  */
 export async function scanCodexRolloutCandidateChunk(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   limit: number;
   after?: CodexRolloutCandidateScanBoundary | null;

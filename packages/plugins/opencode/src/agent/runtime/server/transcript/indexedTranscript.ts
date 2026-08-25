@@ -24,6 +24,10 @@ export type OpenCodeBackwardTranscriptWindowV1<TItem> = Readonly<{
   truncated: boolean;
 }>;
 
+export class OpenCodeTranscriptItemLimitError extends Error {
+  readonly name = 'OpenCodeTranscriptItemLimitError';
+}
+
 export type OpenCodeTranscriptProjectionOptions = Readonly<{
   isHappierAuthoredProviderUserMessageId?: (messageId: string) => boolean;
 }>;
@@ -218,7 +222,7 @@ export function readOpenCodeTranscriptForwardWindow<TItem>(params: Readonly<{
   startIndex: number;
   maxItems: number;
   maxBytes: number;
-  mapMessage: (message: unknown, index: number) => TItem | null;
+  mapMessage: (message: unknown, index: number) => TItem | readonly TItem[] | null;
   measureItemBytes: (item: TItem) => number;
 }>): OpenCodeForwardTranscriptWindowV1<TItem> {
   const items: TItem[] = [];
@@ -228,18 +232,28 @@ export function readOpenCodeTranscriptForwardWindow<TItem>(params: Readonly<{
   let truncated = false;
 
   for (let index = nextIndex; index < params.messages.length; index += 1) {
-    const item = params.mapMessage(params.messages[index], index);
+    const mapped = params.mapMessage(params.messages[index], index);
     nextIndex = index + 1;
-    if (!item) continue;
+    if (mapped === null) continue;
+    const mappedItems = Array.isArray(mapped) ? mapped : [mapped];
+    if (mappedItems.length === 0) continue;
+    if (mappedItems.length > maxItems) {
+      throw new OpenCodeTranscriptItemLimitError(
+        'OpenCode source message contains more semantic items than the requested transcript page allows.',
+      );
+    }
 
-    const itemBytes = params.measureItemBytes(item);
-    if (items.length >= maxItems) {
+    const itemBytes = mappedItems.reduce(
+      (total, item) => total + params.measureItemBytes(item),
+      0,
+    );
+    if (items.length + mappedItems.length > maxItems) {
       nextIndex = index;
       truncated = true;
       break;
     }
     if (itemBytes > remainingBytes && items.length === 0) {
-      items.push(item);
+      items.push(...mappedItems);
       truncated = true;
       break;
     }
@@ -248,7 +262,7 @@ export function readOpenCodeTranscriptForwardWindow<TItem>(params: Readonly<{
       truncated = true;
       break;
     }
-    items.push(item);
+    items.push(...mappedItems);
     remainingBytes = Math.max(0, remainingBytes - itemBytes);
   }
 
@@ -265,7 +279,7 @@ export function readOpenCodeTranscriptBackwardWindow<TItem>(params: Readonly<{
   maxItems: number;
   maxBytes: number;
   rawItemLimit?: number;
-  mapMessage: (message: unknown, index: number) => TItem | null;
+  mapMessage: (message: unknown, index: number) => TItem | readonly TItem[] | null;
   measureItemBytes: (item: TItem) => number;
 }>): OpenCodeBackwardTranscriptWindowV1<TItem> {
   const reversedItems: TItem[] = [];
@@ -279,18 +293,28 @@ export function readOpenCodeTranscriptBackwardWindow<TItem>(params: Readonly<{
   let truncated = false;
 
   for (let index = nextIndex - 1; index >= lowerBound; index -= 1) {
-    const item = params.mapMessage(params.messages[index], index);
+    const mapped = params.mapMessage(params.messages[index], index);
     nextIndex = index;
-    if (!item) continue;
+    if (mapped === null) continue;
+    const mappedItems = Array.isArray(mapped) ? mapped : [mapped];
+    if (mappedItems.length === 0) continue;
+    if (mappedItems.length > maxItems) {
+      throw new OpenCodeTranscriptItemLimitError(
+        'OpenCode source message contains more semantic items than the requested transcript page allows.',
+      );
+    }
 
-    const itemBytes = params.measureItemBytes(item);
-    if (reversedItems.length >= maxItems) {
+    const itemBytes = mappedItems.reduce(
+      (total, item) => total + params.measureItemBytes(item),
+      0,
+    );
+    if (reversedItems.length + mappedItems.length > maxItems) {
       nextIndex = index + 1;
       truncated = true;
       break;
     }
     if (itemBytes > remainingBytes && reversedItems.length === 0) {
-      reversedItems.push(item);
+      reversedItems.push(...[...mappedItems].reverse());
       truncated = true;
       break;
     }
@@ -299,7 +323,7 @@ export function readOpenCodeTranscriptBackwardWindow<TItem>(params: Readonly<{
       truncated = true;
       break;
     }
-    reversedItems.push(item);
+    reversedItems.push(...[...mappedItems].reverse());
     remainingBytes = Math.max(0, remainingBytes - itemBytes);
   }
 

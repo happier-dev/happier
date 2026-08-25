@@ -142,6 +142,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [],
     "systemTools": [
       {

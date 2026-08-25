@@ -14,6 +14,7 @@ describe('forkCodexNativeAppServerConversation', () => {
     expect(request).toHaveBeenCalledWith('thread/fork', {
       threadId: 'parent-thread',
       persistExtendedHistory: true,
+      excludeTurns: true,
     }, { timeoutMs: null });
   });
 
@@ -51,6 +52,7 @@ describe('forkCodexNativeAppServerConversation', () => {
     expect(request).toHaveBeenNthCalledWith(1, 'thread/fork', {
       threadId: 'parent-thread',
       persistExtendedHistory: true,
+      excludeTurns: true,
     }, { timeoutMs: null });
     expect(request).toHaveBeenNthCalledWith(2, 'conversation/fork', {
       threadId: 'parent-thread',
@@ -73,6 +75,7 @@ describe('forkCodexNativeAppServerConversation', () => {
     expect(request).toHaveBeenCalledWith('thread/fork', {
       threadId: 'parent-thread',
       persistExtendedHistory: true,
+      excludeTurns: true,
     }, { timeoutMs: null });
   });
 
@@ -95,6 +98,7 @@ describe('forkCodexNativeAppServerConversation', () => {
     expect(request).toHaveBeenCalledWith('thread/fork', {
       threadId: 'parent-thread',
       persistExtendedHistory: true,
+      excludeTurns: true,
     }, { timeoutMs: null, signal: controller.signal });
   });
 
@@ -121,6 +125,7 @@ describe('forkCodexNativeAppServerConversation', () => {
     expect(request).toHaveBeenCalledWith('thread/fork', {
       threadId: 'parent-thread',
       persistExtendedHistory: true,
+      excludeTurns: true,
     }, { timeoutMs: null, signal: controller.signal });
   });
 

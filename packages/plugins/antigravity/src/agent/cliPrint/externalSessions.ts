@@ -15,16 +15,21 @@ import type {
   AgentExternalSessionsReadAfterTranscriptResult,
   AgentExternalSessionsTranscriptPage,
 } from '@happier-dev/plugin-sdk/sessions/external';
-import { compareExternalSessionCandidatePrecedence } from '@happier-dev/plugin-sdk/sessions/external';
+import {
+  compareExternalSessionCandidatePrecedence,
+  createAgentExternalSessionsProducerOverflowFailure,
+  getAgentExternalSessionsInvocationFailure,
+  isAgentExternalSessionsResultWithinByteBudget,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import { canonicalizePath } from '@happier-dev/plugin-sdk/fs';
 
 import {
   AntigravityCandidateSourceChangedError,
+  authorizeAntigravityConversationTranscriptFile,
   isSafeAntigravityConversationId,
   pageAntigravityConversationCandidates,
   resolveAntigravityBrainDir,
   resolveAntigravityConversationCandidate,
-  resolveAntigravityTranscriptFullPath,
 } from './conversationStore.js';
 import {
   pageAntigravityTranscriptLines,
@@ -152,28 +157,15 @@ function failed(
   };
 }
 
-function serializedByteLength(value: unknown): number {
-  return Buffer.byteLength(JSON.stringify(value), 'utf8');
-}
-
-function invocationFailure(
-  invocation: AgentExternalSessionsInvocation,
-): AgentExternalSessionsResult<never> | null {
-  if (invocation.signal.aborted) return failed('cancelled');
-  if (Date.now() >= invocation.deadlineAtMs) return failed('timeout', undefined, true);
-  if (!Number.isFinite(invocation.maxSerializedBytes) || invocation.maxSerializedBytes < 1) {
-    return failed('invalid_request');
-  }
-  return null;
-}
-
 function boundedResult<T>(
   invocation: AgentExternalSessionsInvocation,
   result: AgentExternalSessionsResult<T>,
 ): AgentExternalSessionsResult<T> {
-  return serializedByteLength(result) <= invocation.maxSerializedBytes
+  return isAgentExternalSessionsResultWithinByteBudget(result, invocation.maxSerializedBytes)
     ? result
-    : failed('invalid_request');
+    : createAgentExternalSessionsProducerOverflowFailure(
+      'Antigravity result cannot fit the valid serialized-byte bound.',
+    );
 }
 
 function readString(value: AgentExternalSessionLinkDataValue | undefined): string | null {
@@ -513,7 +505,7 @@ async function listFullCandidateSearch(params: Readonly<{
   const retained: AgentExternalSessionCandidate[] = [];
 
   while (true) {
-    const stopped = invocationFailure(params.invocation);
+    const stopped = getAgentExternalSessionsInvocationFailure(params.invocation);
     if (stopped) return stopped;
     const page = await pageAntigravityConversationCandidates({
       brainDir: params.brainDir,
@@ -562,7 +554,7 @@ async function listFullCandidateSearch(params: Readonly<{
   if (params.cursor && formatServedMatchDigest(precedingMatchDigest) !== params.cursor.servedDigest) {
     return failed('source_invalid', 'Antigravity full-search candidate ordering changed under its cursor.', true);
   }
-  const stopped = invocationFailure(params.invocation);
+  const stopped = getAgentExternalSessionsInvocationFailure(params.invocation);
   if (stopped) return stopped;
 
   if (retained.length === 0) {
@@ -573,7 +565,7 @@ async function listFullCandidateSearch(params: Readonly<{
   while (candidates.length > 0) {
     const hasMore = retained.length > candidates.length;
     const lastCandidate = candidates.at(-1);
-    if (!lastCandidate) return failed('invalid_request');
+    if (!lastCandidate) return failed('agent_error', 'Antigravity candidate projection is incomplete.', false);
     const servedDigest = new Uint8Array(precedingMatchDigest);
     for (const served of candidates) foldServedMatchDigest(servedDigest, served.remoteSessionId);
     const nextCursor = hasMore && sourceGeneration
@@ -585,16 +577,23 @@ async function listFullCandidateSearch(params: Readonly<{
         candidate: lastCandidate,
       })
       : null;
-    if (hasMore && !nextCursor) return failed('invalid_request');
+    if (hasMore && !nextCursor) {
+      return failed('agent_error', 'Antigravity candidate continuation cannot be represented.', false);
+    }
     const result = ok({
       candidates,
       nextCursor,
     });
-    if (serializedByteLength(result) <= params.invocation.maxSerializedBytes) return result;
+    if (isAgentExternalSessionsResultWithinByteBudget(
+      result,
+      params.invocation.maxSerializedBytes,
+    )) return result;
     candidates = candidates.slice(0, -1);
   }
 
-  return failed('invalid_request');
+  return createAgentExternalSessionsProducerOverflowFailure(
+    'Antigravity candidate result cannot fit the valid serialized-byte bound.',
+  );
 }
 
 async function resolveIdentity(params: Readonly<{
@@ -642,11 +641,17 @@ async function resolveTranscriptReadTarget(params: Readonly<{
     if (!isSafeAntigravityConversationId(params.remoteSessionId)) {
       return failed('source_invalid', 'Antigravity conversation identity is invalid.');
     }
+    const authorization = await authorizeAntigravityConversationTranscriptFile({
+      brainDir: params.brainDir,
+      conversationId: params.remoteSessionId,
+    });
+    if (authorization.status !== 'authorized') {
+      return authorization.status === 'unavailable'
+        ? failed('unavailable', 'Antigravity conversation is unavailable.', true)
+        : failed('candidate_not_found', 'Antigravity conversation was not found or was replaced.');
+    }
     return ok({
-      transcriptPath: resolveAntigravityTranscriptFullPath(
-        params.brainDir,
-        params.remoteSessionId,
-      ),
+      transcriptPath: authorization.transcriptPath,
       sourceRevision,
     });
   }
@@ -803,7 +808,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
 
   return Object.freeze({
     async resolveSource(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       const validation = await validateSource({ source: request.source, env: readEnv() });
       if (!validation.ok) return boundedResult(request, validation);
@@ -811,7 +816,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
     },
 
     async listCandidates(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) return failed('invalid_request');
       const validation = await validateSource({ source: request.source, env: readEnv() });
@@ -881,10 +886,19 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
               ? { searchIncomplete: true }
               : { preparation: { kind: 'building_candidate_index' as const, scanned: candidate.directoryEntryOffset } }),
           });
-          if (serializedByteLength(proposed) > request.maxSerializedBytes) {
-            if (candidates.length === 0) return failed('invalid_request');
+          if (!isAgentExternalSessionsResultWithinByteBudget(
+            proposed,
+            request.maxSerializedBytes,
+          )) {
+            if (candidates.length === 0) {
+              return createAgentExternalSessionsProducerOverflowFailure(
+                'Antigravity candidate result cannot fit the valid serialized-byte bound.',
+              );
+            }
             const lastAcceptedCandidate = filtered[index - 1];
-            if (!lastAcceptedCandidate || !page.sourceGeneration) return failed('invalid_request');
+            if (!lastAcceptedCandidate || !page.sourceGeneration) {
+              return failed('agent_error', 'Antigravity candidate continuation cannot be represented.', false);
+            }
             return ok({
               candidates,
               nextCursor: encodeCandidateCursor({
@@ -923,7 +937,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
         });
         return boundedResult(request, result);
       } catch (error) {
-        const after = invocationFailure(request);
+        const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) return after;
         if (error instanceof AntigravityCandidateSourceChangedError) {
           return boundedResult(request, failed('source_invalid', error.message, true));
@@ -937,7 +951,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
     },
 
     async resolveLinkIdentity(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       const identityMismatch = validateResolvedSourceIdentity(request.source, request.remoteSessionId);
       if (identityMismatch) return boundedResult(request, identityMismatch);
@@ -954,7 +968,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
     },
 
     async resolveLinkedIdentity(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       const identityMismatch = validateResolvedSourceIdentity(request.source, request.remoteSessionId);
       if (identityMismatch) return boundedResult(request, identityMismatch);
@@ -973,7 +987,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
     },
 
     async pageTranscript(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (request.direction !== 'older') return failed('unsupported');
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) return failed('invalid_request');
@@ -1003,7 +1017,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
         maxItems: nativeMaxItems,
         maxBytes: nativeMaxBytes,
       });
-      const after = invocationFailure(request);
+      const after = getAgentExternalSessionsInvocationFailure(request);
       if (after) return after;
       if (outcome.kind === 'source_unavailable') return failed('unavailable', undefined, true);
       if (outcome.kind === 'read_failed') return boundedResult(request, failed('agent_error', outcome.error));
@@ -1099,7 +1113,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
     },
 
     async readAfterTranscript(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) return failed('invalid_request');
       const identityMismatch = validateResolvedSourceIdentity(request.source, request.remoteSessionId);
@@ -1111,7 +1125,19 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
         source: request.source,
         remoteSessionId: request.remoteSessionId,
       });
-      if (!resolved.ok) return boundedResult(request, resolved);
+      if (!resolved.ok) {
+        // The shared physical authorizer classifies an absent physical file
+        // separately from an unauthorized alias. Read-after exposes the former
+        // as its successful source discontinuity; an alias remains an identity
+        // failure. Page/identity calls keep their own method contract at the
+        // same authorizer.
+        return boundedResult(
+          request,
+          resolved.code === 'unavailable'
+            ? ok({ outcome: 'source_unavailable' as const })
+            : resolved,
+        );
+      }
       const outcome = await readAntigravityExternalTranscriptAfter({
         transcriptPath: resolved.value.transcriptPath,
         conversationId: request.remoteSessionId,
@@ -1120,7 +1146,7 @@ export function createAntigravityExternalSessionsContribution(params: Readonly<{
         maxItems: request.maxItems,
         maxBytes: request.maxSerializedBytes,
       });
-      const after = invocationFailure(request);
+      const after = getAgentExternalSessionsInvocationFailure(request);
       if (after) return after;
       return boundedResult(request, mapReadAfterOutcome(outcome));
     },

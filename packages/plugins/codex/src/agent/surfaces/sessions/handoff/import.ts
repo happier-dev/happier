@@ -10,7 +10,7 @@ import {
   withExclusiveFileLock,
 } from '@happier-dev/plugin-sdk/fs';
 
-import { collectCodexSessionRolloutFiles } from '../../../rollout/discovery/sessionsForHome.js';
+import { collectCodexRootSessionRolloutFiles } from '../../../rollout/discovery/sessionsForHome.js';
 import {
   buildCodexAgentRuntimeDescriptor,
   normalizeCodexBackendMode,
@@ -23,12 +23,15 @@ import type {
 import {
   CodexSessionHandoffBundleSchema,
   normalizeCodexHandoffBundleRelativePath,
+  type ValidatedCodexSessionHandoffFile,
+  validateCodexSessionHandoffFiles,
 } from './bundle.js';
 import {
   CodexExternalSessionHandoffSourceSchema,
   type CodexExternalSessionHandoffSource,
   type CodexExternalSessionSource,
 } from '../external/models.js';
+import { resolveCodexRuntimeHomeEnvironment } from '../../../auth/services/state/sharing/files.js';
 
 function parseCodexExternalSessionHandoffSource(source: unknown): CodexExternalSessionHandoffSource | null {
   const parsedSource = CodexExternalSessionHandoffSourceSchema.safeParse(source);
@@ -79,6 +82,16 @@ function resolveCodexHome(env: NodeJS.ProcessEnv): string {
   return raw ? expandHomePath(raw, homeDir) : join(homeDir, '.codex');
 }
 
+function resolveCodexHomeEnvironment(env: NodeJS.ProcessEnv, codexHome: string) {
+  const homeDir = resolveHomeDirFromEnvironment(env);
+  return resolveCodexRuntimeHomeEnvironment({
+    env,
+    codexHome,
+    cwd: process.cwd(),
+    expandHomePath: (rawPath) => expandHomePath(rawPath, homeDir),
+  });
+}
+
 function resolveContainedCodexPath(codexHome: string, relativePath: string): string {
   const root = resolve(codexHome);
   const candidate = resolve(root, relativePath);
@@ -117,7 +130,7 @@ function targetIdentityConflict(relativePath: string, reason: string, cause?: un
 
 function prepareCodexImportFiles(
   codexHome: string,
-  files: CodexSessionHandoffBundle['files'],
+  files: readonly ValidatedCodexSessionHandoffFile[],
 ): readonly PreparedCodexImportFile[] {
   const filesByDestination = new Map<string, PreparedCodexImportFile>();
 
@@ -126,7 +139,7 @@ function prepareCodexImportFiles(
     const prepared = {
       relativePath,
       destinationPath: resolveContainedCodexPath(codexHome, relativePath),
-      content: Buffer.from(file.contentBase64, 'base64'),
+      content: file.content,
     } satisfies PreparedCodexImportFile;
     const previous = filesByDestination.get(prepared.destinationPath);
     if (previous) {
@@ -177,7 +190,7 @@ async function assertExistingCodexNativeSessionBelongsToBundle(
   preparedFiles: readonly PreparedCodexImportFile[],
 ): Promise<void> {
   const preparedDestinations = new Set(preparedFiles.map((file) => file.destinationPath));
-  const existingRollouts = await collectCodexSessionRolloutFiles({
+  const existingRollouts = await collectCodexRootSessionRolloutFiles({
     codexHome,
     remoteSessionId,
   });
@@ -278,6 +291,7 @@ export async function importCodexSessionBundle(params: Readonly<{
 }>): Promise<ImportedCodexSessionHandoffBundle> {
   throwIfAborted(params.signal);
   const bundle = CodexSessionHandoffBundleSchema.parse(normalizeLegacyCodexHandoffBundle(params.bundle)) as CodexSessionHandoffBundle;
+  const validatedFiles = validateCodexSessionHandoffFiles(bundle);
   const codexHome = resolveCodexHome(params.env);
   const runtimeBackendMode = normalizeCodexBackendMode(bundle.affinity?.backendMode) ?? 'appServer';
   const importedRuntimeDescriptor = readCanonicalCodexAgentRuntimeDescriptorV1(bundle.affinity?.runtimeDescriptor);
@@ -322,7 +336,7 @@ export async function importCodexSessionBundle(params: Readonly<{
     bundle.remoteSessionId,
     params.signal,
     async (physicalCodexHome) => {
-      const preparedFiles = prepareCodexImportFiles(physicalCodexHome, bundle.files);
+      const preparedFiles = prepareCodexImportFiles(physicalCodexHome, validatedFiles);
       throwIfAborted(params.signal);
       await assertExistingCodexNativeSessionBelongsToBundle(
         physicalCodexHome,
@@ -370,7 +384,7 @@ export async function importCodexSessionBundle(params: Readonly<{
     runtimeDescriptorV1: runtimeDescriptor,
     resume: {
       directory: params.targetPath,
-      environmentVariables: { CODEX_HOME: codexHome },
+      environmentVariables: resolveCodexHomeEnvironment(params.env, codexHome),
       resumePlanOptions: { codexBackendMode: runtimeBackendMode },
     },
   };

@@ -161,6 +161,61 @@ describe('OpenCode public External Sessions contribution', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('reports newer transcript paging as typed unsupported instead of an authoritative empty page', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(createOpenCodeExternalSessionsContribution({ env }).pageTranscript({
+      source,
+      remoteSessionId: 'session-1',
+      direction: 'newer',
+      maxItems: 10,
+      ...invocation(),
+    })).resolves.toMatchObject({
+      ok: false,
+      code: 'unsupported',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not split a supported tool call/result pair to satisfy a smaller item limit', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      const url = new URL(input);
+      const body = url.pathname === '/session/session-1'
+        ? {
+            id: 'session-1',
+            time: { created: 1 },
+          }
+        : [{
+            info: { id: 'message-tools', role: 'assistant', time: { created: 1 } },
+            parts: [{
+              type: 'tool',
+              sessionID: 'session-1',
+              messageID: 'message-tools',
+              callID: 'call-tools',
+              tool: 'bash',
+              state: { status: 'completed', input: { command: 'pwd' }, output: '/repo\\n' },
+            }],
+          }];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }));
+
+    await expect(createOpenCodeExternalSessionsContribution({ env }).pageTranscript({
+      source,
+      remoteSessionId: 'session-1',
+      direction: 'older',
+      maxItems: 1,
+      ...invocation(),
+    })).resolves.toMatchObject({
+      ok: false,
+      code: 'agent_error',
+      retryable: false,
+    });
+  });
+
   it('uses bounded official list search and reports an honest incomplete top-N result', async () => {
     const requested: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: string) => {

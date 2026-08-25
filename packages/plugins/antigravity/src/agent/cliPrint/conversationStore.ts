@@ -1,8 +1,9 @@
-import { opendir, readdir, stat } from 'node:fs/promises';
+import { lstat, opendir, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import type { JsonlScannerFileSystem } from '@happier-dev/plugin-sdk/sessions/file-stores';
+import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 
 import {
   readAntigravityTranscriptHeadRecord,
@@ -43,6 +44,49 @@ export function isSafeAntigravityConversationId(value: string): boolean {
     && !value.includes('/')
     && !value.includes('\\')
     && !value.includes('\0');
+}
+
+/**
+ * The single physical authorization decision for an Antigravity transcript.
+ * A configured brain root may itself be a symlink, but every identity below it
+ * has to resolve to one regular file inside that root's physical tree. Exact
+ * lookups, transcript reads, and observation all consume the returned path so
+ * candidate discovery cannot be bypassed with a syntactically safe alias.
+ */
+export type AntigravityConversationTranscriptAuthorization =
+  | Readonly<{ status: 'authorized'; transcriptPath: string }>
+  | Readonly<{ status: 'unavailable' }>
+  | Readonly<{ status: 'unauthorized' }>;
+
+export async function authorizeAntigravityConversationTranscriptFile(params: Readonly<{
+  brainDir: string;
+  conversationId: string;
+}>): Promise<AntigravityConversationTranscriptAuthorization> {
+  if (!isSafeAntigravityConversationId(params.conversationId)) {
+    return { status: 'unauthorized' };
+  }
+  const canonicalBrainDir = await realpath(params.brainDir).catch(() => resolve(params.brainDir));
+  const pathSegments = [
+    params.conversationId,
+    '.system_generated',
+    'logs',
+    'transcript_full.jsonl',
+  ] as const;
+  let currentPath = canonicalBrainDir;
+  for (const [index, segment] of pathSegments.entries()) {
+    currentPath = join(currentPath, segment);
+    const entry = await lstat(currentPath).catch(() => null);
+    const isTranscript = index === pathSegments.length - 1;
+    if (!entry) return { status: 'unavailable' };
+    if (isTranscript ? !entry.isFile() : !entry.isDirectory()) {
+      return { status: 'unauthorized' };
+    }
+  }
+  const physicalTranscriptPath = await realpath(currentPath).catch(() => null);
+  if (!physicalTranscriptPath) return { status: 'unavailable' };
+  return isCanonicalAbsolutePathInsideRoot(canonicalBrainDir, physicalTranscriptPath)
+    ? { status: 'authorized', transcriptPath: physicalTranscriptPath }
+    : { status: 'unauthorized' };
 }
 
 export type AntigravityConversationCandidate = Readonly<{
@@ -107,8 +151,9 @@ export async function resolveAntigravityConversationCandidate(params: Readonly<{
   conversationId: string;
   fileSystem?: JsonlScannerFileSystem;
 }>): Promise<AntigravityConversationCandidate | null> {
-  if (!isSafeAntigravityConversationId(params.conversationId)) return null;
-  const transcriptPath = resolveAntigravityTranscriptFullPath(params.brainDir, params.conversationId);
+  const authorization = await authorizeAntigravityConversationTranscriptFile(params);
+  if (authorization.status !== 'authorized') return null;
+  const transcriptPath = authorization.transcriptPath;
   const snapshot = await snapshotAntigravityTranscriptSource(transcriptPath);
   if (!snapshot) return null;
   const title = await readAntigravityConversationTitle({

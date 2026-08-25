@@ -1,3 +1,8 @@
+import { isPluginError } from '@happier-dev/plugin-sdk';
+import {
+  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
+  CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
   AgentRuntimeContext,
   AgentSessionOpenRequest,
@@ -43,11 +48,12 @@ const OPEN_CODE_NATIVE_AUTH_ENV_KEYS = Object.freeze([
   'OPENCODE_AUTH_CONTENT',
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
+  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey,
 ] as const);
 
 export type PreparedOpenCodeQualifiedConnectedAccounts = Readonly<{
   request: AgentSessionOpenRequest;
+  isInvalidated(): boolean;
   bind(session: AgentSessionRuntime): AgentSessionRuntime;
   dispose(): Promise<void>;
 }>;
@@ -74,7 +80,6 @@ function readExactEnvironmentValue(
     AgentRuntimeContext['services']['connectedAccounts']['materialize']
   >>,
   key: string,
-  options: Readonly<{ allowEmpty: boolean }>,
 ): string {
   if (materialized.kind !== 'environment') {
     throw new Error(`OpenCode ${purpose} returned an invalid environment materialization`);
@@ -84,7 +89,7 @@ function readExactEnvironmentValue(
     throw new Error(`OpenCode ${purpose} returned an unrequested environment materialization`);
   }
   const value = materialized.env[key]?.trim() ?? '';
-  if (!options.allowEmpty && !value) {
+  if (!value) {
     throw new Error(`OpenCode ${purpose} did not materialize ${key}`);
   }
   return value;
@@ -105,7 +110,7 @@ function mergeQualifiedLaunchEnvironment(input: Readonly<{
   const unset = new Set(
     (input.request.launchEnvironment?.unset ?? []).filter((key) => !valueKeys.has(key)),
   );
-  unset.add('CLAUDE_CODE_OAUTH_TOKEN');
+  unset.add(CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey);
   return Object.freeze({
     ...input.request,
     launchEnvironment: Object.freeze({
@@ -194,59 +199,71 @@ export async function prepareOpenCodeQualifiedConnectedAccounts(
     for (const purpose of OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS) {
       assertExpectedBinding(purpose, bindings[purpose]);
     }
+    const openAiCodexBinding = bindings[OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID];
+    const openAiBinding = bindings[OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID];
+    const anthropicRequestAuthBinding = bindings[OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID];
+    const anthropicBinding = bindings[OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID];
 
     const directApiKeys: Partial<Record<'openai' | 'anthropic', string>> = {};
     const requiredRequestAuthProviders: Array<'openai' | 'anthropic'> = [];
     let usedBinding = false;
 
-    if (bindings[OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID]) {
+    if (openAiCodexBinding) {
       usedBinding = true;
       requiredRequestAuthProviders.push('openai');
-    } else if (bindings[OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID]) {
+    } else if (openAiBinding) {
       usedBinding = true;
       const materialized = await context.services.connectedAccounts.materialize(
         OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
         { kind: 'environment', keys: ['OPENAI_API_KEY'] },
-        { signal: context.signal },
+        { signal: context.signal, expectedAccount: openAiBinding.account },
       );
       directApiKeys.openai = readExactEnvironmentValue(
         OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
         materialized,
         'OPENAI_API_KEY',
-        { allowEmpty: false },
       );
     }
 
-    if (bindings[OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID]) {
+    if (anthropicRequestAuthBinding) {
       usedBinding = true;
-      const materialized = await context.services.connectedAccounts.materialize(
-        OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-        { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
-        { signal: context.signal },
-      );
-      const setupToken = readExactEnvironmentValue(
-        OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-        materialized,
-        'CLAUDE_CODE_OAUTH_TOKEN',
-        { allowEmpty: true },
-      );
-      if (setupToken) {
+      try {
+        const materialized = await context.services.connectedAccounts.materialize(
+          OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+          CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
+          {
+            signal: context.signal,
+            expectedAccount: anthropicRequestAuthBinding.account,
+          },
+        );
+        const setupToken = readExactEnvironmentValue(
+          OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+          materialized,
+          CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey,
+        );
         directApiKeys.anthropic = setupToken;
-      } else {
+      } catch (error) {
+        if (
+          !isPluginError(error)
+          || error.code
+            !== CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth
+              .requestAuthRequiredErrorCode
+        ) {
+          throw error;
+        }
         requiredRequestAuthProviders.push('anthropic');
       }
-    } else if (bindings[OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID]) {
+    } else if (anthropicBinding) {
       usedBinding = true;
       const materialized = await context.services.connectedAccounts.materialize(
         OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
         { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] },
-        { signal: context.signal },
+        { signal: context.signal, expectedAccount: anthropicBinding.account },
       );
       directApiKeys.anthropic = readExactEnvironmentValue(
         OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
         materialized,
         'ANTHROPIC_API_KEY',
-        { allowEmpty: false },
       );
     }
 
@@ -263,6 +280,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts(
 
     return Object.freeze({
       request: preparedRequest,
+      isInvalidated: () => invalidated,
       bind(session) {
         let sessionDisposed = false;
         const preparedSession: AgentSessionRuntime = {

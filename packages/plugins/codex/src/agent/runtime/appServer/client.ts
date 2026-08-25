@@ -15,9 +15,7 @@ import {
     resolveHomeDirFromEnvironment,
 } from '@happier-dev/plugin-sdk/fs';
 
-import { parseCodexCliStableVersion } from '../../cli/detect.js';
 import { readCodexAppServerRequestTimeoutMs, readCodexAppServerRpcTimeoutMs } from './client/timeout.js';
-import { isCodexRealtimeConversationCliVersionSupported } from './realtimeSupport.js';
 
 type CodexAppServerEnv = Readonly<Record<string, string | undefined>>;
 
@@ -39,8 +37,6 @@ export type CodexAppServerClient = Readonly<{
 export type DisposableCodexAppServerClient = CodexAppServerClient & Readonly<{
     launchFeatures: Readonly<{
         realtimeConversationAdvertised: boolean;
-        codexCliVersion: string | null;
-        realtimeConversationVersionSupported: boolean;
     }>;
     onExit: (listener: (result: Readonly<{
         exitCode: number | null;
@@ -233,41 +229,6 @@ function advertisesRealtimeConversation(result: PluginProcessResult): boolean {
         .some((line) => line.trimStart().startsWith(`${CODEX_REALTIME_CONVERSATION_FEATURE} `));
 }
 
-function readCodexCliVersion(result: PluginProcessResult): string | null {
-    if (
-        !processExitedSuccessfully(result)
-        || result.stdoutTruncated
-        || result.stderrTruncated
-    ) return null;
-    const output = new TextDecoder().decode(result.stdout).trim();
-    const parsed = parseCodexCliStableVersion(output);
-    return parsed && output === `codex-cli ${parsed.value}` ? parsed.value : null;
-}
-
-async function probeCodexCliVersion(params: Readonly<{
-    exec: ExecService;
-    executable: ManagedExecutableRef;
-    env: CodexAppServerEnv;
-    signal?: AbortSignal;
-}>): Promise<string | null> {
-    try {
-        const request = {
-            executable: params.executable,
-            args: ['--version'],
-            cwd: { root: 'workspace', relativePath: '' },
-            env: buildCodexAppServerEnv(params.env),
-            timeoutMs: readCodexAppServerRpcTimeoutMs(params.env),
-        } as const;
-        const result = params.signal
-            ? await params.exec.run(request, { signal: params.signal })
-            : await params.exec.run(request);
-        return readCodexCliVersion(result);
-    } catch (error) {
-        if (params.signal?.aborted) throw error;
-        return null;
-    }
-}
-
 async function probeCodexRealtimeConversationFeature(params: Readonly<{
     exec: ExecService;
     executable: ManagedExecutableRef;
@@ -434,31 +395,21 @@ export async function createCodexNativeAppServerClient(params: Readonly<{
     cwd?: string;
     configOverrides?: readonly string[];
     disableUserMcpServers?: boolean;
-    /** A fork dispatch must not be locally timed out after Codex has received it. */
-    forkOnly?: boolean;
     signal?: AbortSignal;
+    initializeRequestOptions?: CodexAppServerRequestOptions;
 }>): Promise<DisposableCodexAppServerClient> {
     const env = params.processEnv ?? process.env;
     const resolvedSystemTool = await params.exec.systemTools.resolve({
         toolId: 'codex-cli',
         purpose: 'Launch the Codex native app-server',
     });
-    const codexCliVersion = await probeCodexCliVersion({
-        exec: params.exec,
-        executable: resolvedSystemTool.executable,
-        env,
-        ...(params.signal ? { signal: params.signal } : {}),
-    });
-    const realtimeConversationVersionSupported =
-        isCodexRealtimeConversationCliVersionSupported(codexCliVersion);
     const realtimeConversationAdvertised = await probeCodexRealtimeConversationFeature({
         exec: params.exec,
         executable: resolvedSystemTool.executable,
         env,
         ...(params.signal ? { signal: params.signal } : {}),
     });
-    const enableRealtimeConversation =
-        realtimeConversationVersionSupported && realtimeConversationAdvertised;
+    const enableRealtimeConversation = realtimeConversationAdvertised;
     let handle: PluginProtocolClientHandle<'jsonRpc'>;
     try {
         handle = await params.exec.clients.spawn(buildNativeCodexAppServerClientSpec({
@@ -474,19 +425,14 @@ export async function createCodexNativeAppServerClient(params: Readonly<{
     }
     const client = wrapNativeCodexAppServerClient(handle, env, {
         realtimeConversationAdvertised,
-        codexCliVersion,
-        realtimeConversationVersionSupported,
     });
     try {
         await client.request('initialize', {
             clientInfo: CODEX_APP_SERVER_CLIENT_INFO,
             capabilities: { experimentalApi: true },
-        }, params.forkOnly || params.signal
-            ? {
-                ...(params.forkOnly ? { timeoutMs: null } : {}),
-                ...(params.signal ? { signal: params.signal } : {}),
-            }
-            : undefined);
+        }, params.initializeRequestOptions ?? (params.signal
+            ? { signal: params.signal }
+            : undefined));
         await client.notify('initialized');
         return client;
     } catch (error) {

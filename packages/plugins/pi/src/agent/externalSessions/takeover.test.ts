@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildPiRpcArgs } from '../runtime/rpc/args.js';
 import {
   piExternalSessionTakeoverContribution,
   resolvePiExternalSessionTakeoverPlan,
@@ -47,6 +48,7 @@ describe('Pi external-session takeover', () => {
       request(),
     )).resolves.toEqual({
       ok: true,
+      nativeResumeReference: '/home/lee/.pi/agent/sessions/pi-session-1.jsonl',
       value: {
         directory: '/workspace/original',
         environmentVariables: {
@@ -54,6 +56,45 @@ describe('Pi external-session takeover', () => {
         },
       },
     });
+  });
+
+  it('carries the selected canonical file through native resume when two Pi files share an id', async () => {
+    const selectedSessionFile = '/home/lee/.pi/agent/sessions/workspace-a/pi-shared.jsonl';
+    const siblingSessionFile = '/home/lee/.pi/agent/sessions/workspace-b/pi-shared.jsonl';
+    const resolved = await piExternalSessionTakeoverContribution.resolveLaunch(request({
+      source: {
+        kind: 'piAgentDir',
+        agentDir: '/home/lee/.pi/agent',
+        sessionFile: selectedSessionFile,
+      },
+      remoteSessionId: 'pi-shared',
+      linkData: {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'pi',
+          agent: {
+            resumeStrategy: 'sessionFileAbsolutePreferred',
+            providerSessionId: 'pi-shared',
+            sessionFile: selectedSessionFile,
+          },
+        },
+      },
+    }));
+
+    expect(resolved).toMatchObject({
+      ok: true,
+      nativeResumeReference: selectedSessionFile,
+    });
+    expect(resolved).not.toMatchObject({
+      nativeResumeReference: siblingSessionFile,
+    });
+    const nativeResumeReference = (
+      resolved as Readonly<{ nativeResumeReference?: string }>
+    ).nativeResumeReference;
+    expect(buildPiRpcArgs({ resumeSessionId: nativeResumeReference }).slice(-2)).toEqual([
+      '--session',
+      selectedSessionFile,
+    ]);
   });
 
   it('rejects a mismatched runtime descriptor rather than resuming another Pi store', async () => {

@@ -5,7 +5,7 @@ import type {
   VoiceProviderExecutionAuthority } from '@happier-dev/plugin-sdk/voice/client';
 import type {
   VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice';
+} from '@happier-dev/plugin-sdk/voice/client';
 
 import { CODEX_VOICE_PROVIDER_CONTRIBUTION_ID } from '../../constants.js';
 import {
@@ -33,7 +33,6 @@ const START_REMEDIATION_BY_DIAGNOSTIC_CODE = Object.freeze({
   codex_realtime_thread_unavailable: 'session_unavailable',
   codex_realtime_thread_changed: 'session_unavailable',
   codex_realtime_runtime_unavailable: 'unsupported_runtime',
-  codex_realtime_runtime_version_unsupported: 'update_required',
   codex_realtime_version_unsupported: 'update_required',
   codex_realtime_feature_not_advertised: 'update_required',
   codex_realtime_feature_missing: 'update_required',

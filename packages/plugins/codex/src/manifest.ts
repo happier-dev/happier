@@ -10,7 +10,6 @@ import {
 } from './agent/lifecycle/spawnHooks.js';
 import { readCodexMcpConfigServers } from './agent/mcp/configServers.js';
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
-import { CODEX_REALTIME_CONVERSATION_SUPPORTED_CLI_VERSIONS } from './agent/runtime/appServer/realtimeSupport.js';
 import { createCodexAgentRuntime } from './agent/runtime/engine.js';
 import { codexExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
 import { codexExternalSessionHooksContribution } from './agent/surfaces/sessions/external/externalSessionHooks.js';
@@ -62,7 +61,7 @@ export const CODEX_PLUGIN = definePlugin({
           { kind: 'systemTool', id: 'codex-cli' },
           { kind: 'managedDependency', id: 'codex-acp' },
         ],
-        envKeys: ['CODEX_HOME'],
+        envKeys: ['CODEX_HOME', 'CODEX_SQLITE_HOME'],
       },
     }, {
       id: 'openai-codex-oauth',
@@ -332,7 +331,6 @@ export const CODEX_PLUGIN = definePlugin({
         execution: {
           kind: 'experimental_agent_session_realtime',
           agent: CODEX_AGENT_CONTRIBUTION_IDENTITY,
-          supportedRuntimeVersions: [...CODEX_REALTIME_CONVERSATION_SUPPORTED_CLI_VERSIONS],
         },
         settings: {
           schemaVersion: 2,

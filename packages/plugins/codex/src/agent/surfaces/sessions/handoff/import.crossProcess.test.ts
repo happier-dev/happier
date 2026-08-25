@@ -140,7 +140,17 @@ function divergentBundle(remoteSessionId: string, side: 'left' | 'right'): Bundl
     remoteSessionId,
     files: order.map((index) => ({
       relativePath: `sessions/2026/07/23/rollout-${index}-${remoteSessionId}.jsonl`,
-      contentBase64: Buffer.from(`${side}-${index}\n`, 'utf8').toString('base64'),
+      contentBase64: Buffer.from([
+        JSON.stringify({
+          type: 'session_meta',
+          payload: {
+            id: index === 0 ? remoteSessionId : `${remoteSessionId}-${side}-sidechain`,
+            ...(index === 0 ? {} : { session_id: remoteSessionId }),
+          },
+        }),
+        JSON.stringify({ side, index }),
+        '',
+      ].join('\n'), 'utf8').toString('base64'),
     })),
   };
 }
@@ -201,8 +211,8 @@ describe('codex handoff cross-process import exclusion', () => {
         ), 'utf8')
       )));
       expect(persisted).toSatisfy((contents: readonly string[]) => (
-        contents.every((content) => content.startsWith('left-'))
-        || contents.every((content) => content.startsWith('right-'))
+        contents.every((content) => content.includes('"side":"left"'))
+        || contents.every((content) => content.includes('"side":"right"'))
       ));
     } finally {
       left.child.kill('SIGKILL');
@@ -309,7 +319,7 @@ describe('codex handoff cross-process import exclusion', () => {
     });
     expect(await waitForExit(identical.child)).toBe(0);
     expect(await readWorkerResult(identical.resultPath)).toMatchObject({ status: 'fulfilled' });
-    await expect(readFile(missingPath, 'utf8')).resolves.toBe('left-1\n');
+    await expect(readFile(missingPath, 'utf8')).resolves.toContain('"side":"left"');
   }, 120_000);
 
   it('serializes lexical aliases of the same physical CODEX_HOME', async () => {
@@ -390,7 +400,7 @@ describe('codex handoff cross-process import exclusion', () => {
     await expect(readFile(
       join(physicalHomeA, `sessions/2026/07/23/rollout-0-${remoteSessionId}.jsonl`),
       'utf8',
-    )).resolves.toBe('left-0\n');
+    )).resolves.toContain('"side":"left"');
     await expect(access(
       join(physicalHomeB, `sessions/2026/07/23/rollout-0-${remoteSessionId}.jsonl`),
     )).rejects.toMatchObject({ code: 'ENOENT' });

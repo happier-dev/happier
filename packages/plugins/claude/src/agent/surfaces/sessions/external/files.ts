@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstat, opendir, readdir, realpath, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 import { isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { compareExternalSessionCandidatePrecedence } from '@happier-dev/plugin-sdk/sessions/external';
@@ -44,6 +44,10 @@ export type ClaudeJsonlSessionScanPosition = Readonly<{
 export type ClaudeJsonlSessionIdSnapshot = Readonly<{
     matches: readonly DiscoveredClaudeJsonlSession[];
     sourceGeneration: string;
+}>;
+
+type AuthorizedClaudeProjectsRoot = Readonly<{
+    projectsRoot: string;
 }>;
 
 export async function readClaudeJsonlFileSize(
@@ -135,7 +139,20 @@ export async function pageClaudeJsonlSessionFiles(params: Readonly<{
 }>> {
     throwIfAborted(params.signal);
     const configDir = resolveClaudeConfigDir({ source: params.source, env: params.env });
-    const projectsDir = join(configDir, 'projects');
+    const authorizedProjectsRoot = await resolveAuthorizedClaudeProjectsRoot({
+        configDir,
+        ...(params.signal ? { signal: params.signal } : {}),
+    });
+    if (!authorizedProjectsRoot) {
+        return {
+            entries: [],
+            hasMore: false,
+            sourceGeneration: createHash('sha256').update('empty').digest('base64url'),
+            nextScanPoint: null,
+            scanned: 0,
+        };
+    }
+    const projectsDir = authorizedProjectsRoot.projectsRoot;
     const preferredProjectId = resolvePreferredProjectId(params.source);
     const afterTraversalKey = params.afterTraversalKey ?? '';
     const skip = Math.max(0, Math.trunc(params.skip ?? 0));
@@ -205,6 +222,12 @@ export async function pageClaudeJsonlSessionFiles(params: Readonly<{
                 skipped += 1;
                 continue;
             }
+            const filePath = await authorizeClaudeFilePath({
+                projectsRoot: authorizedProjectsRoot.projectsRoot,
+                filePath: join(projectPath, `${remoteSessionId}.jsonl`),
+                ...(params.signal ? { signal: params.signal } : {}),
+            });
+            if (!filePath) continue;
             if (selected.length >= limit) {
                 hasMore = true;
                 break;
@@ -212,7 +235,7 @@ export async function pageClaudeJsonlSessionFiles(params: Readonly<{
             selected.push({
                 remoteSessionId,
                 projectId,
-                filePath: join(projectPath, `${remoteSessionId}.jsonl`),
+                filePath,
                 updatedAtMs: 0,
                 traversalKey,
                 scanPosition: { projectId, sessionEntryOffset },
@@ -292,28 +315,42 @@ function compareClaudeJsonlSessionPrecedence(
 }
 
 /**
- * The single authorization decision for "which bytes is this Claude session
- * transcript?". A name inside the admitted projects root is not proof that the
- * bytes are: a symlink placed there points anywhere on the machine, and `stat`
- * follows it. Every consumer -- exact lookup, linking, metadata, candidate
- * paging and read-after -- takes its path from here, so the containment rule
- * cannot be satisfied on one surface and skipped on another.
- *
- * A symlinked *root* stays supported: containment is proven physically, so a
- * configured config dir that is itself an alias of the real one still resolves.
+ * Canonicalizes the admitted Claude config root before resolving its `projects`
+ * child. This preserves an intentionally symlinked configured root while
+ * rejecting a symlink planted below it that redirects `projects` elsewhere.
  */
-async function resolveCanonicalProjectsRoot(projectsDir: string): Promise<string> {
-    return await realpath(projectsDir).catch(() => resolve(projectsDir));
+async function resolveAuthorizedClaudeProjectsRoot(params: Readonly<{
+    configDir: string;
+    signal?: AbortSignal;
+}>): Promise<AuthorizedClaudeProjectsRoot | null> {
+    const configRoot = await realpath(params.configDir).catch(() => null);
+    throwIfAborted(params.signal);
+    if (!configRoot) return null;
+
+    const projectsRoot = await realpath(join(configRoot, 'projects')).catch(() => null);
+    throwIfAborted(params.signal);
+    if (
+        !projectsRoot
+        || projectsRoot === configRoot
+        || !isCanonicalAbsolutePathInsideRoot(configRoot, projectsRoot)
+    ) {
+        return null;
+    }
+    const directory = await stat(projectsRoot).catch(() => null);
+    throwIfAborted(params.signal);
+    return directory?.isDirectory() ? { projectsRoot } : null;
 }
 
 /**
- * Proves the named session file is a real in-root regular file and returns the
- * physical path callers may open. `lstat` (not `stat`) rejects a symlink at the
- * session-file name itself; the remaining `realpath` resolves any symlinked
- * ancestor so containment is decided on physical bytes, not on the lexical name.
+ * The single physical authorization decision for selected Claude session files.
+ * A name inside the admitted config root is not proof that the bytes are: a
+ * symlink placed there points anywhere on the machine, and `stat` follows it.
+ * `lstat` rejects a symlink at the file name itself; `realpath` resolves any
+ * ancestor; containment is then decided against the already-admitted physical
+ * projects root.
  */
-async function authorizeClaudeJsonlSessionFilePath(params: Readonly<{
-    canonicalProjectsRoot: string;
+export async function authorizeClaudeFilePath(params: Readonly<{
+    projectsRoot: string;
     filePath: string;
     signal?: AbortSignal;
 }>): Promise<string | null> {
@@ -323,7 +360,7 @@ async function authorizeClaudeJsonlSessionFilePath(params: Readonly<{
     const physicalPath = await realpath(params.filePath).catch(() => null);
     throwIfAborted(params.signal);
     if (!physicalPath) return null;
-    return isCanonicalAbsolutePathInsideRoot(params.canonicalProjectsRoot, physicalPath)
+    return isCanonicalAbsolutePathInsideRoot(params.projectsRoot, physicalPath)
         ? physicalPath
         : null;
 }
@@ -339,15 +376,18 @@ export async function resolveClaudeJsonlSessionFile(params: Readonly<{
     if (!isSafeClaudeJsonlPathSegment(remoteSessionId)) return null;
 
     const configDir = resolveClaudeConfigDir({ source: params.source, env: params.env });
-    const projectsDir = join(configDir, 'projects');
-    const canonicalProjectsRoot = await resolveCanonicalProjectsRoot(projectsDir);
-    throwIfAborted(params.signal);
+    const authorizedProjectsRoot = await resolveAuthorizedClaudeProjectsRoot({
+        configDir,
+        ...(params.signal ? { signal: params.signal } : {}),
+    });
+    if (!authorizedProjectsRoot) return null;
+    const projectsDir = authorizedProjectsRoot.projectsRoot;
     const preferredProjectId = resolvePreferredProjectId(params.source);
 
     const resolveInProject = async (projectId: string): Promise<ResolvedClaudeJsonlSessionFile | null> => {
         if (!isSafeClaudeJsonlPathSegment(projectId)) return null;
-        const authorizedPath = await authorizeClaudeJsonlSessionFilePath({
-            canonicalProjectsRoot,
+        const authorizedPath = await authorizeClaudeFilePath({
+            projectsRoot: authorizedProjectsRoot.projectsRoot,
             filePath: join(projectsDir, projectId, `${remoteSessionId}.jsonl`),
             ...(params.signal ? { signal: params.signal } : {}),
         });
@@ -410,21 +450,18 @@ export async function findClaudeJsonlSessionsById(params: Readonly<{
     }
 
     const configDir = resolveClaudeConfigDir({ source: params.source, env: params.env });
-    const projectsDir = join(configDir, 'projects');
-    const canonicalProjectsRoot = await resolveCanonicalProjectsRoot(projectsDir);
-    throwIfAborted(params.signal);
-    const preferredProjectId = resolvePreferredProjectId(params.source);
-    if (preferredProjectId) {
-        const projectsRoot = await stat(projectsDir).catch(() => null);
-        if (!projectsRoot?.isDirectory()) {
-            return {
-                matches: [],
-                sourceGeneration: createHash('sha256')
-                    .update(`empty\n${remoteSessionId}\n`)
-                    .digest('base64url'),
-            };
-        }
+    const authorizedProjectsRoot = await resolveAuthorizedClaudeProjectsRoot({
+        configDir,
+        ...(params.signal ? { signal: params.signal } : {}),
+    });
+    if (!authorizedProjectsRoot) {
+        return {
+            matches: [],
+            sourceGeneration: createHash('sha256').update('empty').digest('base64url'),
+        };
     }
+    const projectsDir = authorizedProjectsRoot.projectsRoot;
+    const preferredProjectId = resolvePreferredProjectId(params.source);
     const projectIds = preferredProjectId
         ? [preferredProjectId]
         : (await readdir(projectsDir, { withFileTypes: true }).catch(() => []))
@@ -439,8 +476,8 @@ export async function findClaudeJsonlSessionsById(params: Readonly<{
     generation.update(`${candidateSourceGeneration}\n${remoteSessionId}\n`);
 
     const resolveInProject = async (projectId: string): Promise<DiscoveredClaudeJsonlSession | null> => {
-        const authorizedPath = await authorizeClaudeJsonlSessionFilePath({
-            canonicalProjectsRoot,
+        const authorizedPath = await authorizeClaudeFilePath({
+            projectsRoot: authorizedProjectsRoot.projectsRoot,
             filePath: join(projectsDir, projectId, `${remoteSessionId}.jsonl`),
             ...(params.signal ? { signal: params.signal } : {}),
         });
@@ -493,7 +530,9 @@ export async function discoverClaudeJsonlSessions(params: Readonly<{
     env: NodeJS.ProcessEnv;
 }>): Promise<readonly DiscoveredClaudeJsonlSession[]> {
     const configDir = resolveClaudeConfigDir({ source: params.source, env: params.env });
-    const projectsDir = join(configDir, 'projects');
+    const authorizedProjectsRoot = await resolveAuthorizedClaudeProjectsRoot({ configDir });
+    if (!authorizedProjectsRoot) return [];
+    const projectsDir = authorizedProjectsRoot.projectsRoot;
     const projectEntries = await readdir(projectsDir, { withFileTypes: true }).catch(() => []);
     const sessions: DiscoveredClaudeJsonlSession[] = [];
 
@@ -509,7 +548,11 @@ export async function discoverClaudeJsonlSessions(params: Readonly<{
             if (!name.endsWith('.jsonl')) continue;
             const remoteSessionId = name.slice(0, -'.jsonl'.length);
             if (!isSafeClaudeJsonlPathSegment(remoteSessionId)) continue;
-            const filePath = join(projectPath, name);
+            const filePath = await authorizeClaudeFilePath({
+                projectsRoot: authorizedProjectsRoot.projectsRoot,
+                filePath: join(projectPath, name),
+            });
+            if (!filePath) continue;
             try {
                 const file = await stat(filePath);
                 if (!file.isFile()) continue;

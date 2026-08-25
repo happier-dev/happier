@@ -110,6 +110,25 @@ describe('shareClaudeUserConfigWithIsolatedRoot', () => {
     expect(await readFile(join(rootDir, 'CLAUDE.md'), 'utf8')).toBe('# user memory\n');
   });
 
+  it('classifies a mixed-case config entry by the same case-folded identity', async () => {
+    // Windows NTFS and the default macOS APFS volume resolve these names to the
+    // same file Claude Code reads, so a case-sensitive classification would link
+    // the user's own credential and settings documents into the pinned root.
+    await writeFile(join(sourceDir, '.Credentials.json'), JSON.stringify({ claudeAiOauth: {} }));
+    await writeFile(join(sourceDir, 'Settings.json'), JSON.stringify({
+      apiKeyHelper: '/usr/local/bin/print-my-anthropic-key',
+      env: { ANTHROPIC_AUTH_TOKEN: 'personal-oauth-token', EDITOR: 'vim' },
+    }));
+
+    await share();
+
+    expect(existsSync(join(rootDir, '.Credentials.json'))).toBe(false);
+    expect((await lstat(join(rootDir, 'Settings.json'))).isSymbolicLink()).toBe(false);
+    const settings = await readProjectedSettings('Settings.json');
+    expect(settings.apiKeyHelper).toBeUndefined();
+    expect(settings.env).toEqual({ EDITOR: 'vim' });
+  });
+
   it('never shares the account identity entries', async () => {
     await writeFile(join(sourceDir, '.credentials.json'), JSON.stringify({ claudeAiOauth: {} }));
     await writeFile(join(sourceDir, '.claude.json'), JSON.stringify({ oauthAccount: {} }));

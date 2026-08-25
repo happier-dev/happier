@@ -10,6 +10,7 @@ import type {
   AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginJsonStreamClient, PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
@@ -55,7 +56,30 @@ function createContext(
   connectedAccounts: ConnectedAccountsFixture = disconnectedConnectedAccounts(),
 ) {
   const client: PluginJsonStreamClient = {
-    write: async (value) => { capture.written.push(value); },
+    write: async (value) => {
+      const record = value as Readonly<{ id?: unknown; type?: unknown }>;
+      if (typeof record.id === 'string' && record.type === 'get_commands') {
+        await capture.listener?.({
+          type: 'response',
+          id: record.id,
+          command: 'get_commands',
+          success: true,
+          data: { commands: [] },
+        });
+        return;
+      }
+      if (typeof record.id === 'string' && record.type === 'get_session_stats') {
+        await capture.listener?.({
+          type: 'response',
+          id: record.id,
+          command: 'get_session_stats',
+          success: true,
+          data: { contextUsage: null },
+        });
+        return;
+      }
+      capture.written.push(value);
+    },
     subscribe(listener) {
       capture.listener = listener;
       return { dispose: () => { if (capture.listener === listener) capture.listener = undefined; } };
@@ -190,10 +214,7 @@ describe('activate', () => {
     });
     try {
       expect(testkit.registrations()).toContainEqual({ family: 'agents', localId: 'pi' });
-      expect(testkit.registrations()).toContainEqual({
-        family: 'hooks',
-        localId: 'resolve-prerequisites',
-      });
+      expect(testkit.registrations()).not.toContainEqual(expect.objectContaining({ family: 'hooks' }));
     } finally {
       await testkit.dispose();
     }
@@ -476,6 +497,82 @@ describe('activate', () => {
     await session.dispose();
   });
 
+  it('loads the host-resolved native tool manifest beside the request-auth extension', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-pi-native-tools-'));
+    try {
+      const agentDir = join(root, 'agent');
+      await mkdir(agentDir, { recursive: true });
+      const capture: Capture = { specs: [], written: [] };
+      const context = createContext(capture);
+      const resolveNativeBridge = vi.fn(async () => ({
+        v: 1 as const,
+        sessionId: 'pi-host-session-1',
+        directory: '/tmp/pi-workspace',
+        systemPrompt: 'Use the registered Happier tools.',
+        tools: [{
+          name: 'action_spec_search',
+          title: 'Search actions',
+          description: 'Search the effective Action catalog.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: { query: { type: 'string' as const } },
+            required: ['query'],
+            additionalProperties: false,
+          },
+        }],
+        launch: {
+          executablePath: '/managed/happier',
+          argsPrefix: ['tools', 'call', '--agent-bridge'],
+        },
+      }));
+      const sessionContext = {
+        ...context.session,
+        session: {
+          ...context.session.session,
+          services: { happierTools: { resolveNativeBridge } },
+        },
+      } as unknown as AgentSessionRuntimeContext;
+      const runtime = await createPiRuntime(context.factory);
+      const session = await runtime.sessions!.open({
+        kind: 'create',
+        sessionId: 'pi-host-session-1',
+        cwd: '/tmp/pi-workspace',
+        startupInstructions: {
+          v: 1,
+          id: 'happier.coding_agent',
+          revision: 1,
+          instructions: 'Use the registered Happier tools.',
+        },
+        launchEnvironment: {
+          values: { PI_CODING_AGENT_DIR: agentDir },
+          unset: [],
+        },
+      }, sessionContext);
+
+      expect(resolveNativeBridge).toHaveBeenCalledWith({
+        systemPrompt: 'Use the registered Happier tools.',
+      }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      const spec = capture.specs[0] as Readonly<{ launch?: Readonly<{ args?: readonly string[] }> }>;
+      const args = spec.launch?.args ?? [];
+      const extensionIndex = args.indexOf('--extension');
+      const configIndex = args.indexOf('--happier-tools-config');
+      expect(extensionIndex).toBeGreaterThanOrEqual(0);
+      expect(configIndex).toBeGreaterThanOrEqual(0);
+      expect(args[extensionIndex + 1]).toContain('happier-pi-tools-bridge.js');
+      const configPath = args[configIndex + 1];
+      expect(configPath).toBeTruthy();
+      expect(JSON.parse(await readFile(configPath!, 'utf8'))).toMatchObject({
+        systemPrompt: 'Use the registered Happier tools.',
+        tools: [{ name: 'action_spec_search' }],
+      });
+
+      await session.dispose();
+      await expect(readFile(configPath!, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('materializes public direct OpenAI and Anthropic purposes before spawning Pi', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-pi-public-direct-'));
     const agentDir = join(root, 'pi-agent-dir');
@@ -496,6 +593,15 @@ describe('activate', () => {
               service: purpose === 'openai-api-key'
                 ? { pluginId: 'happier.voice.openai', localId: 'openai' }
                 : { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+              account: purpose === 'openai-api-key'
+                ? {
+                    service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+                    accountId: 'openai-account',
+                  }
+                : {
+                    service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+                    accountId: 'anthropic-account',
+                  },
               target: { kind: 'account' as const, displayName: purpose },
             }
           : null
@@ -541,8 +647,28 @@ describe('activate', () => {
         ['anthropic-api-key', { signal: context.session.signal }],
       ]);
       expect(connectedAccounts.materialize.mock.calls).toEqual([
-        ['openai-api-key', { kind: 'environment', keys: ['OPENAI_API_KEY'] }, { signal: context.session.signal }],
-        ['anthropic-api-key', { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] }, { signal: context.session.signal }],
+        [
+          'openai-api-key',
+          { kind: 'environment', keys: ['OPENAI_API_KEY'] },
+          {
+            signal: context.session.signal,
+            expectedAccount: {
+              service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+              accountId: 'openai-account',
+            },
+          },
+        ],
+        [
+          'anthropic-api-key',
+          { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] },
+          {
+            signal: context.session.signal,
+            expectedAccount: {
+              service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
+              accountId: 'anthropic-account',
+            },
+          },
+        ],
       ]);
       expect(capture.specs[0]).toMatchObject({
         launch: {
@@ -594,6 +720,57 @@ describe('activate', () => {
       await rm(root, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('does not spawn Pi after a qualified account invalidates after direct materialization', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-pi-invalidated-before-open-'));
+    const agentDir = join(root, 'pi-agent-dir');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'auth.json'), '{}\n');
+    const account = {
+      service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+      accountId: 'openai-account',
+    } as const;
+    const listeners = new Map<string, (event: { kind: 'resync' }) => void | Promise<void>>();
+    const connectedAccounts: ConnectedAccountsFixture = {
+      getBinding: vi.fn(async (purpose: string) => purpose === 'openai-api-key'
+        ? {
+            purpose,
+            service: account.service,
+            account,
+            target: { kind: 'account' as const, displayName: 'OpenAI' },
+          }
+        : null),
+      materialize: vi.fn(async () => {
+        await listeners.get('openai-api-key')?.({ kind: 'resync' });
+        return { kind: 'environment' as const, env: { OPENAI_API_KEY: 'sk-openai-public' } };
+      }),
+      requestSelection: vi.fn(),
+      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+        listeners.set(purpose, listener);
+        listener({ kind: 'resync' });
+        return { dispose() {} };
+      }),
+    };
+    const capture: Capture = { specs: [], written: [] };
+    const context = createContext(capture, 'pi-invalidated-before-open', connectedAccounts);
+    const runtime = await createPiRuntime(context.factory);
+    try {
+      await expect(runtime.sessions!.open({
+        kind: 'create',
+        sessionId: 'pi-invalidated-before-open',
+        cwd: '/tmp/pi-workspace',
+        launchEnvironment: { values: { PI_CODING_AGENT_DIR: agentDir }, unset: [] },
+      }, context.session)).rejects.toThrow('invalidated before opening');
+      expect(connectedAccounts.materialize).toHaveBeenCalledWith(
+        'openai-api-key',
+        { kind: 'environment', keys: ['OPENAI_API_KEY'] },
+        expect.objectContaining({ expectedAccount: account }),
+      );
+      expect(capture.specs).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it('fails malformed public materialization before spawning Pi', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-pi-public-malformed-'));
@@ -685,6 +862,10 @@ describe('activate', () => {
           return {
             purpose,
             service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+            account: {
+              service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+              accountId: 'claude-subscription-account',
+            },
             target: { kind: 'account' as const, displayName: 'Claude setup token' },
           };
         }
@@ -727,7 +908,13 @@ describe('activate', () => {
       expect(connectedAccounts.materialize).toHaveBeenCalledExactlyOnceWith(
         'anthropic-model-request',
         { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
-        { signal: context.session.signal },
+        {
+          signal: context.session.signal,
+          expectedAccount: {
+            service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+            accountId: 'claude-subscription-account',
+          },
+        },
       );
       expect(capture.specs[0]).toMatchObject({
         launch: {
@@ -753,7 +940,7 @@ describe('activate', () => {
     }
   });
 
-  it('keeps Claude OAuth request auth when its public setup-token signal is empty beside direct OpenAI', async () => {
+  it('keeps Claude OAuth on request auth when materialization explicitly requires it beside direct OpenAI', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-pi-public-mixed-'));
     const agentDir = join(root, 'pi-agent-dir');
     await mkdir(agentDir, { recursive: true });
@@ -764,6 +951,10 @@ describe('activate', () => {
           return {
             purpose,
             service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+            account: {
+              service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+              accountId: 'claude-oauth-account',
+            },
             target: { kind: 'account' as const, displayName: 'Claude OAuth' },
           };
         }
@@ -771,17 +962,26 @@ describe('activate', () => {
           return {
             purpose,
             service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+            account: {
+              service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+              accountId: 'openai-api-key-account',
+            },
             target: { kind: 'account' as const, displayName: 'OpenAI API key' },
           };
         }
         return null;
       }),
-      materialize: vi.fn(async (purpose: string) => ({
-        kind: 'environment' as const,
-        env: purpose === 'anthropic-model-request'
-          ? {}
-          : { OPENAI_API_KEY: 'sk-openai-mixed' },
-      })),
+      materialize: vi.fn(async (purpose: string) => {
+        if (purpose === 'anthropic-model-request') {
+          throw new PluginError({
+            code: 'plugin_connected_account_claude_subscription_oauth_request_auth_required',
+          });
+        }
+        return {
+          kind: 'environment' as const,
+          env: { OPENAI_API_KEY: 'sk-openai-mixed' },
+        };
+      }),
       requestSelection: vi.fn(),
       watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
         listener({ kind: 'resync' });
@@ -809,12 +1009,24 @@ describe('activate', () => {
         [
           'anthropic-model-request',
           { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
-          { signal: context.session.signal },
+          {
+            signal: context.session.signal,
+            expectedAccount: {
+              service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+              accountId: 'claude-oauth-account',
+            },
+          },
         ],
         [
           'openai-api-key',
           { kind: 'environment', keys: ['OPENAI_API_KEY'] },
-          { signal: context.session.signal },
+          {
+            signal: context.session.signal,
+            expectedAccount: {
+              service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+              accountId: 'openai-api-key-account',
+            },
+          },
         ],
       ]);
       expect(capture.specs[0]).toMatchObject({
@@ -829,6 +1041,65 @@ describe('activate', () => {
       );
       expect(requestAuthSource).toContain('anthropic-model-request');
       await session.dispose();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not reinterpret an unselected Claude materialization refusal as request auth', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-pi-public-unselected-claude-refusal-'));
+    const agentDir = join(root, 'pi-agent-dir');
+    await mkdir(agentDir, { recursive: true });
+    const connectedAccounts: ConnectedAccountsFixture = {
+      getBinding: vi.fn(async (purpose: string) => purpose === 'anthropic-model-request'
+        ? {
+            purpose,
+            service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+            account: {
+              service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+              accountId: 'claude-unselected-refusal-account',
+            },
+            target: { kind: 'account' as const, displayName: 'Claude account' },
+          }
+        : null),
+      materialize: vi.fn(async () => {
+        throw new PluginError({
+          code: 'plugin_connected_account_claude_subscription_environment_request_unsupported',
+        });
+      }),
+      requestSelection: vi.fn(),
+      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+        listener({ kind: 'resync' });
+        return { dispose() {} };
+      }),
+    };
+    const capture: Capture = { specs: [], written: [] };
+    const context = createContext(capture, 'pi-public-unselected-claude-refusal', connectedAccounts);
+    const runtime = await createPiRuntime(context.factory);
+    try {
+      await expect(runtime.sessions!.open({
+        kind: 'create',
+        sessionId: 'pi-public-unselected-claude-refusal',
+        cwd: '/tmp/pi-workspace',
+        launchEnvironment: {
+          values: { PI_CODING_AGENT_DIR: agentDir },
+          unset: [],
+        },
+      }, context.session)).rejects.toMatchObject({
+        code: 'plugin_connected_account_claude_subscription_environment_request_unsupported',
+      });
+      expect(connectedAccounts.materialize).toHaveBeenCalledExactlyOnceWith(
+        'anthropic-model-request',
+        { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
+        {
+          signal: context.session.signal,
+          expectedAccount: {
+            service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+            accountId: 'claude-unselected-refusal-account',
+          },
+        },
+      );
+      expect(capture.specs).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

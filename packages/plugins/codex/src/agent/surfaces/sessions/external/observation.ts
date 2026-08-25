@@ -19,7 +19,6 @@ import {
   type CodexRolloutFile,
 } from '../../../rollout/discovery/sessionsForHome.js';
 import {
-  inferCodexExternalSessionsActiveServerDir,
   validateCodexExternalSessionsSourcePolicy,
 } from './sourceValidation.js';
 import {
@@ -34,7 +33,6 @@ const MAX_OPAQUE_KEY_LENGTH = 256;
 const MAX_REMOTE_SESSION_ID_LENGTH = 2_000;
 
 type ResolvedCodexObservationIdentity = Readonly<{
-  activeServerDir: string;
   codexHome: string;
   remoteSessionId: string;
   source: CodexExternalSessionSource;
@@ -88,16 +86,7 @@ function resolveIdentity(
   if (!codexHome) {
     throw new Error('Codex observation requires a canonical home path');
   }
-  const activeServerDir = validation.source.home === 'connectedService'
-    ? inferCodexExternalSessionsActiveServerDir(identity.source)
-    : '';
-  if (validation.source.home === 'connectedService' && !activeServerDir) {
-    throw new Error(
-      'Codex connected-service observation requires a qualified active server root',
-    );
-  }
   return {
-    activeServerDir: activeServerDir ?? '',
     codexHome,
     remoteSessionId,
     source: validation.source,
@@ -300,7 +289,6 @@ export function createCodexExternalSessionObservationContribution(params: Readon
           try {
             const homes = await homeEntries({
               source: resolved.source,
-              activeServerDir: resolved.activeServerDir,
               env: readEnv(),
             });
             request.signal.throwIfAborted();

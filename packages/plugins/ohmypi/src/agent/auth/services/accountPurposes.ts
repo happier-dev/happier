@@ -1,3 +1,5 @@
+import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
+
 export const OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES = [{
   purpose: 'openai-codex',
   service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
@@ -11,7 +13,7 @@ export const OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES = [{
 }, {
   purpose: 'claude-subscription',
   service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-  materializationKey: 'CLAUDE_CODE_OAUTH_TOKEN',
+  materializationKey: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey,
   launchEnvironmentKey: 'ANTHROPIC_OAUTH_TOKEN',
 }, {
   purpose: 'anthropic',

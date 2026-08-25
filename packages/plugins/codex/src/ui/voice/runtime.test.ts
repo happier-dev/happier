@@ -471,19 +471,6 @@ describe('Codex Agent-session realtime Voice leaf', () => {
 
   it.each([
     {
-      label: 'runtime-version update remediation after readiness races',
-      result: {
-        status: 'unavailable' as const,
-        diagnostic: {
-          code: 'codex_realtime_runtime_version_unsupported',
-          severity: 'error' as const,
-        },
-      },
-      expectedCode: 'update_required',
-      expectedMessage:
-        'voice_agent_realtime_unavailable:codex_realtime_runtime_version_unsupported',
-    },
-    {
       label: 'runtime-install remediation after readiness races',
       result: {
         status: 'unavailable' as const,

@@ -12,7 +12,6 @@ describe('Codex bundled Voice projection', () => {
     expect(PLUGIN_MANIFEST.contributes.voiceProviders[0]?.execution).toEqual({
       kind: 'experimental_agent_session_realtime',
       agent: 'codex',
-      supportedRuntimeVersions: ['0.145.0', '0.146.0'],
     });
     expect(PLUGIN_MANIFEST.contributes.voiceProviders[0]?.settings?.connectedServicesBinding).toMatchObject({
       agent: 'codex',

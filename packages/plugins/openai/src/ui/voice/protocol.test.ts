@@ -247,6 +247,30 @@ describe('OpenAI Realtime protocol adapter', () => {
     });
   });
 
+  it.each(['cancelled', 'failed', 'incomplete'] as const)(
+    'does not emit tool calls from a %s response',
+    (status) => {
+      const adapter = createOpenAiRealtimeProtocolAdapter({
+        prepare: async () => ({ kind: 'declined', code: 'unused' }),
+      });
+
+      expect(adapter.decodeControl({
+        type: 'response.done',
+        event_id: `done-${status}`,
+        response: {
+          id: `response-${status}`,
+          status,
+          output: [{
+            type: 'function_call',
+            call_id: `call-${status}`,
+            name: 'happier_noop',
+            arguments: '{}',
+          }],
+        },
+      })).not.toContainEqual(expect.objectContaining({ type: 'tool_calls' }));
+    },
+  );
+
   it('maps auth expiry and advertises only controls the OpenAI wire protocol can honor', () => {
     const adapter = createOpenAiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
     expect(adapter.decodeControl({
@@ -262,6 +286,36 @@ describe('OpenAI Realtime protocol adapter', () => {
     expect(adapter.encodeTurnControl('cancel_response')).toEqual({ type: 'response.cancel' });
     expect(adapter.encodeTurnControl('stop_session')).toBeNull();
     expect(adapter.encodeTurnControl('send_exact_message', { text: 'hello' })).toBeNull();
+  });
+
+  it('correlates a WebRTC output buffer to its later assistant transcript item', () => {
+    const adapter = createOpenAiRealtimeProtocolAdapter({
+      prepare: async () => ({ kind: 'declined', code: 'unused' }),
+    });
+
+    expect(adapter.decodeControl({
+      type: 'output_audio_buffer.started',
+      event_id: 'output-started',
+      response_id: 'response-1',
+    })).toEqual([{ type: 'assistant_output_started' }]);
+
+    expect(adapter.decodeControl({
+      type: 'response.output_audio_transcript.done',
+      event_id: 'output-transcript',
+      response_id: 'response-1',
+      item_id: 'assistant-1',
+      transcript: 'The persisted assistant reply.',
+    })).toEqual([
+      { type: 'assistant_output_started', itemId: 'assistant-1' },
+      expect.objectContaining({
+        type: 'transcript',
+        event: expect.objectContaining({
+          itemId: 'assistant-1',
+          role: 'assistant',
+          type: 'voice.transcript.final',
+        }),
+      }),
+    ]);
   });
 
   it('does not project unknown provider payloads across the canonical SDK boundary', () => {
@@ -281,7 +335,7 @@ describe('OpenAI Realtime protocol adapter', () => {
     })).toEqual([{ type: 'input_speech_started' }]);
   });
 
-  it('projects provider wire activity into provider-neutral speech and output edges', () => {
+  it('projects WebRTC output-buffer edges and ignores direct audio-delta events', () => {
     const adapter = createOpenAiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
 
     expect(adapter.decodeControl({
@@ -293,35 +347,25 @@ describe('OpenAI Realtime protocol adapter', () => {
     }))
       .toContainEqual({ type: 'input_speech_stopped' });
     expect(adapter.decodeControl({
+      type: 'output_audio_buffer.started', event_id: 'audio-buffer-1', response_id: 'response-1',
+    })).toEqual([{ type: 'assistant_output_started' }]);
+    expect(adapter.decodeControl({
       type: 'response.output_audio.delta', event_id: 'audio-1', response_id: 'response-1',
       item_id: 'assistant-1', output_index: 0, content_index: 0, delta: 'AA==',
-    })).toContainEqual({ type: 'assistant_output_started', itemId: 'assistant-1' });
+    })).toEqual([]);
     expect(adapter.decodeControl({
-      type: 'response.output_audio.delta', event_id: 'audio-2', response_id: 'response-1',
-      item_id: 'assistant-1', output_index: 0, content_index: 0, delta: 'AA==',
-    })).not.toContainEqual({ type: 'assistant_output_started' });
-    expect(adapter.decodeControl({
-      type: 'response.output_audio.done', event_id: 'audio-3', response_id: 'response-1',
+      type: 'response.output_audio.done', event_id: 'audio-2', response_id: 'response-1',
       item_id: 'assistant-1', output_index: 0, content_index: 0,
-    })).toContainEqual({ type: 'assistant_output_stopped' });
-    adapter.decodeControl({
-      type: 'response.output_audio.delta', event_id: 'audio-4', response_id: 'response-2',
-      item_id: 'assistant-2', output_index: 0, content_index: 0, delta: 'AA==',
-    });
+    })).toEqual([]);
     expect(adapter.decodeControl({
-      type: 'response.output_audio.delta', event_id: 'audio-5', response_id: 'response-2',
-      item_id: 'assistant-3', output_index: 1, content_index: 0, delta: 'AA==',
-    })).toContainEqual({ type: 'assistant_output_started' });
+      type: 'output_audio_buffer.stopped', event_id: 'audio-buffer-2', response_id: 'response-1',
+    })).toEqual([{ type: 'assistant_output_stopped' }]);
     expect(adapter.decodeControl({
-      type: 'response.output_audio.done', event_id: 'audio-6', response_id: 'response-2',
-      item_id: 'assistant-2', output_index: 0, content_index: 0,
-    })).not.toContainEqual({ type: 'assistant_output_stopped' });
+      type: 'output_audio_buffer.started', event_id: 'audio-buffer-3', response_id: 'response-2',
+    })).toEqual([{ type: 'assistant_output_started' }]);
     expect(adapter.decodeControl({
-      type: 'response.done',
-      event_id: 'audio-7',
-      response: { id: 'response-2', object: 'realtime.response', status: 'completed', output: [] },
-    }))
-      .toContainEqual({ type: 'assistant_output_stopped' });
+      type: 'output_audio_buffer.cleared', event_id: 'audio-buffer-4', response_id: 'response-2',
+    })).toEqual([{ type: 'assistant_output_stopped' }]);
   });
 
   it('resets decoder state on a session boundary and ignores unattributable events', () => {
@@ -386,31 +430,17 @@ describe('OpenAI Realtime protocol adapter', () => {
     })).toEqual([{ type: 'input_speech_started' }]);
   });
 
-  it('does not let malformed audio edges or response completion mutate output state', () => {
+  it('does not synthesize WebRTC output edges from direct-audio or response completion events', () => {
     const adapter = createOpenAiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
 
     expect(adapter.decodeControl({
       type: 'response.output_audio.delta',
-      event_id: 'audio-start',
-      response_id: 'response-1',
-      item_id: 'assistant-1',
-      output_index: 0,
-      content_index: 0,
-    })).toEqual([]);
-    expect(adapter.decodeControl({
-      type: 'response.output_audio.delta',
-      event_id: 'audio-start',
+      event_id: 'audio-delta',
       response_id: 'response-1',
       item_id: 'assistant-1',
       output_index: 0,
       content_index: 0,
       delta: 'AA==',
-    })).toEqual([{ type: 'assistant_output_started', itemId: 'assistant-1' }]);
-    expect(adapter.decodeControl({
-      type: 'response.output_audio.done',
-      event_id: 'audio-done-unattributable',
-      response_id: 'response-1',
-      content_index: 0,
     })).toEqual([]);
     expect(adapter.decodeControl({
       type: 'response.output_audio.done',
@@ -418,44 +448,23 @@ describe('OpenAI Realtime protocol adapter', () => {
       response_id: 'response-1',
       item_id: 'assistant-1',
       content_index: 0,
-    })).toEqual([{ type: 'assistant_output_stopped' }]);
-    expect(adapter.decodeControl({
-      type: 'response.output_audio.delta',
-      event_id: 'audio-start-2',
-      response_id: 'response-2',
-      item_id: 'assistant-2',
-      output_index: 0,
-      content_index: 0,
-      delta: 'AA==',
-    })).toEqual([{ type: 'assistant_output_started', itemId: 'assistant-2' }]);
-    expect(adapter.decodeControl({
-      type: 'response.done',
-      event_id: 'response-done-unidentified',
-      response: {},
     })).toEqual([]);
-    // `response.done` is itself the terminal fact; an omitted status (optional
-    // in the pinned SDK) must not cost the assistant its stop edge.
     expect(adapter.decodeControl({
       type: 'response.done',
       event_id: 'response-done',
-      response: { id: 'response-2' },
+      response: { id: 'response-1' },
+    })).toEqual([]);
+    expect(adapter.decodeControl({
+      type: 'output_audio_buffer.started', event_id: 'buffer-start', response_id: 'response-1',
+    })).toEqual([{ type: 'assistant_output_started' }]);
+    expect(adapter.decodeControl({
+      type: 'output_audio_buffer.stopped', event_id: 'buffer-stop', response_id: 'response-1',
     })).toEqual([{ type: 'assistant_output_stopped' }]);
   });
 
-  it('refuses a nonterminal response.done while still admitting unrecognized output entries', () => {
+  it('does not let incomplete response.done events block a later completed response', () => {
     const adapter = createOpenAiRealtimeProtocolAdapter({ prepare: async () => ({ kind: 'declined', code: 'unused' }) });
-    const startOutput = (responseId: string, itemId: string, eventId: string) => adapter.decodeControl({
-      type: 'response.output_audio.delta',
-      event_id: eventId,
-      response_id: responseId,
-      item_id: itemId,
-      output_index: 0,
-      content_index: 0,
-      delta: 'AA==',
-    });
 
-    expect(startOutput('response-1', 'assistant-1', 'audio-start-1'))
-      .toEqual([{ type: 'assistant_output_started', itemId: 'assistant-1' }]);
     expect(adapter.decodeControl({
       type: 'response.done',
       event_id: 'response-done-1a',
@@ -465,12 +474,10 @@ describe('OpenAI Realtime protocol adapter', () => {
       type: 'response.done',
       event_id: 'response-done-1b',
       response: { id: 'response-1', object: 'realtime.response', status: 'completed', output: [] },
-    })).toEqual([{ type: 'assistant_output_stopped' }]);
+    })).toEqual([]);
 
-    expect(startOutput('response-2', 'assistant-2', 'audio-start-2'))
-      .toEqual([{ type: 'assistant_output_started', itemId: 'assistant-2' }]);
     // One unrecognized output entry is skipped as a tool call; it must not cost
-    // the response its stop edge or its well-formed siblings.
+    // the well-formed sibling tool call.
     expect(adapter.decodeControl({
       type: 'response.done',
       event_id: 'response-done-2',
@@ -488,7 +495,6 @@ describe('OpenAI Realtime protocol adapter', () => {
         }],
       },
     })).toEqual([
-      { type: 'assistant_output_stopped' },
       expect.objectContaining({
         type: 'tool_calls',
         responseId: 'response-2',

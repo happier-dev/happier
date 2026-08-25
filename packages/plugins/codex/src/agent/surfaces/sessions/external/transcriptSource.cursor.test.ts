@@ -89,12 +89,22 @@ function sourceParams(fixture: Readonly<{
   };
 }
 
-function transcriptItemText(item: Readonly<{ raw: unknown }>): string {
+/**
+ * A canonical page legitimately mixes assistant message rows with the parent
+ * `SubAgent` tool-call row that anchors a child thread, so membership checks
+ * read the message text as an option instead of demanding one from every row.
+ */
+function readTranscriptItemMessage(item: Readonly<{ raw: unknown }>): string | null {
   const raw = item.raw as Readonly<{
     content?: Readonly<{ data?: Readonly<{ message?: unknown }> }>;
   }>;
   const message = raw.content?.data?.message;
-  if (typeof message !== 'string') throw new Error('Expected a Codex agent message item');
+  return typeof message === 'string' ? message : null;
+}
+
+function transcriptItemText(item: Readonly<{ raw: unknown }>): string {
+  const message = readTranscriptItemMessage(item);
+  if (message === null) throw new Error('Expected a Codex agent message item');
   return message;
 }
 
@@ -881,10 +891,17 @@ describe('Codex external transcript cursor generations', () => {
         maxBytes: 64 * 1024,
         maxItems: 20,
       });
-      expect(canonicalPage.items.filter((item) => transcriptItemText(item) === 'mislabeled child output'))
+      expect(canonicalPage.items.filter((item) => readTranscriptItemMessage(item) === 'mislabeled child output'))
         .toHaveLength(1);
       expect(canonicalPage.items).toEqual(expect.arrayContaining([
         expect.objectContaining({ sidechainId: childThreadId }),
+      ]));
+      // The parent `SubAgent` tool call keyed on the child thread id is what makes the
+      // child rows render under their spawn, so it is asserted rather than tolerated.
+      expect(canonicalPage.items.map((item) => (item.raw as Readonly<{
+        content?: Readonly<{ data?: Readonly<{ type?: unknown; name?: unknown; callId?: unknown }> }>;
+      }>).content?.data)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'tool-call', name: 'SubAgent', callId: childThreadId }),
       ]));
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -1105,16 +1122,35 @@ describe('Codex external transcript cursor generations', () => {
         maxBytes: 64 * 1024,
         maxItems: 20,
       });
-      expect(canonicalPage.items).toMatchObject([{
-        raw: {
-          content: {
-            data: {
-              message: 'delayed child output',
-              sidechainId: childThreadId,
+      // The canonical projection emits the pair: the parent `SubAgent` tool call whose
+      // tool id is the child thread, then the child row carrying that same id as its
+      // `sidechainId`. Both rows are the contract, in that order.
+      expect(canonicalPage.items).toMatchObject([
+        {
+          sidechainId: null,
+          raw: {
+            content: {
+              data: {
+                type: 'tool-call',
+                name: 'SubAgent',
+                callId: childThreadId,
+              },
             },
           },
         },
-      }]);
+        {
+          sidechainId: childThreadId,
+          raw: {
+            content: {
+              data: {
+                type: 'message',
+                message: 'delayed child output',
+                sidechainId: childThreadId,
+              },
+            },
+          },
+        },
+      ]);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }

@@ -6,7 +6,7 @@ import type {
   VoiceProviderConversationService } from '@happier-dev/plugin-sdk/voice/client';
 import type {
   VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice';
+} from '@happier-dev/plugin-sdk/voice/client';
 
 import { XAI_VOICE_PROVIDER_CONTRIBUTION_ID } from '../../constants.js';
 import { XaiRealtimeSettingsV1Schema } from '../../protocol/voice/settings.js';
@@ -125,6 +125,9 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
             resumptionEnabled: resumableConversation !== null,
             authExpiresAtMs: auth.expiresAtMs,
           },
+          // Only a concrete persisted xAI conversation carries the provider's
+          // original response/call identities into this new connection.
+          toolResultReplay: conversationId ? 'stable_ids' : 'none',
         },
       };
     },

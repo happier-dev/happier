@@ -39,7 +39,7 @@ export const XAI_REALTIME_SETTINGS_SECTION = Object.freeze({
       subtitleKey: 'settingsVoice.realtimeProviders.fields.model.subtitle',
       movingAliasRequiresOptIn: true,
       options: Object.freeze([
-        Object.freeze({ kind: 'pinned' as const, id: 'grok-voice-think-fast-1.0' }),
+        Object.freeze({ kind: 'pinned' as const, id: 'grok-voice-think-fast-2.0' }),
         Object.freeze({ kind: 'moving_alias' as const, id: 'grok-voice-latest' }),
       ]),
     }),
@@ -63,7 +63,13 @@ export const XAI_REALTIME_SETTINGS_SECTION = Object.freeze({
       kind: 'segmented' as const,
       path: 'reasoningEffort',
       options: Object.freeze(['high', 'none']),
-      supportedModelIds: Object.freeze(['grok-voice-latest', 'grok-voice-think-fast-1.0']),
+      // Keep an explicitly saved deprecated 1.0 selection editable while only
+      // offering the current 2.0 model and moving alias for new selections.
+      supportedModelIds: Object.freeze([
+        'grok-voice-latest',
+        'grok-voice-think-fast-2.0',
+        'grok-voice-think-fast-1.0',
+      ]),
       titleKey: 'settingsVoice.realtimeProviders.fields.reasoning.title',
       subtitleKey: 'settingsVoice.realtimeProviders.fields.reasoning.subtitle',
     }),

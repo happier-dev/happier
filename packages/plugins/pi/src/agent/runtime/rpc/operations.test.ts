@@ -481,6 +481,41 @@ describe('createPiRuntimeOperations', () => {
     await runtime.dispose();
   });
 
+  it('keeps a provider command active when Pi cannot confirm an idle state', async () => {
+    const capture: Capture = {
+      specs: [],
+      written: [],
+      availableCommands: [{ name: 'goal', source: 'extension' }],
+    };
+    const runtime = await createRuntime(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+
+    const submission = sendPrompt(runtime, '/goal fix authentication');
+    await waitForWrittenCount(capture, 1);
+    await ackCommandAt(capture, 0);
+    await waitForWrittenCount(capture, 2);
+    await ackCommandAt(capture, 1, {
+      sessionId: 'pi-provider-session-1',
+    });
+
+    await expect(submission).resolves.toEqual({ status: 'admitted' });
+    expect(events.some((event) => event.kind === 'turn-complete')).toBe(false);
+
+    await emit(capture, { type: 'agent_start' });
+    await emit(capture, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'goal updated' },
+      message: { role: 'assistant', content: [{ type: 'text', text: 'goal updated' }] },
+    });
+    await emit(capture, { type: 'agent_end', willRetry: false });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'turn-complete' }),
+    ]));
+    await runtime.dispose();
+  });
+
   it.each([
     ['a prompt command', '/goal fix authentication', { name: 'goal', source: 'prompt' as const }],
     ['a differently-cased extension command', '/goal fix authentication', { name: 'Goal', source: 'extension' as const }],
@@ -624,25 +659,47 @@ describe('createPiRuntimeOperations', () => {
     expect(capture.specs).toHaveLength(0);
   });
 
-  it.each([
-    ['agent dir', {
-      [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: '/tmp/request-auth-capability.json',
-    }],
-    ['child capability', {
-      PI_CODING_AGENT_DIR: '/tmp/happier-pi-agent-dir',
-      HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([
-        { kind: 'profile', serviceId: 'openai-codex', profileId: 'primary' },
-      ]),
-    }],
-  ])('fails closed before spawn when request auth is missing the %s', async (_missing, env) => {
+  it('fails closed before spawn when a projected child capability has no agent dir', async () => {
     const capture: Capture = { specs: [], written: [] };
 
-    await expect(createRuntimeWithEnv(capture, env)).rejects.toThrow(
+    await expect(createRuntimeWithEnv(capture, {
+      [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: '/tmp/request-auth-capability.json',
+    })).rejects.toThrow(
       'Pi request-auth runtime requires the agent dir and child endpoint capability',
     );
 
     expect(capture.versionProbeCount).toBeUndefined();
     expect(capture.specs).toHaveLength(0);
+  });
+
+  it('starts a direct-token connected-service session that has no request-auth capability', async () => {
+    // Pi takes an Anthropic API key or Claude setup-token DIRECTLY: the
+    // materializer writes `auth.anthropic = { type: 'api_key' }` and
+    // deliberately projects no child request-auth capability for it. Reading
+    // the connected-service SELECTION as the request-auth signal refused that
+    // supported credential/Agent combination before spawn.
+    const capture: Capture = { specs: [], written: [] };
+
+    await createRuntimeWithEnv(capture, {
+      HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([
+        { kind: 'profile', serviceId: 'anthropic', profileId: 'primary' },
+      ]),
+      PI_CODING_AGENT_DIR: '/tmp/happier-pi-agent-dir',
+    });
+
+    expect(capture.specs).toHaveLength(1);
+    expect(capture.specs[0]?.launch.args).toEqual(expect.arrayContaining([
+      '--provider',
+      'anthropic',
+      '--model',
+      'claude-opus-5',
+      '--models',
+      'anthropic/*',
+    ]));
+    // No capability means no request-auth extension and no version floor.
+    expect(capture.specs[0]?.launch.args).not.toContain('--extension');
+    expect(capture.versionProbeCount).toBeUndefined();
+    expect(capture.specs[0]?.launch.env?.[PI_REQUEST_AUTH_PRODUCER_VERSION_ENV]).toBeUndefined();
   });
 
   it('does not impose the request-auth version floor on native Pi sessions', async () => {

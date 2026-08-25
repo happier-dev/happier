@@ -1,7 +1,3 @@
-import type {
-  AgentExternalSessionSource,
-} from '@happier-dev/plugin-sdk/sessions/external';
-
 import type { CodexExternalSessionSource } from './models.js';
 
 export {
@@ -12,19 +8,6 @@ export {
 export type CodexExternalSessionsSourceValidationPolicyResult =
   | Readonly<{ ok: true; source: CodexExternalSessionSource }>
   | Readonly<{ ok: false; error: string }>;
-
-export function inferCodexExternalSessionsActiveServerDir(
-  source: AgentExternalSessionSource,
-): string | null {
-  const homePath = typeof source.homePath === 'string'
-    ? source.homePath.trim()
-    : '';
-  if (!homePath) return null;
-  const normalized = homePath.replaceAll('\\', '/');
-  const marker = '/daemon/connected-services/homes/';
-  const markerIndex = normalized.lastIndexOf(marker);
-  return markerIndex > 0 ? normalized.slice(0, markerIndex) : null;
-}
 
 /**
  * Canonicalizes a Codex source and enforces the one rule this leaf owns: a
@@ -54,5 +37,14 @@ export function validateCodexExternalSessionsSourcePolicy(params: Readonly<{
       },
     };
   }
-  return { ok: true, source };
+  if (!params.canonicalRequestedHomePath) {
+    return { ok: false, error: 'connected-service source requires an admitted home path' };
+  }
+  return {
+    ok: true,
+    source: {
+      ...source,
+      homePath: params.canonicalRequestedHomePath,
+    },
+  };
 }

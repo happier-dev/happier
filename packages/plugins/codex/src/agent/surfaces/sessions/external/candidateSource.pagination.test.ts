@@ -5,8 +5,16 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
+type AppServerThread = { id: string; updatedAt: number; cwd?: string };
+
 const appServerProbe = vi.hoisted(() => ({
-  threads: [] as { id: string; updatedAt: number; cwd?: string }[],
+  threads: [] as AppServerThread[],
+  pages: new Map<string, Readonly<{
+    data: AppServerThread[];
+    nextCursor: string | null;
+  }>>(),
+  calls: [] as Array<Readonly<{ archived: boolean; cursor: string | null }>>,
+  failCursor: null as string | null,
 }));
 
 // The Codex native app-server is a spawned provider process reached over JSON-RPC:
@@ -19,15 +27,20 @@ vi.mock('../../../runtime/appServer/client.js', async (importOriginal) => {
     createCodexNativeAppServerClient: async () => ({
       launchFeatures: {
         realtimeConversationAdvertised: false,
-        codexCliVersion: null,
-        realtimeConversationVersionSupported: false,
       },
       request: async (method: string, params?: unknown) => {
         if (method !== 'thread/list') return {};
-        const archived = Boolean((params as { archived?: boolean } | undefined)?.archived);
+        const request = params as { archived?: boolean; cursor?: string } | undefined;
+        const archived = Boolean(request?.archived);
+        const cursor = typeof request?.cursor === 'string' ? request.cursor : null;
+        appServerProbe.calls.push({ archived, cursor });
+        if (cursor === appServerProbe.failCursor) {
+          throw new Error(`unexpected native cursor request: ${cursor}`);
+        }
+        const page = appServerProbe.pages.get(`${archived ? 'archived' : 'active'}:${cursor ?? ''}`);
         return {
-          data: archived ? [] : appServerProbe.threads,
-          nextCursor: null,
+          data: page?.data ?? (archived ? [] : appServerProbe.threads),
+          nextCursor: page?.nextCursor ?? null,
         };
       },
       notify: async () => {},
@@ -48,6 +61,9 @@ function jsonl(value: unknown): string {
 afterEach(() => {
   vi.restoreAllMocks();
   appServerProbe.threads = [];
+  appServerProbe.pages.clear();
+  appServerProbe.calls = [];
+  appServerProbe.failCursor = null;
 });
 
 describe('Codex external-session candidate pagination', () => {
@@ -256,6 +272,194 @@ describe('Codex external-session candidate pagination', () => {
       expect(new Set(drained).size).toBe(drained.length);
       // Direction 2: nothing the displaced row shifted past is omitted.
       expect([...drained].sort()).toEqual([...rolloutIds].sort());
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('bounds full native listing, then resumes both archived and unarchived cursors on the next page', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-native-cursor-page-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      await mkdir(codexHome, { recursive: true });
+      const timestamp = Date.parse('2026-08-25T12:00:00.000Z') / 1000;
+      appServerProbe.pages.set('active:', {
+        data: [{ id: 'active-one', updatedAt: timestamp + 4, cwd: '/repo/active-one' }],
+        nextCursor: 'active-next',
+      });
+      appServerProbe.pages.set('archived:', {
+        data: [{ id: 'archived-one', updatedAt: timestamp + 3, cwd: '/repo/archived-one' }],
+        nextCursor: 'archived-next',
+      });
+      appServerProbe.pages.set('active:active-next', {
+        data: [{ id: 'active-two', updatedAt: timestamp + 2, cwd: '/repo/active-two' }],
+        nextCursor: null,
+      });
+      appServerProbe.pages.set('archived:archived-next', {
+        data: [{ id: 'archived-two', updatedAt: timestamp + 1, cwd: '/repo/archived-two' }],
+        nextCursor: null,
+      });
+      const request = {
+        source: { kind: 'codexHome', home: 'user' },
+        activeServerDir: join(root, 'active-server'),
+        env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        exec: {
+          systemTools: { resolve: async () => ({ executable: { kind: 'path', path: '/usr/bin/codex' } }) },
+        } as unknown as ExecService,
+        limit: 10,
+        searchMode: 'full' as const,
+      };
+
+      const first = await listCodexSessionCandidates(request);
+
+      expect(appServerProbe.calls).toHaveLength(2);
+      expect(appServerProbe.calls).toEqual(expect.arrayContaining([
+        { archived: false, cursor: null },
+        { archived: true, cursor: null },
+      ]));
+      expect(first.nextCursor).toEqual(expect.any(String));
+      expect(first.candidates.map((candidate) => candidate.remoteSessionId).sort()).toEqual([
+        'active-one',
+        'archived-one',
+      ]);
+
+      const second = await listCodexSessionCandidates({
+        ...request,
+        cursor: first.nextCursor ?? undefined,
+      });
+
+      expect(appServerProbe.calls).toHaveLength(4);
+      expect(appServerProbe.calls.slice(2)).toEqual(expect.arrayContaining([
+        { archived: false, cursor: 'active-next' },
+        { archived: true, cursor: 'archived-next' },
+      ]));
+      expect(second.candidates.map((candidate) => candidate.remoteSessionId).sort()).toEqual([
+        'active-two',
+        'archived-two',
+      ]);
+      expect(second.nextCursor).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('holds a rollout row behind the native frontier until a later native page resolves its ownership', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-native-frontier-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      const sessionsDir = join(codexHome, 'sessions', '2026', '08', '25');
+      await mkdir(sessionsDir, { recursive: true });
+      const overlappingId = '77777777-7777-7777-7777-777777777777';
+      const nativeOwnedId = '88888888-8888-8888-8888-888888888888';
+      const rolloutPath = join(
+        sessionsDir,
+        `rollout-2026-08-25T10-00-00-${overlappingId}.jsonl`,
+      );
+      await writeFile(rolloutPath, jsonl({
+        type: 'session_meta',
+        timestamp: '2026-08-25T10:00:00.000Z',
+        payload: { id: overlappingId, timestamp: '2026-08-25T10:00:00.000Z', cwd: '/repo' },
+      }), 'utf8');
+      const rolloutUpdatedAt = new Date('2026-08-25T10:00:00.000Z');
+      await utimes(rolloutPath, rolloutUpdatedAt, rolloutUpdatedAt);
+      const nativeOwnedRolloutPath = join(
+        sessionsDir,
+        `rollout-2026-08-25T08-00-00-${nativeOwnedId}.jsonl`,
+      );
+      await writeFile(nativeOwnedRolloutPath, jsonl({
+        type: 'session_meta',
+        timestamp: '2026-08-25T08:00:00.000Z',
+        payload: { id: nativeOwnedId, timestamp: '2026-08-25T08:00:00.000Z', cwd: '/repo' },
+      }), 'utf8');
+      const nativeOwnedRolloutUpdatedAt = new Date('2026-08-25T08:00:00.000Z');
+      await utimes(nativeOwnedRolloutPath, nativeOwnedRolloutUpdatedAt, nativeOwnedRolloutUpdatedAt);
+
+      appServerProbe.pages.set('active:', {
+        data: [{ id: 'native-newer', updatedAt: Date.parse('2026-08-25T12:00:00.000Z') / 1000 }],
+        nextCursor: 'active-later',
+      });
+      // This later native row names the already-visible rollout identity but is
+      // older than the rollout. A bounded listing must not emit the rollout on
+      // page one and then emit this native duplicate on page two.
+      appServerProbe.pages.set('active:active-later', {
+        data: [
+          { id: nativeOwnedId, updatedAt: Date.parse('2026-08-25T11:00:00.000Z') / 1000 },
+          { id: overlappingId, updatedAt: Date.parse('2026-08-25T09:00:00.000Z') / 1000 },
+        ],
+        nextCursor: null,
+      });
+      const request = {
+        source: { kind: 'codexHome', home: 'user' },
+        activeServerDir: join(root, 'active-server'),
+        env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        exec: {
+          systemTools: { resolve: async () => ({ executable: { kind: 'path', path: '/usr/bin/codex' } }) },
+        } as unknown as ExecService,
+        limit: 10,
+        searchMode: 'full' as const,
+      };
+
+      const first = await listCodexSessionCandidates(request);
+      expect(first.candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['native-newer']);
+      expect(first.nextCursor).toEqual(expect.any(String));
+
+      const second = await listCodexSessionCandidates({
+        ...request,
+        cursor: first.nextCursor ?? undefined,
+      });
+      expect(second.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
+        nativeOwnedId,
+        overlappingId,
+      ]);
+      expect(second.candidates[0]?.details?.codexBackendMode).toBe('appServer');
+      expect(second.nextCursor).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('rejects a repeated native continuation without issuing it a third time', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-native-cursor-repeat-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      await mkdir(codexHome, { recursive: true });
+      appServerProbe.pages.set('active:', {
+        data: [{ id: 'repeat-thread', updatedAt: Date.now() / 1000 }],
+        nextCursor: 'repeat-native-cursor',
+      });
+      appServerProbe.pages.set('active:repeat-native-cursor', {
+        data: [],
+        nextCursor: 'repeat-native-cursor',
+      });
+
+      const first = await listCodexSessionCandidates({
+        source: { kind: 'codexHome', home: 'user' },
+        activeServerDir: join(root, 'active-server'),
+        env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        exec: {
+          systemTools: { resolve: async () => ({ executable: { kind: 'path', path: '/usr/bin/codex' } }) },
+        } as unknown as ExecService,
+        limit: 10,
+        searchMode: 'full',
+      });
+      expect(first.nextCursor).toEqual(expect.any(String));
+
+      await expect(listCodexSessionCandidates({
+        source: { kind: 'codexHome', home: 'user' },
+        activeServerDir: join(root, 'active-server'),
+        env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        exec: {
+          systemTools: { resolve: async () => ({ executable: { kind: 'path', path: '/usr/bin/codex' } }) },
+        } as unknown as ExecService,
+        limit: 10,
+        searchMode: 'full',
+        cursor: first.nextCursor ?? undefined,
+      })).rejects.toThrow(/candidate source changed/i);
+
+      expect(appServerProbe.calls).toContainEqual({ archived: false, cursor: null });
+      expect(appServerProbe.calls.filter((call) => (
+        call.archived === false && call.cursor === 'repeat-native-cursor'
+      ))).toHaveLength(1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

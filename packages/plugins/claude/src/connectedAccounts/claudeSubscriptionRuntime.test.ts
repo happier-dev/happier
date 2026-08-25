@@ -19,6 +19,7 @@ function credentialStore(values = new Map<string, string>()) {
 function activateConnectedAccountRuntime(): PluginConnectedAccountRuntime {
   const registrations: Array<Readonly<{ id: string; runtime: PluginConnectedAccountRuntime }>> = [];
   activate({
+    actions: { register() {} },
     agents: {
       register() {},
       registerExternalSessions() {},
@@ -277,7 +278,7 @@ describe('Claude Subscription Connected Account', () => {
     )).rejects.toThrow(/do not support HTTP-header/u);
   });
 
-  it('materializes setup tokens as inference-only native credentials without a token environment', async () => {
+  it('materializes setup tokens as native credentials and as the explicitly requested token environment', async () => {
     const runtime = activateConnectedAccountRuntime();
     const files = await runtime.materialize(
       { kind: 'files', fileIds: ['.credentials.json'] },
@@ -294,14 +295,25 @@ describe('Claude Subscription Connected Account', () => {
     await expect(runtime.materialize(
       { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
       readContext('setup-token', new Map([['setupToken', 'setup-token']])),
-    )).resolves.toEqual({ kind: 'environment', env: {} });
+    )).resolves.toEqual({
+      kind: 'environment',
+      env: { CLAUDE_CODE_OAUTH_TOKEN: 'setup-token' },
+    });
+    await expect(runtime.materialize(
+      { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] },
+      readContext('setup-token', new Map([['setupToken', 'setup-token']])),
+    )).rejects.toMatchObject({
+      code: 'plugin_connected_account_claude_subscription_environment_request_unsupported',
+    });
     await expect(runtime.materialize(
       { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
       readContext('oauth', new Map([
         ['accessToken', 'oauth-access'],
         ['refreshToken', 'oauth-refresh'],
       ])),
-    )).resolves.toEqual({ kind: 'environment', env: {} });
+    )).rejects.toMatchObject({
+      code: 'plugin_connected_account_claude_subscription_oauth_request_auth_required',
+    });
   });
 
   it('loads OAuth account quota through the activated runtime and its declared fixed provider origin', async () => {

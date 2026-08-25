@@ -244,6 +244,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [
       {
         "actions": [],

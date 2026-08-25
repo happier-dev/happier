@@ -210,7 +210,6 @@ describe('Codex rollout candidate paging bounds', () => {
       const controller = new AbortController();
       const contribution = createCodexExternalSessionsContribution({
         env: { CODEX_HOME: codexHome },
-        activeServerDir: join(root, 'active-server'),
       });
       fsProbe.statCalls = 0;
       fsProbe.abortAtStatCall = 2;
@@ -269,7 +268,6 @@ describe('Codex rollout candidate paging bounds', () => {
       vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
       const contribution = createCodexExternalSessionsContribution({
         env: { CODEX_HOME: codexHome },
-        activeServerDir: join(root, 'active-server'),
       });
       fsProbe.statCalls = 0;
       fsProbe.advanceDeadlineAtStatCall = 2;
@@ -501,7 +499,6 @@ describe('Codex rollout candidate paging bounds', () => {
       }
       const contribution = createCodexExternalSessionsContribution({
         env: { CODEX_HOME: codexHome },
-        activeServerDir: join(root, 'active-server'),
       });
       const source = { kind: 'codexHome', home: 'user' } as const;
       const firstPage = await contribution.listCandidates({

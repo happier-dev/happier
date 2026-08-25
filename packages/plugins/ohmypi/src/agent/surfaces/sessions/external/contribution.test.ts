@@ -1022,6 +1022,228 @@ describe('Oh My Pi public External Sessions contribution', () => {
     });
   });
 
+  it('rejects a page when one native message mixes representable and unsupported blocks', async () => {
+    const agentDir = await createAgentDir();
+    const remoteSessionId = 'mixed-page-record';
+    const transcriptPath = await writeTranscript({
+      agentDir,
+      remoteSessionId,
+      records: [
+        { type: 'session', id: remoteSessionId, timestamp: '2026-07-23T10:00:00.000Z' },
+        {
+          type: 'message',
+          id: 'root',
+          parentId: null,
+          timestamp: '2026-07-23T10:00:01.000Z',
+          message: { role: 'user', content: 'root' },
+        },
+        {
+          type: 'message',
+          id: 'mixed',
+          parentId: 'root',
+          timestamp: '2026-07-23T10:00:02.000Z',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'representable text' },
+              { type: 'image', data: 'aGk=', mimeType: 'image/png' },
+            ],
+          },
+        },
+      ],
+    });
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+
+    await expect(contribution.pageTranscript({
+      ...invocation(),
+      source: { kind: 'ohMyPiAgentDir', agentDir, sessionFilePath: transcriptPath },
+      remoteSessionId,
+      direction: 'older',
+      maxItems: 10,
+    })).resolves.toMatchObject({ ok: false, code: 'agent_error', retryable: false });
+  });
+
+  it('rejects a page when a user message mixes text with an unsupported block', async () => {
+    const agentDir = await createAgentDir();
+    const remoteSessionId = 'mixed-user-page-record';
+    const transcriptPath = await writeTranscript({
+      agentDir,
+      remoteSessionId,
+      records: [
+        { type: 'session', id: remoteSessionId, timestamp: '2026-07-23T10:00:00.000Z' },
+        {
+          type: 'message',
+          id: 'root',
+          parentId: null,
+          timestamp: '2026-07-23T10:00:01.000Z',
+          message: { role: 'user', content: 'root' },
+        },
+        {
+          type: 'message',
+          id: 'mixed-user',
+          parentId: 'root',
+          timestamp: '2026-07-23T10:00:02.000Z',
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'representable text' },
+              { type: 'image', data: 'aGk=', mimeType: 'image/png' },
+            ],
+          },
+        },
+      ],
+    });
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+
+    await expect(contribution.pageTranscript({
+      ...invocation(),
+      source: { kind: 'ohMyPiAgentDir', agentDir, sessionFilePath: transcriptPath },
+      remoteSessionId,
+      direction: 'older',
+      maxItems: 10,
+    })).resolves.toMatchObject({ ok: false, code: 'agent_error', retryable: false });
+  });
+
+  it('advances past a mixed native message with a diagnostic instead of publishing a partial row', async () => {
+    const agentDir = await createAgentDir();
+    const remoteSessionId = 'mixed-read-after-record';
+    const transcriptPath = await writeTranscript({
+      agentDir,
+      remoteSessionId,
+      records: [
+        { type: 'session', id: remoteSessionId, timestamp: '2026-07-23T10:00:00.000Z' },
+        {
+          type: 'message',
+          id: 'root',
+          parentId: null,
+          timestamp: '2026-07-23T10:00:01.000Z',
+          message: { role: 'user', content: 'root' },
+        },
+      ],
+    });
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+    const source = { kind: 'ohMyPiAgentDir' as const, agentDir, sessionFilePath: transcriptPath };
+    const initial = await contribution.pageTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      direction: 'older',
+      maxItems: 10,
+    });
+    expect(initial.ok).toBe(true);
+    if (!initial.ok || !initial.value.tailCursor) return;
+
+    const position = (await stat(transcriptPath)).size;
+    await appendFile(transcriptPath, jsonlLine({
+      type: 'message',
+      id: 'mixed',
+      parentId: 'root',
+      timestamp: '2026-07-23T10:00:02.000Z',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'representable text' },
+          { type: 'image', data: 'aGk=', mimeType: 'image/png' },
+        ],
+      },
+    }), 'utf8');
+
+    await expect(contribution.readAfterTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      cursor: initial.value.tailCursor,
+      maxItems: 10,
+    })).resolves.toEqual({
+      ok: true,
+      value: {
+        outcome: 'advanced',
+        items: [],
+        nextCursor: expect.any(String),
+        boundary: expect.any(String),
+        diagnostics: [{
+          code: 'unsupported_record_skipped',
+          count: 1,
+          positions: [position],
+        }],
+      },
+    });
+  });
+
+  it('advances past a mixed user message with a diagnostic instead of publishing a partial row', async () => {
+    const agentDir = await createAgentDir();
+    const remoteSessionId = 'mixed-user-read-after-record';
+    const transcriptPath = await writeTranscript({
+      agentDir,
+      remoteSessionId,
+      records: [
+        { type: 'session', id: remoteSessionId, timestamp: '2026-07-23T10:00:00.000Z' },
+        {
+          type: 'message',
+          id: 'root',
+          parentId: null,
+          timestamp: '2026-07-23T10:00:01.000Z',
+          message: { role: 'user', content: 'root' },
+        },
+      ],
+    });
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+    const source = { kind: 'ohMyPiAgentDir' as const, agentDir, sessionFilePath: transcriptPath };
+    const initial = await contribution.pageTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      direction: 'older',
+      maxItems: 10,
+    });
+    expect(initial.ok).toBe(true);
+    if (!initial.ok || !initial.value.tailCursor) return;
+
+    const position = (await stat(transcriptPath)).size;
+    await appendFile(transcriptPath, jsonlLine({
+      type: 'message',
+      id: 'mixed-user',
+      parentId: 'root',
+      timestamp: '2026-07-23T10:00:02.000Z',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'representable text' },
+          { type: 'image', data: 'aGk=', mimeType: 'image/png' },
+        ],
+      },
+    }), 'utf8');
+
+    await expect(contribution.readAfterTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      cursor: initial.value.tailCursor,
+      maxItems: 10,
+    })).resolves.toEqual({
+      ok: true,
+      value: {
+        outcome: 'advanced',
+        items: [],
+        nextCursor: expect.any(String),
+        boundary: expect.any(String),
+        diagnostics: [{
+          code: 'unsupported_record_skipped',
+          count: 1,
+          positions: [position],
+        }],
+      },
+    });
+  });
+
   it('reports malformed source UTF-8 by byte offset without admitting replacement text', async () => {
     const agentDir = await createAgentDir();
     const remoteSessionId = 'malformed-source-utf8-session';
@@ -1149,7 +1371,7 @@ describe('Oh My Pi public External Sessions contribution', () => {
     });
   });
 
-  it('continues a multi-item appended record without exceeding the read-after item bound', async () => {
+  it('reports a bounded nonempty appended record as a gap instead of accepting a partial cursor', async () => {
     const agentDir = await createAgentDir();
     const remoteSessionId = 'read-after-item-continuation';
     const transcriptPath = await writeTranscript({
@@ -1195,31 +1417,16 @@ describe('Oh My Pi public External Sessions contribution', () => {
       },
     }), 'utf8');
 
-    const itemIds: string[] = [];
-    let cursor = initial.value.tailCursor;
-    for (let call = 0; call < 4; call += 1) {
-      const result = await contribution.readAfterTranscript({
-        ...invocation(),
-        source,
-        remoteSessionId,
-        cursor,
-        maxItems: 1,
-      });
-      expect(result).toMatchObject({ ok: true });
-      if (!result.ok) return;
-      if (result.value.outcome === 'already_current') break;
-      expect(result.value.outcome).toBe('advanced');
-      if (result.value.outcome !== 'advanced') return;
-      expect(result.value.items).toHaveLength(1);
-      itemIds.push(result.value.items[0]!.id);
-      cursor = result.value.nextCursor;
-    }
-
-    expect(itemIds).toEqual([
-      expect.stringContaining(':assistant-multi:text:0'),
-      expect.stringContaining(':assistant-multi:text:1'),
-      expect.stringContaining(':assistant-multi:text:2'),
-    ]);
+    await expect(contribution.readAfterTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      cursor: initial.value.tailCursor,
+      maxItems: 1,
+    })).resolves.toEqual({
+      ok: true,
+      value: { outcome: 'gap_or_cursor_expired' },
+    });
   });
 
   it('returns zero-item gap and unavailable outcomes without advancing source data', async () => {

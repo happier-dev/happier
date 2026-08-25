@@ -113,11 +113,12 @@ describe('createCodexAgentRuntime', () => {
     });
   });
 
-  it('routes startup-instruction sessions through app-server before ACP selection', async () => {
+  it('rejects startup instructions for an explicitly selected ACP runtime before account preparation or launch', async () => {
     const open = vi.fn(async () => createSession());
     const resolveSystemTool = vi.fn(async () => {
       throw new Error('app-server system-tool boundary sentinel');
     });
+    const connectedAccounts = createUnboundConnectedAccounts();
     const runtime = await createCodexAgentRuntime({
       plugin: { id: 'happier.agent.codex', version: '1.5.2' },
       agent: { id: 'codex' },
@@ -126,7 +127,7 @@ describe('createCodexAgentRuntime', () => {
     const context = {
       protocols: { acp: { open } },
       services: {
-        connectedAccounts: createUnboundConnectedAccounts(),
+        connectedAccounts,
         exec: {
           systemTools: { resolve: resolveSystemTool },
         },
@@ -156,11 +157,78 @@ describe('createCodexAgentRuntime', () => {
         unset: [],
       },
       configuration: {
-        mode: { value: null, updatedAtMs: 1 },
+        mode: { value: 'acp', updatedAtMs: 1 },
         model: { value: null, updatedAtMs: 1 },
         permissionIntent: { value: null, updatedAtMs: 1 },
         options: {
           codexBackendMode: { value: 'acp', updatedAtMs: 1 },
+        },
+      },
+    }, context)).rejects.toMatchObject({
+      name: 'PluginError',
+      code: 'codex_startup_instructions_unsupported_in_acp',
+      retryable: false,
+      remediation: {
+        kind: 'openSettings',
+        path: '/settings/agents/codex',
+      },
+    });
+
+    expect(open).not.toHaveBeenCalled();
+    expect(connectedAccounts.watch).not.toHaveBeenCalled();
+    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    expect(resolveSystemTool).not.toHaveBeenCalled();
+  });
+
+  it('routes startup instructions through the selected app-server runtime', async () => {
+    const open = vi.fn(async () => createSession());
+    const resolveSystemTool = vi.fn(async () => {
+      throw new Error('app-server system-tool boundary sentinel');
+    });
+    const runtime = await createCodexAgentRuntime({
+      plugin: { id: 'happier.agent.codex', version: '1.5.2' },
+      agent: { id: 'codex' },
+      signal: new AbortController().signal,
+    } as AgentRuntimeFactoryContext);
+    const context = {
+      protocols: { acp: { open } },
+      services: {
+        connectedAccounts: createUnboundConnectedAccounts(),
+        exec: {
+          systemTools: { resolve: resolveSystemTool },
+        },
+        logger: { debug: vi.fn() },
+        sessions: {
+          current: {
+            media: { registerSourceRoot: vi.fn() },
+          },
+        },
+      },
+      ui: { title: { set: vi.fn(async () => undefined) } },
+      signal: new AbortController().signal,
+    } as unknown as AgentSessionRuntimeContext;
+
+    await expect(runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'global-voice-session-app-server',
+      cwd: '/repo',
+      startupInstructions: {
+        v: 1,
+        id: 'happier.global_voice_agent',
+        revision: 1,
+        instructions: 'Global Voice developer instructions.',
+      },
+      launchEnvironment: {
+        values: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' },
+        unset: [],
+      },
+      configuration: {
+        mode: { value: 'appServer', updatedAtMs: 1 },
+        model: { value: null, updatedAtMs: 1 },
+        permissionIntent: { value: null, updatedAtMs: 1 },
+        options: {
+          codexBackendMode: { value: 'appServer', updatedAtMs: 1 },
         },
       },
     }, context)).rejects.toThrow('Codex app-server startup failed.');

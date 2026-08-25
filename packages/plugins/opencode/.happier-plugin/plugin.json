@@ -45,7 +45,10 @@
           },
           "surfaces": [
             "externalSessions"
-          ]
+          ],
+          "tools": {
+            "delivery": "native_mcp"
+          }
         },
         "cli": {
           "auth": {
@@ -186,6 +189,9 @@
                 "protocol": "openai-chat"
               }
             ],
+            "noAuthProtocols": [
+              "openai-chat"
+            ],
             "supportsNoAuth": true
           },
           "materialization": "configFile",
@@ -306,6 +312,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [
       {
         "actions": [],

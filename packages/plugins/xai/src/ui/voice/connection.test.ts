@@ -83,8 +83,10 @@ describe('xAI WebSocket driver', () => {
     await driver.open({ signal: new AbortController().signal, onControl, onTransport, onRemoteClose });
     socket.emit('message', { data: JSON.stringify({ type: 'conversation.created', conversation: { id: 'conv1' } }) });
     socket.emit('message', { data: JSON.stringify({ type: 'response.output_audio.delta', delta: 'AA==' }) });
+    socket.emit('message', { data: JSON.stringify({ type: 'response.audio.delta', delta: 'AQ==' }) });
     expect(onTransport).toHaveBeenCalledWith({ type: 'session_identity', sessionId: 'conv1' });
-    expect(onAudioDelta).toHaveBeenCalledWith('AA==');
+    expect(onAudioDelta).toHaveBeenNthCalledWith(1, 'AA==');
+    expect(onAudioDelta).toHaveBeenNthCalledWith(2, 'AQ==');
     socket.bufferedAmount = 17;
     expect(() => driver.sendAudioChunk('AQI=')).toThrow(expect.objectContaining({ code: 'voice_connection_backpressure' }));
     socket.emit('error');

@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
+  isNativeOpenCodeSessionId,
   readOpenCodeProviderSessionIdFromMetadata,
 } from '../../../identity/session.js';
 import {
@@ -154,6 +155,13 @@ export const openCodeHandoffSurface = {
           message: 'OpenCode handoff export requires a provider session id',
         };
       }
+      if (!isNativeOpenCodeSessionId(providerSessionId)) {
+        return {
+          ok: false,
+          code: 'bundle_invalid',
+          message: 'OpenCode handoff export requires a native OpenCode session id',
+        };
+      }
 
       try {
         const executable = await resolveOpenCodeExecutable(exec, 'Export an OpenCode session for handoff');
@@ -199,6 +207,13 @@ export const openCodeHandoffSurface = {
           ok: false,
           code: 'bundle_invalid',
           message: 'OpenCode handoff import received unsupported bundle',
+        };
+      }
+      if (!isNativeOpenCodeSessionId(bundle.remoteSessionId)) {
+        return {
+          ok: false,
+          code: 'bundle_invalid',
+          message: 'OpenCode handoff import requires a native OpenCode session id',
         };
       }
       if (estimateBase64DecodedBytes(bundle.exportJsonBase64) > OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES) {

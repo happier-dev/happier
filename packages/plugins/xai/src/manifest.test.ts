@@ -50,7 +50,7 @@ describe('xAI Voice plugin manifest', () => {
     expect(XaiRealtimeSettingsV1Schema.parse(Object.fromEntries(
       fields.map((field) => [field.id, field.default]),
     ))).toMatchObject({
-      model: { kind: 'pinned', id: 'grok-voice-think-fast-1.0' },
+      model: { kind: 'pinned', id: 'grok-voice-think-fast-2.0' },
       voice: { kind: 'catalog', id: 'eve' },
       instructions: '',
       reasoningEffort: 'high',

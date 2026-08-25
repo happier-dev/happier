@@ -1,4 +1,4 @@
-import { appendFile, mkdir, opendir, realpath, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, opendir, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,7 @@ import {
   createAntigravityExternalSessionsContribution,
   readAntigravityExternalTranscriptAfter,
 } from './externalSessions.js';
+import { snapshotAntigravityTranscriptSource } from './transcript/jsonl.js';
 
 function userRaw(text: string) {
   return { role: 'user', content: { type: 'text', text } };
@@ -41,6 +42,48 @@ async function createConversation(
 }
 
 describe('Antigravity external-session pure leaf', () => {
+  it('rejects exact identity and transcript reads through a conversation alias outside the brain root', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-escaped-conversation-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const outsideBrainDir = join(home, 'outside-brain');
+    const outsideTranscriptPath = await createConversation(outsideBrainDir, 'conversation-escaped', [
+      JSON.stringify({ step_index: 1, type: 'USER_INPUT', text: 'outside transcript' }),
+    ]);
+    const snapshot = await snapshotAntigravityTranscriptSource(outsideTranscriptPath);
+    if (!snapshot) throw new Error('missing escaped transcript snapshot');
+    await mkdir(brainDir, { recursive: true });
+    await symlink(
+      join(outsideBrainDir, 'conversation-escaped'),
+      join(brainDir, 'conversation-escaped'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+    const source = {
+      kind: 'antigravityCliPrint' as const,
+      brainDir,
+      conversationId: 'conversation-escaped',
+      sourceRevision: snapshot.sourceRevision,
+    };
+
+    const [identity, page] = await Promise.all([
+      contribution.resolveLinkIdentity({
+        ...invocation(),
+        source,
+        remoteSessionId: 'conversation-escaped',
+      }),
+      contribution.pageTranscript({
+        ...invocation(),
+        source,
+        remoteSessionId: 'conversation-escaped',
+        direction: 'older',
+        maxItems: 10,
+      }),
+    ]);
+
+    expect(identity).toMatchObject({ ok: false, code: 'candidate_not_found' });
+    expect(page).toMatchObject({ ok: false, code: 'candidate_not_found' });
+  });
+
   it('bounds the first candidate scan chunk and rejects continuation across a brain generation change', async () => {
     const home = await mkdir(join(tmpdir(), `antigravity-external-large-candidates-${Date.now()}-`), { recursive: true });
     const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
@@ -1352,7 +1395,7 @@ describe('Antigravity external-session pure leaf', () => {
     ]);
   });
 
-  it('honors complete serialized-result byte budgets without splitting a native record', async () => {
+  it('classifies a transcript that cannot fit a valid result budget as a nonretryable producer error', async () => {
     const home = await mkdir(join(tmpdir(), `antigravity-external-budget-${Date.now()}-`), { recursive: true });
     const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
     await createConversation(brainDir, 'conversation-budget', [
@@ -1373,7 +1416,28 @@ describe('Antigravity external-session pure leaf', () => {
       maxItems: 10,
     })).resolves.toMatchObject({
       ok: false,
-      code: 'invalid_request',
+      code: 'agent_error',
+      retryable: false,
+    });
+  });
+
+  it('classifies an unfit candidate envelope as a nonretryable producer error', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-candidate-budget-${Date.now()}-`), { recursive: true });
+    const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
+    const conversationId = `conversation-${'x'.repeat(160)}`;
+    await createConversation(brainDir, conversationId, [
+      JSON.stringify({ step_index: 1, type: 'USER_INPUT', text: 'candidate' }),
+    ]);
+    const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
+
+    await expect(contribution.listCandidates({
+      ...invocation(120),
+      source: { kind: 'antigravityCliPrint' },
+      maxItems: 10,
+    })).resolves.toMatchObject({
+      ok: false,
+      code: 'agent_error',
+      retryable: false,
     });
   });
 });

@@ -21,7 +21,7 @@ import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/sessions/work-s
 import {
   isNonSteerablePromptPayload,
   parseSpecialCommand,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/sessions';
 import { isRuntimeConfigUpdateOutcomeApplied } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ClaudeUnifiedTerminalWorkspaceTrustPolicy } from '../../../../agentSettings/definition.js';
 import { createClaudeRuntimeActivityPublisher } from '../../shared/runtimeActivityPublisher.js';

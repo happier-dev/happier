@@ -328,7 +328,7 @@ func TestHTTPBrokerPreservesBoundedStatusAndCodeWithoutRetryAuthority(t *testing
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusConflict)
-		_, _ = writer.Write([]byte(`{"ok":false,"error":{"code":"stale_materialization"}}`))
+		_, _ = writer.Write([]byte(`{"ok":false,"error":{"code":"request_auth_not_active"}}`))
 	}))
 	defer server.Close()
 
@@ -349,7 +349,7 @@ func TestHTTPBrokerPreservesBoundedStatusAndCodeWithoutRetryAuthority(t *testing
 	if !errors.As(err, &brokerError) {
 		t.Fatalf("error = %T %v, want BrokerHTTPError", err, err)
 	}
-	if brokerError.StatusCode != http.StatusConflict || brokerError.Code != "stale_materialization" {
+	if brokerError.StatusCode != http.StatusConflict || brokerError.Code != "request_auth_not_active" {
 		t.Fatalf("broker error = %#v", brokerError)
 	}
 }
@@ -629,26 +629,28 @@ func TestHTTPBrokerReclassifiesStableUnauthorizedTupleWithoutResending(t *testin
 func TestBrokerFailureEnvelopeIsStrictAndStatusBounded(t *testing.T) {
 	t.Parallel()
 
-	for _, status := range []int{
-		http.StatusBadRequest,
-		http.StatusUnauthorized,
-		http.StatusForbidden,
-		http.StatusConflict,
-		http.StatusServiceUnavailable,
+	for _, testCase := range []struct {
+		status int
+		code   string
+	}{
+		{status: http.StatusUnauthorized, code: "request_auth_unauthorized"},
+		{status: http.StatusForbidden, code: "request_auth_purpose_forbidden"},
+		{status: http.StatusConflict, code: "request_auth_not_active"},
+		{status: http.StatusServiceUnavailable, code: "request_auth_unavailable"},
 	} {
-		status := status
-		t.Run(fmt.Sprintf("accepts_%d", status), func(t *testing.T) {
+		testCase := testCase
+		t.Run(fmt.Sprintf("accepts_%d_%s", testCase.status, testCase.code), func(t *testing.T) {
 			var output struct{}
 			err := decodeBrokerEnvelope(
-				status,
-				[]byte(`{"ok":false,"error":{"code":"fixture_error"}}`),
+				testCase.status,
+				[]byte(fmt.Sprintf(`{"ok":false,"error":{"code":%q}}`, testCase.code)),
 				&output,
 			)
 			var brokerError *BrokerHTTPError
 			if !errors.As(err, &brokerError) {
 				t.Fatalf("error = %T %v, want BrokerHTTPError", err, err)
 			}
-			if brokerError.StatusCode != status || brokerError.Code != "fixture_error" {
+			if brokerError.StatusCode != testCase.status || brokerError.Code != testCase.code {
 				t.Fatalf("broker error = %#v", brokerError)
 			}
 		})
@@ -659,13 +661,15 @@ func TestBrokerFailureEnvelopeIsStrictAndStatusBounded(t *testing.T) {
 		status int
 		body   string
 	}{
-		{name: "unsupported status", status: http.StatusTooManyRequests, body: `{"ok":false,"error":{"code":"fixture_error"}}`},
-		{name: "ok true", status: http.StatusForbidden, body: `{"ok":true,"error":{"code":"fixture_error"}}`},
-		{name: "extra outer field", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":"fixture_error"},"retry":true}`},
-		{name: "extra nested field", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":"fixture_error","message":"details"}}`},
-		{name: "wrong member", status: http.StatusForbidden, body: `{"ok":false,"value":{"code":"fixture_error"}}`},
+		{name: "unsupported status", status: http.StatusBadRequest, body: `{"ok":false,"error":{"code":"request_auth_unavailable"}}`},
+		{name: "unknown code", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":"fixture_error"}}`},
+		{name: "status and code disagree", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":"request_auth_not_active"}}`},
+		{name: "ok true", status: http.StatusForbidden, body: `{"ok":true,"error":{"code":"request_auth_purpose_forbidden"}}`},
+		{name: "extra outer field", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":"request_auth_purpose_forbidden"},"retry":true}`},
+		{name: "extra nested field", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":"request_auth_purpose_forbidden","message":"details"}}`},
+		{name: "wrong member", status: http.StatusForbidden, body: `{"ok":false,"value":{"code":"request_auth_purpose_forbidden"}}`},
 		{name: "blank code", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":""}}`},
-		{name: "padded code", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":" fixture_error"}}`},
+		{name: "padded code", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":" request_auth_purpose_forbidden"}}`},
 	}
 	for _, testCase := range testCases {
 		testCase := testCase
@@ -678,6 +682,76 @@ func TestBrokerFailureEnvelopeIsStrictAndStatusBounded(t *testing.T) {
 			var brokerError *BrokerHTTPError
 			if errors.As(err, &brokerError) {
 				t.Fatalf("malformed envelope surfaced as authoritative BrokerHTTPError: %#v", brokerError)
+			}
+		})
+	}
+}
+
+func TestHTTPBrokerMatchesProtocolRequestAuthHTTPV1Vectors(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join(
+		"..", "..", "..", "protocol", "src", "connect",
+		"connectedAccountRequestAuthHttpV1.vectors.json",
+	))
+	if err != nil {
+		t.Fatalf("read Protocol request-auth HTTP vectors: %v", err)
+	}
+	var vectors struct {
+		V     int `json:"v"`
+		Paths struct {
+			Lookup       string `json:"lookup"`
+			AuthFailure  string `json:"authFailure"`
+			QuotaFailure string `json:"quotaFailure"`
+		} `json:"paths"`
+		Responses []struct {
+			Name   string          `json:"name"`
+			Status int             `json:"status"`
+			Body   json.RawMessage `json:"body"`
+		} `json:"responses"`
+	}
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatalf("decode Protocol request-auth HTTP vectors: %v", err)
+	}
+	if vectors.V != 1 {
+		t.Fatalf("Protocol request-auth HTTP vector version = %d, want 1", vectors.V)
+	}
+	if vectors.Paths.Lookup != ConnectedAccountRequestAuthLookupPath ||
+		vectors.Paths.AuthFailure != ConnectedAccountRequestAuthFailurePath ||
+		vectors.Paths.QuotaFailure != ConnectedAccountRequestAuthQuotaFailurePath {
+		t.Fatalf("broker paths do not match Protocol vectors: %#v", vectors.Paths)
+	}
+
+	for _, vector := range vectors.Responses {
+		vector := vector
+		t.Run(vector.Name, func(t *testing.T) {
+			if vector.Status == http.StatusOK {
+				var output RequestAuthFailureOutcome
+				if err := decodeBrokerEnvelope(vector.Status, vector.Body, &output); err != nil {
+					t.Fatalf("decode success vector: %v", err)
+				}
+				if output.Status != FailureStatusCurrentUnchanged {
+					t.Fatalf("success outcome = %#v", output)
+				}
+				return
+			}
+
+			var wire struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(vector.Body, &wire); err != nil {
+				t.Fatalf("decode error vector body: %v", err)
+			}
+			var output struct{}
+			err := decodeBrokerEnvelope(vector.Status, vector.Body, &output)
+			var brokerError *BrokerHTTPError
+			if !errors.As(err, &brokerError) {
+				t.Fatalf("error vector = %T %v, want BrokerHTTPError", err, err)
+			}
+			if brokerError.StatusCode != vector.Status || brokerError.Code != wire.Error.Code {
+				t.Fatalf("broker error = %#v, vector status = %d code = %q", brokerError, vector.Status, wire.Error.Code)
 			}
 		})
 	}

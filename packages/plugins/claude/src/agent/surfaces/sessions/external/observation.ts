@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
 
 import {
     deriveExternalSessionActivity,
@@ -11,7 +10,10 @@ import type {
     AgentExternalSessionObservationLinkEvidenceBatchV1,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
-import { isSafeClaudeJsonlPathSegment } from './files.js';
+import {
+    isSafeClaudeJsonlPathSegment,
+    resolveClaudeJsonlSessionFile,
+} from './files.js';
 import {
     validateClaudeExternalSessionSource,
     type ClaudeExternalSessionSource,
@@ -21,10 +23,14 @@ const RESOURCE_KEY_PREFIX = 'claude-jsonl-resource-v1:';
 const LINK_KEY_PREFIX = 'claude-jsonl-link-v1:';
 const RECONCILIATION_FACT_TTL_MS = 15_000;
 
-type ResolvedClaudeObservationIdentity = Readonly<{
-    filePath: string;
+type ClaudeObservationIdentity = Readonly<{
+    source: ClaudeExternalSessionSource;
+    configDir: string;
     projectId: string;
     remoteSessionId: string;
+}>;
+type AuthorizedClaudeObservationIdentity = ClaudeObservationIdentity & Readonly<{
+    filePath: string;
 }>;
 type ExternalAgentObservationLeafFact =
     AgentExternalSessionObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
@@ -46,7 +52,7 @@ function readRequiredPathSegment(value: unknown, label: string): string {
 function resolveIdentity(
     identity: AgentExternalSessionsResolvedIdentity,
     env: NodeJS.ProcessEnv,
-): ResolvedClaudeObservationIdentity {
+): ClaudeObservationIdentity {
     if (identity.source.kind !== 'claudeConfig') {
         throw new Error('provider/source mismatch');
     }
@@ -85,19 +91,53 @@ function resolveIdentity(
         throw new Error('Claude observation requires a canonical config directory');
     }
     return {
-        filePath: join(
-            configDir,
-            'projects',
-            projectId,
-            `${remoteSessionId}.jsonl`,
-        ),
+        source: validation.source,
+        configDir,
         projectId,
         remoteSessionId,
     };
 }
 
+async function resolveAuthorizedIdentity(params: Readonly<{
+    identity: ClaudeObservationIdentity;
+    env: NodeJS.ProcessEnv;
+    signal: AbortSignal;
+}>): Promise<AuthorizedClaudeObservationIdentity | null> {
+    const resolved = await resolveClaudeJsonlSessionFile({
+        source: params.identity.source,
+        env: params.env,
+        remoteSessionId: params.identity.remoteSessionId,
+        signal: params.signal,
+    });
+    if (!resolved || resolved.projectId !== params.identity.projectId) return null;
+    return {
+        ...params.identity,
+        filePath: resolved.filePath,
+    };
+}
+
+function describeIdentity(
+    identity: ClaudeObservationIdentity,
+): Readonly<{
+    resourceKey: string;
+    linkKey: string;
+}> {
+    return {
+        resourceKey: `${RESOURCE_KEY_PREFIX}${hashOpaqueIdentity([
+            identity.configDir,
+            identity.projectId,
+            identity.remoteSessionId,
+        ])}`,
+        linkKey: `${LINK_KEY_PREFIX}${hashOpaqueIdentity([
+            identity.configDir,
+            identity.projectId,
+            identity.remoteSessionId,
+        ])}`,
+    };
+}
+
 function describeResolvedIdentity(
-    resolved: ResolvedClaudeObservationIdentity,
+    resolved: AuthorizedClaudeObservationIdentity,
 ): Readonly<{
     resourceKey: string;
     linkKey: string;
@@ -105,33 +145,11 @@ function describeResolvedIdentity(
     watchFileChanges: Readonly<{ files: string[] }>;
 }> {
     return {
-        resourceKey: `${RESOURCE_KEY_PREFIX}${hashOpaqueIdentity([
-            resolved.filePath,
-        ])}`,
-        linkKey: `${LINK_KEY_PREFIX}${hashOpaqueIdentity([
-            resolved.filePath,
-            resolved.projectId,
-            resolved.remoteSessionId,
-        ])}`,
+        ...describeIdentity(resolved),
         changeObservation: 'watch_file_changes',
         watchFileChanges: {
             files: [resolved.filePath],
         },
-    };
-}
-
-function groupResolvedIdentity(
-    resolved: ResolvedClaudeObservationIdentity,
-): Readonly<{ resourceKey: string; linkKey: string }> {
-    return {
-        resourceKey: `${RESOURCE_KEY_PREFIX}${hashOpaqueIdentity([
-            resolved.filePath,
-        ])}`,
-        linkKey: `${LINK_KEY_PREFIX}${hashOpaqueIdentity([
-            resolved.filePath,
-            resolved.projectId,
-            resolved.remoteSessionId,
-        ])}`,
     };
 }
 
@@ -153,7 +171,7 @@ export function createClaudeExternalSessionObservationContribution(params: Reado
 
     return Object.freeze({
         describeResource(request) {
-            return groupResolvedIdentity(resolveIdentity(request, readEnv()));
+            return describeIdentity(resolveIdentity(request, readEnv()));
         },
 
         observeResource(request) {
@@ -175,11 +193,29 @@ export function createClaudeExternalSessionObservationContribution(params: Reado
                 throw new Error('Claude observation reconciliation requires a current link');
             }
             if (request.purpose === 'resource_descriptors') {
-                const outcomes = request.links.map((link) => ({
-                    kind: 'described' as const,
-                    descriptor: describeResolvedIdentity(
-                        resolveIdentity(link.linkedSource, readEnv()),
-                    ),
+                const outcomes = await Promise.all(request.links.map(async (link) => {
+                    try {
+                        const resolved = await resolveAuthorizedIdentity({
+                            identity: resolveIdentity(link.linkedSource, readEnv()),
+                            env: readEnv(),
+                            signal: request.signal,
+                        });
+                        request.signal.throwIfAborted();
+                        if (!resolved) {
+                            return { kind: 'unavailable' as const, linkKey: link.linkKey };
+                        }
+                        const descriptor = describeResolvedIdentity(resolved);
+                        if (
+                            descriptor.resourceKey !== request.resourceKey
+                            || descriptor.linkKey !== link.linkKey
+                        ) {
+                            return { kind: 'unavailable' as const, linkKey: link.linkKey };
+                        }
+                        return { kind: 'described' as const, descriptor };
+                    } catch (error) {
+                        if (request.signal.aborted) throw error;
+                        return { kind: 'unavailable' as const, linkKey: link.linkKey };
+                    }
                 }));
                 request.signal.throwIfAborted();
                 return {
@@ -191,9 +227,19 @@ export function createClaudeExternalSessionObservationContribution(params: Reado
             const outcomes = [];
             for (const link of request.links) {
                 request.signal.throwIfAborted();
-                let resolved: ResolvedClaudeObservationIdentity;
                 try {
-                    resolved = resolveIdentity(link.linkedSource, readEnv());
+                    const resolved = await resolveAuthorizedIdentity({
+                        identity: resolveIdentity(link.linkedSource, readEnv()),
+                        env: readEnv(),
+                        signal: request.signal,
+                    });
+                    if (!resolved) {
+                        outcomes.push({
+                            linkKey: link.linkKey,
+                            facts: [retrievalFailedFact(observedAtMs)],
+                        });
+                        continue;
+                    }
                     const descriptor = describeResolvedIdentity(resolved);
                     if (
                         descriptor.resourceKey !== request.resourceKey

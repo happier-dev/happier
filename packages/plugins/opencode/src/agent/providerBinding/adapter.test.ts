@@ -16,7 +16,7 @@ const connectionId = ProviderConnectionIdSchema.parse('pc_openrouter_work');
 
 const bearerTransport = {
   id: 'runtime-bearer',
-  protocols: ['openai-responses'],
+  protocols: ['openai-chat'],
   uses: ['runtime'],
   destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
 } as const;
@@ -43,9 +43,9 @@ function materializeInput(
       selection: { connectionId, model: { id: 'vendor/model', name: 'Vendor model' } },
       contributionKey: 'happier.provider.openrouter/openrouter',
       endpoint: {
-        endpointTemplateId: 'openrouter-openai-responses',
+        endpointTemplateId: 'openrouter-openai-chat',
         normalizedUrl: 'https://openrouter.ai/api/v1',
-        protocol: 'openai-responses',
+        protocol: 'openai-chat',
         publicHeaders: {},
       },
       runtimeCredentialTransport: null,
@@ -71,6 +71,7 @@ describe('OpenCode provider-binding adapter V1', () => {
       required: { streaming: true, toolRoundTrips: true },
       credentialSupport: {
         supportsNoAuth: true,
+        noAuthProtocols: ['openai-chat'],
         apiKeyTransports: [
           {
             protocol: 'openai-responses',
@@ -130,7 +131,16 @@ describe('OpenCode provider-binding adapter V1', () => {
           reasoningControls: 'unknown',
         },
       }],
-      credential: undefined,
+      credential: {
+        kind: 'apiKey',
+        required: true,
+        transports: [{
+          id: 'bearer',
+          protocols: ['openai-responses'],
+          uses: ['runtime'],
+          destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' },
+        }],
+      },
       model: { id: 'gateway-model', name: 'Gateway model' },
     });
 
@@ -141,8 +151,60 @@ describe('OpenCode provider-binding adapter V1', () => {
     });
   });
 
+  const gatewayEndpoint = (protocol: 'openai-responses' | 'openai-chat') => ({
+    id: protocol,
+    protocol,
+    baseUrl: 'https://gateway.example.test/v1',
+    capabilities: {
+      streaming: 'supported' as const,
+      toolRoundTrips: 'unknown' as const,
+      statefulResponses: 'unknown' as const,
+      reasoningControls: 'unknown' as const,
+    },
+  });
+
+  it('binds a credential-free Provider over Chat Completions rather than the Responses driver', () => {
+    const support = PLUGIN_MANIFEST.contributes.agents[0]!.providerRequirements!;
+    const resolution = resolveProviderBindingCompatibilityWithFingerprintV1({
+      agentTargetKey: 'backend:opencode:built_in',
+      adapterVersion: OPENCODE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion,
+      agent: support,
+      endpoints: [gatewayEndpoint('openai-responses'), gatewayEndpoint('openai-chat')],
+      credential: undefined,
+      model: { id: 'gateway-model', name: 'Gateway model' },
+    });
+
+    expect(resolution.result).toMatchObject({ selectedProtocol: 'openai-chat' });
+  });
+
+  it('refuses a credential-free Responses-only Provider before it can be selected', () => {
+    const support = PLUGIN_MANIFEST.contributes.agents[0]!.providerRequirements!;
+    const resolution = resolveProviderBindingCompatibilityWithFingerprintV1({
+      agentTargetKey: 'backend:opencode:built_in',
+      adapterVersion: OPENCODE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion,
+      agent: support,
+      endpoints: [gatewayEndpoint('openai-responses')],
+      credential: undefined,
+      model: { id: 'gateway-model', name: 'Gateway model' },
+    });
+
+    expect(resolution.result).toMatchObject({
+      status: 'incompatible',
+      reasons: ['no_auth_unsupported'],
+    });
+  });
+
+  it('refuses a credential-free Responses binding instead of sending a placeholder bearer', async () => {
+    const base = materializeInput();
+    await expect(OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize(materializeInput({
+      binding: {
+        ...base.binding,
+        endpoint: { ...base.binding.endpoint, protocol: 'openai-responses' },
+      },
+    }))).rejects.toThrow(/without a credential/u);
+  });
+
   it.each([
-    ['openai-responses', '@ai-sdk/openai', { apiKey: 'happier-no-auth' }],
     ['openai-chat', '@ai-sdk/openai-compatible', {}],
   ] as const)('owns the verified %s driver mapping and a session-only selected-model config', async (
     protocol,

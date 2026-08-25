@@ -4,7 +4,7 @@ import { asRecord, normalizeString } from './openCodeParsing.js';
 import { readOpenCodeToolCallKey, type OpenCodeServerRuntimeState } from './state.js';
 import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
 
-function buildOpenCodeToolResultOutput(part: OpenCodeToolPart): unknown {
+export function buildOpenCodeToolResultOutput(part: OpenCodeToolPart): unknown {
   const title = normalizeString(part.state.title);
   const metadata = asRecord(part.state.metadata);
   if (!title && !metadata) return part.state.output ?? {};

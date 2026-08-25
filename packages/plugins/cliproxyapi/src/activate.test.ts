@@ -18,6 +18,7 @@ import type {
 
 import { activate } from './index.js';
 import * as publicPackage from './index.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
 
 type ManagedPurpose = 'openai-upstream' | 'anthropic-upstream';
@@ -219,7 +220,10 @@ function createService(
   });
 }
 
-function captureRuntime(): ManagedProviderRuntime {
+function captureRegistration(): Readonly<{
+  localId: string;
+  runtime: ManagedProviderRuntime;
+}> {
   const registrations: Readonly<{
     localId: string;
     runtime: ManagedProviderRuntime;
@@ -236,6 +240,11 @@ function captureRuntime(): ManagedProviderRuntime {
 
   const registration = registrations[0];
   if (!registration) throw new Error('CLIProxyAPI activation did not register a Provider runtime');
+  return registration;
+}
+
+function captureRuntime(): ManagedProviderRuntime {
+  const registration = captureRegistration();
   expect(registration.localId).toBe('cliproxyapi');
   return registration.runtime;
 }
@@ -566,5 +575,55 @@ describe('CLIProxyAPI public managed Provider activation', () => {
       .rejects.toThrow('CLIProxyAPI managed service became unhealthy');
     expect(service.dispose).toHaveBeenCalledOnce();
     expect(service.stop).not.toHaveBeenCalled();
+  });
+});
+
+describe('CLIProxyAPI Provider local identity', () => {
+  // The host registers the Provider under the `definePlugin` record key, and
+  // the managed child asks the host to materialize Connected Account
+  // credentials under the consumer local id the runtime writes into its purpose
+  // configuration. Those must be one identity: a divergence would register one
+  // Provider while the child requests credentials for another. Neither side is
+  // read from a literal here.
+  it('uses one local id for manifest projection, activation, and credential-bearing purpose consumers', async () => {
+    const registration = captureRegistration();
+    const manifestProviderIds = PLUGIN_MANIFEST.contributes.providers.map(
+      (provider) => provider.id,
+    );
+    expect(manifestProviderIds).toEqual([registration.localId]);
+
+    const service = createService();
+    const supervise = vi.fn<ManagedServices['supervise']>(async () => service);
+    await registration.runtime.start(startRequests[0]!, {
+      connectedAccounts: fullyBoundConnectedAccounts(),
+      managedServices: Object.freeze({
+        dependencies: Object.freeze({}) as never,
+        supervise,
+      }),
+      signal: new AbortController().signal,
+    });
+
+    const spec = supervise.mock.calls[0]?.[0];
+    if (!spec || spec.mode.kind !== 'spawn') {
+      throw new Error('CLIProxyAPI managed start did not supervise a spawn service');
+    }
+    const serialized = spec.mode.launch.env?.[
+      'HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION'
+    ];
+    if (typeof serialized !== 'string') {
+      throw new Error('CLIProxyAPI managed start did not inject a purpose configuration');
+    }
+    const configuration = JSON.parse(serialized) as Readonly<{
+      purposes: readonly Readonly<{
+        consumer: Readonly<{ pluginId: string; localId: string }>;
+      }>[];
+    }>;
+    expect(configuration.purposes.length).toBeGreaterThan(0);
+    for (const purpose of configuration.purposes) {
+      expect(purpose.consumer).toEqual({
+        pluginId: PLUGIN_MANIFEST.id,
+        localId: registration.localId,
+      });
+    }
   });
 });

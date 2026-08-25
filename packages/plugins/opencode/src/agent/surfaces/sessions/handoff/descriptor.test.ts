@@ -17,7 +17,7 @@ function buildVendorExport(params?: Readonly<{
   projectID?: string;
   partText?: string;
 }>): Readonly<Record<string, unknown>> {
-  const sessionId = params?.sessionId ?? 'oc-import-1';
+  const sessionId = params?.sessionId ?? 'ses_0199b7a4c3f0AbCdEfGhIjKlMn';
   return {
     info: {
       id: sessionId,
@@ -111,7 +111,7 @@ describe('openCodeHandoffSurface', () => {
     const result = await openCodeHandoffSurface.importBundle({
       bundle: {
         agentId: 'opencode',
-        remoteSessionId: 'oc-import-1',
+        remoteSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
         exportJsonBase64: encodeExportPayload(buildVendorExport()),
         affinity: {
           backendMode: 'server',
@@ -126,7 +126,7 @@ describe('openCodeHandoffSurface', () => {
     expect(execRun).toHaveBeenCalledWith(
       {
         executable: { kind: 'systemTool', id: 'opencode-cli' },
-        args: ['export', 'oc-import-1'],
+        args: ['export', 'ses_0199b7a4c3f0AbCdEfGhIjKlMn'],
         cwd: { root: 'workspace', relativePath: '' },
         maxStdoutBytes: 16 * 1024 * 1024,
       },
@@ -135,7 +135,7 @@ describe('openCodeHandoffSurface', () => {
     expect(result).toMatchObject({
       ok: true,
       value: {
-        providerSessionId: 'oc-import-1',
+        providerSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
         source: {
           kind: 'opencodeServer',
           baseUrl: 'http://127.0.0.1:49196/',
@@ -151,11 +151,11 @@ describe('openCodeHandoffSurface', () => {
                 agentId: 'opencode',
                 agent: {
                   backendMode: 'server',
-                  providerSessionId: 'oc-import-1',
+                  providerSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
                   agentExtra: {
                     runtimeHandle: {
                       backendMode: 'server',
-                      providerSessionId: 'oc-import-1',
+                      providerSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
                       serverBaseUrl: 'http://127.0.0.1:49196/',
                       serverBaseUrlExplicit: true,
                     },
@@ -165,7 +165,7 @@ describe('openCodeHandoffSurface', () => {
             },
             {
               fieldId: 'identity.providerSessionId',
-              value: 'oc-import-1',
+              value: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
             },
           ],
         },
@@ -186,7 +186,7 @@ describe('openCodeHandoffSurface', () => {
     const result = await openCodeHandoffSurface.importBundle({
       bundle: {
         agentId: 'opencode',
-        remoteSessionId: 'oc-import-1',
+        remoteSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
         exportJsonBase64: encodeExportPayload(buildVendorExport()),
         affinity: {
           backendMode: 'server',
@@ -200,7 +200,7 @@ describe('openCodeHandoffSurface', () => {
     expect(result).toEqual({
       ok: false,
       code: 'target_identity_conflict',
-      message: 'OpenCode target session oc-import-1 already exists with divergent data',
+      message: 'OpenCode target session ses_0199b7a4c3f0AbCdEfGhIjKlMn already exists with divergent data',
     });
     expect(execRun).toHaveBeenCalledOnce();
     expect(execRun.mock.calls.some(([input]) => input.args?.[0] === 'import')).toBe(false);
@@ -212,7 +212,7 @@ describe('openCodeHandoffSurface', () => {
         return {
           ...processResult({
             exitCode: 1,
-            stderr: 'Session not found: oc-import-1',
+            stderr: 'Session not found: ses_0199b7a4c3f0AbCdEfGhIjKlMn',
           }),
         };
       }
@@ -229,7 +229,7 @@ describe('openCodeHandoffSurface', () => {
     const result = await openCodeHandoffSurface.importBundle({
       bundle: {
         agentId: 'opencode',
-        remoteSessionId: 'oc-import-1',
+        remoteSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
         exportJsonBase64: encodeExportPayload(buildVendorExport()),
         affinity: {
           backendMode: 'server',
@@ -249,7 +249,7 @@ describe('openCodeHandoffSurface', () => {
       [
         {
           executable: { kind: 'systemTool', id: 'opencode-cli' },
-          args: ['export', 'oc-import-1'],
+          args: ['export', 'ses_0199b7a4c3f0AbCdEfGhIjKlMn'],
           cwd: { root: 'workspace', relativePath: '' },
           maxStdoutBytes: 16 * 1024 * 1024,
         },
@@ -277,7 +277,7 @@ describe('openCodeHandoffSurface', () => {
     const result = await openCodeHandoffSurface.importBundle({
       bundle: {
         agentId: 'opencode',
-        remoteSessionId: 'oc-import-1',
+        remoteSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
         exportJsonBase64: encodeExportPayload(buildVendorExport()),
         affinity: {
           backendMode: 'server',
@@ -291,7 +291,7 @@ describe('openCodeHandoffSurface', () => {
     expect(result).toEqual({
       ok: false,
       code: 'target_identity_conflict',
-      message: 'OpenCode target session oc-import-1 could not be compared safely',
+      message: 'OpenCode target session ses_0199b7a4c3f0AbCdEfGhIjKlMn could not be compared safely',
     });
     expect(execRun).toHaveBeenCalledOnce();
     expect(execRun.mock.calls.some(([input]) => input.args?.[0] === 'import')).toBe(false);
@@ -306,9 +306,9 @@ describe('openCodeHandoffSurface', () => {
     const result = await openCodeHandoffSurface.importBundle({
       bundle: {
         agentId: 'opencode',
-        remoteSessionId: 'oc-import-missing-target',
+        remoteSessionId: 'ses_0199b7a4c3f1ZyXwVuTsRqPoNm',
         exportJsonBase64: encodeExportPayload(buildVendorExport({
-          sessionId: 'oc-import-missing-target',
+          sessionId: 'ses_0199b7a4c3f1ZyXwVuTsRqPoNm',
         })),
         affinity: {
           backendMode: 'server',
@@ -323,6 +323,61 @@ describe('openCodeHandoffSurface', () => {
       ok: false,
       code: 'target_import_failed',
       message: 'spawn cwd ENOENT',
+    });
+  });
+  it('refuses an option-shaped remote id before it can reach the OpenCode argv operand', async () => {
+    const execRun = vi.fn(async () => processResult({ exitCode: 0, stdout: '{}' }));
+    const context = createHandoffInvocationContext(createExecFixture(execRun));
+
+    for (const optionShapedId of ['--sanitize', '--version', '-s']) {
+      const exported = await openCodeHandoffSurface.exportBundle({
+        sessionId: optionShapedId,
+        metadata: { opencodeSessionId: optionShapedId },
+        directory: '/repo',
+      }, context);
+      expect(exported).toMatchObject({ ok: false, code: 'bundle_invalid' });
+
+      const imported = await openCodeHandoffSurface.importBundle({
+        bundle: {
+          agentId: 'opencode',
+          remoteSessionId: optionShapedId,
+          exportJsonBase64: encodeExportPayload(buildVendorExport({ sessionId: optionShapedId })),
+          affinity: { backendMode: 'server', serverBaseUrl: null, serverBaseUrlExplicit: false },
+        },
+        targetDirectory: '/repo',
+      }, context);
+      expect(imported).toMatchObject({ ok: false, code: 'bundle_invalid' });
+    }
+
+    expect(execRun).not.toHaveBeenCalled();
+  });
+
+  it('exports a native OpenCode session id as the exact positional operand', async () => {
+    const vendorExport = buildVendorExport();
+    const execRun = vi.fn(async () => processResult({
+      exitCode: 0,
+      stdout: JSON.stringify(vendorExport),
+    }));
+    const context = createHandoffInvocationContext(createExecFixture(execRun));
+
+    const result = await openCodeHandoffSurface.exportBundle({
+      sessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
+      metadata: { opencodeSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn' },
+      directory: '/repo',
+    }, context);
+
+    expect(execRun).toHaveBeenCalledOnce();
+    expect(execRun).toHaveBeenCalledWith(
+      {
+        executable: { kind: 'systemTool', id: 'opencode-cli' },
+        args: ['export', 'ses_0199b7a4c3f0AbCdEfGhIjKlMn'],
+        maxStdoutBytes: 16 * 1024 * 1024,
+      },
+      { signal: context.signal },
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: { bundle: { agentId: 'opencode', remoteSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn' } },
     });
   });
 });

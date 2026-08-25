@@ -1,9 +1,11 @@
 import {
+  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
   CLAUDE_SUBSCRIPTION_OAUTH_PROFILE,
   type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
   type ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   type ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   CLAUDE_DEFAULT_SUBSCRIPTION_USAGE_URL,
   parseClaudeSubscriptionUsageMeters,
@@ -233,7 +235,10 @@ async function readHealth(
   credentials: ConnectedAccountCredentialReader,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<PluginConnectedAccountHealthResult> {
-  if (authenticationModeId === 'setup-token') {
+  if (
+    authenticationModeId
+    === CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.authenticationModeId
+  ) {
     return await readCredential(credentials, SETUP_TOKEN_KEY, options)
       ? { status: 'connected', displayName: 'Claude setup token', scopes: CLAUDE_CODE_SETUP_TOKEN_SCOPES }
       : {
@@ -244,7 +249,10 @@ async function readHealth(
           ),
         };
   }
-  if (authenticationModeId !== 'oauth') {
+  if (
+    authenticationModeId
+    !== CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth.authenticationModeId
+  ) {
     return {
       status: 'unavailable',
       diagnostic: diagnostic(
@@ -287,7 +295,7 @@ async function readHealth(
 const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
   authentication: {
     modes: {
-      'setup-token': {
+      [CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.authenticationModeId]: {
         kind: 'manual',
         async complete(input, context, options) {
           const setupToken = input.fields.token?.trim() ?? '';
@@ -311,7 +319,7 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
           };
         },
       },
-      oauth: {
+      [CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth.authenticationModeId]: {
         kind: 'oauthAuthorizationCode',
         async begin(input) {
           const query = new URLSearchParams({
@@ -351,7 +359,10 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
   },
   async refresh(context, options) {
     const authenticationModeId = modeId(context);
-    if (authenticationModeId === 'setup-token') {
+    if (
+      authenticationModeId
+      === CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.authenticationModeId
+    ) {
       return readHealth(authenticationModeId, context.credentials, options);
     }
     const refreshToken = await readCredential(context.credentials, REFRESH_TOKEN_KEY, options);
@@ -407,10 +418,16 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
   },
   async quota(context, options) {
     const authenticationModeId = modeId(context);
-    if (authenticationModeId === 'setup-token') {
+    if (
+      authenticationModeId
+      === CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.authenticationModeId
+    ) {
       return { observedAtMs: Date.now(), limits: [] };
     }
-    if (authenticationModeId !== 'oauth') {
+    if (
+      authenticationModeId
+      !== CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth.authenticationModeId
+    ) {
       throw new Error('Claude connected-account authentication mode is unavailable');
     }
     const signal = options?.signal ?? context.signal;
@@ -462,8 +479,24 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
   },
   async materialize(request, context, options) {
     const authenticationModeId = modeId(context);
-    if (authenticationModeId === 'setup-token') {
-      if (request.kind === 'environment') return { kind: 'environment', env: {} };
+    if (
+      authenticationModeId
+      === CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.authenticationModeId
+    ) {
+      if (request.kind === 'environment') {
+        const environmentKey =
+          CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey;
+        if (request.keys.length !== 1 || request.keys[0] !== environmentKey) {
+          throw new PluginError({
+            code: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1
+              .unsupportedEnvironmentRequestErrorCode,
+            message: 'Claude setup-token accounts materialize only their declared environment key.',
+          });
+        }
+        const setupToken = await readCredential(context.credentials, SETUP_TOKEN_KEY, options);
+        if (!setupToken) throw new Error('Claude setup-token credentials are unavailable');
+        return { kind: 'environment', env: { [environmentKey]: setupToken } };
+      }
       if (request.kind !== 'files') {
         throw new Error('Claude setup-token accounts do not support HTTP-header materialization');
       }
@@ -479,10 +512,28 @@ const claudeSubscriptionRuntimeDefinition: PluginConnectedAccountRuntime = {
       }));
       return { kind: 'files', files };
     }
-    if (authenticationModeId !== 'oauth') {
+    if (
+      authenticationModeId
+      !== CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth.authenticationModeId
+    ) {
       throw new Error('Claude connected-account authentication mode is unavailable');
     }
-    if (request.kind === 'environment') return { kind: 'environment', env: {} };
+    if (request.kind === 'environment') {
+      const environmentKey =
+        CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey;
+      if (request.keys.length === 1 && request.keys[0] === environmentKey) {
+        throw new PluginError({
+          code: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth
+            .requestAuthRequiredErrorCode,
+          message: 'Claude OAuth Connected Accounts require request-auth materialization.',
+        });
+      }
+      throw new PluginError({
+        code: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1
+          .unsupportedEnvironmentRequestErrorCode,
+        message: 'Claude OAuth Connected Accounts do not support this environment request.',
+      });
+    }
     if (request.kind === 'httpHeaders') {
       if (
         request.origin !== ANTHROPIC_API_ORIGIN

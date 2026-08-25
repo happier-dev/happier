@@ -11,6 +11,9 @@ import type {
     AgentExternalSessionsResult,
     AgentExternalSessionsTranscriptPage,
 } from '@happier-dev/plugin-sdk/sessions/external';
+import {
+    createAgentExternalSessionsProducerOverflowFailure,
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
     ClaudeCandidateInvalidCursorError,
@@ -299,7 +302,7 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                 const after = invocationFailure(request);
                 if (after) return after;
                 if (error instanceof ClaudeCandidateResultBudgetTooSmallError) {
-                    return failed('agent_error', error.message, false);
+                    return createAgentExternalSessionsProducerOverflowFailure(error.message);
                 }
                 if (error instanceof ClaudeCandidateInvalidCursorError) {
                     return failed('invalid_request', error.message);
@@ -414,7 +417,9 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                 const mapped = mapTranscriptPage(page);
                 return serializedByteLength(mapped) <= request.maxSerializedBytes
                     ? mapped
-                    : failed('agent_error', 'Claude transcript result byte budget cannot fit the page envelope.', false);
+                    : createAgentExternalSessionsProducerOverflowFailure(
+                        'Claude transcript result byte budget cannot fit the page envelope.',
+                    );
             } catch (error) {
                 const after = invocationFailure(request);
                 if (after) return after;
@@ -422,7 +427,7 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                     return failed('invalid_request', error.message);
                 }
                 if (error instanceof ClaudeTranscriptResultBudgetTooSmallError) {
-                    return failed('agent_error', error.message, false);
+                    return createAgentExternalSessionsProducerOverflowFailure(error.message);
                 }
                 return failed(
                     'agent_unavailable',
@@ -463,12 +468,14 @@ export function createClaudeExternalSessionsContribution(params: Readonly<{
                 const mapped = mapReadAfterPage(page);
                 return serializedByteLength(mapped) <= request.maxSerializedBytes
                     ? mapped
-                    : failed('agent_error', 'Claude transcript result byte budget cannot fit the page envelope.', false);
+                    : createAgentExternalSessionsProducerOverflowFailure(
+                        'Claude transcript result byte budget cannot fit the page envelope.',
+                    );
             } catch (error) {
                 const after = invocationFailure(request);
                 if (after) return after;
                 if (error instanceof ClaudeTranscriptResultBudgetTooSmallError) {
-                    return failed('agent_error', error.message, false);
+                    return createAgentExternalSessionsProducerOverflowFailure(error.message);
                 }
                 return ok({ outcome: 'read_failed' });
             }

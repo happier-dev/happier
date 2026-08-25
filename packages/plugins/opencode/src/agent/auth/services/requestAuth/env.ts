@@ -1,7 +1,7 @@
 import { isRecord, type JsonValue } from '@happier-dev/plugin-sdk';
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
-} from '@happier-dev/agents/request-auth';
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { isDeclaredOpenCodeRequestAuthPurpose } from './purposes.js';
 import type { OpenCodeRequestAuthProvider } from './source.js';

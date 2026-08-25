@@ -4,18 +4,15 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
+  measureOpenCodeTranscriptItemBytes,
   readOpenCodeTranscriptForwardWindow,
 } from '../../../runtime/server/transcript/indexedTranscript.js';
-import {
-  classifyOpenCodeMessageForProjection,
-} from '../../../runtime/server/transcript/projection/index.js';
 import {
   createOpenCodeExternalSessionClient,
   type OpenCodeExternalSessionSource,
 } from './client.js';
 import {
-  mapOpenCodeMessageToExternalSessionItem,
-  measureOpenCodeExternalTranscriptItemBytes,
+  projectOpenCodeExternalSessionMessage,
 } from './messages.js';
 
 export type OpenCodeAfterCursorV3 = Readonly<{
@@ -175,19 +172,15 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
       maxBytes: params.maxBytes,
       maxItems,
       mapMessage: (message, index) => {
-        const item = mapOpenCodeMessageToExternalSessionItem(message, params.providerSessionId);
-        if (!item) {
-          const projection = classifyOpenCodeMessageForProjection(message);
-          (
-            projection.kind === 'compaction_internal'
-            || projection.kind === 'ignored_internal'
-              ? knownNonTranscriptPositions
-              : unsupportedPositions
-          ).push(index);
+        const projection = projectOpenCodeExternalSessionMessage(message, params.providerSessionId);
+        if (projection.disposition === 'known_non_transcript') {
+          knownNonTranscriptPositions.push(index);
+        } else if (projection.disposition === 'unsupported') {
+          unsupportedPositions.push(index);
         }
-        return item;
+        return projection.items;
       },
-      measureItemBytes: measureOpenCodeExternalTranscriptItemBytes,
+      measureItemBytes: measureOpenCodeTranscriptItemBytes,
     });
     const newestReadMessageId = readOpenCodeMessageId(rawMessages.at(page.nextIndex - 1))
       ?? decoded.messageId;

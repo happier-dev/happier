@@ -14,15 +14,7 @@ type RequestImplementation = (
   params?: unknown,
 ) => Promise<unknown>;
 
-type VersionedDisposableCodexAppServerClient =
-  Omit<DisposableCodexAppServerClient, 'launchFeatures'>
-  & Readonly<{
-    launchFeatures: Readonly<{
-      realtimeConversationAdvertised: boolean;
-      codexCliVersion: string | null;
-      realtimeConversationVersionSupported: boolean;
-    }>;
-  }>;
+type RequestOptions = Parameters<DisposableCodexAppServerClient['request']>[2];
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -89,12 +81,11 @@ function resolveCanonicalSdpMaxBytes(): number {
 
 function createClientFixture(options?: Readonly<{
   advertised?: boolean;
-  codexCliVersion?: string | null;
-  versionSupported?: boolean;
   request?: RequestImplementation;
 }>) {
   let exited = false;
   const handlers = new Map<string, Set<(params: unknown) => void>>();
+  const requestOptions = new Map<string, RequestOptions[]>();
   const exitListeners = new Set<(result: Readonly<{
     exitCode: number | null;
     signal: string | null;
@@ -105,15 +96,16 @@ function createClientFixture(options?: Readonly<{
     }
     return {};
   }));
-  const client: VersionedDisposableCodexAppServerClient = {
+  const client: DisposableCodexAppServerClient = {
     launchFeatures: {
       realtimeConversationAdvertised: options?.advertised ?? true,
-      codexCliVersion: options && 'codexCliVersion' in options
-        ? options.codexCliVersion ?? null
-        : '0.145.0',
-      realtimeConversationVersionSupported: options?.versionSupported ?? true,
     },
-    request,
+    async request(method, params, options) {
+      const calls = requestOptions.get(method) ?? [];
+      calls.push(options);
+      requestOptions.set(method, calls);
+      return await request(method, params);
+    },
     notify: vi.fn(async () => {}),
     registerRequestHandler: vi.fn(() => () => {}),
     registerNotificationHandler(method, handler) {
@@ -143,6 +135,9 @@ function createClientFixture(options?: Readonly<{
     },
     isExited() {
       return exited;
+    },
+    requestOptions(method: string) {
+      return requestOptions.get(method) ?? [];
     },
     registeredMethods() {
       return [...handlers.keys()].sort();
@@ -306,6 +301,9 @@ describe('Codex app-server realtime V3 adapter', () => {
       'experimentalFeature/list',
       expect.any(Object),
     ));
+    expect(inspectFixture.requestOptions('experimentalFeature/list')).toEqual([
+      { signal: inspectAbort.signal },
+    ]);
 
     const startFeaturePage = deferred<unknown>();
     const startFixture = createClientFixture({
@@ -325,6 +323,9 @@ describe('Codex app-server realtime V3 adapter', () => {
       'experimentalFeature/list',
       expect.any(Object),
     ));
+    expect(startFixture.requestOptions('experimentalFeature/list')).toEqual([
+      { signal: startAbort.signal },
+    ]);
 
     inspectAbort.abort();
     startAbort.abort();
@@ -581,25 +582,6 @@ describe('Codex app-server realtime V3 adapter', () => {
       secret: 'sk-private-launch',
     },
     {
-      label: 'unvalidated feature-advertising runtime version',
-      inspect: async () => {
-        const fixture = createClientFixture({
-          advertised: true,
-          codexCliVersion: '0.146.1',
-          versionSupported: false,
-          request: async () => {
-            throw new Error('feature inspection must not run for an unvalidated runtime');
-          },
-        });
-        const result = await createConversation(fixture).inspect();
-        expect(fixture.request).not.toHaveBeenCalled();
-        return result;
-      },
-      reason: 'update_required',
-      code: 'codex_realtime_runtime_version_unsupported',
-      secret: null,
-    },
-    {
       label: 'unadvertised realtime feature',
       inspect: async () => {
         const fixture = createClientFixture({ advertised: false });
@@ -691,6 +673,28 @@ describe('Codex app-server realtime V3 adapter', () => {
     expect(request).not.toHaveProperty('initialItems');
     expect(request).not.toHaveProperty('model');
     expect(request).not.toHaveProperty('voice');
+  });
+
+  it('keeps the V3 negotiation deadline at the attempt owner while preserving caller cancellation', async () => {
+    const fixture = createClientFixture();
+    const conversation = createConversation(fixture);
+    const caller = new AbortController();
+    const startPromise = conversation.start(
+      { transport: { kind: 'webrtc', offerSdp: 'offer' } },
+      { signal: caller.signal },
+    );
+
+    await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith(
+      'thread/realtime/start',
+      expect.any(Object),
+    ));
+    expect(fixture.requestOptions('thread/realtime/start')).toEqual([{
+      signal: caller.signal,
+      timeoutMs: null,
+    }]);
+
+    const started = await settleSuccessfulStart(fixture, startPromise);
+    expect(started.status).toBe('started');
   });
 
   it.each([
@@ -1217,7 +1221,16 @@ describe('Codex app-server realtime V3 adapter', () => {
   it('fences an admitted timeout through requested close', async () => {
     vi.useFakeTimers();
     try {
-      const fixture = createClientFixture();
+      const admission = deferred<unknown>();
+      const fixture = createClientFixture({
+        request: async (method) => {
+          if (method === 'experimentalFeature/list') {
+            return featurePage([{ name: 'realtime_conversation', enabled: true }]);
+          }
+          if (method === 'thread/realtime/start') return await admission.promise;
+          return {};
+        },
+      });
       const conversation = createConversation(fixture, { settlementTimeoutMs: 250 });
       const startPromise = conversation.start({
         transport: { kind: 'webrtc', offerSdp: 'offer' },
@@ -1232,6 +1245,25 @@ describe('Codex app-server realtime V3 adapter', () => {
         status: 'failed',
         diagnostic: { code: 'codex_realtime_start_timeout' },
       });
+      expect(fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/stop'))
+        .toHaveLength(1);
+
+      admission.resolve({});
+      fixture.publish('thread/realtime/started', {
+        threadId: 'thread-1',
+        realtimeSessionId: 'late-realtime',
+        version: 'v3',
+      });
+      fixture.publish('thread/realtime/sdp', {
+        threadId: 'thread-1',
+        sdp: 'late-answer',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(conversation.isActive()).toBe(false);
+      expect(fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/stop'))
+        .toHaveLength(1);
+
       await expect(conversation.start({
         transport: { kind: 'webrtc', offerSdp: 'blocked' },
       })).resolves.toMatchObject({
@@ -1509,23 +1541,18 @@ describe('Codex app-server realtime V3 adapter', () => {
     ).toHaveLength(1));
   });
 
-  it('keeps local stop fenced when requested close can precede a stale transport close', async () => {
-    let publishLatePriorClose = () => {};
+  it('releases an owned stop when its exact response precedes one queued matching requested close', async () => {
+    const stopResponse = deferred<unknown>();
     let startRequests = 0;
     const fixture = createClientFixture({
       request: async (method) => {
         if (method === 'experimentalFeature/list') {
           return featurePage([{ name: 'realtime_conversation', enabled: true }]);
         }
-        if (method === 'thread/realtime/start' && ++startRequests === 2) {
-          publishLatePriorClose();
-        }
+        if (method === 'thread/realtime/start') startRequests += 1;
+        if (method === 'thread/realtime/stop') return await stopResponse.promise;
         return {};
       },
-    });
-    publishLatePriorClose = () => fixture.publish('thread/realtime/closed', {
-      threadId: 'thread-1',
-      reason: 'transport_closed',
     });
     const conversation = createConversation(fixture);
     const firstPromise = conversation.start({
@@ -1543,15 +1570,27 @@ describe('Codex app-server realtime V3 adapter', () => {
     const early: AgentSessionRealtimeLifecycleEvent[] = [];
     started.handle.watch((event) => early.push(event));
 
-    await expect(started.handle.stop()).resolves.toEqual({ status: 'stopped' });
+    const stopping = started.handle.stop();
+    await vi.waitFor(() => expect(
+      fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/stop'),
+    ).toHaveLength(1));
+
+    // The process JSON-RPC client resolves a response immediately, but feeds
+    // notifications through its serial callback queue. Preserve that wire order:
+    // Stop's exact response, then its one requested-close notification.
+    stopResponse.resolve({});
+    const requestedClose = Promise.resolve().then(() => {
+      fixture.publish('thread/realtime/closed', {
+        threadId: 'thread-1',
+        reason: 'requested',
+      });
+    });
+    await Promise.all([
+      expect(stopping).resolves.toEqual({ status: 'stopped' }),
+      requestedClose,
+    ]);
     await expect(started.handle.stop()).resolves.toEqual({ status: 'already_stopped' });
     await started.handle.dispose();
-    await expect(conversation.start({
-      transport: { kind: 'webrtc', offerSdp: 'blocked' },
-    })).resolves.toMatchObject({
-      status: 'unavailable',
-      diagnostic: { code: 'codex_realtime_retry_unavailable' },
-    });
 
     const late: AgentSessionRealtimeLifecycleEvent[] = [];
     started.handle.watch((event) => late.push(event));
@@ -1559,12 +1598,90 @@ describe('Codex app-server realtime V3 adapter', () => {
     expect(late).toEqual([{ kind: 'terminal', reason: 'stopped' }]);
     expect(fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/stop'))
       .toHaveLength(1);
+    const secondPromise = conversation.start({
+      transport: { kind: 'webrtc', offerSdp: 'offer-2' },
+    });
+    await vi.waitFor(() => expect(
+      fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/start'),
+    ).toHaveLength(2));
+    await settleSuccessfulStart(fixture, secondPromise, 'v=0\r\nanswer-2');
+    expect(startRequests).toBe(2);
+    expect(fixture.client.dispose).not.toHaveBeenCalled();
+  });
+
+  it('keeps a same-thread requested close that predates Stop issuance fenced', async () => {
+    const fixture = createClientFixture();
+    const conversation = createConversation(fixture);
+    const starting = conversation.start({
+      transport: { kind: 'webrtc', offerSdp: 'offer' },
+    });
+    await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith(
+      'thread/realtime/start',
+      expect.any(Object),
+    ));
+    const started = await settleSuccessfulStart(fixture, starting);
+    const terminalEvents: AgentSessionRealtimeLifecycleEvent[] = [];
+    started.handle.watch((event) => terminalEvents.push(event));
+
     fixture.publish('thread/realtime/closed', {
       threadId: 'thread-1',
       reason: 'requested',
     });
+
+    expect(terminalEvents).toEqual([{
+      kind: 'terminal',
+      reason: 'upstream_closed',
+    }]);
     await expect(conversation.start({
-      transport: { kind: 'webrtc', offerSdp: 'offer-2' },
+      transport: { kind: 'webrtc', offerSdp: 'retry' },
+    })).resolves.toMatchObject({
+      status: 'unavailable',
+      diagnostic: { code: 'codex_realtime_retry_unavailable' },
+    });
+    await expect(started.handle.stop()).resolves.toEqual({ status: 'already_stopped' });
+    expect(
+      fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/stop'),
+    ).toHaveLength(0);
+  });
+
+  it('keeps a queued owned close fenced when the thread changes before its exact Stop terminal', async () => {
+    const stopResponse = deferred<unknown>();
+    let threadId = 'thread-1';
+    const fixture = createClientFixture({
+      request: async (method) => {
+        if (method === 'experimentalFeature/list') {
+          return featurePage([{ name: 'realtime_conversation', enabled: true }]);
+        }
+        if (method === 'thread/realtime/stop') return await stopResponse.promise;
+        return {};
+      },
+    });
+    const conversation = createConversation(fixture, {
+      getThreadId: () => threadId,
+    });
+    const starting = conversation.start({
+      transport: { kind: 'webrtc', offerSdp: 'offer' },
+    });
+    await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith(
+      'thread/realtime/start',
+      expect.any(Object),
+    ));
+    const started = await settleSuccessfulStart(fixture, starting);
+    const stopping = started.handle.stop();
+    await vi.waitFor(() => expect(
+      fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/stop'),
+    ).toHaveLength(1));
+
+    fixture.publish('thread/realtime/closed', {
+      threadId: 'thread-1',
+      reason: 'requested',
+    });
+    threadId = 'thread-2';
+    stopResponse.resolve({});
+
+    await expect(stopping).resolves.toEqual({ status: 'stopped' });
+    await expect(conversation.start({
+      transport: { kind: 'webrtc', offerSdp: 'retry' },
     })).resolves.toMatchObject({
       status: 'unavailable',
       diagnostic: { code: 'codex_realtime_retry_unavailable' },
@@ -1572,7 +1689,6 @@ describe('Codex app-server realtime V3 adapter', () => {
     expect(
       fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/start'),
     ).toHaveLength(1);
-    expect(fixture.client.dispose).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1615,6 +1731,10 @@ describe('Codex app-server realtime V3 adapter', () => {
         code: 'codex_realtime_stop_response_invalid',
       }),
     }]);
+    fixture.publish('thread/realtime/closed', {
+      threadId: 'thread-1',
+      reason: 'requested',
+    });
     await expect(conversation.start({
       transport: { kind: 'webrtc', offerSdp: 'retry-after-invalid-stop' },
     })).resolves.toMatchObject({
@@ -1627,6 +1747,44 @@ describe('Codex app-server realtime V3 adapter', () => {
     expect(
       fixture.request.mock.calls.filter(([method]) => method === 'thread/realtime/start'),
     ).toHaveLength(1);
+  });
+
+  it('keeps a failed stop fenced despite a matching requested close', async () => {
+    const fixture = createClientFixture({
+      request: async (method) => {
+        if (method === 'experimentalFeature/list') {
+          return featurePage([{ name: 'realtime_conversation', enabled: true }]);
+        }
+        if (method === 'thread/realtime/stop') {
+          throw new Error('stop transport failed');
+        }
+        return {};
+      },
+    });
+    const conversation = createConversation(fixture);
+    const starting = conversation.start({
+      transport: { kind: 'webrtc', offerSdp: 'offer' },
+    });
+    await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith(
+      'thread/realtime/start',
+      expect.any(Object),
+    ));
+    const started = await settleSuccessfulStart(fixture, starting);
+
+    await expect(started.handle.stop()).resolves.toMatchObject({
+      status: 'unavailable',
+      diagnostic: { code: 'codex_realtime_stop_failed' },
+    });
+    fixture.publish('thread/realtime/closed', {
+      threadId: 'thread-1',
+      reason: 'requested',
+    });
+    await expect(conversation.start({
+      transport: { kind: 'webrtc', offerSdp: 'retry-after-failed-stop' },
+    })).resolves.toMatchObject({
+      status: 'unavailable',
+      diagnostic: { code: 'codex_realtime_retry_unavailable' },
+    });
   });
 
   it('isolates throwing lifecycle watchers and retains terminal replay through one upstream stop', async () => {

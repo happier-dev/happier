@@ -2,10 +2,10 @@ import {
     type AgentModelConfig,
     type AgentModelDescriptor,
 } from '@happier-dev/plugin-sdk/agents';
-import { buildClaudeModelOptions } from '@happier-dev/agents/providers/claude-model-options';
 
 import { isClaude1mContextOptInModelId, toClaude1mModelId } from './contextWindow.js';
 import {
+    buildClaudeModelOptions,
     resolveClaudeDefaultEffortLevelForModelId,
     resolveClaudeEffortLevelsForModelId,
 } from './runtime/reasoningEffort.js';

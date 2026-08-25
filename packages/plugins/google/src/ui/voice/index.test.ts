@@ -29,8 +29,10 @@ describe('Google bundled voice UI contribution', () => {
     const ttsSettings = tts?.createSettingsSpec();
     expect(stt).not.toHaveProperty('speechTarget');
     expect(stt).not.toHaveProperty('schemas');
-    expect(sttSettings).not.toHaveProperty('privacyDisclosureKey');
-    expect(ttsSettings).not.toHaveProperty('privacyDisclosureKey');
+    // The manifest declaration is the single disclosure authority; the UI
+    // presentation contribution must not carry a second copy of provider policy.
+    expect(sttSettings).not.toHaveProperty('privacyDisclosure');
+    expect(ttsSettings).not.toHaveProperty('privacyDisclosure');
     expect(sttSettings?.fields?.map((field) => field.fieldId)).toEqual(['model', 'language']);
     expect(ttsSettings?.fields?.map((field) => field.fieldId)).toEqual([
       'languageCode',

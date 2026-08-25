@@ -4,7 +4,7 @@ import type {
   VoiceClientAuthArtifact } from '@happier-dev/plugin-sdk/voice/client';
 import type {
   VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice';
+} from '@happier-dev/plugin-sdk/voice/client';
 
 import { OpenAiRealtimeSettingsV1Schema } from '../../protocol/voice/settings.js';
 import { OPENAI_VOICE_PROVIDER_CONTRIBUTION_ID } from '../../constants.js';

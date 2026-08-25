@@ -29,6 +29,7 @@ vi.mock('node:fs/promises', async () => {
 import {
     discoverClaudeJsonlSessions,
     findClaudeJsonlSessionsById,
+    pageClaudeJsonlSessionFiles,
     resolveClaudeJsonlSessionFile,
 } from './files.js';
 
@@ -199,6 +200,39 @@ describe('Claude JSONL session file resolution', () => {
             remoteSessionId: 'escaped',
         })).resolves.toMatchObject({ matches: [] });
     });
+
+    it('rejects a projects-root symlink that escapes the admitted config root across paged and exact selection', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-symlink-projects-root-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const outsideProjectsDir = join(root, 'outside', 'tree');
+        const remoteSessionId = 'escaped';
+        await mkdir(join(outsideProjectsDir, 'project-a'), { recursive: true });
+        await writeFile(
+            join(outsideProjectsDir, 'project-a', `${remoteSessionId}.jsonl`),
+            '{"type":"user"}\n',
+            'utf8',
+        );
+        await mkdir(configDir, { recursive: true });
+        await symlink(outsideProjectsDir, join(configDir, 'projects'));
+
+        await expect(pageClaudeJsonlSessionFiles({
+            source: { kind: 'claudeConfig', configDir },
+            env: {},
+            limit: 10,
+        })).resolves.toMatchObject({ entries: [] });
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId,
+        })).resolves.toBeNull();
+        await expect(findClaudeJsonlSessionsById({
+            source: { kind: 'claudeConfig', configDir },
+            env: {},
+            remoteSessionId,
+        })).resolves.toMatchObject({ matches: [] });
+    });
+
     it('admits exactly what candidate discovery admits: an in-root symlink alias is not a session file', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-symlink-in-root-alias-'));
         roots.push(root);

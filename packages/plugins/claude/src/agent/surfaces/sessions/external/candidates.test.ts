@@ -1,7 +1,7 @@
 import { utimesSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -101,6 +101,7 @@ vi.mock('node:fs/promises', async () => {
 });
 
 import {
+    ClaudeCandidateInvalidCursorError,
     ClaudeCandidateSourceChangedError,
     listClaudeExternalSessionCandidates,
 } from './candidates.js';
@@ -244,6 +245,100 @@ describe('Claude external-session candidate listing', () => {
         expect(full.searchIncomplete).toBeUndefined();
     });
 
+    it('does not scan title records beyond the current bounded full-search chunk', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-title-search-chunk-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        await createCandidate({
+            configDir,
+            projectId: 'project-a',
+            remoteSessionId: 'first-row',
+            title: 'unrelated first row',
+        });
+        await createCandidate({
+            configDir,
+            projectId: 'project-b',
+            remoteSessionId: 'target-row',
+            title: 'find this later title',
+        });
+        resetFsObservations();
+
+        const first = await listClaudeExternalSessionCandidates({
+            source: { kind: 'claudeConfig', configDir, projectId: null },
+            env: {},
+            limit: 1,
+            searchTerm: 'later title',
+            searchMode: 'full',
+        });
+
+        expect(first).toMatchObject({
+            candidates: [],
+            nextCursor: expect.any(String),
+            searchIncomplete: true,
+        });
+        expect(transcriptPaths(fsMockState.openCalls)).toHaveLength(1);
+        expect(basename(transcriptPaths(fsMockState.openCalls)[0] ?? '')).toBe('first-row.jsonl');
+
+        resetFsObservations();
+        const second = await listClaudeExternalSessionCandidates({
+            source: { kind: 'claudeConfig', configDir, projectId: null },
+            env: {},
+            cursor: first.nextCursor ?? undefined,
+            limit: 1,
+            searchTerm: 'later title',
+            searchMode: 'full',
+        });
+        expect(second.candidates).toMatchObject([
+            { remoteSessionId: 'target-row', title: 'find this later title' },
+        ]);
+        expect(transcriptPaths(fsMockState.openCalls)).toHaveLength(1);
+        expect(basename(transcriptPaths(fsMockState.openCalls)[0] ?? '')).toBe('target-row.jsonl');
+    });
+
+    it('binds continuation cursors to the normalized search term and search mode', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-candidate-search-cursor-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        await createCandidate({ configDir, projectId: 'project-a', remoteSessionId: 'session-alpha' });
+        await createCandidate({ configDir, projectId: 'project-a', remoteSessionId: 'session-beta' });
+
+        const first = await listClaudeExternalSessionCandidates({
+            source: { kind: 'claudeConfig', configDir, projectId: null },
+            env: {},
+            limit: 1,
+            searchTerm: ' SESSION ',
+            searchMode: 'fast',
+        });
+        expect(first.nextCursor).toEqual(expect.any(String));
+        const cursor = first.nextCursor;
+        if (!cursor) throw new Error('Expected a continuation cursor for the search fixture.');
+
+        await expect(listClaudeExternalSessionCandidates({
+            source: { kind: 'claudeConfig', configDir, projectId: null },
+            env: {},
+            cursor,
+            limit: 1,
+            searchTerm: 'beta',
+            searchMode: 'fast',
+        })).rejects.toBeInstanceOf(ClaudeCandidateInvalidCursorError);
+        await expect(listClaudeExternalSessionCandidates({
+            source: { kind: 'claudeConfig', configDir, projectId: null },
+            env: {},
+            cursor,
+            limit: 1,
+            searchTerm: 'session',
+            searchMode: 'full',
+        })).rejects.toBeInstanceOf(ClaudeCandidateInvalidCursorError);
+        await expect(listClaudeExternalSessionCandidates({
+            source: { kind: 'claudeConfig', configDir, projectId: null },
+            env: {},
+            cursor,
+            limit: 1,
+            searchTerm: 'session',
+            searchMode: 'fast',
+        })).resolves.toMatchObject({ candidates: [expect.any(Object)] });
+    });
+
     it('matches exact session ids without scanning project session directories', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-id-search-'));
         roots.push(root);
@@ -373,14 +468,45 @@ describe('Claude external-session candidate listing', () => {
         expect(result.candidates).toHaveLength(2);
         expect(result.nextCursor).toEqual(expect.any(String));
         expect(transcriptPaths(fsMockState.statCalls)).toHaveLength(2);
-        expect(transcriptPaths(fsMockState.openCalls)).toHaveLength(0);
-        expect(result.candidates.every((candidate) => candidate.title === undefined)).toBe(true);
+        expect(result.candidates.every((candidate) => candidate.title?.startsWith('candidate '))).toBe(true);
+        expect(transcriptPaths(fsMockState.openCalls).map((path) => basename(path)).sort()).toEqual(
+            result.candidates.map((candidate) => `${candidate.remoteSessionId}.jsonl`).sort(),
+        );
         expect(result.candidates.length + (result.nextCursor ? 1 : 0)).toBeLessThanOrEqual(3);
         expect(
             fsMockState.directoryEntryPulls.filter(
                 (path) => path.startsWith(projectDir) && path.endsWith('.jsonl'),
             ).length,
         ).toBeLessThan(40);
+    });
+
+    it('keeps a budget-constrained exact row identifier-only when its title cannot fit', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-title-budget-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        await createCandidate({
+            configDir,
+            projectId: 'project-a',
+            remoteSessionId: 'budgeted-row',
+            title: 'immutable first user title',
+        });
+        resetFsObservations();
+
+        const result = await listClaudeExternalSessionCandidates({
+            source: { kind: 'claudeConfig', configDir, projectId: null },
+            env: {},
+            limit: 1,
+            searchTerm: 'budgeted-row',
+            searchMode: 'fast',
+            resultBudget: {
+                fits(candidates) {
+                    return candidates.every((candidate) => candidate.title === undefined);
+                },
+            },
+        });
+
+        expect(result.candidates).toMatchObject([{ remoteSessionId: 'budgeted-row' }]);
+        expect(result.candidates[0]).not.toHaveProperty('title');
     });
 
     it('returns bounded exact scan chunks for host-owned newest-first indexing', async () => {
@@ -867,7 +993,8 @@ describe.runIf(process.env.HAPPIER_RUN_EXTERNAL_SESSION_BENCHMARK === '1')(
                 ...second.candidates.map(candidateIdentity),
             ]).size).toBe(pageSize * 2);
             expect(firstObservation.selectedTranscriptPaths).toBeLessThanOrEqual(pageSize);
-            expect(firstObservation.titleReadPaths).toBe(0);
+            expect(firstObservation.titleReadPaths).toBe(pageSize);
+            expect(secondObservation.titleReadPaths).toBe(pageSize);
             expect(firstObservation.observablePageStateItems).toBeLessThanOrEqual(pageSize + 1);
             expect(firstObservation.sessionEntriesPulled).toBeLessThan(candidateCount);
         }, 120_000);

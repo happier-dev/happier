@@ -353,6 +353,7 @@ describe('Codex External Session hooks contribution', () => {
     const contribution = createCodexExternalSessionHooksContribution({
       env: {
         CODEX_HOME: '/tmp/codex-hooks-list',
+        CODEX_SQLITE_HOME: '/tmp/codex-state',
         HOME: '/home/ambient-user',
         FOREIGN_SECRET: 'must-not-reach-codex',
       },
@@ -372,7 +373,10 @@ describe('Codex External Session hooks contribution', () => {
     });
     expect(appServerMocks.createCodexNativeAppServerClient).toHaveBeenCalledWith({
       exec,
-      processEnv: { CODEX_HOME: '/tmp/codex-hooks-list' },
+      processEnv: {
+        CODEX_HOME: '/tmp/codex-hooks-list',
+        CODEX_SQLITE_HOME: '/tmp/codex-state',
+      },
       signal: invocation.signal,
     });
     expect(trusted.request).toHaveBeenCalledTimes(1);
@@ -804,6 +808,21 @@ describe('Codex External Session hooks contribution', () => {
       }),
       mapRequest({ eventId: 'unknown-event' }),
       mapRequest({ variantId: 'unknown-variant' }),
+      mapRequest({
+        nativePayload: {
+          session_id: 'codex-thread-a',
+          hook_event_name: 'Stop',
+        },
+      }),
+      mapRequest({
+        eventId: 'codex-stop',
+        nativePayload: {
+          session_id: 'codex-thread-a',
+          turn_id: 'codex-turn-17',
+          stop_hook_active: false,
+          hook_event_name: 'SessionStart',
+        },
+      }),
       mapRequest({ nativePayload: { session_id: true } }),
       mapRequest({ nativePayload: [] }),
     ];

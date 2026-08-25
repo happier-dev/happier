@@ -20,10 +20,12 @@ import {
 } from './client.js';
 import { readCodexAppServerRealtimeStartTimeoutMs } from './client/timeout.js';
 import { isCodexAppServerApplicationRejectionForMethod } from './compatibility.js';
-
-const REALTIME_FEATURE = 'realtime_conversation';
-const FEATURE_PAGE_LIMIT = 100;
-const MAX_FEATURE_PAGES = 100;
+import {
+  CODEX_OPERATION_ABORTED,
+  inspectCodexRealtimeFeature,
+  waitForCodexOperationOrAbort,
+  type CodexRealtimeFeatureInspection,
+} from './realtimeFeatureInspection.js';
 
 type CodexAppServerRealtimeConversation = AgentSessionRealtimeConversation & Readonly<{
   isActive(): boolean;
@@ -48,6 +50,8 @@ type Attempt = {
   requestAccepted: boolean;
   answerSdp: string | null;
   stopRequested: boolean;
+  stopIssued: boolean;
+  requestedCloseObserved: boolean;
   stopPromise: Promise<PluginDiagnosticData | null> | null;
   terminal: AgentSessionRealtimeLifecycleEvent | null;
   listeners: Set<LifecycleSubscription>;
@@ -57,34 +61,6 @@ type Attempt = {
   startSettled: boolean;
   handle: AgentSessionRealtimeHandle;
 };
-
-const OPERATION_ABORTED = Symbol('operation_aborted');
-
-function waitForOperationOrAbort<T>(
-  operation: Promise<T>,
-  signal?: AbortSignal,
-): Promise<T | typeof OPERATION_ABORTED> {
-  if (!signal) return operation;
-  if (signal.aborted) return Promise.resolve(OPERATION_ABORTED);
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      signal.removeEventListener('abort', onAbort);
-      resolve(OPERATION_ABORTED);
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-    if (signal.aborted) onAbort();
-    void operation.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(error);
-      },
-    );
-  });
-}
 
 function diagnostic(code: string, message: string): PluginDiagnosticData {
   return { code, severity: 'error', message };
@@ -181,149 +157,36 @@ function isGeneratedRealtimeClosedNotification(
   return record.reason === null || typeof record.reason === 'string';
 }
 
-function readFeaturePage(value: unknown): Readonly<{
-  data: readonly Readonly<Record<string, unknown>>[];
-  nextCursor: string | null;
-}> | null {
-  const record = readRecord(value);
-  if (!record || !Array.isArray(record.data)) return null;
-  if (record.nextCursor !== null && typeof record.nextCursor !== 'string') return null;
-  if (typeof record.nextCursor === 'string' && record.nextCursor.length === 0) return null;
-  const data = record.data.map(readRecord);
-  if (data.some((entry) => entry === null)) return null;
-  return {
-    data: data as readonly Readonly<Record<string, unknown>>[],
-    nextCursor: record.nextCursor,
-  };
-}
-
-async function inspectEffectiveFeature(params: Readonly<{
-  client: DisposableCodexAppServerClient;
-  threadId: string;
-  getThreadId(): string | null;
-  signal?: AbortSignal;
-}>): Promise<AgentSessionRealtimeAvailability> {
-  if (params.client.launchFeatures.realtimeConversationVersionSupported !== true) {
-    return unavailable(
-      'update_required',
-      'codex_realtime_runtime_version_unsupported',
-      'The selected Codex runtime version has not been validated for Codex Realtime Voice.',
-    );
+function mapFeatureInspectionToAvailability(
+  inspection: CodexRealtimeFeatureInspection,
+): AgentSessionRealtimeAvailability {
+  if (inspection.status === 'enabled') return { status: 'available', transport: 'webrtc' };
+  switch (inspection.code) {
+    case 'feature_not_advertised':
+      return unavailable('update_required', 'codex_realtime_feature_not_advertised', 'The selected Codex runtime does not advertise Codex Realtime Voice.');
+    case 'inspection_aborted':
+      return unavailable('feature_unavailable', 'codex_realtime_inspect_aborted', 'Codex Realtime Voice readiness inspection was aborted.');
+    case 'currentness_lost':
+      return unavailable('session_unavailable', 'codex_realtime_thread_changed', 'The selected Codex session changed during readiness inspection.');
+    case 'authentication_required':
+      return unavailable('authentication_required', 'codex_realtime_authentication_required', 'The selected Codex session must be connected again.');
+    case 'feature_list_unavailable':
+      return unavailable('feature_unavailable', 'codex_realtime_feature_list_unavailable', 'The selected Codex runtime could not verify Codex Realtime Voice.');
+    case 'feature_list_invalid':
+      return unavailable('feature_unavailable', 'codex_realtime_feature_list_invalid', 'The selected Codex runtime returned an invalid feature list.');
+    case 'feature_state_invalid':
+      return unavailable('feature_unavailable', 'codex_realtime_feature_state_invalid', 'The selected Codex runtime returned an invalid Realtime Voice feature state.');
+    case 'feature_state_ambiguous':
+      return unavailable('feature_unavailable', 'codex_realtime_feature_state_ambiguous', 'The selected Codex runtime returned conflicting Realtime Voice feature state.');
+    case 'feature_pagination_invalid':
+      return unavailable('feature_unavailable', 'codex_realtime_feature_pagination_invalid', 'The selected Codex runtime returned an invalid feature-list cursor.');
+    case 'feature_pagination_incomplete':
+      return unavailable('feature_unavailable', 'codex_realtime_feature_pagination_incomplete', 'The selected Codex runtime feature list could not be exhausted safely.');
+    case 'feature_missing':
+      return unavailable('update_required', 'codex_realtime_feature_missing', 'The selected Codex runtime does not include Codex Realtime Voice.');
+    case 'feature_disabled':
+      return unavailable('feature_unavailable', 'codex_realtime_feature_disabled', 'Codex Realtime Voice is not enabled in the selected Codex session.');
   }
-  if (!params.client.launchFeatures.realtimeConversationAdvertised) {
-    return unavailable(
-      'update_required',
-      'codex_realtime_feature_not_advertised',
-      'The selected Codex runtime does not advertise Codex Realtime Voice.',
-    );
-  }
-
-  let cursor: string | null = null;
-  const seenCursors = new Set<string>();
-  let featureEnabled: boolean | null = null;
-  for (let pageNumber = 0; pageNumber < MAX_FEATURE_PAGES; pageNumber += 1) {
-    if (params.signal?.aborted) {
-      return unavailable(
-        'feature_unavailable',
-        'codex_realtime_inspect_aborted',
-        'Codex Realtime Voice readiness inspection was aborted.',
-      );
-    }
-    if (params.getThreadId() !== params.threadId) {
-      return unavailable(
-        'session_unavailable',
-        'codex_realtime_thread_changed',
-        'The selected Codex session changed during readiness inspection.',
-      );
-    }
-
-    let pageValue: unknown;
-    try {
-      const pageOutcome = await waitForOperationOrAbort(
-        params.client.request('experimentalFeature/list', {
-          threadId: params.threadId,
-          cursor,
-          limit: FEATURE_PAGE_LIMIT,
-        }),
-        params.signal,
-      );
-      if (pageOutcome === OPERATION_ABORTED) {
-        return unavailable(
-          'feature_unavailable',
-          'codex_realtime_inspect_aborted',
-          'Codex Realtime Voice readiness inspection was aborted.',
-        );
-      }
-      pageValue = pageOutcome;
-    } catch (error) {
-      const authAvailability = authenticationRequiredAvailability(error);
-      if (authAvailability) return authAvailability;
-      return unavailable(
-        'feature_unavailable',
-        'codex_realtime_feature_list_unavailable',
-        'The selected Codex runtime could not verify Codex Realtime Voice.',
-      );
-    }
-    const page = readFeaturePage(pageValue);
-    if (!page) {
-      return unavailable(
-        'feature_unavailable',
-        'codex_realtime_feature_list_invalid',
-        'The selected Codex runtime returned an invalid feature list.',
-      );
-    }
-    for (const entry of page.data) {
-      if (entry.name !== REALTIME_FEATURE) continue;
-      if (typeof entry.enabled !== 'boolean') {
-        return unavailable(
-          'feature_unavailable',
-          'codex_realtime_feature_state_invalid',
-          'The selected Codex runtime returned an invalid Realtime Voice feature state.',
-        );
-      }
-      if (featureEnabled !== null && featureEnabled !== entry.enabled) {
-        return unavailable(
-          'feature_unavailable',
-          'codex_realtime_feature_state_ambiguous',
-          'The selected Codex runtime returned conflicting Realtime Voice feature state.',
-        );
-      }
-      featureEnabled = entry.enabled;
-    }
-    if (page.nextCursor === null) break;
-    if (seenCursors.has(page.nextCursor)) {
-      return unavailable(
-        'feature_unavailable',
-        'codex_realtime_feature_pagination_invalid',
-        'The selected Codex runtime returned an invalid feature-list cursor.',
-      );
-    }
-    seenCursors.add(page.nextCursor);
-    cursor = page.nextCursor;
-    if (pageNumber === MAX_FEATURE_PAGES - 1) {
-      return unavailable(
-        'feature_unavailable',
-        'codex_realtime_feature_pagination_incomplete',
-        'The selected Codex runtime feature list could not be exhausted safely.',
-      );
-    }
-  }
-
-  if (featureEnabled === null) {
-    return unavailable(
-      'update_required',
-      'codex_realtime_feature_missing',
-      'The selected Codex runtime does not include Codex Realtime Voice.',
-    );
-  }
-  if (!featureEnabled) {
-    return unavailable(
-      'feature_unavailable',
-      'codex_realtime_feature_disabled',
-      'Codex Realtime Voice is not enabled in the selected Codex session.',
-    );
-  }
-  return { status: 'available', transport: 'webrtc' };
 }
 
 export function createCodexAppServerRealtimeConversation(params: Readonly<{
@@ -370,6 +233,18 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
     target.listeners.clear();
   };
 
+  const maybeReleaseOwnedStop = (target: Attempt): void => {
+    if (
+      !target.requestedCloseObserved
+      || params.getThreadId() !== target.threadId
+      || target.terminal?.kind !== 'terminal'
+      || target.terminal.reason !== 'stopped'
+    ) {
+      return;
+    }
+    cleanupAttempt(target);
+  };
+
   const requestStop = async (
     target: Attempt,
   ): Promise<PluginDiagnosticData | null> => {
@@ -377,6 +252,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
     target.stopRequested = true;
     target.stopPromise = (async () => {
       try {
+        target.stopIssued = true;
         const response = await target.client.request('thread/realtime/stop', {
           threadId: target.threadId,
         });
@@ -509,6 +385,7 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
             ...(terminalDiagnostic ? { diagnostic: terminalDiagnostic } : {}),
           },
       );
+      maybeReleaseOwnedStop(target);
       return stopDiagnostic;
     }
     return target.stopPromise ? await target.stopPromise : null;
@@ -551,11 +428,11 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
     }
     let client: DisposableCodexAppServerClient;
     try {
-      const clientOutcome = await waitForOperationOrAbort(
+      const clientOutcome = await waitForCodexOperationOrAbort(
         params.getClient(),
         options?.signal,
       );
-      if (clientOutcome === OPERATION_ABORTED) {
+      if (clientOutcome === CODEX_OPERATION_ABORTED) {
         return {
           availability: unavailable(
             'feature_unavailable',
@@ -587,12 +464,13 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
         ),
       };
     }
-    const availability = await inspectEffectiveFeature({
+    const availability = mapFeatureInspectionToAvailability(await inspectCodexRealtimeFeature({
       client,
       threadId,
-      getThreadId: params.getThreadId,
+      isCurrent: () => params.getThreadId() === threadId,
+      isAuthenticationError: (error) => authenticationRequiredDiagnostic(error) !== null,
       ...(options?.signal ? { signal: options.signal } : {}),
-    });
+    }));
     if (params.isDisposed()) {
       return {
         availability: unavailable(
@@ -705,6 +583,8 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
         requestAccepted: false,
         answerSdp: null,
         stopRequested: false,
+        stopIssued: false,
+        requestedCloseObserved: false,
         stopPromise: null,
         terminal: null,
         listeners: new Set<LifecycleSubscription>(),
@@ -720,20 +600,20 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
           if (stopOptions?.signal?.aborted) return { status: 'aborted' };
           if (target.terminal) {
             if (target.stopPromise) {
-              const joined = await waitForOperationOrAbort(
+              const joined = await waitForCodexOperationOrAbort(
                 target.stopPromise,
                 stopOptions?.signal,
               );
-              if (joined === OPERATION_ABORTED) return { status: 'aborted' };
+              if (joined === CODEX_OPERATION_ABORTED) return { status: 'aborted' };
               if (joined) return { status: 'unavailable', diagnostic: joined };
             }
             return { status: 'already_stopped' };
           }
-          const stopDiagnostic = await waitForOperationOrAbort(
+          const stopDiagnostic = await waitForCodexOperationOrAbort(
             stopAttempt(target, 'stopped'),
             stopOptions?.signal,
           );
-          if (stopDiagnostic === OPERATION_ABORTED) return { status: 'aborted' };
+          if (stopDiagnostic === CODEX_OPERATION_ABORTED) return { status: 'aborted' };
           return stopDiagnostic
             ? { status: 'unavailable', diagnostic: stopDiagnostic }
             : { status: 'stopped' };
@@ -874,11 +754,24 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
         failNegotiation(target, eventDiagnostic);
       });
       register('thread/realtime/closed', (record) => {
-        // Closed notifications have no attempt identity. They terminalize the
-        // current handle, but only process exit can release this thread fence;
-        // otherwise a delayed close from this attachment could authorize a new
-        // same-thread attempt and let its delayed evidence settle that retry.
-        if (target.stopRequested) return;
+        // Closed notifications have no attempt identity. A locally owned Stop
+        // can release this thread fence only while the facade remains bound to
+        // that thread, after both its exact response terminalizes this handle
+        // and the ordered same-thread requested close arrives. The JSON-RPC
+        // callback queue may deliver either fact first. Every other close
+        // remains fenced until process exit.
+        if (target.stopRequested) {
+          if (
+            target.stopIssued
+            && params.getThreadId() === target.threadId
+            && isGeneratedRealtimeClosedNotification(record)
+            && record.reason === 'requested'
+          ) {
+            target.requestedCloseObserved = true;
+            maybeReleaseOwnedStop(target);
+          }
+          return;
+        }
         if (target.phase === 'terminal') return;
         if (!isGeneratedRealtimeClosedNotification(record)) {
           failInvalidNotification(target);
@@ -959,6 +852,9 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
           flushTranscriptTailOnSessionEnd: false,
           codexResponseHandoffMode: 'thinking',
           codexResponsesAsItems: false,
+        }, {
+          timeoutMs: null,
+          ...(options?.signal ? { signal: options.signal } : {}),
         });
       } catch (error) {
         startRequest = Promise.reject(error);

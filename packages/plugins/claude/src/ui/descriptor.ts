@@ -1,7 +1,7 @@
 
 export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
   kind: 'plugin.ui.v1',
-  pluginId: 'claude',
+  pluginId: 'happier.agent.claude',
   agentId: 'claude',
   version: 1,
   display: {
@@ -72,7 +72,6 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
     // semantic fallback. This keeps provider support and actual remote reachability separate.
     workState: {
       editableGoals: {
-        providerId: 'claude',
         capabilityDriven: true,
         persistedGoalSnapshot: {
           path: ['sessionWorkStateV1'],
@@ -102,8 +101,6 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
       trustObservedUsageBeyondKnown: true,
     },
     externalSessions: {
-      browseDescriptorId: 'claude.externalSessions.browse.v1',
-      sessionHandoffDescriptorId: 'claude.sessionHandoff.v1',
       sessionHandoff: {
         clearMetadataKeys: [
           'claudeTranscriptPath',
@@ -189,7 +186,7 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
       {
         id: 'claude.subagentLaunchCards',
         slot: 'sessionSubagents.launchCards',
-        componentId: 'firstParty.claude.subagentLaunchCards',
+        surfaceId: 'subagent-launch',
         props: {
           teamIds: {
             kind: 'subagentGroupKeys',
@@ -200,7 +197,7 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
       {
         id: 'claude.teammateDetailsTab',
         slot: 'sessionSubagents.teammateDetailsTab',
-        componentId: 'firstParty.claude.teammateDetailsTab',
+        surfaceId: 'subagent-details',
         resourceKind: 'claudeSubagentLauncher',
         iconName: 'people',
         tab: {

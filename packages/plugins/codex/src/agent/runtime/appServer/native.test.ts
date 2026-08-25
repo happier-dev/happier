@@ -15,10 +15,19 @@ const runtimeModuleMocks = vi.hoisted(() => ({
   startCodexAppServerRuntime: vi.fn(async () => undefined),
 }));
 
+const clientModuleMocks = vi.hoisted(() => ({
+  createCodexNativeAppServerClient: vi.fn(),
+}));
+
 vi.mock('./runtime.js', async (importOriginal) => ({
   ...await importOriginal<typeof import('./runtime.js')>(),
   createCodexAppServerRuntime: runtimeModuleMocks.createCodexAppServerRuntime,
   startCodexAppServerRuntime: runtimeModuleMocks.startCodexAppServerRuntime,
+}));
+
+vi.mock('./client.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./client.js')>(),
+  createCodexNativeAppServerClient: clientModuleMocks.createCodexNativeAppServerClient,
 }));
 
 import {
@@ -109,6 +118,10 @@ function createConnectedAccountsFixture(input?: Readonly<{
 describe('createCodexNativeAppServerSessionRuntime', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clientModuleMocks.createCodexNativeAppServerClient.mockResolvedValue({
+      request: vi.fn(async () => ({ threadId: 'forked-thread' })),
+      dispose: vi.fn(async () => undefined),
+    });
   });
 
   it('projects the app-server runtime auth facet onto the native session runtime', () => {
@@ -226,6 +239,44 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     }, context);
 
     expect(runtimeModuleMocks.startCodexAppServerRuntime).not.toHaveBeenCalled();
+  });
+
+  it('lets tracked native-fork initialization run until Codex settles or the operation is cancelled', async () => {
+    const appServer = createAppServerSession();
+    runtimeModuleMocks.createCodexAppServerRuntime.mockReturnValueOnce(appServer.runtime);
+    const controller = new AbortController();
+    const context = {
+      signal: controller.signal,
+      services: {
+        exec: {},
+        logger: { debug: vi.fn() },
+        sessions: { current: { media: { registerSourceRoot: vi.fn() } } },
+        connectedAccounts: createConnectedAccountsFixture(),
+      },
+      session: { id: 'session-1', services: {} },
+      ui: { title: { set: vi.fn(async () => undefined) } },
+    } as unknown as AgentSessionRuntimeContext;
+
+    await openCodexNativeAppServerSession({
+      kind: 'fork',
+      sessionId: 'session-1',
+      cwd: '/tmp/codex',
+      source: {
+        sessionId: 'parent-session',
+        providerSessionId: 'parent-thread',
+      },
+    }, context);
+
+    expect(clientModuleMocks.createCodexNativeAppServerClient).toHaveBeenCalledWith({
+      exec: context.services.exec,
+      cwd: '/tmp/codex',
+      processEnv: {},
+      signal: controller.signal,
+      initializeRequestOptions: {
+        signal: controller.signal,
+        timeoutMs: null,
+      },
+    });
   });
 
   it.each([

@@ -6,7 +6,7 @@ describe('XaiRealtimeSettingsV1Schema', () => {
   it('defaults to pinned, secret-free, opt-out resumption settings', () => {
     const settings = XaiRealtimeSettingsV1Schema.parse({});
     expect(settings).toEqual(XAI_REALTIME_DEFAULT_SETTINGS);
-    expect(settings.model).toEqual({ kind: 'pinned', id: 'grok-voice-think-fast-1.0' });
+    expect(settings.model).toEqual({ kind: 'pinned', id: 'grok-voice-think-fast-2.0' });
     expect(settings.resumptionEnabled).toBe(false);
     expect(JSON.stringify(settings)).not.toMatch(/api.?key|secret|token/iu);
   });
@@ -21,6 +21,12 @@ describe('XaiRealtimeSettingsV1Schema', () => {
     first.transcription.keyterms.push('Happier');
     expect(second.transcription.keyterms).toEqual([]);
     expect(XAI_REALTIME_DEFAULT_SETTINGS.transcription.keyterms).toEqual([]);
+  });
+
+  it('preserves an explicitly saved deprecated pinned model instead of migrating it implicitly', () => {
+    expect(XaiRealtimeSettingsV1Schema.parse({
+      model: { kind: 'pinned', id: 'grok-voice-think-fast-1.0' },
+    }).model).toEqual({ kind: 'pinned', id: 'grok-voice-think-fast-1.0' });
   });
 
   it('enforces the documented language, keyterm, speed, and VAD bounds', () => {

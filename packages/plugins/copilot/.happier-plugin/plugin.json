@@ -16,6 +16,9 @@
               "create",
               "resume"
             ]
+          },
+          "tools": {
+            "delivery": "shell_bridge"
           }
         },
         "cli": {
@@ -96,6 +99,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [
       {
         "actions": [],

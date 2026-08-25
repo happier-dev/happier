@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/plugin-sdk/fs';
 import type { HandoffExportSessionMetadata } from '@happier-dev/plugin-sdk/agents/runtime';
 import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
-import { collectCodexSessionRolloutFiles } from '../../../rollout/discovery/sessionsForHome.js';
+import { collectCodexRootSessionRolloutFiles } from '../../../rollout/discovery/sessionsForHome.js';
 import { homes } from '../../../rollout/discovery/sessionsForHomes.js';
 import {
   normalizeCodexHandoffBundleRelativePath,
@@ -25,23 +25,31 @@ function resolveCodexHome(env: NodeJS.ProcessEnv): string {
   return raw ? expandHomePath(raw, homeDir) : join(homeDir, '.codex');
 }
 
-async function resolvePreferredCodexHomes(params: Readonly<{
+/**
+ * An explicit linked source is EXCLUSIVE custody, not a ranked preference. The
+ * session id alone does not identify bytes: the same id can exist in a second
+ * Codex home, so appending the caller environment's `CODEX_HOME` after the
+ * authoritative homes lets an unrelated home's same-id rollout be exported as
+ * this session's transcript. When the linked source resolves to no home, or to
+ * homes without this rollout, that is a typed export failure -- never a
+ * substituted source. The environment home is the authority only when the
+ * session carries no linked source at all.
+ */
+async function resolveAuthoritativeCodexHomes(params: Readonly<{
   metadata: HandoffExportSessionMetadata;
   env: NodeJS.ProcessEnv;
   activeServerDir: string;
 }>): Promise<string[]> {
-  const fallbackCodexHome = resolveCodexHome(params.env);
   const source = resolveCodexSource(params.metadata);
   if (!source || source.kind !== 'codexHome') {
-    return [fallbackCodexHome];
+    return [resolveCodexHome(params.env)];
   }
 
-  const resolvedHomes = await homes({
+  return await homes({
     source,
     activeServerDir: params.activeServerDir,
     env: params.env,
   });
-  return resolvedHomes.includes(fallbackCodexHome) ? resolvedHomes : [...resolvedHomes, fallbackCodexHome];
 }
 
 function resolveCodexSource(metadata: HandoffExportSessionMetadata): CodexExternalSessionSource | undefined {
@@ -84,12 +92,15 @@ export async function exportCodexSessionBundle(params: Readonly<{
       homePath: null,
     })
     : null;
-  const candidateHomes = await resolvePreferredCodexHomes(params);
+  const candidateHomes = await resolveAuthoritativeCodexHomes(params);
   throwIfAborted(params.signal);
-  let rollouts = [] as Awaited<ReturnType<typeof collectCodexSessionRolloutFiles>>;
+  if (candidateHomes.length === 0) {
+    throw new Error(`No Codex home resolved for the linked source of ${params.remoteSessionId}`);
+  }
+  let rollouts = [] as Awaited<ReturnType<typeof collectCodexRootSessionRolloutFiles>>;
   for (const codexHome of candidateHomes) {
     throwIfAborted(params.signal);
-    rollouts = await collectCodexSessionRolloutFiles({
+    rollouts = await collectCodexRootSessionRolloutFiles({
       codexHome,
       remoteSessionId: params.remoteSessionId,
     });
@@ -98,7 +109,7 @@ export async function exportCodexSessionBundle(params: Readonly<{
   }
 
   if (rollouts.length === 0) {
-    throw new Error(`No Codex rollout files found for ${params.remoteSessionId}`);
+    throw new Error(`No Codex rollout files found for ${params.remoteSessionId} in its authoritative Codex home`);
   }
 
   const files = await Promise.all(

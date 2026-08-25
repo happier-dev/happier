@@ -56,7 +56,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
                 additionalProperties: false,
               }],
             },
-            default: { kind: 'pinned', id: 'grok-voice-think-fast-1.0' },
+            default: { kind: 'pinned', id: 'grok-voice-think-fast-2.0' },
             presentation: { control: 'json' },
           },
           {

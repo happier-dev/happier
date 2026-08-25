@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type {
   AgentAcpRuntimeOptions,
@@ -222,6 +223,7 @@ describe('OhMyPi plugin activation', () => {
       return {
         purpose,
         service: services.get(purpose)!,
+        account: { service: services.get(purpose)!, accountId: `${purpose}-account` },
         target: { kind: 'account' as const, displayName: `${purpose} account` },
       };
     });
@@ -300,11 +302,21 @@ describe('OhMyPi plugin activation', () => {
       'getBinding:gemini',
     ]);
     expect(materialize.mock.calls).toEqual([
-      ['openai-codex', { kind: 'environment', keys: ['OPENAI_CODEX_OAUTH_TOKEN'] }, { signal }],
-      ['openai', { kind: 'environment', keys: ['OPENAI_API_KEY'] }, { signal }],
-      ['claude-subscription', { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] }, { signal }],
-      ['anthropic', { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] }, { signal }],
-      ['gemini', { kind: 'environment', keys: ['GEMINI_API_KEY'] }, { signal }],
+      ['openai-codex', { kind: 'environment', keys: ['OPENAI_CODEX_OAUTH_TOKEN'] }, {
+        signal, expectedAccount: { service: services.get('openai-codex'), accountId: 'openai-codex-account' },
+      }],
+      ['openai', { kind: 'environment', keys: ['OPENAI_API_KEY'] }, {
+        signal, expectedAccount: { service: services.get('openai'), accountId: 'openai-account' },
+      }],
+      ['claude-subscription', { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] }, {
+        signal, expectedAccount: { service: services.get('claude-subscription'), accountId: 'claude-subscription-account' },
+      }],
+      ['anthropic', { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] }, {
+        signal, expectedAccount: { service: services.get('anthropic'), accountId: 'anthropic-account' },
+      }],
+      ['gemini', { kind: 'environment', keys: ['GEMINI_API_KEY'] }, {
+        signal, expectedAccount: { service: services.get('gemini'), accountId: 'gemini-account' },
+      }],
     ]);
     expect(open).toHaveBeenCalledWith(expect.objectContaining({
       launchEnvironment: {
@@ -403,6 +415,125 @@ describe('OhMyPi plugin activation', () => {
     await fixture.dispose();
   });
 
+  it('does not open Oh My Pi after a qualified account invalidates between materialization and ACP open', async () => {
+    const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const factory = fixture.registration('agents', 'ohmypi')?.factory;
+    if (!factory) throw new Error('Expected OhMyPi Agent factory');
+    const runtime = await factory({
+      plugin: { id: 'happier.agent.ohmypi', version: '0.0.0' },
+      agent: { id: 'ohmypi' },
+      signal: new AbortController().signal,
+    });
+    const service = { pluginId: 'happier.voice.openai', localId: 'openai' };
+    const listeners = new Map<string, (event: { kind: 'resync' }) => void>();
+    const watch = vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+      listeners.set(purpose, listener);
+      queueMicrotask(() => listener({ kind: 'resync' }));
+      return { dispose() {} };
+    });
+    const getBinding = vi.fn(async (purpose: string) => purpose === 'openai'
+      ? {
+          purpose,
+          service,
+          account: { service, accountId: 'account-a' },
+          target: { kind: 'account' as const, displayName: 'OpenAI account' },
+        }
+      : null);
+    const materialize = vi.fn(async () => {
+      listeners.get('openai')?.({ kind: 'resync' });
+      return { kind: 'environment' as const, env: { OPENAI_API_KEY: 'qualified-key' } };
+    });
+    const open = vi.fn();
+    const signal = new AbortController().signal;
+
+    await expect(runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'qualified-ohmypi-invalidated-before-open',
+      cwd: '/workspace',
+    }, {
+      protocols: { acp: { open } },
+      services: { connectedAccounts: { getBinding, requestSelection: vi.fn(), materialize, watch } },
+      signal,
+    } as unknown as AgentSessionRuntimeContext)).rejects.toThrow(
+      /qualified Connected Account launch was invalidated before opening/i,
+    );
+
+    expect(materialize).toHaveBeenCalledWith(
+      'openai',
+      { kind: 'environment', keys: ['OPENAI_API_KEY'] },
+      { signal, expectedAccount: { service, accountId: 'account-a' } },
+    );
+    expect(open).not.toHaveBeenCalled();
+    await fixture.dispose();
+  });
+
+  it('refuses Claude OAuth materialization because Oh My Pi has no request-auth consumer', async () => {
+    const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const factory = fixture.registration('agents', 'ohmypi')?.factory;
+    if (!factory) throw new Error('Expected OhMyPi Agent factory');
+    const runtime = await factory({
+      plugin: { id: 'happier.agent.ohmypi', version: '0.0.0' },
+      agent: { id: 'ohmypi' },
+      signal: new AbortController().signal,
+    });
+    const watchDisposers: Array<ReturnType<typeof vi.fn>> = [];
+    const watch = vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+      const dispose = vi.fn();
+      watchDisposers.push(dispose);
+      queueMicrotask(() => listener({ kind: 'resync' }));
+      return { dispose };
+    });
+    const getBinding = vi.fn(async (purpose: string) => purpose === 'claude-subscription'
+      ? {
+          purpose,
+          service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+          account: {
+            service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+            accountId: 'claude-account',
+          },
+          target: { kind: 'account' as const, displayName: 'Claude OAuth account' },
+        }
+      : null);
+    const materialize = vi.fn(async () => {
+      throw new PluginError({
+        code: 'plugin_connected_account_claude_subscription_oauth_request_auth_required',
+        message: 'Claude OAuth Connected Accounts require request-auth materialization.',
+      });
+    });
+    const open = vi.fn();
+    const signal = new AbortController().signal;
+
+    await expect(runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'oauth-without-request-auth',
+      cwd: '/workspace',
+    }, {
+      protocols: { acp: { open } },
+      services: {
+        connectedAccounts: { getBinding, requestSelection: vi.fn(), materialize, watch },
+      },
+      signal,
+    } as unknown as AgentSessionRuntimeContext)).rejects.toMatchObject({
+      code: 'plugin_ohmypi_claude_subscription_oauth_unsupported',
+    });
+
+    expect(materialize).toHaveBeenCalledWith(
+      'claude-subscription',
+      { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
+      {
+        signal,
+        expectedAccount: {
+          service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+          accountId: 'claude-account',
+        },
+      },
+    );
+    expect(open).not.toHaveBeenCalled();
+    expect(watchDisposers).toHaveLength(5);
+    for (const dispose of watchDisposers) expect(dispose).toHaveBeenCalledTimes(1);
+    await fixture.dispose();
+  });
+
   it.each([
     {
       name: 'wrong materialization kind',
@@ -426,6 +557,10 @@ describe('OhMyPi plugin activation', () => {
       ? {
           purpose,
           service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+          account: {
+            service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+            accountId: 'gemini-account',
+          },
           target: { kind: 'account' as const, displayName: 'Gemini account' },
         }
       : null);
@@ -458,7 +593,13 @@ describe('OhMyPi plugin activation', () => {
     expect(materialize).toHaveBeenCalledWith(
       'gemini',
       { kind: 'environment', keys: ['GEMINI_API_KEY'] },
-      { signal },
+      {
+        signal,
+        expectedAccount: {
+          service: { pluginId: 'happier.agent.gemini', localId: 'gemini-account' },
+          accountId: 'gemini-account',
+        },
+      },
     );
     expect(open).not.toHaveBeenCalled();
     expect(disposeWatches).toHaveLength(5);

@@ -567,6 +567,14 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
     expect(supervise).toHaveBeenCalledWith(expect.objectContaining({
       mode: expect.objectContaining({
         launch: expect.objectContaining({
+          // The host materializes this exact path: the native CLI payload stages
+          // it and the npm CLI postinstall extracts it into the same runtime
+          // root, then records it in the canonical runtime-asset manifest.
+          executable: {
+            kind: 'packaged-runtime-binary',
+            directorySegments: ['tools', 'unpacked'],
+            executableBaseName: 'happier-cliproxyapi-managed',
+          },
           env: {
             HOST: '127.0.0.1',
             HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION:

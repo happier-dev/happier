@@ -1,6 +1,5 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import {
   PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
@@ -15,7 +14,6 @@ import { AGENT_DEFINITION } from './agent/definition.js';
 import { piExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { piExternalSessionObservationContribution } from './agent/externalSessions/observation.js';
 import { piExternalSessionTakeoverContribution } from './agent/externalSessions/takeover.js';
-import { resolvePiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 import { PI_DIRECT_AUTH_ENV_KEYS, PI_LAUNCH_ENV_KEYS } from './agent/launchEnvironment.js';
 import { createPiAgentRuntime } from './agent/runtime/engine.js';
 import { PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
@@ -27,9 +25,6 @@ export {
   PI_OPENAI_API_KEY_PURPOSE_ID,
   PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
 };
-
-const resolvePiDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
-  resolvePiDaemonSpawnPrerequisites(event, context);
 
 const {
   id: PI_AGENT_SETTINGS_CONTRIBUTION_ID,
@@ -106,6 +101,7 @@ export const PI_PLUGIN = definePlugin({
           sessions: {
             open: ['create', 'resume'],
             delivery: ['newTurn', 'steer', 'followUp'],
+            startupInstructions: { versions: [1] },
             cancel: true,
             configuration: true,
             compaction: { events: true, manual: true },
@@ -163,19 +159,7 @@ export const PI_PLUGIN = definePlugin({
   systemTools: {
     'pi-cli': { title: 'Pi coding-agent CLI', executableNames: ['pi'] },
   },
-  hooks: {
-    'resolve-prerequisites': {
-      declaration: {
-        on: 'agent.resolvePrerequisites',
-        hookApiVersion: 1,
-        category: 'decision',
-        scope: 'agent',
-        filters: { agentId: 'pi' },
-        executionKind: 'decide',
-      },
-      handler: resolvePiDaemonSpawnPrerequisitesHook,
-    },
-  },
+  hooks: {},
   settings: {
     [PI_AGENT_SETTINGS_CONTRIBUTION_ID]: PI_AGENT_SETTINGS_DECLARATION,
   },

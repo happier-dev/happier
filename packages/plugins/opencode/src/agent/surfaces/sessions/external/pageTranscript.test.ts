@@ -103,6 +103,63 @@ describe('pageOpenCodeTranscript', () => {
     expect(page.truncated).toBe(true);
   });
 
+  it('preserves every supported tool call and terminal result from one OpenCode message', async () => {
+    sessionMessagesList.mockResolvedValueOnce({
+      items: [{
+        info: { id: 'msg-tools', role: 'assistant', time: { created: 1 } },
+        parts: [
+          {
+            id: 'part-tools',
+            type: 'tool',
+            sessionID: 'sess-1',
+            messageID: 'msg-tools',
+            callID: 'call-tools',
+            tool: 'bash',
+            state: {
+              status: 'completed',
+              input: { command: 'pwd' },
+              output: '/repo\\n',
+            },
+          },
+        ],
+      }],
+      nextCursor: null,
+    });
+
+    const page = await pageOpenCodeTranscript({
+      source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4099' },
+      providerSessionId: 'sess-1',
+      direction: 'older',
+      maxBytes: 100_000,
+      maxItems: 2,
+    });
+
+    expect(page.items.map((item) => ({
+      messageRole: item.messageRole,
+      data: (item.raw.content as Readonly<{ data: unknown }>).data,
+    }))).toEqual([
+      {
+        messageRole: 'event',
+        data: {
+          type: 'tool-call',
+          id: expect.stringMatching(/:tool-call:/u),
+          callId: 'call-tools',
+          name: 'bash',
+          input: { command: 'pwd' },
+        },
+      },
+      {
+        messageRole: 'event',
+        data: {
+          type: 'tool-result',
+          id: expect.stringMatching(/:tool-result:/u),
+          callId: 'call-tools',
+          output: '/repo\\n',
+        },
+      },
+    ]);
+  });
+
   it('continues inside a bounded server page when the byte budget stops before older items', async () => {
     const boundedPage = {
       items: [

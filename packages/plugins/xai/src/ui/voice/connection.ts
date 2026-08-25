@@ -2,7 +2,9 @@ import type {
   VoiceClientAuthArtifact } from '@happier-dev/plugin-sdk/voice/client';
 import type {
   VoiceRealtimeJsonValue,
-} from '@happier-dev/plugin-sdk/voice';
+} from '@happier-dev/plugin-sdk/voice/client';
+
+import { normalizeXaiRealtimeEventType } from './wire.js';
 
 type CloseReason = Readonly<{ code: 'user_stop' | 'aborted' | 'remote_close' | 'replaced' | 'error'; detail?: string }>;
 type TransportEvent = Readonly<{ type: 'session_identity'; sessionId: string }>;
@@ -160,7 +162,7 @@ export function createXaiWebSocketDriver(input: XaiWebSocketDriverInput) {
               handlers.onTransport({ type: 'session_identity', sessionId: conversationId });
             }
           }
-          if (parsed.type === 'response.output_audio.delta' && typeof parsed.delta === 'string') {
+          if (normalizeXaiRealtimeEventType(parsed.type) === 'response.output_audio.delta' && typeof parsed.delta === 'string') {
             try {
               if (input.onAudioDelta?.(parsed.delta) === false && !closing) {
                 handlers.onRemoteClose('xai_output_audio_backpressure');

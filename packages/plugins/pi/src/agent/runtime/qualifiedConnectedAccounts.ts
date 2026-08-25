@@ -1,5 +1,10 @@
 import { dirname } from 'node:path';
 
+import { isPluginError } from '@happier-dev/plugin-sdk';
+import {
+  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
+  CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
   AgentLaunchEnvironment,
   AgentRuntimeContext,
@@ -23,7 +28,6 @@ import {
 } from '../auth/services/requestAuth/purposes.js';
 import type { PiRequestAuthPurposeMap } from '../auth/services/requestAuth/source.js';
 
-const CLAUDE_SETUP_TOKEN_ENV_KEY = 'CLAUDE_CODE_OAUTH_TOKEN';
 const OPENAI_API_KEY_ENV_KEY = 'OPENAI_API_KEY';
 const ANTHROPIC_API_KEY_ENV_KEY = 'ANTHROPIC_API_KEY';
 
@@ -32,6 +36,7 @@ type ConnectedAccountBinding = Awaited<ReturnType<ConnectedAccounts['getBinding'
 
 export type PreparedPiQualifiedConnectedAccounts = Readonly<{
   launchEnvironment: AgentLaunchEnvironment;
+  isInvalidated(): boolean;
   bind(runtime: AgentSessionRuntime): AgentSessionRuntime;
   dispose(): Promise<void>;
 }>;
@@ -56,8 +61,7 @@ function assertExpectedBinding(
 function readExactEnvironmentValue(input: Readonly<{
   materialized: Awaited<ReturnType<ConnectedAccounts['materialize']>>;
   key: string;
-  optional: boolean;
-}>): string | null {
+}>): string {
   if (input.materialized.kind !== 'environment') {
     throw new Error(`Pi purpose expected an environment materialization for ${input.key}`);
   }
@@ -66,7 +70,7 @@ function readExactEnvironmentValue(input: Readonly<{
     throw new Error(`Pi purpose returned an unexpected environment key while materializing ${input.key}`);
   }
   const value = readNonBlank(input.materialized.env[input.key]);
-  if (!value && !input.optional) {
+  if (!value) {
     throw new Error(`Pi purpose did not materialize ${input.key}`);
   }
   return value;
@@ -193,6 +197,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
     if (!anyBound) {
       return Object.freeze({
         launchEnvironment: sourceLaunchEnvironment,
+        isInvalidated: () => invalidated,
         bind,
         async dispose() {
           disposeSubscriptions();
@@ -215,20 +220,27 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
     } = {};
 
     if (claudeSubscription) {
-      const materialized = await connectedAccounts.materialize(
-        PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES[0].purpose,
-        { kind: 'environment', keys: [CLAUDE_SETUP_TOKEN_ENV_KEY] },
-        { signal: input.context.signal },
-      );
-      const setupToken = readExactEnvironmentValue({
-        materialized,
-        key: CLAUDE_SETUP_TOKEN_ENV_KEY,
-        optional: true,
-      });
-      if (setupToken) {
+      try {
+        const materialized = await connectedAccounts.materialize(
+          PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES[0].purpose,
+          CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
+          { signal: input.context.signal, expectedAccount: claudeSubscription.account },
+        );
+        const setupToken = readExactEnvironmentValue({
+          materialized,
+          key: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey,
+        });
         directEnvironment[ANTHROPIC_API_KEY_ENV_KEY] = setupToken;
         directAuth.anthropic = { type: 'api_key', key: setupToken };
-      } else {
+      } catch (error) {
+        if (
+          !isPluginError(error)
+          || error.code
+            !== CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth
+              .requestAuthRequiredErrorCode
+        ) {
+          throw error;
+        }
         requestAuthPurposes.anthropic = PI_REQUEST_AUTH_DECLARED_PURPOSES.anthropic;
       }
     }
@@ -240,13 +252,12 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       const materialized = await connectedAccounts.materialize(
         PI_OPENAI_API_KEY_PURPOSE_ID,
         { kind: 'environment', keys: [OPENAI_API_KEY_ENV_KEY] },
-        { signal: input.context.signal },
+        { signal: input.context.signal, expectedAccount: openai.account },
       );
       const apiKey = readExactEnvironmentValue({
         materialized,
         key: OPENAI_API_KEY_ENV_KEY,
-        optional: false,
-      })!;
+      });
       directEnvironment[OPENAI_API_KEY_ENV_KEY] = apiKey;
       directAuth.openai = { type: 'api_key', key: apiKey };
     }
@@ -254,13 +265,12 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       const materialized = await connectedAccounts.materialize(
         PI_ANTHROPIC_API_KEY_PURPOSE_ID,
         { kind: 'environment', keys: [ANTHROPIC_API_KEY_ENV_KEY] },
-        { signal: input.context.signal },
+        { signal: input.context.signal, expectedAccount: anthropic.account },
       );
       const apiKey = readExactEnvironmentValue({
         materialized,
         key: ANTHROPIC_API_KEY_ENV_KEY,
-        optional: false,
-      })!;
+      });
       directEnvironment[ANTHROPIC_API_KEY_ENV_KEY] = apiKey;
       directAuth.anthropic = { type: 'api_key', key: apiKey };
     }
@@ -296,6 +306,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
     });
     return Object.freeze({
       launchEnvironment,
+      isInvalidated: () => invalidated,
       bind,
       async dispose() {
         disposeSubscriptions();

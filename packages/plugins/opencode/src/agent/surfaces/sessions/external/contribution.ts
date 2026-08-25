@@ -13,6 +13,11 @@ import type {
   AgentExternalSessionsTranscriptPage,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import {
+  createAgentExternalSessionsProducerOverflowFailure,
+  getAgentExternalSessionsInvocationFailure,
+  isAgentExternalSessionsResultWithinByteBudget,
+} from '@happier-dev/plugin-sdk/sessions/external';
+import {
   getOpenCodeExternalSessionVerifiedWorkingDirectory,
   listOpenCodeSessionCandidates,
   type OpenCodeExternalSessionCandidate,
@@ -30,6 +35,9 @@ import {
   resolveOpenCodeExternalSessionsManagedService,
 } from './managedServer.js';
 import { pageOpenCodeTranscript } from './pageTranscript.js';
+import {
+  OpenCodeTranscriptItemLimitError,
+} from '../../../runtime/server/transcript/indexedTranscript.js';
 import {
   readAfterOpenCodeTranscript,
   type OpenCodeExternalReadAfterOutcome,
@@ -55,16 +63,7 @@ function failed(
 function invocationFailure(
   invocation: AgentExternalSessionsInvocation,
 ): AgentExternalSessionsResult<never> | null {
-  if (invocation.signal.aborted) {
-    return failed('cancelled', 'OpenCode external-session operation was cancelled.');
-  }
-  if (Date.now() >= invocation.deadlineAtMs) {
-    return failed('timeout', 'OpenCode external-session operation exceeded its deadline.', true);
-  }
-  if (!Number.isFinite(invocation.maxSerializedBytes) || invocation.maxSerializedBytes < 1) {
-    return failed('invalid_request', 'OpenCode external-session result byte bound must be positive.');
-  }
-  return null;
+  return getAgentExternalSessionsInvocationFailure(invocation);
 }
 
 function invalidLimit(maxItems: number, noun: string): AgentExternalSessionsResult<never> | null {
@@ -100,24 +99,14 @@ function isLinkData(value: unknown): value is AgentExternalSessionLinkData {
     && Object.values(value).every((entry) => isLinkDataValue(entry, new Set([value])));
 }
 
-function serializedByteLength(value: unknown): number {
-  return Buffer.byteLength(JSON.stringify(value), 'utf8');
-}
-
-/**
- * Output overflow is not a malformed inbound request: the caller's byte bound is
- * well formed and only this Agent's own result overran it. It is reported as a
- * NONRETRYABLE `agent_error`, the same classification the host's
- * bounded-invocation owner applies when a leaf overruns the identical budget.
- */
 function bounded<T>(
   invocation: AgentExternalSessionsInvocation,
   result: AgentExternalSessionsResult<T>,
   message: string,
 ): AgentExternalSessionsResult<T> {
-  return serializedByteLength(result) <= invocation.maxSerializedBytes
+  return isAgentExternalSessionsResultWithinByteBudget(result, invocation.maxSerializedBytes)
     ? result
-    : failed('agent_error', message, false);
+    : createAgentExternalSessionsProducerOverflowFailure(message);
 }
 
 function toAgentSource(source: OpenCodeExternalSessionSource): AgentExternalSessionSource | null {
@@ -382,9 +371,15 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
           nextCursor: listed.nextCursor,
           ...(listed.searchIncomplete ? { searchIncomplete: true } : {}),
         };
-        const result = serializedByteLength(ok(value)) <= request.maxSerializedBytes
-          ? ok(value)
-          : failed('agent_error', 'OpenCode candidate result byte budget cannot fit the page envelope.', false);
+        const success = ok(value);
+        const result = isAgentExternalSessionsResultWithinByteBudget(
+          success,
+          request.maxSerializedBytes,
+        )
+          ? success
+          : createAgentExternalSessionsProducerOverflowFailure(
+            'OpenCode candidate result byte budget cannot fit the page envelope.',
+          );
         return bounded(
           request,
           result,
@@ -463,6 +458,12 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
       if (stopped) return stopped;
       const badLimit = invalidLimit(request.maxItems, 'transcript');
       if (badLimit) return badLimit;
+      if (request.direction !== 'older') {
+        return failed(
+          'unsupported',
+          'OpenCode external-session newer transcript paging is unsupported.',
+        );
+      }
       const env = readEnv();
       const validation = validateSource({ source: request.source, env });
       if (!validation.ok) return validation;
@@ -486,6 +487,9 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
           'OpenCode transcript result byte budget cannot fit the page envelope.',
         );
       } catch (error) {
+        if (error instanceof OpenCodeTranscriptItemLimitError) {
+          return failed('agent_error', error.message, false);
+        }
         return operationFailure(request, error, 'OpenCode external-session transcript operation failed.');
       }
     },
@@ -517,6 +521,9 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
           'OpenCode transcript result byte budget cannot fit the page envelope.',
         );
       } catch (error) {
+        if (error instanceof OpenCodeTranscriptItemLimitError) {
+          return failed('agent_error', error.message, false);
+        }
         const after = invocationFailure(request);
         return after ?? ok({ outcome: 'read_failed' });
       }

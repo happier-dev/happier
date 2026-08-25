@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rename, unlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rename, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -114,6 +114,90 @@ describe('Claude External Session observation', () => {
         expect(requestReconcile).not.toHaveBeenCalled();
         await expect(Promise.resolve(disposable.dispose())).resolves.toBeUndefined();
         await expect(Promise.resolve(disposable.dispose())).resolves.toBeUndefined();
+    });
+
+    it.each(['a transcript symlink', 'a project-directory symlink', 'a projects-root symlink'])(
+        'does not describe or reconcile %s outside the authorized projects root',
+        async (replacement) => {
+            const fixture = await createTranscriptFixture();
+            const contribution = createClaudeExternalSessionObservationContribution({
+                env: { CLAUDE_CONFIG_DIR: fixture.configDir },
+                now: () => 200_000,
+            });
+            const grouping = contribution.describeResource(fixture.identity);
+            const projectDir = join(fixture.configDir, 'projects', 'project-a');
+            const outsideDir = join(fixture.configDir, '..', `outside-${replacement.replaceAll(' ', '-')}`);
+            const outsideTranscript = join(outsideDir, 'session-a.jsonl');
+
+            if (replacement === 'a transcript symlink') {
+                await mkdir(outsideDir, { recursive: true });
+                await writeFile(outsideTranscript, '{"type":"assistant"}\n', 'utf8');
+                await unlink(fixture.filePath);
+                await symlink(outsideTranscript, fixture.filePath);
+            } else if (replacement === 'a project-directory symlink') {
+                await rename(projectDir, outsideDir);
+                await symlink(outsideDir, projectDir);
+            } else {
+                const projectsDir = join(fixture.configDir, 'projects');
+                await rename(projectsDir, outsideDir);
+                await symlink(outsideDir, projectsDir);
+            }
+
+            await expect(contribution.reconcileResource({
+                purpose: 'resource_descriptors',
+                resourceKey: grouping.resourceKey,
+                links: [{ linkKey: grouping.linkKey, linkedSource: fixture.identity }],
+                signal: new AbortController().signal,
+            })).resolves.toEqual({
+                purpose: 'resource_descriptors',
+                outcomes: [{ kind: 'unavailable', linkKey: grouping.linkKey }],
+            });
+            await expect(contribution.reconcileResource({
+                purpose: 'observation_evidence',
+                resourceKey: grouping.resourceKey,
+                links: [{ linkKey: grouping.linkKey, linkedSource: fixture.identity }],
+                signal: new AbortController().signal,
+            })).resolves.toEqual({
+                purpose: 'observation_evidence',
+                outcomes: [{
+                    linkKey: grouping.linkKey,
+                    facts: [{
+                        kind: 'retrieval_failed',
+                        evidenceClass: 'reconciliation',
+                        observedAtMs: 200_000,
+                        axis: 'turn_phase',
+                    }],
+                }],
+            });
+        },
+    );
+
+    it('preserves a deliberately symlinked Claude config root while watching the physical transcript', async () => {
+        const fixture = await createTranscriptFixture();
+        const configAlias = join(fixture.configDir, '..', 'claude-config-alias');
+        await symlink(fixture.configDir, configAlias);
+        const identity = linkedSource({ configDir: configAlias });
+        const contribution = createClaudeExternalSessionObservationContribution({
+            env: { CLAUDE_CONFIG_DIR: configAlias },
+        });
+        const grouping = contribution.describeResource(identity);
+
+        await expect(contribution.reconcileResource({
+            purpose: 'resource_descriptors',
+            resourceKey: grouping.resourceKey,
+            links: [{ linkKey: grouping.linkKey, linkedSource: identity }],
+            signal: new AbortController().signal,
+        })).resolves.toEqual({
+            purpose: 'resource_descriptors',
+            outcomes: [{
+                kind: 'described',
+                descriptor: {
+                    ...grouping,
+                    changeObservation: 'watch_file_changes',
+                    watchFileChanges: { files: [await realpath(fixture.filePath)] },
+                },
+            }],
+        });
     });
 
     it('reconciles advisory mtime without claiming liveness, completion, or idle', async () => {

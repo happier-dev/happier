@@ -3,7 +3,7 @@ import { homeEntries } from './homeEntries.js';
 
 export async function homes(params: Readonly<{
   source: CodexExternalSessionSource;
-  activeServerDir: string;
+  activeServerDir?: string;
   env: NodeJS.ProcessEnv;
 }>): Promise<string[]> {
   const entries = await homeEntries(params);

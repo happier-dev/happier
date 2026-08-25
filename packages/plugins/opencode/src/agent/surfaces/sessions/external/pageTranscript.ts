@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
+  measureOpenCodeTranscriptItemBytes,
   readOpenCodeTranscriptBackwardWindow,
 } from '../../../runtime/server/transcript/indexedTranscript.js';
 import {
@@ -11,8 +12,7 @@ import {
   type OpenCodeExternalSessionSource,
 } from './client.js';
 import {
-  mapOpenCodeMessageToExternalSessionItem,
-  measureOpenCodeExternalTranscriptItemBytes,
+  projectOpenCodeExternalSessionMessage,
 } from './messages.js';
 import {
   encodeOpenCodeExternalAfterCursor,
@@ -76,7 +76,7 @@ function readOpenCodeMessageId(raw: unknown): string | null {
 export async function pageOpenCodeTranscript(params: Readonly<{
   source: OpenCodeExternalSessionSource;
   providerSessionId: string;
-  direction: 'older' | 'newer';
+  direction: 'older';
   cursor?: string;
   maxBytes: number;
   maxItems: number;
@@ -90,10 +90,6 @@ export async function pageOpenCodeTranscript(params: Readonly<{
   hasMore: boolean;
   truncated?: boolean;
 }>> {
-  if (params.direction !== 'older') {
-    return { items: [], nextCursor: null, tailCursor: null, hasMore: false };
-  }
-
   const client = await createOpenCodeExternalSessionClient({
     source: params.source,
     maxResponseBytes: params.maxBytes,
@@ -132,15 +128,21 @@ export async function pageOpenCodeTranscript(params: Readonly<{
     let rawMessages = pageResult.items;
     const newestMessageId = params.cursor ? null : readOpenCodeMessageId(rawMessages.at(-1));
 
-    let page = readOpenCodeTranscriptBackwardWindow<AgentExternalSessionTranscriptItem>({
-      messages: rawMessages,
-      endIndex: rawMessages.length,
+    let encounteredUnsupportedRecord = false;
+    const readPage = (messages: readonly unknown[], rawItemLimit: number) => readOpenCodeTranscriptBackwardWindow<AgentExternalSessionTranscriptItem>({
+      messages,
+      endIndex: messages.length,
       maxBytes: params.maxBytes,
       maxItems,
-      rawItemLimit: maxItems,
-      mapMessage: (message) => mapOpenCodeMessageToExternalSessionItem(message, params.providerSessionId),
-      measureItemBytes: measureOpenCodeExternalTranscriptItemBytes,
+      rawItemLimit,
+      mapMessage: (message) => {
+        const projection = projectOpenCodeExternalSessionMessage(message, params.providerSessionId);
+        if (projection.disposition === 'unsupported') encounteredUnsupportedRecord = true;
+        return projection.items;
+      },
+      measureItemBytes: measureOpenCodeTranscriptItemBytes,
     });
+    let page = readPage(rawMessages, maxItems);
     if (page.nextIndex > 0) {
       pageResult = await client.sessionMessagesList({
         sessionId: params.providerSessionId,
@@ -149,15 +151,8 @@ export async function pageOpenCodeTranscript(params: Readonly<{
         ...(params.signal ? { signal: params.signal } : {}),
       });
       rawMessages = pageResult.items;
-      page = readOpenCodeTranscriptBackwardWindow<AgentExternalSessionTranscriptItem>({
-        messages: rawMessages,
-        endIndex: rawMessages.length,
-        maxBytes: params.maxBytes,
-        maxItems,
-        rawItemLimit: 1,
-        mapMessage: (message) => mapOpenCodeMessageToExternalSessionItem(message, params.providerSessionId),
-        measureItemBytes: measureOpenCodeExternalTranscriptItemBytes,
-      });
+      encounteredUnsupportedRecord = false;
+      page = readPage(rawMessages, 1);
     }
     const confirmedSessionCreatedAtMs = readOpenCodeSessionCreatedAtMs(
       await client.sessionGet({
@@ -184,7 +179,13 @@ export async function pageOpenCodeTranscript(params: Readonly<{
           sessionCreatedAtMs,
         });
     const hasMore = nextCursor !== null;
-    return { items: page.items, nextCursor, tailCursor, hasMore, ...(page.truncated ? { truncated: true } : {}) };
+    return {
+      items: page.items,
+      nextCursor,
+      tailCursor,
+      hasMore,
+      ...(page.truncated || encounteredUnsupportedRecord ? { truncated: true } : {}),
+    };
   } finally {
     await client.dispose().catch(() => {});
   }

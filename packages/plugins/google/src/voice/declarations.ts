@@ -197,6 +197,13 @@ export const GOOGLE_VOICE_UI = {
       },
     },
     {
+      locale: 'de',
+      messages: {
+        'settingsVoice.realtimeProviders.google.sttPrivacyDisclosure': 'Audio, das zur Transkription gesendet wird, verarbeitet Google Gemini. Happier sendet diese Anfragen über den gewählten Ausführungsrechner mit dem Google-API-Zugangsschlüssel dieses Rechners. Google kann empfangene Daten gemäß den Einstellungen des gewählten Google-Kontos und den Bedingungen von Google aufbewahren.',
+        'settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure': 'Text, der zur Sprachausgabe gesendet wird, verarbeitet Google Cloud Text-to-Speech. Happier sendet diese Anfragen über den gewählten Ausführungsrechner mit dem Google-API-Zugangsschlüssel dieses Rechners. Google kann empfangene Daten gemäß den Einstellungen des gewählten Google-Kontos und den Bedingungen von Google aufbewahren.',
+      },
+    },
+    {
       locale: 'ca',
       messages: {
         'settingsVoice.realtimeProviders.google.sttPrivacyDisclosure': 'Google Gemini processa l\'àudio enviat per a la transcripció. Happier envia aquestes sol·licituds a través de la màquina d\'execució seleccionada mitjançant la credencial de l\'API de Google d\'aquesta màquina. Google pot conservar les dades rebudes d\'acord amb la configuració del compte de Google seleccionat i els termes de Google.',

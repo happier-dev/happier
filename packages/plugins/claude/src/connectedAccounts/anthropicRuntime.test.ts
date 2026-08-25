@@ -36,27 +36,27 @@ describe('Anthropic API-key Connected Account', () => {
       },
     } as Parameters<typeof activate>[0]);
 
-    expect(registrations).toMatchObject([
-      {
-        id: 'anthropic',
-        runtime: {
-          authentication: {
-            modes: { 'api-key': { kind: 'manual' } },
-          },
-        },
-      },
-      {
-        id: 'claude-subscription',
-        runtime: {
-          authentication: {
-            modes: {
-              'setup-token': { kind: 'manual' },
-              oauth: { kind: 'oauthAuthorizationCode' },
-            },
-          },
-        },
-      },
+    // Descriptor registration order is the manifest's record order and is not a
+    // public semantic, so this asserts the exact registered id set and each
+    // runtime's authentication shape by id rather than by position.
+    expect([...registrations].map(({ id }) => id).sort()).toEqual([
+      'anthropic',
+      'claude-subscription',
     ]);
+    const runtimeById = new Map(registrations.map(({ id, runtime }) => [id, runtime]));
+    expect(runtimeById.get('anthropic')).toMatchObject({
+      authentication: {
+        modes: { 'api-key': { kind: 'manual' } },
+      },
+    });
+    expect(runtimeById.get('claude-subscription')).toMatchObject({
+      authentication: {
+        modes: {
+          'setup-token': { kind: 'manual' },
+          oauth: { kind: 'oauthAuthorizationCode' },
+        },
+      },
+    });
   });
 
   it('preserves canonical reconnect identity and materializes exact Anthropic access', async () => {

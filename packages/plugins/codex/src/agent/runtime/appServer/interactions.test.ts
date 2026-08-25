@@ -49,8 +49,6 @@ function createFixture() {
   const client: DisposableCodexAppServerClient = {
     launchFeatures: {
       realtimeConversationAdvertised: true,
-      codexCliVersion: '0.145.0',
-      realtimeConversationVersionSupported: true,
     },
     request,
     notify: vi.fn(async () => {}),

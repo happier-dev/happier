@@ -19,12 +19,10 @@ describe('CODEX_UI_DESCRIPTOR context window fallback', () => {
 
   it('publishes semantic runtime projection facts without raw compatibility paths', () => {
     expect(CODEX_UI_DESCRIPTOR.behavior.workState.editableGoals).toMatchObject({
-      providerId: 'codex',
       modeValues: ['acp', 'appServer'],
       activeModeValues: ['appServer'],
     });
     expect(CODEX_UI_DESCRIPTOR.behavior.payload.sessionExtras).toEqual({
-      providerId: 'codex',
       outputKey: 'codexBackendMode',
       values: ['acp', 'appServer'],
     });
@@ -34,7 +32,6 @@ describe('CODEX_UI_DESCRIPTOR context window fallback', () => {
 
   it('declares the spawn/resume backend transport instead of relying on a host-side Codex override', () => {
     expect(CODEX_UI_DESCRIPTOR.behavior.payload.backendTransport).toEqual({
-      providerId: 'codex',
       runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
       legacyModeOutputKey: 'codexBackendMode',
       backendMode: {

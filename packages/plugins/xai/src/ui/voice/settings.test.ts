@@ -12,7 +12,7 @@ describe('xAI Realtime settings section', () => {
       path: 'model',
       movingAliasRequiresOptIn: true,
       options: [
-        { kind: 'pinned', id: 'grok-voice-think-fast-1.0' },
+        { kind: 'pinned', id: 'grok-voice-think-fast-2.0' },
         { kind: 'moving_alias', id: 'grok-voice-latest' },
       ],
     });

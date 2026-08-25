@@ -7,6 +7,7 @@ import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import { listCodexSessionCandidates } from './candidateSource.js';
 import {
+  createInitialCodexExternalSessionIndexCursor,
   decodeCodexExternalSessionCandidateCursor,
   decodeCodexExternalSessionIndexCursor,
   encodeCodexExternalSessionCandidateCursor,
@@ -65,17 +66,28 @@ describe('Codex external-session candidate helpers', () => {
     )).toBeNull();
   });
 
-  it('round-trips candidate index cursors and clamps invalid offsets', () => {
-    const cursor = encodeCodexExternalSessionIndexCursor(42.8);
+  it('round-trips strict native continuation state and rejects prior numeric cursors', () => {
+    const cursor = encodeCodexExternalSessionIndexCursor({
+      ...createInitialCodexExternalSessionIndexCursor(),
+      rolloutOffset: 42,
+      active: { cursor: 'active-next', previousCursor: null, offset: 3, done: false },
+      archived: { cursor: null, previousCursor: 'archived-prior', offset: 0, done: false },
+    });
 
-    expect(decodeCodexExternalSessionIndexCursor(cursor)).toBe(42);
-    expect(decodeCodexExternalSessionIndexCursor('')).toBe(0);
-    expect(decodeCodexExternalSessionIndexCursor('not-base64-json')).toBe(0);
+    expect(decodeCodexExternalSessionIndexCursor(cursor)).toEqual({
+      v: 5,
+      kind: 'codexMergedCandidatePage',
+      rolloutOffset: 42,
+      active: { cursor: 'active-next', previousCursor: null, offset: 3, done: false },
+      archived: { cursor: null, previousCursor: 'archived-prior', offset: 0, done: false },
+    });
+    expect(decodeCodexExternalSessionIndexCursor('')).toBeNull();
+    expect(decodeCodexExternalSessionIndexCursor('not-base64-json')).toBeNull();
     expect(
       decodeCodexExternalSessionIndexCursor(
         Buffer.from(JSON.stringify({ v: 1, kind: 'index', offset: -7 }), 'utf8').toString('base64url'),
       ),
-    ).toBe(0);
+    ).toBeNull();
   });
 
   it('resolves app-server listing budget from Codex external-session env', () => {

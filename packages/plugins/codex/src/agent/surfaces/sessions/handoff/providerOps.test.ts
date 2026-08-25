@@ -12,6 +12,24 @@ function handoffContext(): import('@happier-dev/plugin-sdk').PluginInvocationCon
   return { signal: new AbortController().signal } as import('@happier-dev/plugin-sdk').PluginInvocationContext;
 }
 
+function nativeRolloutContent(params: Readonly<{
+  sessionId: string;
+  rootSessionId?: string;
+  body?: unknown;
+}>): Buffer {
+  return Buffer.from([
+    JSON.stringify({
+      type: 'session_meta',
+      payload: {
+        id: params.sessionId,
+        ...(params.rootSessionId === undefined ? {} : { session_id: params.rootSessionId }),
+      },
+    }),
+    ...(params.body === undefined ? [] : [JSON.stringify(params.body)]),
+    '',
+  ].join('\n'), 'utf8');
+}
+
 describe('codex handoff provider surface', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -22,10 +40,10 @@ describe('codex handoff provider surface', () => {
     vi.stubEnv('CODEX_HOME', codexHome);
     const rolloutDir = join(codexHome, 'sessions', '2026', '06', '22');
     await mkdir(rolloutDir, { recursive: true });
+    const content = nativeRolloutContent({ sessionId: 'current-thread', body: { event: 'current' } });
     await writeFile(
       join(rolloutDir, 'rollout-2026-06-22T10-00-00-current-thread.jsonl'),
-      '{"event":"current"}\n',
-      'utf8',
+      content,
     );
 
     const result = await codexHandoffSurface.exportBundle({
@@ -52,6 +70,7 @@ describe('codex handoff provider surface', () => {
   it('emits codexBackendMode as provider-owned resume plan options on import', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-provider-ops-'));
     vi.stubEnv('CODEX_HOME', codexHome);
+    const content = nativeRolloutContent({ sessionId: 'thread_surface_1', body: { event: 'surface' } });
 
     const result = await codexHandoffSurface.importBundle({
       targetDirectory: '/repo',
@@ -64,7 +83,7 @@ describe('codex handoff provider surface', () => {
         files: [
           {
             relativePath: 'sessions/2026/06/22/rollout-2026-06-22T10-00-00-thread_surface_1.jsonl',
-            contentBase64: Buffer.from('{"event":"surface"}\n', 'utf8').toString('base64'),
+            contentBase64: content.toString('base64'),
           },
         ],
       },
@@ -92,8 +111,7 @@ describe('codex handoff provider surface', () => {
 
     await expect(readFile(
       join(codexHome, 'sessions', '2026', '06', '22', 'rollout-2026-06-22T10-00-00-thread_surface_1.jsonl'),
-      'utf8',
-    )).resolves.toBe('{"event":"surface"}\n');
+    )).resolves.toEqual(content);
   });
 
   it('stops later native writes when the runtime generation retires during a multi-file import', async () => {
@@ -104,6 +122,12 @@ describe('codex handoff provider surface', () => {
     const secondRelativePath = `sessions/2026/06/22/rollout-2026-06-22T10-01-00-${remoteSessionId}.jsonl`;
     const firstPath = join(codexHome, firstRelativePath);
     const secondPath = join(codexHome, secondRelativePath);
+    const firstContent = nativeRolloutContent({ sessionId: remoteSessionId, body: { event: 'first' } });
+    const secondContent = nativeRolloutContent({
+      sessionId: 'thread_retired_sidechain',
+      rootSessionId: remoteSessionId,
+      body: { event: 'second' },
+    });
     const retirementReason = new Error('runtime generation retired');
     const signal = {
       get aborted() {
@@ -124,11 +148,11 @@ describe('codex handoff provider surface', () => {
         files: [
           {
             relativePath: firstRelativePath,
-            contentBase64: Buffer.from('{"event":"first"}\n', 'utf8').toString('base64'),
+            contentBase64: firstContent.toString('base64'),
           },
           {
             relativePath: secondRelativePath,
-            contentBase64: Buffer.from('{"event":"second"}\n', 'utf8').toString('base64'),
+            contentBase64: secondContent.toString('base64'),
           },
         ],
       },
@@ -140,7 +164,7 @@ describe('codex handoff provider surface', () => {
       code: 'target_import_failed',
       message: 'runtime generation retired',
     });
-    await expect(readFile(firstPath, 'utf8')).resolves.toBe('{"event":"first"}\n');
+    await expect(readFile(firstPath)).resolves.toEqual(firstContent);
     await expect(access(secondPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
@@ -148,6 +172,7 @@ describe('codex handoff provider surface', () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-provider-invalid-'));
     vi.stubEnv('CODEX_HOME', codexHome);
     const relativePath = 'sessions/2026/06/22/rollout-invalid.jsonl';
+    const content = nativeRolloutContent({ sessionId: 'thread_invalid', body: { event: 'invalid' } });
 
     const result = await codexHandoffSurface.importBundle({
       targetDirectory: '/repo',
@@ -157,7 +182,7 @@ describe('codex handoff provider surface', () => {
         codexBackendMode: 'appServer',
         files: [{
           relativePath,
-          contentBase64: Buffer.from('{"event":"invalid"}\n', 'utf8').toString('base64'),
+          contentBase64: content.toString('base64'),
         }],
       },
     }, handoffContext());
@@ -169,6 +194,27 @@ describe('codex handoff provider surface', () => {
     await expect(readFile(join(codexHome, relativePath), 'utf8')).rejects.toThrow();
   });
 
+  it('returns bundle_invalid for a semantic non-rollout bundle before creating CODEX_HOME', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-provider-semantic-invalid-'));
+    const codexHome = join(root, 'missing-codex-home');
+    vi.stubEnv('CODEX_HOME', codexHome);
+
+    const result = await codexHandoffSurface.importBundle({
+      targetDirectory: '/repo',
+      bundle: {
+        agentId: 'codex',
+        remoteSessionId: 'thread_semantic_invalid',
+        files: [{
+          relativePath: 'config.toml',
+          contentBase64: Buffer.from('notify = []\n', 'utf8').toString('base64'),
+        }],
+      },
+    }, handoffContext());
+
+    expect(result).toMatchObject({ ok: false, code: 'bundle_invalid' });
+    await expect(access(codexHome)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('returns the shared target identity conflict code without mutating a mixed destination', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-provider-conflict-'));
     vi.stubEnv('CODEX_HOME', codexHome);
@@ -176,8 +222,17 @@ describe('codex handoff provider surface', () => {
     const missingRelativePath = 'sessions/2026/06/22/rollout-missing.jsonl';
     const divergentRelativePath = 'sessions/2026/06/22/rollout-divergent.jsonl';
     const divergentPath = join(codexHome, divergentRelativePath);
+    const existingDivergentContent = nativeRolloutContent({
+      sessionId: 'thread_conflict',
+      body: { event: 'existing' },
+    });
+    const missingContent = nativeRolloutContent({ sessionId: 'thread_conflict', body: { event: 'missing' } });
+    const incomingDivergentContent = nativeRolloutContent({
+      sessionId: 'thread_conflict',
+      body: { event: 'incoming' },
+    });
     await mkdir(rolloutDir, { recursive: true });
-    await writeFile(divergentPath, '{"event":"existing"}\n', 'utf8');
+    await writeFile(divergentPath, existingDivergentContent);
 
     const result = await codexHandoffSurface.importBundle({
       targetDirectory: '/repo',
@@ -187,11 +242,11 @@ describe('codex handoff provider surface', () => {
         files: [
           {
             relativePath: missingRelativePath,
-            contentBase64: Buffer.from('{"event":"missing"}\n', 'utf8').toString('base64'),
+            contentBase64: missingContent.toString('base64'),
           },
           {
             relativePath: divergentRelativePath,
-            contentBase64: Buffer.from('{"event":"incoming"}\n', 'utf8').toString('base64'),
+            contentBase64: incomingDivergentContent.toString('base64'),
           },
         ],
       },
@@ -203,7 +258,7 @@ describe('codex handoff provider surface', () => {
       retryable: false,
     });
     await expect(access(join(codexHome, missingRelativePath))).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(readFile(divergentPath, 'utf8')).resolves.toBe('{"event":"existing"}\n');
+    await expect(readFile(divergentPath)).resolves.toEqual(existingDivergentContent);
   });
 
   it('serializes divergent multi-file imports for one native session without leaving a hybrid target', async () => {
@@ -213,21 +268,29 @@ describe('codex handoff provider surface', () => {
     const firstFiles = [
       {
         relativePath: `sessions/2026/06/22/rollout-2026-06-22T10-00-00-${remoteSessionId}.jsonl`,
-        content: Buffer.from('{"event":"first-main"}\n', 'utf8'),
+        content: nativeRolloutContent({ sessionId: remoteSessionId, body: { event: 'first-main' } }),
       },
       {
         relativePath: `sessions/2026/06/22/rollout-2026-06-22T10-01-00-${remoteSessionId}.jsonl`,
-        content: Buffer.from('{"event":"first-side"}\n', 'utf8'),
+        content: nativeRolloutContent({
+          sessionId: `${remoteSessionId}-first-sidechain`,
+          rootSessionId: remoteSessionId,
+          body: { event: 'first-side' },
+        }),
       },
     ];
     const secondFiles = [
       {
         relativePath: `sessions/2026/06/22/rollout-2026-06-22T11-01-00-${remoteSessionId}.jsonl`,
-        content: Buffer.from('{"event":"second-side"}\n', 'utf8'),
+        content: nativeRolloutContent({
+          sessionId: `${remoteSessionId}-second-sidechain`,
+          rootSessionId: remoteSessionId,
+          body: { event: 'second-side' },
+        }),
       },
       {
         relativePath: `sessions/2026/06/22/rollout-2026-06-22T11-00-00-${remoteSessionId}.jsonl`,
-        content: Buffer.from('{"event":"second-main"}\n', 'utf8'),
+        content: nativeRolloutContent({ sessionId: remoteSessionId, body: { event: 'second-main' } }),
       },
     ];
     const toBundleFiles = (files: typeof firstFiles) => files.map((file) => ({

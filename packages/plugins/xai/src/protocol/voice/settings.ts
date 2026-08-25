@@ -22,7 +22,7 @@ const VoiceSelectionSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const XAI_REALTIME_DEFAULT_SETTINGS = Object.freeze({
-  model: Object.freeze({ kind: 'pinned' as const, id: 'grok-voice-think-fast-1.0' }),
+  model: Object.freeze({ kind: 'pinned' as const, id: 'grok-voice-think-fast-2.0' }),
   voice: Object.freeze({ kind: 'catalog' as const, id: 'eve' }),
   instructions: '',
   reasoningEffort: 'high' as const,

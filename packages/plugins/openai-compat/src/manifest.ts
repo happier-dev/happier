@@ -76,6 +76,13 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           },
         },
         {
+          locale: 'de',
+          messages: {
+            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'Audio für die Transkription wird vom gewählten Ausführungsrechner an den von dir konfigurierten OpenAI-kompatiblen Endpunkt gesendet. Der Betreiber des Endpunkts kann empfangene Daten gemäß seinen eigenen Bedingungen aufbewahren.',
+            'settingsVoice.realtimeProviders.speechProcessing.openAiCompatTts': 'Antworttext für die Sprachsynthese wird vom gewählten Ausführungsrechner an den von dir konfigurierten OpenAI-kompatiblen Endpunkt gesendet. Der Betreiber des Endpunkts kann empfangene Daten gemäß seinen eigenen Bedingungen aufbewahren.',
+          },
+        },
+        {
           locale: 'ca',
           messages: {
             'settingsVoice.realtimeProviders.speechProcessing.openAiCompatStt': 'L’àudio per a la transcripció s’envia des de la màquina d’execució seleccionada al punt final compatible amb OpenAI que configuris. L’operador del punt final pot conservar les dades rebudes segons les seves condicions.',

@@ -10,7 +10,6 @@ import type {
   AgentExternalSessionTranscriptRawRecord,
   AgentExternalSessionsContribution,
   AgentExternalSessionsFailureCode,
-  AgentExternalSessionsInvocation,
   AgentExternalSessionsResult,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/plugin-sdk/sessions/external';
@@ -23,10 +22,13 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 import {
   compareExternalSessionCandidatePrecedence,
+  createAgentExternalSessionsProducerOverflowFailure,
+  getAgentExternalSessionsInvocationFailure,
   HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
   HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
   HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
   HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
+  isAgentExternalSessionsResultWithinByteBudget,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import {
   canonicalizePath,
@@ -209,21 +211,6 @@ function foldIntegrityFailure(fold: PiV3SessionTreeFold): AgentExternalSessionsR
   );
 }
 
-function invocationFailure(
-  invocation: AgentExternalSessionsInvocation,
-): AgentExternalSessionsResult<never> | null {
-  if (invocation.signal.aborted) {
-    return failed('cancelled', 'Pi external-session operation was cancelled.');
-  }
-  if (Date.now() >= invocation.deadlineAtMs) {
-    return failed('timeout', 'Pi external-session operation exceeded its deadline.', true);
-  }
-  if (!Number.isFinite(invocation.maxSerializedBytes) || invocation.maxSerializedBytes < 1) {
-    return failed('invalid_request', 'Pi external-session result byte bound must be positive.');
-  }
-  return null;
-}
-
 function readOptionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
@@ -358,14 +345,6 @@ function decodeTranscriptCursor(raw: string | undefined): PiTranscriptCursorV2 |
     activeLeafFingerprint,
     ...(projection ? { projection } : {}),
   };
-}
-
-function serializedBytes(value: unknown): number {
-  return Buffer.byteLength(JSON.stringify(value), 'utf8');
-}
-
-function resultFits(value: unknown, maxSerializedBytes: number): boolean {
-  return serializedBytes(value) <= maxSerializedBytes;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1271,14 +1250,14 @@ export function createPiExternalSessionsContribution(params: Readonly<{
 
   return Object.freeze({
     resolveSource(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       const resolved = resolvePiSource({ source: request.source, env: readEnv() });
       return resolved.ok ? ok({ source: resolved.value.source }) : resolved;
     },
 
     async listCandidates(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) {
         return failed('invalid_request', 'Pi external-session candidate limit must be positive.');
@@ -1386,10 +1365,12 @@ export function createPiExternalSessionsContribution(params: Readonly<{
             ...(searchTerm ? { searchIncomplete: true } : {}),
             ...candidateScanPreparation(scan, searchTerm),
           });
-          if (!resultFits(proposed, request.maxSerializedBytes)) {
+          if (!isAgentExternalSessionsResultWithinByteBudget(proposed, request.maxSerializedBytes)) {
             if (candidates.length === 0) {
               await retireCandidateScan(scan);
-              return failed('agent_error', 'Pi candidate result byte budget cannot fit one candidate.', false);
+              return createAgentExternalSessionsProducerOverflowFailure(
+                'Pi candidate result byte budget cannot fit one candidate.',
+              );
             }
             scan.pendingCandidate = candidate;
             break;
@@ -1417,7 +1398,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
             true,
           );
         }
-        const after = invocationFailure(request);
+        const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) {
           await retireCandidateScan(scan);
           return after;
@@ -1440,9 +1421,11 @@ export function createPiExternalSessionsContribution(params: Readonly<{
           ...candidateScanPreparation(scan, searchTerm),
         };
         const result = ok(value);
-        if (!resultFits(result, request.maxSerializedBytes)) {
+        if (!isAgentExternalSessionsResultWithinByteBudget(result, request.maxSerializedBytes)) {
           await retireCandidateScan(scan);
-          return failed('agent_error', 'Pi candidate result byte budget cannot fit the page envelope.', false);
+          return createAgentExternalSessionsProducerOverflowFailure(
+            'Pi candidate result byte budget cannot fit the page envelope.',
+          );
         }
         if (!hasMore) await retireCandidateScan(scan);
         return result;
@@ -1454,7 +1437,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
             true,
           );
         }
-        const after = invocationFailure(request);
+        const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) {
           await retireCandidateScan(scan);
           return after;
@@ -1475,7 +1458,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
     },
 
     async resolveLinkIdentity(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       const resolved = resolvePiSource({ source: request.source, env: readEnv() });
       if (!resolved.ok) return resolved;
@@ -1495,7 +1478,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
               signal: request.signal,
             });
       } catch (error) {
-        const after = invocationFailure(request);
+        const after = getAgentExternalSessionsInvocationFailure(request);
         if (after) return after;
         if (error instanceof PiCandidateSourceChangedError) {
           return failed('source_invalid', error.message, true);
@@ -1506,7 +1489,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
           true,
         );
       }
-      const after = invocationFailure(request);
+      const after = getAgentExternalSessionsInvocationFailure(request);
       if (after) return after;
       if (!file) return failed('candidate_not_found', 'Pi external-session candidate was not found.');
       return ok({
@@ -1523,7 +1506,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
     },
 
     async resolveLinkedIdentity(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       const resolved = resolvePiSource({ source: request.source, env: readEnv() });
       if (!resolved.ok) return resolved;
@@ -1537,7 +1520,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         remoteSessionId: request.remoteSessionId,
         maxBytes: request.maxSerializedBytes,
       }).catch(() => null);
-      const after = invocationFailure(request);
+      const after = getAgentExternalSessionsInvocationFailure(request);
       if (after) return after;
       if (!file) return failed('unavailable', 'Pi linked session file is unavailable.', true);
       return ok({
@@ -1554,7 +1537,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
     },
 
     async pageTranscript(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (request.direction !== 'older') {
         return failed('unsupported', 'Pi transcript paging supports only older pages.');
@@ -1594,7 +1577,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         maxItems: projection?.nativeMaxItems ?? Math.trunc(request.maxItems),
         maxOversizeLineBytes: projection?.nativeMaxSerializedBytes ?? request.maxSerializedBytes,
       });
-      const afterPage = invocationFailure(request);
+      const afterPage = getAgentExternalSessionsInvocationFailure(request);
       if (afterPage) return afterPage;
       if (page.diagnostics?.some((diagnostic) => diagnostic.code === 'malformed_source_utf8')) {
         return failed('agent_error', 'Pi transcript source contains malformed UTF-8.');
@@ -1693,10 +1676,16 @@ export function createPiExternalSessionsContribution(params: Readonly<{
       // is not the transcript. Reporting ordinary completion here publishes a
       // partial history as authoritative and retires the continuation that
       // would have surfaced the gap.
+      if (!hasMore && page.reachedStart && nextActiveLeafId !== null) {
+        return failed(
+          'agent_error',
+          'Pi transcript branch reaches the start of its source with an unresolved parent entry.',
+        );
+      }
       const tail = request.cursor && !sourceReplaced
         ? null
         : await readCurrentTail({ file, maxBytes: request.maxSerializedBytes });
-      const afterTail = invocationFailure(request);
+      const afterTail = getAgentExternalSessionsInvocationFailure(request);
       if (afterTail) return afterTail;
       const result: AgentExternalSessionsResult<AgentExternalSessionsTranscriptPage> = ok({
         items: emittedItems,
@@ -1705,13 +1694,15 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         hasMore,
         ...(sourceReplaced ? { truncated: true } : {}),
       });
-      return resultFits(result, request.maxSerializedBytes)
+      return isAgentExternalSessionsResultWithinByteBudget(result, request.maxSerializedBytes)
         ? result
-        : failed('agent_error', 'Pi transcript result byte budget cannot fit the page envelope.', false);
+        : createAgentExternalSessionsProducerOverflowFailure(
+          'Pi transcript result byte budget cannot fit the page envelope.',
+        );
     },
 
     async readAfterTranscript(request) {
-      const stopped = invocationFailure(request);
+      const stopped = getAgentExternalSessionsInvocationFailure(request);
       if (stopped) return stopped;
       if (!Number.isFinite(request.maxItems) || request.maxItems < 1) {
         return failed('invalid_request', 'Pi external-session transcript limit must be positive.');
@@ -1746,7 +1737,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         cursor,
         maxBytes: request.maxSerializedBytes,
       });
-      const afterAnchor = invocationFailure(request);
+      const afterAnchor = getAgentExternalSessionsInvocationFailure(request);
       if (afterAnchor) return afterAnchor;
       if (!anchor.matches) {
         return ok({ outcome: 'source_replaced' });
@@ -1762,7 +1753,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         maxItems: projection?.nativeMaxItems ?? Math.trunc(request.maxItems),
         maxOversizeLineBytes: projection?.nativeMaxSerializedBytes ?? request.maxSerializedBytes,
       });
-      const afterPage = invocationFailure(request);
+      const afterPage = getAgentExternalSessionsInvocationFailure(request);
       if (afterPage) return afterPage;
       const pageValues = page.items.map((item) => item.value);
       if (pageValues.some((value) => !isPiV3SessionFileRecord(value))) {
@@ -1773,7 +1764,7 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         cursor,
         maxBytes: request.maxSerializedBytes,
       });
-      const afterAnchorRecheck = invocationFailure(request);
+      const afterAnchorRecheck = getAgentExternalSessionsInvocationFailure(request);
       if (afterAnchorRecheck) return afterAnchorRecheck;
       if (!anchorAfterPage.matches) {
         return ok({ outcome: 'source_replaced' });
@@ -1896,9 +1887,11 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         boundary,
         ...(diagnostics.length > 0 ? { diagnostics } : {}),
       });
-      return resultFits(result, request.maxSerializedBytes)
+      return isAgentExternalSessionsResultWithinByteBudget(result, request.maxSerializedBytes)
         ? result
-        : failed('agent_error', 'Pi transcript result byte budget cannot fit the readAfter envelope.', false);
+        : createAgentExternalSessionsProducerOverflowFailure(
+          'Pi transcript result byte budget cannot fit the readAfter envelope.',
+        );
     },
   });
 }

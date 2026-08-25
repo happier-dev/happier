@@ -87,6 +87,42 @@ describe('Claude handoff bundle leaf', () => {
         });
     });
 
+    it.each(['linked source', 'derived path'] as const)(
+        'rejects a transcript-name symlink outside the Claude projects root for the %s export',
+        async (sourceKind) => {
+            const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-export-symlink-'));
+            const workspace = join(root, 'workspace');
+            const configDir = join(root, '.claude');
+            const projectId = sourceKind === 'linked source'
+                ? 'project-linked'
+                : resolveClaudeProjectId(workspace);
+            const remoteSessionId = 'session-symlink';
+            const transcriptPath = join(configDir, 'projects', projectId, `${remoteSessionId}.jsonl`);
+            const sentinelPath = join(root, 'outside-sentinel.jsonl');
+            const sentinel = '{"type":"assistant","text":"outside-sentinel"}\n';
+            await mkdir(join(configDir, 'projects', projectId), { recursive: true });
+            await writeFile(sentinelPath, sentinel, 'utf8');
+            await symlink(sentinelPath, transcriptPath, 'file');
+
+            await expect(exportClaudeSessionBundle({
+                metadata: {
+                    path: workspace,
+                    ...(sourceKind === 'linked source'
+                        ? {
+                            externalSessionSource: {
+                                kind: 'claudeConfig' as const,
+                                configDir,
+                                projectId,
+                            },
+                        }
+                        : {}),
+                },
+                remoteSessionId,
+                env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+            })).rejects.toThrow();
+        },
+    );
+
     it('does not read raw owner metadata when selecting a transcript source', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-compat-'));
         const workspace = join(root, 'workspace');
@@ -569,5 +605,93 @@ describe('Claude handoff bundle leaf', () => {
         })).rejects.toThrow(/bundle|transcript/i);
 
         await expect(access(join(configDir, 'projects'))).rejects.toThrow();
+    });
+    it('refuses to export a same-id transcript from the environment config root when the linked project holds none', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-export-exclusive-project-'));
+        const workspace = join(root, 'workspace');
+        const linkedConfigDir = join(root, 'linked-claude');
+        const environmentConfigDir = join(root, 'environment-claude');
+        const environmentProjectId = resolveClaudeProjectId(workspace);
+
+        // The linked project exists but holds no transcript for this id, while the
+        // caller environment root holds a different session that shares it.
+        await mkdir(join(linkedConfigDir, 'projects', 'project-linked'), { recursive: true });
+        await mkdir(join(environmentConfigDir, 'projects', environmentProjectId), { recursive: true });
+        await writeFile(
+            join(environmentConfigDir, 'projects', environmentProjectId, 'session-shared-id.jsonl'),
+            '{"type":"assistant","text":"other-root-bytes"}\n',
+            'utf8',
+        );
+
+        await expect(exportClaudeSessionBundle({
+            metadata: {
+                path: workspace,
+                externalSessionSource: {
+                    kind: 'claudeConfig',
+                    configDir: linkedConfigDir,
+                    projectId: 'project-linked',
+                },
+            },
+            remoteSessionId: 'session-shared-id',
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: environmentConfigDir },
+        })).rejects.toThrow(/session-shared-id/);
+    });
+
+    it('treats a linked source that names only a config root as exclusive custody', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-export-exclusive-configdir-'));
+        const workspace = join(root, 'workspace');
+        const linkedConfigDir = join(root, 'linked-claude');
+        const environmentConfigDir = join(root, 'environment-claude');
+        const environmentProjectId = resolveClaudeProjectId(workspace);
+
+        await mkdir(join(linkedConfigDir, 'projects', 'project-linked'), { recursive: true });
+        await mkdir(join(environmentConfigDir, 'projects', environmentProjectId), { recursive: true });
+        await writeFile(
+            join(environmentConfigDir, 'projects', environmentProjectId, 'session-config-only.jsonl'),
+            '{"type":"assistant","text":"other-root-bytes"}\n',
+            'utf8',
+        );
+
+        await expect(exportClaudeSessionBundle({
+            metadata: {
+                path: workspace,
+                externalSessionSource: { kind: 'claudeConfig', configDir: linkedConfigDir },
+            },
+            remoteSessionId: 'session-config-only',
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: environmentConfigDir },
+        })).rejects.toThrow(/session-config-only/);
+    });
+
+    it('exports from a linked source that names only a config root when that root holds the transcript', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-export-configdir-positive-'));
+        const workspace = join(root, 'workspace');
+        const linkedConfigDir = join(root, 'linked-claude');
+        const environmentConfigDir = join(root, 'environment-claude');
+        const transcript = '{"type":"assistant","text":"linked-root-bytes"}\n';
+        await mkdir(join(linkedConfigDir, 'projects', 'project-linked'), { recursive: true });
+        await mkdir(join(environmentConfigDir, 'projects', resolveClaudeProjectId(workspace)), { recursive: true });
+        await writeFile(
+            join(linkedConfigDir, 'projects', 'project-linked', 'session-config-only-ok.jsonl'),
+            transcript,
+            'utf8',
+        );
+        await writeFile(
+            join(environmentConfigDir, 'projects', resolveClaudeProjectId(workspace), 'session-config-only-ok.jsonl'),
+            '{"type":"assistant","text":"other-root-bytes"}\n',
+            'utf8',
+        );
+
+        await expect(exportClaudeSessionBundle({
+            metadata: {
+                path: workspace,
+                externalSessionSource: { kind: 'claudeConfig', configDir: linkedConfigDir },
+            },
+            remoteSessionId: 'session-config-only-ok',
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: environmentConfigDir },
+        })).resolves.toEqual({
+            agentId: 'claude',
+            remoteSessionId: 'session-config-only-ok',
+            transcriptBase64: Buffer.from(transcript, 'utf8').toString('base64'),
+        });
     });
 });

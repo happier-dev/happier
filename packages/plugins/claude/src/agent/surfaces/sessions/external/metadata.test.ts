@@ -20,7 +20,7 @@ describe('Claude external-session metadata', () => {
         const meaningfulTask = 'Validate infinite scrolling for external Claude transcripts without dropping tool lines';
 
         const lines = [
-            ...Array.from({ length: 80 }, (_, index) =>
+            ...Array.from({ length: 3 }, (_, index) =>
                 jsonlLine({
                     type: 'user',
                     uuid: `image-${index}`,
@@ -52,7 +52,7 @@ describe('Claude external-session metadata', () => {
         await expect(readClaudeJsonlSessionTitle(filePath)).resolves.toBe(meaningfulTask);
     });
 
-    it('falls back to queued prompt content when the transcript never materializes a user message record', async () => {
+    it('does not substitute a queued prompt when the transcript has no immutable user message', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-queue-'));
         const projectDir = join(root, 'projects', 'proj-one');
         await mkdir(projectDir, { recursive: true });
@@ -78,10 +78,10 @@ describe('Claude external-session metadata', () => {
             'utf8',
         );
 
-        await expect(readClaudeJsonlSessionTitle(filePath)).resolves.toBe(queuedPrompt);
+        await expect(readClaudeJsonlSessionTitle(filePath)).resolves.toBeNull();
     });
 
-    it('prefers bounded Claude title records from the transcript tail and history file', async () => {
+    it('uses the first immutable user message rather than mutable history, AI, or summary titles', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-history-'));
         const projectDir = join(root, 'projects', 'proj-one');
         await mkdir(projectDir, { recursive: true });
@@ -92,6 +92,7 @@ describe('Claude external-session metadata', () => {
             [
                 jsonlLine({ type: 'user', uuid: 'first-user', message: { content: 'old first user title' } }),
                 jsonlLine({ type: 'ai-title', title: 'AI generated title' }),
+                jsonlLine({ type: 'summary', summary: 'Mutable summary title' }),
             ].join(''),
             'utf8',
         );
@@ -104,6 +105,27 @@ describe('Claude external-session metadata', () => {
             'utf8',
         );
 
-        await expect(readClaudeJsonlSessionTitle(filePath)).resolves.toBe('Renamed Claude session');
+        await expect(readClaudeJsonlSessionTitle(filePath)).resolves.toBe('old first user title');
+    });
+
+    it('stays identifier-only when the first meaningful user message is beyond the bounded title head', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-head-budget-'));
+        const projectDir = join(root, 'projects', 'proj-one');
+        await mkdir(projectDir, { recursive: true });
+        const filePath = join(projectDir, 'session-one.jsonl');
+        await writeFile(
+            filePath,
+            [
+                ...Array.from({ length: 64 }, (_, index) => jsonlLine({
+                    type: 'user',
+                    uuid: `image-${index}`,
+                    message: { content: [{ type: 'image', source: { type: 'base64', data: 'AAAA' } }] },
+                })),
+                jsonlLine({ type: 'user', uuid: 'late-text', message: { content: 'must not scan this far' } }),
+            ].join(''),
+            'utf8',
+        );
+
+        await expect(readClaudeJsonlSessionTitle(filePath)).resolves.toBeNull();
     });
 });

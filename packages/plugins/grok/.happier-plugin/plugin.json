@@ -27,6 +27,9 @@
                 ]
               }
             ]
+          },
+          "tools": {
+            "delivery": "native_mcp"
           }
         },
         "cli": {
@@ -150,6 +153,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [],
     "systemTools": [
       {

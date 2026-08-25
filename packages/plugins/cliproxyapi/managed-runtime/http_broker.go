@@ -186,7 +186,7 @@ func decodeBrokerEnvelope(status int, body []byte, output any) error {
 		}
 		return nil
 	}
-	if ok || len(envelope) != 2 || !validBrokerErrorStatus(status) {
+	if ok || len(envelope) != 2 {
 		return fmt.Errorf("request-auth broker error envelope is invalid")
 	}
 	rawError, hasError := envelope["error"]
@@ -199,7 +199,7 @@ func decodeBrokerEnvelope(status int, body []byte, output any) error {
 	if err := decodeStrictJSON(rawError, &wireError); err != nil {
 		return fmt.Errorf("request-auth broker error value is invalid")
 	}
-	if wireError.Code != strings.TrimSpace(wireError.Code) || wireError.Code == "" || len(wireError.Code) > 128 {
+	if !validBrokerErrorCode(status, wireError.Code) {
 		return fmt.Errorf("request-auth broker error code is invalid")
 	}
 	return &BrokerHTTPError{StatusCode: status, Code: wireError.Code}
@@ -341,14 +341,16 @@ func validFailureStatus(status FailureStatus) bool {
 	}
 }
 
-func validBrokerErrorStatus(status int) bool {
+func validBrokerErrorCode(status int, code string) bool {
 	switch status {
-	case http.StatusBadRequest,
-		http.StatusUnauthorized,
-		http.StatusForbidden,
-		http.StatusConflict,
-		http.StatusServiceUnavailable:
-		return true
+	case http.StatusUnauthorized:
+		return code == "request_auth_unauthorized"
+	case http.StatusForbidden:
+		return code == "request_auth_purpose_forbidden"
+	case http.StatusConflict:
+		return code == "request_auth_not_active"
+	case http.StatusServiceUnavailable:
+		return code == "request_auth_unavailable"
 	default:
 		return false
 	}

@@ -2,6 +2,10 @@ import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
+import {
+  GOOGLE_CLOUD_TTS_VOICE_PROVIDER_DECLARATION,
+  GOOGLE_GEMINI_STT_VOICE_PROVIDER_DECLARATION,
+} from './voice/declarations.js';
 
 describe('Google voice plugin manifest', () => {
   it('declares the public daemon speech facet consumed by the Voice host', () => {
@@ -81,14 +85,44 @@ describe('Google voice plugin manifest', () => {
     expect(serialized).not.toContain('schemas');
   });
 
-  it('owns the Google speech processing disclosure in its UI locale contribution', () => {
+  /**
+   * Gemini STT and Cloud TTS are separately selectable providers, so one shared
+   * "audio and text" disclosure told an STT-only user that reply text is transmitted
+   * and a TTS-only user that microphone audio is. Each declaration therefore owns a
+   * role-specific key, and this plugin — not a host locale file — owns the copy behind
+   * both keys in every locale the plugin ships.
+   */
+  it('owns role-specific Google speech processing disclosures in its UI locale contributions', () => {
+    const sttKey = 'settingsVoice.realtimeProviders.google.sttPrivacyDisclosure';
+    const ttsKey = 'settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure';
+    expect(GOOGLE_GEMINI_STT_VOICE_PROVIDER_DECLARATION.settings.privacyDisclosure.key).toBe(sttKey);
+    expect(GOOGLE_CLOUD_TTS_VOICE_PROVIDER_DECLARATION.settings.privacyDisclosure.key).toBe(ttsKey);
+
+    const missing = PLUGIN_MANIFEST.contributes.ui.translations.flatMap((translation) => {
+      const stt = translation.messages[sttKey];
+      const tts = translation.messages[ttsKey];
+      if (typeof stt !== 'string' || stt.trim().length === 0) return [`${translation.locale}: ${sttKey}`];
+      if (typeof tts !== 'string' || tts.trim().length === 0) return [`${translation.locale}: ${ttsKey}`];
+      // A re-merged combined disclosure would make the two roles indistinguishable.
+      return stt === tts ? [`${translation.locale}: shared combined disclosure`] : [];
+    });
+    expect(missing).toEqual([]);
+
     const english = PLUGIN_MANIFEST.contributes.ui.translations.find(
       (translation) => translation.locale === 'en',
     );
-    const disclosure = english?.messages['settingsVoice.realtimeProviders.google.privacyDisclosure'];
-    expect(disclosure).toMatch(/Google Gemini/iu);
-    expect(disclosure).toMatch(/Google Cloud Text-to-Speech/iu);
-    expect(disclosure).toMatch(/selected execution machine/iu);
-    expect(disclosure).toMatch(/may retain/iu);
+    const stt = english?.messages[sttKey];
+    const tts = english?.messages[ttsKey];
+    // Transcription copy must not promise speech synthesis...
+    expect(stt).toMatch(/Google Gemini/iu);
+    expect(stt).toMatch(/transcription/iu);
+    expect(stt).not.toMatch(/Text-to-Speech/iu);
+    // ...and speech copy must not claim microphone audio is transmitted.
+    expect(tts).toMatch(/Google Cloud Text-to-Speech/iu);
+    expect(tts).not.toMatch(/audio/iu);
+    for (const value of [stt, tts]) {
+      expect(value).toMatch(/selected execution machine/iu);
+      expect(value).toMatch(/may retain/iu);
+    }
   });
 });

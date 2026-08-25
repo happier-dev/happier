@@ -173,6 +173,11 @@ export const OPENCODE_PLUGIN = definePlugin({
           required: { streaming: true, toolRoundTrips: true },
           credentialSupport: {
             supportsNoAuth: true,
+            // The Responses driver (`@ai-sdk/openai`) always renders an
+            // Authorization header from its configured key, so OpenCode can only
+            // honour a credential-free Provider over Chat Completions
+            // (`@ai-sdk/openai-compatible`, which omits the header entirely).
+            noAuthProtocols: ['openai-chat'],
             apiKeyTransports: [
               {
                 protocol: 'openai-responses',

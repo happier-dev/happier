@@ -77,7 +77,6 @@ describe('OPENCODE_UI_DESCRIPTOR', () => {
         },
         payload: {
           environmentVariables: {
-            providerId: 'opencode',
             backendMode: {
               envKey: 'HAPPIER_OPENCODE_BACKEND_MODE',
               settingKey: 'opencodeBackendMode',

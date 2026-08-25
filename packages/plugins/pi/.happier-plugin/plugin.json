@@ -28,6 +28,11 @@
               "create",
               "resume"
             ],
+            "startupInstructions": {
+              "versions": [
+                1
+              ]
+            },
             "usageLimitRecovery": {
               "active": [
                 "checkNow"
@@ -39,7 +44,10 @@
           },
           "surfaces": [
             "externalSessions"
-          ]
+          ],
+          "tools": {
+            "delivery": "native_extension"
+          }
         },
         "cli": {
           "auth": {
@@ -200,19 +208,7 @@
     "daemonDatabases": [],
     "events": [],
     "executionRunProfiles": [],
-    "hooks": [
-      {
-        "category": "decision",
-        "executionKind": "decide",
-        "filters": {
-          "agentId": "pi"
-        },
-        "hookApiVersion": 1,
-        "id": "resolve-prerequisites",
-        "on": "agent.resolvePrerequisites",
-        "scope": "agent"
-      }
-    ],
+    "hooks": [],
     "managedDependencies": [],
     "mcp": {
       "discoverySources": [],
@@ -229,6 +225,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [
       {
         "actions": [],

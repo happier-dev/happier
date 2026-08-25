@@ -88,6 +88,9 @@ async function openOpenCodeSession(
 ): Promise<AgentSessionRuntime> {
   const prepared = await prepareOpenCodeQualifiedConnectedAccounts(request, context);
   try {
+    if (prepared.isInvalidated()) {
+      throw new Error('OpenCode qualified Connected Account launch was invalidated before opening the runtime.');
+    }
     const mode = readOpenCodeNativeMode(prepared.request);
     const session = mode === 'acp'
       ? await openOpenCodeAcpSession(prepared.request, context)
@@ -216,6 +219,9 @@ async function openOpenCodeExecutionRun(
   } as const;
   const prepared = await prepareOpenCodeQualifiedConnectedAccounts(sessionRequest, context);
   try {
+    if (prepared.isInvalidated()) {
+      throw new Error('OpenCode qualified Connected Account launch was invalidated before opening the runtime.');
+    }
     const session = readOpenCodeNativeMode(prepared.request) === 'acp'
       ? await openOpenCodeAcpSession(prepared.request, context)
       : await openOpenCodeServerSession(prepared.request, context);

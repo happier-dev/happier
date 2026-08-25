@@ -13,6 +13,7 @@ import type {
   AgentSessionRuntime,
   AgentTerminalSurface,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
 
 import { buildCodexNativeAcpRuntimeOptions } from '../acp/backend.js';
@@ -50,9 +51,6 @@ function readStringArray(value: unknown): readonly string[] | undefined {
 }
 
 function readCodexBackendMode(request: AgentSessionOpenRequest): 'appServer' | 'acp' {
-  if ('startupInstructions' in request && request.startupInstructions) {
-    return 'appServer';
-  }
   const environment = request.launchEnvironment?.values ?? {};
   const resolved = resolveCanonicalCodexBackendModeFromCompatInput({
     backendMode: request.configuration?.mode.value,
@@ -61,6 +59,10 @@ function readCodexBackendMode(request: AgentSessionOpenRequest): 'appServer' | '
       ?? environment.CODEX_BACKEND_MODE,
   });
   return resolved === 'acp' ? 'acp' : 'appServer';
+}
+
+function requestHasStartupInstructions(request: AgentSessionOpenRequest): boolean {
+  return 'startupInstructions' in request && request.startupInstructions !== undefined;
 }
 
 const CODEX_PRIMARY_ACCOUNT_PURPOSE = 'primary';
@@ -229,6 +231,13 @@ async function openCodexSession(
 ): Promise<AgentSessionRuntime> {
   const backendMode = readCodexBackendMode(request);
   if (backendMode === 'acp') {
+    if (requestHasStartupInstructions(request)) {
+      throw new PluginError({
+        code: 'codex_startup_instructions_unsupported_in_acp',
+        message: 'Codex ACP does not support Agent session startup instructions. Switch the Codex routing mode to App Server.',
+        remediation: { kind: 'openSettings', path: '/settings/agents/codex' },
+      });
+    }
     if (Object.prototype.hasOwnProperty.call(request, 'providerBinding')) {
       throw new Error('Codex Provider binding is unavailable in ACP mode.');
     }

@@ -658,8 +658,10 @@ export async function openCodexNativeAppServerSession(
       exec: context.services.exec,
       cwd: request.cwd,
       processEnv,
-      forkOnly: true,
       signal: context.signal,
+      // This Session action owns cancellation. Let a slow-but-live Codex initialize instead of
+      // converting the generic startup budget into a false native-fork failure.
+      initializeRequestOptions: { signal: context.signal, timeoutMs: null },
     });
     try {
       const forked = await forkCodexNativeAppServerConversation({

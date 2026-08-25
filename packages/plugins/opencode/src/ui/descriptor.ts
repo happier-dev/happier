@@ -46,8 +46,6 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
       },
     },
     externalSessions: {
-      browseDescriptorId: 'opencode.externalSessions.browse.v1',
-      sessionHandoffDescriptorId: 'opencode.sessionHandoff.v1',
       browse: {
         order: 30,
         sourceOptions: [
@@ -65,7 +63,6 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
     },
     payload: {
       environmentVariables: {
-        providerId: 'opencode',
         backendMode: {
           envKey: 'HAPPIER_OPENCODE_BACKEND_MODE',
           settingKey: 'opencodeBackendMode',

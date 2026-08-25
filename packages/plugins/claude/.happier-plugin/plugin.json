@@ -1,7 +1,89 @@
 {
   "contributes": {
     "accountCollections": [],
-    "actions": [],
+    "actions": [
+      {
+        "dangerLevel": "safe",
+        "description": "Creates one Claude agent team in the current Session.",
+        "execution": {
+          "target": "daemon"
+        },
+        "id": "subagent-team-launch",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "teamId": {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "teamId"
+          ],
+          "type": "object"
+        },
+        "placementBindings": [
+          "primary"
+        ],
+        "scopes": [
+          "session"
+        ],
+        "surfaces": [
+          "ui"
+        ],
+        "title": "Create agent team"
+      },
+      {
+        "dangerLevel": "safe",
+        "description": "Launches one Claude teammate in the current Session.",
+        "execution": {
+          "target": "daemon"
+        },
+        "id": "subagent-member-launch",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "instructions": {
+              "maxLength": 20000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "memberLabel": {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            },
+            "teamId": {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "teamId",
+            "memberLabel",
+            "instructions"
+          ],
+          "type": "object"
+        },
+        "placementBindings": [
+          "primary"
+        ],
+        "scopes": [
+          "session"
+        ],
+        "surfaces": [
+          "ui"
+        ],
+        "title": "Launch teammate"
+      }
+    ],
     "agents": [
       {
         "capabilities": {
@@ -57,7 +139,10 @@
           "surfaces": [
             "terminal",
             "externalSessions"
-          ]
+          ],
+          "tools": {
+            "delivery": "native_mcp"
+          }
         },
         "catalog": {
           "agentCliSystemTool": {
@@ -868,6 +953,7 @@
     "scmBackends": [],
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
+    "sessionInfoSections": [],
     "settings": [
       {
         "actions": [],
@@ -1773,7 +1859,52 @@
     "tools": [],
     "transcriptActivities": [],
     "ui": {
-      "renderers": [],
+      "renderers": [
+        {
+          "id": "subagent-launch-renderer",
+          "kind": "declarative",
+          "root": {
+            "children": [
+              {
+                "action": "subagent-team-launch",
+                "kind": "action",
+                "label": "Create team",
+                "variant": "primary"
+              },
+              {
+                "action": "subagent-member-launch",
+                "kind": "action",
+                "label": "Launch teammate"
+              }
+            ],
+            "kind": "actionPanel"
+          }
+        },
+        {
+          "id": "subagent-details-renderer",
+          "kind": "declarative",
+          "root": {
+            "children": [
+              {
+                "kind": "text",
+                "text": "Launch a Claude teammate in an agent team."
+              },
+              {
+                "children": [
+                  {
+                    "action": "subagent-member-launch",
+                    "kind": "action",
+                    "label": "Launch teammate",
+                    "variant": "primary"
+                  }
+                ],
+                "kind": "actionPanel"
+              }
+            ],
+            "kind": "stack"
+          }
+        }
+      ],
       "settingsGroups": [],
       "settingsPages": [],
       "translations": [
@@ -1888,7 +2019,28 @@
           }
         }
       ],
-      "views": []
+      "views": [
+        {
+          "container": "sessionSubagentLaunch",
+          "headerActions": [],
+          "id": "subagent-launch",
+          "instancePolicy": "singleton",
+          "renderer": "subagent-launch-renderer",
+          "target": {
+            "kind": "session"
+          }
+        },
+        {
+          "container": "sessionSubagentDetails",
+          "headerActions": [],
+          "id": "subagent-details",
+          "instancePolicy": "singleton",
+          "renderer": "subagent-details-renderer",
+          "target": {
+            "kind": "session"
+          }
+        }
+      ]
     },
     "voiceModelPacks": [],
     "voiceProviders": [],
@@ -1976,6 +2128,7 @@
         "scope": {
           "access": [
             "read",
+            "write",
             "control"
           ]
         }

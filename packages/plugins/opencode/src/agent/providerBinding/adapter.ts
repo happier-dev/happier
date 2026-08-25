@@ -14,7 +14,6 @@ type ProviderCredentialTransport = NonNullable<
 >;
 
 const OPENCODE_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_OPENCODE_PROVIDER_API_KEY';
-const OPENCODE_OPENAI_NO_AUTH_DRIVER_PLACEHOLDER = 'happier-no-auth';
 export const OPENCODE_PROVIDER_BINDING_ADAPTER_VERSION_V1 = 1;
 export const OPENCODE_PROVIDER_CONFIG_RELATIVE_PATH = 'opencode/opencode.json';
 
@@ -100,12 +99,15 @@ function resolveCredentialOptions(input: AgentProviderBindingMaterializeInput): 
     if (input.binding.runtimeCredentialTransport !== null) {
       throw new Error('OpenCode provider binding credential does not match its selected transport');
     }
-    return {
-      secretValue: null,
-      ...(input.binding.endpoint.protocol === 'openai-responses'
-        ? { apiKey: OPENCODE_OPENAI_NO_AUTH_DRIVER_PLACEHOLDER }
-        : {}),
-    };
+    // `@ai-sdk/openai` renders `Authorization: Bearer <apiKey>` unconditionally,
+    // so there is no Responses configuration that genuinely sends no
+    // authorization. The manifest narrows no-auth support to Chat Completions;
+    // this refuses before launch rather than fabricating a placeholder bearer
+    // that contradicts the selected credential-free Provider.
+    if (input.binding.endpoint.protocol !== 'openai-chat') {
+      throw new Error('OpenCode cannot drive this wire protocol without a credential');
+    }
+    return { secretValue: null };
   }
 
   const { transport, value } = input.credential;

@@ -142,6 +142,63 @@ describe('Antigravity External Session observation', () => {
     });
 
     expect(() => contribution.describeResource(fixture.identity)).not.toThrow();
+    const descriptor = contribution.describeResource(fixture.identity);
+    await expect(contribution.reconcileResource({
+      purpose: 'resource_descriptors',
+      resourceKey: descriptor.resourceKey,
+      links: [{
+        linkKey: descriptor.linkKey,
+        linkedSource: fixture.identity,
+      }],
+      signal: new AbortController().signal,
+    })).resolves.toEqual({
+      purpose: 'resource_descriptors',
+      outcomes: [{
+        kind: 'described',
+        descriptor: {
+          ...descriptor,
+          changeObservation: 'watch_file_changes',
+          watchFileChanges: { files: [fixture.transcriptPath] },
+        },
+      }],
+    });
+  });
+
+  it('does not describe or read a conversation alias that escapes the physical brain root', async () => {
+    const fixture = await createConversationFixture();
+    const readSnapshot = vi.fn(snapshotAntigravityTranscriptSource);
+    const contribution = createAntigravityExternalSessionObservationContribution({
+      env: { HOME: fixture.homeDir },
+      readSnapshot,
+    });
+    const descriptor = contribution.describeResource(fixture.identity);
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'antigravity-observation-outside-'));
+    const outsideTranscriptPath = resolveAntigravityTranscriptFullPath(
+      outsideRoot,
+      fixture.identity.remoteSessionId,
+    );
+    await mkdir(dirname(outsideTranscriptPath), { recursive: true });
+    await writeFile(outsideTranscriptPath, '{"type":"user_input","text":"outside"}\n', 'utf8');
+    await rm(join(fixture.brainDir, fixture.identity.remoteSessionId), { recursive: true });
+    await symlink(
+      join(outsideRoot, fixture.identity.remoteSessionId),
+      join(fixture.brainDir, fixture.identity.remoteSessionId),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    await expect(contribution.reconcileResource({
+      purpose: 'resource_descriptors',
+      resourceKey: descriptor.resourceKey,
+      links: [{
+        linkKey: descriptor.linkKey,
+        linkedSource: fixture.identity,
+      }],
+      signal: new AbortController().signal,
+    })).resolves.toEqual({
+      purpose: 'resource_descriptors',
+      outcomes: [{ kind: 'unavailable', linkKey: descriptor.linkKey }],
+    });
+    expect(readSnapshot).not.toHaveBeenCalled();
   });
 
   it('rejects an identity without the durable link-data source revision', async () => {

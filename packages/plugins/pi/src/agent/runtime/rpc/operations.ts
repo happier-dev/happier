@@ -213,16 +213,24 @@ function normalizeEnv(env: Readonly<Record<string, string | undefined>>): Record
   );
 }
 
+/**
+ * Request-auth is in play exactly when the host projected a child capability
+ * for it.
+ *
+ * A connected-service SELECTION is not that signal. Pi takes an OpenAI or
+ * Anthropic API key and a Claude setup-token DIRECTLY — the materializer writes
+ * those into `auth.<provider>` and deliberately projects no capability — so
+ * deriving the mode from the selection refused every direct-token connected
+ * account before spawn. The materializer already fails closed when a purpose
+ * that DOES require request-auth has no capability, so this reads the one fact
+ * the runtime can see.
+ */
 function hasPiRequestAuthProvider(env: Readonly<Record<string, string | undefined>>): boolean {
-  return readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) !== null
-    || readPiConnectedServiceIdFromEnv(env) !== null;
+  return readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) !== null;
 }
 
 function assertPiRequestAuthRuntimeConfigured(env: Readonly<Record<string, string | undefined>>): void {
-  if (
-    readString(env.PI_CODING_AGENT_DIR) === null
-    || readString(env[PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]) === null
-  ) {
+  if (readString(env.PI_CODING_AGENT_DIR) === null) {
     throw new Error('Pi request-auth runtime requires the agent dir and child endpoint capability');
   }
 }
@@ -727,8 +735,9 @@ function createRuntimeOperations(params: Readonly<{
           if (
             activeTurn
             && !activeTurnStartObserved
-            && state?.isStreaming !== true
-            && state?.isCompacting !== true
+            && state !== null
+            && state.isStreaming === false
+            && state.isCompacting === false
           ) {
             settleProviderNativeCommandWithoutAgentTurn();
           }
@@ -1221,7 +1230,6 @@ export async function createPiRuntimeOperations(params: PiRuntimeOperationsParam
       error: error instanceof Error ? error.message : String(error),
     });
   }
-  const availableCommandNames = new Set(availableCommands.map((command) => command.name));
   const modelsSource = params.models
     ? createPiSessionModelsSource({
         readState: async () => (await rpc.send({ type: 'get_state' }, 30_000)).data,

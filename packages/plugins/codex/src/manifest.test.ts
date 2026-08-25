@@ -89,7 +89,7 @@ describe('Codex plugin manifest', () => {
     expect(PLUGIN_MANIFEST.hostAccess.required.find(
       (request) => request.id === 'codex-process',
     )?.scope).toMatchObject({
-      envKeys: ['CODEX_HOME'],
+      envKeys: ['CODEX_HOME', 'CODEX_SQLITE_HOME'],
     });
     expect(PLUGIN_MANIFEST.contributes.hooks?.map((hook) => hook.on)).toEqual([
       'agent.resolvePrerequisites', 'agent.spawnEnv.augment',
@@ -121,7 +121,6 @@ describe('Codex plugin manifest', () => {
       execution: {
         kind: 'experimental_agent_session_realtime',
         agent: 'codex',
-        supportedRuntimeVersions: ['0.145.0', '0.146.0'],
       },
       settings: {
         schemaVersion: 2,

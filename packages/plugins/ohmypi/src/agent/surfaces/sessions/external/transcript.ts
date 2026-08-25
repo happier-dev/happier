@@ -48,7 +48,6 @@ type OhMyPiTranscriptCursorV1 = Readonly<{
   itemEndExclusive?: number;
   itemStartIndex?: number;
   sourceSize?: number;
-  sourceMtimeMs?: number;
 }>;
 
 export class OhMyPiExternalSessionSourceChangedError extends Error {
@@ -76,6 +75,19 @@ export class OhMyPiExternalSessionIncompleteBranchError extends Error {
   ) {
     super(message);
     this.name = 'OhMyPiExternalSessionIncompleteBranchError';
+  }
+}
+
+/**
+ * External Sessions must never advance beyond a native message after publishing
+ * only the siblings its projection happened to recognize. Pages have no
+ * per-record diagnostic channel, so an incomplete message is a typed failure
+ * there; read-after records the same condition as a skipped diagnostic.
+ */
+export class OhMyPiExternalSessionUnsupportedRecordError extends Error {
+  constructor(message = 'Oh My Pi external-session transcript contains an unsupported record.') {
+    super(message);
+    this.name = 'OhMyPiExternalSessionUnsupportedRecordError';
   }
 }
 
@@ -135,14 +147,6 @@ function decodeOhMyPiTreeCursor(raw: string | null | undefined): OhMyPiTranscrip
           || cursor.sourceSize < 0
         )
       )
-      || (
-        cursor.sourceMtimeMs !== undefined
-        && (
-          typeof cursor.sourceMtimeMs !== 'number'
-          || !Number.isFinite(cursor.sourceMtimeMs)
-          || cursor.sourceMtimeMs < 0
-        )
-      )
     ) {
       return null;
     }
@@ -163,7 +167,6 @@ function decodeOhMyPiTreeCursor(raw: string | null | undefined): OhMyPiTranscrip
         ? { itemStartIndex: cursor.itemStartIndex }
         : {}),
       ...(cursor.sourceSize !== undefined ? { sourceSize: cursor.sourceSize } : {}),
-      ...(cursor.sourceMtimeMs !== undefined ? { sourceMtimeMs: cursor.sourceMtimeMs } : {}),
     };
   } catch {
     return null;
@@ -232,6 +235,80 @@ function classifyOhMyPiTranscriptRecord(
       ? record.parentId
       : null,
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isCompleteOhMyPiAssistantBlock(value: unknown): boolean {
+  const block = asRecord(value);
+  if (!block || !isNonEmptyString(block.type)) return false;
+  switch (block.type) {
+    case 'text':
+      return typeof block.text === 'string';
+    case 'thinking':
+      return typeof block.thinking === 'string';
+    case 'toolCall':
+      return isNonEmptyString(block.id) && isNonEmptyString(block.name);
+    case 'tool_use':
+      return isNonEmptyString(block.id) && isNonEmptyString(block.name);
+    case 'tool_result':
+      return isNonEmptyString(block.tool_use_id);
+    default:
+      return false;
+  }
+}
+
+/**
+ * This is deliberately stricter than the local snapshot's display projection:
+ * the External Sessions cursor makes every accepted native message durable
+ * history, so projecting a recognizable subset would silently lose siblings.
+ * Empty known content is still a complete record and advances without a row.
+ */
+function isCompleteOhMyPiExternalMessage(value: unknown): boolean {
+  const record = asRecord(value);
+  const message = asRecord(record?.message);
+  if (!message || !isNonEmptyString(message.role)) return false;
+
+  if (message.role === 'user') {
+    return typeof message.content === 'string'
+      || (Array.isArray(message.content) && message.content.every((block) => {
+        const value = asRecord(block);
+        return value?.type === 'text' && typeof value.text === 'string';
+      }));
+  }
+  if (message.role === 'assistant') {
+    return typeof message.content === 'string'
+      || (Array.isArray(message.content) && message.content.every(isCompleteOhMyPiAssistantBlock));
+  }
+  if (message.role === 'toolResult') {
+    return isNonEmptyString(message.toolCallId);
+  }
+  return false;
+}
+
+function projectCompleteOhMyPiExternalMessage(params: Readonly<{
+  sessionFilePath: string;
+  sessionId: string;
+  value: unknown;
+}>): readonly OhMyPiRawTranscriptItem[] | null {
+  const record = asRecord(params.value);
+  if (record?.type === 'message' && !isCompleteOhMyPiExternalMessage(params.value)) return null;
+  return projectOhMyPiSessionSnapshotToDirectMessages({
+    sessionFilePath: params.sessionFilePath,
+    sessionId: params.sessionId,
+    lines: [
+      { type: 'session', id: params.sessionId },
+      params.value,
+    ],
+  }).items;
 }
 
 function measureItemBytes(item: OhMyPiRawTranscriptItem): number {
@@ -334,15 +411,16 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
   if (cursor && cursor.generation !== generation) {
     throw new OhMyPiExternalSessionSourceChangedError();
   }
-  if (
-    cursor
-    && (
-      cursor.sourceSize === undefined
-      || cursor.sourceMtimeMs === undefined
-      || cursor.sourceSize !== before.size
-      || cursor.sourceMtimeMs !== before.mtimeMs
-    )
-  ) {
+  // The cursor addresses a byte prefix: this page scans BACKWARD from `cursor.position`,
+  // which is inside the size recorded when the cursor was issued. An ordinary append —
+  // the normal state of a live Oh My Pi session — writes only beyond that prefix and
+  // leaves every byte the cursor depends on intact, so the recorded size is a FLOOR, not
+  // an equality. Requiring equality (and pinning mtime, which is not identity) turned
+  // every normal write into a permanently unrecoverable `unavailable`, because the UI
+  // retains and retries the same cursor. A SHRINK under the same physical generation is
+  // an in-place truncation or rotation: those offsets no longer address the accepted
+  // records, so that stays a typed discontinuity, as does the generation check above.
+  if (cursor && (cursor.sourceSize === undefined || before.size < cursor.sourceSize)) {
     throw new OhMyPiExternalSessionSourceChangedError();
   }
   const scan = await readJsonlFileBackwardPage({
@@ -356,10 +434,14 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
     throw new Error('Oh My Pi transcript source contains malformed UTF-8.');
   }
   const after = await stat(resolved.filePath);
+  // The same rule the cursor admission check above and the tail cursor already apply:
+  // this scan reads only bytes below the size observed before it started, so a
+  // concurrent append — the normal state of a live session — cannot disturb a scanned
+  // byte. Only a different physical file or a shrink invalidates the read, and mtime is
+  // not identity.
   if (
     generation !== formatOhMyPiSessionFileGeneration(after)
-    || before.size !== after.size
-    || before.mtimeMs !== after.mtimeMs
+    || after.size < before.size
   ) {
     throw new OhMyPiExternalSessionSourceChangedError();
   }
@@ -400,21 +482,21 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
       initialLeafEntryId = classification.id;
     }
 
-    const projected = projectOhMyPiSessionSnapshotToDirectMessages({
+    const projected = projectCompleteOhMyPiExternalMessage({
       sessionFilePath: resolved.filePath,
       sessionId: params.providerSessionId,
-      lines: [
-        { type: 'session', id: params.providerSessionId },
-        scanned.value,
-      ],
+      value: scanned.value,
     });
+    if (projected === null) {
+      throw new OhMyPiExternalSessionUnsupportedRecordError();
+    }
     const itemEndExclusive = Math.min(
-      projected.items.length,
-      pendingItemEndExclusive ?? projected.items.length,
+      projected.length,
+      pendingItemEndExclusive ?? projected.length,
     );
     let consumedWholeEntry = true;
     for (let itemIndex = itemEndExclusive - 1; itemIndex >= 0; itemIndex -= 1) {
-      const item = projected.items[itemIndex]!;
+      const item = projected[itemIndex]!;
       const itemBytes = measureItemBytes(item);
       const wouldExceedBound =
         selectedNewestFirst.length >= maxItems
@@ -465,7 +547,6 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
       tailLeafEntryId: initialLeafEntryId,
       ...(nextItemEndExclusive !== undefined ? { itemEndExclusive: nextItemEndExclusive } : {}),
       sourceSize: before.size,
-      sourceMtimeMs: before.mtimeMs,
     })
     : null;
   return {
@@ -477,7 +558,7 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
       kind: 'ohMyPiTree',
       mode: 'tail',
       generation,
-      position: Math.max(0, Math.trunc(after.size)),
+      position: Math.max(0, Math.trunc(before.size)),
       leafEntryId: initialLeafEntryId,
     }),
     truncated: false,
@@ -586,15 +667,15 @@ export async function readAfterOhMyPiSessionTranscript(params: Readonly<{
         'Oh My Pi external-session branch changed after the cursor.',
       );
     }
-    const projected = projectOhMyPiSessionSnapshotToDirectMessages({
+    const projected = projectCompleteOhMyPiExternalMessage({
       sessionFilePath: resolved.filePath,
       sessionId: params.providerSessionId,
-      lines: [
-        { type: 'session', id: params.providerSessionId },
-        parsed,
-      ],
+      value: parsed,
     });
-    if (projected.items.length === 0) {
+    const record = asRecord(parsed);
+    const isCompleteMessage = record?.type === 'message'
+      && isCompleteOhMyPiExternalMessage(parsed);
+    if (projected === null || (projected.length === 0 && !isCompleteMessage)) {
       skippedRecords.push({ code: 'unsupported_record_skipped', position: lineStartOffset });
       leafEntryId = classification.id;
       nextPosition = nextLineStartOffset;
@@ -602,14 +683,25 @@ export async function readAfterOhMyPiSessionTranscript(params: Readonly<{
       continue;
     }
     const itemStartIndex = index === 0 ? (cursor.itemStartIndex ?? 0) : 0;
-    if (itemStartIndex >= projected.items.length) {
+    if (projected.length === 0) {
+      if (itemStartIndex !== 0) {
+        throw new OhMyPiExternalSessionInvalidCursorError(
+          'Oh My Pi external-session item continuation is outside its source record.',
+        );
+      }
+      leafEntryId = classification.id;
+      nextPosition = nextLineStartOffset;
+      nextItemStartIndex = undefined;
+      continue;
+    }
+    if (itemStartIndex >= projected.length) {
       throw new OhMyPiExternalSessionInvalidCursorError(
         'Oh My Pi external-session item continuation is outside its source record.',
       );
     }
     let consumedWholeEntry = true;
-    for (let itemIndex = itemStartIndex; itemIndex < projected.items.length; itemIndex += 1) {
-      const item = projected.items[itemIndex]!;
+    for (let itemIndex = itemStartIndex; itemIndex < projected.length; itemIndex += 1) {
+      const item = projected[itemIndex]!;
       const itemBytes = measureItemBytes(item);
       if (
         items.length >= Math.max(1, Math.trunc(params.maxItems))

@@ -29,7 +29,19 @@ export async function prepareClaudeQualifiedPurposeRoot(input: Readonly<{
  * skills, hooks, commands, plugins, and transcript history.
  */
 function isClaudeIdentityConfigEntry(name: string): boolean {
-  return name === '.credentials.json' || name.startsWith('.claude.json');
+  const folded = foldClaudeConfigEntryName(name);
+  return folded === '.credentials.json' || folded.startsWith('.claude.json');
+}
+
+/**
+ * Config entry names are classified by a case-folded identity for the same
+ * reason environment names are: Windows NTFS and the default macOS APFS volume
+ * resolve `Settings.json` and `settings.json` to the one file Claude Code
+ * reads. A case-sensitive classification would link the user's own credential
+ * or credential-resolving settings document into the pinned root verbatim.
+ */
+function foldClaudeConfigEntryName(name: string): string {
+  return name.toLowerCase();
 }
 
 /**
@@ -39,8 +51,8 @@ function isClaudeIdentityConfigEntry(name: string): boolean {
  * instead of naming `projects` again: a descriptor that grows a state entry
  * must not leave this path sharing it behind the user's back.
  */
-const CLAUDE_STATE_ENTRY_NAMES: readonly string[] = Object.freeze(
-  claudeAuthStateSharingDescriptor.state.entries.map((entry) => entry.path),
+const CLAUDE_STATE_ENTRY_NAMES: ReadonlySet<string> = new Set(
+  claudeAuthStateSharingDescriptor.state.entries.map((entry) => foldClaudeConfigEntryName(entry.path)),
 );
 
 /**
@@ -52,10 +64,10 @@ const CLAUDE_STATE_ENTRY_NAMES: readonly string[] = Object.freeze(
  * is exactly the identity the pinned root exists to withhold from a
  * credential-less redirected upstream.
  */
-const CLAUDE_USER_SETTINGS_ENTRY_NAMES = Object.freeze([
+const CLAUDE_USER_SETTINGS_ENTRY_NAMES: ReadonlySet<string> = new Set([
   'settings.json',
   'settings.local.json',
-] as const);
+]);
 
 /**
  * Removes the credential-resolving keys from one settings document.
@@ -142,8 +154,9 @@ export async function shareClaudeUserConfigWithIsolatedRoot(input: Readonly<{
   if (sourceDir === resolve(input.rootDir)) return;
   for (const entry of await readClaudeConfigDirEntries(sourceDir)) {
     if (isClaudeIdentityConfigEntry(entry.name)) continue;
-    if (input.stateMode === 'isolated' && CLAUDE_STATE_ENTRY_NAMES.includes(entry.name)) continue;
-    if ((CLAUDE_USER_SETTINGS_ENTRY_NAMES as readonly string[]).includes(entry.name)) {
+    const foldedName = foldClaudeConfigEntryName(entry.name);
+    if (input.stateMode === 'isolated' && CLAUDE_STATE_ENTRY_NAMES.has(foldedName)) continue;
+    if (CLAUDE_USER_SETTINGS_ENTRY_NAMES.has(foldedName)) {
       await shareSanitizedClaudeUserSettings({
         sourcePath: join(sourceDir, entry.name),
         targetPath: join(input.rootDir, entry.name),

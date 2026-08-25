@@ -83,6 +83,9 @@ async function openPiSession(
         || join(resolveHomeDirFromEnvironment(launchEnv), '.pi', 'agent');
       preparedTools = await preparePiHappierToolsExtension({ agentDir, config });
     }
+    if (prepared.isInvalidated()) {
+      throw new Error('Pi qualified Connected Account launch was invalidated before opening the runtime.');
+    }
     runtime = prepared.bind(await createPiRuntimeOperations({
       services: context.services,
       ...(models ? { models } : {}),

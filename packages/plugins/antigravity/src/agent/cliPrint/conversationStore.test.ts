@@ -1,4 +1,4 @@
-import { mkdir, open, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -78,6 +78,73 @@ describe('Antigravity cliPrint conversation store', () => {
       conversationId: 'conv-title',
     });
     expect(candidate?.title).toBe('Review the candidate titles');
+  });
+
+  it('authorizes only physical regular transcripts below the physical brain root', async () => {
+    const physicalBrainDir = join(
+      tmpdir(),
+      `antigravity-physical-brain-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    const brainAlias = `${physicalBrainDir}-alias`;
+    const canonicalTranscriptPath = await createConversation(physicalBrainDir, 'conversation-real', [
+      JSON.stringify({ step_index: 0, type: 'USER_INPUT', content: '<USER_REQUEST>ok</USER_REQUEST>' }),
+    ]);
+    await symlink(physicalBrainDir, brainAlias, process.platform === 'win32' ? 'junction' : 'dir');
+
+    await expect(resolveAntigravityConversationCandidate({
+      brainDir: brainAlias,
+      conversationId: 'conversation-real',
+    })).resolves.toMatchObject({
+      conversationId: 'conversation-real',
+      transcriptPath: await realpath(canonicalTranscriptPath),
+    });
+
+    const outsideBrainDir = `${physicalBrainDir}-outside`;
+    const outsideTranscriptPath = await createConversation(outsideBrainDir, 'conversation-escaped', [
+      JSON.stringify({ step_index: 0, type: 'USER_INPUT', content: '<USER_REQUEST>outside</USER_REQUEST>' }),
+    ]);
+    await symlink(
+      join(outsideBrainDir, 'conversation-escaped'),
+      join(physicalBrainDir, 'conversation-escaped'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    await expect(resolveAntigravityConversationCandidate({
+      brainDir: brainAlias,
+      conversationId: 'conversation-escaped',
+    })).resolves.toBeNull();
+
+    const fileAliasTranscriptPath = await createConversation(physicalBrainDir, 'conversation-file-alias', [
+      JSON.stringify({ step_index: 0, type: 'USER_INPUT', content: '<USER_REQUEST>file alias</USER_REQUEST>' }),
+    ]);
+    await rm(fileAliasTranscriptPath);
+    await symlink(
+      outsideTranscriptPath,
+      fileAliasTranscriptPath,
+      'file',
+    );
+    await expect(resolveAntigravityConversationCandidate({
+      brainDir: brainAlias,
+      conversationId: 'conversation-file-alias',
+    })).resolves.toBeNull();
+
+    const ancestorConversationDir = join(physicalBrainDir, 'conversation-ancestor-alias');
+    const outsideGeneratedDir = join(outsideBrainDir, 'generated-alias');
+    await mkdir(join(ancestorConversationDir), { recursive: true });
+    await mkdir(join(outsideGeneratedDir, 'logs'), { recursive: true });
+    await writeFile(
+      join(outsideGeneratedDir, 'logs', 'transcript_full.jsonl'),
+      `${JSON.stringify({ step_index: 0, type: 'USER_INPUT', content: '<USER_REQUEST>ancestor alias</USER_REQUEST>' })}\n`,
+    );
+    await symlink(
+      outsideGeneratedDir,
+      join(ancestorConversationDir, '.system_generated'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    await expect(resolveAntigravityConversationCandidate({
+      brainDir: brainAlias,
+      conversationId: 'conversation-ancestor-alias',
+    })).resolves.toBeNull();
   });
 
   it.each([

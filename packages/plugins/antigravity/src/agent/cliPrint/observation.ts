@@ -12,9 +12,9 @@ import {
 } from '@happier-dev/plugin-sdk/fs';
 
 import {
+  authorizeAntigravityConversationTranscriptFile,
   isSafeAntigravityConversationId,
   resolveAntigravityBrainDir,
-  resolveAntigravityTranscriptFullPath,
 } from './conversationStore.js';
 import {
   formatAntigravityTranscriptSourceRevision,
@@ -31,10 +31,13 @@ const MAX_REMOTE_SESSION_ID_LENGTH = 2_000;
 type ExternalAgentObservationLeafFact =
   AgentExternalSessionObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
 
-type AntigravityObservationLinkedFile = Readonly<{
+type AntigravityObservationLinkedIdentity = Readonly<{
   brainDir: string;
   conversationId: string;
   sourceRevision: string;
+}>;
+
+type AntigravityObservationLinkedFile = AntigravityObservationLinkedIdentity & Readonly<{
   transcriptPath: string;
 }>;
 
@@ -44,10 +47,10 @@ function readNonemptyString(value: unknown): string | null {
     : null;
 }
 
-function readLinkedFile(
+function readLinkedIdentity(
   identity: AgentExternalSessionsResolvedIdentity,
   env: NodeJS.ProcessEnv,
-): AntigravityObservationLinkedFile {
+): AntigravityObservationLinkedIdentity {
   if (identity.source.kind !== 'antigravityCliPrint') {
     throw new Error('provider/source mismatch');
   }
@@ -88,11 +91,22 @@ function readLinkedFile(
     brainDir: requestedBrainDir,
     conversationId,
     sourceRevision,
-    transcriptPath: resolveAntigravityTranscriptFullPath(
-      requestedBrainDir,
-      conversationId,
-    ),
   };
+}
+
+async function readLinkedFile(
+  identity: AgentExternalSessionsResolvedIdentity,
+  env: NodeJS.ProcessEnv,
+): Promise<AntigravityObservationLinkedFile> {
+  const linkedIdentity = readLinkedIdentity(identity, env);
+  const authorization = await authorizeAntigravityConversationTranscriptFile({
+    brainDir: linkedIdentity.brainDir,
+    conversationId: linkedIdentity.conversationId,
+  });
+  if (authorization.status !== 'authorized') {
+    throw new Error('Antigravity observation transcript is unavailable or unauthorized');
+  }
+  return { ...linkedIdentity, transcriptPath: authorization.transcriptPath };
 }
 
 function hashOpaqueIdentity(value: unknown): string {
@@ -109,13 +123,7 @@ function buildDescriptor(
   changeObservation: 'watch_file_changes';
   watchFileChanges: Readonly<{ files: string[] }>;
 }> {
-  const resourceKey = `${RESOURCE_KEY_PREFIX}${hashOpaqueIdentity({
-    transcriptPath: linkedFile.transcriptPath,
-  })}`;
-  const linkKey = `${LINK_KEY_PREFIX}${hashOpaqueIdentity({
-    brainDir: linkedFile.brainDir,
-    conversationId: linkedFile.conversationId,
-  })}`;
+  const { resourceKey, linkKey } = buildGrouping(linkedFile);
   if (
     resourceKey.length > MAX_OPAQUE_KEY_LENGTH
     || linkKey.length > MAX_OPAQUE_KEY_LENGTH
@@ -133,11 +141,12 @@ function buildDescriptor(
 }
 
 function buildGrouping(
-  linkedFile: AntigravityObservationLinkedFile,
+  linkedFile: AntigravityObservationLinkedIdentity,
 ): Readonly<{ resourceKey: string; linkKey: string }> {
   return {
     resourceKey: `${RESOURCE_KEY_PREFIX}${hashOpaqueIdentity({
-      transcriptPath: linkedFile.transcriptPath,
+      brainDir: linkedFile.brainDir,
+      conversationId: linkedFile.conversationId,
     })}`,
     linkKey: `${LINK_KEY_PREFIX}${hashOpaqueIdentity({
       brainDir: linkedFile.brainDir,
@@ -240,8 +249,7 @@ export function createAntigravityExternalSessionObservationContribution(
 
   return Object.freeze({
     describeResource(identity) {
-      const linkedFile = readLinkedFile(identity, env);
-      return buildGrouping(linkedFile);
+      return buildGrouping(readLinkedIdentity(identity, env));
     },
 
     observeResource(request) {
@@ -262,29 +270,26 @@ export function createAntigravityExternalSessionObservationContribution(
         );
       }
       if (request.purpose === 'resource_descriptors') {
-        const resolvedLinks = request.links.map((link) => ({
-          linkKey: link.linkKey,
-          linkedFile: readLinkedFile(link.linkedSource, env),
-        }));
         const snapshotsByFile = new Map<
           string,
           Promise<AntigravityTranscriptSourceSnapshot | null>
         >();
-        const outcomes = await Promise.all(resolvedLinks.map(async ({ linkKey, linkedFile }) => {
-          let snapshotPromise = snapshotsByFile.get(linkedFile.transcriptPath);
-          if (!snapshotPromise) {
-            snapshotPromise = Promise.resolve().then(
-              () => readSnapshot(linkedFile.transcriptPath),
-            );
-            snapshotsByFile.set(linkedFile.transcriptPath, snapshotPromise);
-          }
+        const outcomes = await Promise.all(request.links.map(async (link) => {
           try {
+            const linkedFile = await readLinkedFile(link.linkedSource, env);
+            let snapshotPromise = snapshotsByFile.get(linkedFile.transcriptPath);
+            if (!snapshotPromise) {
+              snapshotPromise = Promise.resolve().then(
+                () => readSnapshot(linkedFile.transcriptPath),
+              );
+              snapshotsByFile.set(linkedFile.transcriptPath, snapshotPromise);
+            }
             const snapshot = await snapshotPromise;
             throwIfAborted(request.signal);
             if (!snapshot) {
               return {
                 kind: 'unavailable' as const,
-                linkKey,
+                linkKey: link.linkKey,
               };
             }
             return {
@@ -295,7 +300,7 @@ export function createAntigravityExternalSessionObservationContribution(
             throwIfAborted(request.signal);
             return {
               kind: 'unavailable' as const,
-              linkKey,
+              linkKey: link.linkKey,
             };
           }
         }));
@@ -308,7 +313,7 @@ export function createAntigravityExternalSessionObservationContribution(
       const observedAtMs = clampObservationTime(now());
       const outcomes = await Promise.all(request.links.map(async (link) => {
         try {
-          const linkedFile = readLinkedFile(link.linkedSource, env);
+          const linkedFile = await readLinkedFile(link.linkedSource, env);
           const snapshot = await readSnapshot(linkedFile.transcriptPath);
           throwIfAborted(request.signal);
           if (!snapshot) {

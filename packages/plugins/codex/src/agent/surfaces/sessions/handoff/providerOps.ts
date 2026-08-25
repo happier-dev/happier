@@ -4,7 +4,10 @@ import type {
   AgentTerminalSessionStateUpdate,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { CodexSessionHandoffBundleSchema } from './bundle.js';
+import {
+  CodexSessionHandoffBundleSchema,
+  CodexSessionHandoffBundleValidationError,
+} from './bundle.js';
 import { exportCodexSessionBundle } from './export.js';
 import { importCodexSessionBundle } from './import.js';
 
@@ -67,6 +70,13 @@ export const codexHandoffSurface = {
         },
       };
     } catch (error) {
+      if (error instanceof CodexSessionHandoffBundleValidationError) {
+        return {
+          ok: false,
+          code: 'bundle_invalid',
+          message: error.message,
+        };
+      }
       if (
         isPluginError(error)
         && (error.code === 'target_identity_conflict' || error.code === 'agent_version_unsupported')

@@ -219,6 +219,7 @@ export type CreateClaudeNativeRuntimeOptions = Readonly<{
 
 type ClaudePreparedLaunchEnvironment = Readonly<{
   launchEnvironment: AgentLaunchEnvironment;
+  isInvalidated(): boolean;
   armInvalidation(handler: () => Promise<void>): void;
   dispose(): Promise<void>;
 }>;
@@ -293,6 +294,7 @@ export const prepareClaudeQualifiedConnectedAccountLaunch:
             values: Object.freeze({}),
             unset: Object.freeze([]),
           }),
+          isInvalidated: () => false,
           armInvalidation() {},
           async dispose() {},
         });
@@ -330,6 +332,7 @@ export const prepareClaudeQualifiedConnectedAccountLaunch:
           rootDir: isolatedRootDir,
           authEnv: Object.freeze({}),
         }),
+        isInvalidated: () => false,
         armInvalidation() {},
         async dispose() {
           await rm(isolatedRootDir, { recursive: true, force: true });
@@ -395,6 +398,7 @@ export const prepareClaudeQualifiedConnectedAccountLaunch:
             values: Object.freeze({}),
             unset: Object.freeze([]),
           }),
+          isInvalidated: () => invalidated,
           armInvalidation(handler) {
             invalidationHandler = handler;
             if (invalidated) void handler();
@@ -414,10 +418,13 @@ export const prepareClaudeQualifiedConnectedAccountLaunch:
 
       let authEnv: Readonly<Record<string, string>>;
       if (useSubscription) {
+        if (!subscriptionBinding) {
+          throw new Error('Claude Subscription binding disappeared before materialization.');
+        }
         const files = await context.services.connectedAccounts.materialize(
           CLAUDE_SUBSCRIPTION_PURPOSE,
           { kind: 'files', fileIds: [CLAUDE_CREDENTIAL_FILE_ID] },
-          { signal: context.signal },
+          { signal: context.signal, expectedAccount: subscriptionBinding.account },
         );
         if (files.kind !== 'files') {
           throw new Error('Claude Subscription returned an invalid qualified materialization.');
@@ -433,10 +440,13 @@ export const prepareClaudeQualifiedConnectedAccountLaunch:
         );
         authEnv = Object.freeze({});
       } else {
+        if (!anthropicBinding) {
+          throw new Error('Anthropic binding disappeared before materialization.');
+        }
         const environment = await context.services.connectedAccounts.materialize(
           ANTHROPIC_API_KEY_PURPOSE,
           { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] },
-          { signal: context.signal },
+          { signal: context.signal, expectedAccount: anthropicBinding.account },
         );
         if (environment.kind !== 'environment') {
           throw new Error('Anthropic returned an invalid qualified materialization.');
@@ -455,6 +465,7 @@ export const prepareClaudeQualifiedConnectedAccountLaunch:
       });
       return Object.freeze({
         launchEnvironment,
+        isInvalidated: () => invalidated,
         armInvalidation(handler) {
           invalidationHandler = handler;
           if (invalidated) void handler();
@@ -1379,6 +1390,9 @@ export function createClaudeNativeRuntime(
           request: effectiveRequest,
           context,
         });
+      if (prepared?.isInvalidated()) {
+        throw new Error('Claude qualified Connected Account launch was invalidated before opening the runtime.');
+      }
       operations = await options.openSession({
         request: effectiveRequest,
         context,
@@ -1459,6 +1473,9 @@ export function createClaudeNativeRuntime(
               request: effectiveRequest,
               context,
             });
+          if (prepared?.isInvalidated()) {
+            throw new Error('Claude qualified Connected Account launch was invalidated before opening the runtime.');
+          }
           operations = await options.openExecutionSession({
             request: effectiveRequest,
             context,

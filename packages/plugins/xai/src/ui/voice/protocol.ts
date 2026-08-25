@@ -2,11 +2,10 @@
 import {
   createVoiceTranscriptLadderMapper,
   VoiceRealtimeJsonValueSchema,
-  VoiceRealtimeToolCallV1Schema } from '@happier-dev/plugin-sdk/voice/client';
-import {
+  VoiceRealtimeToolCallV1Schema,
   type VoiceRealtimeJsonValue,
   type VoiceRealtimeToolResult as VoiceRealtimeToolResultV1,
-} from '@happier-dev/plugin-sdk/voice';
+} from '@happier-dev/plugin-sdk/voice/client';
 import type {
   RealtimeVoiceProviderProtocol,
   VoiceRealtimeCanonicalEvent,
@@ -15,6 +14,7 @@ import type {
 } from '@happier-dev/plugin-sdk/voice/client';
 
 import type { XaiRealtimeSettingsV1 } from '../../protocol/voice/settings.js';
+import { normalizeXaiRealtimeEventType } from './wire.js';
 
 const MAX_PENDING_TOOL_RESPONSES = 128;
 const MAX_COMPLETED_TOOL_RESPONSES = 512;
@@ -68,6 +68,9 @@ export function createXaiSessionUpdate(
   clientTools: readonly XaiRealtimeClientToolDefinition[],
 ): VoiceRealtimeJsonValue {
   const supportsReasoning = settings.model.id === 'grok-voice-latest'
+    || settings.model.id === 'grok-voice-think-fast-2.0'
+    // 1.0 remains an accepted deprecated provider model, so preserve an
+    // explicitly saved selection's existing session settings without migration.
     || settings.model.id === 'grok-voice-think-fast-1.0';
   const transcription = optionalEntries({
     model: 'grok-transcribe',
@@ -146,6 +149,7 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
       // under an id that cannot mean the same thing twice.
       const eventId = providerEventId(event.event_id);
       if (!eventId) return [];
+      const eventType = normalizeXaiRealtimeEventType(event.type);
       const result: VoiceRealtimeCanonicalEvent[] = [];
       if (event.type === 'conversation.created') {
         const nextConversationId = text(record(event.conversation)?.id);
@@ -173,12 +177,15 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
       } else if (event.type === 'input_audio_buffer.speech_stopped') {
         result.push({ type: 'input_speech_stopped' });
       }
-      if (itemId && event.type === 'response.output_audio.delta' && !activeOutputItems.has(itemId)) {
-        const wasIdle = activeOutputItems.size === 0;
-        activeOutputItems.set(itemId, text(event.response_id) ?? itemId);
-        result.push(wasIdle
-          ? { type: 'assistant_output_started', itemId }
-          : { type: 'assistant_output_started' });
+      const outputAudioDelta = text(event.delta);
+      if (itemId && eventType === 'response.output_audio.delta' && outputAudioDelta) {
+        if (!activeOutputItems.has(itemId)) {
+          const wasIdle = activeOutputItems.size === 0;
+          activeOutputItems.set(itemId, text(event.response_id) ?? itemId);
+          result.push(wasIdle
+            ? { type: 'assistant_output_started', itemId }
+            : { type: 'assistant_output_started' });
+        }
       } else if (
         itemId
         && event.type === 'response.output_audio.done'
@@ -225,7 +232,12 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
         }
       }
       if (event.type === 'response.done') {
-        const responseId = text(record(event.response)?.id) ?? text(event.response_id);
+        const response = record(event.response);
+        const responseId = text(response?.id) ?? text(event.response_id);
+        // xAI documents `response.done` as the completed response edge and
+        // currently omits `status`; preserve that documented wire while
+        // refusing an explicitly unsuccessful OpenAI-compatible status.
+        const completed = response?.status === undefined || response.status === 'completed';
         if (responseId) {
           let stopped = false;
           for (const [activeItemId, activeResponseId] of activeOutputItems) {
@@ -240,10 +252,12 @@ export function createXaiRealtimeProtocolAdapter(input: Readonly<{
           completedToolResponses.add(responseId);
           while (completedToolResponses.size > MAX_COMPLETED_TOOL_RESPONSES) deleteOldest(completedToolResponses);
           pendingToolCalls.delete(responseId);
-          result.push({
-            type: 'tool_calls', responseId,
-            calls: Object.freeze([...calls.values()].sort((left, right) => left.order - right.order || left.callId.localeCompare(right.callId))),
-          });
+          if (completed) {
+            result.push({
+              type: 'tool_calls', responseId,
+              calls: Object.freeze([...calls.values()].sort((left, right) => left.order - right.order || left.callId.localeCompare(right.callId))),
+            });
+          }
         }
       }
       return Object.freeze(result);
