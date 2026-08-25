@@ -111,7 +111,7 @@ export async function claudeLocal(opts: {
     hookPluginDir?: string | null
     /** Effective session prompt text for new sessions; falls back to Claude-specific provider behavior blocks. */
     systemPromptText?: string | null,
-}) {
+}): Promise<string | null> {
 
     const processEnv = withCurrentHappierSessionId(process.env, opts.happierSessionId ?? '');
     const claudeConfigDir = resolveClaudeConfigDirOverride(processEnv);

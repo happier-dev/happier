@@ -1618,6 +1618,62 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         }
     });
 
+    it.each(['', '   ', 'offline-local-session'])(
+        'removes an inherited managed session id when the supplied id is unusable (%j)',
+        async (happySessionId: string) => {
+            const originalSessionId = process.env.HAPPIER_SESSION_ID;
+            const originalMarker = process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+            process.env.HAPPIER_SESSION_ID = 'outer-session';
+            process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = JSON.stringify(['HAPPIER_SESSION_ID']);
+
+            try {
+                let capturedOptions: any = null;
+                const createQuery = vi.fn((_params: any) => {
+                    capturedOptions = _params.options;
+                    return {
+                        async *[Symbol.asyncIterator]() {
+                            yield { type: 'result' } as any;
+                        },
+                        close: vi.fn(),
+                        setPermissionMode: vi.fn(),
+                        setModel: vi.fn(),
+                        setMaxThinkingTokens: vi.fn(),
+                        supportedCommands: vi.fn(async () => []),
+                        supportedModels: vi.fn(async () => []),
+                    } as any;
+                });
+                let didSendFirst = false;
+
+                await claudeRemoteAgentSdk({
+                    sessionId: null,
+                    happySessionId,
+                    transcriptPath: null,
+                    path: '/tmp',
+                    claudeArgs: [],
+                    claudeExecutablePath: '/tmp/claude',
+                    canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                    isAborted: () => false,
+                    nextMessage: async () => {
+                        if (didSendFirst) return null;
+                        didSendFirst = true;
+                        return { message: 'hello', mode: makeMode({ permissionMode: 'default' } as any) };
+                    },
+                    onReady: () => {},
+                    onSessionFound: () => {},
+                    onMessage: () => {},
+                    createQuery,
+                } as any);
+
+                expect(capturedOptions.env.HAPPIER_SESSION_ID).toBeUndefined();
+            } finally {
+                if (originalSessionId === undefined) delete process.env.HAPPIER_SESSION_ID;
+                else process.env.HAPPIER_SESSION_ID = originalSessionId;
+                if (originalMarker === undefined) delete process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON;
+                else process.env.HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON = originalMarker;
+            }
+        },
+    );
+
     it('does not forward Claude OAuth refresh material into the normal subprocess env allowlist', async () => {
         const originals = {
             refreshToken: process.env.CLAUDE_CODE_OAUTH_REFRESH_TOKEN,

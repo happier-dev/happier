@@ -42,7 +42,7 @@ vi.mock('@/ui/logger', () => ({
   },
 }));
 
-function createSessionStub(sessionId = 'api-session-1'): Session {
+function createSessionStub(sessionId: string = 'api-session-1'): Session {
   const client = Object.assign(new EventEmitter(), {
     sessionId,
     rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => undefined) },

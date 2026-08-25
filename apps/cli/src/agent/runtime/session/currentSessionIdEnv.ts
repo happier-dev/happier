@@ -17,8 +17,16 @@ export function readCurrentHappierSessionIdFromEnv(
 
 /** Returns a copied environment with the managed session id set, or removed when unusable. */
 export function withCurrentHappierSessionId(
+  env: Record<string, string>,
+  sessionId: unknown,
+): Record<string, string>;
+export function withCurrentHappierSessionId(
   env: NodeJS.ProcessEnv,
-  sessionId: string,
+  sessionId: unknown,
+): NodeJS.ProcessEnv;
+export function withCurrentHappierSessionId(
+  env: NodeJS.ProcessEnv,
+  sessionId: unknown,
 ): NodeJS.ProcessEnv {
   const resolvedSessionId = normalizeCurrentHappierSessionId(sessionId);
   const nextEnv: NodeJS.ProcessEnv = { ...env };

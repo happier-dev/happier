@@ -138,6 +138,38 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
     expect(launchSpec.diagnostics?.sessionExitDir).toContain('/logs/session-exit');
   });
 
+  it.each(['', '   ', 'offline-local-session'])(
+    'removes an inherited managed session id when the supplied id is unusable (%j)',
+    async (happySessionId: string) => {
+      await withPatchedEnv({
+        HAPPIER_SESSION_ID: 'outer-session',
+        [HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR]: JSON.stringify(['HAPPIER_SESSION_ID']),
+      }, async () => {
+        const spawn = await buildClaudeUnifiedTerminalSpawn({
+          path: '/workspace/project',
+          happySessionId,
+          first: {
+            message: 'hello',
+            mode: {
+              permissionMode: 'default',
+            },
+          },
+          deps: {
+            resolveClaudeCliPath: () => '/usr/local/bin/claude',
+            isClaudeCliJavaScriptFile: () => false,
+            ensureClaudeJsRuntimeExecutable: async () => '/managed/node',
+            claudeLocalLauncherPath: '/happier/scripts/claude_local_launcher.cjs',
+            terminalLaunchSpecRunnerPath: '/happier/scripts/terminal_launch_spec_runner.cjs',
+            resolveCommandInvocation: ({ command, args }) => ({ command, args: [...args] }),
+          },
+        });
+
+        const launchSpec = await readLaunchSpecFromSpawn(spawn);
+        expect(launchSpec.env?.HAPPIER_SESSION_ID).toBeUndefined();
+      });
+    },
+  );
+
   it('preserves Windows verbatim argument handling from the resolved Claude invocation', async () => {
     const spawn = await buildClaudeUnifiedTerminalSpawn({
       path: 'C:\\workspace\\project',

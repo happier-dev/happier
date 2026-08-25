@@ -1284,7 +1284,7 @@ describe('claudeLocal launcher selection', () => {
         expect(spawnOpts?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe('1');
     });
 
-    it.each(['', 'offline-local-session'])('does not inherit an outer Happier session id for unusable managed id %j', async (happierSessionId) => {
+    it.each(['', 'offline-local-session'])('does not inherit an outer Happier session id for unusable managed id %j', async (happierSessionId: string) => {
         const previousSessionId = process.env.HAPPIER_SESSION_ID;
         process.env.HAPPIER_SESSION_ID = 'outer-session';
 

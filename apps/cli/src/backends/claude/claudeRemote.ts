@@ -157,7 +157,7 @@ export async function claudeRemote(opts: {
     onProviderActivityObservationLost?: (() => void) | null,
     runtimeActivityAdapter?: ReturnType<typeof createClaudeProviderRuntimeActivityAdapter> | null,
     onWorkflowActivityObserverReady?: (() => void) | null,
-}) {
+}): Promise<void> {
 
     // Determine how we should (re)start the Claude session.
     //
