@@ -7,17 +7,34 @@ type CodexBackwardStreamCursorV3 = Readonly<{
   }>[];
 }>;
 
-export function encodeCodexDirectBackwardCursor(value: CodexBackwardStreamCursorV3): string {
+type CodexBackwardStreamCursorV4 = Readonly<{
+  v: 4;
+  kind: 'codexBackwardStreamVector';
+  streams: readonly Readonly<{
+    fileRelPath: string;
+    endOffsetBytes: number;
+    threadId: string;
+    sidechainId: string | null;
+    discoveredFrom?: Readonly<{
+      fileRelPath: string;
+      lineStartOffsetBytes: number;
+    }>;
+  }>[];
+}>;
+
+export type CodexDirectBackwardCursor = CodexBackwardStreamCursorV3 | CodexBackwardStreamCursorV4;
+
+export function encodeCodexDirectBackwardCursor(value: CodexDirectBackwardCursor): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
-export function decodeCodexDirectBackwardCursor(raw: string | undefined): CodexBackwardStreamCursorV3 | null {
+export function decodeCodexDirectBackwardCursor(raw: string | undefined): CodexDirectBackwardCursor | null {
   if (typeof raw !== 'string' || raw.trim().length === 0) return null;
   try {
     const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object') return null;
     const record = parsed as Record<string, unknown>;
-    if (record.v !== 3 || record.kind !== 'codexBackwardStreamVector') return null;
+    if ((record.v !== 3 && record.v !== 4) || record.kind !== 'codexBackwardStreamVector') return null;
     const rawStreams = Array.isArray(record.streams) ? record.streams : [];
     const streams = rawStreams
       .map((entry) => {
@@ -28,10 +45,43 @@ export function decodeCodexDirectBackwardCursor(raw: string | undefined): CodexB
           ? Math.trunc(streamRecord.endOffsetBytes)
           : NaN;
         if (!fileRelPath || !Number.isFinite(endOffsetBytes) || endOffsetBytes < 0) return null;
-        return { fileRelPath, endOffsetBytes };
+        if (record.v === 3) return { fileRelPath, endOffsetBytes };
+        const threadId = typeof streamRecord.threadId === 'string' ? streamRecord.threadId.trim() : '';
+        const sidechainId = streamRecord.sidechainId === null
+          ? null
+          : typeof streamRecord.sidechainId === 'string' && streamRecord.sidechainId.trim().length > 0
+            ? streamRecord.sidechainId.trim()
+            : undefined;
+        if (!threadId || sidechainId === undefined) return null;
+        const discoveredFrom = (() => {
+          if (!streamRecord.discoveredFrom || typeof streamRecord.discoveredFrom !== 'object'
+              || Array.isArray(streamRecord.discoveredFrom)) return undefined;
+          const discovery = streamRecord.discoveredFrom as Record<string, unknown>;
+          const parentFileRelPath = typeof discovery.fileRelPath === 'string' ? discovery.fileRelPath.trim() : '';
+          const lineStartOffsetBytes = typeof discovery.lineStartOffsetBytes === 'number'
+            && Number.isFinite(discovery.lineStartOffsetBytes)
+            ? Math.trunc(discovery.lineStartOffsetBytes)
+            : NaN;
+          if (!parentFileRelPath || !Number.isSafeInteger(lineStartOffsetBytes) || lineStartOffsetBytes < 0) return null;
+          return { fileRelPath: parentFileRelPath, lineStartOffsetBytes };
+        })();
+        if (streamRecord.discoveredFrom !== undefined && !discoveredFrom) return null;
+        return { fileRelPath, endOffsetBytes, threadId, sidechainId, ...(discoveredFrom ? { discoveredFrom } : {}) };
       })
-      .filter((entry): entry is { fileRelPath: string; endOffsetBytes: number } => entry !== null);
-    return { v: 3, kind: 'codexBackwardStreamVector', streams };
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+    if (streams.length !== rawStreams.length) return null;
+    if (record.v === 3) {
+      const legacyStreams = streams.map((entry) => ({
+        fileRelPath: entry.fileRelPath,
+        endOffsetBytes: entry.endOffsetBytes,
+      }));
+      return { v: 3, kind: 'codexBackwardStreamVector', streams: legacyStreams };
+    }
+    const durableStreams = streams.filter((entry): entry is Extract<typeof entry, { threadId: string }> => (
+      'threadId' in entry && typeof entry.threadId === 'string'
+    ));
+    if (durableStreams.length !== streams.length) return null;
+    return { v: 4, kind: 'codexBackwardStreamVector', streams: durableStreams };
   } catch {
     return null;
   }

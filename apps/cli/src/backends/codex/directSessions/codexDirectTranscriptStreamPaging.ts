@@ -37,6 +37,36 @@ async function statFileSize(filePath: string): Promise<number> {
   return stat(filePath).then((s) => Math.max(0, Math.trunc(s.size))).catch(() => 0);
 }
 
+type CodexStreamDiscovery = Readonly<{
+  fileRelPath: string;
+  lineStartOffsetBytes: number;
+}>;
+
+async function validatesDiscoveredChildStream(params: Readonly<{
+  streams: readonly CodexDirectTranscriptRolloutStream[];
+  childThreadId: string;
+  discovery: CodexStreamDiscovery;
+}>): Promise<boolean> {
+  const parent = params.streams.find((stream) => stream.fileRelPath === params.discovery.fileRelPath);
+  if (!parent) return false;
+  const page = await readJsonlFileForward({
+    filePath: parent.filePath,
+    offsetBytes: params.discovery.lineStartOffsetBytes,
+    maxBytes: 1024,
+    maxItems: 1,
+  });
+  const line = page.items.find((candidate) => candidate.startOffsetBytes === params.discovery.lineStartOffsetBytes);
+  if (!line) return false;
+  const projected = projectCodexRolloutLineToTranscriptRecords({
+    stream: parent,
+    lineStartOffsetBytes: line.startOffsetBytes,
+    lineNextOffsetBytes: line.endOffsetBytes + 1,
+    lineValue: line.value,
+    semanticTracker: createCodexRolloutSemanticTracker(),
+  });
+  return projected.discoveredChildThreadIds.includes(params.childThreadId);
+}
+
 function normalizeOffsetBytes(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
 }
@@ -389,18 +419,57 @@ export async function pageCodexRolloutStreams(params: Readonly<{
   hasMore: boolean;
   truncated?: boolean;
 }>> {
-  const streams = await collectCodexDirectTranscriptRolloutStreams({
+  const streams = [...await collectCodexDirectTranscriptRolloutStreams({
     codexHome: params.codexHome,
     remoteSessionId: params.remoteSessionId,
     initialRolloutFiles: params.initialRolloutFiles,
-  });
-  const tailCursor = await buildCodexStreamVectorTailCursor(streams);
+  })];
 
   if (params.direction !== 'older') {
+    const tailCursor = await buildCodexStreamVectorTailCursor(streams);
     return { items: [], nextCursor: null, tailCursor, hasMore: false };
   }
 
   const decoded = decodeCodexDirectBackwardCursor(params.cursor);
+  const knownStreamIds = new Set(streams.map((stream) => stream.fileRelPath));
+  const discoveredThreadIds = new Set(streams.map((stream) => stream.threadId));
+  const discoveryByStreamId = new Map<string, CodexStreamDiscovery>();
+  if (decoded?.v === 4) {
+    let pending = decoded.streams.filter((persisted) => !knownStreamIds.has(persisted.fileRelPath));
+    while (pending.length > 0) {
+      const deferred: typeof pending = [];
+      let restored = 0;
+      for (const persisted of pending) {
+        if (!persisted.discoveredFrom) continue;
+        if (!knownStreamIds.has(persisted.discoveredFrom.fileRelPath)) {
+          deferred.push(persisted);
+          continue;
+        }
+        if (!(await validatesDiscoveredChildStream({
+          streams,
+          childThreadId: persisted.threadId,
+          discovery: persisted.discoveredFrom,
+        }))) continue;
+        const files = await collectCodexSessionRolloutFiles({
+          codexHome: params.codexHome,
+          remoteSessionId: persisted.threadId,
+        });
+        const file = files.find((candidate) => candidate.fileRelPath === persisted.fileRelPath);
+        if (!file) continue;
+        knownStreamIds.add(file.fileRelPath);
+        discoveredThreadIds.add(persisted.threadId);
+        discoveryByStreamId.set(file.fileRelPath, persisted.discoveredFrom);
+        streams.push({
+          ...file,
+          threadId: persisted.threadId,
+          sidechainId: persisted.sidechainId,
+        });
+        restored += 1;
+      }
+      if (restored === 0) break;
+      pending = deferred;
+    }
+  }
   const endByStreamId = new Map(decoded?.streams.map((entry) => [entry.fileRelPath, entry.endOffsetBytes] as const) ?? []);
   const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
   const maxItems = Math.max(1, Math.trunc(params.maxItems));
@@ -410,7 +479,8 @@ export async function pageCodexRolloutStreams(params: Readonly<{
   const pageNextEndByStreamId = new Map<string, number>();
   const hasLoadedCandidateByStreamId = new Map<string, boolean>();
 
-  for (const stream of streams) {
+  for (let streamIndex = 0; streamIndex < streams.length; streamIndex += 1) {
+    const stream = streams[streamIndex]!;
     const fileSize = await statFileSize(stream.filePath);
     const endOffsetBytes = Math.min(fileSize, Math.max(0, Math.trunc(endByStreamId.get(stream.fileRelPath) ?? fileSize)));
     initialEndByStreamId.set(stream.fileRelPath, endOffsetBytes);
@@ -436,8 +506,36 @@ export async function pageCodexRolloutStreams(params: Readonly<{
         hasLoadedCandidateByStreamId.set(stream.fileRelPath, true);
       }
       candidateRecords.push(...projected.records);
+      for (const childThreadId of projected.discoveredChildThreadIds) {
+        if (discoveredThreadIds.has(childThreadId)) continue;
+        discoveredThreadIds.add(childThreadId);
+        const childFiles = await collectCodexSessionRolloutFiles({
+          codexHome: params.codexHome,
+          remoteSessionId: childThreadId,
+        });
+        for (const childFile of childFiles) {
+          if (knownStreamIds.has(childFile.fileRelPath)) continue;
+          knownStreamIds.add(childFile.fileRelPath);
+          discoveryByStreamId.set(childFile.fileRelPath, {
+            fileRelPath: stream.fileRelPath,
+            lineStartOffsetBytes: line.startOffsetBytes,
+          });
+          streams.push({
+            ...childFile,
+            threadId: childThreadId,
+            sidechainId: childThreadId,
+          });
+        }
+      }
     }
   }
+
+  streams.sort((left, right) =>
+    left.sortMs - right.sortMs
+    || left.mtimeMs - right.mtimeMs
+    || left.fileRelPath.localeCompare(right.fileRelPath),
+  );
+  const tailCursor = await buildCodexStreamVectorTailCursor(streams);
 
   candidateRecords.sort(compareCodexProjectedRecordsOldestFirst);
   const selectedReversed: CodexProjectedTranscriptRecord[] = [];
@@ -483,10 +581,18 @@ export async function pageCodexRolloutStreams(params: Readonly<{
   const hasMore = hasUndeliveredLoadedRecord || mayHaveUndeliveredRecordBeforeLoadedWindow;
   const nextCursor = hasMore
     ? encodeCodexDirectBackwardCursor({
-      v: 3,
+      v: 4,
       kind: 'codexBackwardStreamVector',
-      streams: [...nextEndByStreamId.entries()]
-        .map(([fileRelPath, endOffsetBytes]) => ({ fileRelPath, endOffsetBytes }))
+      streams: streams
+        .map((stream) => ({
+          fileRelPath: stream.fileRelPath,
+          endOffsetBytes: nextEndByStreamId.get(stream.fileRelPath) ?? 0,
+          threadId: stream.threadId,
+          sidechainId: stream.sidechainId,
+          ...(discoveryByStreamId.get(stream.fileRelPath)
+            ? { discoveredFrom: discoveryByStreamId.get(stream.fileRelPath)! }
+            : {}),
+        }))
         .sort((left, right) => left.fileRelPath.localeCompare(right.fileRelPath)),
     })
     : null;
