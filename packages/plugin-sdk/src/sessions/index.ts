@@ -86,7 +86,7 @@ export { normalizeSlashCommandName } from '../services/sessions.js';
 export {
     isNonSteerablePromptPayload,
     parseSpecialCommand,
-} from '@happier-dev/protocol/sessions/messages/special-commands';
+} from './specialCommands.js';
 export { readHappierStructuredInputV1FromMeta } from '../services/sessions.js';
 export { readLeadingSlashCommandName } from '../services/sessions.js';
 export { readPendingLocalId } from '../services/sessions.js';
