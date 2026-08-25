@@ -30,6 +30,7 @@ export function createPiAcpRuntime(params: {
   memoryRecallGuidanceEnabled?: boolean;
   fallbackToolDelivery: 'native_mcp' | 'shell_bridge' | 'unsupported';
   getPermissionMode?: () => PermissionMode | null | undefined;
+  processEnv?: NodeJS.ProcessEnv;
   pendingQueueDrainMaxPopPerWake?: number;
   providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
   /**
@@ -78,9 +79,7 @@ export function createPiAcpRuntime(params: {
       machineId: params.machineId,
     },
     getPermissionMode: params.getPermissionMode,
-    backendOptions: {
-      env: process.env,
-    },
+    processEnv: params.processEnv ?? process.env,
     pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
     providerInputConsumer: params.providerInputConsumer,
     inFlightSteer: { enabled: true },

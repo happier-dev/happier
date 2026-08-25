@@ -28,7 +28,7 @@ export async function runCopilot(opts: StandardAcpProviderRunOptions & {
     machineMetadata: initialMachineMetadata,
     terminalDisplay: CopilotTerminalDisplay,
     resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => createCopilotAcpRuntime({
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, processEnv, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => createCopilotAcpRuntime({
       directory,
       machineId,
       session,
@@ -38,6 +38,7 @@ export async function runCopilot(opts: StandardAcpProviderRunOptions & {
       onThinkingChange: setThinking,
       memoryRecallGuidanceEnabled,
       getPermissionMode,
+      processEnv,
       pendingQueueDrainMaxPopPerWake,
       providerInputConsumer,
     }),

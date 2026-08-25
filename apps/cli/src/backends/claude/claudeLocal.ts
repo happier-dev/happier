@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { mkdirSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { logger } from "@/ui/logger";
+import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 import { attachProcessSignalForwardingToChild } from '@/agent/runtime/signalForwarding';
 import { claudeCheckSession } from "./utils/claudeCheckSession";
 import { claudeFindLastSession } from "./utils/claudeFindLastSession";
@@ -92,6 +93,8 @@ export async function claudeLocal(opts: {
         activeFetchCount: number,
     }>) => void) | undefined,
     claudeArgs?: string[],
+    /** Happier session identity to bind into the managed Claude subprocess environment. */
+    happierSessionId?: string | null,
     /** Optional env overrides to apply to the spawned Claude Code subprocess. */
     envOverlay?: Record<string, string>,
     /** Optional MCP config JSON to inject into the Claude Code CLI invocation (e.g. Happier MCP). */
@@ -108,9 +111,10 @@ export async function claudeLocal(opts: {
     hookPluginDir?: string | null
     /** Effective session prompt text for new sessions; falls back to Claude-specific provider behavior blocks. */
     systemPromptText?: string | null,
-}) {
+}): Promise<string | null> {
 
-    const claudeConfigDir = resolveClaudeConfigDirOverride(process.env);
+    const processEnv = withCurrentHappierSessionId(process.env, opts.happierSessionId ?? '');
+    const claudeConfigDir = resolveClaudeConfigDirOverride(processEnv);
 
     // Ensure project directory exists
     const projectDir = getProjectPath(opts.path, claudeConfigDir);
@@ -420,13 +424,16 @@ export async function claudeLocal(opts: {
             // Prepare environment variables
             // Note: Local mode uses global Claude installation with --session-id flag
             // Launcher only intercepts fetch for thinking state tracking
-            const env: NodeJS.ProcessEnv = stripNestedSessionDetectionEnv({
-                ...process.env,
-                // Keep behavior consistent with our wrapper script.
-                DISABLE_AUTOUPDATER: '1',
-                ...resolveClaudeConfigDirEnvOverlay(process.env),
-                ...(opts.envOverlay ?? {}),
-            })
+            const env = withCurrentHappierSessionId(
+                stripNestedSessionDetectionEnv({
+                    ...processEnv,
+                    // Keep behavior consistent with our wrapper script.
+                    DISABLE_AUTOUPDATER: '1',
+                    ...resolveClaudeConfigDirEnvOverlay(processEnv),
+                    ...(opts.envOverlay ?? {}),
+                }),
+                opts.happierSessionId ?? '',
+            );
             isolateClaudeRuntimeAuthEnv(env);
             // Internal daemon→CLI marker used for strict env filtering in Agent SDK remote mode.
             // Never forward it into the Claude Code subprocess environment.
@@ -435,7 +442,7 @@ export async function claudeLocal(opts: {
                 logPrefix: 'ClaudeLocal',
                 sessionId: opts.sessionId,
                 startFrom,
-                runnerEnv: process.env,
+                runnerEnv: processEnv,
                 childEnv: env,
             });
 

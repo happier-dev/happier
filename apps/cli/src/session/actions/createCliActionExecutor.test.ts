@@ -334,7 +334,7 @@ describe('createCliActionExecutor', () => {
 
   it('resolves session mode options from fetched session metadata when targeting a different session id', async () => {
     const executor = createPlainExecutor();
-    fetchSessionById.mockResolvedValue({
+    const rawSession = {
       id: 'sess-2',
       createdAt: 1,
       updatedAt: 2,
@@ -350,7 +350,11 @@ describe('createCliActionExecutor', () => {
           ],
         },
       },
-    });
+    };
+    fetchSessionsPage
+      .mockResolvedValueOnce({ sessions: [rawSession], hasNext: false, nextCursor: null })
+      .mockResolvedValueOnce({ sessions: [], hasNext: false, nextCursor: null });
+    fetchSessionById.mockResolvedValue(rawSession);
 
     const result = await executor.execute(
       'action.options.resolve',
@@ -2043,6 +2047,32 @@ describe('createCliActionExecutor', () => {
       },
     });
     expect(setSessionPermissionMode).not.toHaveBeenCalled();
+  });
+
+  it('does not treat ambient direct-CLI session metadata as permission authority', async () => {
+    allowSessionAgentActions('session.permission_mode.set');
+    const executor = createPlainExecutor({
+      currentSessionPermissionAuthority: 'ambient_context',
+      rawSession: {
+        metadata: {
+          permissionMode: 'default',
+          permissionModeUpdatedAt: 10,
+        },
+      },
+    });
+    setSessionPermissionMode.mockResolvedValueOnce({ ok: true, sessionId: 'sess-2' });
+
+    const result = await executor.execute(
+      'session.permission_mode.set',
+      {
+        sessionId: 'sess-2',
+        permissionMode: 'bypassPermissions',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(setSessionPermissionMode).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed for session-agent non-escalation when live caller permission is not supplied', async () => {

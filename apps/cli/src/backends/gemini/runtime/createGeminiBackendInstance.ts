@@ -7,6 +7,7 @@ import type { GeminiBackendOptions, GeminiBackendResult } from '@/backends/gemin
 
 export async function createGeminiBackendInstance(params: {
   cwd: string;
+  processEnv: NodeJS.ProcessEnv;
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: ProviderEnforcedPermissionHandler;
   currentUserEmail?: string;
@@ -16,6 +17,7 @@ export async function createGeminiBackendInstance(params: {
 }): Promise<GeminiBackendResult> {
   const backendResult = (await createCatalogAcpBackend<GeminiBackendOptions, GeminiBackendResult>('gemini', {
     cwd: params.cwd,
+    env: params.processEnv,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     currentUserEmail: params.currentUserEmail,

@@ -137,6 +137,9 @@ async function main() {
           GEMINI_MODEL: Object.prototype.hasOwnProperty.call(process.env, 'GEMINI_MODEL')
             ? process.env.GEMINI_MODEL
             : null,
+          HAPPIER_SESSION_ID: Object.prototype.hasOwnProperty.call(process.env, 'HAPPIER_SESSION_ID')
+            ? process.env.HAPPIER_SESSION_ID
+            : null,
           HAPPIER_GEMINI_ACP_AUTH_METHOD: Object.prototype.hasOwnProperty.call(process.env, 'HAPPIER_GEMINI_ACP_AUTH_METHOD')
             ? process.env.HAPPIER_GEMINI_ACP_AUTH_METHOD
             : null,
@@ -194,6 +197,31 @@ main().catch((error) => {
         expect(result.modelSource).toBe('default');
       }),
     );
+  });
+
+  it('preserves the managed Happier session id in the Gemini child environment', async () => {
+    await withTempHome(async () => {
+      await withTempDir('happier-gemini-acp-session-env-', async (testDir) => {
+        const newSessionLogPath = join(testDir, 'new-session-log.jsonl');
+        await withFakeGeminiAcpCli({ newSessionLogPath }, async () => {
+          const result = createGeminiBackend({
+            cwd: testDir,
+            env: { HAPPIER_SESSION_ID: 'session-1' },
+            model: null,
+          });
+
+          try {
+            await expect(result.backend.startSession()).resolves.toMatchObject({ sessionId: expect.any(String) });
+            const payload = JSON.parse(readFileSync(newSessionLogPath, 'utf8').trim()) as {
+              env?: { HAPPIER_SESSION_ID?: string | null };
+            };
+            expect(payload.env?.HAPPIER_SESSION_ID).toBe('session-1');
+          } finally {
+            await result.backend.dispose().catch(() => {});
+          }
+        });
+      });
+    });
   });
 
   it('uses gemini-api-key when GEMINI_API_KEY is present', async () => {

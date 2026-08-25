@@ -19,6 +19,7 @@ export function createAuggieAcpRuntime(params: {
   memoryRecallGuidanceEnabled?: boolean;
   allowIndexing: boolean;
   getPermissionMode?: () => PermissionMode | null | undefined;
+  processEnv?: NodeJS.ProcessEnv;
   pendingQueueDrainMaxPopPerWake?: number;
   providerInputConsumer: SessionProviderInputConsumer<unknown, unknown>;
 }) {
@@ -42,5 +43,6 @@ export function createAuggieAcpRuntime(params: {
     backendOptions: {
       allowIndexing: params.allowIndexing,
     },
+    processEnv: params.processEnv,
   });
 }

@@ -1591,6 +1591,7 @@ export async function claudeRemoteLauncher(
                     abortSignal: controller.signal,
                     dispatch: async () => claudeRemoteDispatch({
                     sessionId: session.sessionId,
+                    happySessionId: session.client.sessionId,
                     transcriptPath: session.transcriptPath,
                     path: session.path,
                     systemPromptText: session.defaultSystemPromptText,

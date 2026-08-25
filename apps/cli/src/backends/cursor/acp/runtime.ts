@@ -38,7 +38,7 @@ export function createCursorAcpRuntime(params: {
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     sessionIdentity: { kind: 'manifest-metadata' },
-    backendOptions: params.env ? { env: params.env } : undefined,
+    processEnv: params.env,
     onThinkingChange: params.onThinkingChange,
     memoryRecallGuidance: {
       enabled: params.memoryRecallGuidanceEnabled === true,

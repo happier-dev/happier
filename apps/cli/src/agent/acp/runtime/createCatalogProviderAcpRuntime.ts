@@ -39,6 +39,7 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  processEnv?: NodeJS.ProcessEnv;
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
   backendOptions?: Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'happierSessionId'>;
   /**
@@ -191,6 +192,7 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
         permissionHandler: params.permissionHandler,
         permissionMode,
         happierSessionId: params.session.sessionId,
+        ...(params.processEnv ? { env: params.processEnv } : {}),
       } as unknown as TBackendOptions);
 
       logger.debug(`[${params.loggerLabel}] Backend created`);
