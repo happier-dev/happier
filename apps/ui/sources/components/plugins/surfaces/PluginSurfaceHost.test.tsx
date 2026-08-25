@@ -2957,7 +2957,7 @@ describe('PluginSurfacePlacementHost', () => {
                         { kind: 'section', path: 'root.c0.c0', order: 2, title: 'Active', footer: 'Refreshed on reload', children: [
                             { kind: 'item', path: 'root.c0.c0.c0', order: 3, title: 'happier', subtitle: 'Main repository', detail: '42', icon: 'file', action: reference('open'), input: { id: 'happier' }, enabled: true },
                             { kind: 'item', path: 'root.c0.c0.c1', order: 4, title: 'archived', tone: 'danger', action: reference('archive'), enabled: false },
-                            { kind: 'item', path: 'root.c0.c0.c2', order: 5, title: 'read only', subtitle: 'No action' },
+                            { kind: 'item', path: 'root.c0.c0.c2', order: 5, title: 'unavailable', subtitle: 'Action unavailable', action: reference('missing') },
                         ] },
                         { kind: 'state', path: 'root.c0.c1', order: 6, state: 'error', title: 'Sync failed', description: 'Retry from the panel.' },
                         { kind: 'state', path: 'root.c0.c2', order: 7, state: 'loading', title: 'Loading repositories' },
