@@ -38,7 +38,7 @@ function compatibleInstance(overrides = {}) {
     arch: 'aarch64',
     cpus: 10,
     memory: 24 * 1024 ** 3,
-    disk: 200 * 1024 ** 3,
+    disk: 160 * 1024 ** 3,
     config: {
       mounts: [],
       vmOpts: { vz: { diskImageFormat: 'raw', rosetta: { enabled: false, binfmt: false } } },

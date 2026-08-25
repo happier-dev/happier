@@ -10,6 +10,10 @@ import {
   writeCandidateExecutionHostProfile,
 } from './utils/execution_host/config.mjs';
 import { executeCandidateHostCommand, inspectExecutionHost } from './utils/execution_host/controller.mjs';
+import {
+  prepareExecutionHostCandidateRepository,
+  readExecutionHostCandidateState,
+} from './utils/execution_host/candidate_repository.mjs';
 import { createManagedLimaHostExecutor } from './utils/managed_lima/host_executor.mjs';
 import { startManagedLimaInstance, stopManagedLimaInstance } from './utils/managed_lima/lifecycle.mjs';
 import { setupManagedLimaRuntime } from './utils/managed_lima/manager.mjs';
@@ -26,10 +30,11 @@ function flagValue(argv, name) {
 function usage(json) {
   printResult({
     json,
-    data: { commands: ['setup', 'status', 'doctor', 'start', 'stop', 'shell', 'exec'] },
+    data: { commands: ['setup', 'mirror', 'status', 'doctor', 'start', 'stop', 'shell', 'exec'] },
     text: [
       '[host] usage:',
       '  hstack host setup [--instance=happier-agent-primary] [--profile=balanced] [--json]',
+      '  hstack host mirror [--source-dir=/absolute/path/to/repo] [--json]',
       '  hstack host status|doctor|start|stop [--json]',
       '  hstack host shell [--guest-cwd=/absolute/path] [-- COMMAND...]',
       '  hstack host exec [--guest-cwd=/absolute/path] -- COMMAND [ARG...]',
@@ -102,15 +107,34 @@ async function main() {
 
   const profile = readExecutionHostProfile(process.env);
   if (command === 'status' || command === 'doctor') {
-    const result = profile
+    const inspected = profile
       ? await inspectExecutionHost({ profile, executor: executorFor(profile) })
       : await inspectExecutionHost({ profile: null });
+    const candidateRepository = await readExecutionHostCandidateState(profile, process.env);
+    const result = candidateRepository ? { ...inspected, candidateRepository } : inspected;
     printResult({ json, data: result, text: plainStatus(result) });
     if (command === 'doctor' && profile && result.doctor?.ok !== true) process.exitCode = 1;
     return;
   }
   if (!profile) throw new Error('[host] execution host is not configured; run `hstack host setup` explicitly');
   const executor = executorFor(profile);
+  if (command === 'mirror') {
+    const result = await prepareExecutionHostCandidateRepository({
+      profile,
+      sourceDir: flagValue(argv, '--source-dir').trim() || process.cwd(),
+      env: process.env,
+      executor,
+    });
+    return printResult({
+      json,
+      data: result,
+      text: [
+        `[host] candidate repository prepared at ${result.guestRepositoryDir}`,
+        '[host] continuous sync: macOS -> Linux candidate',
+        '[host] authoritative: no (macOS remains authoritative)',
+      ].join('\n'),
+    });
+  }
   if (command === 'start') {
     const result = await startManagedLimaInstance({ executor, instance: profile.instance });
     return printResult({ json, data: result, text: `[host] VM status: ${result.status}` });

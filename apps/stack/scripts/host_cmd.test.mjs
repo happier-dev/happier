@@ -98,7 +98,7 @@ test('hstack registry exposes the host controller without requiring workspace ad
     },
   });
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /hstack host setup\|status\|doctor\|start\|stop\|shell\|exec/);
+  assert.match(result.stdout, /hstack host setup\|mirror\|status\|doctor\|start\|stop\|shell\|exec/);
 });
 
 test('active execution profile delegates an ordinary hstack command before local workspace admission', async (t) => {

@@ -29,6 +29,32 @@ function requireSuccessful(result, description) {
   throw new Error(`[dev-targets] ${description} failed (code=${String(result?.code ?? 'unknown')})`);
 }
 
+export async function resumeDevTargetSync(
+  { target, env },
+  { runProcess = runDevTargetControlProcess } = {},
+) {
+  const result = await runProcess({
+    label: `sync:${target.name}`,
+    command: 'mutagen',
+    args: ['sync', 'resume', resolveMutagenSessionName(target.name)],
+    env,
+  });
+  requireSuccessful(result, `${target.name} Mutagen resume`);
+}
+
+export async function flushDevTargetSync(
+  { target, env },
+  { runProcess = runDevTargetControlProcess } = {},
+) {
+  const result = await runProcess({
+    label: `sync:${target.name}`,
+    command: 'mutagen',
+    args: ['sync', 'flush', resolveMutagenSessionName(target.name)],
+    env,
+  });
+  requireSuccessful(result, `${target.name} Mutagen initial flush`);
+}
+
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }

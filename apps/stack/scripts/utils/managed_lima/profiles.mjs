@@ -17,10 +17,10 @@ const BASE_PROFILE = Object.freeze({
 
 const PROFILE_SIZES = Object.freeze({
   small: Object.freeze({ cpus: 8, memoryGiB: 16, diskGiB: 160 }),
-  balanced: Object.freeze({ cpus: 10, memoryGiB: 24, diskGiB: 200 }),
+  balanced: Object.freeze({ cpus: 10, memoryGiB: 24, diskGiB: 160 }),
   performance: Object.freeze({ cpus: 12, memoryGiB: 32, diskGiB: 240 }),
   heavy: Object.freeze({ cpus: 14, memoryGiB: 48, diskGiB: 320 }),
-  'worker-balanced': Object.freeze({ cpus: 8, memoryGiB: 24, diskGiB: 200 }),
+  'worker-balanced': Object.freeze({ cpus: 8, memoryGiB: 24, diskGiB: 160 }),
 });
 
 function requireInstanceName(value) {
