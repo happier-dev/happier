@@ -26,9 +26,11 @@ describe('resolvePluginBrowserPolicyDecision', () => {
         let locale: 'en' | 'fr' = 'fr';
         const localize: PluginLocalizedTextResolver = (_pluginId, value) => {
             if (typeof value === 'string') return value;
-            const fallback = value && typeof value === 'object' && !Array.isArray(value)
-                && typeof value.fallback === 'string'
-                ? value.fallback
+            const candidate = value && typeof value === 'object' && !Array.isArray(value)
+                ? value as Readonly<Record<string, unknown>>
+                : null;
+            const fallback = typeof candidate?.fallback === 'string'
+                ? candidate.fallback
                 : '';
             return locale === 'fr' ? 'Ouvrir l’aperçu est disponible uniquement sur ordinateur.' : fallback;
         };
