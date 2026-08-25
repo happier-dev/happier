@@ -23,10 +23,17 @@ describe('terminal native event normalization', () => {
     expect(normalizeTerminalNativeEvent('rendererCrash', {
       surfaceId: 'surface-1',
       reason: 'native renderer crashed',
+      fatal: true,
     })).toEqual({
       surfaceId: 'surface-1',
       reason: 'native renderer crashed',
+      fatal: true,
     });
+
+    expect(normalizeTerminalNativeEvent('rendererCrash', {
+      surfaceId: 'surface-1',
+      reason: 'native renderer crashed',
+    })).toBeNull();
 
     expect(normalizeTerminalNativeEvent('surfaceReady', {
       surfaceId: 'surface-1',
