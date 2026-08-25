@@ -73,10 +73,10 @@ export function seedAndOpenNewSession(params: Readonly<{
     scope?: ServerAccountScope | null;
     signal?: AbortSignal;
     isCurrent: () => boolean;
-    navigateToNewSession: (dataId: string | null) => void;
+    navigateToNewSession: (input: Readonly<{ dataId: string | null; draftId: string }>) => void;
     nowMs?: () => number;
+    createDraftId?: Parameters<typeof seedNewSessionDraftV1>[0]['createDraftId'];
     writeDraft?: Parameters<typeof seedNewSessionDraftV1>[0]['writeDraft'];
-    readDraft?: Parameters<typeof seedNewSessionDraftV1>[0]['readDraft'];
     storeTempData?: typeof storeTempData;
 }>): SessionNewSessionSeedOutcome {
     const seed = readPluginNewSessionSeedV1(params.seed);
@@ -95,14 +95,14 @@ export function seedAndOpenNewSession(params: Readonly<{
     if (params.signal?.aborted === true) return { kind: 'unavailable', reason: 'aborted' };
     if (!readIsCurrent(params.isCurrent)) return { kind: 'stale', reason: 'host_retired' };
 
-    const draftSeeded = seedNewSessionDraftV1({
+    const draftId = seedNewSessionDraftV1({
         seed,
         scope: params.scope ?? null,
         ...(params.nowMs ? { nowMs: params.nowMs } : {}),
+        ...(params.createDraftId ? { createDraftId: params.createDraftId } : {}),
         ...(params.writeDraft ? { writeDraft: params.writeDraft } : {}),
-        ...(params.readDraft ? { readDraft: params.readDraft } : {}),
     });
-    if (!draftSeeded) return { kind: 'unavailable', reason: 'navigation_unavailable' };
+    if (!draftId) return { kind: 'unavailable', reason: 'navigation_unavailable' };
 
     // Requests that cannot become a persisted draft field travel through the
     // incumbent one-shot New Session handoff. Only its mounted composer can
@@ -125,7 +125,7 @@ export function seedAndOpenNewSession(params: Readonly<{
         : (params.storeTempData ?? storeTempData)({ pluginNewSessionSeed: handoff });
 
     try {
-        params.navigateToNewSession(dataId);
+        params.navigateToNewSession({ dataId, draftId });
     } catch {
         // The draft is already written, so the reader can still reach it by
         // opening New Session themselves. Reporting success would claim a

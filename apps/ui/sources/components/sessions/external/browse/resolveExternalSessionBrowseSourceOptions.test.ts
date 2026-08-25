@@ -4,7 +4,7 @@ import {
     PluginProjectionV2Schema,
     type PluginProjectionV2,
 } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -573,4 +573,96 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         });
     });
 
+});
+
+/**
+ * An installed Agent's UI declaration is a fact of ONE machine: two machines can
+ * hold different versions of the same Agent. The External Sessions browse screen
+ * always knows which machine it is browsing — it fetches that machine's daemon
+ * projection — so its Agent-declared browse behavior has to come from that same
+ * machine. Reading the machine-blind floor here silently renders machine A's
+ * declaration while listing machine B's sessions.
+ */
+describe('external session browse behavior is a per-machine fact', () => {
+    const FIRST_MACHINE_ID = 'machine-a';
+    const SECOND_MACHINE_ID = 'machine-b';
+
+    afterEach(async () => {
+        const { clearProjectedAgentUiBehaviorDescriptors } = await import('@/agents/registry/agentUiBehaviorProjection');
+        clearProjectedAgentUiBehaviorDescriptors();
+    });
+
+    async function publishBrowseBehavior(
+        machineId: string,
+        externalSessionsByAgentId: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+    ): Promise<void> {
+        const { publishProjectedAgentUiBehaviorDescriptors } = await import('@/agents/registry/agentUiBehaviorProjection');
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId,
+            descriptorsByAgentId: Object.fromEntries(
+                Object.entries(externalSessionsByAgentId).map(([agentId, externalSessions]) => [agentId, {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme',
+                    agentId,
+                    version: 1,
+                    behavior: { externalSessions },
+                }]),
+            ),
+        });
+    }
+
+    it('orders browse Agents by the declaration held by the browsed machine', async () => {
+        const { listExternalSessionBrowseProviderIds } = await externalSessionBrowseModulePromise;
+        const projection = createProjection(['alpha', 'beta']);
+
+        await publishBrowseBehavior(FIRST_MACHINE_ID, {
+            alpha: { browse: { order: 1 } },
+            beta: { browse: { order: 2 } },
+        });
+        await publishBrowseBehavior(SECOND_MACHINE_ID, {
+            alpha: { browse: { order: 2 } },
+            beta: { browse: { order: 1 } },
+        });
+
+        expect(listExternalSessionBrowseProviderIds({ projection, machineId: FIRST_MACHINE_ID }))
+            .toEqual(['alpha', 'beta']);
+        expect(listExternalSessionBrowseProviderIds({ projection, machineId: SECOND_MACHINE_ID }))
+            .toEqual(['beta', 'alpha']);
+    });
+
+    it('presents the source options the browsed machine\'s Agent declares', async () => {
+        const { resolveExternalSessionBrowseSourceOptions } = await externalSessionBrowseModulePromise;
+        const projection = createProjection(['alpha']);
+
+        await publishBrowseBehavior(FIRST_MACHINE_ID, {
+            alpha: {
+                browse: {
+                    sourceOptions: [{
+                        key: 'alpha:alphaArchive',
+                        labelKey: 'firstMachineLabel',
+                        source: { kind: 'alphaArchive' },
+                    }],
+                },
+            },
+        });
+        await publishBrowseBehavior(SECOND_MACHINE_ID, {
+            alpha: {
+                browse: {
+                    sourceOptions: [{
+                        key: 'alpha:alphaArchive',
+                        labelKey: 'secondMachineLabel',
+                        source: { kind: 'alphaArchive' },
+                    }],
+                },
+            },
+        });
+
+        expect(resolveExternalSessionBrowseSourceOptions({
+            providerId: 'alpha',
+            profile: null,
+            settings: { connectedServicesProfileLabelByKey: {} },
+            projection,
+            machineId: SECOND_MACHINE_ID,
+        }).map((option) => option.label)).toEqual(['secondMachineLabel']);
+    });
 });

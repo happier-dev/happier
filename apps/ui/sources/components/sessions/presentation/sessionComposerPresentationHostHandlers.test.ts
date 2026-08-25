@@ -2,8 +2,8 @@ import type {
     ComposerContentHandleV1,
     ComposerSnapshotV1,
     ComposerTransactionResultV1,
-    PluginProjectedComposerAttachmentEntryV1,
 } from '@happier-dev/protocol';
+import type { PluginUiComposerAttachmentProjection } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiHostApiRequestEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -161,7 +161,7 @@ function createTarget(initial: ComposerSnapshotV1): ComposerPresentationTarget &
 }
 
 function createIssueAttachmentTransactionApplier() {
-    const issue: PluginProjectedComposerAttachmentEntryV1 = {
+    const issue: PluginUiComposerAttachmentProjection = {
         id: 'acme.fixture/issue',
         pluginId: 'acme.fixture',
         identity: { pluginId: 'acme.fixture', localId: 'issue' },
@@ -173,6 +173,7 @@ function createIssueAttachmentTransactionApplier() {
             cardinality: 'many',
             valueSchema: { type: 'object' },
         },
+        valueValidator: () => true,
     };
     return createComposerPresentationTransactionApplier({
         composerAttachmentsById: { [issue.id]: issue },

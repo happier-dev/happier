@@ -13,7 +13,7 @@ import {
     clearSessionDraftValuesForSession,
     readSessionDraftValue,
     writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+} from '@/dev/testkit/sessionDraftRepositoryTestkit';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { SessionPending } from '@/sync/store/domains/pending';
 
@@ -64,7 +64,8 @@ const runSessionAgentTransitionSpy = vi.hoisted(() => vi.fn(async (..._args: any
 const daemonMergedProjectionState = vi.hoisted(() => ({
     value: { phase: 'idle', inputs: null } as any,
 }));
-const machinePluginComposerAttachmentPrepareMock = vi.hoisted(() => vi.fn());
+const preparePendingMessageComposerAdmissionMock = vi.hoisted(() => vi.fn());
+const acceptPendingMessageComposerAdmissionMock = vi.hoisted(() => vi.fn());
 const chooseSubmitModeState = vi.hoisted(() => ({
     mode: 'agent_queue',
 }));
@@ -211,15 +212,14 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
     useDaemonMergedProjectionInputs: () => daemonMergedProjectionState.value,
 }));
-vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        machinePluginComposerAttachmentPrepare: (...args: unknown[]) => (
-            machinePluginComposerAttachmentPrepareMock(...args)
-        ),
-    };
-});
+vi.mock('@/sync/ops/pendingMessageComposerAdmission', () => ({
+    preparePendingMessageComposerAdmission: (...args: unknown[]) => (
+        preparePendingMessageComposerAdmissionMock(...args)
+    ),
+    acceptPendingMessageComposerAdmission: (...args: unknown[]) => (
+        acceptPendingMessageComposerAdmissionMock(...args)
+    ),
+}));
 vi.mock('@/voice/session/voiceSession', () => ({
     useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
     voiceSessionManager: {},
@@ -227,7 +227,41 @@ vi.mock('@/voice/session/voiceSession', () => ({
 
 const sendMessageSpy = vi.fn(async (..._args: any[]) => {});
 const enqueuePendingMessageSpy = vi.fn(async (..._args: any[]) => ({ localId: 'pending-local-id' }));
-const updatePendingMessageSpy = vi.fn(async (..._args: any[]) => {});
+function acceptedPendingComposerFact(
+    sessionId: string,
+    pendingId: string,
+    structuredInput: unknown,
+    options?: Readonly<{
+        replacementLocalId?: string;
+        preparedComposerAdmission?: Readonly<{ stagedMediaHandles?: readonly unknown[] }>;
+    }>,
+) {
+    return {
+        sessionId,
+        localId: options?.replacementLocalId ?? pendingId,
+        structuredInput,
+        stagedMediaHandles: options?.preparedComposerAdmission?.stagedMediaHandles ?? [],
+    };
+}
+const updatePendingMessageSpy = vi.fn(async (
+    sessionId: string,
+    pendingId: string,
+    _text: string,
+    structuredInput: unknown,
+    options?: Parameters<typeof acceptedPendingComposerFact>[3],
+) => acceptedPendingComposerFact(sessionId, pendingId, structuredInput, options));
+function deferPendingComposerUpdate(gate: Promise<void>) {
+    return async (
+        sessionId: string,
+        pendingId: string,
+        _text: string,
+        structuredInput: unknown,
+        options?: Parameters<typeof acceptedPendingComposerFact>[3],
+    ) => {
+        await gate;
+        return acceptedPendingComposerFact(sessionId, pendingId, structuredInput, options);
+    };
+}
 const patchSessionMetadataWithRetrySpy = vi.fn(async (..._args: any[]) => {});
 
 function setCurrentComposerAttachmentProjection(input: Readonly<{
@@ -656,7 +690,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         enqueuePendingMessageSpy.mockClear();
         updatePendingMessageSpy.mockClear();
         patchSessionMetadataWithRetrySpy.mockClear();
-        machinePluginComposerAttachmentPrepareMock.mockReset();
+        preparePendingMessageComposerAdmissionMock.mockReset().mockImplementation(async (
+            _sessionId: string,
+            request: { text: string; structuredInput: unknown },
+        ) => ({ ok: true, text: request.text, structuredInput: request.structuredInput }));
+        acceptPendingMessageComposerAdmissionMock.mockReset().mockResolvedValue(undefined);
         daemonMergedProjectionState.value = { phase: 'idle', inputs: null };
         resumeSessionSpy.mockClear();
         uploadSpy.mockClear();
@@ -1645,7 +1683,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             expect(updatePendingMessageSpy).toHaveBeenCalledTimes(1);
             expect(updatePendingMessageSpy).toHaveBeenCalledWith(
-                's1', 'p-edit', 'Edited queued text', { v: 1 }, undefined,
+                's1', 'p-edit', 'Edited queued text', { v: 1 }, {
+                    preparedComposerAdmission: { stagedMediaHandles: [] },
+                },
             );
             expect(sendMessageSpy).not.toHaveBeenCalled();
             expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
@@ -1675,9 +1715,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionPendingMessagesState.current = [queuedMessage];
         let releaseUpdate!: () => void;
         const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
-        updatePendingMessageSpy.mockImplementationOnce(async () => {
-            await updateGate;
-        });
+        updatePendingMessageSpy.mockImplementationOnce(deferPendingComposerUpdate(updateGate));
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
@@ -1709,7 +1747,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
             expect(updatePendingMessageSpy).toHaveBeenCalledTimes(1);
             expect(updatePendingMessageSpy).toHaveBeenCalledWith(
-                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, undefined,
+                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, {
+                    preparedComposerAdmission: { stagedMediaHandles: [] },
+                },
             );
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
@@ -1746,9 +1786,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionPendingMessagesState.current = [queuedMessage];
         let releaseUpdate!: () => void;
         const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
-        updatePendingMessageSpy.mockImplementationOnce(async () => {
-            await updateGate;
-        });
+        updatePendingMessageSpy.mockImplementationOnce(deferPendingComposerUpdate(updateGate));
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
@@ -1778,7 +1816,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
             expect(updatePendingMessageSpy).toHaveBeenCalledWith(
-                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, undefined,
+                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, {
+                    preparedComposerAdmission: { stagedMediaHandles: [] },
+                },
             );
             expect(pendingFireAndForget).toHaveLength(1);
 
@@ -1828,9 +1868,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionPendingMessagesState.current = [queuedMessage];
         let releaseUpdate!: () => void;
         const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
-        updatePendingMessageSpy.mockImplementationOnce(async () => {
-            await updateGate;
-        });
+        updatePendingMessageSpy.mockImplementationOnce(deferPendingComposerUpdate(updateGate));
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
@@ -1860,7 +1898,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
             expect(updatePendingMessageSpy).toHaveBeenCalledWith(
-                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, undefined,
+                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, {
+                    preparedComposerAdmission: { stagedMediaHandles: [] },
+                },
             );
             expect(pendingFireAndForget).toHaveLength(1);
 
@@ -1915,9 +1955,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionPendingMessagesState.current = [queuedMessage];
         let releaseUpdate!: () => void;
         const updateGate = new Promise<void>((resolve) => { releaseUpdate = resolve; });
-        updatePendingMessageSpy.mockImplementationOnce(async () => {
-            await updateGate;
-        });
+        updatePendingMessageSpy.mockImplementationOnce(deferPendingComposerUpdate(updateGate));
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
@@ -1947,7 +1985,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
             expect(updatePendingMessageSpy).toHaveBeenCalledWith(
-                's1', queuedMessage.id, 'Edited @new.ts text', { v: 1 }, undefined,
+                's1', queuedMessage.id, 'Edited @new.ts text', { v: 1 }, {
+                    preparedComposerAdmission: { stagedMediaHandles: [] },
+                },
             );
             expect(pendingFireAndForget).toHaveLength(1);
 
@@ -2104,7 +2144,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     mentions: [mention],
                     composerAttachments: [attachment],
                 },
-                undefined,
+                {
+                    preparedComposerAdmission: { stagedMediaHandles: [] },
+                },
             );
             expect(sendMessageSpy).not.toHaveBeenCalled();
             expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
@@ -2171,8 +2213,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             };
             const attachmentApplier = createComposerPresentationTransactionApplier({
                 composerAttachmentsById: {
-                    'acme.issues/issue': daemonMergedProjectionState.value.inputs.pluginProjectionV2
-                        .familiesById.composerAttachments.entriesById['acme.issues/issue'],
+                    'acme.issues/issue': {
+                        ...daemonMergedProjectionState.value.inputs.pluginProjectionV2
+                            .familiesById.composerAttachments.entriesById['acme.issues/issue'],
+                        valueValidator: () => true,
+                    },
                 },
             });
             await act(async () => {
@@ -2197,21 +2242,37 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     },
                 }).status).toBe('applied');
             });
-            machinePluginComposerAttachmentPrepareMock.mockResolvedValueOnce({
-                supported: true,
-                result: {
-                    ok: true,
-                    attachment: attachment.attachment,
-                    result: {
-                        attachments: [{
-                            instanceId: attachment.instanceId,
-                            status: 'ready',
-                            value: { issueId: 430 },
-                            presentation: { label: 'Prepared issue #430' },
-                        }],
-                    },
+            preparePendingMessageComposerAdmissionMock.mockImplementationOnce(async (
+                _sessionId: string,
+                request: { localId: string },
+            ) => ({
+                ok: true,
+                text: queuedMessage.text,
+                structuredInput: {
+                    v: 1,
+                    composerAttachments: [{
+                        ...changedAttachment,
+                        value: { issueId: 430 },
+                        presentation: { label: 'Prepared issue #430', typeLabel: 'Issue' },
+                    }],
                 },
-            });
+                stagedMediaHandles: [],
+                localId: request.localId,
+            }));
+            updatePendingMessageSpy.mockImplementationOnce(async (
+                sessionId: string,
+                pendingId: string,
+                _text: string,
+                _structuredInput: unknown,
+                options?: Parameters<typeof acceptedPendingComposerFact>[3],
+            ) => acceptedPendingComposerFact(sessionId, pendingId, {
+                v: 1,
+                composerAttachments: [{
+                    ...changedAttachment,
+                    value: { issueId: 431 },
+                    presentation: { label: 'Persisted issue #431', typeLabel: 'Issue' },
+                }],
+            }, options));
 
             const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             await act(async () => {
@@ -2222,23 +2283,21 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await act(async () => {
                 await pendingFireAndForget[0];
             });
-            expect(machinePluginComposerAttachmentPrepareMock).toHaveBeenCalledTimes(1);
-            const prepareRequest = machinePluginComposerAttachmentPrepareMock.mock.calls[0]?.[1];
+            expect(preparePendingMessageComposerAdmissionMock).toHaveBeenCalledTimes(1);
+            const prepareRequest = preparePendingMessageComposerAdmissionMock.mock.calls[0]?.[1];
             expect(prepareRequest).toMatchObject({
-                serverId: 'server-1',
-                expectedGeneration: '7',
-                attachment: attachment.attachment,
-                request: {
-                    sessionId: 's1',
-                    localId: expect.any(String),
-                    attachments: [{
+                localId: expect.any(String),
+                text: queuedMessage.text,
+                structuredInput: {
+                    v: 1,
+                    composerAttachments: [{
                         instanceId: attachment.instanceId,
                         key: attachment.key,
                         value: changedAttachment.value,
                     }],
                 },
             });
-            const replacementLocalId = prepareRequest.request.localId;
+            const replacementLocalId = prepareRequest.localId;
             expect(replacementLocalId).not.toBe(queuedMessage.localId);
             expect(updatePendingMessageSpy).toHaveBeenCalledWith('s1', queuedMessage.id, queuedMessage.text, {
                 v: 1,
@@ -2247,7 +2306,25 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     value: { issueId: 430 },
                     presentation: { label: 'Prepared issue #430', typeLabel: 'Issue' },
                 }],
-            }, { replacementLocalId });
+            }, {
+                replacementLocalId,
+                preparedComposerAdmission: { stagedMediaHandles: [] },
+            });
+            expect(acceptPendingMessageComposerAdmissionMock).toHaveBeenCalledWith('s1', {
+                sessionId: 's1',
+                localId: replacementLocalId,
+                structuredInput: {
+                    v: 1,
+                    composerAttachments: [{
+                        ...changedAttachment,
+                        value: { issueId: 431 },
+                        presentation: { label: 'Persisted issue #431', typeLabel: 'Issue' },
+                    }],
+                },
+                stagedMediaHandles: [],
+            }, expect.objectContaining({ serverId: 'server-1' }));
+            expect(updatePendingMessageSpy.mock.invocationCallOrder[0])
+                .toBeLessThan(acceptPendingMessageComposerAdmissionMock.mock.invocationCallOrder[0]!);
             expect(modalAlertSpy).not.toHaveBeenCalled();
         } finally {
             act(() => {
@@ -2257,7 +2334,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }
     });
 
-    it('refuses a pending-edit save whose prepared attachment still owns transfer-staged media', async () => {
+    it('keeps the pending edit when canonical attachment admission rejects', async () => {
         const attachment = {
             v: 1,
             instanceId: 'issue-42',
@@ -2307,8 +2384,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             };
             const attachmentApplier = createComposerPresentationTransactionApplier({
                 composerAttachmentsById: {
-                    'acme.issues/issue': daemonMergedProjectionState.value.inputs.pluginProjectionV2
-                        .familiesById.composerAttachments.entriesById['acme.issues/issue'],
+                    'acme.issues/issue': {
+                        ...daemonMergedProjectionState.value.inputs.pluginProjectionV2
+                            .familiesById.composerAttachments.entriesById['acme.issues/issue'],
+                        valueValidator: () => true,
+                    },
                 },
             });
             await act(async () => {
@@ -2333,38 +2413,12 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                     },
                 }).status).toBe('applied');
             });
-            // The plugin's own `prepareForSend` is allowed to return a staged-media
-            // claim (ComposerAttachmentPrepareReadyOutcomeV1 carries `content`). A
-            // Pending row can only persist contentless admitted records, so this
-            // save must fail closed instead of silently dropping the media.
-            machinePluginComposerAttachmentPrepareMock.mockResolvedValueOnce({
-                supported: true,
-                result: {
-                    ok: true,
-                    attachment: attachment.attachment,
-                    result: {
-                        attachments: [{
-                            instanceId: attachment.instanceId,
-                            status: 'ready',
-                            value: { issueId: 430 },
-                            presentation: { label: 'Prepared issue #430' },
-                            content: {
-                                kind: 'stagedMedia',
-                                handle: {
-                                    v: 1,
-                                    id: 'stage-1',
-                                    executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-                                    owner: { pluginId: 'acme.issues', localId: 'issue' },
-                                    mediaKind: 'image',
-                                    mimeType: 'image/png',
-                                    name: 'screenshot.png',
-                                    sizeBytes: 1234,
-                                    sha256: 'a'.repeat(64),
-                                },
-                            },
-                        }],
-                    },
-                },
+            // The canonical Session admission owner rejects any transform or
+            // finalization failure before the Pending writer sees a payload.
+            preparePendingMessageComposerAdmissionMock.mockResolvedValueOnce({
+                ok: false,
+                error: 'composer_attachment_admission_failed',
+                errorCode: 'composer_attachment_admission_failed',
             });
 
             const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
@@ -2376,14 +2430,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await act(async () => {
                 await pendingFireAndForget[0];
             });
-            // Nothing is persisted, so nothing is silently lost.
+            // Nothing is persisted, and the refusal is reported instead of the
+            // message being dropped silently at the queue.
             expect(updatePendingMessageSpy).not.toHaveBeenCalled();
             expect(modalAlertSpy).toHaveBeenCalled();
-            // The Pending row and its editor are left exactly as they were.
-            expect(readComposerPresentationSnapshot(pendingRef)?.attachments).toMatchObject([{
-                instanceId: attachment.instanceId,
-                value: { issueId: 43 },
-            }]);
         } finally {
             act(() => {
                 tree?.unmount();

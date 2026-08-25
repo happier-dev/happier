@@ -14,6 +14,7 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
 import { showSwitchBranchWithChangesDialog } from '@/components/workspaces/scm/branches/SwitchBranchWithChangesDialog';
 import { t } from '@/text';
 import { scmStatusSync } from '@/scm/scmStatusSync';
@@ -70,9 +71,11 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
     const canLaunchWorktreeSession = snapshot?.repo.isRepo === true;
 
     const openNewSessionForDirectory = React.useCallback((directory: string) => {
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         router.push({
             pathname: '/new',
             params: buildNewSessionLaunchRouteParams({
+                draftId,
                 directory,
                 machineId: machineTarget?.machineId ?? null,
                 targetServerId,

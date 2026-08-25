@@ -2,15 +2,19 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
 import {
     buildLocalServiceInventoryState,
-    buildManagedLocalServicesState,
+    flushHookEffects,
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
+import * as inventoryMachineRpc from '@/sync/domains/local/services/inventory/machineRpc';
+import { resetLocalServiceInventoryStoreForTests } from '@/sync/domains/local/services/inventory/sharedStore';
+import { resetLocalServiceLauncherStoreForTests } from '@/sync/domains/local/services/launch/sharedStore';
 import {
     applyLocalServiceLauncherSnapshot,
     createLocalServiceLauncherState,
@@ -123,6 +127,13 @@ describe('LocalServicesSurfaceHost', () => {
         };
         pluginProjectionState.scopedInputs = [];
         pluginProjectionState.stackProps = [];
+        resetLocalServiceInventoryStoreForTests();
+        resetLocalServiceLauncherStoreForTests();
+    });
+
+    afterEach(() => {
+        resetLocalServiceInventoryStoreForTests();
+        resetLocalServiceLauncherStoreForTests();
     });
 
     it('renders the detected services pane and the Services-bound plugin stack under the testID prefix', async () => {
@@ -132,7 +143,6 @@ describe('LocalServicesSurfaceHost', () => {
                 serverId="server-a"
                 sessionId="session-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 testID="surface-host-services"
             />,
@@ -153,7 +163,6 @@ describe('LocalServicesSurfaceHost', () => {
                 serverId="server-a"
                 sessionId="session-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 testID="surface-host-services"
             />,
@@ -170,7 +179,6 @@ describe('LocalServicesSurfaceHost', () => {
                 serverId="server-a"
                 sessionId="session-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 onOpenServiceInBrowser={onOpenServiceInBrowser}
                 testID="surface-host-services"
@@ -192,7 +200,6 @@ describe('LocalServicesSurfaceHost', () => {
                 serverId="server-a"
                 sessionId="session-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 testID="surface-host-services"
             />,
@@ -221,7 +228,6 @@ describe('LocalServicesSurfaceHost', () => {
                 serverId="server-a"
                 sessionId="session-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 testID="surface-host-services"
             />,
@@ -245,7 +251,6 @@ describe('LocalServicesSurfaceHost', () => {
         await renderScreen(
             <LocalServicesSurfaceHost
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 testID="surface-host-services"
             />,
@@ -272,7 +277,6 @@ describe('LocalServicesSurfaceHost', () => {
                 serverId="server-pane-driver"
                 sessionId="session-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 pluginUiProjection={null}
                 projectionInteractionEnabled={false}
@@ -305,8 +309,88 @@ describe('LocalServicesSurfaceHost', () => {
             const source = fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
             expect(source).toContain('LocalServicesSurfaceHost');
             expect(source).not.toContain('createDefaultRuntimeActionExecutor');
-            expect(source).not.toContain('useManagedLocalServicesStateController');
             expect(source).not.toContain('createLocalServiceInventoryState');
         }
+    });
+    it('shows a service that starts after mount, by re-reading the launcher feed the inventory watch reported changed', async () => {
+        // The regression this pins: the pane's rows are built from LAUNCH TARGETS, and inventory
+        // entries only enrich them. Making the inventory fresh while leaving the launcher feed on
+        // its mount-time read renders nothing new, which a store-level assertion cannot see.
+        const startedTarget: LocalServiceLaunchTarget = {
+            ...openableTarget,
+            id: 'inventory:vite-5199',
+            source: 'inventory_entry',
+            title: 'Vite dev server',
+            subtitle: '127.0.0.1:5199',
+            browserTarget: {
+                kind: 'localServicePreview',
+                targetId: 'preview-vite-5199',
+                sessionId: 'session-a',
+                machineId: 'machine-a',
+            },
+        };
+        const inventorySnapshotAt = (generatedAt: number, entries: readonly unknown[]) => ({
+            v: 1 as const,
+            machineId: 'machine-a',
+            generatedAt,
+            refreshState: 'idle' as const,
+            entries: entries as never,
+            diagnostics: [],
+        });
+
+        const inventorySnapshotClient = vi.fn(async () => ({
+            ok: true as const,
+            snapshot: inventorySnapshotAt(1_000, []),
+        }));
+        let launcherReads = 0;
+        const launcherSnapshotClient = vi.fn(async () => {
+            launcherReads += 1;
+            return {
+                ok: true as const,
+                snapshot: {
+                    v: 1 as const,
+                    machineId: 'machine-a',
+                    sessionId: 'session-a',
+                    updatedAt: 3_000 + launcherReads,
+                    // The daemon only knows about the new service from the scan that just ran.
+                    targets: launcherReads > 1 ? [startedTarget] : [],
+                },
+            };
+        });
+
+        let answerWatch: ((result: unknown) => void) | null = null;
+        const watchSpy = vi.spyOn(inventoryMachineRpc, 'watchLocalServiceInventorySnapshotViaMachineRpc')
+            .mockImplementation(async () => await new Promise((resolve) => {
+                answerWatch = resolve as (result: unknown) => void;
+            }) as never);
+
+        const screen = await renderScreen(
+            <LocalServicesSurfaceHost
+                machineId="machine-a"
+                serverId="server-a"
+                sessionId="session-a"
+                inventorySnapshotClient={inventorySnapshotClient as never}
+                launcherSnapshotClient={launcherSnapshotClient as never}
+                testID="surface-host-services"
+            />,
+        );
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        expect(screen.findAllByTestId('surface-host-services-row:inventory:vite-5199')).toHaveLength(0);
+        expect(answerWatch).toBeTypeOf('function');
+
+        // The dev server starts; the daemon answers the parked watch with the newer snapshot.
+        await act(async () => {
+            answerWatch?.({
+                ok: true,
+                changed: true,
+                snapshot: inventorySnapshotAt(2_000, []),
+            });
+            await Promise.resolve();
+        });
+        await flushHookEffects({ cycles: 4, turns: 4 });
+
+        expect(launcherSnapshotClient.mock.calls.length).toBeGreaterThan(1);
+        expect(screen.findByTestId('surface-host-services-row:inventory:vite-5199')).toBeTruthy();
+        watchSpy.mockRestore();
     });
 });

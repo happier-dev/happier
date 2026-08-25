@@ -12,7 +12,6 @@ const routerPushSpy = vi.fn();
 const forkSessionSpy = vi.fn();
 const openSessionForkStrategyFlowSpy = vi.fn();
 const ensureSessionVisibleSpy = vi.fn();
-const updateSessionDraftSpy = vi.fn();
 const patchSessionMetadataWithRetrySpy = vi.fn();
 const modalAlertSpy = vi.fn();
 const resolvePreferredServerIdForSessionIdSpy = vi.fn<(sessionId: string) => string | undefined>();
@@ -174,7 +173,6 @@ installMessageViewCommonModuleMocks({
       },
       machines: machinesState,
       getProjectForSession: (sessionId: string) => (sessionId === 's1' ? projectForSession : null),
-      updateSessionDraft: (...args: any[]) => updateSessionDraftSpy(...args),
     } as any);
     storageStoreRef.current = storageStore;
     return createStorageModuleStub({
@@ -303,7 +301,6 @@ describe('MessageView (fork button)', () => {
     forkSessionSpy.mockReset();
     openSessionForkStrategyFlowSpy.mockReset();
     ensureSessionVisibleSpy.mockReset();
-    updateSessionDraftSpy.mockReset();
     patchSessionMetadataWithRetrySpy.mockReset();
     modalAlertSpy.mockReset();
     resolvePreferredServerIdForSessionIdSpy.mockReset();

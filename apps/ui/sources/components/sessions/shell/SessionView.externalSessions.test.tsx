@@ -5,6 +5,7 @@ import {
   buildProviderAccountUsageRecordId,
   buildSystemSessionMetadataV1,
   ExternalSessionOperationSharedPresentationV1Schema,
+  StrictJsonValueSchema,
 } from '@happier-dev/protocol';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -19,12 +20,12 @@ import { settingsDefaults, type Settings } from '@/sync/domains/settings/setting
 import type { StorageState } from '@/sync/store/types';
 import type { StoreApi, UseBoundStore } from 'zustand';
 import {
-  clearSessionDraftValuesForSession,
-  flushSessionDraftValues,
-  readSessionDraftValue,
-  resetSessionDraftValueCachesForTests,
-  writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+  deleteSessionDraft,
+  getSessionDraftSnapshot,
+  resetSessionDraftRepositoryForTests,
+  writeExistingSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -76,6 +77,9 @@ const resolveSessionViewRuntimeDisplayStateSpy = vi.hoisted(() =>
 );
 const preferredServerIdState = vi.hoisted(() => ({
   current: 'server-canonical' as string | null,
+}));
+const activeServerAccountScopeState = vi.hoisted(() => ({
+  current: null as { serverId: string; accountId: string } | null,
 }));
 const resolvePreferredServerIdForSessionIdSpy = vi.hoisted(() => vi.fn((sessionId: string) => preferredServerIdState.current));
 const sendVoiceSessionComposerTextSpy = vi.hoisted(() =>
@@ -338,7 +342,7 @@ installSessionShellCommonModuleMocks({
       importOriginal,
       overrides: {
         storage: shellStorageStore,
-        useActiveServerAccountScope: () => null,
+        useActiveServerAccountScope: () => activeServerAccountScopeState.current,
         useSession: () => storageState.sessions.s1,
         useIsDataReady: () => true,
         useSessionMessages: () => ({ messages: sessionMessagesState.current, isLoaded: true }),
@@ -377,11 +381,20 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
+  // Test boundary: the real view is a keyboard/scroll scaffold. It renders three
+  // slots, and `placeholder` is the one the transcript recovery states live in, so
+  // dropping it here would make every placeholder assertion unfalsifiable.
   AgentContentView: (props: any) =>
     React.createElement(
       'AgentContentView',
       props,
-      React.createElement(React.Fragment, null, props.content ?? null, props.input ?? null),
+      React.createElement(
+        React.Fragment,
+        null,
+        props.content ?? null,
+        props.placeholder ?? null,
+        props.input ?? null,
+      ),
     ),
 }));
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
@@ -625,6 +638,71 @@ function syncShellStorageStore() {
 }
 
 describe('SessionView (direct sessions)', () => {
+  const canonicalDraftScope: ServerAccountScope = {
+    serverId: 'server-canonical',
+    accountId: 'account-canonical',
+  };
+
+  function useCanonicalDraftScope() {
+    activeServerAccountScopeState.current = canonicalDraftScope;
+  }
+
+  function writeCanonicalSessionDraft(input: Readonly<{
+    recipient?: unknown;
+    executionRunDelivery?: unknown;
+    mentions?: readonly unknown[];
+  }>) {
+    writeExistingSessionDraft({
+      scope: canonicalDraftScope,
+      sessionId: 's1',
+      patch: {
+        ...(input.mentions === undefined
+          ? {}
+          : { mentions: input.mentions.map((mention) => StrictJsonValueSchema.parse(mention)) }),
+        routing: {
+          ...(input.recipient === undefined
+            ? {}
+            : { recipient: StrictJsonValueSchema.parse({ mode: 'manual', recipient: input.recipient }) }),
+          ...(input.executionRunDelivery === undefined
+            ? {}
+            : { executionRunDelivery: StrictJsonValueSchema.parse(input.executionRunDelivery) }),
+        },
+      },
+    });
+  }
+
+  function readCanonicalSessionDraft() {
+    const document = getSessionDraftSnapshot(canonicalDraftScope, { kind: 'session', sessionId: 's1' })?.document;
+    return document?.target.kind === 'session' ? document : null;
+  }
+
+  function readCanonicalDraftRecipient(): unknown {
+    const document = readCanonicalSessionDraft();
+    if (!document || document.target.kind !== 'session') return undefined;
+    const value = document.target.routing.recipient.value;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const candidate = value as Readonly<Record<string, unknown>>;
+    return candidate.mode === 'manual' ? candidate.recipient : undefined;
+  }
+
+  function readCanonicalDraftDelivery(): unknown {
+    const document = readCanonicalSessionDraft();
+    return document?.target.kind === 'session'
+      ? document.target.routing.executionRunDelivery.value
+      : undefined;
+  }
+
+  function readCanonicalDraftMentions(): unknown {
+    return readCanonicalSessionDraft()?.composer.mentions.value;
+  }
+
+  function clearCanonicalSessionDraft() {
+    deleteSessionDraft({
+      scope: canonicalDraftScope,
+      address: { kind: 'session', sessionId: 's1' },
+    });
+  }
+
   async function renderSessionView() {
     const { SessionView } = await import('./SessionView');
     return renderScreen(
@@ -669,6 +747,7 @@ describe('SessionView (direct sessions)', () => {
   }
 
   beforeEach(() => {
+    activeServerAccountScopeState.current = null;
     createDefaultActionExecutorMock.mockReset();
     chatListPropsSpy.mockReset();
     chatHeaderPropsSpy.mockReset();
@@ -790,7 +869,7 @@ describe('SessionView (direct sessions)', () => {
       executionRunDelivery: 'steer_if_supported',
       setExecutionRunDelivery: vi.fn(),
     };
-    resetSessionDraftValueCachesForTests();
+    resetSessionDraftRepositoryForTests();
     showExternalSessionTakeoverDialogSpy.mockResolvedValue({ action: null });
     machineExternalSessionStatusGetSpy.mockResolvedValue({
       ok: true,
@@ -993,6 +1072,33 @@ describe('SessionView (direct sessions)', () => {
     expect(banner).not.toHaveProperty('actionLabel');
     expect(banner).not.toHaveProperty('actionTestID');
     expect(banner).not.toHaveProperty('onActionPress');
+  });
+
+  it('says the visible transcript is the last known one when a refresh fails over retained rows', async () => {
+    await renderSessionViewAndSettle();
+
+    const shellStorageStore = shellStorageStoreState.current;
+    if (!shellStorageStore) throw new Error('Expected SessionView test storage to be mounted');
+    await act(async () => {
+      shellStorageStore.setState((state) => ({
+        ...state,
+        sessionTranscriptLoadIssues: {
+          ...state.sessionTranscriptLoadIssues,
+          s1: { kind: 'source_discontinuity' },
+        },
+      }));
+    });
+    await settleExternalSessionView();
+
+    const banners = warningActionBannerPropsSpy.mock.calls
+      .map(([props]) => props)
+      .filter((props) => props?.testID === 'session.externalTranscript.loadIssue');
+    expect(banners.length).toBeGreaterThan(0);
+    expect(banners.at(-1)).toMatchObject({
+      title: 'externalSessions.transcriptRetainedRefreshFailedTitle',
+      body: 'externalSessions.transcriptLoadFailed',
+      actionLabel: 'common.retry',
+    });
   });
 
   it('renders a retryable typed transcript-load issue instead of an authoritative empty state', async () => {
@@ -2640,9 +2746,11 @@ describe('SessionView (direct sessions)', () => {
         source: { kind: 'codexHome', contractVersion: 1 },
       },
     };
-    writeSessionDraftValue(null, 's1', 'routing.recipient', { kind: 'execution_run', runId: 'run-1' });
-    writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
-    flushSessionDraftValues(null);
+    useCanonicalDraftScope();
+    writeCanonicalSessionDraft({
+      recipient: { kind: 'execution_run', runId: 'run-1' },
+      executionRunDelivery: 'interrupt',
+    });
     const screen = await renderSessionView();
     expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
 
@@ -2696,9 +2804,9 @@ describe('SessionView (direct sessions)', () => {
     }, { serverId: 'server-canonical' });
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
     expect(findAgentInput(screen).props.value).toBe('continue this session');
-    expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toEqual({ kind: 'execution_run', runId: 'run-1' });
-    expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBe('interrupt');
-    expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toEqual([{
+    expect(readCanonicalDraftRecipient()).toEqual({ kind: 'execution_run', runId: 'run-1' });
+    expect(readCanonicalDraftDelivery()).toBe('interrupt');
+    expect(readCanonicalDraftMentions()).toEqual([{
       kind: 'skill',
       tokenText: 'continue',
       name: 'continue',
@@ -2844,9 +2952,11 @@ describe('SessionView (direct sessions)', () => {
 
   it('keeps the composer text when direct takeover is cancelled from the send prompt', async () => {
     showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: null });
-    writeSessionDraftValue(null, 's1', 'routing.recipient', { kind: 'execution_run', runId: 'run-1' });
-    writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
-    flushSessionDraftValues(null);
+    useCanonicalDraftScope();
+    writeCanonicalSessionDraft({
+      recipient: { kind: 'execution_run', runId: 'run-1' },
+      executionRunDelivery: 'interrupt',
+    });
     const screen = await renderSessionView();
 
     let agentInput = findAgentInput(screen);
@@ -2869,14 +2979,87 @@ describe('SessionView (direct sessions)', () => {
 
     agentInput = findAgentInput(screen);
     expect(agentInput.props.value).toBe('draft stays here');
-    expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toEqual({ kind: 'execution_run', runId: 'run-1' });
-    expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBe('interrupt');
-    expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toEqual([{
+    expect(readCanonicalDraftRecipient()).toEqual({ kind: 'execution_run', runId: 'run-1' });
+    expect(readCanonicalDraftDelivery()).toBe('interrupt');
+    expect(readCanonicalDraftMentions()).toEqual([{
       kind: 'skill',
       tokenText: 'draft',
       name: 'draft',
     }]);
 
+  });
+
+  it('restores an unchanged composer snapshot after a projected direct send is rejected', async () => {
+    settingByKeyState.current.sessionMessageSendMode = 'agent_queue';
+    (storageState.sessions.s1 as any).pendingVersion = 2;
+    const recipient = { kind: 'execution_run' as const, runId: 'run-restored' };
+    const mention = {
+      kind: 'skill' as const,
+      tokenText: '$restored',
+      name: 'restored',
+    };
+    let rejectSubmit!: (error: Error) => void;
+
+    useCanonicalDraftScope();
+    clearCanonicalSessionDraft();
+    writeCanonicalSessionDraft({
+      recipient,
+      executionRunDelivery: 'interrupt',
+      mentions: [mention],
+    });
+
+    syncSubmitMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[4] as
+        | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
+        | undefined;
+      options?.onLocalPendingProjectionCreated?.({ localId: 'direct-local-id' });
+      return new Promise<void>((_resolve, reject) => {
+        rejectSubmit = reject;
+      });
+    });
+    machineExternalSessionStatusGetSpy.mockResolvedValue({
+      ok: true,
+      machineOnline: true,
+      runnerActive: true,
+      activity: 'running',
+      canTakeOverDirect: false,
+      canTakeOverPersist: false,
+      canForceStop: false,
+    });
+
+    try {
+      const screen = await renderSessionView();
+      let agentInput = findAgentInput(screen);
+      await act(async () => {
+        agentInput.props.onChangeText('restore this prompt');
+      });
+
+      let sendPromise: Promise<void> | undefined;
+      await act(async () => {
+        sendPromise = agentInput.props.onSend();
+      });
+      await flushHookEffects({ cycles: 1, turns: 1 });
+
+      expect(readCanonicalDraftRecipient()).toBeUndefined();
+      expect(readCanonicalDraftDelivery()).toBeUndefined();
+      expect(readCanonicalDraftMentions()).toBeUndefined();
+
+      await act(async () => {
+        rejectSubmit(new Error('direct send rejected'));
+        await sendPromise;
+      });
+      await settleExternalSessionView();
+
+      agentInput = findAgentInput(screen);
+      expect(agentInput.props.value).toBe('restore this prompt');
+      expect(readCanonicalDraftRecipient()).toEqual(recipient);
+      expect(readCanonicalDraftDelivery()).toBe('interrupt');
+      expect(readCanonicalDraftMentions()).toEqual([mention]);
+      expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'direct send rejected');
+    } finally {
+      clearCanonicalSessionDraft();
+      resetSessionDraftRepositoryForTests();
+    }
   });
 
   it('does not restore an old composer snapshot over a newer draft after direct handoff failure', async () => {
@@ -2896,11 +3079,13 @@ describe('SessionView (direct sessions)', () => {
     };
     let rejectSubmit!: (error: Error) => void;
 
-    clearSessionDraftValuesForSession(null, 's1', { reason: 'sessionDelete' });
-    writeSessionDraftValue(null, 's1', 'routing.recipient', oldRecipient);
-    writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
-    writeSessionDraftValue(null, 's1', 'structuredInput.mentions', [oldMention]);
-    flushSessionDraftValues(null);
+    useCanonicalDraftScope();
+    clearCanonicalSessionDraft();
+    writeCanonicalSessionDraft({
+      recipient: oldRecipient,
+      executionRunDelivery: 'interrupt',
+      mentions: [oldMention],
+    });
 
     syncSubmitMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
       const options = args[4] as
@@ -2934,9 +3119,9 @@ describe('SessionView (direct sessions)', () => {
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toBeUndefined();
-      expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBeUndefined();
-      expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toBeUndefined();
+      expect(readCanonicalDraftRecipient()).toBeUndefined();
+      expect(readCanonicalDraftDelivery()).toBeUndefined();
+      expect(readCanonicalDraftMentions()).toBeUndefined();
 
       agentInput = findAgentInput(screen);
       const onStructuredInputMentionsChange = agentInput.props.onStructuredInputMentionsChange;
@@ -2945,8 +3130,10 @@ describe('SessionView (direct sessions)', () => {
       }
       await act(async () => {
         agentInput.props.onChangeText('send to $new target');
-        writeSessionDraftValue(null, 's1', 'routing.recipient', newRecipient);
-        writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'prompt');
+        writeCanonicalSessionDraft({
+          recipient: newRecipient,
+          executionRunDelivery: 'prompt',
+        });
         onStructuredInputMentionsChange([newMention]);
       });
 
@@ -2958,14 +3145,13 @@ describe('SessionView (direct sessions)', () => {
 
       agentInput = findAgentInput(screen);
       expect(agentInput.props.value).toBe('send to $new target');
-      expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toEqual(newRecipient);
-      expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBe('prompt');
-      expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toEqual([newMention]);
+      expect(readCanonicalDraftRecipient()).toEqual(newRecipient);
+      expect(readCanonicalDraftDelivery()).toBe('prompt');
+      expect(readCanonicalDraftMentions()).toEqual([newMention]);
       expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'direct send rejected');
     } finally {
-      clearSessionDraftValuesForSession(null, 's1', { reason: 'sessionDelete' });
-      flushSessionDraftValues(null);
-      resetSessionDraftValueCachesForTests();
+      clearCanonicalSessionDraft();
+      resetSessionDraftRepositoryForTests();
     }
   });
 

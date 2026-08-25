@@ -10,9 +10,12 @@ import {
     supportsDirectTranscriptStorageForNewSession,
 } from './newSessionTranscriptStorage';
 
-function publishInstalledAgentBehavior(behavior: Readonly<Record<string, unknown>>): void {
+function publishInstalledAgentBehaviorOnMachine(
+    machineId: string,
+    behavior: Readonly<Record<string, unknown>>,
+): void {
     publishProjectedAgentUiBehaviorDescriptors({
-        machineId: 'machine-a',
+        machineId,
         descriptorsByAgentId: {
             'acme.agent': {
                 kind: 'plugin.ui.v1',
@@ -23,6 +26,10 @@ function publishInstalledAgentBehavior(behavior: Readonly<Record<string, unknown
             },
         },
     });
+}
+
+function publishInstalledAgentBehavior(behavior: Readonly<Record<string, unknown>>): void {
+    publishInstalledAgentBehaviorOnMachine('machine-a', behavior);
 }
 
 afterEach(() => {
@@ -70,6 +77,43 @@ describe('supportsDirectTranscriptStorageForNewSession', () => {
             agentId: 'kiro',
             settings: {},
         })).toBe(true);
+    });
+
+    it('reads the declaration of the machine that will run the Session', () => {
+        // Two machines can hold different versions of the same installed Agent.
+        // `machine-a` sorts first, so a machine-blind read answers with it and
+        // the composer offers — or withholds — the wrong storage control.
+        publishInstalledAgentBehaviorOnMachine('machine-a', {
+            newSession: { transcriptStorageModes: ['persisted'] },
+        });
+        publishInstalledAgentBehaviorOnMachine('machine-b', {
+            newSession: { transcriptStorageModes: ['persisted', 'direct'] },
+        });
+
+        expect(supportsDirectTranscriptStorageForNewSession({
+            agentId: 'acme.agent',
+            machineId: 'machine-b',
+            settings: {},
+        })).toBe(true);
+        expect(supportsDirectTranscriptStorageForNewSession({
+            agentId: 'acme.agent',
+            machineId: 'machine-a',
+            settings: {},
+        })).toBe(false);
+        expect(coerceNewSessionTranscriptStorage({
+            requested: 'direct',
+            agentId: 'acme.agent',
+            machineId: 'machine-b',
+            settings: {},
+            externalSessionsEnabled: true,
+        })).toBe('direct');
+        expect(coerceNewSessionTranscriptStorage({
+            requested: 'direct',
+            agentId: 'acme.agent',
+            machineId: 'machine-a',
+            settings: {},
+            externalSessionsEnabled: true,
+        })).toBe('persisted');
     });
 
     it('still applies provider-specific runtime constraints', () => {

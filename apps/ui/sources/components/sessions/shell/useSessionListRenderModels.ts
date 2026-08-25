@@ -41,6 +41,13 @@ import {
     resolveSessionListRowStoreScopeKey,
     resolveSessionListRowStoreSubscriptionItemsWithUncachedRows,
 } from './row/sessionListVisibleRowStoreScopes';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import {
+    getExistingSessionDraftProjection,
+    subscribeSessionDraftList,
+    type ExistingSessionDraftProjection,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { sessionTagKey } from './sessionTagUtils';
 
 type SessionReachableDisplay = Readonly<{
     machineId: string | null;
@@ -65,6 +72,7 @@ const EMPTY_SESSION_LIST_RENDER_MODELS = {
     },
     rowViewModels: [] as ReadonlyArray<SessionListRowViewModel | null>,
     rowRenderableByKey: EMPTY_SESSION_LIST_ROW_RENDERABLES_BY_KEY,
+    existingDraftBySessionKey: new Map<string, ExistingSessionDraftProjection>(),
     selectionScopeRowViewModels: [] as ReadonlyArray<SessionListRowViewModel | null>,
 } satisfies Readonly<{
     listItems: ReadonlyArray<SessionListIndexItem>;
@@ -75,6 +83,7 @@ const EMPTY_SESSION_LIST_RENDER_MODELS = {
     projectHeaderViewModelState: SessionListProjectHeaderViewModelState;
     rowViewModels: ReadonlyArray<SessionListRowViewModel | null>;
     rowRenderableByKey: ReadonlyMap<string, SessionListRenderableSession>;
+    existingDraftBySessionKey: ReadonlyMap<string, ExistingSessionDraftProjection>;
     selectionScopeRowViewModels: ReadonlyArray<SessionListRowViewModel | null>;
 }>;
 
@@ -186,6 +195,13 @@ export function useSessionListRenderModels(input: Readonly<{
     attentionStandingEnabled?: boolean | null;
     attentionStandingPolicy?: SessionAttentionStandingPolicy | null;
 }>) {
+    const draftScope = useActiveServerAccountScope();
+    const [draftListRevision, setDraftListRevision] = React.useState(0);
+    React.useEffect(() => (
+        draftScope
+            ? subscribeSessionDraftList(draftScope, () => setDraftListRevision((revision) => revision + 1))
+            : undefined
+    ), [draftScope]);
     const deriveRowViewModels = input.rowViewModelMode !== 'deferred';
     const pinnedKeySet = React.useMemo(() => (
         input.pinnedKeySet.size === 0 ? EMPTY_PINNED_KEY_SET : input.pinnedKeySet
@@ -231,6 +247,16 @@ export function useSessionListRenderModels(input: Readonly<{
         });
     }, [input.headerFilters, normalizedShellState.sessionTags, visibleListItems]);
     const listItems = (filteredListItems ?? []) as Array<SessionListIndexItem>;
+    const existingDraftBySessionKey = React.useMemo(() => {
+        const drafts = new Map<string, ExistingSessionDraftProjection>();
+        if (!draftScope) return drafts;
+        for (const item of listItems) {
+            if (item.type !== 'session' || (item.serverId && item.serverId !== draftScope.serverId)) continue;
+            const projection = getExistingSessionDraftProjection(draftScope, item.sessionId);
+            if (projection) drafts.set(sessionTagKey(draftScope.serverId, item.sessionId), projection);
+        }
+        return drafts;
+    }, [draftListRevision, draftScope, listItems]);
     const selectionScopeListItems = React.useMemo(() => {
         const items = input.paneState.visibleSessionListIndex;
         if (!items || items.length === 0) return [] as Array<SessionListIndexItem>;
@@ -343,6 +369,7 @@ export function useSessionListRenderModels(input: Readonly<{
                 showPinnedServerBadge: input.showPinnedServerBadge,
                 attentionStandingEnabled: input.attentionStandingEnabled === true,
                 attentionStandingPolicy: input.attentionStandingPolicy ?? undefined,
+                existingDraftBySessionKey,
             }),
         );
     }, [
@@ -358,6 +385,7 @@ export function useSessionListRenderModels(input: Readonly<{
         input.workingTextMode,
         input.workingIndicatorMode,
         deriveRowViewModels,
+        existingDraftBySessionKey,
         listItems,
         normalizedShellState.sessionTags,
         relativeNowMs,
@@ -396,6 +424,7 @@ export function useSessionListRenderModels(input: Readonly<{
             showPinnedServerBadge: input.showPinnedServerBadge,
             attentionStandingEnabled: input.attentionStandingEnabled === true,
             attentionStandingPolicy: input.attentionStandingPolicy ?? undefined,
+            existingDraftBySessionKey,
         });
     }, [
         input.activeColorMode,
@@ -409,6 +438,7 @@ export function useSessionListRenderModels(input: Readonly<{
         input.workingTextMode,
         input.workingIndicatorMode,
         deriveRowViewModels,
+        existingDraftBySessionKey,
         normalizedShellState.sessionTags,
         pinnedKeySet,
         relativeNowMs,
@@ -446,6 +476,7 @@ export function useSessionListRenderModels(input: Readonly<{
             projectHeaderViewModelState,
             rowViewModels,
             rowRenderableByKey,
+            existingDraftBySessionKey,
             selectionScopeRowViewModels,
         };
     }, [
@@ -453,6 +484,7 @@ export function useSessionListRenderModels(input: Readonly<{
         projectHeaderViewModelState,
         rowViewModels,
         rowRenderableByKey,
+        existingDraftBySessionKey,
         selectionScopeListItems,
         selectionScopeRowViewModels,
         sessionReachabilitySummary.displayById,

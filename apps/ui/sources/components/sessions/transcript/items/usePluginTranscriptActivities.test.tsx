@@ -242,6 +242,88 @@ describe('plugin transcript Activity Resource projection', () => {
         await act(async () => { tree?.unmount(); });
     });
 
+    it('projects only the profile-declared Actions from an Activity snapshot', async () => {
+        transport.read.mockReset();
+        transport.open.mockReset();
+        transport.next.mockReset();
+        transport.close.mockReset();
+        // The static profile is the closed Action allowlist. Resource bytes are
+        // plugin-authored, so a snapshot naming an Action the profile never
+        // declared must not reach the card.
+        const allowlistProjection: PluginUiProjectionModel = Object.freeze({
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            generation: 7,
+            transcriptActivitiesById: Object.freeze({
+                'acme.preview/activity': Object.freeze({
+                    id: 'acme.preview/activity',
+                    pluginId: 'acme.preview',
+                    contributionKind: 'transcriptActivity' as const,
+                    descriptorId: 'activity',
+                    resource: Object.freeze({ pluginId: 'acme.preview', localId: 'live-activity' }),
+                    actions: Object.freeze([
+                        Object.freeze({ pluginId: 'acme.preview', localId: 'retry' }),
+                    ]),
+                }),
+            }),
+        });
+        const current = response({
+            version: 1,
+            activities: [{
+                localActivityId: 'build',
+                title: 'Build running',
+                phase: 'running',
+                checklist: [],
+                dismissible: false,
+                actions: [
+                    { actionId: 'retry', label: 'Retry build' },
+                    { actionId: 'undeclared-reset', label: 'Reset everything' },
+                ],
+            }],
+        }, `sha256:${'c'.repeat(64)}`);
+        transport.read.mockResolvedValue(current);
+        transport.open.mockImplementation(async (_machineId: string, options: Readonly<{ subscriptionId: string }>) => ({
+            supported: true,
+            result: {
+                ok: true,
+                subscriptionId: options.subscriptionId,
+                digest: current.result.digest,
+            },
+        }));
+        transport.next.mockImplementation(async () => await new Promise(() => {}));
+        transport.close.mockResolvedValue(undefined);
+
+        let latest!: ReturnType<typeof usePluginTranscriptActivities>;
+        function Probe() {
+            latest = usePluginTranscriptActivities({
+                accountLifetime: ACCOUNT_LIFETIME,
+                interactionEnabled: false,
+                machineId: 'machine-1',
+                platform: 'web',
+                pluginUiProjection: allowlistProjection,
+                serverId: 'server-1',
+                sessionId: 'session-a',
+            });
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<ActivityTestProviders><Probe /></ActivityTestProviders>);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await vi.waitFor(() => {
+            expect(latest.activities).toHaveLength(1);
+        });
+        // Positive control and negative in one assertion: the declared Action
+        // keeps its snapshot label, and the undeclared one is absent.
+        expect(latest.activities[0]?.actions).toEqual([
+            { pluginId: 'acme.preview', localId: 'retry', label: 'Retry build' },
+        ]);
+
+        await act(async () => { tree?.unmount(); });
+    });
+
     it('keeps terminal rows until a valid empty profile snapshot omits them, even when interaction is inactive', async () => {
         let current = response({
             version: 1,

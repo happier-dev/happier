@@ -476,4 +476,74 @@ describe('useNewSessionAvailabilityState', () => {
 
         expect(hookB.getCurrent().isCliBannerDismissed('claude' as any)).toBe(false);
     });
+
+    describe('installed Agent resume picker', () => {
+        const installedAgentMachine: Machine = {
+            id: 'machine-1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: Date.now(),
+            revokedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 1,
+        };
+
+        async function renderWithProjectedAgent(sessionOpenOperations: readonly string[]) {
+            vi.resetModules();
+            vi.doMock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+                useDaemonMergedProjectionInputs: () => ({
+                    phase: 'ready',
+                    inputs: {
+                        pluginProjectionV2: {
+                            generation: 4,
+                            agentsById: {
+                                'acme.reviewer': {
+                                    id: 'acme.reviewer',
+                                    identity: { pluginId: 'acme.tools', localId: 'reviewer' },
+                                    capabilities: { sessions: { open: sessionOpenOperations } },
+                                },
+                            },
+                        },
+                    },
+                }),
+            }));
+
+            const { useNewSessionAvailabilityState } = await import('./useNewSessionAvailabilityState');
+            return renderHook(() => useNewSessionAvailabilityState({
+                selectedMachineId: installedAgentMachine.id,
+                selectedMachine: installedAgentMachine,
+                capabilityServerId: 'server-1',
+                externalSessionsFeatureEnabled: false,
+                settings: {} as any,
+                // An installed Agent has no bundled catalog backing, so the
+                // static catalog id is null and only the runtime carrier names it.
+                staticAgentId: null,
+                runtimeCarrierAgentId: 'acme.reviewer',
+                resumeSessionId: null,
+                enabledAgentIds: [] as any,
+                backendNewSessionOptionStateByTargetKey: {},
+                resolvedBackendEntries: [],
+                selectedBackendEntry: null,
+                setBackendTarget: vi.fn(),
+                machines: [installedAgentMachine],
+                dismissedCliWarnings: null,
+                setDismissedCliWarnings: vi.fn(),
+                allProfiles: [],
+            } as any));
+        }
+
+        it('offers the resume picker for an installed Agent whose current projection declares resume', async () => {
+            const hook = await renderWithProjectedAgent(['create', 'resume']);
+            expect(hook.getCurrent().showResumePicker).toBe(true);
+        });
+
+        it('withholds the resume picker when the same installed Agent does not declare resume', async () => {
+            const hook = await renderWithProjectedAgent(['create']);
+            expect(hook.getCurrent().showResumePicker).toBe(false);
+        });
+    });
 });

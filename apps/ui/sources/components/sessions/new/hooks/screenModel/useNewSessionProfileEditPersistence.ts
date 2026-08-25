@@ -14,6 +14,7 @@ import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInterac
 
 export function useNewSessionProfileEditPersistence(params: Readonly<{
     router: Router;
+    draftId: string;
     selectedMachineId: string | null;
     backendTargetRouteParams: SerializedBackendTargetRouteParams;
     buildCurrentPersistedDraft: () => NewSessionDraft;
@@ -41,6 +42,7 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
             pathname: '/new/pick/profile-edit',
             params: {
                 ...next,
+                draftId: params.draftId,
                 ...params.backendTargetRouteParams,
                 ...draftBackendTargetRouteParams,
                 ...(params.selectedMachineId ? { machineId: params.selectedMachineId } : {}),
@@ -60,6 +62,7 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
         params.buildCurrentPersistedDraft,
         params.draftPersistenceGenerationRef,
         params.backendTargetRouteParams,
+        params.draftId,
         params.persistDraftIfEnabled,
         params.router,
         params.selectedMachineId,

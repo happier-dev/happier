@@ -57,6 +57,7 @@ export type SessionInstrumentStripProps = Readonly<{
     permission?: SessionInstrumentStripPermission | null;
     quota?: SessionInstrumentStripQuota | null;
     statusBadges?: ReadonlyArray<AgentInputStatusBadgeDescriptor>;
+    statusTrailingActions?: React.ReactNode;
     activeStatusBadgeKey?: string | null;
     onActiveStatusBadgeKeyChange?: (key: string | null) => void;
     onGitPress?: () => void;
@@ -236,7 +237,8 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
 
     const hasAnything = props.connectionStatus
         || collapsibleInstruments.length > 0
-        || permissionChip !== null;
+        || permissionChip !== null
+        || props.statusTrailingActions != null;
     if (!hasAnything) {
         // Keep a measuring host so overflow can resolve once content appears.
         return <View style={instrumentStripStyles.root} onLayout={onLayout} />;
@@ -275,6 +277,7 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                     ))
                 )}
                 {permissionChip}
+                {props.statusTrailingActions}
             </View>
 
             {activeStatusBadge?.renderPopover?.({

@@ -13,7 +13,7 @@ describe('sendTranscriptSelectionToSession', () => {
     it('formats messages, applies the template, writes sessionInitialPromptV1, and navigates to the destination session', async () => {
         const chooseDestinationSessionId = vi.fn(async (): Promise<SendTranscriptSelectionDestination> => ({ kind: 'existingSession', sessionId: 'dest', serverId: 'server-b' }));
         const writeInitialPrompt = vi.fn(async () => undefined);
-        const appendNewSessionDraft = vi.fn();
+        const appendNewSessionDraft = vi.fn(() => 'draft-a');
         const navigateToSession = vi.fn();
         const navigateToNewSession = vi.fn();
 
@@ -85,7 +85,7 @@ describe('sendTranscriptSelectionToSession', () => {
     it('appends to the new-session draft and opens /new when the picker chooses a new session', async () => {
         const chooseDestinationSessionId = vi.fn(async (): Promise<SendTranscriptSelectionDestination> => ({ kind: 'newSession' }));
         const writeInitialPrompt = vi.fn(async () => undefined);
-        const appendNewSessionDraft = vi.fn();
+        const appendNewSessionDraft = vi.fn(() => 'draft-a');
         const navigateToSession = vi.fn();
         const navigateToNewSession = vi.fn();
 
@@ -113,7 +113,7 @@ describe('sendTranscriptSelectionToSession', () => {
             sourceSessionId: 'source',
             sourceServerId: 'server-a',
         });
-        expect(navigateToNewSession).toHaveBeenCalledTimes(1);
+        expect(navigateToNewSession).toHaveBeenCalledWith('draft-a');
         expect(writeInitialPrompt).not.toHaveBeenCalled();
         expect(navigateToSession).not.toHaveBeenCalled();
     });

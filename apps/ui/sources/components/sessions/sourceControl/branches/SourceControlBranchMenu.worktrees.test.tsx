@@ -62,6 +62,7 @@ describe('SourceControlBranchMenu worktrees', () => {
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.any(String),
                 machineId: undefined,
                 directory: '/repo/.worktrees/feature-auth',
                 spawnServerId: 'server-a',
@@ -118,6 +119,7 @@ describe('SourceControlBranchMenu worktrees', () => {
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.any(String),
                 machineId: 'machine-1',
                 directory: '/repo/.dev/worktree/feature-auth',
                 spawnServerId: 'server-a',
@@ -168,6 +170,7 @@ describe('SourceControlBranchMenu worktrees', () => {
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.any(String),
                 machineId: 'machine-1',
                 directory: '/repo/.dev/worktree/feature-auth/packages/app',
             },
@@ -255,6 +258,7 @@ describe('SourceControlBranchMenu worktrees', () => {
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.any(String),
                 machineId: 'machine-1',
                 directory: '/repo',
                 worktree: 'new',

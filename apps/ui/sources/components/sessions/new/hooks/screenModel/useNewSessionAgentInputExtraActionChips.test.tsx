@@ -42,6 +42,7 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                 agentId: 'claude',
                 agentOptionState: null,
                 setAgentOptionState: vi.fn(),
+                selectedMachineId: 'machine-a',
                 showAutomationActionChips: true,
                 automationDraft: {
                     enabled: false,
@@ -93,6 +94,7 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                 agentId: 'codex',
                 agentOptionState: null,
                 setAgentOptionState: vi.fn(),
+                selectedMachineId: 'machine-a',
                 showAutomationActionChips: false,
                 automationDraft: {
                     enabled: false,
@@ -152,6 +154,7 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                 agentId: 'codex',
                 agentOptionState: null,
                 setAgentOptionState: vi.fn(),
+                selectedMachineId: 'machine-a',
                 showAutomationActionChips: false,
                 automationDraft: {
                     enabled: false,

@@ -1,5 +1,6 @@
 import { Modal } from '@/modal';
-import { storage } from '@/sync/domains/state/storage';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { t } from '@/text';
 import type { SessionRollbackCodeMode, SessionRollbackTarget } from '@happier-dev/protocol';
@@ -134,6 +135,14 @@ export async function executeTranscriptRollbackAction(params: Readonly<{
 
     const restoredDraftText = typeof params.restoredDraftText === 'string' ? params.restoredDraftText : null;
     if (restoredDraftText && restoredDraftText.trim().length > 0) {
-        storage.getState().updateSessionDraft(params.sessionId, restoredDraftText);
+        const scope = getActiveServerAccountScope();
+        if (scope) {
+            writeExistingSessionDraft({
+                scope,
+                sessionId: params.sessionId,
+                patch: { text: restoredDraftText },
+                materializationIntent: 'seeded',
+            });
+        }
     }
 }

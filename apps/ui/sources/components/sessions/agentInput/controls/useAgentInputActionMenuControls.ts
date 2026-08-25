@@ -7,6 +7,7 @@ import type { AgentInputExtraActionChip } from '../agentInputContracts';
 import { useAgentInputActionMenuActions } from './useAgentInputActionMenuActions';
 import type { AgentInputSelectionOverlayId } from '../selection/agentInputSelectionOverlayTypes';
 import type { IconName } from '@/components/ui/icons/Icon';
+import type { FocusReturnRef } from '@/keyboard/focusReturn';
 
 export function useAgentInputActionMenuControls(params: Readonly<{
     showActionMenu: boolean;
@@ -42,6 +43,8 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     resumeSessionId?: string | null;
     sessionId?: string;
     extraActionChips?: readonly AgentInputExtraActionChip[];
+    /** The action menu's own anchor, so a dialog opened from it can return focus there. */
+    actionMenuAnchorRef?: FocusReturnRef;
     openCollapsedOptionsPopover: (chipKey: string | null) => void;
     sessionModeLabel?: string | null;
     sessionModeChipInteraction?: ChipOptionInteraction<string> | null;
@@ -161,6 +164,7 @@ export function useAgentInputActionMenuControls(params: Readonly<{
         resumeSessionId: params.resumeSessionId,
         sessionId: params.sessionId,
         extraActionChips: params.extraActionChips,
+        ...(params.actionMenuAnchorRef ? { actionMenuAnchorRef: params.actionMenuAnchorRef } : {}),
         dismissActionMenu,
         blurInput: blurComposerInput,
         openCollapsedOptionsPopover: params.openCollapsedOptionsPopover,

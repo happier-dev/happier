@@ -24,8 +24,10 @@ describe('useNewSessionWizardProps', () => {
 
         function Probe(props: Readonly<{
             agentLabel: string;
+            composerTopContent: React.ReactNode;
             providerLaunchError: ProviderErrorV1;
             retryProviderLaunch: () => void;
+            statusTrailingActions: React.ReactNode;
         }>) {
             observed = useNewSessionWizardProps({
                 theme: {},
@@ -97,6 +99,7 @@ describe('useNewSessionWizardProps', () => {
                 handleCreateSession: () => {},
                 canCreate: false,
                 isCreating: false,
+                composerTopContent: props.composerTopContent,
                 providerLaunchError: props.providerLaunchError,
                 retryProviderLaunch: props.retryProviderLaunch,
                 emptyAutocompleteKinds: [],
@@ -104,6 +107,7 @@ describe('useNewSessionWizardProps', () => {
                 resumeSessionId: '',
                 isResumeSupportChecking: false,
                 sessionPromptInputMaxHeight: 0,
+                statusTrailingActions: props.statusTrailingActions,
             } as any);
             return null;
         }
@@ -114,22 +118,30 @@ describe('useNewSessionWizardProps', () => {
         });
         const firstRetry = vi.fn();
         const secondRetry = vi.fn();
+        const composerTopContent = React.createElement('ComposerNotice');
+        const statusTrailingActions = React.createElement('StatusActions');
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(React.createElement(Probe, {
             agentLabel: 'Preset A',
+            composerTopContent,
             providerLaunchError,
             retryProviderLaunch: firstRetry,
+            statusTrailingActions,
         }))).tree;
 
         expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.agent.agentLabel).toBe('Preset A');
         expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.footer.providerLaunchError).toBe(providerLaunchError);
         expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.footer.retryProviderLaunch).toBe(firstRetry);
+        expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.footer.composerTopContent).toBe(composerTopContent);
+        expect((observed as ReturnType<typeof useNewSessionWizardProps> | null)?.footer.statusTrailingActions).toBe(statusTrailingActions);
 
         act(() => {
             tree?.update(React.createElement(Probe, {
                 agentLabel: 'Preset B',
+                composerTopContent,
                 providerLaunchError,
                 retryProviderLaunch: secondRetry,
+                statusTrailingActions,
             }));
         });
 

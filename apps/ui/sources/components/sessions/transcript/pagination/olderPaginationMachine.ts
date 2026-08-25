@@ -99,6 +99,11 @@ export type OlderPaginationEvent =
     | Readonly<{ type: 'loadFinished'; loaded: number; hasMore: boolean; error?: boolean; failed?: boolean }>
     | Readonly<{ type: 'cooldownElapsed' }>
     | Readonly<{ type: 'retryRequested' }>
+    /**
+     * An underfilled transcript cannot create a scroll threshold observation. The reader
+     * explicitly asks for one more page from the retained canonical older cursor.
+     */
+    | Readonly<{ type: 'continuationRequested' }>
     | Readonly<{ type: 'suspend'; reason: OlderPaginationSuspendReason }>
     | Readonly<{ type: 'resume'; reason: OlderPaginationSuspendReason }>
     | Readonly<{ type: 'reset' }>;
@@ -337,6 +342,21 @@ export function reduceOlderPagination(state: OlderPaginationState, event: OlderP
                 ...state,
                 phase: 'armed',
                 rearmEligible: true,
+            };
+        }
+        case 'continuationRequested': {
+            // Initial fill is deliberately bounded. If it leaves an unscrollable transcript
+            // with a retained `hasMore` cursor, the normal threshold-enter path is physically
+            // unreachable. This is a reader action, not another paginator: it arms the same
+            // single-entry machine for exactly one ordinary older read. The normal load result
+            // and cooldown then decide whether any later reader action is needed.
+            if (!state.hasMore || state.phase === 'loading' || state.phase === 'armed') return state;
+            return {
+                ...state,
+                phase: 'armed',
+                committedExactEdgeDuringLoad: false,
+                successfulLoadAwaitingCommittedLayout: false,
+                rearmEligible: false,
             };
         }
         case 'suspend': {

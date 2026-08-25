@@ -4,6 +4,10 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
+import {
+    ExternalSessionOperationSharedPresentationV1Schema,
+} from '@happier-dev/protocol';
+
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { CapturingLegendListMockState } from '@/dev/testkit/mocks/legendList';
 
@@ -86,6 +90,47 @@ describe('public TranscriptList web keyboard ownership', () => {
             expect(capture.props.maintainScrollAtEnd).toBe(false);
         } finally {
             unregisterOther();
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+        }
+    });
+
+    it('returns a terminal public operation dismissal to its registered transcript viewport', async () => {
+        const { Platform } = await import('react-native');
+        const { TranscriptList } = await import('./TranscriptList');
+        const originalPlatform = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        const publicScroller = document.createElement('div');
+        document.body.append(publicScroller);
+        const capture = legendListCapture.state;
+        if (!capture) throw new Error('LegendList mock did not initialize');
+        capture.refHandle.getScrollableNode.mockReturnValue(publicScroller);
+        const presentation = ExternalSessionOperationSharedPresentationV1Schema.parse({
+            v: 1,
+            operationId: 'operation-public-focus',
+            revision: 1,
+            kind: 'materialize',
+            status: 'completed',
+            phase: 'publishing',
+        });
+
+        try {
+            const screen = await renderScreen(<TranscriptList
+                sessionId="public-focus-session"
+                datasetKey="public:public-focus-session:1"
+                metadata={{
+                    path: '/repo',
+                    host: 'public-host',
+                    externalSessionOperationPresentationV1: presentation,
+                }}
+                messages={[]}
+                interaction={{ canSendMessages: false, canApprovePermissions: false }}
+            />);
+
+            await screen.pressByTestIdAsync('external-session-operation-action-dismiss');
+
+            expect(screen.findByTestId('external-session-operation-shared-card')).toBeNull();
+            expect(document.activeElement).toBe(publicScroller);
+        } finally {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
         }
     });

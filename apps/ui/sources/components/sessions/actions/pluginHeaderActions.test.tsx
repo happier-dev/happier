@@ -20,7 +20,7 @@ import {
 
 const HOST_POLICY_CONTEXT = { platform: 'web', channel: 'internal' } as const;
 
-const DEFAULT_HEADER_ACTION = {
+const DEFAULT_HEADER_COMMAND = {
     kind: 'executeAction',
     action: { pluginId: 'acme.plugin', localId: 'roundtrip' },
 } satisfies PluginUiResolvedSemanticCommandV1;
@@ -38,7 +38,7 @@ function createScopedLaunchFacts(
 }
 
 function createProjectedHeaderAction(params?: Readonly<{
-    action?: PluginUiResolvedSemanticCommandV1;
+    command?: PluginUiResolvedSemanticCommandV1;
     execution?: PluginProjectedActionV2['execution'];
     origin?: Readonly<{
         serverIdentityId: NonNullable<PluginProjectedActionV2['serverIdentityId']>;
@@ -49,6 +49,7 @@ function createProjectedHeaderAction(params?: Readonly<{
     legacyAction?: string;
     availability?: Readonly<Record<string, unknown>>;
     compatibility?: Readonly<Record<string, unknown>>;
+    available?: boolean;
 }>): PluginProjectionV2 {
     return {
         v: 2,
@@ -71,7 +72,7 @@ function createProjectedHeaderAction(params?: Readonly<{
                 ...(params?.origin ?? {}),
                 placementBindings: ['detailsPanel'],
                 dangerLevel: 'safe',
-                available: true,
+                available: params?.available ?? true,
             },
             ...(params?.extraActions ?? {}),
         },
@@ -104,7 +105,7 @@ function createProjectedHeaderAction(params?: Readonly<{
                             fallback: 'Roundtrip fallback',
                         },
                         ...(params?.legacyAction === undefined
-                            ? { action: params?.action ?? DEFAULT_HEADER_ACTION }
+                            ? { command: params?.command ?? DEFAULT_HEADER_COMMAND }
                             // Off-contract wire bytes by construction: a stale
                             // producer's raw local id. The cast is the only way
                             // to reproduce it against the compiled entry type.
@@ -168,9 +169,9 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
 
         expect(projectedAction).toMatchObject({
             descriptorId: 'roundtrip-header',
-            action: DEFAULT_HEADER_ACTION,
+            command: DEFAULT_HEADER_COMMAND,
         });
-        expect(projectedAction).not.toHaveProperty('command');
+        expect(projectedAction).not.toHaveProperty('action');
         expect(items).toHaveLength(1);
         expect(items[0]).toMatchObject({
             id: createPluginSessionHeaderActionMenuId(projectedAction!),
@@ -197,7 +198,7 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
         });
     });
 
-    it('maps omitted executeAction input to the canonical null sentinel only at the generation-leased daemon action RPC', async () => {
+    it('keeps omitted executeAction input absent through the generation-leased daemon action RPC', async () => {
         const projection = normalizePluginUiProjection(createProjectedHeaderAction());
         const projectedAction = projection.sessionHeaderActionsById[
             'sessionHeaderAction:acme.plugin:roundtrip-header'
@@ -223,15 +224,34 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
             serverId: 'server-a',
             expectedGeneration: '7',
             qualifiedActionId: 'acme.plugin/roundtrip',
-            input: null,
             sessionId: 'sess-1',
             executionSurface: 'ui',
         });
     });
 
+    it('refuses a terminally unavailable projected Action before Session header dispatch', async () => {
+        const projection = normalizePluginUiProjection(createProjectedHeaderAction({ available: false }));
+        const projectedAction = projection.sessionHeaderActionsById[
+            'sessionHeaderAction:acme.plugin:roundtrip-header'
+        ]!;
+        const execute = vi.fn();
+
+        await expect(dispatchPluginSessionHeaderAction({
+            projection,
+            menuActionId: createPluginSessionHeaderActionMenuId(projectedAction),
+            scopedLaunchFacts: createScopedLaunchFacts(),
+            execute,
+        })).resolves.toEqual({
+            ok: false,
+            code: 'unavailable',
+            reason: 'plugin_ui_action_unavailable',
+        });
+        expect(execute).not.toHaveBeenCalled();
+    });
+
     it('dispatches the compiled qualified action target without requalifying it against the declaring plugin', async () => {
         const projection = normalizePluginUiProjection(createProjectedHeaderAction({
-            action: {
+            command: {
                 kind: 'executeAction',
                 action: { pluginId: 'other.plugin', localId: 'roundtrip' },
                 input: { source: 'header' },
@@ -275,7 +295,7 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
 
     it('delegates openSurface through the existing host handler without inventing input or action transport', async () => {
         const projection = normalizePluginUiProjection(createProjectedHeaderAction({
-            action: {
+            command: {
                 kind: 'openSurface',
                 destination: { pluginId: 'acme.plugin', localId: 'details' },
                 subPath: 'recent',
@@ -490,7 +510,6 @@ describe('pluginHeaderActions — scoped projection authority', () => {
             serverId: 'server-projection',
             expectedGeneration: '7',
             qualifiedActionId: 'acme.plugin/roundtrip',
-            input: null,
             sessionId: 'sess-1',
             executionSurface: 'ui',
         });
@@ -542,7 +561,7 @@ function createOrderedHeaderActions(): PluginProjectionV2 {
         contributionKind: 'sessionHeaderAction',
         descriptorId,
         title: descriptorId,
-        action: {
+        command: {
             kind: 'executeAction' as const,
             action: { pluginId: 'acme.plugin', localId: descriptorId },
         },

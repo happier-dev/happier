@@ -1116,6 +1116,7 @@ describe('SessionItem activity time', () => {
                     attentionStanding: false,
                     isAttentionStanding: false,
                     attentionStandingEnabled: false,
+                    draft: null,
                 }}
                 serverId="server_a"
                 serverName="Server A"

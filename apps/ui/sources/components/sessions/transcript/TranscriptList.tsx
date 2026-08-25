@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { findNodeHandle, Platform, View } from 'react-native';
 import { MessageViewWithSessionCommon } from '@/components/sessions/transcript/MessageView';
 import { ChatFooter } from '@/components/sessions/transcript/ChatFooter';
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -29,9 +29,11 @@ import { useTranscriptMotionConfig } from '@/components/sessions/transcript/moti
 import { TranscriptRowLayoutMutationProvider } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 import { useRendererOwnedTranscriptRowLayoutMutation } from '@/components/sessions/transcript/viewport/shell/useRendererOwnedTranscriptRowLayoutMutation';
 import {
+    focusRegisteredWebTranscriptKeyboardViewport,
     registerWebTranscriptKeyboardOwner,
     type WebTranscriptKeyboardVerticalDirection,
 } from '@/components/sessions/transcript/viewport/lifecycle/webTranscriptKeyboardOwner';
+import { focusNativeAccessibilityTarget } from '@/keyboard/focusReturn';
 import type {
     ExternalSessionOperationSharedPresentationV1,
 } from '@happier-dev/protocol';
@@ -120,6 +122,7 @@ export const TranscriptList = React.memo((props: {
         listRef,
         prepareRowLayoutMutation,
     } = useRendererOwnedTranscriptRowLayoutMutation<Message>();
+    const transcriptViewportFocusRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const forkCommon = React.useMemo(
         () => deriveTranscriptForkCommonForInteraction(transcriptSessionCommon.fork, props.interaction),
         [props.interaction, transcriptSessionCommon.fork],
@@ -160,6 +163,19 @@ export const TranscriptList = React.memo((props: {
             ? rendererNode
             : null;
     }, []);
+    const returnFocusToTranscriptViewport = React.useCallback(() => {
+        if (Platform.OS === 'web') {
+            const scroller = resolveWebKeyboardScroller();
+            if (scroller && typeof document !== 'undefined') {
+                focusRegisteredWebTranscriptKeyboardViewport({ document, scroller });
+            }
+            return;
+        }
+        const nativeTarget = findNodeHandle(transcriptViewportFocusRef.current);
+        if (typeof nativeTarget === 'number') {
+            focusNativeAccessibilityTarget(nativeTarget);
+        }
+    }, [resolveWebKeyboardScroller]);
     const recordWebKeyboardViewportInput = React.useCallback((
         verticalDirection: WebTranscriptKeyboardVerticalDirection,
     ): void => {
@@ -176,6 +192,45 @@ export const TranscriptList = React.memo((props: {
         recordWebKeyboardViewportInput,
         resolveWebKeyboardScroller,
         shellFrame.platform,
+    ]);
+    const pendingExternalSessionOperationDismissalRef = React.useRef<Readonly<{
+        operationId: string;
+        revision: number;
+        sessionId: string;
+    }> | null>(null);
+    const dismissExternalSessionOperationWithFocus = React.useCallback((
+        actionRef: ExternalSessionOperationActionRef,
+    ) => {
+        pendingExternalSessionOperationDismissalRef.current = {
+            ...actionRef,
+            sessionId: props.sessionId,
+        };
+        onDismissExternalSessionOperation(actionRef);
+    }, [onDismissExternalSessionOperation, props.sessionId]);
+    React.useLayoutEffect(() => {
+        const pendingDismissal = pendingExternalSessionOperationDismissalRef.current;
+        if (pendingDismissal === null) return;
+        if (pendingDismissal.sessionId !== props.sessionId) {
+            pendingExternalSessionOperationDismissalRef.current = null;
+            return;
+        }
+        if (visibleExternalSessionOperationPresentation !== null) {
+            if (
+                visibleExternalSessionOperationPresentation.operationId
+                    !== pendingDismissal.operationId
+                || visibleExternalSessionOperationPresentation.revision
+                    !== pendingDismissal.revision
+            ) {
+                pendingExternalSessionOperationDismissalRef.current = null;
+            }
+            return;
+        }
+        pendingExternalSessionOperationDismissalRef.current = null;
+        returnFocusToTranscriptViewport();
+    }, [
+        props.sessionId,
+        returnFocusToTranscriptViewport,
+        visibleExternalSessionOperationPresentation,
     ]);
     const listData = React.useMemo(() => {
         if (shellFrame.dataOrder === 'newest-first') {
@@ -211,12 +266,12 @@ export const TranscriptList = React.memo((props: {
                     visibleExternalSessionOperationPresentation
                 }
                 onDismissExternalSessionOperation={
-                    onDismissExternalSessionOperation
+                    dismissExternalSessionOperationWithFocus
                 }
             />
         ),
     }), [
-        onDismissExternalSessionOperation,
+        dismissExternalSessionOperationWithFocus,
         props.bottomNotice,
         props.isLoaded,
         shellFrame,
@@ -306,28 +361,30 @@ export const TranscriptList = React.memo((props: {
     return (
         <TranscriptMotionProvider key={props.datasetKey} sessionKey={props.datasetKey} config={motionConfig}>
             <TranscriptRowLayoutMutationProvider value={prepareRowLayoutMutation}>
-                <TranscriptListShell<Message>
-                    key={props.datasetKey}
-                    ref={listRef}
-                    dataKey={props.datasetKey}
-                    data={listData}
-                    extraData={transcriptMessageSelection.selectionVersion}
-                    frame={shellFrame}
-                    webDomObservation={webDomObservation}
-                    keyExtractor={keyExtractor}
-                    getItemType={getItemType}
-                    renderItem={renderItem}
-                    header={shellEdgeSlots.listHeaderNode}
-                    footer={shellEdgeSlots.listFooterNode}
-                    {...olderPagination.shellProps}
-                    olderLoadOverlay={
-                        olderPagination.isLoadingOlder
-                            ? <OlderLoadProgressOverlay />
-                            : olderPagination.loadFailed
-                                ? <OlderLoadRetryOverlay onRetry={olderPagination.retryLoad} />
-                                : null
-                    }
-                />
+                <View ref={transcriptViewportFocusRef} style={{ flex: 1 }}>
+                    <TranscriptListShell<Message>
+                        key={props.datasetKey}
+                        ref={listRef}
+                        dataKey={props.datasetKey}
+                        data={listData}
+                        extraData={transcriptMessageSelection.selectionVersion}
+                        frame={shellFrame}
+                        webDomObservation={webDomObservation}
+                        keyExtractor={keyExtractor}
+                        getItemType={getItemType}
+                        renderItem={renderItem}
+                        header={shellEdgeSlots.listHeaderNode}
+                        footer={shellEdgeSlots.listFooterNode}
+                        {...olderPagination.shellProps}
+                        olderLoadOverlay={
+                            olderPagination.isLoadingOlder
+                                ? <OlderLoadProgressOverlay />
+                                : olderPagination.loadFailed
+                                    ? <OlderLoadRetryOverlay onRetry={olderPagination.retryLoad} />
+                                    : null
+                        }
+                    />
+                </View>
             </TranscriptRowLayoutMutationProvider>
         </TranscriptMotionProvider>
     );

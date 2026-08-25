@@ -41,8 +41,19 @@ installMessageViewCommonModuleMocks({
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        // The transcript byline is asserted against the REAL English catalog.
+        // A hand-written literal here would let the shipped copy drift while
+        // this test kept passing, which is the exact shape of a guard that
+        // cannot fail.
+        const { en } = await import('@/text/translations/en');
+        const englishMessage = en.message as unknown as Readonly<Record<string, unknown>>;
         return createTextModuleMock({
             translate: (key: string, params?: any) => {
+                if (key.startsWith('message.pluginAttribution')) {
+                    const leaf = englishMessage[key.slice('message.'.length)];
+                    if (typeof leaf === 'function') return (leaf as (input: unknown) => string)(params);
+                    if (typeof leaf === 'string') return leaf;
+                }
                 if (key === 'session.reviewFindings.findingTitle' && params && typeof params.title === 'string') {
                     return params.title;
                 }
@@ -56,9 +67,6 @@ installMessageViewCommonModuleMocks({
                 if (key === 'session.reviewFindings.actions.applyTriage') return 'Apply review actions';
                 if (key === 'session.reviewFindings.actions.sending') return 'Sending…';
                 if (key === 'session.reviewFindings.actions.applying') return 'Applying…';
-                if (key === 'message.pluginAttribution' && params && typeof params.pluginId === 'string') {
-                    return `From plugin ${params.pluginId}`;
-                }
                 return key;
             },
         });
@@ -479,6 +487,66 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         expect(screen.findByTestId('transcript-plugin-attribution:no-provenance')).toBeNull();
         expect(screen.findByTestId('transcript-plugin-attribution:malformed-provenance')).toBeNull();
         expect(screen.findByTestId('transcript-plugin-attribution:other-provenance')).toBeNull();
+    });
+
+    it('names the external sender and discloses forwarding in the durable plugin byline', async () => {
+        const { MessageView } = await import('./MessageView');
+        const external = (
+            id: string,
+            externalActor: Readonly<{ kind: 'human' | 'bot'; displayNameSnapshot?: string }>,
+            contentProvenance: 'original' | 'forwarded' | 'viaBot',
+        ) => ({
+            kind: 'user-text',
+            id,
+            localId: `local-${id}`,
+            createdAt: 0,
+            text: 'External input',
+            meta: {
+                happierProvenanceV1: {
+                    v: 1,
+                    kind: 'pluginSession',
+                    pluginId: 'happier.channels',
+                    contributionLocalId: 'inbound',
+                    surface: 'unspecified',
+                    sourceRef: 'channels:binding:binding-1',
+                    sourceRevisionOrEpoch: '1:1',
+                    externalActor,
+                    contentProvenance,
+                },
+            },
+        }) satisfies UserTextMessage;
+        const messages = [
+            external('external-named', { kind: 'human', displayNameSnapshot: 'Ada Lovelace' }, 'original'),
+            external('external-forwarded', { kind: 'human', displayNameSnapshot: 'Ada Lovelace' }, 'forwarded'),
+            external('external-anonymous-person', { kind: 'human' }, 'original'),
+            external('external-anonymous-bot', { kind: 'bot' }, 'viaBot'),
+        ];
+
+        const screen = await renderScreen(
+            <>
+                {messages.map((message) => (
+                    <MessageView
+                        key={message.id}
+                        message={message}
+                        metadata={null}
+                        sessionId="s1"
+                    />
+                ))}
+            </>,
+        );
+
+        for (const [id, label] of [
+            ['external-named', 'From Ada Lovelace via plugin happier.channels'],
+            // Forwarding changes WHO wrote the message. Rendering the plain
+            // "From <sender>" byline for it would state something false.
+            ['external-forwarded', 'Forwarded by Ada Lovelace via plugin happier.channels'],
+            ['external-anonymous-person', 'From an external sender via plugin happier.channels'],
+            ['external-anonymous-bot', 'From an external bot via plugin happier.channels'],
+        ]) {
+            const attribution = screen.findByTestId(`transcript-plugin-attribution:${id}`);
+            expect(attribution?.props.accessibilityLabel).toBe(label);
+            expect(attribution?.props.children).toBe(label);
+        }
     });
 
     it('fails closed for an unpersisted generic plugin envelope', async () => {

@@ -5,6 +5,7 @@ import {
     type ComposerInputLockSnapshotV1,
     type ComposerRefV1,
 } from '@happier-dev/protocol';
+import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 
 import type {
     AgentInputComposerDecoration,
@@ -12,7 +13,6 @@ import type {
 } from '@/components/sessions/agentInput/agentInputContracts';
 
 import {
-    composerPresentationTargetKey,
     notifyComposerPresentationTargetChanged,
     type ComposerPresentationDecorationUpdate,
     type ComposerPresentationInputLockLease,
@@ -86,7 +86,7 @@ export function useComposerPresentationInputEffects(input: Readonly<{
     ref: ComposerRefV1;
 }>): ComposerPresentationInputEffects {
     const runtimeRef = React.useRef<ComposerPresentationInputRuntime | null>(null);
-    const targetKey = composerPresentationTargetKey(input.ref);
+    const targetKey = composerRefV1Key(input.ref);
     const [, forceRender] = React.useReducer((version: number) => version + 1, 0);
 
     if (runtimeRef.current?.targetKey !== targetKey) {

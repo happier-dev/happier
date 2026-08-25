@@ -5,6 +5,7 @@ import type {
     ComposerTransactionResultV1,
     ParticipantRecipientV1,
 } from '@happier-dev/protocol';
+import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 import * as React from 'react';
 
 import type {
@@ -31,11 +32,10 @@ import {
     composerReferencesFromStructuredMentions,
     composerStructuredMentionsFromReferences,
 } from '@/components/sessions/composer/composerScopeAdapters';
+import { useEphemeralComposerDocumentOwner } from '@/components/sessions/composer/useEphemeralComposerDocumentOwner';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import {
-    readComposerSubmissionFieldCurrentness,
     submitComposerSnapshot,
-    type ComposerSubmissionSnapshot,
 } from '@/components/sessions/composer/composerSubmissionCoordinator';
 import {
     applyComposerPresentationTransaction,
@@ -83,23 +83,6 @@ type ParticipantComposerDocument = Readonly<{
     attachments: readonly ComposerAttachmentDraftV1[];
 }>;
 
-function sameComposerRef(left: ComposerRefV1, right: ComposerRefV1): boolean {
-    return left.kind === right.kind
-        && left.kind === 'participantMessage'
-        && right.kind === 'participantMessage'
-        && left.sessionId === right.sessionId
-        && left.instanceId === right.instanceId;
-}
-
-function sameParticipantComposerDocument(
-    left: ParticipantComposerDocument,
-    right: ParticipantComposerDocument,
-): boolean {
-    return left.text === right.text
-        && JSON.stringify(left.mentions) === JSON.stringify(right.mentions)
-        && JSON.stringify(left.attachments) === JSON.stringify(right.attachments);
-}
-
 export const SessionParticipantComposer = React.memo((props: Readonly<{
     sessionId: string;
     canSendMessages: boolean;
@@ -131,19 +114,25 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
     const composerInputFocusedRef = React.useRef(false);
     const composerActionBarLayoutRef = React.useRef<ComposerSnapshotV1['layout']>('wrap');
     const composerFocusRequestRef = React.useRef<(() => void) | null>(null);
-    const documentRef = React.useRef<ParticipantComposerDocument>({
-        text: '',
-        mentions: [],
-        attachments: [],
-    });
-    const revisionRef = React.useRef(0);
-    const [, forceComposerDocumentRender] = React.useReducer((version: number) => version + 1, 0);
-
     const isParticipantComposerCurrent = React.useCallback(() => (
         mountedRef.current
-        && sameComposerRef(composerRefRef.current, composerRef)
+        && composerRefsV1Equal(composerRefRef.current, composerRef)
         && (composerAccountLifetime === null || composerAccountLifetime.isCurrent())
     ), [composerAccountLifetime, composerRef]);
+    const participantComposerDocumentOwner = useEphemeralComposerDocumentOwner({
+        ref: composerRef,
+        capabilities: { text: true, references: true, attachments: true, submit: true },
+        isCurrent: isParticipantComposerCurrent,
+        onDocumentChange: () => notifyComposerPresentationTargetChanged(composerRef),
+    });
+    const readParticipantDocument = React.useCallback((): ParticipantComposerDocument => {
+        const document = participantComposerDocumentOwner.read().document;
+        return {
+            text: document.text,
+            mentions: document.structuredInputMentions,
+            attachments: document.composerAttachments,
+        };
+    }, [participantComposerDocumentOwner]);
     const composerInputEffects = useComposerPresentationInputEffects({
         ref: composerRef,
     });
@@ -212,7 +201,7 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
     }, [composerAccountLifetime, composerInputEffects.retire]);
 
     const onComposerFocusChange = React.useCallback((focused: boolean) => {
-        if (!mountedRef.current || !sameComposerRef(composerRefRef.current, composerRef)) return;
+        if (!mountedRef.current || !composerRefsV1Equal(composerRefRef.current, composerRef)) return;
         if (composerInputFocusedRef.current === focused) return;
         composerInputFocusedRef.current = focused;
         notifyComposerPresentationTargetChanged(composerRef);
@@ -223,30 +212,30 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
     }, []);
 
     const onComposerActionBarLayoutChange = React.useCallback((layout: ComposerSnapshotV1['layout']) => {
-        if (!mountedRef.current || !sameComposerRef(composerRefRef.current, composerRef)) return;
+        if (!mountedRef.current || !composerRefsV1Equal(composerRefRef.current, composerRef)) return;
         if (composerActionBarLayoutRef.current === layout) return;
         composerActionBarLayoutRef.current = layout;
         notifyComposerPresentationTargetChanged(composerRef);
     }, [composerRef]);
 
-    const updateParticipantComposerDocument = React.useCallback((next: ParticipantComposerDocument, notify: boolean): number => {
-        if (!sameComposerRef(composerRefRef.current, composerRef)) return revisionRef.current;
-        if (sameParticipantComposerDocument(documentRef.current, next)) return revisionRef.current;
-        documentRef.current = next;
-        revisionRef.current += 1;
-        forceComposerDocumentRender();
-        if (notify) notifyComposerPresentationTargetChanged(composerRef);
-        return revisionRef.current;
-    }, [composerRef]);
+    const updateParticipantComposerDocument = React.useCallback((next: ParticipantComposerDocument, _notify: boolean): number => {
+        if (!composerRefsV1Equal(composerRefRef.current, composerRef)) return participantComposerDocumentOwner.read().revision;
+        const revision = participantComposerDocumentOwner.replaceDocument({
+            text: next.text,
+            structuredInputMentions: next.mentions,
+            composerAttachments: next.attachments,
+        });
+        return revision;
+    }, [composerRef, participantComposerDocumentOwner]);
 
     const readParticipantComposerSnapshot = React.useCallback((): ComposerSnapshotV1 => {
-        const document = documentRef.current;
+        const document = readParticipantDocument();
         const canSendMessages = canSendMessagesRef.current;
         const inputLock = composerInputEffects.readComposerInputLock();
         const editable = canSendMessages && inputLock?.mode !== 'editAndSubmit';
         const submittable = canSendMessages && inputLock === null;
         return {
-            revision: revisionRef.current,
+            revision: participantComposerDocumentOwner.read().revision,
             ref: composerRef,
             text: document.text,
             references: [...composerReferencesFromStructuredMentions({
@@ -272,36 +261,22 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
                 ...(inputLock ? { inputLock } : {}),
             },
         };
-    }, [composerInputEffects.readComposerInputLock, composerRef, participantComposerAttachmentEntriesById]);
+    }, [composerInputEffects.readComposerInputLock, composerRef, participantComposerAttachmentEntriesById, participantComposerDocumentOwner, readParticipantDocument]);
 
     const commitParticipantComposerDocument = React.useCallback((input: Readonly<{
         expectedRevision: number;
         mutation: ComposerPresentationDocumentMutation;
     }>): ComposerTransactionResultV1 => {
-        if (!sameComposerRef(composerRefRef.current, composerRef) || revisionRef.current !== input.expectedRevision) {
-            return { status: 'conflict', currentRevision: revisionRef.current };
-        }
-        const previous = documentRef.current;
-        const next: ParticipantComposerDocument = {
-            text: input.mutation.text,
-            mentions: composerStructuredMentionsFromReferences({
-                references: input.mutation.references,
-                existing: previous.mentions,
-            }),
-            attachments: input.mutation.attachments.map(composerAttachmentViewToDraft),
-        };
-        return {
-            status: 'applied',
-            revision: updateParticipantComposerDocument(next, false),
-        };
-    }, [composerRef, updateParticipantComposerDocument]);
+        if (!composerRefsV1Equal(composerRefRef.current, composerRef)) return { status: 'composerUnavailable' };
+        return participantComposerDocumentOwner.apply(input.expectedRevision, input.mutation);
+    }, [composerRef, participantComposerDocumentOwner]);
 
     const composerTarget = useStableComposerPresentationTarget(composerRef, {
-        readRevision: () => revisionRef.current,
+        readRevision: () => participantComposerDocumentOwner.read().revision,
         replace: (text, expectedRevision) => {
-            if (revisionRef.current !== expectedRevision) return revisionRef.current;
+            if (participantComposerDocumentOwner.read().revision !== expectedRevision) return participantComposerDocumentOwner.read().revision;
             return updateParticipantComposerDocument({
-                ...documentRef.current,
+                ...readParticipantDocument(),
                 text,
             }, true);
         },
@@ -312,13 +287,13 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
         acquireComposerInputLock: composerInputEffects.acquireComposerInputLock,
         isCurrent: () => (
             mountedRef.current
-            && sameComposerRef(composerRefRef.current, composerRef)
+            && composerRefsV1Equal(composerRefRef.current, composerRef)
             && (composerAccountLifetime === null || composerAccountLifetime.isCurrent())
         ),
         focusComposer: () => {
             if (
                 !mountedRef.current
-                || !sameComposerRef(composerRefRef.current, composerRef)
+                || !composerRefsV1Equal(composerRefRef.current, composerRef)
                 || (composerAccountLifetime !== null && !composerAccountLifetime.isCurrent())
             ) {
                 return false;
@@ -348,7 +323,7 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
         });
     }, [composerRef]);
 
-    const document = documentRef.current;
+    const document = readParticipantDocument();
     const composerAttachmentViews = React.useMemo(() => document.attachments.map((attachment) => (
         composerAttachmentDraftToView(attachment, {
             entriesById: participantComposerAttachmentEntriesById,
@@ -356,34 +331,25 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
     )), [document.attachments, participantComposerAttachmentEntriesById]);
     const composerAttachmentRowItems = React.useMemo(() => projectComposerAttachmentRowItems({
         attachments: composerAttachmentViews,
-        onRemove: removeComposerAttachment,
+        // Mirrors this scope's `ComposerSnapshotV1.state.editable`: removal is
+        // a Composer mutation, so a view-only participant or an `editAndSubmit`
+        // lock keeps preview/picker access without an enabled remove control
+        // the transaction owner would refuse.
+        ...(props.canSendMessages && composerInputEffects.composerInputLock?.mode !== 'editAndSubmit'
+            ? { onRemove: removeComposerAttachment }
+            : {}),
         entriesById: participantComposerAttachmentEntriesById ?? undefined,
         renderSurface: participantComposerPresentation.renderAttachmentSurface,
         resolveInteraction: participantComposerPresentation.resolveAttachmentInteraction,
     }), [
         composerAttachmentViews,
+        composerInputEffects.composerInputLock,
         participantComposerAttachmentEntriesById,
         participantComposerPresentation.renderAttachmentSurface,
         participantComposerPresentation.resolveAttachmentInteraction,
+        props.canSendMessages,
         removeComposerAttachment,
     ]);
-
-    const clearAcceptedParticipantSnapshot = React.useCallback((submittedSnapshot: ComposerSubmissionSnapshot): boolean => {
-        if (!mountedRef.current) return false;
-        const currentSnapshot = readParticipantComposerSnapshot();
-        if (!sameComposerRef(composerRefRef.current, submittedSnapshot.ref)) return false;
-        const currentness = readComposerSubmissionFieldCurrentness(currentSnapshot, submittedSnapshot);
-        if (!currentness) return false;
-        updateParticipantComposerDocument({
-            text: currentness.reconciledText,
-            mentions: composerStructuredMentionsFromReferences({
-                references: currentness.reconciledReferences,
-                existing: documentRef.current.mentions,
-            }),
-            attachments: currentness.attachments ? [] : documentRef.current.attachments,
-        }, true);
-        return true;
-    }, [readParticipantComposerSnapshot, updateParticipantComposerDocument]);
 
     const handleParticipantSend = React.useCallback((sendOptions?: AgentInputSendOptions) => {
         if (!props.canSendMessages) {
@@ -391,15 +357,17 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
             return;
         }
 
-        const liveComposerText = sendOptions?.inputTextOverride ?? documentRef.current.text;
-        if (liveComposerText !== documentRef.current.text) {
+        const currentDocument = readParticipantDocument();
+        const liveComposerText = sendOptions?.inputTextOverride ?? currentDocument.text;
+        if (liveComposerText !== currentDocument.text) {
             updateParticipantComposerDocument({
-                ...documentRef.current,
+                ...currentDocument,
                 text: liveComposerText,
             }, true);
         }
 
         const snapshot = readParticipantComposerSnapshot();
+        const submittedCurrentness = participantComposerDocumentOwner.captureCurrentness();
         fireAndForget(submitComposerSnapshot({
             snapshot,
             route: {
@@ -512,7 +480,7 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
                     }
                 },
             },
-            clearAcceptedSnapshot: clearAcceptedParticipantSnapshot,
+            clearAcceptedSnapshot: () => participantComposerDocumentOwner.clearAccepted(submittedCurrentness),
         }).then((result) => {
             if (
                 result.status === 'blocked'
@@ -522,7 +490,6 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
             }
         }), { tag: 'SessionParticipantComposer.sendMessage' });
     }, [
-        clearAcceptedParticipantSnapshot,
         props.browserContextState,
         props.canSendMessages,
         props.executionRunDelivery,
@@ -531,6 +498,7 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
         props.sessionId,
         participantMachineTarget?.machineId,
         participantServerId,
+        participantComposerDocumentOwner,
         readParticipantComposerSnapshot,
         updateParticipantComposerDocument,
     ]);
@@ -553,14 +521,14 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
                 composerInputLock={composerInputEffects.composerInputLock}
                 onChangeText={(text) => {
                     updateParticipantComposerDocument({
-                        ...documentRef.current,
+                        ...readParticipantDocument(),
                         text,
                     }, true);
                 }}
                 structuredInputMentions={document.mentions}
                 onStructuredInputMentionsChange={(mentions) => {
                     updateParticipantComposerDocument({
-                        ...documentRef.current,
+                        ...readParticipantDocument(),
                         mentions,
                     }, true);
                 }}

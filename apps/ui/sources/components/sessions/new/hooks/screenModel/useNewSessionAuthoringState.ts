@@ -7,7 +7,7 @@ import {
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import { resolveNewSessionCompatAgentType } from '@/components/sessions/new/modules/resolveNewSessionCompatAgentType';
-import { clearNewSessionDraft, saveNewSessionDraft } from '@/sync/domains/state/persistence';
+import { writeNewSessionAuthoringDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
@@ -60,6 +60,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     backendNewSessionOptionStateByTargetKey: BackendNewSessionOptionStateByTargetKey;
     composerAttachments?: BuildPersistedInputs['composerAttachments'];
     draftScope?: ServerAccountScope | null;
+    draftId?: string;
     launchUserAttemptId?: string | null;
 }>): Readonly<{
     authoringContext: ReturnType<typeof buildNewSessionAuthoringContext>;
@@ -216,12 +217,13 @@ export function useNewSessionAuthoringState(params: Readonly<{
             return;
         }
 
-        if (params.draftScope) {
-            saveNewSessionDraft(draft, params.draftScope);
-            return;
-        }
-        clearNewSessionDraft();
-    }, [params.draftScope]);
+        if (!params.draftScope || !params.draftId) return;
+        writeNewSessionAuthoringDraftToRepository({
+            scope: params.draftScope,
+            draftId: params.draftId,
+            draft,
+        });
+    }, [params.draftId, params.draftScope]);
 
     const disableDraftPersistence = React.useCallback(() => {
         draftPersistenceEnabledRef.current = false;

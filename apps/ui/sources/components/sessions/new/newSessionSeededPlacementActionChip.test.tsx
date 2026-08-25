@@ -20,7 +20,7 @@ describe('createNewSessionSeededPlacementActionChip', () => {
             rootPath: '/worktrees/web',
             reachable: true,
             worktrees: [],
-        }] as const;
+        }];
 
         const chip = createNewSessionSeededPlacementActionChip({ candidates, onSelect });
         expect(chip?.collapsedOptionsPopover).toMatchObject({ presentation: 'list' });

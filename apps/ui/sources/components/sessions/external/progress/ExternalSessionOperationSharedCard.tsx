@@ -17,6 +17,7 @@ import {
 } from './externalSessionOperationProgressPresentation';
 import { presentExternalSessionOperationShared } from './externalSessionOperationSharedPresentation';
 import { ExternalSessionOperationAccessibilityStatus } from './ExternalSessionOperationAccessibilityStatus';
+import { useExternalSessionOperationActionFocusReturn } from './useExternalSessionOperationActionFocusReturn';
 
 export const ExternalSessionOperationSharedCard = React.memo(
     function ExternalSessionOperationSharedCard(props: Readonly<{
@@ -28,6 +29,8 @@ export const ExternalSessionOperationSharedCard = React.memo(
          * recoveries were a remount or an offline -> online transition.
          */
         onCheckAgain?: () => void;
+        /** The transcript row owns focus once this card is removed or hydrates into another card. */
+        onTranscriptOperationActionTransition?: (kind: 'dismiss' | 'check_again') => void;
     }>) {
         const presentation = presentExternalSessionOperationShared(props.presentation);
         const canDismiss = props.onDismiss !== undefined
@@ -44,6 +47,13 @@ export const ExternalSessionOperationSharedCard = React.memo(
         const readFailedSubtitle = onCheckAgain
             ? t('externalSessions.operationStatusOwnerReadFailed')
             : null;
+        const availableActionKinds = [
+            ...(onCheckAgain ? ['check_again' as const] : []),
+            ...(canDismiss ? ['dismiss' as const] : []),
+        ];
+        const { actionNodeRef, armActionFocusReturn } = useExternalSessionOperationActionFocusReturn({
+            availableActionKinds,
+        });
         const accessibilityAnnouncement = [
             t(presentation.titleKey),
             t(presentation.statusKey),
@@ -81,9 +91,14 @@ export const ExternalSessionOperationSharedCard = React.memo(
                     {onCheckAgain && checkAgainTitle && readFailedSubtitle ? (
                         <Item
                             testID="external-session-operation-action-check-again"
+                            pressableRef={actionNodeRef('check_again')}
                             title={checkAgainTitle}
                             subtitle={readFailedSubtitle}
-                            onPress={onCheckAgain}
+                            onPress={() => {
+                                armActionFocusReturn('check_again');
+                                props.onTranscriptOperationActionTransition?.('check_again');
+                                onCheckAgain();
+                            }}
                             showChevron={false}
                             accessibilityRole="button"
                             accessibilityLabel={[checkAgainTitle, readFailedSubtitle].join('. ')}
@@ -92,11 +107,15 @@ export const ExternalSessionOperationSharedCard = React.memo(
                     {canDismiss && dismissTitle ? (
                         <Item
                             testID="external-session-operation-action-dismiss"
+                            pressableRef={actionNodeRef('dismiss')}
                             title={dismissTitle}
-                            onPress={() => props.onDismiss?.({
-                                operationId: props.presentation.operationId,
-                                revision: props.presentation.revision,
-                            })}
+                            onPress={() => {
+                                props.onTranscriptOperationActionTransition?.('dismiss');
+                                props.onDismiss?.({
+                                    operationId: props.presentation.operationId,
+                                    revision: props.presentation.revision,
+                                });
+                            }}
                             showChevron={false}
                             accessibilityRole="button"
                             accessibilityLabel={dismissTitle}

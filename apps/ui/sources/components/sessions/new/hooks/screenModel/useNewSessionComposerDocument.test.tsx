@@ -14,11 +14,23 @@ import {
     applyComposerPresentationTransaction,
     createComposerPresentationHostHandlers,
     readComposerPresentationSnapshot,
+    subscribeComposerPresentationTarget,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import {
     normalizePluginUiProjection,
     type PluginUiComposerAttachmentProjection,
 } from '@/sync/domains/plugins/ui/projection';
+import {
+    clearAllNewSessionComposerAttachmentSeeds,
+    readNewSessionComposerAttachmentSeeds,
+    writeNewSessionComposerAttachmentSeeds,
+} from '@/components/sessions/new/attachments/newSessionComposerAttachmentSeedStore';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import {
+    getSessionDraftSnapshot,
+    resetSessionDraftRepositoryForTests,
+    writeNewSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import { createNewSessionPromptStore } from './newSessionPromptStore';
 import { useNewSessionComposerDocument } from './useNewSessionComposerDocument';
@@ -157,10 +169,55 @@ function newSessionComposerCatalogEntry(): DaemonPluginUiComposerSurfaceCatalogE
 }
 
 afterEach(() => {
+    clearAllNewSessionComposerAttachmentSeeds();
+    resetSessionDraftRepositoryForTests();
     standardCleanup();
 });
 
 describe('useNewSessionComposerDocument', () => {
+    it('mints every author-shaped seed into the canonical mounted composer snapshot', async () => {
+        writeNewSessionComposerAttachmentSeeds('draft-seeded', [{
+            pluginId: 'acme.issues',
+            attachmentLocalId: 'issue',
+            value: { key: '42', value: { issueId: 42 }, presentation: { label: 'Issue #42' } },
+        }, {
+            pluginId: 'acme.issues',
+            attachmentLocalId: 'issue',
+            value: { key: '99', value: { issueId: 99 }, presentation: { label: 'Issue #99' } },
+        }]);
+
+        const hook = await renderHook(() => useNewSessionComposerDocument({
+            draftId: 'draft-seeded',
+            promptStore: createNewSessionPromptStore(''),
+            persistedAttachments: [],
+            composerAttachmentEntriesById: entriesById(issueAttachmentCatalogEntry),
+            scopeKey: 'server-a/account-a',
+            canSubmitRef: { current: true },
+            isSubmitting: false,
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const attachments = hook.getCurrent().captureSubmissionSnapshot()?.attachments ?? [];
+        expect(attachments).toHaveLength(2);
+        expect(attachments.map((attachment) => attachment.key)).toEqual(['42', '99']);
+        expect(attachments).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                instanceId: expect.any(String),
+                attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+            }),
+            expect.objectContaining({
+                instanceId: expect.any(String),
+                attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                presentation: { label: 'Issue #99', typeLabel: 'Issue' },
+            }),
+        ]));
+        expect(new Set(attachments.map((attachment) => attachment.instanceId)).size).toBe(2);
+        expect(readNewSessionComposerAttachmentSeeds('draft-seeded')).toEqual([]);
+
+        await hook.unmount();
+    });
+
     it('projects New Session regions through the shared host on the app target', async () => {
         pluginSurfaceHostSpy.mockClear();
         const promptStore = createNewSessionPromptStore('Draft prompt');
@@ -513,6 +570,171 @@ describe('useNewSessionComposerDocument', () => {
         ]);
 
         await remounted.unmount();
+    });
+
+    it('preserves a locally edited ephemeral document when its durable owner arrives with older text', async () => {
+        const draftId = 'draft-handoff-local';
+        const durableScope = Object.freeze({
+            serverId: 'server-a',
+            accountId: 'account-a',
+        }) satisfies ServerAccountScope;
+        const promptStore = createNewSessionPromptStore('Continue @Nightly%20review now');
+        const sessionMention = {
+            kind: 'happier.session',
+            ref: 'session:sess-42',
+            token: '@Nightly%20review',
+            label: 'Nightly review',
+        } as const;
+        const hook = await renderHook((props: Readonly<{
+            draftScope: ServerAccountScope | null;
+            scopeKey: string | null;
+        }>) => useNewSessionComposerDocument({
+            draftId,
+            draftScope: props.draftScope,
+            promptStore,
+            persistedAttachments: [issueAttachment],
+            composerAttachmentEntriesById: entriesById(issueAttachmentCatalogEntry),
+            initialStructuredInputReferences: [sessionMention],
+            scopeKey: props.scopeKey,
+            canSubmitRef: { current: true },
+            isSubmitting: false,
+        }), {
+            initialProps: {
+                draftScope: null,
+                scopeKey: null,
+            } as Readonly<{
+                draftScope: ServerAccountScope | null;
+                scopeKey: string | null;
+            }>,
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const localText = 'Continue @Nightly%20review now, locally edited';
+        await act(async () => {
+            promptStore.setPrompt(localText);
+        });
+        writeNewSessionDraft({
+            scope: durableScope,
+            draftId,
+            patch: { text: 'Continue @Nightly%20review now' },
+            materializationIntent: 'userEdit',
+        });
+
+        await hook.rerender({
+            draftScope: durableScope,
+            scopeKey: 'server-a/account-a',
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(promptStore.getPrompt()).toBe(localText);
+        expect(hook.getCurrent().captureSubmissionSnapshot()).toMatchObject({
+            text: localText,
+            references: [{ ...sessionMention, start: 9, end: 26 }],
+            attachments: [{ instanceId: issueAttachment.instanceId }],
+        });
+        expect(getSessionDraftSnapshot(durableScope, { kind: 'newSession', draftId })?.document.composer)
+            .toMatchObject({
+                text: { value: localText },
+                mentions: { value: [expect.objectContaining({ tokenText: sessionMention.token })] },
+                attachments: { value: [expect.objectContaining({ instanceId: issueAttachment.instanceId })] },
+            });
+
+        await hook.unmount();
+    });
+
+    it('adopts the durable document when an untouched ephemeral editor gains its scope', async () => {
+        const draftId = 'draft-handoff-clean';
+        const durableScope = Object.freeze({
+            serverId: 'server-a',
+            accountId: 'account-a',
+        }) satisfies ServerAccountScope;
+        const promptStore = createNewSessionPromptStore('');
+        const hook = await renderHook((props: Readonly<{
+            draftScope: ServerAccountScope | null;
+            scopeKey: string | null;
+        }>) => useNewSessionComposerDocument({
+            draftId,
+            draftScope: props.draftScope,
+            promptStore,
+            persistedAttachments: [],
+            composerAttachmentEntriesById: {},
+            scopeKey: props.scopeKey,
+            canSubmitRef: { current: true },
+            isSubmitting: false,
+        }), {
+            initialProps: {
+                draftScope: null,
+                scopeKey: null,
+            } as Readonly<{
+                draftScope: ServerAccountScope | null;
+                scopeKey: string | null;
+            }>,
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        writeNewSessionDraft({
+            scope: durableScope,
+            draftId,
+            patch: { text: 'Durable draft text' },
+            materializationIntent: 'userEdit',
+        });
+        await hook.rerender({
+            draftScope: durableScope,
+            scopeKey: 'server-a/account-a',
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(promptStore.getPrompt()).toBe('Durable draft text');
+        expect(hook.getCurrent().captureSubmissionSnapshot()?.text).toBe('Durable draft text');
+
+        await hook.unmount();
+    });
+
+    it('keeps composer state and presentation quiet for an authoring-only repository mutation', async () => {
+        const draftId = 'draft-authoring-only';
+        const draftScope = Object.freeze({
+            serverId: 'server-a',
+            accountId: 'account-a',
+        }) satisfies ServerAccountScope;
+        writeNewSessionDraft({
+            scope: draftScope,
+            draftId,
+            patch: { text: 'Stable composer text', attachments: [issueAttachment] },
+            materializationIntent: 'userEdit',
+        });
+        const hook = await renderHook(() => useNewSessionComposerDocument({
+            draftId,
+            draftScope,
+            promptStore: createNewSessionPromptStore(''),
+            persistedAttachments: [],
+            composerAttachmentEntriesById: entriesById(issueAttachmentCatalogEntry),
+            scopeKey: 'server-a/account-a',
+            canSubmitRef: { current: true },
+            isSubmitting: false,
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const before = hook.getCurrent();
+        const presentationChanged = vi.fn();
+        const unsubscribe = subscribeComposerPresentationTarget(before.ref, presentationChanged);
+
+        await act(async () => {
+            writeNewSessionDraft({
+                scope: draftScope,
+                draftId,
+                patch: { authoring: { machineId: 'machine-b' } },
+                materializationIntent: 'userEdit',
+            });
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(hook.getCurrent()).toBe(before);
+        expect(hook.getCurrent().attachments).toBe(before.attachments);
+        expect(hook.getCurrent().structuredInputMentions).toBe(before.structuredInputMentions);
+        expect(presentationChanged).not.toHaveBeenCalled();
+
+        unsubscribe();
+        await hook.unmount();
     });
 
     it('retires the old document identity when the account-scoped draft owner changes', async () => {

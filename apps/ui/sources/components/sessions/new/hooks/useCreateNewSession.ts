@@ -18,7 +18,7 @@ import { resolveNewSessionServerTarget } from '@/sync/domains/server/selection/s
 import { getMissingRequiredConfigEnvVarNames } from '@/utils/profiles/profileConfigRequirements';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secretRequirementApply';
-import { clearNewSessionDraft, saveSessionDrafts } from '@/sync/domains/state/persistence';
+import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { isProfileCompatibleWithBackendTarget, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -29,6 +29,7 @@ import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/c
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildLastUsedBackendTargetSettings } from '@/agents/backendCatalog/buildLastUsedBackendTargetSettings';
 import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getNewSessionPreflightIssues } from '@/agents/catalog/catalog';
+import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
 import { transformProfileToEnvironmentVars } from '@/components/sessions/new/modules/profileHelpers';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { getMachineCapabilitiesSnapshot } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -102,6 +103,7 @@ import {
 import {
     submitPluginEventAutomation,
 } from '@/components/automations/editor/pluginEventAutomationSubmit';
+import { confirmPluginEventAutomationSubmission } from '@/components/automations/editor/pluginEventAutomationSubmissionConfirmation';
 import type {
     PluginEventAutomationResolvedTarget,
     PluginEventAutomationTargetKind,
@@ -129,39 +131,26 @@ import {
     resolveSessionSpawnNewActionFailureMessageKey,
     resolveSessionSpawnNewResultFailureMessageKey,
 } from '@/sync/ops/actions/sessionSpawnNewAction';
-
-function getActiveNewSessionDraftScope() {
-    return storage.getState().profileScope ?? null;
-}
-
-function clearNewSessionDraftForLaunchParams(params: Readonly<{
-    draftScope?: ServerAccountScope | null;
-}>): void {
-    const hasExplicitDraftScope = Object.prototype.hasOwnProperty.call(params, 'draftScope');
-    const scope = hasExplicitDraftScope ? params.draftScope : getActiveNewSessionDraftScope();
-    if (scope) {
-        clearNewSessionDraft(scope);
-        return;
-    }
-    clearNewSessionDraft();
-}
-
-function isSessionHydratedForDraftRestore(sessionId: string): boolean {
-    return Boolean(storage.getState().sessions[sessionId]);
-}
+import {
+    captureNewSessionDraftLaunchCurrentness,
+    captureNewSessionDraftWorkflowCurrentness,
+    clearCapturedNewSessionDraftAfterLaunch,
+} from '@/components/sessions/new/modules/newSessionDraftLifecycle';
+import { actionOperationSelectors } from '@/sync/domains/actionOperations/actionOperationSelectors';
 
 function preserveCreatedSessionDraft(params: Readonly<{
     sessionId: string;
     draftText: string;
+    scope: ServerAccountScope | null | undefined;
 }>): void {
     const draftText = params.draftText.trim();
-    if (!draftText) {
-        return;
-    }
-    saveSessionDrafts({ [params.sessionId]: draftText });
-    if (isSessionHydratedForDraftRestore(params.sessionId)) {
-        storage.getState().updateSessionDraft(params.sessionId, draftText);
-    }
+    if (!draftText || !params.scope) return;
+    writeExistingSessionDraft({
+        scope: params.scope,
+        sessionId: params.sessionId,
+        patch: { text: draftText },
+        materializationIntent: 'seeded',
+    });
 }
 
 type MutableSettingsDelta = {
@@ -326,6 +315,13 @@ export function useCreateNewSession(params: Readonly<{
     agentType: string;
     /** Explicit bundled behavior backing; absent for unbacked external Agents. */
     staticAgentId?: AgentId | null;
+    /**
+     * The OPERATIONAL Agent identity of the current selection — the Agent that
+     * owns the backend at runtime, bundled or installed. It is the same identity
+     * the composer renders this Agent's declared options under, so the spawn
+     * envelope is built from the declaration the user actually saw.
+     */
+    runtimeCarrierAgentId?: AgentId | null;
     backendTarget?: BackendTargetRefV2;
     spawnBackendTarget?: BackendTargetRefV2Input;
     transcriptStorage?: 'persisted' | 'direct';
@@ -376,6 +372,7 @@ export function useCreateNewSession(params: Readonly<{
         'mergedBackendProjectionById' | 'mergedProviderProjectionById'
     > | null;
     draftScope?: ServerAccountScope | null;
+    draftId?: string;
     disableDraftPersistence?: () => void;
     onLaunchAttemptChange?: (attempt: NewSessionLaunchAttempt | null) => void;
     launchIntentSignature: string;
@@ -458,6 +455,7 @@ export function useCreateNewSession(params: Readonly<{
         }
         const current = latestParamsRef.current;
         const staticAgentId = resolveStaticAgentId(current);
+        const spawnBehaviorAgentId = resolveNewSessionBehaviorAgentId(current);
         const selectedMachineId = current.selectedMachineId;
         if (current.authoringCommitPending === true) {
             reportAfterCreatedSettlement({ status: 'rejected' });
@@ -490,6 +488,22 @@ export function useCreateNewSession(params: Readonly<{
         setProviderLaunchFailure(null);
         createInFlightRef.current = true;
         current.setIsCreating(true);
+        let settlementOwnedByCanonicalOperation = false;
+        const submittedDraftCurrentness = current.draftScope && current.draftId
+            ? captureNewSessionDraftWorkflowCurrentness({
+                scope: current.draftScope,
+                draftId: current.draftId,
+            })
+            : null;
+        const clearCompletedDraft = async (launchUserAttemptId?: string): Promise<void> => {
+            if (!current.draftScope || !current.draftId) return;
+            await clearCapturedNewSessionDraftAfterLaunch({
+                scope: current.draftScope,
+                draftId: current.draftId,
+                currentness: submittedDraftCurrentness,
+                launchUserAttemptId,
+            });
+        };
 
         try {
             const resolvedTargetServerId = resolveNewSessionLaunchTargetServerId(current);
@@ -679,8 +693,13 @@ export function useCreateNewSession(params: Readonly<{
                         };
                     },
                     resolveTarget: current.resolveEventAutomationTarget,
+                    confirmSubmission: confirmPluginEventAutomationSubmission,
                     isCurrent: isLaunchScopeStillActive,
                 });
+                if (eventSubmission.kind === 'cancelled') {
+                    current.setIsCreating(false);
+                    return;
+                }
                 if (eventSubmission.kind === 'unavailable') {
                     if (eventSubmission.reason === 'account') {
                         Modal.alert(
@@ -696,7 +715,7 @@ export function useCreateNewSession(params: Readonly<{
                     return;
                 }
                 current.disableDraftPersistence?.();
-                clearNewSessionDraftForLaunchParams(current);
+                await clearCompletedDraft();
                 reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
                 current.router.replace((eventSubmission.kind === 'updated'
                     ? `/automations/${eventSubmission.automationId}`
@@ -814,9 +833,9 @@ export function useCreateNewSession(params: Readonly<{
                 }
             }
 
-            if (staticAgentId) {
+            if (spawnBehaviorAgentId) {
                 environmentVariables = buildSpawnEnvironmentVariablesFromUiState({
-                    agentId: staticAgentId,
+                    agentId: spawnBehaviorAgentId,
                     settings: current.settings,
                     machineId: selectedMachineId,
                     environmentVariables,
@@ -899,9 +918,9 @@ export function useCreateNewSession(params: Readonly<{
                 ? current.settings.sessionWindowsTerminalWindowName.trim()
                 : '';
             const normalizedSessionPrompt = sessionPrompt.trim();
-            const spawnSessionExtras: ReturnType<typeof buildSpawnSessionExtrasFromUiState> = staticAgentId
+            const spawnSessionExtras: ReturnType<typeof buildSpawnSessionExtrasFromUiState> = spawnBehaviorAgentId
                 ? buildSpawnSessionExtrasFromUiState({
-                    agentId: staticAgentId,
+                    agentId: spawnBehaviorAgentId,
                     settings: current.settings,
                     machineId: selectedMachineId,
                     resumeSessionId: current.resumeSessionId,
@@ -1029,8 +1048,13 @@ export function useCreateNewSession(params: Readonly<{
                     },
                     buildExecutionRun: () => null,
                     resolveTarget: current.resolveEventAutomationTarget,
+                    confirmSubmission: confirmPluginEventAutomationSubmission,
                     isCurrent: isLaunchScopeStillActive,
                 });
+                if (eventSubmission.kind === 'cancelled') {
+                    current.setIsCreating(false);
+                    return;
+                }
                 if (eventSubmission.kind === 'unavailable') {
                     if (eventSubmission.reason === 'account') {
                         Modal.alert(
@@ -1046,7 +1070,7 @@ export function useCreateNewSession(params: Readonly<{
                     return;
                 }
                 current.disableDraftPersistence?.();
-                clearNewSessionDraftForLaunchParams(current);
+                await clearCompletedDraft();
                 reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
                 current.router.replace((eventSubmission.kind === 'updated'
                     ? `/automations/${eventSubmission.automationId}`
@@ -1098,7 +1122,7 @@ export function useCreateNewSession(params: Readonly<{
                     }
                     await sync.updateAutomation(automationEditId, normalizedAutomationInput);
                     current.disableDraftPersistence?.();
-                    clearNewSessionDraftForLaunchParams(current);
+                    await clearCompletedDraft();
                     await sync.refreshAutomations();
                     reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
                     current.router.replace(`/automations/${automationEditId}` as any);
@@ -1111,7 +1135,7 @@ export function useCreateNewSession(params: Readonly<{
                     assignments: [{ machineId: selectedMachineId, enabled: true, priority: 100 }],
                 });
                 current.disableDraftPersistence?.();
-                clearNewSessionDraftForLaunchParams(current);
+                await clearCompletedDraft();
                 await sync.refreshAutomations();
                 reportAfterCreatedSettlement({ status: 'accepted', sessionId: null });
                 current.router.replace('/automations' as any);
@@ -1150,6 +1174,13 @@ export function useCreateNewSession(params: Readonly<{
             });
             if (!retryableLaunchAttempt && launchUserAttemptIdForCurrentIntentRef.current !== launchAttempt.attemptId) {
                 current.onLaunchUserAttemptIdChange?.(launchAttempt.attemptId);
+            }
+            if (current.draftScope && current.draftId && submittedDraftCurrentness) {
+                captureNewSessionDraftLaunchCurrentness({
+                    scope: current.draftScope,
+                    draftId: current.draftId,
+                    launchUserAttemptId: launchAttempt.attemptId,
+                });
             }
             publishLaunchAttempt(launchAttempt);
             let createdSessionId = launchAttempt.createdSessionId;
@@ -1203,8 +1234,8 @@ export function useCreateNewSession(params: Readonly<{
                 actionOperationPresentationCoordinator.register({
                     requestId: launchAttempt.attemptId,
                     onStart: 'current',
-                    ...(current.draftScope
-                        ? { origin: createNewSessionActionOperationOrigin(current.draftScope) }
+                    ...(current.draftScope && current.draftId
+                        ? { origin: createNewSessionActionOperationOrigin(current.draftScope, current.draftId) }
                         : {}),
                 });
                 const actionResult = await (async () => {
@@ -1213,10 +1244,39 @@ export function useCreateNewSession(params: Readonly<{
                             surface: 'ui',
                             actionRequestId: launchAttempt.attemptId,
                         });
+                    } catch (error) {
+                        const draftAccountId = current.draftScope?.accountId.trim() ?? '';
+                        const canonicalOperation = draftAccountId
+                            ? actionOperationSelectors.selectSnapshotByRequestId(
+                                actionOperationStore.getSnapshot(),
+                                launchAttempt.attemptId,
+                                draftAccountId,
+                            )
+                            : null;
+                        if (
+                            canonicalOperation?.actionId === 'session.spawn_new'
+                            && (
+                                canonicalOperation.state === 'accepted'
+                                || canonicalOperation.state === 'running'
+                                || canonicalOperation.state === 'succeeded'
+                                || canonicalOperation.state === 'failed'
+                                || canonicalOperation.state === 'cancelled'
+                            )
+                        ) {
+                            settlementOwnedByCanonicalOperation = canonicalOperation.state === 'accepted'
+                                || canonicalOperation.state === 'running'
+                                || canonicalOperation.state === 'succeeded';
+                            if (mountedRef.current) {
+                                current.setIsCreating(false);
+                            }
+                            return null;
+                        }
+                        throw error;
                     } finally {
                         releaseUserRequestLease();
                     }
                 })();
+                if (actionResult === null) return;
                 if (!actionResult.ok) {
                     launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
                         phase: 'spawning',
@@ -1389,6 +1449,7 @@ export function useCreateNewSession(params: Readonly<{
                             return 'session';
                         },
                     });
+                    actionOperationPresentationCoordinator.acknowledgeRequestPresented(launchAttempt.attemptId);
                     createdSessionRouteOpened = true;
                     return true;
                 };
@@ -1570,6 +1631,7 @@ export function useCreateNewSession(params: Readonly<{
                         preserveCreatedSessionDraft({
                             sessionId: createdSessionId,
                             draftText: initialMessageText || sessionPrompt,
+                            scope: current.draftScope,
                         });
                     }
                     if (mountedRef.current) {
@@ -1587,6 +1649,7 @@ export function useCreateNewSession(params: Readonly<{
                     preserveCreatedSessionDraft({
                         sessionId: createdSessionId,
                         draftText: initialMessageText || sessionPrompt,
+                        scope: current.draftScope,
                     });
                 }
 
@@ -1606,7 +1669,7 @@ export function useCreateNewSession(params: Readonly<{
                     if (mountedRef.current) {
                         current.disableDraftPersistence?.();
                     }
-                    clearNewSessionDraftForLaunchParams(current);
+                    await clearCompletedDraft(launchAttempt.attemptId);
                 }
             } else {
                 throw new Error('Created session ID is required to complete launch.');
@@ -1657,7 +1720,9 @@ export function useCreateNewSession(params: Readonly<{
             Modal.alert(t('common.error'), errorMessage);
             latestParamsRef.current.setIsCreating(false);
         } finally {
-            reportAfterCreatedSettlement({ status: 'rejected' });
+            if (!settlementOwnedByCanonicalOperation) {
+                reportAfterCreatedSettlement({ status: 'rejected' });
+            }
             createInFlightRef.current = false;
         }
     }, [applySettings, mountedRef, publishLaunchAttempt]);

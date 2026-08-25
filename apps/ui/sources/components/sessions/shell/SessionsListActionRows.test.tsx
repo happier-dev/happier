@@ -95,9 +95,6 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: (props: React.PropsWithChildren<Record<string, unknown>>) =>
         React.createElement('ItemGroup', props, props.children),
 }));
-vi.mock('@/components/ui/icons/Icon', () => ({
-    Icon: (props: Record<string, unknown>) => React.createElement('Icon', props),
-}));
 vi.mock('@/components/appShell/destinations/compactAppDestinationCatalog', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/components/appShell/destinations/compactAppDestinationCatalog')>()),
     useCompactAppDestinations: () => compactDestinationState.value,

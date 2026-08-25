@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import {
+    isNativeAutomaticModelSelectionInputV1,
     readProviderSettingsFromAccountSettingsV1,
     type BackendTargetRefV2,
     type SessionModelSelectionV1,
@@ -217,7 +218,13 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         setSelectedConfigOverrides(nextSelection.configOverrides);
         props.onSelectionChange?.({
             ...nextSelection,
-            modelLabel: nextSelection.modelId === 'default'
+            // `default` names the Agent's own automatic model only when no
+            // Provider connection is bound; a Provider may serve a model
+            // literally named `default`, and that choice keeps its label.
+            modelLabel: isNativeAutomaticModelSelectionInputV1({
+                providerConnectionId: nextSelection.modelSelection?.ref.providerConnectionId ?? null,
+                modelId: nextSelection.modelId,
+            })
                 ? null
                 : resolveEffectiveModelLabel(modelOptions, nextSelection.modelId),
         });

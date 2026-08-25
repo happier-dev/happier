@@ -18,6 +18,7 @@ import { getSessionName, getSessionStatus, type SessionStatus, type SessionWorki
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { LruMap } from '@/utils/cache/lruMap';
 import { t } from '@/text';
+import type { ExistingSessionDraftProjection } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import { getTagsForSession, sessionTagKey } from './sessionTagUtils';
 import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
@@ -86,6 +87,7 @@ export type SessionListRowViewModel = Readonly<{
     isAttentionStanding: boolean;
     /** Whether the Keep / Remove action means anything at all (attention band on). */
     attentionStandingEnabled: boolean;
+    draft: ExistingSessionDraftProjection | null;
 }>;
 
 const EMPTY_SESSION_LIST_ROW_VIEW_MODELS: ReadonlyArray<SessionListRowViewModel | null> = [];
@@ -122,6 +124,8 @@ export type BuildSessionListRowViewModelInput = Readonly<{
     showPinnedServerBadge: boolean;
     attentionStandingEnabled?: boolean;
     attentionStandingPolicy?: SessionAttentionStandingPolicy;
+    existingDraft?: ExistingSessionDraftProjection | null;
+    existingDraftBySessionKey?: ReadonlyMap<string, ExistingSessionDraftProjection>;
 }>;
 
 export function buildSessionListRowViewModel(input: BuildSessionListRowViewModelInput): SessionListRowViewModel {
@@ -215,6 +219,8 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
             ? resolveSessionAttentionStanding(input.attentionStandingPolicy, sessionKey)
             : false,
         attentionStandingEnabled: input.attentionStandingEnabled === true && sessionKey != null,
+        draft: input.existingDraft
+            ?? (sessionKey ? input.existingDraftBySessionKey?.get(sessionKey) ?? null : null),
     };
     const signature = buildRowViewModelSignature(rowViewModel);
     const cacheKey = sessionKey ?? `session:${sessionId}`;
@@ -256,6 +262,7 @@ export function buildSessionListRowViewModels(input: Readonly<{
     showPinnedServerBadge: boolean;
     attentionStandingEnabled?: boolean;
     attentionStandingPolicy?: SessionAttentionStandingPolicy;
+    existingDraftBySessionKey?: ReadonlyMap<string, ExistingSessionDraftProjection>;
 }>): ReadonlyArray<SessionListRowViewModel | null> {
     if (input.listItems.length === 0) {
         return EMPTY_SESSION_LIST_ROW_VIEW_MODELS;
@@ -312,6 +319,9 @@ function buildRowViewModelSignature(viewModel: SessionListRowViewModel): string 
         viewModel.attentionStanding ? '1' : '0',
         viewModel.isAttentionStanding ? '1' : '0',
         viewModel.attentionStandingEnabled ? '1' : '0',
+        viewModel.draft?.updatedAt ?? '',
+        viewModel.draft?.preview ?? '',
+        viewModel.draft?.status ?? '',
     ].join('\u0002');
 }
 

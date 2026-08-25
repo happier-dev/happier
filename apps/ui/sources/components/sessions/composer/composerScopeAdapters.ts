@@ -1,5 +1,6 @@
 import {
     buildQualifiedPluginContributionKey,
+    ComposerAttachmentDraftV1Schema,
     isValidPluginJsonSchemaValue,
     readHappierStructuredInputV1FromMeta,
     type ComposerAttachmentDraftV1,
@@ -34,6 +35,11 @@ type ComposerMentionIdentity = Omit<ComposerMentionRef, 'start' | 'end'>;
  */
 export type ComposerAttachmentAvailabilityCatalog = Readonly<{
     entriesById: Readonly<Record<string, PluginUiComposerAttachmentProjection>> | null | undefined;
+}>;
+
+export type ComposerAttachmentDraftAvailabilitySummary = Readonly<{
+    pluginUnavailable: boolean;
+    attachmentNeedsAttention: boolean;
 }>;
 
 /**
@@ -95,6 +101,36 @@ export function composerAttachmentDraftToView(
         ...draft,
         availability: resolveComposerAttachmentAvailability(draft, catalog),
     };
+}
+
+/**
+ * Reduces persisted opaque attachment values to presentation-safe currentness
+ * flags. Callers never need to retain or expose the attachment records, daemon
+ * resources, or catalog generation in their own state.
+ */
+export function summarizeComposerAttachmentDraftAvailability(input: Readonly<{
+    values: readonly unknown[];
+    catalog: ComposerAttachmentAvailabilityCatalog;
+    installedPluginIds: ReadonlySet<string>;
+}>): ComposerAttachmentDraftAvailabilitySummary {
+    let pluginUnavailable = false;
+    let attachmentNeedsAttention = false;
+    for (const value of input.values) {
+        const parsed = ComposerAttachmentDraftV1Schema.safeParse(value);
+        if (!parsed.success) {
+            attachmentNeedsAttention = true;
+            continue;
+        }
+        const draft = parsed.data;
+        if (!input.installedPluginIds.has(draft.attachment.pluginId)) {
+            pluginUnavailable = true;
+            continue;
+        }
+        if (composerAttachmentDraftToView(draft, input.catalog).availability.status !== 'ready') {
+            attachmentNeedsAttention = true;
+        }
+    }
+    return { pluginUnavailable, attachmentNeedsAttention };
 }
 
 /** Drops only computed display availability while preserving canonical staged content. */

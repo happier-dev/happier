@@ -141,8 +141,9 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const browseProviderIds = React.useMemo(
         () => listExternalSessionBrowseProviderIds({
             projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+            machineId: effectiveSelectedMachineId,
         }),
-        [daemonMergedProjectionInputs?.pluginProjectionV2],
+        [daemonMergedProjectionInputs?.pluginProjectionV2, effectiveSelectedMachineId],
     );
     const providers = React.useMemo<ReadonlyArray<Readonly<{
         id: ExternalSessionBrowseProviderId;
@@ -179,6 +180,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         if (lockScope) {
             const resolvedOption = resolveExternalSessionBrowseSourceOption({
                 providerId: lockScope.providerId,
+                machineId: effectiveSelectedMachineId,
                 profile,
                 settings,
                 projection: daemonMergedProjectionInputs?.pluginProjectionV2,
@@ -195,12 +197,13 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         if (!selectedProviderId) return [];
         return resolveExternalSessionBrowseSourceOptions({
             providerId: selectedProviderId,
+            machineId: effectiveSelectedMachineId,
             profile,
             settings,
             projection: daemonMergedProjectionInputs?.pluginProjectionV2,
             activeServerId,
         });
-    }, [activeServerId, daemonMergedProjectionInputs?.pluginProjectionV2, lockScope, profile, selectedProviderId, settings]);
+    }, [activeServerId, daemonMergedProjectionInputs?.pluginProjectionV2, effectiveSelectedMachineId, lockScope, profile, selectedProviderId, settings]);
     const [selectedSourceKey, setSelectedSourceKey] = React.useState<string | null>(() => (
         lockScope ? 'locked' : sourceOptions[0]?.key ?? null
     ));
@@ -343,7 +346,6 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         searchTerm: candidateSearchTerm,
         enabled: daemonMergedProjectionReady,
     });
-    const rootRefreshFailed = error !== null && nextCursor === null;
     /**
      * Whether a candidate on screen may be acted on. This is a capability fact about
      * the listing's authority, not a liveness fact about how much of it has arrived:
@@ -362,11 +364,17 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
      * answer the previous one. `candidatesAuthoritative` cannot see that: no new
      * request has started yet. Comparing the visible query with the one the hook
      * actually published closes the interval.
+     *
+     * A reported error is deliberately not a second gate here. A root refresh that
+     * failed never published, so it already leaves the retained rows unauthoritative;
+     * the errors that survive a publication — a cancelled index build, a full search
+     * whose continuation failed — describe how complete the listing is, not whether
+     * the rows in it are real. Reading the error again would strand the user with a
+     * visible, correct, inert list.
      */
     const candidateActionsAllowed = daemonMergedProjectionReady
         && candidatesAuthoritative
-        && publishedSearchTerm === searchQuery.trim()
-        && !rootRefreshFailed;
+        && publishedSearchTerm === searchQuery.trim();
     const candidateActionAuthorityKey = React.useMemo(() => JSON.stringify({
         machineId: effectiveSelectedMachineId,
         serverId: lockScope?.serverId ?? null,
@@ -516,6 +524,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         try {
             const linkEnsureExtras = resolveExternalSessionBrowseLinkEnsureRequestExtras({
                 providerId: selectedProviderId,
+                machineId: effectiveSelectedMachineId,
                 source: selectedSource,
                 candidate,
             });
@@ -524,6 +533,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 : undefined;
             const effectiveSource = resolveExternalSessionBrowseCompatibleLinkSource({
                 providerId: selectedProviderId,
+                machineId: effectiveSelectedMachineId,
                 selectedSource,
                 candidateSource,
             });

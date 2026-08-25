@@ -190,6 +190,20 @@ describe('AgentInputSessionConfigOptionsSection', () => {
         expect(ultracodeRow.props.disabled).not.toBe(true);
     });
 
+    // The option name sits beside the switch as plain text, which names nothing: an adjacent label
+    // is not a programmatic one, so the control announced as a bare "switch, on".
+    it('announces a boolean option switch by the option name', async () => {
+        const screen = await renderSection({
+            configOptions: [EFFORT_OPTION, ULTRACODE_OPTION],
+            ultracodeOn: false,
+            onSelectValue: vi.fn(),
+        });
+
+        const switchHosts = screen.findAll((node) => String(node.type) === 'Switch');
+        expect(switchHosts).toHaveLength(1);
+        expect(switchHosts[0]!.props.accessibilityLabel).toBe('Ultracode');
+    });
+
     // A model whose choice set has no `xhigh` must not point at a segment that does not exist.
     it('dims without highlighting any segment when the forced value is not one of the choices', async () => {
         const screen = await renderSection({

@@ -17,7 +17,7 @@ import {
     clearSessionDraftValuesForSession,
     readSessionDraftValue,
     writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+} from '@/dev/testkit/sessionDraftRepositoryTestkit';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
@@ -1160,12 +1160,12 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await act(async () => {
             agentInput.props.onChangeText('hello now');
         });
-        await act(async () => {
-            agentInput.props.onSend({ forceImmediate: true });
-        });
+        agentInput.props.onSend({ forceImmediate: true });
+        await vi.waitFor(() => expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(1));
 
         expect(pendingFireAndForget.length).toBeGreaterThan(0);
-        expect(findAgentInput(screen).props.value).toBe('');
+        expect(findAgentInput(screen).props.value).toBe('hello now');
+        expect(inputComposerPersistenceSpies.clearTransientInputState).not.toHaveBeenCalled();
         await act(async () => {
             resolveEnqueue?.();
             await pendingFireAndForget[0];
@@ -1215,9 +1215,8 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await act(async () => {
             agentInput.props.onChangeText('owned by pending');
         });
-        await act(async () => {
-            agentInput.props.onSend({ forceImmediate: true });
-        });
+        agentInput.props.onSend({ forceImmediate: true });
+        await vi.waitFor(() => expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(1));
 
         expect(pendingFireAndForget.length).toBeGreaterThan(0);
         await act(async () => {
@@ -1233,7 +1232,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it('restores the submitted draft when send_now enqueue fails before durable acceptance', async () => {
+    it('keeps the submitted draft when send_now enqueue fails before durable acceptance', async () => {
         sessionMetadataOverrides.current = { version: '0.1.0' };
         sessionStateOverrides.current = {
             active: true,
@@ -1268,7 +1267,8 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
         expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(1);
         expect(sendMessageSpy).not.toHaveBeenCalled();
-        expect(inputComposerPersistenceSpies.restoreTransientInputState).toHaveBeenCalledTimes(1);
+        expect(inputComposerPersistenceSpies.clearTransientInputState).not.toHaveBeenCalled();
+        expect(inputComposerPersistenceSpies.restoreTransientInputState).not.toHaveBeenCalled();
         expect(findAgentInput(screen).props.value).toBe('retry me');
 
         await screen.unmount();

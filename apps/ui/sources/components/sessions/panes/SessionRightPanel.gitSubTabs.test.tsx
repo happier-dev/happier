@@ -243,6 +243,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 }));
 
 vi.mock('@/components/workspaces/scm/states', () => ({
+    SourceControlStaleSnapshotNotice: () => null,
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),

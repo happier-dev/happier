@@ -354,6 +354,58 @@ describe('NewSessionSimplePanel', () => {
         );
 
         expect(agentInputPropsRef.current?.statusBadges).toBe(statusBadges);
+        expect(agentInputPropsRef.current?.showStatusPermissionMode).toBe(false);
+    });
+
+    it('places host notice content immediately before the composer and passes trailing status actions through', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        const composerTopContent = React.createElement('ComposerNotice', { testID: 'composer-notice' });
+        const statusTrailingActions = React.createElement('StatusActions', { testID: 'status-actions' });
+        const screen = await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={20}
+                newSessionSidePadding={16}
+                newSessionBottomPadding={8}
+                promptStore={createNewSessionPromptStore('hello')}
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate
+                isCreating={false}
+                composerTopContent={composerTopContent}
+                statusTrailingActions={statusTrailingActions}
+                emptyAutocompleteKinds={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+                containerStyle={{ flex: 0 }}
+            />,
+        );
+
+        const notice = screen.findByTestId('composer-notice');
+        const composer = screen.findByType('AgentInput' as React.ElementType);
+        if (!notice) throw new Error('Expected composer notice');
+        const siblings = notice.parent?.children.filter((child) => typeof child === 'object') ?? [];
+        expect(notice.parent).toBe(composer.parent);
+        expect(siblings.indexOf(composer)).toBe(siblings.indexOf(notice) + 1);
+        expect(agentInputPropsRef.current?.statusTrailingActions).toBe(statusTrailingActions);
+        await screen.unmount();
     });
 
     it('renders the submitted prompt as pending launch content while creation is unresolved', async () => {

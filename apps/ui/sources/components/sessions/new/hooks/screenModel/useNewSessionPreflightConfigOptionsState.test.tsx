@@ -472,4 +472,47 @@ describe('useNewSessionPreflightConfigOptionsState', () => {
 
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
     });
+    it('probes config options for an installed Agent that carries no bundled catalog id', async () => {
+        // An installed Session Agent is a first-class runtime carrier: its
+        // operational Agent id is the probe identity, exactly as the models
+        // probe already treats it. Narrowing the probe identity to the closed
+        // bundled set is what silently removes ACP configuration options from
+        // every installed Agent.
+        vi.resetModules();
+
+        const machineCapabilitiesInvokeMock = vi.fn(async (_machineId: string, _request: unknown) => ({
+            supported: true as const,
+            response: { ok: true as const, result: { configOptions: [] } },
+        }));
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        const { useNewSessionPreflightConfigOptionsState } = await import('./useNewSessionPreflightConfigOptionsState');
+
+        function Harness() {
+            useNewSessionPreflightConfigOptionsState({
+                backendTarget: { kind: 'backend', backendId: 'acme.review' },
+                runtimeCarrierAgentId: 'acme.review',
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            } as any);
+            return null;
+        }
+
+        let root!: renderer.ReactTestRenderer;
+        root = (await renderScreen(React.createElement(Harness))).tree;
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            root.unmount();
+        });
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        const firstCall = machineCapabilitiesInvokeMock.mock.calls[0] as unknown as [unknown, unknown] | undefined;
+        expect(firstCall?.[1]).toMatchObject({
+            id: 'cli.acme.review',
+            method: 'probeConfigOptions',
+        });
+    });
 });

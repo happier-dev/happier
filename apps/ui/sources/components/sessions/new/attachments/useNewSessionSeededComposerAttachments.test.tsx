@@ -29,7 +29,7 @@ const entry = {
     immutableGenerationId: 'triage-generation-1',
     definition: {
         id: 'entry',
-        title: 'Entry',
+        title: { key: 'attachment.entry', fallback: 'Entry' },
         icon: 'file',
         cardinality: 'many',
         valueSchema: { type: 'object' },
@@ -44,6 +44,14 @@ const seeds: readonly NewSessionPluginAttachmentSeedV1[] = [{
         key: 'entry:42',
         value: { entryId: '42' },
         presentation: { label: 'PR #42' },
+    },
+}, {
+    pluginId: 'happier.triage',
+    attachmentLocalId: 'entry',
+    value: {
+        key: 'entry:43',
+        value: { entryId: '43' },
+        presentation: { label: 'Issue #43' },
     },
 }];
 
@@ -120,19 +128,36 @@ describe('useNewSessionSeededComposerAttachments', () => {
             ref,
             entriesById: { [entry.id]: entry },
             isCurrent: () => true,
+            localize: (pluginId, value) => (
+                pluginId === 'happier.triage'
+                && typeof value === 'object'
+                && value !== null
+                && 'key' in value
+                    ? 'Entrada'
+                    : String(value)
+            ),
         }));
 
-        expect(readComposerPresentationSnapshot(ref)?.attachments).toEqual([expect.objectContaining({
-            instanceId: 'host-minted-1',
-            attachment: { pluginId: 'happier.triage', localId: 'entry' },
-            key: 'entry:42',
-            value: { entryId: '42' },
-            presentation: { label: 'PR #42', typeLabel: 'Entry' },
-        })]);
+        expect(readComposerPresentationSnapshot(ref)?.attachments).toEqual([
+            expect.objectContaining({
+                instanceId: 'host-minted-1',
+                attachment: { pluginId: 'happier.triage', localId: 'entry' },
+                key: 'entry:42',
+                value: { entryId: '42' },
+                presentation: { label: 'PR #42', typeLabel: 'Entrada' },
+            }),
+            expect.objectContaining({
+                instanceId: 'host-minted-2',
+                attachment: { pluginId: 'happier.triage', localId: 'entry' },
+                key: 'entry:43',
+                value: { entryId: '43' },
+                presentation: { label: 'Issue #43', typeLabel: 'Entrada' },
+            }),
+        ]);
 
         await hook.rerender();
         await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(readComposerPresentationSnapshot(ref)?.attachments).toHaveLength(1);
+        expect(readComposerPresentationSnapshot(ref)?.attachments).toHaveLength(2);
     });
 
     it('keeps a seed pending until the current Composer catalog admits its contribution', async () => {
@@ -143,15 +168,13 @@ describe('useNewSessionSeededComposerAttachments', () => {
                 ref,
                 entriesById,
                 isCurrent: () => true,
+                localize: (_pluginId, value) => typeof value === 'string' ? value : 'Entry',
             })
         ), { initialProps: {} });
 
         expect(readComposerPresentationSnapshot(ref)?.attachments).toEqual([]);
 
         await hook.rerender({ [entry.id]: entry });
-        expect(readComposerPresentationSnapshot(ref)?.attachments).toEqual([expect.objectContaining({
-            instanceId: 'host-minted-1',
-            attachment: { pluginId: 'happier.triage', localId: 'entry' },
-        })]);
+        expect(readComposerPresentationSnapshot(ref)?.attachments).toHaveLength(2);
     });
 });

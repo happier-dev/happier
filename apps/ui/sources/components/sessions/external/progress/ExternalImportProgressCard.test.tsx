@@ -60,8 +60,28 @@ vi.mock('react-native', async () => {
     };
 });
 
+const itemFocusNodes = vi.hoisted(() => new Map<string, { focus: ReturnType<typeof vi.fn> }>());
+
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: Record<string, unknown> & { children?: React.ReactNode }) => React.createElement('Item', props, props.children),
+    // Test boundary: the real Item forwards `pressableRef` to its Pressable host.
+    // Dropping it here would make every focus-restoration assertion unfalsifiable.
+    Item: ({ pressableRef, ...props }: Record<string, unknown> & {
+        children?: React.ReactNode;
+        pressableRef?: unknown;
+        testID?: string;
+    }) => {
+        const testID = props.testID ?? '';
+        const node = itemFocusNodes.get(testID) ?? { focus: vi.fn() };
+        itemFocusNodes.set(testID, node);
+        React.useEffect(() => {
+            if (typeof pressableRef === 'function') {
+                (pressableRef as (value: unknown) => void)(node);
+                return () => (pressableRef as (value: unknown) => void)(null);
+            }
+            return undefined;
+        });
+        return React.createElement('Item', props, props.children);
+    },
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -555,6 +575,82 @@ describe('ExternalImportProgressCard', () => {
 
         expect(screen.findByTestId('external-session-operation-progress-card')?.props.accessibilityState)
             .toEqual({ busy: false });
+    });
+
+    it('returns focus to a remaining action when the invoked one is replaced', async () => {
+        itemFocusNodes.clear();
+        const onResume = vi.fn(async () => undefined);
+        const onCancel = vi.fn(async () => undefined);
+        const props = {
+            observationContext: 'hydrated' as const,
+            originAvailability: 'online' as const,
+            onDismiss: vi.fn(),
+            onResume,
+            onCancel,
+        };
+        const screen = await renderScreen(React.createElement(ExternalImportProgressCard, {
+            ...props,
+            progress: createProgress({
+                status: 'awaiting_user_resume',
+                retryTargetPhase: 'importing',
+            }),
+        }));
+        expect(screen.findByTestId('external-session-operation-action-resume')).not.toBeNull();
+        expect(screen.findByTestId('external-session-operation-action-cancel')).not.toBeNull();
+
+        await screen.pressByTestIdAsync('external-session-operation-action-resume');
+        expect(onResume).toHaveBeenCalledTimes(1);
+
+        await screen.update(React.createElement(ExternalImportProgressCard, {
+            ...props,
+            progress: createProgress({
+                revision: 10,
+                status: 'running',
+                phase: 'importing',
+            }),
+        }));
+
+        expect(screen.findByTestId('external-session-operation-action-resume')).toBeNull();
+        const cancelNode = itemFocusNodes.get('external-session-operation-action-cancel');
+        const resumeNode = itemFocusNodes.get('external-session-operation-action-resume');
+        expect(cancelNode?.focus).toHaveBeenCalledTimes(1);
+        expect(resumeNode?.focus).not.toHaveBeenCalled();
+    });
+
+    it('leaves focus alone when the invoked action survives its own result', async () => {
+        itemFocusNodes.clear();
+        const onRetry = vi.fn(async () => undefined);
+        const props = {
+            observationContext: 'live' as const,
+            originAvailability: 'online' as const,
+            onDismiss: vi.fn(),
+            onResume: vi.fn(async () => undefined),
+            onRetry,
+            onCancel: vi.fn(async () => undefined),
+        };
+        const failedProgress = () => createProgress({
+            status: 'awaiting_user_resume',
+            phase: 'validating',
+            retryTargetPhase: 'validating',
+        });
+        const screen = await renderScreen(React.createElement(ExternalImportProgressCard, {
+            ...props,
+            progress: failedProgress(),
+        }));
+        expect(screen.findByTestId('external-session-operation-action-retry')).not.toBeNull();
+
+        await screen.pressByTestIdAsync('external-session-operation-action-retry');
+        expect(onRetry).toHaveBeenCalledTimes(1);
+
+        // The retry did not change the operation, so the control the reader
+        // activated is still under them and must keep focus.
+        await screen.update(React.createElement(ExternalImportProgressCard, {
+            ...props,
+            progress: failedProgress(),
+        }));
+
+        expect(screen.findByTestId('external-session-operation-action-retry')).not.toBeNull();
+        for (const node of itemFocusNodes.values()) expect(node.focus).not.toHaveBeenCalled();
     });
 
     it('delegates terminal dismissal with the exact revision without owning its lifetime', async () => {

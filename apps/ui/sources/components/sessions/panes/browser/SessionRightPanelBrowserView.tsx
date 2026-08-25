@@ -50,6 +50,8 @@ export function SessionRightPanelBrowserView(props: Readonly<{
         ...props.overrides,
         machineId,
         serverId,
+        pluginUiProjection: props.pluginProjection?.pluginUiProjection,
+        pluginBrowserProjection: props.pluginProjection?.pluginBrowserProjection,
     });
     // W2-A-1 / A3: supply the real UI→daemon control transport so a daemon-authoritative
     // (chromiumSidecar/streamedBrowserSurface) view dispatches reload/stop/navigate through the

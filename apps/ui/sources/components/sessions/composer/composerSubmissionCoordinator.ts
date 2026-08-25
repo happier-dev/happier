@@ -5,12 +5,15 @@ import type {
     ComposerSnapshotV1,
     SessionExecutionTargetV1,
 } from '@happier-dev/protocol';
+import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 import {
     admitMentionRefsV1ForText,
     ComposerContentHandleV1Schema,
+    hasSessionInputContentV1,
     SessionExecutionTargetV1Schema,
 } from '@happier-dev/protocol';
 
+import { sameComposerAttachmentViews } from '@/components/sessions/composer/composerDocumentOwner';
 import { getComposerMediaContentAvailability } from '@/sync/domains/transfers/runtime/transferRuntime';
 
 type ComposerMentionRef = ComposerSnapshotV1['references'][number];
@@ -97,27 +100,6 @@ export function captureComposerSubmissionSnapshot(snapshot: ComposerSnapshotV1 |
     });
 }
 
-function sameComposerRef(left: ComposerRefV1, right: ComposerRefV1): boolean {
-    if (left.kind !== right.kind) return false;
-
-    switch (left.kind) {
-        case 'session':
-            return right.kind === 'session' && left.sessionId === right.sessionId;
-        case 'newSession':
-            return right.kind === 'newSession' && left.instanceId === right.instanceId;
-        case 'pendingMessage':
-            return right.kind === 'pendingMessage'
-                && left.sessionId === right.sessionId
-                && left.localId === right.localId;
-        case 'participantMessage':
-            return right.kind === 'participantMessage'
-                && left.sessionId === right.sessionId
-                && left.instanceId === right.instanceId;
-        default:
-            return false;
-    }
-}
-
 function sameComposerReferenceContent(
     left: readonly ComposerMentionRef[],
     right: readonly ComposerMentionRef[],
@@ -146,14 +128,19 @@ export function readComposerSubmissionFieldCurrentness(
         acceptedTextReplacement?: string;
     }>,
 ): ComposerSubmissionFieldCurrentness | null {
-    if (!sameComposerRef(current.ref, accepted.ref)) return null;
+    if (!composerRefsV1Equal(current.ref, accepted.ref)) return null;
     const text = current.text === accepted.text;
     const reconciledText = text ? (options?.acceptedTextReplacement ?? '') : current.text;
     const admittedReferences = new Set(admitMentionRefsV1ForText(reconciledText, current.references));
     return {
         text,
         references: sameComposerReferenceContent(current.references, accepted.references),
-        attachments: JSON.stringify(current.attachments) === JSON.stringify(accepted.attachments),
+        // Attachments are strict JSON. Deciding their currentness by
+        // serialization made an equivalent object-key order look like a
+        // mutation here while the durable draft repository's own writer, which
+        // already delegates to the Protocol equality owner, treated it as
+        // unchanged. Both Composer scopes now ask the same owner.
+        attachments: sameComposerAttachmentViews(current.attachments, accepted.attachments),
         reconciledText,
         // Retain the live reference objects rather than reconstructing a new
         // positionless shape: scope owners turn these back through their
@@ -166,15 +153,25 @@ function isSubmissionRouteForSnapshot(
     snapshot: ComposerSubmissionSnapshot,
     route: ComposerSubmissionRoute,
 ): boolean {
-    return snapshot.ref.kind === route.kind && sameComposerRef(snapshot.ref, route.ref);
+    return snapshot.ref.kind === route.kind && composerRefsV1Equal(snapshot.ref, route.ref);
 }
 
 function hasUnavailableAttachment(snapshot: ComposerSubmissionSnapshot): boolean {
     return snapshot.attachments.some((attachment) => attachment.availability.status !== 'ready');
 }
 
+/**
+ * "There is nothing to send" is decided by the one canonical Session-input
+ * predicate (`hasSessionInputContentV1`), which the plugin Session-input seam
+ * and its Action surface binding now share. A local copy of the same rule is
+ * what let those seams drift into refusing an attachment-only input this
+ * composer has always admitted.
+ */
 function isTextlessAndAttachmentless(snapshot: ComposerSubmissionSnapshot): boolean {
-    return snapshot.text.trim().length === 0 && snapshot.attachments.length === 0;
+    return !hasSessionInputContentV1({
+        text: snapshot.text,
+        attachmentCount: snapshot.attachments.length,
+    });
 }
 
 type StagedMediaHandleRead =

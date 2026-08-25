@@ -15,6 +15,7 @@ import { SessionFolderFocusBreadcrumbs, SessionsListHeader } from './sessionList
 import type { SessionFolderFocusScope } from '@/sync/domains/session/folders';
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
 import { Icon } from '@/components/ui/icons/Icon';
+import { NewSessionDraftsSection } from './NewSessionDraftsSection';
 
 export type SessionListVirtualizedNode = Readonly<{
     id: string;
@@ -212,6 +213,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     const handlePressArchivedSessions = React.useCallback(() => {
         onPressArchivedSessionsRef.current();
     }, []);
+    const rowDensity: SessionListRowDensity = props.rowDensity ?? 'default';
     const footerComponent = React.useMemo(() => (
         <>
             {props.filteredNoResultsMessage ? (
@@ -228,6 +230,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             return (
                 <>
                     <SessionsListHeader />
+                    <NewSessionDraftsSection density={rowDensity} />
                     {folderFocus ? (
                         <SessionFolderFocusBreadcrumbs
                             breadcrumbs={folderFocus.breadcrumbs}
@@ -239,9 +242,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
                 </>
             );
         };
-    }, [props.folderFocus, props.folderFocusRootTitle, props.onClearFolderFocus, props.onSelectFolderBreadcrumb]);
-
-    const rowDensity: SessionListRowDensity = props.rowDensity ?? 'default';
+    }, [props.folderFocus, props.folderFocusRootTitle, props.onClearFolderFocus, props.onSelectFolderBreadcrumb, rowDensity]);
     const getNodeType = React.useCallback(
         (node: SessionListVirtualizedNode) => getSessionListNodeType(node, rowDensity),
         [rowDensity],

@@ -156,6 +156,8 @@ export function useNewSessionWizardProps(params: Readonly<{
     emptyAutocompleteSuggestions: ActiveSuggestionsHandler;
     connectionStatus?: any;
     statusBadges?: NewSessionWizardFooterProps['statusBadges'];
+    composerTopContent?: NewSessionWizardFooterProps['composerTopContent'];
+    statusTrailingActions?: NewSessionWizardFooterProps['statusTrailingActions'];
     machinePopover?: NewSessionWizardFooterProps['machinePopover'];
     pathPopover?: NewSessionWizardFooterProps['pathPopover'];
     resumeSessionId: string;
@@ -496,6 +498,8 @@ export function useNewSessionWizardProps(params: Readonly<{
             emptyAutocompleteSuggestions: params.emptyAutocompleteSuggestions,
             connectionStatus: params.connectionStatus,
             statusBadges: params.statusBadges,
+            composerTopContent: params.composerTopContent,
+            statusTrailingActions: params.statusTrailingActions,
             machinePopover: params.machinePopover,
             pathPopover: params.pathPopover,
             resumeSessionId: params.resumeSessionId,
@@ -516,6 +520,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.attachmentFlowId,
         params.canCreate,
         params.connectionStatus,
+        params.composerTopContent,
         params.emptyAutocompleteKinds,
         params.emptyAutocompleteSuggestions,
         params.handleCreateSession,
@@ -533,6 +538,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.sessionPromptInputMaxHeight,
         params.setSessionPrompt,
         params.statusBadges,
+        params.statusTrailingActions,
     ]);
 
     return {

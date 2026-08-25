@@ -16,12 +16,19 @@ import {
 export function canBrowseExternalSessions(params: Readonly<{
     agentId: ExternalSessionsAgentId;
     projection: PluginProjectionV2 | null | undefined;
+    /** See `resolveExternalSessionBrowseSourceOptions`. */
+    machineId?: string | null;
 }>): boolean {
-    return listExternalSessionBrowseProviderIds({ projection: params.projection }).includes(params.agentId);
+    return listExternalSessionBrowseProviderIds({
+        projection: params.projection,
+        machineId: params.machineId,
+    }).includes(params.agentId);
 }
 
 export function resolveExternalSessionBrowseLockedSource(params: Readonly<{
     providerId: ExternalSessionsAgentId;
+    /** See `resolveExternalSessionBrowseSourceOptions`. */
+    machineId?: string | null;
     agentOptionState?: Record<string, unknown> | null;
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
     settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
@@ -29,13 +36,15 @@ export function resolveExternalSessionBrowseLockedSource(params: Readonly<{
 }>): ExternalSessionsSource | null {
     const sourceOptions = resolveExternalSessionBrowseSourceOptions({
         providerId: params.providerId,
+        machineId: params.machineId,
         profile: params.profile,
         settings: params.settings,
         projection: params.projection,
     });
     if (sourceOptions.length === 0) return null;
 
-    const resolver = resolveAgentUiBehavior(params.providerId).externalSessions?.browse?.resolveLockedSourceOption;
+    const resolver = resolveAgentUiBehavior(params.providerId, params.machineId)
+        .externalSessions?.browse?.resolveLockedSourceOption;
     const resolvedOption = resolver
         ? resolver({
             agentId: params.providerId,

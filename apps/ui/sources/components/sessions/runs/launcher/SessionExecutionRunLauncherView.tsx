@@ -47,6 +47,7 @@ import {
 } from './resolveExecutionRunLauncherProfileChoices';
 import { ExecutionRunProfilePicker } from './ExecutionRunProfilePicker';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
+import { toExecutionRunActionPermissionMode } from '@/sync/domains/actions/executionRunActionPermissionMode';
 import { normalizeActionInputPatch } from '@/sync/domains/actions/normalizeActionInputPatch';
 import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/actions/resolveExecutionRunActionDefaultPermissionMode';
 import { resolveExecutionRunActionAllowedPermissionModes } from '@/sync/domains/actions/resolveExecutionRunActionAllowedPermissionModes';
@@ -302,7 +303,10 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
         if (typeof rawAgentType !== 'string') {
             return [];
         }
-        return getPermissionModeOptionsForAgentType(rawAgentType as any);
+        return getPermissionModeOptionsForAgentType(rawAgentType as any).map((option) => ({
+            ...option,
+            value: toExecutionRunActionPermissionMode(option.value),
+        }));
     }, [enabledAgentIds, selectedBackendChoices, session, sessionActionDefaultBackend]);
     const selectedPermissionMode = React.useMemo(() => {
         const value = getValueAtPath(actionInput, 'permissionMode');

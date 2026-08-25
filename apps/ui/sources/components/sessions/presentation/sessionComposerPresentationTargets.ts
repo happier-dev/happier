@@ -15,9 +15,9 @@ import {
     type ComposerTransactionResultV1,
     type ComposerInputLockRequestV1,
     type PluginContributionIdentityV1,
-    type PluginProjectedComposerAttachmentEntryV1,
     type SessionExecutionTargetV1,
 } from '@happier-dev/protocol';
+import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import {
     PluginUiApplyComposerRequestV1Schema,
     PluginUiAcquireComposerInputLockRequestV1Schema,
@@ -40,12 +40,10 @@ import {
     type PluginSurfaceHostApiHandlers,
     type PluginSurfaceHostApiRequestOptions,
 } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
-import {
-    composerAttachmentDraftToView,
-    composerAttachmentViewToDraft,
-    composerReferencesFromStructuredMentions,
-    composerStructuredMentionsFromReferences,
-} from '@/components/sessions/composer/composerScopeAdapters';
+import { projectComposerDocumentSnapshot } from '@/components/sessions/composer/composerSnapshotProjection';
+import { createExistingSessionComposerDocumentOwner } from '@/components/sessions/composer/existingSessionComposerDocumentOwner';
+import type { ComposerPresentationDocumentMutation } from '@/components/sessions/composer/composerDocumentOwner';
+export type { ComposerPresentationDocumentMutation } from '@/components/sessions/composer/composerDocumentOwner';
 import { randomUUID } from '@/platform/randomUUID';
 import { pickAndStageComposerMedia } from '@/sync/domains/transfers/ops/pickAndStageComposerMedia';
 import {
@@ -58,31 +56,12 @@ import {
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import {
-    batchSessionComposerSemanticRevision,
-    clearSessionDraftValue,
-    flushSessionDraftValues,
-    readSessionComposerSemanticRevision,
-    readSessionDraftValue,
-    subscribeSessionComposerSemanticRevision,
-    writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
 import { storage } from '@/sync/domains/state/storage';
-import { loadSessionDrafts } from '@/sync/domains/state/sessionPersistence';
+import { subscribeSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import type { PluginUiComposerAttachmentProjection } from '@/sync/domains/plugins/ui/projection';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
 type ComposerMentionRef = ComposerSnapshotV1['references'][number];
-
-/**
- * The mutable semantic portion of a composer snapshot. Scope adapters own
- * their persistence/lifecycle and commit this one document shape atomically;
- * the transaction grammar below remains centralized in this module.
- */
-export type ComposerPresentationDocumentMutation = Readonly<{
-    text: string;
-    selection?: NonNullable<ComposerSnapshotV1['selection']>;
-    references: readonly ComposerMentionRef[];
-    attachments: readonly ComposerAttachmentViewV1[];
-}>;
 
 /**
  * A mounted Composer control's exact admitted identity. The presentation host
@@ -150,6 +129,7 @@ type ComposerPresentationAttachmentAuthority = Readonly<{
     immutableGenerationId: string;
     typeLabel: string;
     cardinality: 'one' | 'many';
+    valueValidator: PluginUiComposerAttachmentProjection['valueValidator'];
 }>;
 
 type ComposerPresentationAttachmentAuthorityResolver = (input: Readonly<{
@@ -215,7 +195,7 @@ export function useStableComposerPresentationTarget(
 ): ComposerPresentationTarget {
     const latestTargetRef = React.useRef(target);
     latestTargetRef.current = target;
-    const targetKey = composerPresentationTargetKey(ref);
+    const targetKey = composerRefV1Key(ref);
     const stableTargetRef = React.useRef<Readonly<{
         targetKey: string;
         target: ComposerPresentationTarget;
@@ -271,7 +251,7 @@ const listenersByTargetKey = new Map<string, Set<() => void>>();
 function emit(ref?: ComposerRefV1): void {
     for (const listener of listeners) listener();
     if (!ref) return;
-    for (const listener of listenersByTargetKey.get(composerPresentationTargetKey(ref)) ?? []) {
+    for (const listener of listenersByTargetKey.get(composerRefV1Key(ref)) ?? []) {
         listener();
     }
 }
@@ -280,28 +260,8 @@ function encodePart(value: string): string {
     return `${value.length}:${value}`;
 }
 
-/**
- * The one exact live-scope identity used by the document target registry.
- * Delimited length encoding preserves the Protocol union's discriminants and
- * prevents a Session/localId pair from colliding with any opaque live arm.
- */
-export function composerPresentationTargetKey(ref: ComposerRefV1): string {
-    switch (ref.kind) {
-        case 'session':
-            return `session:${encodePart(ref.sessionId)}`;
-        case 'newSession':
-            return `newSession:${encodePart(ref.instanceId)}`;
-        case 'pendingMessage':
-            return `pendingMessage:${encodePart(ref.sessionId)}${encodePart(ref.localId)}`;
-        case 'participantMessage':
-            return `participantMessage:${encodePart(ref.sessionId)}${encodePart(ref.instanceId)}`;
-        case 'automationAuthoring':
-            return `automationAuthoring:${encodePart(ref.sessionId)}${encodePart(ref.instanceId)}`;
-    }
-}
-
 function readRegisteredTarget(ref: ComposerRefV1): ComposerPresentationTarget | null {
-    const target = targets.get(composerPresentationTargetKey(ref)) ?? null;
+    const target = targets.get(composerRefV1Key(ref)) ?? null;
     return target && isComposerPresentationTargetCurrent(target) ? target : null;
 }
 
@@ -347,55 +307,6 @@ function persistentSessionDraftStateSignature(
     return `available:${accessLevel}`;
 }
 
-function equalJsonValues(left: unknown, right: unknown): boolean {
-    return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function readPersistentSessionComposerSnapshot(input: Readonly<{
-    scope: ServerAccountScope;
-    sessionId: string;
-}>): ComposerSnapshotV1 {
-    const state = storage.getState();
-    const rawText = loadSessionDrafts(input.scope)[input.sessionId];
-    const text = typeof rawText === 'string' ? rawText : '';
-    const mentions = readSessionDraftValue(
-        input.scope,
-        input.sessionId,
-        'structuredInput.mentions',
-    ) ?? [];
-    const attachments = readSessionDraftValue(
-        input.scope,
-        input.sessionId,
-        'structuredInput.composerAttachments',
-    ) ?? [];
-    const editable = state.sessions[input.sessionId]?.accessLevel !== 'view';
-    return {
-        revision: readSessionComposerSemanticRevision(input.scope, input.sessionId),
-        ref: { kind: 'session', sessionId: input.sessionId },
-        text,
-        references: [...composerReferencesFromStructuredMentions({ text, mentions })],
-        // An unmounted exact draft retains its persisted fallback presentation,
-        // but has no live daemon catalog to claim attachment runtime readiness.
-        attachments: attachments.map((attachment) => composerAttachmentDraftToView(attachment, {
-            entriesById: null,
-        })),
-        layout: 'wrap',
-        capabilities: {
-            text: true,
-            references: true,
-            attachments: true,
-            submit: true,
-        },
-        state: {
-            focused: false,
-            editable,
-            submittable: editable,
-            submitting: false,
-            running: state.sessions[input.sessionId]?.active === true,
-        },
-    };
-}
-
 function createPersistentSessionComposerTarget(
     ref: Extract<ComposerRefV1, Readonly<{ kind: 'session' }>>,
 ): ComposerPresentationTarget | null {
@@ -404,82 +315,39 @@ function createPersistentSessionComposerTarget(
     if (!scope || !sessionId) return null;
 
     const isCurrent = () => isPersistentSessionDraftCurrent(scope, sessionId);
-    const readSnapshot = () => readPersistentSessionComposerSnapshot({ scope, sessionId });
-    const commitDocument = (input: Readonly<{
-        expectedRevision: number;
-        mutation: ComposerPresentationDocumentMutation;
-    }>): ComposerTransactionResultV1 => {
-        if (!isCurrent()) return { status: 'composerUnavailable' };
-        const snapshot = readSnapshot();
-        if (snapshot.revision !== input.expectedRevision) {
-            return { status: 'conflict', currentRevision: snapshot.revision };
-        }
-
-        const previousMentions = readSessionDraftValue(
-            scope,
-            sessionId,
-            'structuredInput.mentions',
-        ) ?? [];
-        const previousAttachments = readSessionDraftValue(
-            scope,
-            sessionId,
-            'structuredInput.composerAttachments',
-        ) ?? [];
-        const nextMentions = composerStructuredMentionsFromReferences({
-            references: input.mutation.references,
-            existing: previousMentions,
+    const owner = createExistingSessionComposerDocumentOwner({ scope, ref, isCurrent });
+    const readSnapshot = (): ComposerSnapshotV1 => {
+    const state = storage.getState();
+        const editable = state.sessions[sessionId]?.accessLevel !== 'view';
+        return projectComposerDocumentSnapshot({
+            owner,
+            attachmentCatalog: { entriesById: null },
+            presentation: {
+                layout: 'wrap',
+                focused: false,
+                editable,
+                submittable: editable,
+                submitting: false,
+                running: state.sessions[sessionId]?.active === true,
+            },
         });
-        const nextAttachments = input.mutation.attachments.map(composerAttachmentViewToDraft);
-        const textChanged = snapshot.text !== input.mutation.text;
-        const mentionsChanged = !equalJsonValues(previousMentions, nextMentions);
-        const attachmentsChanged = !equalJsonValues(previousAttachments, nextAttachments);
-
-        batchSessionComposerSemanticRevision(scope, sessionId, () => {
-            if (textChanged) {
-                storage.getState().updateSessionDraft(sessionId, input.mutation.text);
-            }
-            if (mentionsChanged) {
-                if (nextMentions.length === 0) {
-                    clearSessionDraftValue(scope, sessionId, 'structuredInput.mentions');
-                } else {
-                    writeSessionDraftValue(scope, sessionId, 'structuredInput.mentions', nextMentions);
-                }
-            }
-            if (attachmentsChanged) {
-                if (nextAttachments.length === 0) {
-                    clearSessionDraftValue(scope, sessionId, 'structuredInput.composerAttachments');
-                } else {
-                    writeSessionDraftValue(scope, sessionId, 'structuredInput.composerAttachments', nextAttachments);
-                }
-            }
-            if (mentionsChanged || attachmentsChanged) flushSessionDraftValues(scope);
-        });
-
-        if (!isCurrent()) return { status: 'composerUnavailable' };
-        return {
-            status: 'applied',
-            revision: readSessionComposerSemanticRevision(scope, sessionId),
-        };
     };
 
     return Object.freeze({
-        readRevision: () => readSessionComposerSemanticRevision(scope, sessionId),
+        readRevision: () => owner.read().revision,
         replace: (text, expectedRevision) => {
             const snapshot = readSnapshot();
             if (snapshot.revision !== expectedRevision) return snapshot.revision;
-            const result = commitDocument({
-                expectedRevision,
-                mutation: {
-                    text,
-                    references: snapshot.references,
-                    attachments: snapshot.attachments,
-                },
+            const result = owner.apply(expectedRevision, {
+                text,
+                references: snapshot.references,
+                attachments: snapshot.attachments,
             });
-            return result.status === 'applied' ? result.revision : readSessionComposerSemanticRevision(scope, sessionId);
+            return result.status === 'applied' ? result.revision : owner.read().revision;
         },
         isCurrent,
         readSnapshot,
-        commitDocument,
+        commitDocument: ({ expectedRevision, mutation }) => owner.apply(expectedRevision, mutation),
         commitDocumentEmitsChange: true,
         createAttachmentInstanceId: randomUUID,
     });
@@ -740,26 +608,39 @@ function resolveReferences(input: Readonly<{
     return { ok: true, references: ordered.map((entry) => entry.reference) };
 }
 
+/**
+ * The attachment's type label, resolved ONCE at admission.
+ *
+ * 03d1 freezes this string into the persisted record deliberately: replay must
+ * not depend on which plugin translations happen to be installed later. That
+ * makes resolving the CURRENT locale here the whole point — persisting the raw
+ * declaration fallback froze every reader's attachment into the plugin author's
+ * English instead of the language they were using when they added it.
+ */
 function readAttachmentTypeLabel(
-    entry: PluginProjectedComposerAttachmentEntryV1,
+    entry: PluginUiComposerAttachmentProjection,
+    localize: PluginLocalizedTextResolver | undefined,
 ): string | null {
     const title = entry.definition.title;
-    const fallback = typeof title === 'string'
-        ? title.trim()
-        : typeof title?.fallback === 'string'
-            ? title.fallback.trim()
-            : '';
-    return fallback.length > 0 ? fallback : null;
+    const resolved = localize
+        ? localize(entry.identity.pluginId, title).trim()
+        : (typeof title === 'string'
+            ? title.trim()
+            : typeof title?.fallback === 'string'
+                ? title.fallback.trim()
+                : '');
+    return resolved.length > 0 ? resolved : null;
 }
 
 function createAttachmentAuthorityResolver(input: Readonly<{
-    composerAttachmentsById: Readonly<Record<string, PluginProjectedComposerAttachmentEntryV1>>;
+    composerAttachmentsById: Readonly<Record<string, PluginUiComposerAttachmentProjection>>;
+    localize?: PluginLocalizedTextResolver;
 }>): ComposerPresentationAttachmentAuthorityResolver {
     const authoritiesByQualifiedId = new Map<string, ComposerPresentationAttachmentAuthority>();
     for (const [mapKey, entry] of Object.entries(input.composerAttachmentsById)) {
         const identity = entry.identity;
         const qualifiedId = buildQualifiedPluginContributionKey(identity);
-        const typeLabel = readAttachmentTypeLabel(entry);
+        const typeLabel = readAttachmentTypeLabel(entry, input.localize);
         if (
             mapKey !== entry.id
             || entry.id !== qualifiedId
@@ -776,6 +657,7 @@ function createAttachmentAuthorityResolver(input: Readonly<{
             immutableGenerationId: entry.immutableGenerationId,
             typeLabel,
             cardinality: entry.definition.cardinality,
+            valueValidator: entry.valueValidator,
         }));
     }
 
@@ -794,6 +676,62 @@ function createAttachmentAuthorityResolver(input: Readonly<{
         }
         return authority;
     };
+}
+
+function attachmentValueIsValid(
+    authority: ComposerPresentationAttachmentAuthority,
+    value: unknown,
+): boolean {
+    try {
+        return authority.valueValidator?.(value) === true;
+    } catch {
+        return false;
+    }
+}
+
+function validateAttachmentOperationValues(input: Readonly<{
+    snapshot: ComposerSnapshotV1;
+    operations: readonly ReturnType<typeof ComposerOperationV1Schema.parse>[];
+    attachmentAuthorityResolver: ComposerPresentationAttachmentAuthorityResolver | null;
+    admittedContributor: ComposerPresentationAdmittedContributor | null;
+}>):
+    | Readonly<{ ok: true; authoritiesByOperationIndex: ReadonlyMap<number, ComposerPresentationAttachmentAuthority> }>
+    | Readonly<{ ok: false; result: ComposerTransactionResultV1 }> {
+    const authoritiesByOperationIndex = new Map<number, ComposerPresentationAttachmentAuthority>();
+    for (let operationIndex = 0; operationIndex < input.operations.length; operationIndex += 1) {
+        const operation = input.operations[operationIndex]!;
+        if (operation.kind === 'attachment.add') {
+            const authority = input.attachmentAuthorityResolver?.({
+                attachmentLocalId: operation.attachmentLocalId,
+                admittedContributor: input.admittedContributor,
+            }) ?? null;
+            if (!authority || authority.identity.localId !== operation.attachmentLocalId) {
+                return { ok: false, result: invalidOperation(operationIndex, 'attachment_authority_mismatch') };
+            }
+            if (!attachmentValueIsValid(authority, operation.value.value)) {
+                return { ok: false, result: invalidOperation(operationIndex, 'attachment_value_invalid') };
+            }
+            authoritiesByOperationIndex.set(operationIndex, authority);
+            continue;
+        }
+        if (operation.kind !== 'attachment.update') continue;
+        const existing = input.snapshot.attachments.find((attachment) => attachment.instanceId === operation.instanceId);
+        if (!existing) {
+            return { ok: false, result: invalidOperation(operationIndex, 'attachment_not_found') };
+        }
+        const authority = input.attachmentAuthorityResolver?.({
+            attachmentLocalId: existing.attachment.localId,
+            admittedContributor: input.admittedContributor,
+        }) ?? null;
+        if (!authority || !equalContributionIdentity(existing.attachment, authority.identity)) {
+            return { ok: false, result: invalidOperation(operationIndex, 'attachment_authority_mismatch') };
+        }
+        if (!attachmentValueIsValid(authority, operation.update.value)) {
+            return { ok: false, result: invalidOperation(operationIndex, 'attachment_value_invalid') };
+        }
+        authoritiesByOperationIndex.set(operationIndex, authority);
+    }
+    return { ok: true, authoritiesByOperationIndex };
 }
 
 function resolveAttachments(input: Readonly<{
@@ -816,17 +754,14 @@ function resolveAttachments(input: Readonly<{
         return { ok: false, result: invalidOperation(attachmentOperations[0]!.operationIndex, 'attachments_unsupported') };
     }
 
+    const validatedValues = validateAttachmentOperationValues(input);
+    if (!validatedValues.ok) return validatedValues;
+
     const attachments = input.snapshot.attachments.map((attachment) => ({ ...attachment }));
     const attachmentInstanceIds: string[] = [];
     for (const { operation, operationIndex } of attachmentOperations) {
         if (operation.kind === 'attachment.add') {
-            const authority = input.attachmentAuthorityResolver?.({
-                attachmentLocalId: operation.attachmentLocalId,
-                admittedContributor: input.admittedContributor,
-            }) ?? null;
-            if (!authority || authority.identity.localId !== operation.attachmentLocalId) {
-                return { ok: false, result: invalidOperation(operationIndex, 'attachment_authority_mismatch') };
-            }
+            const authority = validatedValues.authoritiesByOperationIndex.get(operationIndex)!;
             if (
                 operation.content?.kind === 'stagedMedia'
                 && (
@@ -908,13 +843,6 @@ function resolveAttachments(input: Readonly<{
         }
 
         const existing = attachments[existingIndex]!;
-        const authority = input.attachmentAuthorityResolver?.({
-            attachmentLocalId: existing.attachment.localId,
-            admittedContributor: input.admittedContributor,
-        }) ?? null;
-        if (!authority || !equalContributionIdentity(existing.attachment, authority.identity)) {
-            return { ok: false, result: invalidOperation(operationIndex, 'attachment_authority_mismatch') };
-        }
         attachments[existingIndex] = {
             ...existing,
             value: operation.update.value,
@@ -1053,7 +981,13 @@ function applyComposerPresentationTransactionAtOwner(input: Readonly<{
  * exact admitted contributor and an intact transaction.
  */
 export function createComposerPresentationTransactionApplier(input: Readonly<{
-    composerAttachmentsById: Readonly<Record<string, PluginProjectedComposerAttachmentEntryV1>>;
+    composerAttachmentsById: Readonly<Record<string, PluginUiComposerAttachmentProjection>>;
+    /**
+     * Resolves declared attachment titles for the current locale before they are
+     * frozen into the persisted record. A composition that cannot reach the
+     * translation projection keeps the author's declared fallback.
+     */
+    localize?: PluginLocalizedTextResolver;
 }>): ComposerPresentationTransactionApplier {
     const attachmentAuthorityResolver = createAttachmentAuthorityResolver(input);
     return Object.freeze({
@@ -1106,7 +1040,7 @@ export function registerComposerPresentationTarget(
     ref: ComposerRefV1,
     target: ComposerPresentationTarget,
 ): () => void {
-    const key = composerPresentationTargetKey(ref);
+    const key = composerRefV1Key(ref);
     targets.set(key, target);
     emit(ref);
     return () => {
@@ -1147,7 +1081,7 @@ function subscribePersistentSessionComposerTarget(
     if (!sessionId || !scope) return () => undefined;
 
     let signature = persistentSessionDraftStateSignature(scope, sessionId);
-    const unsubscribeSemanticRevision = subscribeSessionComposerSemanticRevision(scope, sessionId, () => {
+    const unsubscribeSemanticRevision = subscribeSessionDraft(scope, { kind: 'session', sessionId }, () => {
         // A mounted target owns its current visual document. Its registration
         // and retirement already emit through this module's one target map.
         if (readRegisteredTarget(ref)) return;
@@ -1176,7 +1110,7 @@ export function subscribeComposerPresentationTarget(
     ref: ComposerRefV1,
     listener: () => void,
 ): () => void {
-    const key = composerPresentationTargetKey(ref);
+    const key = composerRefV1Key(ref);
     const scopedListeners = listenersByTargetKey.get(key) ?? new Set<() => void>();
     scopedListeners.add(listener);
     listenersByTargetKey.set(key, scopedListeners);
@@ -1440,7 +1374,7 @@ export function createComposerPresentationHostHandlers(
     }
 
     function stopObservingIfUnused(ref: ComposerRefV1): void {
-        const targetKey = composerPresentationTargetKey(ref);
+        const targetKey = composerRefV1Key(ref);
         if (refHasActiveEffects(targetKey)) return;
         targetObservers.get(targetKey)?.dispose();
         targetObservers.delete(targetKey);
@@ -1490,7 +1424,7 @@ export function createComposerPresentationHostHandlers(
     }
 
     function reconcileTargetEffects(ref: ComposerRefV1): void {
-        const targetKey = composerPresentationTargetKey(ref);
+        const targetKey = composerRefV1Key(ref);
         const currentTarget = readTarget(ref);
         const currentSnapshot = currentTarget ? readComposerSnapshot(currentTarget) : null;
 
@@ -1513,7 +1447,7 @@ export function createComposerPresentationHostHandlers(
     }
 
     function ensureObserving(ref: ComposerRefV1): void {
-        const targetKey = composerPresentationTargetKey(ref);
+        const targetKey = composerRefV1Key(ref);
         if (targetObservers.has(targetKey)) return;
         targetObservers.set(targetKey, Object.freeze({
             dispose: subscribeComposerPresentationTarget(ref, () => {
@@ -1780,7 +1714,7 @@ export function createComposerPresentationHostHandlers(
             if (!parsed.success) return composerHostInvalidPayload('composer_decoration_payload_invalid');
             const target = readTarget(parsed.data.ref);
             if (!target?.setComposerDecorations) return { status: 'unavailable', reason: 'scopeClosed' };
-            const targetKey = composerPresentationTargetKey(parsed.data.ref);
+            const targetKey = composerRefV1Key(parsed.data.ref);
             const entryKey = decorationEntryKey(targetKey, parsed.data.key);
             const previous = decorations.get(entryKey);
 
@@ -1867,7 +1801,7 @@ export function createComposerPresentationHostHandlers(
 
             const lock: ActiveComposerInputLock = {
                 subscriptionId,
-                targetKey: composerPresentationTargetKey(parsed.data.ref),
+                targetKey: composerRefV1Key(parsed.data.ref),
                 ref: parsed.data.ref,
                 target,
                 release,

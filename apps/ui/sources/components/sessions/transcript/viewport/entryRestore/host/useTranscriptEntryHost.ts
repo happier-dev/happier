@@ -224,6 +224,14 @@ export type TranscriptEntryHost = Readonly<{
     verifyWebEntryRestoreTransaction(): void;
 }>;
 
+/**
+ * Poll cadence and bound for re-testing a loader that answered `in_flight` or `not_ready`.
+ * This waits on a condition owned elsewhere — the older cursor being materialized, or another
+ * owner's load finishing — and is not a limit on how much history may be loaded.
+ */
+const WEB_FILL_TRANSIENT_RETRY_MS = 25;
+const WEB_FILL_MAX_TRANSIENT_RETRIES = 6;
+
 export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): TranscriptEntryHost {
     const requestSessionOpenInitialFillRef = React.useRef<() => void>(() => {});
     const hasObservedScrollSinceSessionEntry = React.useCallback((): boolean => {
@@ -797,6 +805,90 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
         if (deps.sessionOpenLatch.initialFillStatus() !== 'idle') return;
         if (deps.listLayoutHeight <= 0 || deps.listContentHeight <= 0) return;
         if (!deps.sessionOpenLatch.markInitialFillInProgress(deps.sessionId)) return;
+        const entersAtBottom = deps.sessionEntryViewportRef.current?.shouldFollowBottom !== false;
+        if (Platform.OS === 'web') {
+            // Web paints the newest transcript immediately: holding historical loads inside the
+            // open latch serialized network, decrypt and render work before the session became
+            // interactive. Settle FIRST — nothing below this line is on the open critical path.
+            applySessionOpenLatchEffects(deps.sessionOpenLatch.onInitialFillSettled({
+                nowMs: Date.now(),
+                sessionId: deps.sessionId,
+            }).effects);
+
+            // Settling alone is not sufficient. `olderPaginationMachine` cannot arm on a
+            // NON-SCROLLABLE viewport — both of its threshold-validity paths require
+            // `scrollable === true` — so a transcript whose newest page paints short (a tail of
+            // collapsed tool calls, or a page of client-routed sidechain events that add no
+            // main-lane height) would never request the rest, because there is nothing to
+            // scroll. So keep the same fill-to-sufficiency contract, just after settlement and
+            // with the prepend viewport preserved: the reader already has an interactive
+            // session, so older rows must land above their view rather than move it.
+            // Bottom entries only. An ANCHORED entry is owned by entry restore, which
+            // materializes its anchor with its own `loadOlder({ preservePrependViewport: false })`
+            // behind `anchorLookupInFlightRef`. Running this fill alongside it puts two viewport
+            // policies on one loader with no shared ownership, and — because a concurrent load
+            // answers `in_flight` — this loop would count those answers as no-progress and could
+            // exhaust its budget without ever loading a page. Filling to bottom-scrollability is
+            // not the contract for an anchored entry anyway.
+            if (!entersAtBottom) return;
+            const webFillController = new AbortController();
+            deps.initialFillAbortRef.current?.abort();
+            deps.initialFillAbortRef.current = webFillController;
+            const webFillSignal = webFillController.signal;
+            fireAndForget((async () => {
+                const webTuning = sync.getSyncTuning();
+                const { budgetMs, maxNoProgressLoads } = resolveTranscriptInitialFillTuning({
+                    transcriptInitialFillBudgetMs: webTuning.transcriptInitialFillBudgetMs,
+                    transcriptInitialFillMaxNoProgressLoads: webTuning.transcriptInitialFillMaxNoProgressLoads,
+                });
+                const webStartedAtMs = Date.now();
+                // Same bounds as the open-phase loop below, from the same owner: being off the
+                // critical path buys latency, not licence. The no-progress counter alone does
+                // not bound a transcript whose pages each add a few px, so the absolute ceiling
+                // is load-bearing here exactly as it is there.
+                const webAbsoluteFillDeadlineMs = webStartedAtMs + budgetMs * 5;
+                let webLastProgressAtMs = webStartedAtMs;
+                let webConsecutiveNoProgressLoads = 0;
+                let webTransientRetries = 0;
+                let webContentHeightBaselinePx = deps.listContentHeightRef.current;
+                while (!webFillSignal.aborted) {
+                    if (deps.isScrollable() && deps.committedMessagesCount > 0) break;
+                    if (Date.now() - webLastProgressAtMs >= budgetMs) break;
+                    if (Date.now() >= webAbsoluteFillDeadlineMs) break;
+                    const result = await deps.loadOlder({ preservePrependViewport: true, showLoadingIndicator: false });
+                    if (!result) break;
+                    if (result.status === 'no_more') break;
+                    // Transient, and NOT this loop's failure. `not_ready` means the older cursor
+                    // has not been materialized yet — the common state immediately after open,
+                    // which is exactly when this runs — and `in_flight` means another owner holds
+                    // the loader. Counting either against the no-progress budget burns it on
+                    // someone else's work; giving up permanently leaves the underfilled transcript
+                    // this fill exists to prevent. So wait for the condition to clear and re-test.
+                    //
+                    // Bounded by an explicit count rather than the deadline alone: the deadline is
+                    // wall-clock, and a transient that never clears would otherwise spin against a
+                    // clock this loop does not advance.
+                    if (result.status === 'in_flight' || result.status === 'not_ready') {
+                        if (webTransientRetries >= WEB_FILL_MAX_TRANSIENT_RETRIES) break;
+                        webTransientRetries += 1;
+                        await new Promise((resolve) => setTimeout(resolve, WEB_FILL_TRANSIENT_RETRY_MS));
+                        continue;
+                    }
+                    webTransientRetries = 0;
+                    const madeProgress = result.status === 'loaded' && result.loaded > 0;
+                    webConsecutiveNoProgressLoads = madeProgress ? 0 : webConsecutiveNoProgressLoads + 1;
+                    await Promise.resolve();
+                    await Promise.resolve();
+                    const contentHeightPx = deps.listContentHeightRef.current;
+                    if (contentHeightPx > webContentHeightBaselinePx + 1) {
+                        webContentHeightBaselinePx = contentHeightPx;
+                        webLastProgressAtMs = Date.now();
+                    }
+                    if (webConsecutiveNoProgressLoads >= maxNoProgressLoads) break;
+                }
+            })(), { tag: 'ChatList.webPostSettleFillToScrollable' });
+            return;
+        }
         deps.initialFillAbortRef.current?.abort();
         const controller = new AbortController();
         deps.initialFillAbortRef.current = controller;

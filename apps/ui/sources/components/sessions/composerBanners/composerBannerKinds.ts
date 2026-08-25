@@ -15,6 +15,7 @@ export const SESSION_COMPOSER_BANNER_KINDS = [
     'directControlTakeover',
     'sessionNotice',
     'agentTransitionOutcome',
+    'draftConflict',
 ] as const;
 
 export type SessionComposerBannerKind = (typeof SESSION_COMPOSER_BANNER_KINDS)[number];

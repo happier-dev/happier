@@ -27,6 +27,7 @@ describe('composer attachment row projection', () => {
         expect(items).toEqual([expect.objectContaining({
             kind: 'badge',
             key: 'composer-attachment:issue-42',
+            testID: 'composer-attachment:issue-42',
             label: 'Issue #42',
             accessibilityLabel: 'Issue: Issue #42',
             availability: 'ready',
@@ -60,8 +61,40 @@ describe('composer attachment row projection', () => {
             kind: 'badge',
             availability: 'unavailable',
             label: 'Issue #42',
+            testID: 'composer-attachment:issue-42',
         });
         expect(items[0]?.onRemove).toEqual(expect.any(Function));
+    });
+
+    // Removal is a Composer mutation. A read-only Session, a `view` share, and
+    // an `editAndSubmit` lock all refuse the transaction, so offering the
+    // control there produced a visibly enabled affordance that silently
+    // no-opped. Preview and picker interaction stay available.
+    it('omits removal when the owning Composer scope cannot be mutated', () => {
+        const attachments: readonly ComposerAttachmentViewV1[] = [{
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+            availability: { status: 'ready' },
+        }];
+        const onPress = vi.fn();
+
+        const readOnly = projectComposerAttachmentRowItems({
+            attachments,
+            resolveInteraction: () => ({ onPress }),
+            entriesById: {},
+        });
+        expect(readOnly[0]).toMatchObject({ kind: 'badge', label: 'Issue #42' });
+        expect(readOnly[0]?.onRemove).toBeUndefined();
+
+        // Positive twin: an editable scope still supplies removal.
+        const onRemove = vi.fn();
+        const editable = projectComposerAttachmentRowItems({ attachments, onRemove });
+        editable[0]?.onRemove?.();
+        expect(onRemove).toHaveBeenCalledWith('issue-42');
     });
 
     it('accepts only the exact daemon-admitted attachment definition instead of trusting an id-keyed catalog collision', () => {

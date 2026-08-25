@@ -1,3 +1,4 @@
+import { isExternalSessionOperationTerminalStatusV1 } from '@happier-dev/protocol';
 import type {
     ExternalSessionOperationPhaseV1,
     ExternalSessionOperationProgressV1,
@@ -109,16 +110,10 @@ export type ExternalSessionOperationProgressPresentation = Readonly<{
     discardRequiresConfirmation: boolean;
 }>;
 
-const TERMINAL_STATUSES = new Set<ExternalSessionOperationStatusV1>([
-    'cancelled',
-    'completed',
-    'discarded',
-]);
-
 export function isExternalSessionOperationDismissibleStatus(
     status: ExternalSessionOperationStatusV1,
 ): boolean {
-    return TERMINAL_STATUSES.has(status);
+    return isExternalSessionOperationTerminalStatusV1(status);
 }
 
 const PHASE_LABEL_KEYS: Readonly<
@@ -267,7 +262,7 @@ function resolveSummaryKey(
             ? 'externalSessions.operationStatusSpawnFailedAfterImport'
             : 'externalSessions.operationStatusSpawnFailedAfterTakeover';
     }
-    if (originAvailability !== 'online' && !TERMINAL_STATUSES.has(effectiveStatus)) {
+    if (originAvailability !== 'online' && !isExternalSessionOperationTerminalStatusV1(effectiveStatus)) {
         return originAvailability === 'offline'
             ? 'externalSessions.operationStatusOriginOffline'
             : 'externalSessions.operationStatusOriginUnknown';

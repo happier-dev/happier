@@ -206,13 +206,13 @@ describe('resolveSessionAgentContinuationEligibility', () => {
         })).toEqual({ status: 'unavailable', kind: 'local', reason: 'target_no_sessions' });
     });
 
-    it('blocks configured and plugin-provided targets whose contract is not proven', () => {
+    it('lets daemon inspection decide continuation for every session-capable projected target', () => {
         for (const kind of ['configuredBackend', 'pluginBackend'] as const) {
             expect(resolveSessionAgentContinuationEligibility({
                 entry: builtInEntry('ultracode', { kind }),
                 source: eligibleSource,
                 inspection: SUPPORTED,
-            })).toEqual({ status: 'unavailable', kind: 'local', reason: 'target_not_proven' });
+            })).toEqual({ status: 'eligible' });
         }
     });
 

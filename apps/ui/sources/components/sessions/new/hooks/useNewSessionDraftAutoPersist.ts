@@ -87,6 +87,8 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
     const persistenceEnabledRef = React.useRef(params.persistenceEnabled ?? true);
     const draftTextRef = React.useRef(params.draftText);
     const focused = params.focused ?? true;
+    const focusedRef = React.useRef(focused);
+    focusedRef.current = focused;
     React.useEffect(() => {
         persistDraftNowRef.current = params.persistDraftNow;
     }, [params.persistDraftNow]);
@@ -106,9 +108,12 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         cancelIdlePersist();
     }, []);
 
-    const persistAfterCurrentPolicy = React.useCallback(() => {
+    const persistAfterCurrentPolicy = React.useCallback((options?: Readonly<{
+        allowUnfocused?: boolean;
+    }>) => {
+        const allowUnfocused = options?.allowUnfocused === true;
         cancelPendingIdlePersist();
-        if (!persistenceEnabledRef.current) {
+        if (!persistenceEnabledRef.current || (!allowUnfocused && !focusedRef.current)) {
             return;
         }
         // Persisting uses synchronous storage under the hood (MMKV). Large web
@@ -120,7 +125,7 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
                 if (cancelIdlePersistRef.current === cancelCurrentIdlePersist) {
                     cancelIdlePersistRef.current = null;
                 }
-                if (!persistenceEnabledRef.current) {
+                if (!persistenceEnabledRef.current || (!allowUnfocused && !focusedRef.current)) {
                     return;
                 }
                 persistDraftNowRef.current();
@@ -130,6 +135,9 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         }
 
         if (Platform.OS === 'web') {
+            if (!allowUnfocused && !focusedRef.current) {
+                return;
+            }
             persistDraftNowRef.current();
             return;
         }
@@ -144,7 +152,7 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         // `@/utils/timing/runAfterInteractionsWithFallback`. Web is handled above because there
         // the persist is already scheduled by the idle/large-draft policy.
         InteractionManager.runAfterInteractions(() => {
-            if (!persistenceEnabledRef.current) {
+            if (!persistenceEnabledRef.current || (!allowUnfocused && !focusedRef.current)) {
                 return;
             }
             persistDraftNowRef.current();
@@ -162,12 +170,14 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         if (!wasFocused || focused) {
             return;
         }
-        if (draftSaveTimerRef.current === null) {
+        if (draftSaveTimerRef.current === null && cancelIdlePersistRef.current === null) {
             return;
         }
-        clearTimeout(draftSaveTimerRef.current);
-        draftSaveTimerRef.current = null;
-        persistAfterCurrentPolicy();
+        if (draftSaveTimerRef.current !== null) {
+            clearTimeout(draftSaveTimerRef.current);
+            draftSaveTimerRef.current = null;
+        }
+        persistAfterCurrentPolicy({ allowUnfocused: true });
     }, [focused, persistAfterCurrentPolicy]);
 
     const armDebouncedPersist = React.useCallback(() => {
@@ -176,7 +186,7 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
             draftSaveTimerRef.current = null;
         }
         cancelPendingIdlePersist();
-        if ((params.persistenceEnabled ?? true) !== true) {
+        if (!focusedRef.current || !persistenceEnabledRef.current) {
             return;
         }
         const delayMs = resolveNewSessionDraftAutoPersistDelayMs({
@@ -185,14 +195,24 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         });
         draftSaveTimerRef.current = setTimeout(() => {
             draftSaveTimerRef.current = null;
+            if (!focusedRef.current || !persistenceEnabledRef.current) {
+                return;
+            }
             persistAfterCurrentPolicy();
         }, delayMs);
-    }, [cancelPendingIdlePersist, params.persistenceEnabled, persistAfterCurrentPolicy]);
+    }, [cancelPendingIdlePersist, persistAfterCurrentPolicy]);
 
+    const hasSkippedInitialMountPersistRef = React.useRef(false);
     React.useEffect(() => {
         if (!focused) {
             // The blur-flush effect above already flushed any pending debounce; leave an
             // in-flight idle persist alone so the flush completes with the live value.
+            return;
+        }
+        if (!hasSkippedInitialMountPersistRef.current) {
+            hasSkippedInitialMountPersistRef.current = true;
+            // Hydration/default resolution is not a semantic edit. The draft-change key or
+            // live text subscription will arm persistence after the first actual change.
             return;
         }
         armDebouncedPersist();
@@ -216,6 +236,9 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
             return;
         }
         return draftText.subscribe(() => {
+            if (!focusedRef.current || !persistenceEnabledRef.current) {
+                return;
+            }
             armDebouncedPersist();
         });
     }, [armDebouncedPersist, params.draftText]);
@@ -228,7 +251,7 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
             }
             clearTimeout(draftSaveTimerRef.current);
             draftSaveTimerRef.current = null;
-            persistAfterCurrentPolicy();
+            persistAfterCurrentPolicy({ allowUnfocused: true });
         };
     }, [persistAfterCurrentPolicy]);
 }

@@ -88,7 +88,14 @@ export function resolveComposerAttachmentCatalogRowDescriptor(input: Readonly<{
  */
 export function projectComposerAttachmentRowItems(input: Readonly<{
     attachments: readonly ComposerAttachmentViewV1[];
-    onRemove: (instanceId: string) => void;
+    /**
+     * Removal is a Composer document mutation. The owning scope supplies it
+     * only while its exact `ComposerSnapshotV1.state.editable` allows one; an
+     * explicit read-only/locked scope omits it so the row does not render a
+     * control whose transaction the owner would refuse. Non-mutating preview,
+     * picker and surface interaction remain available either way.
+     */
+    onRemove?: (instanceId: string) => void;
     /** The current daemon-normalized attachment projection, never a retained local catalog. */
     entriesById?: Readonly<Record<string, PluginProjectedComposerAttachmentEntryV1>>;
     /**
@@ -117,10 +124,6 @@ export function projectComposerAttachmentRowItems(input: Readonly<{
                 attachment,
                 entriesById: input.entriesById,
             });
-        const surface = attachment.availability.status === 'ready'
-            && catalog?.display?.kind === 'surface'
-            ? input.renderSurface?.({ attachment, catalog })
-            : undefined;
         const handle = attachment.availability.status === 'ready' && catalog !== null
             ? resolveComposerAttachmentStagedMediaHandle({ attachment, catalog })
             : null;
@@ -134,13 +137,25 @@ export function projectComposerAttachmentRowItems(input: Readonly<{
             && catalog.preview?.kind !== 'host'
             ? input.resolveInteraction?.({ attachment, catalog })
             : undefined;
+        // This row owns the instance's label, error feedback and removal for a
+        // surface item too, so a mounted custom display receives no row-shaped
+        // fallback: its failure state is body-level content inside this row.
+        const surface = attachment.availability.status === 'ready'
+            && catalog?.display?.kind === 'surface'
+            ? input.renderSurface?.({ attachment, catalog })
+            : undefined;
+        const removeAttachment = input.onRemove;
+        const onRemove = removeAttachment === undefined
+            ? undefined
+            : () => removeAttachment(attachment.instanceId);
         const projected = projectComposerAttachmentRowItem({
             attachment,
             catalog,
             ...(media === undefined ? {} : { media }),
             ...(surface === undefined ? {} : { surface }),
             ...(interaction === undefined ? {} : interaction),
-            onRemove: () => input.onRemove(attachment.instanceId),
+            ...(onRemove === undefined ? {} : { onRemove }),
+            testID: `composer-attachment:${attachment.instanceId}`,
             accessibilityLabel: `${attachment.presentation.typeLabel}: ${attachment.presentation.label}`,
             removeAccessibilityLabel: `${t('common.remove')} ${attachment.presentation.typeLabel}: ${attachment.presentation.label}`,
         });

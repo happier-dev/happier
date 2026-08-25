@@ -4,8 +4,8 @@ import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 
 import type { ActionOperationReentryOrigin } from '@/components/inbox/actionOperations/actionOperationPresentationCoordinator';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
-import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { getSessionDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 function shouldReopenPersistedDraft(snapshot: ActionOperationSnapshotV1): boolean {
     if (snapshot.state === 'failed' || snapshot.state === 'cancelled') {
@@ -24,21 +24,26 @@ function shouldReopenPersistedDraft(snapshot: ActionOperationSnapshotV1): boolea
  */
 export function createNewSessionActionOperationOrigin(
     scope: ServerAccountScope,
+    draftId: string,
 ): ActionOperationReentryOrigin {
     const persistedDraftScope = Object.freeze({
         serverId: scope.serverId,
         accountId: scope.accountId,
     });
+    const persistedDraftId = draftId;
 
     return Object.freeze({
         resolve(snapshot: ActionOperationSnapshotV1): (() => void) | null {
             if (!shouldReopenPersistedDraft(snapshot)) {
                 return null;
             }
-            if (!loadNewSessionDraft(persistedDraftScope)) {
+            if (!getSessionDraftSnapshot(persistedDraftScope, { kind: 'newSession', draftId: persistedDraftId })) {
                 return null;
             }
-            return () => router.push('/new' as never);
+            return () => router.push({
+                pathname: '/new',
+                params: { draftId: persistedDraftId },
+            } as never);
         },
     });
 }

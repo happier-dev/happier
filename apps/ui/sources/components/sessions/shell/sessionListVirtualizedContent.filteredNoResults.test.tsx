@@ -41,6 +41,12 @@ vi.mock('./sessionListChrome', () => ({
     SessionsListHeader: () => React.createElement('SessionsListHeader'),
     SessionFolderFocusBreadcrumbs: () => React.createElement('SessionFolderFocusBreadcrumbs'),
 }));
+vi.mock('./NewSessionDraftsSection', () => ({
+    NewSessionDraftsSection: (props: Record<string, unknown>) => React.createElement('NewSessionDraftsSection', {
+        ...props,
+        testID: 'session-drafts-section',
+    }),
+}));
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.title),
 }));
@@ -61,6 +67,7 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
 
         const screen = await renderScreen(React.createElement(SessionListVirtualizedContent as any, {
             nodes: [{ id: 'header:active', rowViewModel: null }],
+            rowDensity: 'minimal',
             rowHeight: 48,
             safeAreaBottom: 0,
             renderItem: ({ item }: any) => React.createElement('Row', { testID: `row:${item.id}` }),
@@ -75,5 +82,7 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
 
         expect(screen.getTextContent()).toContain('directSessions.browseNoSearchResults');
         expect(screen.findByProps({ accessibilityLiveRegion: 'polite' })).toBeTruthy();
+        expect(screen.findByTestId('session-drafts-section')).toBeTruthy();
+        expect(screen.findByTestId('session-drafts-section')?.props.density).toBe('minimal');
     });
 });

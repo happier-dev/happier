@@ -7,8 +7,6 @@ import {
 import {
     buildLocalServiceInventoryRow,
     buildLocalServiceInventoryState,
-    buildManagedLocalServiceRow,
-    buildManagedLocalServicesState,
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
@@ -123,17 +121,15 @@ describe('DetectedLocalServicesPane', () => {
         expect(screen.findByTestId('local-services-pane-error-code-scanner_permission_denied')).toBeTruthy();
     });
 
-    it('renders a count badge from the live inventory + managed rows', async () => {
+    it('renders a count badge of total and listening detected rows', async () => {
         const screen = await renderScreen(
             <DetectedLocalServicesPane
                 inventoryState={buildLocalServiceInventoryState({
                     rows: [
                         buildLocalServiceInventoryRow({ id: 'live-1', state: 'listening' }),
+                        buildLocalServiceInventoryRow({ id: 'live-2', state: 'listening' }),
                         buildLocalServiceInventoryRow({ id: 'stale-1', state: 'stale' }),
                     ],
-                })}
-                managedState={buildManagedLocalServicesState({
-                    rows: [buildManagedLocalServiceRow({ id: 'managed-1', phase: 'running' })],
                 })}
                 testID="local-services-pane"
             />,
@@ -245,7 +241,16 @@ describe('DetectedLocalServicesPane', () => {
         );
     });
 
-    it('preserves the public-preview control on an exposure-bearing row (§5.7)', async () => {
+    /**
+     * §5.7's capability, at its new owner.
+     *
+     * The exposure group used to be mounted inside every qualifying ROW, which repeated the group
+     * heading down the pane, nested a group inside a band group, and made `activeExposureCount`
+     * rescan the whole exposure set once per row (U-10). It is now mounted ONCE at pane level, so
+     * these two tests assert the same capability at `…-public-preview` rather than at
+     * `…-row:<id>-public-preview`. Relocated, not removed.
+     */
+    it('preserves the public-preview control for an exposure-bearing target, once at pane level (§5.7)', async () => {
         const previewTarget = {
             id: 'preview:preview_1',
             source: 'registered_preview' as const,
@@ -297,7 +302,6 @@ describe('DetectedLocalServicesPane', () => {
         const screen = await renderScreen(
             <DetectedLocalServicesPane
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={launcherStateWith([previewTarget], 'session-a')}
                 publicPreviewState={publicPreviewState}
                 publicPreviewActions={{ create: vi.fn(), copyUrl: vi.fn(), revoke: vi.fn() }}
@@ -305,10 +309,15 @@ describe('DetectedLocalServicesPane', () => {
                 testID="local-services-pane"
             />,
         );
-        expect(screen.findByTestId('local-services-pane-row:preview:preview_1-public-preview-exposure:public_preview_1-revoke')).toBeTruthy();
+        expect(screen.findByTestId('local-services-pane-public-preview-exposure:public_preview_1-revoke')).toBeTruthy();
+        // Exactly one group, not one per row — that is the whole point of the hoist. Counted over
+        // HOST instances: `findAllByTestId` also matches the composite that receives `testID` as a
+        // prop, so a single group that forwards it to its root view counts twice and the assertion
+        // would fail for a rendering that is correct.
+        expect(screen.findAllHostsByTestId('local-services-pane-public-preview')).toHaveLength(1);
     });
 
-    it('renders disabled public-preview state on a plain loopback open row (§5.7)', async () => {
+    it('renders disabled public-preview state for a plain loopback open target (§5.7)', async () => {
         const publicPreviewState = applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), {
             v: 1,
             machineId: 'machine-a',
@@ -339,7 +348,7 @@ describe('DetectedLocalServicesPane', () => {
                 testID="local-services-pane"
             />,
         );
-        expect(screen.findByTestId('local-services-pane-row:inventory:openable-row-public-preview-target:inventory:openable-row-disabled')).toBeTruthy();
+        expect(screen.findByTestId('local-services-pane-public-preview-target:inventory:openable-row-disabled')).toBeTruthy();
         expect(screen.getTextContent()).toContain('Open a local preview before creating a public link.');
         expect(screen.findAll((node) => String(node.props?.testID ?? '').endsWith('-create'))).toHaveLength(0);
     });

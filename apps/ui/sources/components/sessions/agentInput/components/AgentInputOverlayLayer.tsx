@@ -465,7 +465,13 @@ export function AgentInputOverlayLayer(props: Readonly<{
                         railWidth={popover.railWidth}
                         railMaxWidth={popover.railMaxWidth}
                         onSelect={(selectedId) => {
-                            props.activeExtraCollapsedPopoverChip?.collapsedOptionsPopover?.onSelect(selectedId);
+                            // A chip that reports its selection was refused —
+                            // a Composer transaction conflict or a non-editable
+                            // draft — keeps its overflow open instead of
+                            // dismissing as if the choice had applied.
+                            const applied = props.activeExtraCollapsedPopoverChip
+                                ?.collapsedOptionsPopover?.onSelect(selectedId);
+                            if (applied === false) return;
                             props.onActiveExtraCollapsedPopoverChipClose();
                         }}
                         onRequestClose={props.onActiveExtraCollapsedPopoverChipClose}

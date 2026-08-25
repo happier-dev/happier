@@ -1,6 +1,8 @@
 import { useRouter } from 'expo-router';
 
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { storage, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
@@ -41,6 +43,7 @@ export function useSessionListNavigationActions() {
             scopeHint: WorkspaceScopeHint,
             options?: CreateSessionFromWorkspaceScopeOptions,
         ) {
+            const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
             const seedSessionId = normalizeString(options?.seedSessionId);
             const seedSession = rememberLastProjectSessionSelections
                 ? resolveSeedSession(seedSessionId)
@@ -60,21 +63,25 @@ export function useSessionListNavigationActions() {
                 router.push({
                     pathname: '/new',
                     params: {
+                        ...buildNewSessionLaunchRouteParams({
+                            draftId,
+                            machineId: scopeHint.machineId,
+                            directory,
+                            targetServerId: scopeHint.serverId,
+                        }),
                         dataId,
-                        machineId: scopeHint.machineId,
-                        directory,
-                        ...(scopeHint.serverId ? { spawnServerId: scopeHint.serverId } : {}),
                     },
                 } as any);
                 return;
             }
             router.push({
                 pathname: '/new',
-                params: {
+                params: buildNewSessionLaunchRouteParams({
+                    draftId,
                     machineId: scopeHint.machineId,
                     directory,
-                    ...(scopeHint.serverId ? { spawnServerId: scopeHint.serverId } : {}),
-                },
+                    targetServerId: scopeHint.serverId,
+                }),
             } as any);
         },
         handleOpenArchivedSessions() {

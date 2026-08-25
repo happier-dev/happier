@@ -11,6 +11,7 @@ describe('buildProfileEditPickerRouteParams', () => {
                 backendTargetKey: 'backend:review-bot:configured:review-bot',
             },
             dataId: 'draft-1',
+            draftId: 'draft-id',
             machineId: 'machine-1',
             spawnServerId: 'server-2',
             nextParams: {
@@ -22,6 +23,7 @@ describe('buildProfileEditPickerRouteParams', () => {
             backendTargetKey: 'backend:review-bot:configured:review-bot',
             cloneFromProfileId: 'profile-1',
             dataId: 'draft-1',
+            draftId: 'draft-id',
             machineId: 'machine-1',
             spawnServerId: 'server-2',
         });

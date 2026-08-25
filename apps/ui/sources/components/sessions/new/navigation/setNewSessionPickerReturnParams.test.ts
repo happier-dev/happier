@@ -1,8 +1,52 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { resolveNewSessionPickerReturnRouteKey, setNewSessionPickerReturnParams } from './setNewSessionPickerReturnParams';
+import {
+    buildNewSessionPickerFallbackHref,
+    pickNewSessionRouteParams,
+    resolveNewSessionPickerReturnRouteKey,
+    setNewSessionPickerReturnParams,
+} from './setNewSessionPickerReturnParams';
+
+describe('pickNewSessionRouteParams', () => {
+    it('preserves ordinary-entry origin across picker round trips without admitting unrelated params', () => {
+        expect(pickNewSessionRouteParams({
+            draftId: '4a506d8a-85bd-4c42-a662-6f502f3acc45',
+            draftOrigin: 'ordinary',
+            unrelated: 'drop-me',
+        })).toEqual({
+            draftId: '4a506d8a-85bd-4c42-a662-6f502f3acc45',
+            draftOrigin: 'ordinary',
+        });
+    });
+});
+
+describe('buildNewSessionPickerFallbackHref', () => {
+    it('preserves the exact current draft identity in an emergency picker fallback', () => {
+        expect(buildNewSessionPickerFallbackHref({
+            draftId: '4a506d8a-85bd-4c42-a662-6f502f3acc45',
+            directory: '/repo with space',
+            unrelated: 'drop-me',
+        })).toEqual({
+            pathname: '/new',
+            params: {
+                draftId: '4a506d8a-85bd-4c42-a662-6f502f3acc45',
+                directory: '/repo with space',
+            },
+        });
+    });
+});
 
 describe('resolveNewSessionPickerReturnRouteKey', () => {
+    it('recognizes a route carrying only the exact new-session draft identity', () => {
+        expect(resolveNewSessionPickerReturnRouteKey({
+            index: 2,
+            routes: [
+                { key: 'session-route', name: '(app)/session/[id]', path: '/session/s1', params: { id: 's1' } },
+                { key: 'new-route', params: { draftId: 'draft-id' } },
+                { key: 'path-picker', name: '(app)/new/pick/path', path: '/new/pick/path' },
+            ],
+        })).toBe('new-route');
+    });
     it('prefers the nearest prior /new route over an unrelated modal parent', () => {
         expect(resolveNewSessionPickerReturnRouteKey({
             index: 2,
@@ -70,6 +114,33 @@ describe('resolveNewSessionPickerReturnRouteKey', () => {
 });
 
 describe('setNewSessionPickerReturnParams', () => {
+    it('preserves the exact draft identity through replace fallback', () => {
+        const replace = vi.fn();
+
+        setNewSessionPickerReturnParams({
+            navigation: {
+                dispatch: vi.fn(),
+                getState: () => ({
+                    index: 1,
+                    routes: [
+                        { key: 'session-route', name: '(app)/session/[id]', path: '/session/s1' },
+                        { key: 'picker-route', name: '(app)/new/pick/path', path: '/new/pick/path' },
+                    ],
+                }),
+            },
+            router: { replace },
+            currentParams: { draftId: 'draft-id' },
+            routeParams: { directory: '/repo/selected' },
+        });
+
+        expect(replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                draftId: 'draft-id',
+                directory: '/repo/selected',
+            },
+        });
+    });
     it('dispatches params onto the new-session route when it is still on the stack', () => {
         const dispatch = vi.fn();
         const replace = vi.fn();

@@ -44,15 +44,42 @@ describe('useNewSessionDraftAutoPersist', () => {
         })).toBe(TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS);
     });
 
+    it('does not persist an unchanged focused draft merely because the hook mounted', async () => {
+        const persistDraftNow = vi.fn();
+
+        vi.useFakeTimers();
+        try {
+            const hook = await renderHook(() =>
+                useNewSessionDraftAutoPersist({
+                    persistDraftNow,
+                    focused: true,
+                    draftText: staticDraftText(0),
+                    draftChangeKey: 'unchanged',
+                }),
+            );
+
+            await vi.advanceTimersByTimeAsync(5_000);
+            await hook.unmount();
+
+            expect(persistDraftNow).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('flushes the pending persist callback on unmount', async () => {
         const persistDraftNow = vi.fn();
+        let draftChangeKey = 'initial';
 
         const hook = await renderHook(() =>
             useNewSessionDraftAutoPersist({
                 persistDraftNow,
+                draftChangeKey,
             }),
         );
 
+        draftChangeKey = 'changed';
+        await hook.rerender();
         // Unmount before the debounce timer fires.
         await hook.unmount();
 
@@ -62,6 +89,7 @@ describe('useNewSessionDraftAutoPersist', () => {
     it('does not flush a pending persist callback after persistence is disabled', async () => {
         const persistDraftNow = vi.fn();
         let persistenceEnabled = true;
+        let draftChangeKey = 'initial';
 
         vi.useFakeTimers();
         try {
@@ -69,9 +97,12 @@ describe('useNewSessionDraftAutoPersist', () => {
                 useNewSessionDraftAutoPersist({
                     persistDraftNow,
                     persistenceEnabled,
+                    draftChangeKey,
                 }),
             );
 
+            draftChangeKey = 'changed';
+            await hook.rerender();
             persistenceEnabled = false;
             await hook.rerender();
             await flushHookEffects({ runAllTimers: true });
@@ -105,9 +136,43 @@ describe('useNewSessionDraftAutoPersist', () => {
         }
     });
 
+    it('ignores mutable text-source notifications while the screen is unfocused', async () => {
+        const persistDraftNow = vi.fn();
+        const listeners = new Set<() => void>();
+        const draftText = {
+            getLength: () => 10,
+            subscribe: (listener: () => void) => {
+                listeners.add(listener);
+                return () => listeners.delete(listener);
+            },
+        } as const;
+
+        vi.useFakeTimers();
+        try {
+            const hook = await renderHook(() =>
+                useNewSessionDraftAutoPersist({
+                    persistDraftNow,
+                    focused: false,
+                    draftText,
+                }),
+            );
+
+            for (const listener of Array.from(listeners)) listener();
+            await vi.advanceTimersByTimeAsync(5_000);
+
+            expect(persistDraftNow).not.toHaveBeenCalled();
+            await hook.unmount();
+            expect(persistDraftNow).not.toHaveBeenCalled();
+            expect(listeners.size).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('flushes pending draft persistence once when the screen loses focus', async () => {
         const persistDraftNow = vi.fn();
         let focused = true;
+        let draftChangeKey = 'initial';
 
         vi.useFakeTimers();
         try {
@@ -116,9 +181,12 @@ describe('useNewSessionDraftAutoPersist', () => {
                     persistDraftNow,
                     focused,
                     draftText: staticDraftText(10),
+                    draftChangeKey,
                 }),
             );
 
+            draftChangeKey = 'changed';
+            await hook.rerender();
             // Blur before the debounce deadline: the latest draft must be flushed
             // exactly once so navigation away does not drop recent typing.
             focused = false;
@@ -137,6 +205,7 @@ describe('useNewSessionDraftAutoPersist', () => {
 
     it('does not re-arm the debounce from re-renders that do not change the draft', async () => {
         const persistDraftNow = vi.fn();
+        let draftChangeKey = 'initial';
 
         vi.useFakeTimers();
         try {
@@ -145,9 +214,12 @@ describe('useNewSessionDraftAutoPersist', () => {
                 useNewSessionDraftAutoPersist({
                     persistDraftNow: () => persistDraftNow(),
                     draftText: staticDraftText(10),
+                    draftChangeKey,
                 }),
             );
 
+            draftChangeKey = 'changed';
+            await hook.rerender();
             await vi.advanceTimersByTimeAsync(200);
             await hook.rerender();
             // The web debounce is 250ms from the ORIGINAL schedule; an unrelated
@@ -175,10 +247,13 @@ describe('useNewSessionDraftAutoPersist', () => {
                 }),
             );
 
+            draftChangeKey = 'BBBB';
+            await hook.rerender();
             await vi.advanceTimersByTimeAsync(250);
+
             expect(persistDraftNow).toHaveBeenCalledTimes(1);
 
-            draftChangeKey = 'BBBB';
+            draftChangeKey = 'CCCC';
             await hook.rerender();
             await vi.advanceTimersByTimeAsync(250);
 
@@ -216,12 +291,17 @@ describe('useNewSessionDraftAutoPersist', () => {
                 }),
             );
 
-            await vi.advanceTimersByTimeAsync(250);
-            expect(persistDraftNow).toHaveBeenCalledTimes(1);
-
             // A keystroke: the text changes and subscribers are notified, but nothing re-renders
             // and draftChangeKey is unchanged.
             text = 'ab';
+            for (const listener of Array.from(listeners)) {
+                listener();
+            }
+            await vi.advanceTimersByTimeAsync(250);
+
+            expect(persistDraftNow).toHaveBeenCalledTimes(1);
+
+            text = 'abc';
             for (const listener of Array.from(listeners)) {
                 listener();
             }
@@ -254,13 +334,17 @@ describe('useNewSessionDraftAutoPersist', () => {
 
         vi.useFakeTimers();
         try {
+            let draftChangeKey = 'initial';
             const hook = await renderHook(() =>
                 useNewSessionDraftAutoPersist({
                     persistDraftNow,
                     draftText: staticDraftText(largeDraftTextLength),
+                    draftChangeKey,
                 }),
             );
 
+            draftChangeKey = 'changed';
+            await hook.rerender();
             await hook.unmount();
 
             expect(persistDraftNow).not.toHaveBeenCalled();
@@ -307,11 +391,13 @@ describe('useNewSessionDraftAutoPersist', () => {
                 }),
             );
 
+            draftChangeKey = 'large-draft-b';
+            await hook.rerender();
             await vi.advanceTimersByTimeAsync(delayMs);
             expect(idleCallbacks).toHaveLength(1);
             expect(persistDraftNow).not.toHaveBeenCalled();
 
-            draftChangeKey = 'large-draft-b';
+            draftChangeKey = 'large-draft-c';
             await hook.rerender();
 
             expect(globalThis.cancelIdleCallback).toHaveBeenCalledWith(1);
@@ -322,6 +408,56 @@ describe('useNewSessionDraftAutoPersist', () => {
             idleCallbacks[0]?.();
             idleCallbacks[1]?.();
 
+            expect(persistDraftNow).toHaveBeenCalledTimes(1);
+
+            await hook.unmount();
+        } finally {
+            vi.useRealTimers();
+            globalThis.requestIdleCallback = originalRequestIdleCallback;
+            globalThis.cancelIdleCallback = originalCancelIdleCallback;
+        }
+    });
+
+    it('retires a focused idle callback on blur and flushes exactly once through the blur lifecycle', async () => {
+        const persistDraftNow = vi.fn();
+        const idleCallbacks: Array<() => void> = [];
+        const originalRequestIdleCallback = globalThis.requestIdleCallback;
+        const originalCancelIdleCallback = globalThis.cancelIdleCallback;
+
+        globalThis.requestIdleCallback = vi.fn((callback: IdleRequestCallback) => {
+            idleCallbacks.push(() => callback({ didTimeout: false, timeRemaining: () => 10 }));
+            return idleCallbacks.length;
+        });
+        globalThis.cancelIdleCallback = vi.fn();
+
+        vi.useFakeTimers();
+        try {
+            const largeDraftTextLength = TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1;
+            const delayMs = resolveNewSessionDraftAutoPersistDelayMs({
+                platformOS: 'web',
+                draftTextLength: largeDraftTextLength,
+            });
+            let focused = true;
+            let draftChangeKey = 'initial';
+            const hook = await renderHook(() => useNewSessionDraftAutoPersist({
+                persistDraftNow,
+                focused,
+                draftText: staticDraftText(largeDraftTextLength),
+                draftChangeKey,
+            }));
+
+            draftChangeKey = 'changed';
+            await hook.rerender();
+            await vi.advanceTimersByTimeAsync(delayMs);
+            expect(idleCallbacks).toHaveLength(1);
+
+            focused = false;
+            await hook.rerender();
+            expect(globalThis.cancelIdleCallback).toHaveBeenCalledWith(1);
+            expect(idleCallbacks).toHaveLength(2);
+
+            idleCallbacks[0]?.();
+            idleCallbacks[1]?.();
             expect(persistDraftNow).toHaveBeenCalledTimes(1);
 
             await hook.unmount();

@@ -1042,6 +1042,45 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(routerPushSpy).toHaveBeenCalledWith('/session/happy-session-1');
     });
 
+    it('keeps a served candidate actionable after the index build is cancelled', async () => {
+        const indexingContinuation = vi.fn(() => createDeferred<ExternalSessionsCandidatesListResponse>().promise);
+        candidatesListSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                candidates: [
+                    {
+                        remoteSessionId: 'codex-session-1',
+                        title: 'Existing Codex Session',
+                        updatedAtMs: 1_700_000_000_000,
+                        activity: 'running',
+                        details: { path: '/tmp/worktree' },
+                    },
+                ] as ExternalSessionCandidateV1[],
+                nextCursor: null,
+                preparation: { kind: 'building_candidate_index', scanned: 50, total: 5_000 },
+            })
+            .mockImplementation(indexingContinuation);
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+        await flushHookEffects();
+        expect(indexingContinuation).toHaveBeenCalled();
+
+        await screen.pressByTestIdAsync('direct-session-candidates:indexing:cancel');
+        await flushHookEffects();
+
+        const servedCandidate = screen.findByTestId('direct-session-candidate:codex-session-1');
+        expect(servedCandidate).not.toBeNull();
+        expect(servedCandidate?.props.disabled).toBe(false);
+
+        await screen.pressByTestIdAsync('direct-session-candidate:codex-session-1');
+
+        expect(linkEnsureSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            agentId: 'codex',
+            remoteSessionId: 'codex-session-1',
+        }));
+    });
+
     it('admits only one link submission before React commits the pending state', async () => {
         let resolveLink!: (value: Awaited<ReturnType<typeof linkEnsureSpy>>) => void;
         const pendingLink = new Promise<Awaited<ReturnType<typeof linkEnsureSpy>>>((resolve) => {

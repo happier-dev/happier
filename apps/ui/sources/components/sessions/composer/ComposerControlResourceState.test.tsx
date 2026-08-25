@@ -1,12 +1,14 @@
 import * as React from 'react';
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+    MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
 } from '@happier-dev/protocol';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 
 import type { PluginContextualResourceBinding } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
+import { log } from '@/log';
 
 import {
     useComposerControlResourceState,
@@ -89,7 +91,59 @@ describe('ComposerControlResourceState', () => {
         await act(async () => { tree?.unmount(); });
     });
 
+    it('does not decode an unchanged digest again when only the canonical Resource observation changes', async () => {
+        const observed: { current: ComposerControlResourceStateProjection | null } = { current: null };
+        const binding = createBinding();
+        const isCurrent = () => true;
+        const valid = resourceSnapshot({
+            contentType: COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+            document: JSON.stringify({ label: 'Ready', count: 3, enabled: true }),
+            digest: `sha256:${'9'.repeat(64)}`,
+        });
+        const stale = {
+            ...valid,
+            freshness: 'stale' as const,
+            pending: 'refresh' as const,
+            error: { code: 'transport_unavailable', message: 'Resource refresh failed.' },
+            subscription: 'reconnecting' as const,
+        } satisfies PluginUiResourceSnapshot;
+        const parse = vi.spyOn(JSON, 'parse');
+
+        function Probe(props: Readonly<{ snapshot: PluginUiResourceSnapshot | null }>): null {
+            observed.current = useComposerControlResourceState({
+                binding,
+                resource: 'control-state',
+                snapshot: props.snapshot,
+                isCurrent,
+            });
+            return null;
+        }
+
+        let tree: ReturnType<typeof create> | null = null;
+        try {
+            await act(async () => {
+                tree = create(<Probe snapshot={valid} />);
+            });
+            await act(async () => {
+                tree?.update(<Probe snapshot={stale} />);
+            });
+
+            // Freshness/pending/error are independent canonical Resource facts.
+            // Re-observing the same content must retain and expose them without
+            // reparsing the identical control document on the UI thread.
+            expect(parse).toHaveBeenCalledTimes(1);
+            expect(observed.current).toEqual({
+                state: { label: 'Ready', count: 3, enabled: true },
+                resource: stale,
+            });
+        } finally {
+            parse.mockRestore();
+            await act(async () => { tree?.unmount(); });
+        }
+    });
+
     it('retains the last valid semantic state when a later Resource update has the wrong type or malformed JSON', async () => {
+        const diagnostic = vi.spyOn(log, 'log').mockImplementation(() => undefined);
         const observed: { current: ComposerControlResourceStateProjection | null } = { current: null };
         const binding = createBinding();
         const valid = resourceSnapshot({
@@ -138,13 +192,93 @@ describe('ComposerControlResourceState', () => {
             tree?.update(<Probe snapshot={malformed} />);
         });
         expect(observed.current?.state).toEqual({ label: 'Ready', count: 3, enabled: true });
+        await act(async () => {
+            tree?.update(<Probe snapshot={malformed} />);
+        });
 
         await act(async () => {
             tree?.update(<Probe snapshot={schemaMismatch} />);
         });
         expect(observed.current?.state).toEqual({ label: 'Ready', count: 3, enabled: true });
+        expect(diagnostic.mock.calls.filter(([message]) => String(message).includes('composer_control_resource_invalid')))
+            .toHaveLength(3);
+        expect(diagnostic.mock.calls.some(([message]) => String(message).includes('Wrong shape'))).toBe(false);
 
         await act(async () => { tree?.unmount(); });
+        diagnostic.mockRestore();
+    });
+
+    it('rejects an oversized document before decoding it and keeps the last valid state', async () => {
+        const observed: { current: ComposerControlResourceStateProjection | null } = { current: null };
+        const binding = createBinding();
+        const valid = resourceSnapshot({
+            contentType: COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+            document: JSON.stringify({ label: 'Ready' }),
+            digest: `sha256:${'2'.repeat(64)}`,
+        });
+        const oversizedDocument = JSON.stringify({
+            label: 'Oversized',
+            unavailableReason: 'x'.repeat(MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1),
+        });
+        expect(new TextEncoder().encode(oversizedDocument).byteLength)
+            .toBeGreaterThan(MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1);
+        const oversized = resourceSnapshot({
+            contentType: COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+            document: oversizedDocument,
+            digest: `sha256:${'3'.repeat(64)}`,
+        });
+        // A document at the declared ceiling stays admissible, so the guard is a
+        // bound rather than a blanket refusal of large-but-valid state.
+        const atCeilingLabel = 'y'.repeat(200);
+        const atCeiling = resourceSnapshot({
+            contentType: COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
+            document: JSON.stringify({ label: atCeilingLabel }),
+            digest: `sha256:${'4'.repeat(64)}`,
+        });
+
+        let decodedBytes = 0;
+        const realDecode = TextDecoder.prototype.decode;
+        const decodeSpy = vi.spyOn(TextDecoder.prototype, 'decode').mockImplementation(function (
+            this: TextDecoder,
+            input?: AllowSharedBufferSource,
+            options?: TextDecodeOptions,
+        ) {
+            if (input instanceof Uint8Array) decodedBytes += input.byteLength;
+            return realDecode.call(this, input as never, options as never);
+        });
+
+        function Probe(props: Readonly<{ snapshot: PluginUiResourceSnapshot | null }>): null {
+            observed.current = useComposerControlResourceState({
+                binding,
+                resource: 'control-state',
+                snapshot: props.snapshot,
+                isCurrent: () => true,
+            });
+            return null;
+        }
+
+        let tree: ReturnType<typeof create> | null = null;
+        try {
+            await act(async () => {
+                tree = create(<Probe snapshot={valid} />);
+            });
+            expect(observed.current?.state).toEqual({ label: 'Ready' });
+
+            const decodedBeforeOversized = decodedBytes;
+            await act(async () => {
+                tree?.update(<Probe snapshot={oversized} />);
+            });
+            expect(observed.current?.state).toEqual({ label: 'Ready' });
+            expect(decodedBytes).toBe(decodedBeforeOversized);
+
+            await act(async () => {
+                tree?.update(<Probe snapshot={atCeiling} />);
+            });
+            expect(observed.current?.state).toEqual({ label: atCeilingLabel });
+        } finally {
+            decodeSpy.mockRestore();
+            await act(async () => { tree?.unmount(); });
+        }
     });
 
     it('drops prior semantic state when its exact binding changes or the caller becomes stale', async () => {

@@ -405,7 +405,6 @@ async function setupUseCreateNewSessionHarness() {
     ));
     const applySettingsSpy = vi.fn((..._args: unknown[]) => {});
     const updateAutomationSpy = vi.fn(async () => {});
-    const updateSessionDraftSpy = vi.fn();
     const upsertPendingMessageSpy = vi.fn();
     const markSessionOptimisticThinkingSpy = vi.fn();
     const saveSessionDraftsSpy = vi.fn();
@@ -487,7 +486,6 @@ async function setupUseCreateNewSessionHarness() {
                 sessions,
                 updateSessionPermissionMode: vi.fn(),
                 updateSessionModelMode: vi.fn(),
-                updateSessionDraft: updateSessionDraftSpy,
                 upsertPendingMessage: upsertPendingMessageSpy,
                 markSessionOptimisticThinking: markSessionOptimisticThinkingSpy,
             }),
@@ -692,7 +690,6 @@ async function setupUseCreateNewSessionHarness() {
         refreshAutomationsSpy,
         refreshAutomationDefinitionDetailSpy,
         updateAutomationSpy,
-        updateSessionDraftSpy,
         upsertPendingMessageSpy,
         markSessionOptimisticThinkingSpy,
         saveSessionDraftsSpy,

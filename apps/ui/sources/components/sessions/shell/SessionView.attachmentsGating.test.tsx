@@ -107,7 +107,6 @@ installSessionShellCommonModuleMocks({
     resolveAgentUiBehavior: () => ({}),
     resolveAgentUiBehaviorFromFlavor: () => ({}),
     resolveAgentUiBehaviorFromSessionMetadata: () => ({}),
-    supportsDetectedMcpConfigScan: () => false,
     supportsEditableSessionGoals: supportsEditableSessionGoalsMock,
   }),
   storage: async () =>

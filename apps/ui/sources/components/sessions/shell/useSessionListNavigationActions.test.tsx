@@ -73,6 +73,7 @@ describe('useSessionListNavigationActions', () => {
         expect(routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.any(String),
                 machineId: 'machine_a',
                 directory: '/repo',
                 spawnServerId: 'server_a',
@@ -135,6 +136,7 @@ describe('useSessionListNavigationActions', () => {
             pathname: '/new',
             params: {
                 dataId: expect.any(String),
+                draftId: expect.any(String),
                 machineId: 'machine_target',
                 directory: '/repo',
                 spawnServerId: 'server_a',
@@ -200,6 +202,7 @@ describe('useSessionListNavigationActions', () => {
         expect(routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.any(String),
                 machineId: 'machine_target',
                 directory: '/Users/alice/repo',
                 spawnServerId: 'server_a',

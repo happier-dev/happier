@@ -669,11 +669,18 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                     return;
                 }
                 if (requestObservedPreparation) {
-                    setCandidatesAuthoritative(false);
-                    setCandidates([]);
-                    setAnnotationsIncomplete(false);
+                    /**
+                     * The full search's index published digest-verified rows for this
+                     * request's own scope and generation before it failed. They are
+                     * exactly as valid as the prefix a deliberately stopped build
+                     * leaves behind, so the failure retires the crawl and is reported
+                     * on its own instead of destroying rows the user is already
+                     * reading. Rows a restarted generation orphaned lost their
+                     * authority where that restart was observed and keep it lost here.
+                     */
                     setNextPage(null);
                     setPreparation(null);
+                    setPreparationStopped(true);
                     setError(resolveExternalSessionBrowseThrownErrorMessage(augmentationError, 'list'));
                 }
                 // Otherwise keep fast search results visible if slower augmentation fails.
@@ -733,17 +740,12 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         activePageRequestKeysRef.current.clear();
         loadedScopeKeyRef.current = currentScopeKey;
         setLoadedScopeKey(currentScopeKey);
-        setCandidatesAuthoritative(false);
-        setCandidates([]);
         setNextPage(null);
         setLoading(false);
         setLoadingMore(false);
         setSearchAugmenting(false);
-        setSearchIncomplete(false);
-        setAnnotationsIncomplete(false);
         setPreparation(null);
-        setPreparationStopped(false);
-        setAutoLinkPolicyScope(null);
+        setPreparationStopped(true);
         setError(t('externalSessions.browseIndexingCancelled'));
         setCancelled(true);
     }, [currentScopeKey]);

@@ -45,6 +45,28 @@ const issueAttachment = {
     availability: { status: 'ready' },
 } satisfies ComposerAttachmentViewV1;
 
+const triageEntryAttachment = {
+    v: 1,
+    instanceId: 'triage-entry-42',
+    attachment: { pluginId: 'happier.triage', localId: 'entry' },
+    key: 'triage-entry-key-42',
+    value: {
+        v: 1,
+        entryRef: {
+            source: { pluginId: 'happier.scm.github', localId: 'triage-source' },
+            kindId: 'pull-request',
+            collisionScope: 'github:repository-7',
+            entryId: '42',
+        },
+        sourceInstance: {
+            source: { pluginId: 'happier.scm.github', localId: 'triage-source' },
+            sourceInstanceId: 'github-account-1',
+        },
+    },
+    presentation: { label: 'PR #42', typeLabel: 'PRs & Issues' },
+    availability: { status: 'ready' },
+} satisfies ComposerAttachmentViewV1;
+
 const composerMediaExecutionTarget = { serverId: 'server-1', machineId: 'machine-1' } as const;
 
 const stagedMediaAttachment = {
@@ -176,6 +198,41 @@ describe('composerSubmissionCoordinator', () => {
         }
     });
 
+    // Composer strict-JSON fields have one equality owner. A valid public
+    // attachment update may supply an equivalent value whose object keys arrive
+    // in another order, and the durable draft repository already treats that as
+    // unchanged; submission currentness must not disagree with it.
+    it('decides attachment currentness by strict-JSON value, not by serialization order', () => {
+        // Built literally rather than through `captureComposerSubmissionSnapshot`
+        // so this case measures only the equality rule.
+        const acceptedWith = (
+            attachments: readonly ComposerAttachmentViewV1[],
+        ): ComposerSubmissionSnapshot => structuredClone({
+            ref: { kind: 'session', sessionId: 'session-1' } as ComposerRefV1,
+            revision: 7,
+            text: '@issue-42',
+            references: [issueReference],
+            attachments: [...attachments],
+        });
+
+        const accepted = acceptedWith([{ ...issueAttachment, value: { a: 1, b: 2 } }]);
+        expect(readComposerSubmissionFieldCurrentness(createSnapshot({
+            attachments: [{ ...issueAttachment, value: { b: 2, a: 1 } }],
+        }), accepted)).toMatchObject({ attachments: true });
+
+        // Positive twin: a real nested value change is still not current.
+        expect(readComposerSubmissionFieldCurrentness(createSnapshot({
+            attachments: [{ ...issueAttachment, value: { a: 1, b: 3 } }],
+        }), accepted)).toMatchObject({ attachments: false });
+
+        // Positive twin: the optional fields a projected attachment view can
+        // carry — staged media content included — stay current against an exact
+        // detached clone of the same value.
+        expect(readComposerSubmissionFieldCurrentness(createSnapshot({
+            attachments: [stagedMediaAttachment],
+        }), acceptedWith([stagedMediaAttachment]))).toMatchObject({ attachments: true });
+    });
+
     it('clears changed references together with unchanged accepted text', () => {
         const accepted = captureComposerSubmissionSnapshot(createSnapshot());
         if (!accepted) throw new Error('expected accepted Composer snapshot');
@@ -243,6 +300,54 @@ describe('composerSubmissionCoordinator', () => {
             attachments: [issueAttachment],
         }));
         expect(result).toMatchObject({ status: 'accepted', cleared: false });
+    });
+
+    it('takes Triage entry context only from the exact current composer snapshot across selection and scope changes', async () => {
+        const admit = vi.fn(async () => ({ status: 'accepted' as const }));
+        const clearAcceptedSnapshot = vi.fn(() => true);
+
+        // Deselecting an entry while retaining prose sends the prose without a
+        // remembered attachment. The canonical snapshot is the only binding.
+        await expect(submitComposerSnapshot({
+            snapshot: createSnapshot({ text: 'Continue without the PR', references: [], attachments: [] }),
+            route: { kind: 'session', ref: { kind: 'session', sessionId: 'session-1' }, admit },
+            clearAcceptedSnapshot,
+        })).resolves.toMatchObject({ status: 'accepted' });
+        expect(admit).toHaveBeenLastCalledWith(expect.objectContaining({ attachments: [] }), expect.anything());
+
+        // Replacing the selected entry before submission sends only the newer
+        // canonical value, never the entry captured by an earlier render.
+        const changedEntry = {
+            ...triageEntryAttachment,
+            instanceId: 'triage-entry-43',
+            key: 'triage-entry-key-43',
+            value: {
+                ...triageEntryAttachment.value,
+                entryRef: { ...triageEntryAttachment.value.entryRef, entryId: '43' },
+            },
+            presentation: { ...triageEntryAttachment.presentation, label: 'PR #43' },
+        } satisfies ComposerAttachmentViewV1;
+        await expect(submitComposerSnapshot({
+            snapshot: createSnapshot({ text: '', references: [], attachments: [changedEntry] }),
+            route: { kind: 'session', ref: { kind: 'session', sessionId: 'session-1' }, admit },
+            clearAcceptedSnapshot,
+        })).resolves.toMatchObject({ status: 'accepted' });
+        expect(admit).toHaveBeenLastCalledWith(expect.objectContaining({ attachments: [changedEntry] }), expect.anything());
+
+        // Clearing the composer leaves no input to admit, and switching to a
+        // different Session cannot submit the previous Session's attachment.
+        await expect(submitComposerSnapshot({
+            snapshot: createSnapshot({ text: '', references: [], attachments: [] }),
+            route: { kind: 'session', ref: { kind: 'session', sessionId: 'session-1' }, admit },
+            clearAcceptedSnapshot,
+        })).resolves.toMatchObject({ status: 'notSendable' });
+        await expect(submitComposerSnapshot({
+            snapshot: createSnapshot({ text: '', references: [], attachments: [triageEntryAttachment] }),
+            route: { kind: 'session', ref: { kind: 'session', sessionId: 'session-2' }, admit },
+            clearAcceptedSnapshot,
+        })).resolves.toMatchObject({ status: 'blocked', reason: 'scopeMismatch' });
+
+        expect(admit).toHaveBeenCalledTimes(2);
     });
 
     it('fails closed before every Message-carrying admission when an older daemon does not negotiate staged media', async () => {

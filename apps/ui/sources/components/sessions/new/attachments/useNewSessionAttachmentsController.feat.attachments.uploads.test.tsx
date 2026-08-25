@@ -54,6 +54,7 @@ const readCachedSnapshotForMachinePathMock = vi.hoisted(() => vi.fn((_input: Rea
     machineId: string;
     path: string;
 }>) => null));
+const deferOnWebSpy = vi.hoisted(() => vi.fn((callback: () => void) => callback()));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledSpy(featureId),
@@ -113,7 +114,7 @@ vi.mock('@/scm/scmRepositoryService', () => ({
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     blurActiveElementOnWeb: vi.fn(),
-    deferOnWeb: (callback: () => void) => callback(),
+    deferOnWeb: (callback: () => void) => deferOnWebSpy(callback),
 }));
 
 installNewSessionScreenModelCommonModuleMocks({
@@ -284,6 +285,8 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         }) => input.drafts);
         readCachedSnapshotForMachinePathMock.mockReset();
         readCachedSnapshotForMachinePathMock.mockImplementation(() => null);
+        deferOnWebSpy.mockReset();
+        deferOnWebSpy.mockImplementation((callback: () => void) => callback());
     });
 
     it('passes a live input text override through simple sends before prompt state catches up', async () => {
@@ -305,6 +308,37 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         });
 
         expect(handleCreateSession).toHaveBeenCalledWith({ inputTextOverride: 'large live prompt' });
+        await hook.unmount();
+    });
+
+    it('captures a legacy text-only prompt before the deferred create callback can observe a cleared store', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const promptStore = createNewSessionPromptStore('Ship the captured prompt');
+        const handleCreateSession = vi.fn();
+        let deferredCreate: (() => void) | null = null;
+        deferOnWebSpy.mockImplementation((callback: () => void) => {
+            deferredCreate = callback;
+        });
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-legacy-text-capture',
+            isCreating: false,
+            promptStore,
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-a',
+            baseActionChips: [],
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleSend();
+            promptStore.setPrompt('');
+            deferredCreate?.();
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(handleCreateSession).toHaveBeenCalledWith({
+            inputTextOverride: 'Ship the captured prompt',
+        });
         await hook.unmount();
     });
 

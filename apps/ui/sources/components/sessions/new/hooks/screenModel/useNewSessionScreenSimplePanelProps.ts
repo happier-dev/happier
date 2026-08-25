@@ -49,6 +49,8 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         | 'emptyAutocompleteSuggestions'
         | 'sessionPromptInputMaxHeight'
         | 'statusBadges'
+        | 'composerTopContent'
+        | 'statusTrailingActions'
     >;
     agent: Pick<
         NewSessionSimplePanelProps,

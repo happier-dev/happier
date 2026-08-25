@@ -46,9 +46,9 @@ export async function sendTranscriptSelectionToSession(params: Readonly<{
     nowMs: () => number;
     chooseDestinationSessionId: (input: SendTranscriptSelectionChooseDestinationInput) => Promise<SendTranscriptSelectionDestination | null>;
     writeInitialPrompt: (input: SendTranscriptSelectionWriteInitialPromptInput) => Promise<void>;
-    appendNewSessionDraft: (input: SendTranscriptSelectionAppendNewSessionDraftInput) => void;
+    appendNewSessionDraft: (input: SendTranscriptSelectionAppendNewSessionDraftInput) => string | null;
     navigateToSession: (input: Readonly<{ sessionId: string; serverId: string }>) => void;
-    navigateToNewSession: () => void;
+    navigateToNewSession: (draftId: string) => void;
 }>): Promise<boolean> {
     if (params.selectedMessages.length === 0) return false;
     const formattedMessages = formatSelectedMessagesForClipboard(params.selectedMessages, {
@@ -80,14 +80,15 @@ export async function sendTranscriptSelectionToSession(params: Readonly<{
     };
 
     if (destination.kind === 'newSession') {
-        params.appendNewSessionDraft({
+        const draftId = params.appendNewSessionDraft({
             promptText,
             createdAtMs: prompt.createdAtMs,
             sourceMessageIds: prompt.sourceMessageIds ?? [],
             sourceSessionId: params.sourceSessionId,
             sourceServerId: params.sourceServerId,
         });
-        params.navigateToNewSession();
+        if (!draftId) return false;
+        params.navigateToNewSession(draftId);
         return true;
     }
 

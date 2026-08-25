@@ -92,30 +92,28 @@ describe('applyNewSessionDraftSeedV1', () => {
 });
 
 describe('seedNewSessionDraftV1', () => {
-    it('merges into the incumbent scoped New Session draft and saves through its existing owner', () => {
+    it('creates one fresh exact draft through the incumbent repository owner', () => {
         const scope = { serverId: 'server-a', accountId: 'account-a' };
-        const readDraft = vi.fn(() => existingDraft({ selectedSecretId: 'secret-kept' }));
         const writeDraft = vi.fn();
 
-        const seeded = seedNewSessionDraftV1({
+        const draftId = seedNewSessionDraftV1({
             seed: { prompt: { text: 'Seeded', mode: 'replace' } },
             scope,
-            readDraft,
             writeDraft,
+            createDraftId: () => 'draft-seeded',
             nowMs: () => 7,
         });
 
-        expect(seeded).toBe(true);
-        expect(readDraft).toHaveBeenCalledWith(scope);
-        expect(writeDraft).toHaveBeenCalledWith(
-            expect.objectContaining({
+        expect(draftId).toBe('draft-seeded');
+        expect(writeDraft).toHaveBeenCalledWith({
+            scope,
+            draftId: 'draft-seeded',
+            draft: expect.objectContaining({
                 input: 'Seeded',
                 entryIntent: 'session',
-                selectedSecretId: 'secret-kept',
                 updatedAt: 7,
             }),
-            scope,
-        );
+        });
     });
 
     it('writes nothing at all for a seed that declares nothing', () => {
@@ -147,15 +145,14 @@ describe('seedNewSessionDraftV1', () => {
             }],
             },
             scope: { serverId: 'server-a', accountId: 'account-a' },
-            readDraft: () => null,
             writeDraft,
             nowMs: () => 7,
         });
 
-        expect(seeded).toBe(true);
+        expect(seeded).not.toBeNull();
         expect(writeDraft).toHaveBeenCalledTimes(1);
         // The RECORD is not written here: the persisted draft carries finished
         // attachment drafts, and only a mounted composer can mint one.
-        expect(writeDraft.mock.calls[0]?.[0]).not.toHaveProperty('composerAttachments');
+        expect(writeDraft.mock.calls[0]?.[0].draft).not.toHaveProperty('composerAttachments');
     });
 });

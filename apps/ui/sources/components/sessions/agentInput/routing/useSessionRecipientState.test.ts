@@ -11,8 +11,8 @@ import {
     readSessionDraftValue,
     resetSessionDraftValueCachesForTests,
     writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
-import { saveRawSessionDraftValues } from '@/sync/domains/state/sessionDraftValuesPersistence';
+} from '@/dev/testkit/sessionDraftRepositoryTestkit';
+import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import { useSessionRecipientState } from './useSessionRecipientState';
 
@@ -61,6 +61,12 @@ vi.mock('@/sync/domains/state/storage', async () => {
 function target(recipient: ParticipantRecipientV1, label = 'x'): SessionParticipantTarget {
     const key = `${recipient.kind}:${(recipient as any).runId ?? (recipient as any).memberId ?? (recipient as any).teamId}`;
     return { key, displayLabel: label, recipient };
+}
+
+function getActiveScope(): ServerAccountScope {
+    const scope = activeScopeState.value;
+    if (!scope) throw new Error('Expected an active server account scope');
+    return scope;
 }
 
 describe('useSessionRecipientState', () => {
@@ -200,6 +206,72 @@ describe('useSessionRecipientState', () => {
         await hook.unmount();
     });
 
+    it('does not rerender routing state for unrelated composer text writes', async () => {
+        const persisted: ParticipantRecipientV1 = {
+            kind: 'agent_team_member',
+            teamId: 'team_1',
+            memberId: 'member_1',
+            memberLabel: 'Reviewer',
+        };
+        const targets = [target(persisted)];
+        writeSessionDraftValue(getActiveScope(), 'session-a', 'routing.recipient', persisted);
+        let renderCount = 0;
+        const hook = await renderHook(
+            () => {
+                renderCount += 1;
+                return useSessionRecipientState({
+                    targets,
+                    autoRecipient: null,
+                    draftPersistence: { sessionId: 'session-a', surface: 'mainComposer' },
+                });
+            },
+            { flushOptions: { cycles: 2, turns: 2 } },
+        );
+        const settledRenderCount = renderCount;
+
+        await act(async () => {
+            writeExistingSessionDraft({
+                scope: getActiveScope(),
+                sessionId: 'session-a',
+                patch: { text: 'hello world' },
+                materializationIntent: 'userEdit',
+            });
+            await flushHookEffects({ cycles: 2, turns: 2 });
+        });
+
+        expect(renderCount).toBe(settledRenderCount);
+        expect(hook.getCurrent().recipient).toEqual(persisted);
+        await hook.unmount();
+    });
+
+    it('does not feed persisted recipient hydration back through equivalent target arrays', async () => {
+        const persisted: ParticipantRecipientV1 = {
+            kind: 'agent_team_member',
+            teamId: 'team_1',
+            memberId: 'member_1',
+            memberLabel: 'Reviewer',
+        };
+        const persistedTarget = target(persisted);
+        writeSessionDraftValue(getActiveScope(), 'session-a', 'routing.recipient', persisted);
+        let renderCount = 0;
+        const hook = await renderHook(
+            () => {
+                renderCount += 1;
+                if (renderCount > 20) throw new Error('recipient hydration feedback loop');
+                return useSessionRecipientState({
+                    targets: [{ ...persistedTarget }],
+                    autoRecipient: null,
+                    draftPersistence: { sessionId: 'session-a', surface: 'mainComposer' },
+                });
+            },
+            { flushOptions: { cycles: 2, turns: 2 } },
+        );
+
+        expect(renderCount).toBeLessThan(10);
+        expect(hook.getCurrent().recipient).toEqual(persisted);
+        await hook.unmount();
+    });
+
     it('does not apply an unavailable persisted recipient but restores it when the target reappears', async () => {
         const auto: ParticipantRecipientV1 = { kind: 'execution_run', runId: 'run_auto' };
         const persisted: ParticipantRecipientV1 = {
@@ -238,25 +310,18 @@ describe('useSessionRecipientState', () => {
 
     it('hydrates persisted delivery and falls back when the persisted delivery is invalid', async () => {
         const auto: ParticipantRecipientV1 = { kind: 'execution_run', runId: 'run_1' };
-        saveRawSessionDraftValues({
-            'session-a': {
-                'routing.executionRunDelivery': {
-                    v: 1,
-                    updatedAt: 1,
-                    lastEditedAt: 1,
-                    value: 'interrupt',
-                },
-            },
-            'session-b': {
-                'routing.executionRunDelivery': {
-                    v: 1,
-                    updatedAt: 1,
-                    lastEditedAt: 1,
-                    value: 'invalid-delivery',
-                },
-            },
-        }, activeScopeState.value);
-        resetSessionDraftValueCachesForTests();
+        writeExistingSessionDraft({
+            scope: getActiveScope(),
+            sessionId: 'session-a',
+            patch: { routing: { executionRunDelivery: 'interrupt' } },
+            materializationIntent: 'userEdit',
+        });
+        writeExistingSessionDraft({
+            scope: getActiveScope(),
+            sessionId: 'session-b',
+            patch: { routing: { executionRunDelivery: 'invalid-delivery' } },
+            materializationIntent: 'userEdit',
+        });
 
         const hook = await renderHook(
             ({ sessionId }: { sessionId: string }) =>

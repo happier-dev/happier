@@ -16,14 +16,28 @@ import { buildNewSessionActionShortcutChips } from '@/components/sessions/agentI
 import { NewSessionServerSelectionContent } from '@/components/sessions/new/components/NewSessionServerSelectionContent';
 import { storage } from '@/sync/domains/state/storage';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
+import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
 
 export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     /** Explicit bundled behavior backing for built-in action chips. */
     staticAgentId?: AgentId | null;
+    /**
+     * The Agent that will actually run the Session. An installed Agent has no
+     * bundled presentation id, so reading its declared chips from
+     * `staticAgentId` answers `null` for every one of them; the operational
+     * identity is what the descriptor owner is keyed by.
+     */
+    runtimeCarrierAgentId?: AgentId | null;
     /** @deprecated Direct callers without a projected backend entry are bundled-only. */
     agentId?: AgentId;
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionState: (key: string, next: unknown) => void;
+    /**
+     * The machine the composer is about to spawn on. An installed Agent's
+     * descriptor is a per-machine fact, so its declared chips are read from the
+     * machine that will run the Session.
+     */
+    selectedMachineId: string | null;
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
     seededPlacementActionChip?: AgentInputExtraActionChip | null;
     showAutomationActionChips: boolean;
@@ -47,6 +61,10 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     onActionShortcutPress: (actionId: ActionId) => void;
 }>): ReadonlyArray<AgentInputExtraActionChip> {
     const staticAgentId = params.staticAgentId ?? params.agentId ?? null;
+    const behaviorAgentId = resolveNewSessionBehaviorAgentId({
+        runtimeCarrierAgentId: params.runtimeCarrierAgentId,
+        staticAgentId,
+    });
     const serverPickerActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (!params.showServerPickerChip) return null;
         return createServerActionChip({
@@ -88,11 +106,12 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     ]);
 
     return React.useMemo(() => {
-        const baseChips = staticAgentId
+        const baseChips = behaviorAgentId
             ? getNewSessionAgentInputExtraActionChips({
-                agentId: staticAgentId,
+                agentId: behaviorAgentId,
                 agentOptionState: params.agentOptionState,
                 setAgentOptionState: params.setAgentOptionState,
+                machineId: params.selectedMachineId,
             }) ?? []
             : [];
         const chips: AgentInputExtraActionChip[] = [];
@@ -139,6 +158,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         params.mcpChip,
         params.seededPlacementActionChip,
         params.onActionShortcutPress,
+        params.selectedMachineId,
         params.selectedMachineIsWindows,
         params.setAgentOptionState,
         params.showAutomationActionChips,
@@ -148,6 +168,6 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         automationActionChip,
         serverPickerActionChip,
         storageActionChip,
-        staticAgentId,
+        behaviorAgentId,
     ]);
 }

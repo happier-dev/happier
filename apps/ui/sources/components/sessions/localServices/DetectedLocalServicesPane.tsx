@@ -1,16 +1,18 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLocalServiceInventory } from '@/sync/domains/local/services/inventory/useLocalServiceInventory';
 import type { LocalServiceInventoryState } from '@/sync/domains/local/services/inventory/store';
-import type { ManagedLocalServicesState } from '@/sync/domains/local/services/managed/store';
 import {
     createLocalServiceLauncherState,
     selectLocalServiceLaunchTargets,
@@ -26,11 +28,9 @@ import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 import type { TranslationKey } from '@/text/i18n';
 
+import { LocalServicePublicPreviewControls } from './LocalServicePublicPreviewControls';
 import type { LocalServicePublicPreviewActions } from './publicPreviewActions';
-import type {
-    ManagedLocalServiceRestartHandler,
-    ManagedLocalServiceStopHandler,
-} from './ManagedLocalServiceRow';
+import type { LocalServiceCapabilityDisabledReasons } from './useLocalServicePublicPreviewFeature';
 import {
     ServiceRowView,
     type ServiceRowCopyUrlHandler,
@@ -39,14 +39,33 @@ import {
     type ServiceRowStartHandler,
     type ServiceRowTerminateHandler,
 } from './ServiceRowView';
-import { ServicesScopeToggle, type ServicesScope } from './ServicesScopeToggle';
+
+/**
+ * Which services the surface is asking for. Owned here because the pane is the only component that
+ * both renders the choice and passes it to the row model — the hand-rolled `ServicesScopeToggle`
+ * that used to own this type has been replaced by the canonical `SegmentedTabBar` (U-6).
+ */
+export type ServicesScope = 'workspace' | 'machine';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         minHeight: 0,
         backgroundColor: theme.colors.surface.base,
-        paddingBottom: 16,
+    },
+    /**
+     * The pane's own scroll. It had none: the bands, the suggestion band and the public-preview
+     * group were stacked in a `flex: 1` View inside an absolutely positioned panel, so on a short
+     * viewport — or simply with enough services — everything below the fold was unreachable, and
+     * the public-preview group is the LAST thing in the stack. No ancestor scrolls this axis
+     * (`SessionRightPanel` mounts it inside a `RetainedPanelSurface` overlay), so this is the owner.
+     */
+    scrollContent: {
+        paddingBottom: 24,
+    },
+    scopeToggle: {
+        marginHorizontal: 16,
+        marginBottom: 8,
     },
     banner: {
         marginHorizontal: 16,
@@ -113,12 +132,54 @@ function ServiceCountBadge(props: Readonly<{
                         size={28}
                         iconSize={14}
                         variant="plain"
+                        // The drawn 28px square stays — it is the right visual weight beside a
+                        // count label — while the press box grows to the platform floor. The
+                        // primitive owns the frame as real box model; never `hitSlop`, which
+                        // react-native-web ignores and the desktop app IS the web bundle.
+                        minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
                         disabled={props.isRefreshing}
                         animationEnabled={props.animationEnabled}
                         onPress={props.onRefresh}
                     />
                 </>
             ) : null}
+        </View>
+    );
+}
+
+/**
+ * The this-workspace ⇄ this-machine scope control.
+ *
+ * `ServicesScopeToggle` was a hand-rolled pair of `Pressable`s that painted the SELECTED segment
+ * with `surface.pressed` — the same token a press uses — so selected and pressed were the same
+ * pixel, and there was no press feedback at all because the `Pressable` had no interaction-state
+ * style. It also put `accessibilityRole="button"` children inside an `accessibilityRole="tablist"`
+ * parent, which announces a tab list containing no tabs. Every one of those is already solved by
+ * the canonical bar: a distinct `segmentedControl.activeBackground` with elevation, the spring
+ * thumb gated at the motion chokepoint, roving focus, real `tab` roles and WCAG 2.5.8 sizing.
+ */
+function ServicesScopeBar(props: Readonly<{
+    scope: ServicesScope;
+    onChangeScope: (scope: ServicesScope) => void;
+    testID: string;
+}>): React.ReactElement {
+    const styles = stylesheet;
+    const tabs = React.useMemo(() => ([
+        { id: 'workspace' as const, label: t('localServices.scope.workspace') },
+        { id: 'machine' as const, label: t('localServices.scope.machine') },
+    ]), []);
+    return (
+        <View style={styles.scopeToggle}>
+            <SegmentedTabBar
+                tabs={tabs}
+                activeTabId={props.scope}
+                onSelectTab={props.onChangeScope}
+                accessibilityLabel={t('localServices.scope.toggleA11y')}
+                testIDPrefix={props.testID}
+                segmentSizing="content"
+                slidingThumb
+                compact
+            />
         </View>
     );
 }
@@ -162,20 +223,18 @@ function firstInventoryDiagnosticCopy(diagnostics: readonly unknown[]): ReturnTy
 
 export function DetectedLocalServicesPane(props: Readonly<{
     inventoryState: LocalServiceInventoryState;
-    managedState?: ManagedLocalServicesState | null;
     launcherState?: LocalServiceLauncherState | null;
     publicPreviewState?: LocalServicePublicPreviewState | null;
     sessionId?: string | null;
     scope?: ServicesScope;
     onChangeScope?: (scope: ServicesScope) => void;
-    onStopManagedService?: ManagedLocalServiceStopHandler;
-    onRestartManagedService?: ManagedLocalServiceRestartHandler;
     onStartLauncherTarget?: ServiceRowStartHandler;
     onTerminateDetectedService?: ServiceRowTerminateHandler;
     onForgetDetectedService?: ServiceRowForgetHandler;
     onCopyServiceUrl?: ServiceRowCopyUrlHandler;
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
     publicPreviewActions?: LocalServicePublicPreviewActions;
+    publicPreviewCapabilityDisabledReasons?: LocalServiceCapabilityDisabledReasons;
     /**
      * User-initiated re-read. Freshness is normally pushed by the daemon inventory watch; this is
      * the explicit control and the recovery path when that watch is unavailable.
@@ -187,10 +246,7 @@ export function DetectedLocalServicesPane(props: Readonly<{
     const reducedMotion = useReducedMotionPreference();
     const animationEnabled = !reducedMotion;
     const scope: ServicesScope = props.scope ?? 'workspace';
-    const viewModel = useLocalServiceInventory({
-        inventoryState: props.inventoryState,
-        managedState: props.managedState ?? null,
-    });
+    const viewModel = useLocalServiceInventory({ inventoryState: props.inventoryState });
     const styles = stylesheet;
 
     // The pane is ALWAYS driven by the controller's launcherState (the live host supplies
@@ -206,8 +262,8 @@ export function DetectedLocalServicesPane(props: Readonly<{
     const activeSessionId = props.sessionId ?? launcherState.sessionId ?? null;
 
     const counts = React.useMemo(
-        () => selectLocalServiceServiceCounts({ inventoryRows: viewModel.rows, managedRows: viewModel.managedRows }),
-        [viewModel.managedRows, viewModel.rows],
+        () => selectLocalServiceServiceCounts({ inventoryRows: viewModel.rows }),
+        [viewModel.rows],
     );
 
     // ONE ranked row model (keep-last-good: memoized on structural inputs only — never
@@ -215,12 +271,11 @@ export function DetectedLocalServicesPane(props: Readonly<{
     const rows = React.useMemo(
         () => buildLocalServiceRows({
             inventoryRows: viewModel.rows,
-            managedRows: viewModel.managedRows,
             launchTargets: launcherTargets,
             sessionId: activeSessionId,
             scope,
         }),
-        [activeSessionId, launcherTargets, scope, viewModel.managedRows, viewModel.rows],
+        [activeSessionId, launcherTargets, scope, viewModel.rows],
     );
 
     const bands = React.useMemo(() => {
@@ -244,10 +299,6 @@ export function DetectedLocalServicesPane(props: Readonly<{
             onTerminateDetectedService={props.onTerminateDetectedService}
             onForgetDetectedService={props.onForgetDetectedService}
             onCopyServiceUrl={props.onCopyServiceUrl}
-            onStopManagedService={props.onStopManagedService}
-            onRestartManagedService={props.onRestartManagedService}
-            publicPreviewState={props.publicPreviewState}
-            publicPreviewActions={props.publicPreviewActions}
             animationEnabled={animationEnabled}
             testID={`${testID}-row:${row.id}`}
         />
@@ -256,12 +307,8 @@ export function DetectedLocalServicesPane(props: Readonly<{
         props.onCopyServiceUrl,
         props.onForgetDetectedService,
         props.onOpenServiceInBrowser,
-        props.onRestartManagedService,
         props.onStartLauncherTarget,
-        props.onStopManagedService,
         props.onTerminateDetectedService,
-        props.publicPreviewActions,
-        props.publicPreviewState,
         testID,
     ]);
 
@@ -309,44 +356,64 @@ export function DetectedLocalServicesPane(props: Readonly<{
     }
 
     return (
-        <View testID={testID} style={styles.root}>
-            <DiagnosticsBanner diagnostics={viewModel.diagnostics} testID={`${testID}-error`} />
-            {counts.total > 0 ? (
-                <ServiceCountBadge
-                    total={counts.total}
-                    running={counts.running}
-                    isRefreshing={viewModel.isRefreshing}
-                    onRefresh={props.onRefresh}
-                    animationEnabled={animationEnabled}
-                    testID={`${testID}-count-badge`}
-                />
-            ) : null}
-            {props.onChangeScope ? (
-                <ServicesScopeToggle
-                    scope={scope}
-                    onChangeScope={props.onChangeScope}
-                    testID={`${testID}-scope-toggle`}
-                />
-            ) : null}
-            {hasRows
-                ? bands.map((entry) => (
-                    <View key={entry.band} testID={`${testID}-band-${entry.band}`}>
-                        <ItemGroup
-                            title={t(BAND_TITLE_KEYS[entry.band])}
-                            selectableItemCountOverride={entry.rows.length}
-                        >
-                            {entry.rows.map(renderRow)}
-                        </ItemGroup>
-                    </View>
-                ))
-                : (
-                    <SurfaceStateCard
-                        testID={`${testID}-launcher-unavailable`}
-                        kind="unavailable"
-                        title={t('common.unavailable')}
-                        reason={t('localServices.launcher.status.unavailableGeneric')}
+        <ScrollView
+            testID={testID}
+            style={styles.root}
+            contentContainerStyle={styles.scrollContent}
+        >
+            <ConstrainedScreenContent>
+                <DiagnosticsBanner diagnostics={viewModel.diagnostics} testID={`${testID}-error`} />
+                {counts.total > 0 ? (
+                    <ServiceCountBadge
+                        total={counts.total}
+                        running={counts.running}
+                        isRefreshing={viewModel.isRefreshing}
+                        onRefresh={props.onRefresh}
+                        animationEnabled={animationEnabled}
+                        testID={`${testID}-count-badge`}
                     />
-                )}
-        </View>
+                ) : null}
+                {props.onChangeScope ? (
+                    <ServicesScopeBar
+                        scope={scope}
+                        onChangeScope={props.onChangeScope}
+                        testID={`${testID}-scope-toggle`}
+                    />
+                ) : null}
+                {hasRows
+                    ? bands.map((entry) => (
+                        <View key={entry.band} testID={`${testID}-band-${entry.band}`}>
+                            <ItemGroup
+                                title={t(BAND_TITLE_KEYS[entry.band])}
+                                selectableItemCountOverride={entry.rows.length}
+                            >
+                                {entry.rows.map(renderRow)}
+                            </ItemGroup>
+                        </View>
+                    ))
+                    : (
+                        <SurfaceStateCard
+                            testID={`${testID}-launcher-unavailable`}
+                            kind="unavailable"
+                            title={t('common.unavailable')}
+                            reason={t('localServices.launcher.status.unavailableGeneric')}
+                        />
+                    )}
+                {/*
+                  * ONE public-preview group for the whole pane (U-10). It used to be mounted inside
+                  * every qualifying service row, which repeated the group heading down the list,
+                  * nested a group inside a band group, and made `activeExposureCount` rescan the
+                  * entire exposure set once per row. Exposure is a pane-level concern — the user
+                  * asks "what of mine is public right now", not "is this row public".
+                  */}
+                <LocalServicePublicPreviewControls
+                    launchTargets={launcherTargets}
+                    state={props.publicPreviewState}
+                    actions={props.publicPreviewActions}
+                    capabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
+                    testID={`${testID}-public-preview`}
+                />
+            </ConstrainedScreenContent>
+        </ScrollView>
     );
 }

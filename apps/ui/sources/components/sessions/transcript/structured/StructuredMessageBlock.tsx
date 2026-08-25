@@ -91,7 +91,7 @@ function PersistedPluginStructuredMessage(props: Readonly<{
             // An immutable snapshot carries the input deliberately. Omitted
             // input follows the existing Action default; explicit null remains
             // an admitted author value through the canonical dispatcher.
-            input: action.input === undefined ? {} : action.input,
+            ...(action.input === undefined ? {} : { input: action.input }),
             ...(messageActionHost?.signal ? { signal: messageActionHost.signal } : {}),
         }).finally(() => {
             actionPendingRef.current = false;

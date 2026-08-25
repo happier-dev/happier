@@ -18,6 +18,7 @@ import {
     composerAttachmentViewToDraft,
     composerReferencesFromStructuredMentions,
     composerStructuredMentionsFromReferences,
+    summarizeComposerAttachmentDraftAvailability,
 } from './composerScopeAdapters';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 
@@ -81,6 +82,33 @@ function composerAttachmentCatalog(
 }
 
 describe('composer scope adapters', () => {
+    it('reduces persisted attachment values to safe current availability flags', () => {
+        const readyDraft: ComposerAttachmentDraftV1 = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        };
+
+        expect(summarizeComposerAttachmentDraftAvailability({
+            values: [readyDraft],
+            catalog: composerAttachmentCatalog(issueAttachmentCatalogEntry),
+            installedPluginIds: new Set(['acme.issues']),
+        })).toEqual({ pluginUnavailable: false, attachmentNeedsAttention: false });
+        expect(summarizeComposerAttachmentDraftAvailability({
+            values: [readyDraft],
+            catalog: { entriesById: {} },
+            installedPluginIds: new Set(),
+        })).toEqual({ pluginUnavailable: true, attachmentNeedsAttention: false });
+        expect(summarizeComposerAttachmentDraftAvailability({
+            values: [{ privateRuntimeResource: '/private/daemon/socket' }],
+            catalog: composerAttachmentCatalog(issueAttachmentCatalogEntry),
+            installedPluginIds: new Set(['acme.issues']),
+        })).toEqual({ pluginUnavailable: false, attachmentNeedsAttention: true });
+    });
+
     it('compiles one current attachment schema once across repeated snapshot projections, then recompiles once for a replacement catalog', async () => {
         vi.resetModules();
         const protocol = await import('@happier-dev/protocol');

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { MetadataSchema } from '@/sync/domains/state/storageTypes';
 import { createProviderBindingSecurityFingerprintV1 } from '@happier-dev/protocol';
@@ -778,6 +778,62 @@ describe('resolveContextWindowTokens observed-usage evidence bump (Claude)', () 
             sessionActive: false,
             usageData: { contextSize: 733_000 },
         } as any)).toBe(372_000);
+    });
+});
+
+/**
+ * An installed Agent's context-window declaration is a fact of ONE machine, and
+ * two machines in the same Account can hold different versions of it. A
+ * machine-blind read here would warn a Session on machine B with machine A's
+ * window, so the resolver has to use the Session's own machine.
+ */
+describe('resolveContextWindowTokens across two machines holding different descriptors', () => {
+    const EXTERNAL_AGENT_ID = 'acme.agent';
+
+    async function publishDisagreeingMachines() {
+        const { publishProjectedAgentUiBehaviorDescriptors } = await import(
+            '@/agents/registry/agentUiBehaviorProjection'
+        );
+        // `machine-a` sorts first, so it is what a machine-blind read returns.
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-a',
+            descriptorsByAgentId: {
+                [EXTERNAL_AGENT_ID]: { contextWindow: { defaultTokens: 111_000 } },
+            },
+        });
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-b',
+            descriptorsByAgentId: {
+                [EXTERNAL_AGENT_ID]: { contextWindow: { defaultTokens: 222_000 } },
+            },
+        });
+    }
+
+    afterEach(async () => {
+        const { clearProjectedAgentUiBehaviorDescriptors } = await import(
+            '@/agents/registry/agentUiBehaviorProjection'
+        );
+        clearProjectedAgentUiBehaviorDescriptors();
+    });
+
+    it('uses the owning machine’s declared default window', async () => {
+        await publishDisagreeingMachines();
+
+        expect(resolveContextWindowTokens({
+            agentId: EXTERNAL_AGENT_ID,
+            metadata: MetadataSchema.parse({ path: '/tmp/project', host: 'localhost', machineId: 'machine-b' }),
+            sessionActive: false,
+        } as any)).toBe(222_000);
+    });
+
+    it('still uses the other machine’s window for a Session that runs there', async () => {
+        await publishDisagreeingMachines();
+
+        expect(resolveContextWindowTokens({
+            agentId: EXTERNAL_AGENT_ID,
+            metadata: MetadataSchema.parse({ path: '/tmp/project', host: 'localhost', machineId: 'machine-a' }),
+            sessionActive: false,
+        } as any)).toBe(111_000);
     });
 });
 

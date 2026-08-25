@@ -30,6 +30,10 @@ import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    shouldForceFreshNewSessionEntryFromPressEvent,
+    useResolveNewSessionOrdinaryEntryRoute,
+} from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
@@ -43,7 +47,7 @@ export type SessionGettingStartedGuidanceViewModel = Readonly<{
     serverName: string;
     showServerSetup: boolean;
     onOpenSetup?: () => void;
-    onStartNewSession?: () => void;
+    onStartNewSession?: (event?: unknown) => void;
     onConnectTerminal?: () => void;
     onEnterUrlManually?: () => void;
     connectIsLoading?: boolean;
@@ -496,15 +500,19 @@ function useSessionGettingStartedGuidanceViewModelBase(
     options: Readonly<{ ignoreConnectMachineDismissal?: boolean }> = {},
 ): SessionGettingStartedGuidanceViewModel | null {
     const baseModel = useSessionGettingStartedGuidanceBaseModel();
+    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const dismissed = useLocalSetting('sessionGettingStartedGuidanceDismissed') === true;
     const ignoreConnectMachineDismissal = options.ignoreConnectMachineDismissal === true;
     const onOpenSetup = React.useCallback(() => {
         router.push(buildMachineSetupWizardHref({ action: 'local', step: 'setup_this_computer' }) as any);
     }, []);
 
-    const onStartNewSession = React.useCallback(() => {
-        router.push('/new' as any);
-    }, []);
+    const onStartNewSession = React.useCallback((event?: unknown) => {
+        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+            forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
+        });
+        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
+    }, [resolveNewSessionOrdinaryEntryRoute]);
 
     return React.useMemo(() => {
         if (dismissed && baseModel.kind === 'connect_machine' && !ignoreConnectMachineDismissal) {

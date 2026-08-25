@@ -32,6 +32,12 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
     newSessionDefaultPersistenceModeByTargetKeyV1: Settings['newSessionDefaultPersistenceModeByTargetKeyV1'];
     resolvedBackendTargets: ReadonlyArray<BackendTargetRefV2>;
     agentType: string;
+    /**
+     * The machine the composer will spawn on. An installed Agent's transcript
+     * storage declaration is a per-machine fact, so the control it drives is
+     * read from the machine that will actually run the Session.
+     */
+    selectedMachineId: string | null;
     backendTarget: BackendTargetRefV2;
     settings: Settings;
     externalSessionsFeatureEnabled: boolean;
@@ -65,6 +71,7 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
         return coerceNewSessionTranscriptStorage({
             requested: params.hydratedPersistedAuthoringDraft?.transcriptStorage ?? resolvedDefault,
             agentId: params.agentType,
+            machineId: params.selectedMachineId,
             settings: params.settings,
             externalSessionsEnabled: params.externalSessionsFeatureEnabled,
         });
@@ -73,9 +80,10 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
     const supportsDirectTranscriptStorage = React.useMemo(() => {
         return supportsDirectTranscriptStorageForNewSession({
             agentId: params.agentType,
+            machineId: params.selectedMachineId,
             settings: params.settings,
         });
-    }, [params.agentType, params.settings]);
+    }, [params.agentType, params.selectedMachineId, params.settings]);
 
     const accountTranscriptStorageDefaults = React.useMemo(() => {
         return readAccountTranscriptStorageDefaults({
@@ -114,6 +122,7 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
         const coerced = coerceNewSessionTranscriptStorage({
             requested,
             agentId: params.agentType,
+            machineId: params.selectedMachineId,
             settings: params.settings,
             externalSessionsEnabled: params.externalSessionsFeatureEnabled,
         });
@@ -125,6 +134,7 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
         params.agentType,
         params.backendTarget,
         params.externalSessionsFeatureEnabled,
+        params.selectedMachineId,
         params.settings,
         selectedProfileTranscriptStorageDefaultsByTargetKey,
         transcriptStorage,

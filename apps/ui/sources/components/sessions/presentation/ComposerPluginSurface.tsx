@@ -97,6 +97,7 @@ export type ComposerPluginSurfaceProps = Readonly<{
      * resolving after doing nothing.
      */
     openSurface?: PluginSurfaceOpenHandler;
+    fallback?: React.ReactNode;
 }>;
 
 /**
@@ -191,11 +192,16 @@ export function ComposerPluginSurface(props: ComposerPluginSurfaceProps): React.
         <PluginSurfaceHost
             composerMount={{
                 mount,
+                // This is the existing exact mount/catalog identity that
+                // controls physical Composer replacement. It also clears a
+                // renderer-local error boundary when that owner advances.
+                boundaryResetKey: mountKey,
                 physicalTarget: props.physicalTarget,
                 parentLifetime: props.parentLifetime,
                 pluginProjectionById: props.pluginProjectionById,
                 pluginProjectionV2: props.pluginProjectionV2,
                 daemonProjectionReady: true,
+                fallback: props.fallback,
                 ...(binding === undefined ? {} : { binding }),
                 ...(publisherCapable ? { setComposerSubscriptionPublisher } : {}),
             }}

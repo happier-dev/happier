@@ -72,6 +72,7 @@ export function createSessionItemRowViewModel(
         attentionStanding: false,
         isAttentionStanding: false,
         attentionStandingEnabled: false,
+        draft: null,
         ...input.overrides,
     };
 }

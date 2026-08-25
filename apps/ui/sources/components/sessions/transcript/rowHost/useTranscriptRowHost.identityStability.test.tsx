@@ -105,6 +105,7 @@ function createRendererDeps(props: TranscriptItemRendererDeps['props']): Transcr
         props,
         resolveKindForMessageId: vi.fn(() => null),
         resolveThinkingExpanded: vi.fn(() => false),
+        returnFocusToTranscriptViewport: vi.fn(),
         resolveToolCallMessagesForIds: vi.fn(() => []),
         setThinkingExpanded: vi.fn(),
         setToolCallsGroupExpanded: vi.fn(),
@@ -568,6 +569,136 @@ describe('useTranscriptItemRenderer identity stability', () => {
         expect(retryOperationSpy).not.toHaveBeenCalled();
         expect(cancelOperationSpy).not.toHaveBeenCalled();
         expect(discardOperationSpy).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('returns focus from a removed or hydrated operation card to the stable transcript viewport', async () => {
+        // The action card is deliberately not the focus owner: Dismiss removes its whole row,
+        // while Check Again can replace SharedCard with ImportProgressCard. In both cases the
+        // card-local effect unmounts before it can run. The mounted row/viewport owner must
+        // observe the transition after commit and focus the surviving transcript target.
+        const returnFocusToTranscriptViewport = vi.fn();
+        const sharedItem = {
+            kind: 'external-session-operation' as const,
+            id: 'external-session-operation:operation-focus',
+            presentation: {
+                v: 1 as const,
+                operationId: 'operation-focus',
+                revision: 1,
+                kind: 'materialize' as const,
+                status: 'completed' as const,
+                phase: 'publishing' as const,
+            },
+            progress: null,
+            createdAt: 0,
+        };
+        const hydratedItem = {
+            ...sharedItem,
+            progress: {} as never,
+        };
+        const baseDeps = {
+            ...createRendererDeps(createRendererProps({
+                onCheckAgainExternalSessionOperation: vi.fn(),
+            })),
+            returnFocusToTranscriptViewport,
+        } as unknown as TranscriptItemRendererDeps;
+        const hook = await renderHook(
+            ({ listData }: { listData: readonly typeof sharedItem[] }) => useTranscriptItemRenderer({
+                ...baseDeps,
+                listData,
+            }),
+            { initialProps: { listData: [sharedItem] } },
+        );
+        const row = hook.getCurrent().renderItem({ item: sharedItem, index: 0 }) as {
+            props: { children: { props: { children: { props: Record<string, unknown> } } } };
+        };
+        const card = row.props.children.props.children;
+        const armTransition = card.props.onTranscriptOperationActionTransition as (
+            kind: 'dismiss' | 'check_again',
+        ) => void;
+
+        expect(typeof armTransition).toBe('function');
+        await act(async () => {
+            armTransition('check_again');
+        });
+        await hook.rerender({ listData: [hydratedItem] });
+        expect(returnFocusToTranscriptViewport).toHaveBeenCalledTimes(1);
+
+        const hydratedRow = hook.getCurrent().renderItem({ item: hydratedItem, index: 0 }) as {
+            props: { children: { props: { children: { props: Record<string, unknown> } } } };
+        };
+        const hydratedCard = hydratedRow.props.children.props.children;
+        const armHydratedDismiss = hydratedCard.props.onTranscriptOperationActionTransition as (
+            kind: 'dismiss',
+        ) => void;
+        await act(async () => {
+            armHydratedDismiss('dismiss');
+        });
+        await hook.rerender({ listData: [] });
+        expect(returnFocusToTranscriptViewport).toHaveBeenCalledTimes(2);
+        await hook.unmount();
+    });
+
+    it('leaves focus on the surviving shared card when Check Again only removes its own action', async () => {
+        // The card-local action hook already knows how to advance focus to Dismiss when the
+        // same SharedCard survives. The row/viewport owner is only for whole-card retirement
+        // or SharedCard -> ImportProgressCard hydration; stealing focus here would discard the
+        // nearer surviving control.
+        const returnFocusToTranscriptViewport = vi.fn();
+        const sharedItem = {
+            kind: 'external-session-operation' as const,
+            id: 'external-session-operation:operation-local-focus',
+            presentation: {
+                v: 1 as const,
+                operationId: 'operation-local-focus',
+                revision: 1,
+                kind: 'materialize' as const,
+                status: 'completed' as const,
+                phase: 'publishing' as const,
+            },
+            progress: null,
+            createdAt: 0,
+        };
+        const beforeCheckAgain = createRendererProps({
+            onCheckAgainExternalSessionOperation: vi.fn(),
+        });
+        const afterCheckAgain = {
+            ...beforeCheckAgain,
+            onCheckAgainExternalSessionOperation: null,
+        } as TranscriptItemRendererDeps['props'];
+        const baseDeps = {
+            ...createRendererDeps(beforeCheckAgain),
+            returnFocusToTranscriptViewport,
+        } as TranscriptItemRendererDeps;
+        const hook = await renderHook((params: Readonly<{
+            listData: readonly typeof sharedItem[];
+            props: TranscriptItemRendererDeps['props'];
+        }>) => useTranscriptItemRenderer({
+            ...baseDeps,
+            listData: params.listData,
+            props: params.props,
+        }), {
+            initialProps: {
+                listData: [sharedItem],
+                props: beforeCheckAgain,
+            },
+        });
+        const row = hook.getCurrent().renderItem({ item: sharedItem, index: 0 }) as {
+            props: { children: { props: { children: { props: Record<string, unknown> } } } };
+        };
+        const card = row.props.children.props.children;
+        const armTransition = card.props.onTranscriptOperationActionTransition as (
+            kind: 'dismiss' | 'check_again',
+        ) => void;
+
+        await act(async () => {
+            armTransition('check_again');
+        });
+        await hook.rerender({
+            listData: [sharedItem],
+            props: afterCheckAgain,
+        });
+        expect(returnFocusToTranscriptViewport).not.toHaveBeenCalled();
         await hook.unmount();
     });
 });

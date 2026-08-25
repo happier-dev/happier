@@ -6,6 +6,7 @@ import { buildAgentInputActionMenuActions } from '../actionMenuActions';
 import type { AgentInputExtraActionChip } from '../agentInputContracts';
 import { buildCollapsedExtraControlActions } from './buildCollapsedExtraControlActions';
 import type { IconName } from '@/components/ui/icons/Icon';
+import type { FocusReturnRef } from '@/keyboard/focusReturn';
 
 export function useAgentInputActionMenuActions(params: Readonly<{
     actionBarIsCollapsed: boolean;
@@ -22,6 +23,8 @@ export function useAgentInputActionMenuActions(params: Readonly<{
     resumeSessionId?: string | null;
     sessionId?: string;
     extraActionChips?: readonly AgentInputExtraActionChip[];
+    /** The action menu's own trigger, handed to items that open a native dialog. */
+    actionMenuAnchorRef?: FocusReturnRef;
     dismissActionMenu: () => void;
     blurInput: () => void;
     openCollapsedOptionsPopover: (chipKey: string | null) => void;
@@ -46,6 +49,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
             blurInput: params.blurInput,
             openCollapsedOptionsPopover: (chipKey) => params.openCollapsedOptionsPopover(chipKey),
             resetCorePopovers: params.resetCorePopovers,
+            ...(params.actionMenuAnchorRef ? { focusReturnRef: params.actionMenuAnchorRef } : {}),
         });
 
         return buildAgentInputActionMenuActions({
@@ -79,6 +83,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
         });
     }, [
         params.actionBarIsCollapsed,
+        params.actionMenuAnchorRef,
         params.agentId,
         params.agentLabel,
         params.engineLabel,

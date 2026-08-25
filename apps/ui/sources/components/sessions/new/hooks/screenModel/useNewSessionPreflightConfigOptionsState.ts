@@ -75,8 +75,15 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         }
         // For built-in backends the backend id is already a canonical agent id.
         // For plugin-contributed backends the provider may still override it.
-        return resolveCatalogAgentIdForBackendTarget(backendTargetForProbe)
+        const bundledProbeAgentId = resolveCatalogAgentIdForBackendTarget(backendTargetForProbe)
             ?? (isBundledAgentId(backendTargetForProbe.backendId) ? backendTargetForProbe.backendId : null);
+        if (bundledProbeAgentId) return bundledProbeAgentId;
+        // An installed Agent owns its own `cli.<agentId>` capability, so its
+        // operational runtime carrier is the probe identity — the same rule the
+        // models probe already applies. Narrowing the probe identity to the
+        // closed bundled set is what removes ACP configuration options from
+        // every installed Agent.
+        return params.runtimeCarrierAgentId?.trim() || null;
     }, [backendTargetForProbe, params.runtimeCarrierAgentId]);
     const probeContextKey = buildNewSessionCapabilityProbeContextKey(params.probeContext);
     const probeContextCacheKeySuffixParts = React.useMemo(

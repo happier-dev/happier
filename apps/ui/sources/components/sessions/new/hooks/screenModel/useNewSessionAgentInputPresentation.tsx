@@ -100,6 +100,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     backendTarget: BackendTargetRefV2;
     agentType: string;
     staticAgentId: AgentId | null;
+    /** The Agent that will run the Session; see the chips hook. */
+    runtimeCarrierAgentId: AgentId | null;
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionStateForCurrentAgent: (key: string, next: unknown) => void;
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
@@ -233,8 +235,10 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
 
     const agentInputExtraActionChips = useNewSessionAgentInputExtraActionChips({
         staticAgentId: params.staticAgentId,
+        runtimeCarrierAgentId: params.runtimeCarrierAgentId,
         agentOptionState: params.agentOptionState,
         setAgentOptionState: params.setAgentOptionStateForCurrentAgent,
+        selectedMachineId: params.selectedMachineId,
         connectedServicesAuthChip: params.connectedServicesAuthChip,
         seededPlacementActionChip: params.seededPlacementActionChip,
         showAutomationActionChips: params.showAutomationActionChips,

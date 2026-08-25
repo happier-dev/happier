@@ -88,14 +88,16 @@ describe('sessionTranscriptAgentAttribution', () => {
         expect(resolveHistoricalAgentIdAtSeq(index, 10)).toBeNull();
     });
 
-    it('refuses a divider naming an Agent this build does not know', () => {
-        // A divider outlives the catalog. The divider row still renders its raw
-        // ids, but attribution must not hand an unknown id to a consumer that
-        // will look up an Agent core with it.
-        const fixture = createMixedAgentTranscriptFixture({ targetAgentId: 'agent-from-the-future' });
+    it('retains a valid divider naming an installed Agent outside the bundled catalog', () => {
+        const fixture = createMixedAgentTranscriptFixture({ targetAgentId: 'acme-installed-agent' });
 
         const index = buildSessionTranscriptAgentAttributionIndex(fixture.messages);
 
-        expect(index).toBe(EMPTY_SESSION_TRANSCRIPT_AGENT_ATTRIBUTION_INDEX);
+        expect(index.boundaries).toEqual([{
+            seq: fixture.dividerSeq,
+            fromAgentId: fixture.sourceAgentId,
+            toAgentId: 'acme-installed-agent',
+        }]);
+        expect(resolveHistoricalAgentIdAtSeq(index, fixture.targetAgentSeqs[0])).toBe('acme-installed-agent');
     });
 });

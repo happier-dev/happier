@@ -931,7 +931,7 @@ describe('SessionHeaderActionMenu handoff', () => {
                 key: 'title',
                 fallback: 'Preview',
               },
-              action: {
+              command: {
                 kind: 'executeAction',
                 action: { pluginId: 'acme.preview', localId: 'run' },
               },
@@ -1083,7 +1083,7 @@ describe('SessionHeaderActionMenu handoff', () => {
                 key: 'title',
                 fallback: 'Preview',
               },
-              action: {
+              command: {
                 kind: 'executeAction',
                 action: { pluginId: 'acme.preview', localId: 'run' },
               },
@@ -1199,7 +1199,7 @@ describe('SessionHeaderActionMenu handoff', () => {
               contributionKind: 'sessionHeaderAction',
               descriptorId: 'open-preview',
               title: 'Open preview',
-              action: {
+              command: {
                 kind: 'openSurface',
                 destination: { pluginId: 'acme.preview', localId: 'preview' },
               },

@@ -20,6 +20,11 @@ import type { SessionModelProjectionGroup } from '@/components/sessions/modelPic
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import {
+    clearAllNewSessionComposerPlacementSeeds,
+    readNewSessionComposerPlacementSeeds,
+    writeNewSessionComposerPlacementSeeds,
+} from '../newSessionComposerPlacementSeedStore';
+import {
     findCheckoutChip as findSelectionListCheckoutChip,
     findCheckoutChipOptionFromChip,
     getCheckoutChipExistingWorktreeIds,
@@ -1092,10 +1097,12 @@ async function runFocusEffects(): Promise<Array<void | (() => void)>> {
 
 describe('useNewSessionScreenModel (draft hydration)', () => {
     afterEach(() => {
+        clearAllNewSessionComposerPlacementSeeds();
         standardCleanup();
     });
 
     beforeEach(() => {
+        clearAllNewSessionComposerPlacementSeeds();
         clearDaemonMergedProjectionCacheForTests();
         machineContributionRegistryProjectionDescribeMock.mockReset();
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
@@ -1378,11 +1385,14 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         return cleanups;
     }
 
-    async function renderNewSessionScreenModel(assignModel: (nextModel: unknown) => void) {
+    async function renderNewSessionScreenModel(
+        assignModel: (nextModel: unknown) => void,
+        input?: Readonly<{ draftId: string }>,
+    ) {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         return renderHook(() => {
-            const nextModel = useNewSessionScreenModel();
+            const nextModel = useNewSessionScreenModel(input);
             assignModel(nextModel);
             return nextModel;
         }, {
@@ -2057,6 +2067,62 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(secondModel?.simpleProps?.attachmentFlowId).toBe(firstAttachmentFlowId);
 
         await secondHook.unmount();
+    });
+
+    it('leaves an ambiguous seeded placement unresolved until the reader selects its normal route inputs', async () => {
+        const draftId = 'draft-placement-candidates';
+        const candidates = [{
+            projectKey: { id: 'project-api' },
+            serverId: 'server-api',
+            machineId: 'machine-api',
+            rootPath: '/worktrees/api',
+            label: 'API',
+            reachable: true,
+            worktrees: [],
+        }, {
+            projectKey: { id: 'project-web' },
+            serverId: 'server-web',
+            machineId: 'machine-web',
+            rootPath: '/worktrees/web',
+            label: 'Web',
+            reachable: true,
+            worktrees: [],
+        }] as const;
+        writeNewSessionComposerPlacementSeeds(draftId, { candidates });
+
+        let model: any = null;
+        const hook = await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        }, { draftId });
+
+        const chip = model?.simpleProps?.agentInputExtraActionChips?.find(
+            (entry: any) => entry?.key === 'new-session-seeded-placement',
+        );
+        const popover = chip?.collapsedOptionsPopover;
+        if (!popover || popover.presentation !== 'list') throw new Error('expected seeded placement list');
+        const section = popover.rootStep.sections[0];
+        if (!section || section.kind !== 'static') throw new Error('expected seeded placement options');
+
+        // Presentation alone never turns the first candidate into a target.
+        expect(routerSetParamsMock).not.toHaveBeenCalled();
+        expect(section.options).toHaveLength(2);
+
+        await act(async () => {
+            section.options[1]?.onSelect?.();
+        });
+
+        expect(routerSetParamsMock).toHaveBeenCalledWith({
+            spawnServerId: 'server-web',
+            machineId: 'machine-web',
+            directory: '/worktrees/web',
+        });
+        expect(readNewSessionComposerPlacementSeeds(draftId)).toBeNull();
+        await settleNewSessionScreenModel();
+        expect(model?.simpleProps?.agentInputExtraActionChips?.find(
+            (entry: any) => entry?.key === 'new-session-seeded-placement',
+        )).toBeUndefined();
+
+        await hook.unmount();
     });
 
     it('does not invalidate the screen model when focus reloads an equivalent draft', async () => {

@@ -560,6 +560,26 @@ describe('AgentInputAttachmentsRow', () => {
         expect(onFallbackPress).not.toHaveBeenCalled();
     });
 
+    it('hands a modal attachment action the real badge origin for focus return', async () => {
+        const { AgentInputAttachmentsRow } = await import('./AgentInputAttachmentsRow');
+        const onPress = vi.fn();
+        const screen = await renderScreen(
+            <AgentInputAttachmentsRow items={[{
+                kind: 'badge',
+                key: 'focus-origin',
+                label: 'Focus origin',
+                testID: 'focus-origin',
+                onPress,
+            }]} />,
+        );
+
+        const trigger = screen.findByTestId('focus-origin-preview');
+        act(() => { trigger?.props.onPress?.(); });
+        const context = onPress.mock.calls[0]?.[0];
+        expect(context?.focusReturnRef?.current).toBeTruthy();
+        expect(typeof context.focusReturnRef.current.focus).toBe('function');
+    });
+
     it('uses host preview affordances for adapter media and custom surfaces while retaining error feedback', async () => {
         const { AgentInputAttachmentsRow } = await import('./AgentInputAttachmentsRow');
         const onMediaPreview = vi.fn();

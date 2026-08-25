@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 
-const loadNewSessionDraftMock = vi.hoisted(() => vi.fn());
+const getSessionDraftSnapshotMock = vi.hoisted(() => vi.fn());
 const routerPushMock = vi.hoisted(() => vi.fn());
 const actionOperationStoreSnapshot = vi.hoisted(() => ({
     followUpAttentionByRequestId: new Map<string, string>(),
@@ -12,8 +12,8 @@ vi.mock('expo-router', () => ({
     router: { push: routerPushMock },
 }));
 
-vi.mock('@/sync/domains/state/persistence', () => ({
-    loadNewSessionDraft: loadNewSessionDraftMock,
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+    getSessionDraftSnapshot: getSessionDraftSnapshotMock,
 }));
 
 vi.mock('@/sync/domains/actionOperations/actionOperationStore', () => ({
@@ -43,8 +43,8 @@ function operation(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOp
 }
 
 beforeEach(() => {
-    loadNewSessionDraftMock.mockReset();
-    loadNewSessionDraftMock.mockReturnValue({ input: 'persisted prompt' });
+    getSessionDraftSnapshotMock.mockReset();
+    getSessionDraftSnapshotMock.mockReturnValue({ document: { v: 1 } });
     routerPushMock.mockReset();
     actionOperationStoreSnapshot.followUpAttentionByRequestId.clear();
 });
@@ -54,23 +54,26 @@ describe('createNewSessionActionOperationOrigin', () => {
         'reopens a %s operation from the exact persisted draft scope after the launching surface is gone',
         (state) => {
             const mutableScope = { serverId: 'server-a', accountId: 'account-a' };
-            const origin = createNewSessionActionOperationOrigin(mutableScope);
+            const origin = createNewSessionActionOperationOrigin(mutableScope, 'draft-id');
             mutableScope.serverId = 'mutated-after-registration';
 
             const reopen = origin.resolve(operation({ state, settledAt: 3 }));
             reopen?.();
 
-            expect(loadNewSessionDraftMock).toHaveBeenCalledWith({
+            expect(getSessionDraftSnapshotMock).toHaveBeenCalledWith({
                 serverId: 'server-a',
                 accountId: 'account-a',
+            }, { kind: 'newSession', draftId: 'draft-id' });
+            expect(routerPushMock).toHaveBeenCalledWith({
+                pathname: '/new',
+                params: { draftId: 'draft-id' },
             });
-            expect(routerPushMock).toHaveBeenCalledWith('/new');
         },
     );
 
     it('reopens daemon success whose client-side setup still needs attention', () => {
         actionOperationStoreSnapshot.followUpAttentionByRequestId.set('request-1', 'Setup needs attention');
-        const origin = createNewSessionActionOperationOrigin({ serverId: 'server-a', accountId: 'account-a' });
+        const origin = createNewSessionActionOperationOrigin({ serverId: 'server-a', accountId: 'account-a' }, 'draft-id');
 
         const reopen = origin.resolve(operation({
             state: 'succeeded',
@@ -79,11 +82,11 @@ describe('createNewSessionActionOperationOrigin', () => {
         }));
         reopen?.();
 
-        expect(routerPushMock).toHaveBeenCalledWith('/new');
+        expect(routerPushMock).toHaveBeenCalledWith({ pathname: '/new', params: { draftId: 'draft-id' } });
     });
 
     it('leaves active progress, complete success, and missing drafts to standard Activity presentation', () => {
-        const origin = createNewSessionActionOperationOrigin({ serverId: 'server-a', accountId: 'account-a' });
+        const origin = createNewSessionActionOperationOrigin({ serverId: 'server-a', accountId: 'account-a' }, 'draft-id');
 
         expect(origin.resolve(operation())).toBeNull();
         expect(origin.resolve(operation({
@@ -92,7 +95,7 @@ describe('createNewSessionActionOperationOrigin', () => {
             result: { sessionId: 'session-created' },
         }))).toBeNull();
 
-        loadNewSessionDraftMock.mockReturnValue(null);
+        getSessionDraftSnapshotMock.mockReturnValue(null);
         expect(origin.resolve(operation({ state: 'failed', settledAt: 3 }))).toBeNull();
         expect(routerPushMock).not.toHaveBeenCalled();
     });

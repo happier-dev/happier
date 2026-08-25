@@ -79,6 +79,19 @@ describe('useNewSessionSimplePanelProps', () => {
         await hook.unmount();
     });
 
+    it('preserves route-owned composer notice and trailing actions', async () => {
+        const composerTopContent = React.createElement('ComposerNotice');
+        const statusTrailingActions = React.createElement('StatusActions');
+        const hook = await renderHook((props: NewSessionSimplePanelProps) => useNewSessionSimplePanelProps(props), {
+            initialProps: createPanelProps({ composerTopContent, statusTrailingActions }),
+        });
+
+        expect(hook.getCurrent().composerTopContent).toBe(composerTopContent);
+        expect(hook.getCurrent().statusTrailingActions).toBe(statusTrailingActions);
+
+        await hook.unmount();
+    });
+
     it('preserves the typed Provider launch refusal and updates its recovery callback', async () => {
         const providerLaunchError = createProviderErrorV1('provider_not_enabled_on_machine', {
             connectionId: 'pc_provider',

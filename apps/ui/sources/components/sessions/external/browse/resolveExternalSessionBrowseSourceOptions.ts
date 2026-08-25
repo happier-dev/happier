@@ -126,12 +126,14 @@ function materializeProjectedSourceOptions(params: Readonly<{
 
 function enrichProjectedSourceOptions(params: Readonly<{
     providerId: string;
+    machineId?: string | null;
     projectedOptions: readonly ExternalSessionBrowseSourceOption[];
     declarations: readonly PluginBackendExternalSessionSourceDeclarationV1[];
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
     settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
 }>): ExternalSessionBrowseSourceOption[] {
-    const getSourceOptions = resolveAgentUiBehavior(params.providerId).externalSessions?.browse?.getSourceOptions;
+    const getSourceOptions = resolveAgentUiBehavior(params.providerId, params.machineId)
+        .externalSessions?.browse?.getSourceOptions;
     if (!getSourceOptions) return [...params.projectedOptions];
     const presentationBySourceKey = new Map<string, ExternalSessionBrowseSourceOption>();
     for (const option of getSourceOptions({
@@ -157,6 +159,13 @@ function enrichProjectedSourceOptions(params: Readonly<{
 
 export function resolveExternalSessionBrowseSourceOptions(params: Readonly<{
     providerId: ExternalSessionsAgentId;
+    /**
+     * The machine being browsed. An installed Agent's UI declaration is a fact
+     * of one machine, so the browse presentation is read from the machine whose
+     * sessions are being listed rather than from whichever machine happens to
+     * have published first.
+     */
+    machineId?: string | null;
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
     settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
     projection: PluginProjectionV2 | null | undefined;
@@ -177,6 +186,8 @@ export function resolveExternalSessionBrowseSourceOptions(params: Readonly<{
 
 export function resolveExternalSessionBrowseSourceOption(params: Readonly<{
     providerId: ExternalSessionsAgentId;
+    /** See `resolveExternalSessionBrowseSourceOptions`. */
+    machineId?: string | null;
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
     settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
     projection: PluginProjectionV2 | null | undefined;
@@ -200,14 +211,16 @@ export function resolveExternalSessionBrowseSourceOption(params: Readonly<{
 
 export function listExternalSessionBrowseProviderIds(params: Readonly<{
     projection: PluginProjectionV2 | null | undefined;
+    /** See `resolveExternalSessionBrowseSourceOptions`. */
+    machineId?: string | null;
 }>): ExternalSessionsAgentId[] {
     const projection = params.projection;
     if (!projection) return [];
     return Object.keys(projection.agentsById)
         .filter((providerId) => resolveProjectedExternalSessionBrowseAgent({ providerId, projection }) !== null)
         .sort((a, b) => {
-            const orderA = resolveAgentUiBehavior(a).externalSessions?.browse?.order ?? Number.MAX_SAFE_INTEGER;
-            const orderB = resolveAgentUiBehavior(b).externalSessions?.browse?.order ?? Number.MAX_SAFE_INTEGER;
+            const orderA = resolveAgentUiBehavior(a, params.machineId).externalSessions?.browse?.order ?? Number.MAX_SAFE_INTEGER;
+            const orderB = resolveAgentUiBehavior(b, params.machineId).externalSessions?.browse?.order ?? Number.MAX_SAFE_INTEGER;
             if (orderA !== orderB) return orderA - orderB;
             const titleA = projection.agentsById[a]?.title ?? a;
             const titleB = projection.agentsById[b]?.title ?? b;
@@ -246,10 +259,13 @@ export function supportsExternalSessionBackgroundFollow(params: Readonly<{
 
 export function resolveExternalSessionBrowseLinkEnsureRequestExtras(params: Readonly<{
     providerId: ExternalSessionsAgentId;
+    /** See `resolveExternalSessionBrowseSourceOptions`. */
+    machineId?: string | null;
     source: ExternalSessionsSource;
     candidate: Readonly<{ details?: Record<string, unknown> }>;
 }>): ExternalSessionBrowseLinkEnsureRequestExtras {
-    const buildExtras = resolveAgentUiBehavior(params.providerId).externalSessions?.browse?.buildLinkEnsureRequestExtras;
+    const buildExtras = resolveAgentUiBehavior(params.providerId, params.machineId)
+        .externalSessions?.browse?.buildLinkEnsureRequestExtras;
     if (!buildExtras) return {};
     return buildExtras({
         agentId: params.providerId,
@@ -260,10 +276,13 @@ export function resolveExternalSessionBrowseLinkEnsureRequestExtras(params: Read
 
 export function resolveExternalSessionBrowseCompatibleLinkSource(params: Readonly<{
     providerId: ExternalSessionsAgentId;
+    /** See `resolveExternalSessionBrowseSourceOptions`. */
+    machineId?: string | null;
     selectedSource: ExternalSessionsSource;
     candidateSource?: ExternalSessionsSource | null;
 }>): ExternalSessionsSource {
-    const resolveCompatibleLinkSource = resolveAgentUiBehavior(params.providerId).externalSessions?.browse?.resolveCompatibleLinkSource;
+    const resolveCompatibleLinkSource = resolveAgentUiBehavior(params.providerId, params.machineId)
+        .externalSessions?.browse?.resolveCompatibleLinkSource;
     return resolveCompatibleExternalSessionBrowseLinkSource({
         selectedSource: params.selectedSource,
         candidateSource: params.candidateSource,

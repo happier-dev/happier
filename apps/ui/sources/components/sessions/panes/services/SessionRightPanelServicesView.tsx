@@ -9,8 +9,6 @@ import type {
     LocalServiceLaunchTarget,
 } from '@/sync/domains/local/services/launch';
 import type { LocalServiceInventoryState } from '@/sync/domains/local/services/inventory/store';
-import type { ManagedLocalServicesState } from '@/sync/domains/local/services/managed/store';
-import type { LocalServiceManagedSnapshotClient } from '@/sync/domains/local/services/managed/useManagedLocalServicesState';
 import type { LocalServicePublicPreviewState } from '@/sync/domains/local/services/publicPreview/store';
 import type { LocalServicePublicPreviewStatusClient } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
@@ -26,8 +24,6 @@ export type SessionRightPanelServicesViewProps = Readonly<{
     projectionInteractionEnabled?: boolean;
     platform?: LocalServicePreviewPlatform;
     inventoryState?: LocalServiceInventoryState;
-    managedState?: ManagedLocalServicesState;
-    managedSnapshotClient?: LocalServiceManagedSnapshotClient;
     launcherState?: LocalServiceLauncherState | null;
     launcherSnapshotClient?: LocalServiceLauncherSnapshotClient;
     publicPreviewState?: LocalServicePublicPreviewState | null;
@@ -56,8 +52,6 @@ export function SessionRightPanelServicesView(props: SessionRightPanelServicesVi
             serverId={serverId}
             sessionId={props.sessionId}
             inventoryState={props.inventoryState}
-            managedState={props.managedState}
-            managedSnapshotClient={props.managedSnapshotClient}
             launcherState={props.launcherState}
             launcherSnapshotClient={props.launcherSnapshotClient}
             publicPreviewState={props.publicPreviewState}

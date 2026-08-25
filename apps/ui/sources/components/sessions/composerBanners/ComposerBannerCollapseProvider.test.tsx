@@ -66,6 +66,11 @@ function CollapseProbe(props: Readonly<{ surface: string }>) {
     });
 }
 
+function EphemeralCollapseProbe() {
+    const { collapsed, toggle } = useComposerBannerCollapse('draftConflict', { persistence: 'ephemeral' });
+    return React.createElement('probe', { probeId: 'draft-conflict', collapsed, onToggle: toggle });
+}
+
 function renderSurface() {
     let tree!: renderer.ReactTestRenderer;
     act(() => {
@@ -138,5 +143,20 @@ describe('ComposerBannerCollapseProvider', () => {
 
         expect(readCollapsed(tree, 'badge')).toBe(false);
         expect(settingsStore.state.collapsedKinds).toEqual({ usageLimitRecovery: true });
+    });
+
+    it('keeps an explicitly ephemeral conflict collapse out of remembered banner preferences', () => {
+        settingsStore.state.remember = true;
+        let tree!: renderer.ReactTestRenderer;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(ComposerBannerCollapseProvider, null, React.createElement(EphemeralCollapseProbe)),
+            );
+        });
+
+        toggleFrom(tree, 'draft-conflict');
+
+        expect(readCollapsed(tree, 'draft-conflict')).toBe(true);
+        expect(settingsStore.state.collapsedKinds).toEqual({});
     });
 });

@@ -137,6 +137,28 @@ function focusScroller(entry: RegisteredEntry, scroller: HTMLElement): void {
     scroller.focus({ preventScroll: true });
 }
 
+/**
+ * Return focus to the one already-registered transcript viewport. This deliberately consumes the
+ * keyboard owner's existing per-document entry and tabindex lifecycle instead of introducing a
+ * second global focus registry for transient transcript rows.
+ */
+export function focusRegisteredWebTranscriptKeyboardViewport(params: Readonly<{
+    document: Document;
+    scroller: HTMLElement;
+}>): boolean {
+    if (!params.scroller.isConnected) return false;
+    const registry = documentRegistries.get(params.document);
+    if (!registry) return false;
+    const matches = Array.from(registry.entries.values()).filter((entry) => (
+        entry.resolveScroller() === params.scroller
+    ));
+    if (matches.length !== 1) return false;
+    const entry = matches[0];
+    if (!entry) return false;
+    focusScroller(entry, params.scroller);
+    return true;
+}
+
 function isDocumentFallbackTarget(document: Document, target: EventTarget | null): boolean {
     return target === document || target === document.body || target === document.documentElement;
 }

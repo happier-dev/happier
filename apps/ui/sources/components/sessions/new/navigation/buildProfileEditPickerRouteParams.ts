@@ -3,6 +3,7 @@ import type { SerializedBackendTargetRouteParams } from '@/agents/backendCatalog
 export function buildProfileEditPickerRouteParams(params: Readonly<{
     backendTargetRouteParams: SerializedBackendTargetRouteParams;
     dataId?: string;
+    draftId?: string;
     machineId?: string;
     spawnServerId?: string;
     nextParams: Readonly<Record<string, string>>;
@@ -10,6 +11,7 @@ export function buildProfileEditPickerRouteParams(params: Readonly<{
     return {
         ...params.backendTargetRouteParams,
         ...(params.dataId ? { dataId: params.dataId } : {}),
+        ...(params.draftId ? { draftId: params.draftId } : {}),
         ...params.nextParams,
         ...(params.machineId ? { machineId: params.machineId } : {}),
         ...(params.spawnServerId ? { spawnServerId: params.spawnServerId } : {}),

@@ -60,7 +60,6 @@ import { useComposerScopePluginPresentation } from '@/components/sessions/presen
 import { useComposerPresentationInputEffects } from '@/components/sessions/presentation/useComposerPresentationInputEffects';
 import {
     applyComposerPresentationTransaction,
-    composerPresentationTargetKey,
     notifyComposerPresentationTargetChanged,
     readComposerPresentationSnapshot,
     registerComposerPresentationTarget,
@@ -68,12 +67,21 @@ import {
     useStableComposerPresentationTarget,
     type ComposerPresentationDocumentMutation,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import {
     PluginContextualResourceStoreProvider,
 } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import {
     projectComposerAttachmentRowItems,
 } from '@/components/sessions/composer/composerAttachmentProjection';
+import { createExistingSessionComposerDocumentOwner } from '@/components/sessions/composer/existingSessionComposerDocumentOwner';
+import { createPendingMessageComposerDocumentOwner } from '@/components/sessions/composer/pendingMessageComposerDocumentOwner';
+import type { MutableComposerDocumentOwner } from '@/components/sessions/composer/composerDocumentOwner';
+import {
+    createEphemeralComposerDocumentOwner,
+    sameComposerAttachmentViews,
+} from '@/components/sessions/composer/composerDocumentOwner';
+import { projectComposerDocumentSnapshot } from '@/components/sessions/composer/composerSnapshotProjection';
 import {
     composerAttachmentDraftToView,
     composerAttachmentViewToDraft,
@@ -108,6 +116,10 @@ import { EmptyMessages } from '@/components/ui/empty/EmptyMessages';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
+import {
+    SessionDraftConflictResolution,
+    useSessionDraftConflictComposerBanner,
+} from '@/components/sessions/drafts/SessionDraftConflictResolution';
 import {
     captureComposerTransientInputStateForOutboundHandoff,
     clearComposerAfterOutboundHandoff,
@@ -187,7 +199,10 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { sync } from '@/sync/sync';
-import { machinePluginComposerAttachmentPrepare } from '@/sync/ops/machineContributionRegistryProjection';
+import {
+    acceptPendingMessageComposerAdmission,
+    preparePendingMessageComposerAdmission,
+} from '@/sync/ops/pendingMessageComposerAdmission';
 import type { SessionTranscriptLoadIssue } from '@/sync/store/domains/transcriptLoading';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { filterReviewCommentDraftsIncludedInPrompt } from '@/sync/domains/input/reviewComments/reviewCommentPrompt';
@@ -199,24 +214,21 @@ import {
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
-import {
-    batchSessionComposerSemanticRevision,
-    clearSessionDraftValue,
-    clearSessionDraftValuesForSession,
-    createSessionComposerTextMutationToken,
-    flushSessionDraftValues,
-    hasSessionComposerTextMutationToken,
-    readSessionComposerSemanticRevision,
-    readSessionDraftValue,
-    readSessionDraftValueMutationRevision,
-    subscribeSessionComposerSemanticRevision,
-    writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
 import { SESSION_DRAFT_VALUE_FIELD_CATALOG } from '@/sync/domains/input/draftValues/sessionDraftValueFieldCatalog';
 import type {
     SessionArmedAgentContinuationSubmission,
     SessionDraftValueFieldId,
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import { SESSION_DRAFT_VALUE_SCHEMAS } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import {
+    captureSessionDraftCurrentness,
+    clearSessionDraftCurrentnessLocal,
+    flushSessionDraft,
+    getSessionDraftSnapshot,
+    subscribeSessionDraft,
+    writeExistingSessionDraft,
+    type SessionDraftCurrentness,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
 import { t, tLoose, type TranslationKey } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
@@ -255,10 +267,12 @@ import { readSessionUiTelemetryNowMs } from '@/sync/runtime/performance/sessionU
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
 import {
-    buildPendingMessageComposerEditStructuredInput,
+    decidePendingMessageComposerRotation,
+    derivePendingMessageComposerSuccessorEditState,
     hydratePendingMessageComposerAttachmentDrafts,
     readPendingMessageComposerSemanticDraftFieldsToRestore,
     type PendingMessageComposerEditState,
+    type PendingMessageComposerExposedSuccessor,
     type PendingMessageComposerSemanticDraftMutationRevisions,
     type PendingMessageComposerSemanticDraftSnapshot as ComposerSemanticDraftSnapshot,
 } from './pendingMessageComposerEditSnapshot';
@@ -390,9 +404,9 @@ import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
 import {
     ConnectedServiceIdSchema,
-    ComposerAttachmentPrepareRequestV1Schema,
-    type ComposerAttachmentAuthorPresentationV1,
+    RawIngressStructuredInputV1Schema,
     type ComposerAttachmentDraftV1,
+    type ComposerAttachmentInputV1,
     type ComposerRefV1,
     type ComposerSnapshotV1,
     type ComposerTransactionResultV1,
@@ -404,6 +418,8 @@ import {
     removeSessionPendingQueueHoldV1FromMetadata,
     SessionModelTransitionResultV1Schema,
     SessionRunnerRuntimeStateV1Schema,
+    sameStrictJsonValue,
+    StrictJsonValueSchema,
     type ProviderBoundModelRef,
     readProviderSettingsFromAccountSettingsV1,
     writeSessionPendingQueueHoldV1ToMetadata,
@@ -613,12 +629,7 @@ function hasCanonicalOutboundHandoffForLocalId(sessionId: string, localId: strin
 type ComposerSemanticDraftCurrentnessSnapshot = Readonly<{
     values: ComposerSemanticDraftSnapshot;
     mutationRevisions: PendingMessageComposerSemanticDraftMutationRevisions;
-}>;
-
-type PendingComposerAttachmentPreparationRetry = Readonly<{
-    pendingId: string;
-    fingerprint: string;
-    replacementLocalId: string;
+    repositoryCurrentness: SessionDraftCurrentness;
 }>;
 
 const SESSION_COMPOSER_DRAFT_FIELD_IDS = Object.keys(
@@ -1146,7 +1157,9 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
 
     return (
         <>
-            {shouldRenderChatTimeline ? <ExternalTranscriptLoadIssueBanner sessionId={sessionId} /> : null}
+            {shouldRenderChatTimeline ? (
+                <ExternalTranscriptLoadIssueBanner sessionId={sessionId} retainedTranscriptVisible />
+            ) : null}
             {shouldRenderChatTimeline && shouldRenderChatTimelineImmediately ? (
                 <ChatList
                     session={session}
@@ -1202,7 +1215,7 @@ function resolveExternalTranscriptLoadIssueBody(issue: SessionTranscriptLoadIssu
             return t('externalSessions.browseAgentUnavailable');
         }
     }
-    return t('externalSessions.browseFailedToLoad');
+    return t('externalSessions.transcriptLoadFailed');
 }
 
 function isExternalTranscriptLoadIssueRetryable(issue: SessionTranscriptLoadIssue): boolean {
@@ -1211,10 +1224,19 @@ function isExternalTranscriptLoadIssueRetryable(issue: SessionTranscriptLoadIssu
     return issue.reason === 'machine_offline';
 }
 
+/**
+ * Reports one typed transcript-load issue.
+ *
+ * The same issue means two different things to a reader depending on what is
+ * behind the banner. Over a timeline that still shows its last known content,
+ * the transcript is readable and only its refresh failed; with no timeline at
+ * all, there is nothing safe to read. Saying "unavailable" in both places hides
+ * from the reader that the rows in front of them are retained and may be stale.
+ */
 const ExternalTranscriptLoadIssueBanner = React.memo(function ExternalTranscriptLoadIssueBanner({
     sessionId,
-    centered = false,
-}: Readonly<{ sessionId: string; centered?: boolean }>) {
+    retainedTranscriptVisible = false,
+}: Readonly<{ sessionId: string; retainedTranscriptVisible?: boolean }>) {
     const issue = storage((state) => state.sessionTranscriptLoadIssues[sessionId] ?? null);
     const [retrying, setRetrying] = React.useState(false);
     const retryInFlightRef = React.useRef(false);
@@ -1238,19 +1260,21 @@ const ExternalTranscriptLoadIssueBanner = React.memo(function ExternalTranscript
 
     return (
         <View
-            style={centered
-                ? {
+            style={retainedTranscriptVisible
+                ? { marginTop: 8, marginHorizontal: 8 }
+                : {
                     flex: 1,
                     alignItems: 'center',
                     justifyContent: 'center',
                     paddingHorizontal: 24,
-                }
-                : { marginTop: 8, marginHorizontal: 8 }}
+                }}
         >
-            <View style={{ width: '100%', maxWidth: centered ? 560 : undefined }}>
+            <View style={{ width: '100%', maxWidth: retainedTranscriptVisible ? undefined : 560 }}>
                 <WarningActionBanner
                     testID="session.externalTranscript.loadIssue"
-                    title={t('externalSessions.sharingTranscriptUnavailableTitle')}
+                    title={retainedTranscriptVisible
+                        ? t('externalSessions.transcriptRetainedRefreshFailedTitle')
+                        : t('externalSessions.sharingTranscriptUnavailableTitle')}
                     body={resolveExternalTranscriptLoadIssueBody(issue)}
                     actionLabel={retryable ? t('common.retry') : undefined}
                     actionAccessibilityLabel={retryable ? t('common.retry') : undefined}
@@ -1338,7 +1362,7 @@ const SessionTranscriptPlaceholder = React.memo(function SessionTranscriptPlaceh
     }
 
     if (transcriptLoadIssue) {
-        return <ExternalTranscriptLoadIssueBanner sessionId={sessionId} centered />;
+        return <ExternalTranscriptLoadIssueBanner sessionId={sessionId} />;
     }
 
     return isLoaded ? (
@@ -1418,6 +1442,7 @@ const SessionViewRetainedSurface = React.memo((props: SessionViewProps & {
             <PluginSurfacePaneLaunchScope>
                 <SessionViewFocusedSurface
                     {...props}
+                    isPresented={isPresented}
                 />
             </PluginSurfacePaneLaunchScope>
         </View>
@@ -1428,6 +1453,7 @@ const SessionViewFocusedSurface = React.memo((props: SessionViewProps & {
     sessionId: string;
     isFocused: boolean;
     isSurfaceVisible: boolean;
+    isPresented: boolean;
 }) => {
     const sessionId = props.sessionId;
     const isFocused = props.isFocused;
@@ -1959,7 +1985,7 @@ const SessionViewFocusedSurface = React.memo((props: SessionViewProps & {
                       null
                   ) : (
                       // Normal session view
-                       <ComposerBannerCollapseProvider>
+                       <ComposerBannerCollapseProvider key={sessionId}>
                        <MemoizedSessionViewLoaded
                            authSurfaceState={authSurfaceState}
                            key={sessionId}
@@ -1970,6 +1996,7 @@ const SessionViewFocusedSurface = React.memo((props: SessionViewProps & {
                            isMachineReachable={isMachineReachable}
                            machineReachability={machineReachability}
                            surfaceFocused={isSurfaceFocused}
+                           surfacePresented={props.isPresented}
                            onBackPress={handleBackPress}
                            isEncryptedSessionLocked={isEncryptedSessionLocked}
                            executionRunsEnabled={executionRunsEnabled}
@@ -2014,6 +2041,7 @@ function SessionViewLoaded({
     isMachineReachable,
     machineReachability,
     surfaceFocused,
+    surfacePresented,
     onBackPress,
     isEncryptedSessionLocked,
     executionRunsEnabled,
@@ -2044,6 +2072,7 @@ function SessionViewLoaded({
     isMachineReachable: boolean;
     machineReachability: ReturnType<typeof useSessionViewBootstrap>['machineReachability'];
     surfaceFocused: boolean;
+    surfacePresented: boolean;
     onBackPress: () => void;
     isEncryptedSessionLocked: boolean;
     executionRunsEnabled: boolean;
@@ -2087,8 +2116,8 @@ function SessionViewLoaded({
     const composerPresentationAccountLifetime = captureActiveServerAccountScopeLifetime();
     const isActiveComposerPresentationCurrent = React.useCallback(() => (
         composerPresentationMountedRef.current
-        && composerPresentationTargetKey(activeComposerRefRef.current)
-            === composerPresentationTargetKey(activeComposerRef)
+        && composerRefV1Key(activeComposerRefRef.current)
+            === composerRefV1Key(activeComposerRef)
         && (composerPresentationAccountLifetime === null || composerPresentationAccountLifetime.isCurrent())
     ), [activeComposerRef, composerPresentationAccountLifetime]);
     const composerInputEffects = useComposerPresentationInputEffects({
@@ -2558,8 +2587,8 @@ function SessionViewLoaded({
     composerReferenceHostRef.current = composerReferenceHost;
     const isSessionComposerPluginScopeCurrent = React.useCallback(() => (
         composerPresentationMountedRef.current
-        && composerPresentationTargetKey(activeComposerRefRef.current)
-            === composerPresentationTargetKey(activeComposerRef)
+        && composerRefV1Key(activeComposerRefRef.current)
+            === composerRefV1Key(activeComposerRef)
         && surfaceFocused
         && (composerPresentationAccountLifetime === null || composerPresentationAccountLifetime.isCurrent())
     ), [activeComposerRef, composerPresentationAccountLifetime, surfaceFocused]);
@@ -4050,24 +4079,8 @@ function SessionViewLoaded({
     });
 
     const messageRef = React.useRef(message);
-    // Pending-message editing is a distinct, mounted-only Composer scope. It
-    // intentionally keeps its own ephemeral revision while the Session draft
-    // itself uses the shared semantic revision in the draft-value owner.
-    const pendingComposerPresentationRevisionRef = React.useRef(0);
-    const composerPresentationObservedTextRef = React.useRef(message);
-    const onSessionComposerTextMutation = React.useCallback((input: Readonly<{
-        sessionId: string;
-        text: string;
-    }>) => {
-        if (input.sessionId === sessionId) {
-            messageRef.current = input.text;
-        }
-        return createSessionComposerTextMutationToken(activeServerAccountScope, input.sessionId);
-    }, [activeServerAccountScope, sessionId]);
-
-    // Use draft hook for auto-saving message drafts. Its visible-text callback
-    // advances the one Session semantic revision immediately; the later
-    // persistence write consumes that exact token instead of double-bumping.
+    const pendingComposerDocumentOwnerRef = React.useRef<MutableComposerDocumentOwner | null>(null);
+    const pendingComposerEditExposedSuccessorRef = React.useRef<PendingMessageComposerExposedSuccessor | null>(null);
     const {
         clearDraft,
         clearDraftForSessionIfCurrentValueMatches,
@@ -4076,9 +4089,47 @@ function SessionViewLoaded({
         setDraftValue,
         restoreDraft,
         restoreComposerSnapshot,
-    } = useDraft(sessionId, message, setMessage, {
-        onTextMutation: onSessionComposerTextMutation,
-    });
+    } = useDraft(sessionId, message, setMessage);
+    const sessionDraftAddress = React.useMemo(() => ({
+        kind: 'session' as const,
+        sessionId,
+    }), [sessionId]);
+    const subscribeCurrentSessionDraft = React.useCallback((listener: () => void) => (
+        activeServerAccountScope
+            ? subscribeSessionDraft(activeServerAccountScope, sessionDraftAddress, listener)
+            : () => undefined
+    ), [activeServerAccountScope, sessionDraftAddress]);
+    const getCurrentSessionDraftSnapshot = React.useCallback(() => (
+        activeServerAccountScope
+            ? getSessionDraftSnapshot(activeServerAccountScope, sessionDraftAddress)
+            : null
+    ), [activeServerAccountScope, sessionDraftAddress]);
+    const currentSessionDraftSnapshot = React.useSyncExternalStore(
+        subscribeCurrentSessionDraft,
+        getCurrentSessionDraftSnapshot,
+        getCurrentSessionDraftSnapshot,
+    );
+    const draftConflictBanner = useSessionDraftConflictComposerBanner(
+        currentSessionDraftSnapshot?.conflict ?? null,
+    );
+    const sessionComposerRef = React.useMemo<Extract<ComposerRefV1, { kind: 'session' }>>(
+        () => ({ kind: 'session', sessionId }),
+        [sessionId],
+    );
+    const existingSessionComposerOwner = React.useMemo(() => activeServerAccountScope
+        ? createExistingSessionComposerDocumentOwner({
+            scope: activeServerAccountScope,
+            ref: sessionComposerRef,
+        })
+        : createEphemeralComposerDocumentOwner({
+            ref: sessionComposerRef,
+            capabilities: { text: true, references: true, attachments: true, submit: true },
+            initialDocument: {
+                text: messageRef.current,
+                structuredInputMentions: [],
+                composerAttachments: [],
+            },
+        }), [activeServerAccountScope, sessionComposerRef]);
     const readActiveComposerPresentationRevision = React.useCallback(() => {
         const ref = activeComposerRefRef.current;
         const pendingEdit = pendingMessageEditRef.current;
@@ -4087,19 +4138,17 @@ function SessionViewLoaded({
             && ref.sessionId === sessionId
             && pendingEdit?.localId === ref.localId
         ) {
-            return pendingEdit.document.revision;
+            return pendingComposerDocumentOwnerRef.current?.read().revision
+                ?? pendingEdit.document.revision;
         }
-        return readSessionComposerSemanticRevision(activeServerAccountScope, sessionId);
-    }, [activeServerAccountScope, sessionId]);
+        return existingSessionComposerOwner.read().revision;
+    }, [existingSessionComposerOwner, sessionId]);
     const setComposerDraftValue = React.useCallback((nextValueOrUpdater: React.SetStateAction<string>) => {
         setDraftValue((currentValue) => {
             const nextValue = typeof nextValueOrUpdater === 'function'
                 ? (nextValueOrUpdater as (value: string) => string)(currentValue)
                 : nextValueOrUpdater;
             messageRef.current = nextValue;
-            if (nextValue !== currentValue) {
-                composerPresentationObservedTextRef.current = nextValue;
-            }
             return nextValue;
         });
     }, [setDraftValue]);
@@ -4108,11 +4157,17 @@ function SessionViewLoaded({
     ): PendingMessageComposerEditState | null => {
         const current = pendingMessageEditRef.current;
         if (!current) return null;
-        const document = updater(current.document);
-        if (document === current.document) return current;
+        const candidate = updater(current.document);
+        if (candidate === current.document) return current;
+        const owner = pendingComposerDocumentOwnerRef.current;
+        const revision = owner?.replaceDocument({
+            text: candidate.text,
+            structuredInputMentions: candidate.mentions,
+            composerAttachments: candidate.attachments,
+        }) ?? candidate.revision;
+        const document = { ...candidate, revision };
         const next = { ...current, document };
         pendingMessageEditRef.current = next;
-        pendingComposerPresentationRevisionRef.current = document.revision;
         setPendingMessageEdit(next);
         notifyComposerPresentationTargetChanged({
             kind: 'pendingMessage',
@@ -4137,29 +4192,15 @@ function SessionViewLoaded({
     }, [setComposerDraftValue, updatePendingMessageComposerDocument]);
     React.useEffect(() => {
         messageRef.current = message;
-        if (composerPresentationObservedTextRef.current !== message) {
-            composerPresentationObservedTextRef.current = message;
-            const persistedText = storage.getState().sessions[sessionId]?.draft ?? '';
-            // A storage-owned update already advanced the semantic revision.
-            // This catches only other visible text writers that bypassed
-            // `useDraft`'s token callback.
-            if (persistedText !== message) {
-                createSessionComposerTextMutationToken(activeServerAccountScope, sessionId);
-            }
-        }
-    }, [activeServerAccountScope, message, sessionId]);
+    }, [message]);
     React.useEffect(() => {
-        return subscribeSessionComposerSemanticRevision(activeServerAccountScope, sessionId, () => {
-            const persistedText = storage.getState().sessions[sessionId]?.draft ?? '';
-            if (
-                !hasSessionComposerTextMutationToken(activeServerAccountScope, sessionId)
-                && persistedText !== messageRef.current
-            ) {
-                messageRef.current = persistedText;
-            }
+        return existingSessionComposerOwner.observe(() => {
+            // useDraft is the single repository-to-text bridge. This observer
+            // only invalidates semantic Composer presentations (references,
+            // attachments, and transaction revisions).
             notifyComposerPresentationTargetChanged({ kind: 'session', sessionId });
         });
-    }, [activeServerAccountScope, sessionId]);
+    }, [existingSessionComposerOwner, sessionId]);
     const pendingMessageEditHoldPatchRef = React.useRef<Promise<unknown>>(Promise.resolve());
     const patchPendingMessageEditHoldMetadata = React.useCallback((
         updater: (metadata: Metadata) => Metadata,
@@ -4194,39 +4235,67 @@ function SessionViewLoaded({
         const snapshot = {} as {
             [FieldId in SessionDraftValueFieldId]: ComposerSemanticDraftSnapshot[FieldId];
         };
-        const captureField = <FieldId extends SessionDraftValueFieldId>(fieldId: FieldId): void => {
-            snapshot[fieldId] = readSessionDraftValue(activeServerAccountScope, sessionId, fieldId);
-        };
-        for (const fieldId of SESSION_COMPOSER_DRAFT_FIELD_IDS) {
-            captureField(fieldId);
+        const document = existingSessionComposerOwner.read().document;
+        snapshot['structuredInput.mentions'] = document.structuredInputMentions;
+        snapshot['structuredInput.composerAttachments'] = document.composerAttachments;
+        if (activeServerAccountScope) {
+            const stored = getSessionDraftSnapshot(
+                activeServerAccountScope,
+                { kind: 'session', sessionId },
+            );
+            if (stored?.document.target.kind === 'session') {
+                const routing = stored.document.target.routing;
+                const recipientValue = routing.recipient.value;
+                const recipient = recipientValue && typeof recipientValue === 'object' && !Array.isArray(recipientValue)
+                    && 'mode' in recipientValue && recipientValue.mode === 'manual'
+                    ? SESSION_DRAFT_VALUE_SCHEMAS['routing.recipient'].safeParse(recipientValue.recipient)
+                    : null;
+                if (recipient?.success) snapshot['routing.recipient'] = recipient.data;
+                const continuation = SESSION_DRAFT_VALUE_SCHEMAS['routing.agentContinuation']
+                    .safeParse(routing.agentContinuation.value);
+                if (continuation.success) snapshot['routing.agentContinuation'] = continuation.data;
+                const delivery = SESSION_DRAFT_VALUE_SCHEMAS['routing.executionRunDelivery']
+                    .safeParse(routing.executionRunDelivery.value);
+                if (delivery.success) snapshot['routing.executionRunDelivery'] = delivery.data;
+            }
         }
         return snapshot;
-    }, [activeServerAccountScope, sessionId]);
+    }, [activeServerAccountScope, existingSessionComposerOwner, sessionId]);
     const captureComposerSemanticDraftMutationRevisions = React.useCallback((): PendingMessageComposerSemanticDraftMutationRevisions => {
         const revisions = {} as {
             [FieldId in SessionDraftValueFieldId]: number;
         };
+        const revision = existingSessionComposerOwner.read().revision;
         for (const fieldId of SESSION_COMPOSER_DRAFT_FIELD_IDS) {
-            revisions[fieldId] = readSessionDraftValueMutationRevision(
-                activeServerAccountScope,
-                sessionId,
-                fieldId,
-            );
+            revisions[fieldId] = revision;
         }
         return revisions;
-    }, [activeServerAccountScope, sessionId]);
+    }, [existingSessionComposerOwner]);
     const captureComposerSemanticDraftCurrentnessSnapshot = React.useCallback((): ComposerSemanticDraftCurrentnessSnapshot => ({
         values: captureComposerSemanticDraftSnapshot(),
         mutationRevisions: captureComposerSemanticDraftMutationRevisions(),
-    }), [captureComposerSemanticDraftMutationRevisions, captureComposerSemanticDraftSnapshot]);
+        repositoryCurrentness: activeServerAccountScope
+            ? captureSessionDraftCurrentness({
+                scope: activeServerAccountScope,
+                address: { kind: 'session', sessionId },
+            })
+            : { address: { kind: 'session', sessionId }, mutationIds: {} },
+    }), [activeServerAccountScope, captureComposerSemanticDraftMutationRevisions, captureComposerSemanticDraftSnapshot, sessionId]);
     const clearSemanticDraftValuesAfterOutboundHandoff = React.useCallback((
         snapshot: ComposerSemanticDraftCurrentnessSnapshot,
     ): readonly SessionDraftValueFieldId[] => {
-        const cleared = clearSessionDraftValuesForSession(activeServerAccountScope, sessionId, {
-            reason: 'send',
-            snapshot,
+        if (!activeServerAccountScope) return [];
+        const changed = clearSessionDraftCurrentnessLocal({
+            scope: activeServerAccountScope,
+            address: { kind: 'session', sessionId },
+            currentness: snapshot.repositoryCurrentness,
         });
-        flushSessionDraftValues(activeServerAccountScope);
+        if (!changed) return [];
+        void flushSessionDraft({
+            scope: activeServerAccountScope,
+            address: { kind: 'session', sessionId },
+        });
+        const cleared = [...SESSION_COMPOSER_DRAFT_FIELD_IDS];
         if (cleared.includes('structuredInput.composerAttachments')) {
             setComposerDocumentRenderEpoch((current) => current + 1);
         }
@@ -4237,7 +4306,7 @@ function SessionViewLoaded({
         clearedSnapshot: ComposerSemanticDraftCurrentnessSnapshot;
         clearedFieldIds: readonly SessionDraftValueFieldId[];
     }>): readonly SessionDraftValueFieldId[] => {
-        const fieldsToRestore = readPendingMessageComposerSemanticDraftFieldsToRestore(
+        const candidateFields = readPendingMessageComposerSemanticDraftFieldsToRestore(
             input.snapshot.values,
             captureComposerSemanticDraftSnapshot(),
             input.clearedFieldIds,
@@ -4245,16 +4314,61 @@ function SessionViewLoaded({
             captureComposerSemanticDraftMutationRevisions(),
             input.clearedSnapshot.values,
         );
-        for (const fieldId of fieldsToRestore) {
-            const value = input.snapshot.values[fieldId];
-            if (typeof value === 'undefined') {
-                continue;
-            } else {
-                writeSessionDraftValue(activeServerAccountScope, sessionId, fieldId, value);
-            }
-        }
-
-        flushSessionDraftValues(activeServerAccountScope);
+        if (!activeServerAccountScope) return [];
+        const currentness = captureSessionDraftCurrentness({
+            scope: activeServerAccountScope,
+            address: { kind: 'session', sessionId },
+        });
+        const pathByField: Readonly<Record<SessionDraftValueFieldId, string>> = {
+            'structuredInput.mentions': 'composer.mentions',
+            'structuredInput.composerAttachments': 'composer.attachments',
+            'routing.recipient': 'target.routing.recipient',
+            'routing.agentContinuation': 'target.routing.agentContinuation',
+            'routing.executionRunDelivery': 'target.routing.executionRunDelivery',
+        };
+        const fieldsToRestore = candidateFields.filter((fieldId) => {
+            const path = pathByField[fieldId];
+            return currentness.mutationIds[path] === input.clearedSnapshot.repositoryCurrentness.mutationIds[path];
+        });
+        const values = input.snapshot.values;
+        writeExistingSessionDraft({
+            scope: activeServerAccountScope,
+            sessionId,
+            patch: {
+                ...(fieldsToRestore.includes('structuredInput.mentions')
+                    ? {
+                        mentions: (values['structuredInput.mentions'] ?? [])
+                            .map((value) => StrictJsonValueSchema.parse(value)),
+                    }
+                    : {}),
+                ...(fieldsToRestore.includes('structuredInput.composerAttachments')
+                    ? {
+                        attachments: (values['structuredInput.composerAttachments'] ?? [])
+                            .map((value) => StrictJsonValueSchema.parse(value)),
+                    }
+                    : {}),
+                routing: {
+                    ...(fieldsToRestore.includes('routing.recipient')
+                        ? {
+                            recipient: StrictJsonValueSchema.parse({
+                                mode: 'manual',
+                                recipient: values['routing.recipient'] ?? null,
+                            }),
+                        }
+                        : {}),
+                    ...(fieldsToRestore.includes('routing.agentContinuation')
+                        ? {
+                            agentContinuation: StrictJsonValueSchema.parse(
+                                values['routing.agentContinuation'] ?? null,
+                            ),
+                        }
+                        : {}),
+                    ...(fieldsToRestore.includes('routing.executionRunDelivery')
+                        ? { executionRunDelivery: values['routing.executionRunDelivery'] ?? null }
+                        : {}),
+                },
+            },
+        });
         if (fieldsToRestore.includes('structuredInput.composerAttachments')) {
             setComposerDocumentRenderEpoch((current) => current + 1);
         }
@@ -4271,10 +4385,9 @@ function SessionViewLoaded({
         if (inSessionAgentPicker.armedContinuation !== null) {
             inSessionAgentPicker.clearArmedContinuation();
         }
-        clearSessionDraftValuesForSession(activeServerAccountScope, sessionId, { reason: 'composerClear' });
-        flushSessionDraftValues(activeServerAccountScope);
+        existingSessionComposerOwner.clear('discarded');
     }, [
-        activeServerAccountScope,
+        existingSessionComposerOwner,
         inSessionAgentPicker.armedContinuation,
         inSessionAgentPicker.clearArmedContinuation,
         sessionId,
@@ -4309,31 +4422,30 @@ function SessionViewLoaded({
             ...(currentness
                 ? {
                     clearSemanticDraftValuesMatchingSnapshot: () => {
-                        let didClear = false;
-                        batchSessionComposerSemanticRevision(activeServerAccountScope, sessionId, () => {
-                            const fields = [
-                                ['structuredInput.mentions', currentness.mentions],
-                                ['structuredInput.composerAttachments', currentness.composerAttachments],
-                            ] as const;
-                            for (const [fieldId, expected] of fields) {
-                                const actual = readSessionDraftValue(
-                                    activeServerAccountScope,
-                                    sessionId,
-                                    fieldId,
-                                );
-                                if (
-                                    typeof actual === 'undefined'
-                                    || JSON.stringify(actual) !== JSON.stringify(expected)
-                                ) {
-                                    continue;
-                                }
-                                clearSessionDraftValue(activeServerAccountScope, sessionId, fieldId);
-                                didClear = true;
-                                clearedComposerAttachments = clearedComposerAttachments
-                                    || fieldId === 'structuredInput.composerAttachments';
-                            }
-                        });
-                        if (didClear) flushSessionDraftValues(activeServerAccountScope);
+                        const ownerSnapshot = existingSessionComposerOwner.read();
+                        const clearMentions = sameStrictJsonValue(
+                            ownerSnapshot.document.structuredInputMentions,
+                            currentness.mentions,
+                        );
+                        const clearAttachments = sameStrictJsonValue(
+                            ownerSnapshot.document.composerAttachments,
+                            currentness.composerAttachments,
+                        );
+                        const didClear = clearMentions || clearAttachments;
+                        if (didClear) {
+                            const result = existingSessionComposerOwner.apply(ownerSnapshot.revision, {
+                                text: ownerSnapshot.document.text,
+                                references: [...composerReferencesFromStructuredMentions({
+                                    text: ownerSnapshot.document.text,
+                                    mentions: clearMentions ? [] : ownerSnapshot.document.structuredInputMentions,
+                                })],
+                                attachments: (clearAttachments ? [] : ownerSnapshot.document.composerAttachments)
+                                    .map((attachment) => composerAttachmentDraftToView(attachment, {
+                                        entriesById: composerAttachmentAvailabilityEntriesById,
+                                    })),
+                            });
+                            clearedComposerAttachments = clearAttachments && result.status === 'applied';
+                        }
                         if (clearedComposerAttachments) {
                             setComposerDocumentRenderEpoch((current) => current + 1);
                         }
@@ -4381,6 +4493,8 @@ function SessionViewLoaded({
         return didClearComposer || didClearAttachmentDrafts || didClearReviewComments;
     }, [
         activeServerAccountScope,
+        composerAttachmentAvailabilityEntriesById,
+        existingSessionComposerOwner,
         clearDraftForSessionIfCurrentValueMatches,
         clearSentReviewCommentDrafts,
         clearTransientInputState,
@@ -4459,58 +4573,29 @@ function SessionViewLoaded({
         return edit.accountScope === null && activeServerAccountScope === null;
     }, [activeServerAccountScope]);
     const readSessionComposerSnapshot = React.useCallback((): ComposerSnapshotV1 => {
-        const text = messageRef.current;
-        const mentions = readSessionDraftValue(
-            activeServerAccountScope,
-            sessionId,
-            'structuredInput.mentions',
-        ) ?? [];
-        const attachments = readSessionDraftValue(
-            activeServerAccountScope,
-            sessionId,
-            'structuredInput.composerAttachments',
-        ) ?? [];
-        return {
-            revision: readSessionComposerSemanticRevision(activeServerAccountScope, sessionId),
-            ref: { kind: 'session', sessionId },
-            text,
-            // Structured-input normalization exposes an immutable projection.
-            // The Protocol snapshot is the wire-shaped mutable-array boundary,
-            // so materialize it here rather than widening the document owner.
-            references: [...composerReferencesFromStructuredMentions({ text, mentions })],
-            attachments: attachments.map((attachment) => composerAttachmentDraftToView(attachment, {
-                entriesById: composerAttachmentAvailabilityEntriesById,
-            })),
-            layout: composerActionBarLayoutRef.current,
-            capabilities: {
-                text: true,
-                references: true,
-                attachments: true,
-                submit: true,
-            },
-            state: {
+        return projectComposerDocumentSnapshot({
+            owner: existingSessionComposerOwner,
+            attachmentCatalog: { entriesById: composerAttachmentAvailabilityEntriesById },
+            presentation: {
+                layout: composerActionBarLayoutRef.current,
                 focused: false,
                 editable: true,
                 submittable: true,
                 submitting: false,
                 running: false,
             },
-        };
-    }, [activeServerAccountScope, composerAttachmentAvailabilityEntriesById, sessionId]);
+        });
+    }, [composerAttachmentAvailabilityEntriesById, existingSessionComposerOwner]);
     const readSessionComposerSubmissionSnapshot = React.useCallback((text: string): ComposerSnapshotV1 => {
         const snapshot = readSessionComposerSnapshot();
         if (snapshot.text === text) return snapshot;
-        const mentions = readSessionDraftValue(
-            activeServerAccountScope,
-            sessionId,
-            'structuredInput.mentions',
-        ) ?? [];
+        const mentions = existingSessionComposerOwner.read().document.structuredInputMentions;
         return {
             ...snapshot,
             text,
             references: [...composerReferencesFromStructuredMentions({ text, mentions })],
         };
-    }, [activeServerAccountScope, readSessionComposerSnapshot, sessionId]);
+    }, [existingSessionComposerOwner, readSessionComposerSnapshot]);
     const readPendingMessageComposerSnapshot = React.useCallback((
         edit: PendingMessageComposerEditState,
     ): ComposerSnapshotV1 => {
@@ -4546,8 +4631,8 @@ function SessionViewLoaded({
             && current.ref.sessionId === snapshot.ref.sessionId
             && current.ref.localId === snapshot.ref.localId
             && current.text === snapshot.text
-            && JSON.stringify(current.references) === JSON.stringify(snapshot.references)
-            && JSON.stringify(current.attachments) === JSON.stringify(snapshot.attachments);
+            && sameStrictJsonValue(current.references, snapshot.references)
+            && sameComposerAttachmentViews(current.attachments, snapshot.attachments);
     }, [readPendingMessageComposerSnapshot, sessionId]);
     const commitSessionComposerDocument = React.useCallback((
         input: Readonly<{
@@ -4565,98 +4650,55 @@ function SessionViewLoaded({
             ) {
                 return { status: 'conflict', currentRevision: 0 };
             }
-            if (edit.document.revision !== input.expectedRevision) {
-                return { status: 'conflict', currentRevision: edit.document.revision };
-            }
-            const nextMentions = composerStructuredMentionsFromReferences({
-                references: input.mutation.references,
-                existing: edit.document.mentions,
-            });
-            const nextAttachments = input.mutation.attachments.map(composerAttachmentViewToDraft);
-            const textChanged = edit.document.text !== input.mutation.text;
-            const mentionsChanged = JSON.stringify(edit.document.mentions) !== JSON.stringify(nextMentions);
-            const attachmentsChanged = JSON.stringify(edit.document.attachments) !== JSON.stringify(nextAttachments);
-            if (!textChanged && !mentionsChanged && !attachmentsChanged) {
-                return { status: 'applied', revision: edit.document.revision };
-            }
+            const owner = pendingComposerDocumentOwnerRef.current;
+            if (!owner) return { status: 'composerUnavailable' };
+            const previous = owner.read().document;
+            const result = owner.apply(input.expectedRevision, input.mutation);
+            if (result.status !== 'applied') return result;
+            const next = owner.read().document;
+            const attachmentsChanged = !sameStrictJsonValue(
+                previous.composerAttachments,
+                next.composerAttachments,
+            );
             const nextDocument = {
-                text: input.mutation.text,
-                mentions: nextMentions,
-                attachments: nextAttachments,
-                revision: edit.document.revision + 1,
+                text: next.text,
+                mentions: next.structuredInputMentions,
+                attachments: next.composerAttachments,
+                revision: result.revision,
             } satisfies PendingMessageComposerEditState['document'];
             updatePendingMessageComposerDocument(() => nextDocument);
             if (attachmentsChanged) {
                 setComposerDocumentRenderEpoch((current) => current + 1);
             }
-            return { status: 'applied', revision: nextDocument.revision };
+            return result;
         }
 
-        const currentRevision = readSessionComposerSemanticRevision(activeServerAccountScope, sessionId);
-        if (currentRevision !== input.expectedRevision) {
-            return { status: 'conflict', currentRevision };
+        const previous = existingSessionComposerOwner.read().document;
+        const result = existingSessionComposerOwner.apply(input.expectedRevision, input.mutation);
+        if (result.status !== 'applied') return result;
+        const next = existingSessionComposerOwner.read().document;
+        if (previous.text !== next.text) {
+            messageRef.current = next.text;
+            setMessage(next.text);
         }
-
-        const previousText = messageRef.current;
-        const previousMentions = readSessionDraftValue(
-            activeServerAccountScope,
-            sessionId,
-            'structuredInput.mentions',
-        ) ?? [];
-        const previousAttachments = readSessionDraftValue(
-            activeServerAccountScope,
-            sessionId,
-            'structuredInput.composerAttachments',
-        ) ?? [];
-        const nextMentions = composerStructuredMentionsFromReferences({
-            references: input.mutation.references,
-            existing: previousMentions,
-        });
-        const nextAttachments = input.mutation.attachments.map(composerAttachmentViewToDraft);
-        const textChanged = previousText !== input.mutation.text;
-        const mentionsChanged = JSON.stringify(previousMentions) !== JSON.stringify(nextMentions);
-        const attachmentsChanged = JSON.stringify(previousAttachments) !== JSON.stringify(nextAttachments);
-
-        batchSessionComposerSemanticRevision(activeServerAccountScope, sessionId, () => {
-            if (mentionsChanged) {
-                inputComposerPersistence.structuredInputPersistence.onMentionsChange(nextMentions);
-            }
-            if (attachmentsChanged) {
-                if (nextAttachments.length === 0) {
-                    clearSessionDraftValue(activeServerAccountScope, sessionId, 'structuredInput.composerAttachments');
-                } else {
-                    writeSessionDraftValue(
-                        activeServerAccountScope,
-                        sessionId,
-                        'structuredInput.composerAttachments',
-                        nextAttachments,
-                    );
-                }
-            }
-            if (mentionsChanged || attachmentsChanged) {
-                flushSessionDraftValues(activeServerAccountScope);
-            }
-            if (textChanged) {
-                setComposerDraftValue(input.mutation.text);
-            }
-        });
-        const revision = readSessionComposerSemanticRevision(activeServerAccountScope, sessionId);
-        if (attachmentsChanged) {
+        if (!sameStrictJsonValue(previous.structuredInputMentions, next.structuredInputMentions)) {
+            inputComposerPersistence.structuredInputPersistence.onMentionsChange(next.structuredInputMentions);
+        }
+        if (!sameStrictJsonValue(previous.composerAttachments, next.composerAttachments)) {
             setComposerDocumentRenderEpoch((current) => current + 1);
         }
-
-        return { status: 'applied', revision };
+        return result;
     }, [
-        activeServerAccountScope,
+        existingSessionComposerOwner,
         inputComposerPersistence.structuredInputPersistence,
         sessionId,
-        setComposerDraftValue,
         updatePendingMessageComposerDocument,
     ]);
     const cancelPendingMessageEdit = React.useCallback(() => {
         const edit = pendingMessageEditRef.current;
         if (!edit) return;
         pendingMessageEditRef.current = null;
+        pendingComposerDocumentOwnerRef.current = null;
         setPendingMessageEdit(null);
         clearPendingMessageEditDrainHold(edit.holdId);
     }, [clearPendingMessageEditDrainHold]);
@@ -4689,22 +4731,41 @@ function SessionViewLoaded({
         if (previousEdit && previousEdit.pendingId !== request.id) {
             clearPendingMessageEditDrainHold(previousEdit.holdId);
         }
+        if (previousEdit?.pendingId !== request.id) {
+            // A successor identity belongs to the row that exposed it.
+            pendingComposerEditExposedSuccessorRef.current = null;
+        }
+        const localId = request.message.localId ?? request.id;
+        const pendingRef = { kind: 'pendingMessage' as const, sessionId, localId };
+        const pendingOwner = createPendingMessageComposerDocumentOwner({
+            ref: pendingRef,
+            initialDocument: {
+                text: editText,
+                structuredInputMentions: hydratedComposerMentions,
+                composerAttachments: attachmentHydration.attachments,
+            },
+            isCurrent: () => {
+                const current = pendingMessageEditRef.current;
+                return current?.localId === localId
+                    && (accountLifetime === null || accountLifetime.isCurrent());
+            },
+        });
         const document = {
             text: editText,
             mentions: hydratedComposerMentions,
             attachments: attachmentHydration.attachments,
-            revision: pendingComposerPresentationRevisionRef.current + 1,
+            revision: pendingOwner.read().revision,
         } satisfies PendingMessageComposerEditState['document'];
         const nextEdit: PendingMessageComposerEditState = {
             pendingId: request.id,
-            localId: request.message.localId ?? request.id,
+            localId,
             holdId: previousEdit?.pendingId === request.id ? previousEdit.holdId : randomUUID(),
             accountScope: accountLifetime?.scope ?? null,
             accountLifetime,
             document,
             admittedDocument: document,
         };
-        pendingComposerPresentationRevisionRef.current = document.revision;
+        pendingComposerDocumentOwnerRef.current = pendingOwner;
         pendingMessageEditRef.current = nextEdit;
         setPendingMessageEdit(nextEdit);
         notifyComposerPresentationTargetChanged({
@@ -4727,6 +4788,8 @@ function SessionViewLoaded({
         if (stillQueued) return;
 
         pendingMessageEditRef.current = null;
+        pendingComposerDocumentOwnerRef.current = null;
+        pendingComposerEditExposedSuccessorRef.current = null;
         setPendingMessageEdit(null);
         clearPendingMessageEditDrainHold(edit.holdId);
     }, [clearPendingMessageEditDrainHold, pendingMessages]);
@@ -4744,132 +4807,53 @@ function SessionViewLoaded({
         if (!edit) return;
         clearPendingMessageEditDrainHold(edit.holdId);
     }, [clearPendingMessageEditDrainHold]);
-    const pendingComposerAttachmentPreparationRetryRef = React.useRef<PendingComposerAttachmentPreparationRetry | null>(null);
-    const prepareChangedPendingComposerAttachments = React.useCallback(async (
+    const preparePendingComposerAdmissionCandidate = React.useCallback((
         edit: PendingMessageComposerEditState,
         snapshot: ComposerSubmissionSnapshot,
-    ): Promise<
-        | Readonly<{ status: 'ready'; attachments: readonly ComposerAttachmentDraftV1[]; replacementLocalId?: string }>
-        | Readonly<{ status: 'blocked' }>
-    > => {
+    ): Readonly<{
+        attachments: readonly ComposerAttachmentDraftV1[];
+        localId: string;
+        replacementLocalId?: string;
+    }> => {
         const attachments = snapshot.attachments.map(composerAttachmentViewToDraft);
         const admittedByInstanceId = new Map(
             edit.admittedDocument.attachments.map((attachment) => [attachment.instanceId, attachment]),
         );
-        const groups = new Map<string, Readonly<{
-            identity: ComposerAttachmentDraftV1['attachment'];
-            attachments: ComposerAttachmentDraftV1[];
-        }>>();
-        for (const attachment of attachments) {
+        const requiresPreparation = attachments.some((attachment) => {
             const admitted = admittedByInstanceId.get(attachment.instanceId);
-            if (JSON.stringify(admitted) === JSON.stringify(attachment)) continue;
+            if (sameStrictJsonValue(admitted, attachment)) return false;
             const entry = resolveCurrentComposerAttachmentCatalogEntry(
                 attachment,
                 composerAttachmentAvailabilityEntriesById,
             );
-            if (!entry || entry.definition.runtime?.prepareForSend !== true) continue;
-            const current = groups.get(entry.id);
-            groups.set(entry.id, {
-                identity: entry.identity,
-                attachments: current ? [...current.attachments, attachment] : [attachment],
-            });
-        }
-        if (groups.size === 0) {
-            pendingComposerAttachmentPreparationRetryRef.current = null;
-            return { status: 'ready', attachments };
-        }
-
-        const fingerprint = JSON.stringify({
+            return entry?.definition.runtime?.prepareForSend === true;
+        });
+        const fingerprint = StrictJsonValueSchema.parse({
             text: snapshot.text,
             references: snapshot.references,
             attachments,
         });
-        const prior = pendingComposerAttachmentPreparationRetryRef.current;
-        const replacementLocalId = prior?.pendingId === edit.pendingId && prior.fingerprint === fingerprint
-            ? prior.replacementLocalId
-            : randomUUID();
-        // Allocate the one replacement identity before any daemon callback;
-        // retried identical snapshots keep it, while a changed snapshot gets a
-        // new candidate rather than reusing a potentially admitted payload.
-        pendingComposerAttachmentPreparationRetryRef.current = {
+        // One owner decides rotation. Preparation exposes the Message local id to
+        // the contributor, so every later differing payload — text-only included —
+        // must rotate rather than reuse an identity a plugin already saw.
+        const rotation = decidePendingMessageComposerRotation({
             pendingId: edit.pendingId,
             fingerprint,
-            replacementLocalId,
-        };
-
-        const expectedGeneration = daemonMergedProjection.inputs?.pluginProjectionV2?.generation;
-        if (!machineId || expectedGeneration === null || expectedGeneration === undefined) {
-            return { status: 'blocked' };
-        }
-
-        const preparedByInstanceId = new Map<string, Readonly<{
-            value: ComposerAttachmentDraftV1['value'];
-            content?: ComposerAttachmentDraftV1['content'];
-            presentation?: ComposerAttachmentAuthorPresentationV1;
-        }>>();
-        for (const group of groups.values()) {
-            const response = await machinePluginComposerAttachmentPrepare(machineId, {
-                serverId: sessionRouteServerId,
-                expectedGeneration: String(expectedGeneration),
-                attachment: group.identity,
-                signal: composerPluginActionScopeSignal,
-                request: ComposerAttachmentPrepareRequestV1Schema.parse({
-                    sessionId,
-                    localId: replacementLocalId,
-                    attachments: group.attachments.map((attachment) => ({
-                        instanceId: attachment.instanceId,
-                        key: attachment.key,
-                        value: attachment.value,
-                        ...(attachment.content === undefined ? {} : { content: attachment.content }),
-                    })),
-                }),
-            });
-            if (
-                !response.supported
-                || !response.result.ok
-                || response.result.attachment.pluginId !== group.identity.pluginId
-                || response.result.attachment.localId !== group.identity.localId
-                || response.result.result.attachments.length !== group.attachments.length
-            ) {
-                return { status: 'blocked' };
-            }
-            const requestedIds = new Set(group.attachments.map((attachment) => attachment.instanceId));
-            for (const outcome of response.result.result.attachments) {
-                if (!requestedIds.delete(outcome.instanceId) || outcome.status !== 'ready') {
-                    return { status: 'blocked' };
-                }
-                preparedByInstanceId.set(outcome.instanceId, {
-                    value: outcome.value,
-                    ...(outcome.content === undefined ? {} : { content: outcome.content }),
-                    ...(outcome.presentation === undefined ? {} : { presentation: outcome.presentation }),
-                });
-            }
-            if (requestedIds.size !== 0) return { status: 'blocked' };
-        }
-
+            requiresPreparation,
+            exposed: pendingComposerEditExposedSuccessorRef.current,
+            allocateLocalId: () => randomUUID(),
+        });
+        // Record the identity before any daemon callback; retried identical
+        // snapshots keep it, while a changed payload gets a new candidate rather
+        // than reusing a potentially admitted one.
+        pendingComposerEditExposedSuccessorRef.current = rotation.exposed;
         return {
-            status: 'ready',
-            replacementLocalId,
-            attachments: attachments.map((attachment) => {
-                const prepared = preparedByInstanceId.get(attachment.instanceId);
-                if (!prepared) return attachment;
-                return {
-                    ...attachment,
-                    value: prepared.value,
-                    ...(prepared.content === undefined ? {} : { content: prepared.content }),
-                    ...(prepared.presentation === undefined
-                        ? {}
-                        : { presentation: { ...attachment.presentation, ...prepared.presentation } }),
-                };
-            }),
+            localId: rotation.replacementLocalId ?? edit.pendingId,
+            ...(rotation.replacementLocalId ? { replacementLocalId: rotation.replacementLocalId } : {}),
+            attachments,
         };
     }, [
         composerAttachmentAvailabilityEntriesById,
-        composerPluginActionScopeSignal,
-        daemonMergedProjection.inputs?.pluginProjectionV2?.generation,
-        machineId,
-        sessionId,
-        sessionRouteServerId,
     ]);
 
     // Handle dismissing CLI version warning
@@ -5279,7 +5263,20 @@ function SessionViewLoaded({
     const bottomNotice = runtimeDisplayState.bottomNotice;
 
     const isReadOnly = session.accessLevel === 'view';
-    const sessionComposerRef = React.useMemo<ComposerRefV1>(() => ({ kind: 'session', sessionId }), [sessionId]);
+    /**
+     * The one Composer mutability rule for this Session screen. Both public
+     * snapshots and the host attachment row's mutation affordances read it, so
+     * a read-only Session, a blocked external operation, or an `editAndSubmit`
+     * lock cannot leave an enabled control whose transaction the owner refuses.
+     */
+    const isComposerMutationEditable = React.useCallback(
+        (inputLock: Readonly<{ mode?: string }> | null): boolean => (
+            !isReadOnly
+            && !externalSessionOperationShell.blocksNewOperation
+            && inputLock?.mode !== 'editAndSubmit'
+        ),
+        [externalSessionOperationShell.blocksNewOperation, isReadOnly],
+    );
     const activeComposerPresentationTarget = useStableComposerPresentationTarget(activeComposerRef, {
         readRevision: readActiveComposerPresentationRevision,
         replace: (text, expectedRevision) => {
@@ -5300,7 +5297,7 @@ function SessionViewLoaded({
                 ...snapshot,
                 state: {
                     focused: surfaceFocused && composerInputFocusedRef.current,
-                    editable: !isReadOnly && !externalSessionOperationShell.blocksNewOperation && inputLock?.mode !== 'editAndSubmit',
+                    editable: isComposerMutationEditable(inputLock),
                     submittable: !isReadOnly && !externalSessionOperationShell.blocksNewOperation && !isComposerSending && inputLock === null,
                     submitting: isComposerSending,
                     running: isSessionActive,
@@ -5318,8 +5315,8 @@ function SessionViewLoaded({
             if (
                 !surfaceFocused
                 || !composerPresentationMountedRef.current
-                || composerPresentationTargetKey(activeComposerRefRef.current)
-                    !== composerPresentationTargetKey(activeComposerRef)
+                || composerRefV1Key(activeComposerRefRef.current)
+                    !== composerRefV1Key(activeComposerRef)
                 || (composerPresentationAccountLifetime !== null && !composerPresentationAccountLifetime.isCurrent())
             ) {
                 return false;
@@ -5331,12 +5328,21 @@ function SessionViewLoaded({
         },
     });
     const sessionComposerPresentationTarget = useStableComposerPresentationTarget(sessionComposerRef, {
-        readRevision: () => readSessionComposerSemanticRevision(activeServerAccountScope, sessionId),
+        readRevision: () => existingSessionComposerOwner.read().revision,
         replace: (text, expectedRevision) => {
-            const currentRevision = readSessionComposerSemanticRevision(activeServerAccountScope, sessionId);
-            if (currentRevision !== expectedRevision) return currentRevision;
-            setComposerDraftValue(text);
-            return readSessionComposerSemanticRevision(activeServerAccountScope, sessionId);
+            const snapshot = readSessionComposerSnapshot();
+            if (snapshot.revision !== expectedRevision) return snapshot.revision;
+            const result = commitSessionComposerDocument({
+                expectedRevision,
+                mutation: {
+                    text,
+                    references: snapshot.references,
+                    attachments: snapshot.attachments,
+                },
+            }, sessionComposerRef);
+            return result.status === 'applied'
+                ? result.revision
+                : existingSessionComposerOwner?.read().revision ?? snapshot.revision;
         },
         readSnapshot: () => {
             const inputLock = composerInputEffects.readComposerInputLock();
@@ -5346,7 +5352,7 @@ function SessionViewLoaded({
                     focused: surfaceFocused
                         && activeComposerRefRef.current.kind === 'session'
                         && composerInputFocusedRef.current,
-                    editable: !isReadOnly && !externalSessionOperationShell.blocksNewOperation && inputLock?.mode !== 'editAndSubmit',
+                    editable: isComposerMutationEditable(inputLock),
                     submittable: !isReadOnly && !externalSessionOperationShell.blocksNewOperation && !isComposerSending && inputLock === null,
                     submitting: isComposerSending,
                     running: isSessionActive,
@@ -5644,7 +5650,7 @@ function SessionViewLoaded({
                     { serverId });
                 },
                 appendNewSessionDraft: ({ promptText, sourceServerId }) => {
-                    appendTranscriptSelectionToNewSessionDraft({
+                    return appendTranscriptSelectionToNewSessionDraft({
                         promptText,
                         sourceServerId,
                         scope: activeServerAccountScope,
@@ -5653,8 +5659,8 @@ function SessionViewLoaded({
                 navigateToSession: ({ sessionId: destinationSessionId, serverId }) => {
                     void navigateToSession(destinationSessionId, { serverId });
                 },
-                navigateToNewSession: () => {
-                    router.push('/new');
+                navigateToNewSession: (draftId) => {
+                    router.push({ pathname: '/new', params: { draftId } });
                 },
             });
         } catch {
@@ -5765,17 +5771,11 @@ function SessionViewLoaded({
         }, [activeComposerRef]);
         const composerAttachmentDrafts = React.useMemo(() => (
             pendingComposerDocument?.attachments
-            ?? readSessionDraftValue(
-                activeServerAccountScope,
-                sessionId,
-                'structuredInput.composerAttachments',
-            )
-            ?? []
+            ?? existingSessionComposerOwner.read().document.composerAttachments
         ), [
-            activeServerAccountScope,
             composerDocumentRenderEpoch,
+            existingSessionComposerOwner,
             pendingComposerDocument?.attachments,
-            sessionId,
         ]);
         const composerAttachmentViews = React.useMemo(
             () => composerAttachmentDrafts.map((attachment) => composerAttachmentDraftToView(attachment, {
@@ -5786,7 +5786,12 @@ function SessionViewLoaded({
         const composerAttachmentRowItems = React.useMemo(() => {
             return projectComposerAttachmentRowItems({
                 attachments: composerAttachmentViews,
-                onRemove: removeComposerAttachment,
+                // Removal is a Composer mutation; a read-only or locked scope
+                // gets preview and picker access without a control the
+                // transaction owner would refuse.
+                ...(isComposerMutationEditable(composerInputEffects.composerInputLock)
+                    ? { onRemove: removeComposerAttachment }
+                    : {}),
                 entriesById: composerAttachmentAvailabilityEntriesById ?? undefined,
                 renderSurface: composerPluginPresentation.renderAttachmentSurface,
                 resolveInteraction: composerPluginPresentation.resolveAttachmentInteraction,
@@ -5794,8 +5799,10 @@ function SessionViewLoaded({
         }, [
             composerAttachmentViews,
             composerAttachmentAvailabilityEntriesById,
+            composerInputEffects.composerInputLock,
             composerPluginPresentation.renderAttachmentSurface,
             composerPluginPresentation.resolveAttachmentInteraction,
+            isComposerMutationEditable,
             removeComposerAttachment,
         ]);
         const sessionAttachmentRowItems = React.useMemo(() => (
@@ -6057,6 +6064,7 @@ function SessionViewLoaded({
         const agentInputStatusBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => [
             ...sessionStatusBadges,
             ...sessionConnectedServicesAuthSwitch.statusBadges,
+            ...(draftConflictBanner.statusBadge ? [draftConflictBanner.statusBadge] : []),
             ...(providerLaunchBinding && providerBindingPresentation
                 ? [{
                     key: 'provider-binding',
@@ -6174,6 +6182,7 @@ function SessionViewLoaded({
             authRecoveryBanner.toggle,
             authSurfaceState,
             cancelPendingMessageEdit,
+            draftConflictBanner.statusBadge,
             externalTranscriptAuthority?.kind,
             externalTranscriptSnapshotBanner.collapsed,
             externalTranscriptSnapshotBanner.toggle,
@@ -6301,7 +6310,9 @@ function SessionViewLoaded({
               * Re-deriving that here from the configured provider unmounted a
               * live attempt's transport the moment the user selected Off.
               */}
-            {voiceEnabled && !isHiddenSystemSessionSession ? <VoiceSurface variant="session" sessionId={sessionId} /> : null}
+            {voiceEnabled && !isHiddenSystemSessionSession ? (
+                <VoiceSurface variant="session" sessionId={sessionId} isPresented={surfacePresented} />
+            ) : null}
             {authSurfaceState && !authRecoveryBanner.collapsed ? (
                 <ComposerAuxiliaryFrame>
                     <SessionAuthRecoveryBanner message={authSurfaceState.message} />
@@ -6418,6 +6429,17 @@ function SessionViewLoaded({
                 composerRegions={composerPluginPresentation.composerRegions}
                 renderComposerRegion={composerPluginPresentation.renderComposerRegion}
             />
+            {activeServerAccountScope
+                && currentSessionDraftSnapshot?.conflict
+                && !draftConflictBanner.collapsed ? (
+                <ComposerAuxiliaryFrame>
+                    <SessionDraftConflictResolution
+                        scope={activeServerAccountScope}
+                        address={sessionDraftAddress}
+                        conflict={currentSessionDraftSnapshot.conflict}
+                    />
+                </ComposerAuxiliaryFrame>
+            ) : null}
             <AgentInput
                 placeholder={isReadOnly
                     ? t('session.sharing.viewOnlyMode')
@@ -6432,6 +6454,7 @@ function SessionViewLoaded({
                 composerDecorations={composerInputEffects.composerDecorations}
                 composerInputLock={composerInputEffects.composerInputLock}
                 sessionId={sessionId}
+                surfacePresented={surfacePresented}
                 contentPaddingHorizontal={COMPOSER_CONTENT_HORIZONTAL_INSET}
                 agentType={agentInputAgentType ?? undefined}
                 agentLabel={agentInputAgentType ? resolveSessionActionDefaultBackendTitle({
@@ -6497,7 +6520,8 @@ function SessionViewLoaded({
                         setIsComposerSending(true);
                         try {
                                 let acceptedReplacementLocalId: string | null = null;
-                                let acceptedPreparedAttachments: readonly ComposerAttachmentDraftV1[] | null = null;
+                                let acceptedPreparedAttachments: readonly ComposerAttachmentInputV1[] | null = null;
+                                let postAcceptanceError: unknown = null;
                                 const result = await submitComposerSnapshot({
                                     snapshot: pendingComposerSnapshot,
                                     route: {
@@ -6524,35 +6548,63 @@ function SessionViewLoaded({
                                             if (snapshot.ref.kind !== 'pendingMessage' || !isStructuredInputCurrent()) {
                                                 return { status: 'rejected' };
                                             }
-                                            const prepared = await prepareChangedPendingComposerAttachments(
+                                            const candidate = preparePendingComposerAdmissionCandidate(
                                                 activePendingEdit,
                                                 snapshot,
                                             );
-                                            if (prepared.status !== 'ready' || !isStructuredInputCurrent()) {
+                                            if (!isStructuredInputCurrent()) {
                                                 return { status: 'rejected' };
                                             }
-                                            const structuredInput = buildPendingMessageComposerEditStructuredInput({
+                                            const rawStructuredInput = RawIngressStructuredInputV1Schema.parse({
+                                                v: 1,
                                                 mentions: composerStructuredMentionsFromReferences({
                                                     references: snapshot.references,
                                                     existing: [],
                                                 }),
-                                                text: snapshot.text,
-                                                attachments: prepared.attachments,
+                                                composerAttachments: candidate.attachments,
                                             });
-                                            if (structuredInput.status !== 'ready') {
+                                            const prepared = await preparePendingMessageComposerAdmission(sessionId, {
+                                                localId: candidate.localId,
+                                                text: snapshot.text,
+                                                structuredInput: rawStructuredInput,
+                                            }, {
+                                                serverId: sessionRouteServerId,
+                                                signal: composerPluginActionScopeSignal,
+                                            });
+                                            if (!prepared.ok || !isStructuredInputCurrent()) {
                                                 return { status: 'rejected' };
                                             }
-                                            await sync.updatePendingMessage(
+                                            const acceptedComposerAdmission = await sync.updatePendingMessage(
                                                 sessionId,
                                                 activePendingEdit.pendingId,
-                                                snapshot.text,
-                                                structuredInput.structuredInput,
-                                                prepared.replacementLocalId
-                                                    ? { replacementLocalId: prepared.replacementLocalId }
-                                                    : undefined,
+                                                prepared.text,
+                                                prepared.structuredInput,
+                                                {
+                                                    ...(candidate.replacementLocalId
+                                                        ? { replacementLocalId: candidate.replacementLocalId }
+                                                        : {}),
+                                                    preparedComposerAdmission: {
+                                                        stagedMediaHandles: prepared.stagedMediaHandles ?? [],
+                                                    },
+                                                },
                                             );
-                                            acceptedReplacementLocalId = prepared.replacementLocalId ?? null;
-                                            acceptedPreparedAttachments = prepared.attachments;
+                                            if (!acceptedComposerAdmission) {
+                                                throw new Error('Pending Composer PATCH accepted without its canonical admission fact');
+                                            }
+                                            acceptedReplacementLocalId = acceptedComposerAdmission.localId === activePendingEdit.localId
+                                                ? null
+                                                : acceptedComposerAdmission.localId;
+                                            acceptedPreparedAttachments = acceptedComposerAdmission.structuredInput.composerAttachments ?? [];
+                                            try {
+                                                await acceptPendingMessageComposerAdmission(sessionId, acceptedComposerAdmission, {
+                                                    serverId: sessionRouteServerId,
+                                                });
+                                            } catch (error) {
+                                                // The Pending PATCH is already authoritative. Keep
+                                                // the accepted outcome while surfacing settlement/
+                                                // notification failure to the user below.
+                                                postAcceptanceError = error;
+                                            }
                                             return { status: 'accepted' };
                                         },
                                     },
@@ -6561,26 +6613,33 @@ function SessionViewLoaded({
                                         if (!currentEdit || currentEdit.pendingId !== activePendingEdit.pendingId) return false;
                                         if (isPendingMessageComposerSubmissionSnapshotCurrent(currentEdit, snapshot)) {
                                             pendingMessageEditRef.current = null;
+                                            pendingComposerDocumentOwnerRef.current = null;
                                             setPendingMessageEdit(null);
                                             clearPendingMessageEditDrainHold(currentEdit.holdId);
                                             return true;
                                         }
                                         if (acceptedReplacementLocalId && acceptedPreparedAttachments) {
-                                            const admittedDocument = {
-                                                text: snapshot.text,
-                                                mentions: composerStructuredMentionsFromReferences({
-                                                    references: snapshot.references,
-                                                    existing: currentEdit.admittedDocument.mentions,
-                                                }),
-                                                attachments: acceptedPreparedAttachments,
-                                                revision: currentEdit.admittedDocument.revision,
-                                            } satisfies PendingMessageComposerEditState['admittedDocument'];
-                                            const nextEdit = {
-                                                ...currentEdit,
-                                                pendingId: acceptedReplacementLocalId,
-                                                localId: acceptedReplacementLocalId,
-                                                admittedDocument,
-                                            };
+                                            // The successor row is a new document owner, so the
+                                            // edit state publishes ITS canonical snapshot; carrying
+                                            // the retired owner's revision across would make the
+                                            // presentation revision, the submission currentness
+                                            // compare and the owner's own CAS disagree.
+                                            const successor = derivePendingMessageComposerSuccessorEditState({
+                                                current: currentEdit,
+                                                sessionId,
+                                                successorLocalId: acceptedReplacementLocalId,
+                                                admitted: {
+                                                    text: snapshot.text,
+                                                    mentions: composerStructuredMentionsFromReferences({
+                                                        references: snapshot.references,
+                                                        existing: currentEdit.admittedDocument.mentions,
+                                                    }),
+                                                    attachments: acceptedPreparedAttachments,
+                                                },
+                                                readMountedEditLocalId: () => pendingMessageEditRef.current?.localId ?? null,
+                                            });
+                                            const nextEdit = successor.edit;
+                                            pendingComposerDocumentOwnerRef.current = successor.owner;
                                             pendingMessageEditRef.current = nextEdit;
                                             setPendingMessageEdit(nextEdit);
                                             notifyComposerPresentationTargetChanged({
@@ -6601,6 +6660,13 @@ function SessionViewLoaded({
                                     );
                                 } else if (result.status === 'rejected') {
                                     Modal.alert(t('common.error'), t('session.pendingMessages.errors.updateFailed'));
+                                } else if (postAcceptanceError) {
+                                    Modal.alert(
+                                        t('common.error'),
+                                        postAcceptanceError instanceof Error
+                                            ? postAcceptanceError.message
+                                            : t('session.pendingMessages.errors.updateFailed'),
+                                    );
                                 }
                         } catch (e) {
                             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.updateFailed'));
@@ -6764,16 +6830,12 @@ function SessionViewLoaded({
                         const clearAfterOutboundHandoff = (
                             currentness?: ComposerSubmissionFieldCurrentness,
                         ) => {
-                            // Composer admission ends at the durable/optimistic outbound handoff. Runtime
+                            // Composer admission ends at the durable outbound handoff. Runtime
                             // wake and provider delivery continue through their canonical session/Pending
                             // projections and must not keep the submit button in a local sending state.
                             setIsComposerSending(false);
                             const mentionsBeforeClear = currentness
-                                ? readSessionDraftValue(
-                                    activeServerAccountScope,
-                                    sessionId,
-                                    'structuredInput.mentions',
-                                )
+                                ? existingSessionComposerOwner.read().document.structuredInputMentions
                                 : undefined;
                             let didClear = clearComposerAfterOutboundHandoff({
                                 snapshot: sendSnapshot,
@@ -6791,12 +6853,9 @@ function SessionViewLoaded({
                                     references: currentness.reconciledReferences,
                                     existing: mentionsBeforeClear ?? [],
                                 });
-                                const currentMentions = readSessionDraftValue(
-                                    activeServerAccountScope,
-                                    sessionId,
-                                    'structuredInput.mentions',
-                                );
-                                if (JSON.stringify(currentMentions) !== JSON.stringify(reconciledMentions)) {
+                                const currentOwnerSnapshot = existingSessionComposerOwner.read();
+                                const currentMentions = currentOwnerSnapshot.document.structuredInputMentions;
+                                if (!sameStrictJsonValue(currentMentions, reconciledMentions)) {
                                     semanticDraftSnapshotForFailedHandoffRestore = {
                                         ...semanticDraftSnapshot,
                                         values: {
@@ -6804,21 +6863,17 @@ function SessionViewLoaded({
                                             'structuredInput.mentions': mentionsBeforeClear,
                                         },
                                     };
-                                    if (reconciledMentions.length === 0) {
-                                        clearSessionDraftValue(
-                                            activeServerAccountScope,
-                                            sessionId,
-                                            'structuredInput.mentions',
-                                        );
-                                    } else {
-                                        writeSessionDraftValue(
-                                            activeServerAccountScope,
-                                            sessionId,
-                                            'structuredInput.mentions',
-                                            reconciledMentions,
-                                        );
-                                    }
-                                    flushSessionDraftValues(activeServerAccountScope);
+                                    existingSessionComposerOwner.apply(currentOwnerSnapshot.revision, {
+                                        text: currentOwnerSnapshot.document.text,
+                                        references: [...composerReferencesFromStructuredMentions({
+                                            text: currentOwnerSnapshot.document.text,
+                                            mentions: reconciledMentions,
+                                        })],
+                                        attachments: currentOwnerSnapshot.document.composerAttachments
+                                            .map((attachment) => composerAttachmentDraftToView(attachment, {
+                                                entriesById: composerAttachmentAvailabilityEntriesById,
+                                            })),
+                                    });
                                     if (!semanticDraftFieldsClearedAtHandoff.includes('structuredInput.mentions')) {
                                         semanticDraftFieldsClearedAtHandoff = [
                                             ...semanticDraftFieldsClearedAtHandoff,
@@ -6864,8 +6919,8 @@ function SessionViewLoaded({
                                         || acceptedSnapshot.ref.sessionId !== sessionId
                                         || acceptedSnapshot.revision !== composerSubmissionSnapshot.revision
                                         || acceptedSnapshot.text !== composerSubmissionSnapshot.text
-                                        || JSON.stringify(acceptedSnapshot.references) !== JSON.stringify(composerSubmissionSnapshot.references)
-                                        || JSON.stringify(acceptedSnapshot.attachments) !== JSON.stringify(composerSubmissionSnapshot.attachments)
+                                        || !sameStrictJsonValue(acceptedSnapshot.references, composerSubmissionSnapshot.references)
+                                        || !sameComposerAttachmentViews(acceptedSnapshot.attachments, composerSubmissionSnapshot.attachments)
                                     ) {
                                         return false;
                                     }
@@ -7657,7 +7712,7 @@ function SessionViewLoaded({
                 onStructuredInputMentionsChange={pendingComposerDocument
                     ? (mentions) => {
                         updatePendingMessageComposerDocument((document) => (
-                            JSON.stringify(document.mentions) === JSON.stringify(mentions)
+                            sameStrictJsonValue(document.mentions, mentions)
                                 ? document
                                 : { ...document, mentions, revision: document.revision + 1 }
                         ));

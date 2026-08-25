@@ -20,6 +20,7 @@ const machineSelectorPropsRef: { current: Record<string, unknown> | null } = { c
 const modelSelectionPropsRef: { current: Record<string, unknown> | null } = { current: null };
 const dropdownPropsRef: { current: Record<string, unknown> | null } = { current: null };
 const agentInputPropsRef: { current: Record<string, unknown> | null } = { current: null };
+let machineSelectorRenderCount = 0;
 installNewSessionComponentsCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -68,7 +69,7 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: (props: Record<string, unknown>) => {
         agentInputPropsRef.current = props;
-        return null;
+        return React.createElement('AgentInput', { testID: 'actual-composer' });
     },
 }));
 vi.mock('@/components/machines/InstallableDepInstaller', () => ({
@@ -76,6 +77,7 @@ vi.mock('@/components/machines/InstallableDepInstaller', () => ({
 }));
 vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
     MachineSelector: (props: Record<string, unknown>) => {
+        machineSelectorRenderCount += 1;
         machineSelectorPropsRef.current = props;
         return null;
     },
@@ -158,6 +160,7 @@ describe('NewSessionWizard', () => {
         modelSelectionPropsRef.current = null;
         dropdownPropsRef.current = null;
         agentInputPropsRef.current = null;
+        machineSelectorRenderCount = 0;
     });
 
     afterAll(() => {
@@ -329,6 +332,38 @@ describe('NewSessionWizard', () => {
         });
 
         expect(agentInputPropsRef.current?.statusBadges).toBe(statusBadges);
+    });
+
+    it('updates prompt presentation without re-rendering wizard selection sections', async () => {
+        const promptStore = createNewSessionPromptStore('Initial prompt');
+        const screen = await renderWizardForModelRefresh({}, { promptStore });
+        const selectionRenderCount = machineSelectorRenderCount;
+
+        await renderer.act(async () => {
+            promptStore.setPrompt('Updated prompt');
+        });
+
+        expect(agentInputPropsRef.current?.value).toBe('Updated prompt');
+        expect(machineSelectorRenderCount).toBe(selectionRenderCount);
+        await screen.unmount();
+    });
+
+    it('places host notice content immediately before the composer and passes trailing status actions through', async () => {
+        const composerTopContent = React.createElement('ComposerNotice', { testID: 'composer-notice' });
+        const statusTrailingActions = React.createElement('StatusActions', { testID: 'status-actions' });
+        const screen = await renderWizardForModelRefresh({}, {
+            composerTopContent,
+            statusTrailingActions,
+        });
+
+        const notice = screen.findByTestId('composer-notice');
+        const composer = screen.findByType('AgentInput' as React.ElementType);
+        if (!notice) throw new Error('Expected composer notice');
+        const siblings = notice.parent?.children.filter((child) => typeof child === 'object') ?? [];
+        expect(notice.parent).toBe(composer.parent);
+        expect(siblings.indexOf(composer)).toBe(siblings.indexOf(notice) + 1);
+        expect(agentInputPropsRef.current?.statusTrailingActions).toBe(statusTrailingActions);
+        await screen.unmount();
     });
 
     it('renders the submitted prompt as pending wizard launch content while creation is unresolved', async () => {

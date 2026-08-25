@@ -16,7 +16,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { Icon } from '@/components/ui/icons/Icon';
 
 type ServerSelectionParams = Readonly<{
@@ -100,6 +100,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const serverSelectionGroups = useSetting('serverSelectionGroups');
     const serverSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');
     const serverSelectionActiveTargetId = useSetting('serverSelectionActiveTargetId');
@@ -182,12 +183,12 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
             },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
         if (dismissOnSelection) {
             onClose();
         }
-    }, [currentRouteParams, dismissOnSelection, navigation, onClose, params.dataId, router]);
+    }, [currentRouteParams, dismissOnSelection, navigation, onClose, params.dataId, pickerFallbackHref, router]);
 
     const handleServerPress = React.useCallback((serverId: string) => {
         fireAndForget((async () => {

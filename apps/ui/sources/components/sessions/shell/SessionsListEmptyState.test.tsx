@@ -157,6 +157,7 @@ describe('SessionsListEmptyState', () => {
         expect(routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                draftId: expect.any(String),
                 machineId: 'm-online',
                 spawnServerId: 'server-1',
             },

@@ -9,7 +9,7 @@ import {
     readSessionDraftValue,
     resetSessionDraftValueCachesForTests,
     writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+} from '@/dev/testkit/sessionDraftRepositoryTestkit';
 import type { SessionArmedAgentContinuation } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 
 import {

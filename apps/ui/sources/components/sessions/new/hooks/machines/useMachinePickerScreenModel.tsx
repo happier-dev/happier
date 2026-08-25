@@ -15,7 +15,7 @@ import { HeaderTitleWithAction } from '@/components/navigation/HeaderTitleWithAc
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
@@ -81,6 +81,7 @@ export function useMachinePickerScreenModel() {
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
+    const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const settings = useSettings();
     const activeServerSource = useNewSessionActiveServerSource();
     const machines = useAllMachines();
@@ -166,8 +167,8 @@ export function useMachinePickerScreenModel() {
         }
     }, [activeServerId, isRefreshing, selectedMachineId, selectedServerId]);
     const handleBack = React.useCallback(() => {
-        safeRouterBack({ router, navigation, fallbackHref: '/new' });
-    }, [navigation, router]);
+        safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
+    }, [navigation, pickerFallbackHref, router]);
     const handleRefreshPress = React.useCallback(() => {
         fireAndForget(handleRefresh(), { tag: 'MachinePickerScreen.refreshMachinesAndCapabilities' });
     }, [handleRefresh]);
@@ -207,9 +208,9 @@ export function useMachinePickerScreenModel() {
             },
         });
         if (returnMode === 'dispatch') {
-            safeRouterBack({ router, navigation, fallbackHref: '/new' });
+            safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [activeServerId, currentRouteParams, navigation, params.dataId, router, selectedServerId]);
+    }, [activeServerId, currentRouteParams, navigation, params.dataId, pickerFallbackHref, router, selectedServerId]);
 
     React.useEffect(() => {
         if (autoSelectedSingleMachineRef.current) return;

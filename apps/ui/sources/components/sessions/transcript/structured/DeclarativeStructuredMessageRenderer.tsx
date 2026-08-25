@@ -12,6 +12,7 @@ import {
 
 import {
     readDeclarativeRecord,
+    readDeclarativeText,
     renderDeclarativeNode,
     type DeclarativeActionAffordance,
 } from '@/components/plugins/shared/declarativeNodes';
@@ -121,6 +122,10 @@ export function DeclarativeStructuredMessageRenderer(props: Readonly<{
                 colors: theme.colors,
                 presentationTheme,
                 minimumTouchTarget,
+                // A persisted transcript replays the author's frozen words. It
+                // is deliberately independent of whatever plugin translation
+                // bundle is installed now — the message is history, not live UI.
+                localize: readDeclarativeText,
                 resolveAction,
                 renderField,
                 renderCollectionList,

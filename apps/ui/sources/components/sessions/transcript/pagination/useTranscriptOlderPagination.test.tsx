@@ -178,6 +178,37 @@ describe('useTranscriptOlderPagination', () => {
         expect(hook.getCurrent().loadFailed).toBe(false);
     });
 
+    it('keeps a bounded, underfilled sidechain history reachable through explicit continuation', async () => {
+        // Initial fill can stop after bounded work while the current older cursor still says
+        // `hasMore`. A short transcript has no scrollable geometry, so it can never produce the
+        // threshold observation that normally arms this machine. The explicit affordance must
+        // re-use this one pager/cursor, one page at a time: three renderless sidechain pages are
+        // followed by the parent/root page that actually gives the reader something to scroll.
+        vi.useFakeTimers();
+        const { input, loadOlder, pendingLoads } = createHarness({ cooldownMs: 0 });
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+        const requestContinuation = () => hook.getCurrent().continueOlderLoad();
+
+        for (let sidechainPage = 0; sidechainPage < 3; sidechainPage += 1) {
+            await act(async () => {
+                requestContinuation();
+            });
+            expect(loadOlder).toHaveBeenCalledTimes(sidechainPage + 1);
+            expect(loadOlder).toHaveBeenLastCalledWith({ trigger: 'explicit-continuation' });
+            await resolveLoad(pendingLoads, { status: 'loaded', loaded: 8, hasMore: true });
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(0);
+            });
+        }
+
+        await act(async () => {
+            requestContinuation();
+        });
+        expect(loadOlder).toHaveBeenCalledTimes(4);
+        expect(loadOlder).toHaveBeenLastCalledWith({ trigger: 'explicit-continuation' });
+        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 1, hasMore: true });
+    });
+
     it('does not offer retry for an unmet precondition or a concurrent read', async () => {
         // `not_ready` / `in_flight` are not failures: nothing was attempted that the reader
         // could retry, so surfacing a retry there would be a button that fixes nothing.

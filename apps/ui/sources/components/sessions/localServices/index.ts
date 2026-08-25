@@ -1,12 +1,8 @@
 export { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
+export type { ServicesScope } from './DetectedLocalServicesPane';
 export { ServiceRowView } from './ServiceRowView';
-export { ServicesScopeToggle } from './ServicesScopeToggle';
-export type { ServicesScope } from './ServicesScopeToggle';
 export { LocalServicesSurfaceHost } from './LocalServicesSurfaceHost';
 export type { LocalServicesSurfaceHostProps } from './LocalServicesSurfaceHost';
 export { LocalServicePublicPreviewControls } from './LocalServicePublicPreviewControls';
-export { LocalServicePreviewFrame } from './LocalServicePreviewFrame';
-export { ManagedLocalServiceRow } from './ManagedLocalServiceRow';
-export { ManagedLocalServiceStatus } from './ManagedLocalServiceStatus';
 export { useServicesOpenInBrowser } from './useServicesOpenInBrowser';
 export type { UseServicesOpenInBrowserInput } from './useServicesOpenInBrowser';

@@ -5,6 +5,8 @@ import type {
     ComposerTransactionResultV1,
     MentionRefV1,
 } from '@happier-dev/protocol';
+import { sameStrictJsonValue } from '@happier-dev/protocol';
+import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 import * as React from 'react';
 
 import type {
@@ -15,17 +17,16 @@ import type {
 } from '@/components/sessions/agentInput/agentInputContracts';
 import { useNewSessionSeededComposerAttachments } from '@/components/sessions/new/attachments/useNewSessionSeededComposerAttachments';
 import { projectComposerAttachmentRowItems } from '@/components/sessions/composer/composerAttachmentProjection';
+import { createEphemeralComposerDocumentOwner } from '@/components/sessions/composer/composerDocumentOwner';
+import { createNewSessionComposerDocumentOwner } from '@/components/sessions/composer/newSessionComposerDocumentOwner';
 import {
     composerAttachmentDraftToView,
-    composerAttachmentViewToDraft,
     composerReferencesFromStructuredMentions,
     composerStructuredMentionsFromReferences,
     type ComposerAttachmentAvailabilityCatalog,
 } from '@/components/sessions/composer/composerScopeAdapters';
-import {
-    readComposerSubmissionFieldCurrentness,
-    type ComposerSubmissionSnapshot,
-} from '@/components/sessions/composer/composerSubmissionCoordinator';
+import type { ComposerSubmissionSnapshot } from '@/components/sessions/composer/composerSubmissionCoordinator';
+import type { ComposerDraftFieldCurrentness } from '@/components/sessions/composer/composerDocumentOwner';
 import {
     applyComposerPresentationTransaction,
     notifyComposerPresentationTargetChanged,
@@ -42,6 +43,7 @@ import {
 import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import type { NewSessionPluginAttachmentSeedV1 } from '@/utils/sessions/tempDataStore';
 
@@ -80,39 +82,24 @@ export type NewSessionComposerDocument = Readonly<{
     clearAcceptedSnapshot: (snapshot: ComposerSubmissionSnapshot) => boolean;
 }>;
 
-function sameJsonValue(left: unknown, right: unknown): boolean {
-    return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function sameComposerRef(
-    left: ComposerRefV1,
-    right: ComposerRefV1,
-): left is Extract<ComposerRefV1, Readonly<{ kind: 'newSession' }>> {
-    return left.kind === 'newSession'
-        && right.kind === 'newSession'
-        && left.instanceId === right.instanceId;
-}
-
 function sameDocumentState(
     left: NewSessionComposerDocumentState,
     right: NewSessionComposerDocumentState,
 ): boolean {
-    return sameJsonValue(left.attachments, right.attachments)
-        && sameJsonValue(left.mentions, right.mentions);
-}
-
-function attachmentSignature(attachments: readonly ComposerAttachmentDraftV1[]): string {
-    return JSON.stringify(attachments);
+    return sameStrictJsonValue(left.attachments, right.attachments)
+        && sameStrictJsonValue(left.mentions, right.mentions);
 }
 
 /**
- * Adapts New Session's incumbent prompt store and persisted contentless
- * attachment drafts to the one Composer presentation document. This is not a
- * second draft store: text remains prompt-store owned, attachment persistence
- * remains the New Session draft owner, and the target only commits through
- * those owners.
+ * Adapts New Session's incumbent prompt store and persisted contentless attachment
+ * drafts to the one Composer presentation document. Once a repository scope exists,
+ * its Composer document owner is canonical; the prompt store mirrors live input for
+ * the mounted control rather than becoming another persistence writer.
  */
 export function useNewSessionComposerDocument(params: Readonly<{
+    /** Required by the routed New Session owner; optional only for isolated legacy harnesses. */
+    draftId?: string;
+    draftScope?: ServerAccountScope | null;
     promptStore: NewSessionPromptStore;
     persistedAttachments: readonly ComposerAttachmentDraftV1[];
     /** One-shot host input, accepted only by this mounted composer transaction. */
@@ -139,22 +126,14 @@ export function useNewSessionComposerDocument(params: Readonly<{
     canSubmitRef: React.RefObject<boolean>;
     isSubmitting: boolean;
 }>): NewSessionComposerDocument {
+    const [legacyHarnessDraftId] = React.useState(randomUUID);
+    const draftId = params.draftId ?? legacyHarnessDraftId;
+    const draftScope = params.draftScope ?? null;
     const composerAccountLifetime = captureActiveServerAccountScopeLifetime();
-    const scopedIdentityRef = React.useRef<Readonly<{
-        scopeKey: string | null;
-        instanceId: string;
-    }> | null>(null);
-    if (scopedIdentityRef.current?.scopeKey !== params.scopeKey) {
-        scopedIdentityRef.current = {
-            scopeKey: params.scopeKey,
-            instanceId: randomUUID(),
-        };
-    }
-    const instanceId = scopedIdentityRef.current.instanceId;
     const ref = React.useMemo<Extract<ComposerRefV1, Readonly<{ kind: 'newSession' }>>>(() => ({
         kind: 'newSession',
-        instanceId,
-    }), [instanceId]);
+        instanceId: draftId,
+    }), [draftId]);
     const refRef = React.useRef<ComposerRefV1>(ref);
     refRef.current = ref;
     const mountedRef = React.useRef(true);
@@ -164,33 +143,66 @@ export function useNewSessionComposerDocument(params: Readonly<{
     const isSubmittingRef = React.useRef(params.isSubmitting);
     isSubmittingRef.current = params.isSubmitting;
     const suppressPromptNotificationRef = React.useRef(false);
-    const initialStateRef = React.useRef<NewSessionComposerDocumentState | null>(null);
-    // Placed once for this mount: the adapter is only meaningful for the first
-    // document, and re-running it on every composer render would be per-keystroke
-    // work for a value that is discarded.
-    initialStateRef.current ??= {
-        attachments: params.persistedAttachments,
-        mentions: composerStructuredMentionsFromReferences({
-            references: params.initialStructuredInputReferences ?? [],
-            existing: [],
-        }),
-    };
-    const documentRef = React.useRef<NewSessionComposerDocumentState>(initialStateRef.current);
-    const [documentState, setDocumentState] = React.useState<NewSessionComposerDocumentState>(initialStateRef.current);
-    const revisionRef = React.useRef(0);
     const localDocumentChangeRef = React.useRef(false);
     const hydratedScopeKeyRef = React.useRef<string | null>(params.scopeKey);
-    const hydratedAttachmentSignatureRef = React.useRef(attachmentSignature(params.persistedAttachments));
-    const persistedAttachmentSignature = attachmentSignature(params.persistedAttachments);
+    const hydratedAttachmentsRef = React.useRef(params.persistedAttachments);
 
     const isNewSessionComposerCurrent = React.useCallback(() => (
         mountedRef.current
-        && sameComposerRef(refRef.current, ref)
+        && composerRefsV1Equal(refRef.current, ref)
         && (composerAccountLifetime === null || composerAccountLifetime.isCurrent())
     ), [composerAccountLifetime, ref]);
     const isNewSessionReferenceSearchCurrent = React.useCallback(() => (
         isNewSessionComposerCurrent() && composerInputFocusedRef.current
     ), [isNewSessionComposerCurrent]);
+    const isCurrentCallbackRef = React.useRef(isNewSessionComposerCurrent);
+    isCurrentCallbackRef.current = isNewSessionComposerCurrent;
+    const documentOwnerKey = `${params.scopeKey ?? 'ephemeral'}\u0000${draftId}`;
+    const documentOwnerRef = React.useRef<Readonly<{
+        key: string;
+        owner: ReturnType<typeof createNewSessionComposerDocumentOwner>;
+    }> | null>(null);
+    if (documentOwnerRef.current?.key !== documentOwnerKey) {
+        documentOwnerRef.current = {
+            key: documentOwnerKey,
+            owner: draftScope
+                ? createNewSessionComposerDocumentOwner({
+                    scope: draftScope,
+                    ref,
+                    isCurrent: () => isCurrentCallbackRef.current(),
+                })
+                : createEphemeralComposerDocumentOwner({
+                    ref,
+                    capabilities: { text: true, references: true, attachments: true, submit: true },
+                    isCurrent: () => isCurrentCallbackRef.current(),
+                    initialDocument: {
+                        text: params.promptStore.getPrompt(),
+                        structuredInputMentions: composerStructuredMentionsFromReferences({
+                            references: params.initialStructuredInputReferences ?? [],
+                            existing: [],
+                        }),
+                        composerAttachments: params.persistedAttachments,
+                    },
+                }),
+        };
+    }
+    const documentOwner = documentOwnerRef.current.owner;
+    const initialOwnerDocument = documentOwner.read().document;
+    const initialStateRef = React.useRef<NewSessionComposerDocumentState | null>(null);
+    initialStateRef.current ??= {
+        attachments: initialOwnerDocument.composerAttachments.length > 0
+            ? initialOwnerDocument.composerAttachments
+            : params.persistedAttachments,
+        mentions: initialOwnerDocument.structuredInputMentions.length > 0
+            ? initialOwnerDocument.structuredInputMentions
+            : composerStructuredMentionsFromReferences({
+                references: params.initialStructuredInputReferences ?? [],
+                existing: [],
+            }),
+    };
+    const documentRef = React.useRef<NewSessionComposerDocumentState>(initialStateRef.current);
+    const [documentState, setDocumentState] = React.useState<NewSessionComposerDocumentState>(initialStateRef.current);
+    const submissionCurrentnessRef = React.useRef(new WeakMap<object, ComposerDraftFieldCurrentness>());
     const composerInputEffects = useComposerPresentationInputEffects({
         ref,
     });
@@ -235,7 +247,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
     }, [composerAccountLifetime, composerInputEffects.retire]);
 
     const onComposerFocusChange = React.useCallback((focused: boolean) => {
-        if (!mountedRef.current || !sameComposerRef(refRef.current, ref)) return;
+        if (!mountedRef.current || !composerRefsV1Equal(refRef.current, ref)) return;
         if (composerInputFocusedRef.current === focused) return;
         composerInputFocusedRef.current = focused;
         notifyComposerPresentationTargetChanged(ref);
@@ -246,7 +258,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
     }, []);
 
     const onComposerActionBarLayoutChange = React.useCallback((layout: ComposerSnapshotV1['layout']) => {
-        if (!mountedRef.current || !sameComposerRef(refRef.current, ref)) return;
+        if (!mountedRef.current || !composerRefsV1Equal(refRef.current, ref)) return;
         if (composerActionBarLayoutRef.current === layout) return;
         composerActionBarLayoutRef.current = layout;
         notifyComposerPresentationTargetChanged(ref);
@@ -260,9 +272,28 @@ export function useNewSessionComposerDocument(params: Readonly<{
     }>): number => {
         const textChanged = params.promptStore.getPrompt() !== input.text;
         const stateChanged = !sameDocumentState(documentRef.current, input.state);
-        if (!textChanged && !stateChanged) {
-            return revisionRef.current;
+        const current = documentOwner.read();
+        const ownerState = {
+            attachments: current.document.composerAttachments,
+            mentions: current.document.structuredInputMentions,
+        };
+        const ownerChanged = current.document.text !== input.text
+            || !sameDocumentState(ownerState, input.state);
+        if (!textChanged && !stateChanged && !ownerChanged) {
+            return current.revision;
         }
+
+        const result = documentOwner.apply(current.revision, {
+            text: input.text,
+            references: composerReferencesFromStructuredMentions({
+                text: input.text,
+                mentions: input.state.mentions,
+            }),
+            attachments: input.state.attachments.map((attachment) => composerAttachmentDraftToView(attachment, {
+                entriesById: params.composerAttachmentEntriesById,
+            })),
+        });
+        if (result.status !== 'applied') return documentOwner.read().revision;
 
         if (textChanged) {
             suppressPromptNotificationRef.current = true;
@@ -279,12 +310,11 @@ export function useNewSessionComposerDocument(params: Readonly<{
         if (input.local) {
             localDocumentChangeRef.current = true;
         }
-        revisionRef.current += 1;
         if (input.notify) {
             notifyComposerPresentationTargetChanged(ref);
         }
-        return revisionRef.current;
-    }, [params.promptStore, ref]);
+        return result.revision;
+    }, [documentOwner, params.composerAttachmentEntriesById, params.promptStore, ref]);
 
     const readSnapshot = React.useCallback((): ComposerSnapshotV1 => {
         const state = documentRef.current;
@@ -294,7 +324,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
         const editable = canSubmit && inputLock?.mode !== 'editAndSubmit';
         const submittable = canSubmit && inputLock === null;
         return {
-            revision: revisionRef.current,
+            revision: documentOwner.read().revision,
             ref,
             text,
             // The scope adapter exposes immutable normalized references. The
@@ -319,37 +349,36 @@ export function useNewSessionComposerDocument(params: Readonly<{
                 ...(inputLock ? { inputLock } : {}),
             },
         };
-    }, [composerInputEffects.readComposerInputLock, params.composerAttachmentEntriesById, params.promptStore, ref]);
+    }, [composerInputEffects.readComposerInputLock, documentOwner, params.composerAttachmentEntriesById, params.promptStore, ref]);
 
     const commitDocument = React.useCallback((input: Readonly<{
         expectedRevision: number;
         mutation: ComposerPresentationDocumentMutation;
     }>): ComposerTransactionResultV1 => {
-        if (!sameComposerRef(refRef.current, ref) || revisionRef.current !== input.expectedRevision) {
-            return { status: 'conflict', currentRevision: revisionRef.current };
+        if (!composerRefsV1Equal(refRef.current, ref)) return { status: 'composerUnavailable' };
+        const result = documentOwner.apply(input.expectedRevision, input.mutation);
+        if (result.status !== 'applied') return result;
+        const next = documentOwner.read().document;
+        suppressPromptNotificationRef.current = true;
+        try {
+            params.promptStore.setPrompt(next.text);
+        } finally {
+            suppressPromptNotificationRef.current = false;
         }
-        const nextState: NewSessionComposerDocumentState = {
-            attachments: input.mutation.attachments.map(composerAttachmentViewToDraft),
-            mentions: composerStructuredMentionsFromReferences({
-                references: input.mutation.references,
-                existing: documentRef.current.mentions,
-            }),
+        const nextState = {
+            attachments: next.composerAttachments,
+            mentions: next.structuredInputMentions,
         };
-        return {
-            status: 'applied',
-            revision: updateDocument({
-                text: input.mutation.text,
-                state: nextState,
-                notify: false,
-                local: true,
-            }),
-        };
-    }, [ref, updateDocument]);
+        documentRef.current = nextState;
+        setDocumentState(nextState);
+        localDocumentChangeRef.current = true;
+        return result;
+    }, [documentOwner, params.promptStore, ref]);
 
     const target = useStableComposerPresentationTarget(ref, {
-        readRevision: () => revisionRef.current,
+        readRevision: () => documentOwner.read().revision,
         replace: (text, expectedRevision) => {
-            if (revisionRef.current !== expectedRevision) return revisionRef.current;
+            if (documentOwner.read().revision !== expectedRevision) return documentOwner.read().revision;
             return updateDocument({
                 text,
                 state: documentRef.current,
@@ -364,13 +393,13 @@ export function useNewSessionComposerDocument(params: Readonly<{
         acquireComposerInputLock: composerInputEffects.acquireComposerInputLock,
         isCurrent: () => (
             mountedRef.current
-            && sameComposerRef(refRef.current, ref)
+            && composerRefsV1Equal(refRef.current, ref)
             && (composerAccountLifetime === null || composerAccountLifetime.isCurrent())
         ),
         focusComposer: () => {
             if (
                 !mountedRef.current
-                || !sameComposerRef(refRef.current, ref)
+                || !composerRefsV1Equal(refRef.current, ref)
                 || (composerAccountLifetime !== null && !composerAccountLifetime.isCurrent())
             ) {
                 return false;
@@ -384,16 +413,51 @@ export function useNewSessionComposerDocument(params: Readonly<{
 
     React.useEffect(() => registerComposerPresentationTarget(ref, target), [ref, target]);
 
-    // The seed could state an attachment request and nothing more. This mounted
-    // composer is the first place contribution authority and a host-minted
-    // instance id coexist, so acceptance uses the same applier as a live plugin
-    // composer control.
+    // The other half of a plugin-seeded New Session. The seed could state the
+    // attachment REQUEST and nothing more; this mount is the first place the
+    // contribution authority and the host-minted instance id exist, so it is
+    // where the request becomes a record — through the same applier a live
+    // plugin composer control uses.
     useNewSessionSeededComposerAttachments({
         seeds: params.seededAttachmentRequests ?? [],
         ref,
         entriesById: params.composerAttachmentEntriesById,
+        localize: composerPluginPresentation.localizePluginText,
         isCurrent: isNewSessionComposerCurrent,
     });
+
+    React.useEffect(() => documentOwner.observe(() => {
+        const next = documentOwner.read().document;
+        const nextState = {
+            attachments: next.composerAttachments,
+            mentions: next.structuredInputMentions,
+        };
+        if (
+            params.promptStore.getPrompt() === next.text
+            && sameDocumentState(documentRef.current, nextState)
+        ) {
+            return;
+        }
+        if (
+            hydratedScopeKeyRef.current !== params.scopeKey
+            && localDocumentChangeRef.current
+            && (
+                params.promptStore.getPrompt() !== next.text
+                || !sameDocumentState(documentRef.current, nextState)
+            )
+        ) {
+            return;
+        }
+        suppressPromptNotificationRef.current = true;
+        try {
+            params.promptStore.setPrompt(next.text);
+        } finally {
+            suppressPromptNotificationRef.current = false;
+        }
+        documentRef.current = nextState;
+        setDocumentState(nextState);
+        notifyComposerPresentationTargetChanged(ref);
+    }), [documentOwner, params.promptStore, ref]);
 
     React.useEffect(() => {
         notifyComposerPresentationTargetChanged(ref);
@@ -402,23 +466,54 @@ export function useNewSessionComposerDocument(params: Readonly<{
     React.useEffect(() => params.promptStore.subscribe(() => {
         if (suppressPromptNotificationRef.current) return;
         localDocumentChangeRef.current = true;
-        revisionRef.current += 1;
-        notifyComposerPresentationTargetChanged(ref);
-    }), [params.promptStore, ref]);
+        updateDocument({
+            text: params.promptStore.getPrompt(),
+            state: documentRef.current,
+            notify: true,
+            local: true,
+        });
+    }), [params.promptStore, updateDocument]);
 
     React.useEffect(() => {
         const scopeChanged = hydratedScopeKeyRef.current !== params.scopeKey;
         if (!scopeChanged && localDocumentChangeRef.current) {
             return;
         }
-        if (!scopeChanged && hydratedAttachmentSignatureRef.current === persistedAttachmentSignature) {
+        if (!scopeChanged && sameStrictJsonValue(hydratedAttachmentsRef.current, params.persistedAttachments)) {
             return;
         }
 
         hydratedScopeKeyRef.current = params.scopeKey;
-        hydratedAttachmentSignatureRef.current = persistedAttachmentSignature;
-        if (scopeChanged) {
-            localDocumentChangeRef.current = false;
+        hydratedAttachmentsRef.current = params.persistedAttachments;
+        if (scopeChanged && localDocumentChangeRef.current) {
+            updateDocument({
+                text: params.promptStore.getPrompt(),
+                state: documentRef.current,
+                notify: true,
+                local: false,
+            });
+            return;
+        }
+        const ownedDocument = documentOwner.read().document;
+        if (
+            ownedDocument.text.length > 0
+            || ownedDocument.structuredInputMentions.length > 0
+            || ownedDocument.composerAttachments.length > 0
+        ) {
+            suppressPromptNotificationRef.current = true;
+            try {
+                params.promptStore.setPrompt(ownedDocument.text);
+            } finally {
+                suppressPromptNotificationRef.current = false;
+            }
+            const ownedState = {
+                attachments: ownedDocument.composerAttachments,
+                mentions: ownedDocument.structuredInputMentions,
+            };
+            documentRef.current = ownedState;
+            setDocumentState(ownedState);
+            notifyComposerPresentationTargetChanged(ref);
+            return;
         }
         updateDocument({
             text: params.promptStore.getPrompt(),
@@ -433,7 +528,9 @@ export function useNewSessionComposerDocument(params: Readonly<{
         params.persistedAttachments,
         params.promptStore,
         params.scopeKey,
-        persistedAttachmentSignature,
+        documentOwner,
+        params.persistedAttachments,
+        ref,
         updateDocument,
     ]);
 
@@ -451,28 +548,31 @@ export function useNewSessionComposerDocument(params: Readonly<{
                 local: true,
             });
         }
-        return readSnapshot();
-    }, [params.promptStore, readSnapshot, updateDocument]);
+        const snapshot = readSnapshot();
+        submissionCurrentnessRef.current.set(snapshot, documentOwner.captureCurrentness());
+        return snapshot;
+    }, [documentOwner, params.promptStore, readSnapshot, updateDocument]);
 
     const clearAcceptedSnapshot = React.useCallback((snapshot: ComposerSubmissionSnapshot): boolean => {
-        if (!mountedRef.current || !sameComposerRef(refRef.current, snapshot.ref)) return false;
-        const current = readSnapshot();
-        const currentness = readComposerSubmissionFieldCurrentness(current, snapshot);
-        if (!currentness) return false;
-        updateDocument({
-            text: currentness.reconciledText,
-            state: {
-                attachments: currentness.attachments ? [] : documentRef.current.attachments,
-                mentions: composerStructuredMentionsFromReferences({
-                    references: currentness.reconciledReferences,
-                    existing: documentRef.current.mentions,
-                }),
-            },
-            notify: true,
-            local: true,
-        });
+        if (!mountedRef.current || !composerRefsV1Equal(refRef.current, snapshot.ref)) return false;
+        const currentness = submissionCurrentnessRef.current.get(snapshot);
+        if (!currentness || !documentOwner.clearAccepted(currentness)) return false;
+        const next = documentOwner.read().document;
+        suppressPromptNotificationRef.current = true;
+        try {
+            params.promptStore.setPrompt(next.text);
+        } finally {
+            suppressPromptNotificationRef.current = false;
+        }
+        const nextState = {
+            attachments: next.composerAttachments,
+            mentions: next.structuredInputMentions,
+        };
+        documentRef.current = nextState;
+        setDocumentState(nextState);
+        notifyComposerPresentationTargetChanged(ref);
         return true;
-    }, [readSnapshot, updateDocument]);
+    }, [documentOwner, params.promptStore, ref]);
 
     const onStructuredInputMentionsChange = React.useCallback((mentions: readonly ComposerStructuredInputMention[]) => {
         updateDocument({
@@ -503,14 +603,23 @@ export function useNewSessionComposerDocument(params: Readonly<{
     )), [documentState.attachments, params.composerAttachmentEntriesById]);
     const attachmentRowItems = React.useMemo(() => projectComposerAttachmentRowItems({
         attachments: attachmentViews,
-        onRemove: removeAttachment,
+        // Mirrors this scope's `ComposerSnapshotV1.state.editable`: an
+        // `editAndSubmit` lock or an in-flight submission refuses the removal
+        // transaction, so the row must not offer the control there.
+        ...(params.canSubmitRef.current === true
+            && !isSubmittingRef.current
+            && composerInputEffects.composerInputLock?.mode !== 'editAndSubmit'
+            ? { onRemove: removeAttachment }
+            : {}),
         entriesById: params.composerAttachmentEntriesById ?? undefined,
         renderSurface: composerPluginPresentation.renderAttachmentSurface,
         resolveInteraction: composerPluginPresentation.resolveAttachmentInteraction,
     }), [
         attachmentViews,
+        composerInputEffects.composerInputLock,
         composerPluginPresentation.renderAttachmentSurface,
         composerPluginPresentation.resolveAttachmentInteraction,
+        params.canSubmitRef,
         params.composerAttachmentEntriesById,
         removeAttachment,
     ]);
@@ -519,7 +628,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
         ref,
         isCurrent: isNewSessionComposerCurrent,
         isReferenceSearchCurrent: isNewSessionReferenceSearchCurrent,
-        revision: revisionRef.current,
+        revision: documentOwner.read().revision,
         attachments: documentState.attachments,
         structuredInputMentions: documentState.mentions,
         onStructuredInputMentionsChange,
@@ -556,6 +665,6 @@ export function useNewSessionComposerDocument(params: Readonly<{
         isNewSessionReferenceSearchCurrent,
         readCurrentExecutionTarget,
         ref,
-        revisionRef.current,
+        documentOwner,
     ]);
 }

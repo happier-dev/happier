@@ -22,7 +22,11 @@ export type TranscriptOlderPaginationLoadStatus = TranscriptOlderPageLoadStatus;
 
 export type TranscriptOlderPaginationLoadResult = TranscriptOlderPageLoadResult;
 
-export type TranscriptOlderPaginationLoadTrigger = 'threshold-enter' | 'post-cooldown' | 'readiness-open';
+export type TranscriptOlderPaginationLoadTrigger =
+    | 'threshold-enter'
+    | 'post-cooldown'
+    | 'readiness-open'
+    | 'explicit-continuation';
 
 export type TranscriptOlderPaginationLoadOptions = Readonly<{
     trigger: TranscriptOlderPaginationLoadTrigger;
@@ -66,6 +70,12 @@ export type UseTranscriptOlderPaginationResult = Readonly<{
     loadFailed: boolean;
     /** Re-issue the failed older read from the retained cursor. No-op unless `loadFailed`. */
     retryLoad: () => void;
+    /**
+     * Read one more retained older page when bounded initial fill leaves the transcript too
+     * short to create a scroll threshold observation. The same pager still owns currentness,
+     * single-flight admission, cooldown, and the canonical cursor.
+     */
+    continueOlderLoad: () => void;
     getSnapshot: () => TranscriptOlderPaginationSnapshot;
     reset: () => void;
 }>;
@@ -291,6 +301,12 @@ export function useTranscriptOlderPagination(input: UseTranscriptOlderPagination
         maybeStartLoadRef.current('readiness-open');
     }, [clearCooldownTimeout, dispatch]);
 
+    const continueOlderLoad = React.useCallback(() => {
+        clearCooldownTimeout();
+        dispatch({ type: 'continuationRequested' });
+        maybeStartLoadRef.current('explicit-continuation');
+    }, [clearCooldownTimeout, dispatch]);
+
     const reset = React.useCallback(() => {
         operationGenerationRef.current += 1;
         clearCooldownTimeout();
@@ -317,6 +333,7 @@ export function useTranscriptOlderPagination(input: UseTranscriptOlderPagination
         hasMore,
         loadFailed,
         retryLoad,
+        continueOlderLoad,
         getSnapshot,
         reset,
     };

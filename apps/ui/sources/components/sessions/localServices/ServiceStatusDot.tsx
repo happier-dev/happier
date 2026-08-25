@@ -3,9 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import type { LocalServiceInventoryRow } from '@/sync/domains/local/services/inventory/store';
-import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
-import type { ManagedLocalServiceRow as ManagedLocalServiceStoreRow } from '@/sync/domains/local/services/managed/store';
+import type { ServiceRowStatus } from '@/sync/domains/local/services/serviceRow';
 
 /**
  * Liveness tone for a service row's status dot. `live` pulses; everything else
@@ -26,40 +24,24 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
-function inventoryLiveness(state: LocalServiceInventoryRow['state']): ServiceLiveness {
-    switch (state) {
-        case 'listening':
-            return 'live';
-        case 'gone':
-            return 'gone';
-        case 'stale':
-        case 'unknown':
-            return 'idle';
-    }
-}
-
-function managedLiveness(phase: ManagedLocalServiceStoreRow['phase']): ServiceLiveness {
-    switch (phase) {
+/**
+ * The dot's tone is a projection of the row's canonical status — never a second reading of the raw
+ * `LocalServiceLaunchTarget['state']` (SB-F).
+ *
+ * `resolveStatus` in the row model is the one owner that turns the daemon's launch-target state into
+ * a service status; the dot, the pill and the accessibility label are three renderings of that one
+ * decision. Taking `ServiceRowStatus` here is what makes the split unrepresentable: the raw state's
+ * `'available'` is not a member of this union, so re-pointing the caller back at `target.state` does
+ * not compile.
+ */
+function serviceLiveness(status: ServiceRowStatus): ServiceLiveness {
+    switch (status) {
         case 'running':
-        case 'detecting':
-        case 'starting':
-            return 'live';
-        case 'stopped':
-        case 'failed':
-            return 'gone';
-        case 'unhealthy':
-        case 'stopping':
-            return 'idle';
-    }
-}
-
-function launchTargetLiveness(state: LocalServiceLaunchTarget['state']): ServiceLiveness {
-    switch (state) {
-        case 'available':
         case 'starting':
             return 'live';
         case 'stale':
             return 'idle';
+        case 'stopped':
         case 'unavailable':
             return 'gone';
     }
@@ -79,15 +61,16 @@ function useServiceStatusToneColor(liveness: ServiceLiveness): Readonly<{ dot: s
     }
 }
 
-function ServiceStatusDotInner(props: Readonly<{
-    liveness: ServiceLiveness;
-    animationEnabled: boolean;
+export function ServiceStatusDot(props: Readonly<{
+    status: ServiceRowStatus;
+    animationEnabled?: boolean;
     testID: string;
     accessibilityLabel?: string;
 }>): React.ReactElement {
     const styles = stylesheet;
-    const color = useServiceStatusToneColor(props.liveness);
-    const isLive = props.liveness === 'live';
+    const liveness = serviceLiveness(props.status);
+    const color = useServiceStatusToneColor(liveness);
+    const isLive = liveness === 'live';
     return (
         <View
             testID={`${props.testID}-halo`}
@@ -98,57 +81,9 @@ function ServiceStatusDotInner(props: Readonly<{
                 color={color.dot}
                 size={DOT_SIZE}
                 isPulsing={isLive}
-                animationEnabled={props.animationEnabled}
+                animationEnabled={props.animationEnabled !== false}
                 accessibilityLabel={props.accessibilityLabel}
             />
         </View>
-    );
-}
-
-export function DetectedServiceStatusDot(props: Readonly<{
-    state: LocalServiceInventoryRow['state'];
-    animationEnabled?: boolean;
-    testID: string;
-    accessibilityLabel?: string;
-}>): React.ReactElement {
-    return (
-        <ServiceStatusDotInner
-            liveness={inventoryLiveness(props.state)}
-            animationEnabled={props.animationEnabled !== false}
-            testID={props.testID}
-            accessibilityLabel={props.accessibilityLabel}
-        />
-    );
-}
-
-export function ManagedServiceStatusDot(props: Readonly<{
-    phase: ManagedLocalServiceStoreRow['phase'];
-    animationEnabled?: boolean;
-    testID: string;
-    accessibilityLabel?: string;
-}>): React.ReactElement {
-    return (
-        <ServiceStatusDotInner
-            liveness={managedLiveness(props.phase)}
-            animationEnabled={props.animationEnabled !== false}
-            testID={props.testID}
-            accessibilityLabel={props.accessibilityLabel}
-        />
-    );
-}
-
-export function LaunchTargetStatusDot(props: Readonly<{
-    state: LocalServiceLaunchTarget['state'];
-    animationEnabled?: boolean;
-    testID: string;
-    accessibilityLabel?: string;
-}>): React.ReactElement {
-    return (
-        <ServiceStatusDotInner
-            liveness={launchTargetLiveness(props.state)}
-            animationEnabled={props.animationEnabled !== false}
-            testID={props.testID}
-            accessibilityLabel={props.accessibilityLabel}
-        />
     );
 }

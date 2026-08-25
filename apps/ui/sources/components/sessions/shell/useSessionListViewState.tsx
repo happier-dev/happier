@@ -4,6 +4,7 @@ import { usePathname } from 'expo-router';
 import { EXTERNAL_SESSION_STATUS_DEMAND_MAX_ENTRIES_V1 } from '@happier-dev/protocol';
 import {
     useSetting,
+    useSettings,
     useSettingMutable,
     useMachineDisplayById,
     useProfile,
@@ -123,6 +124,8 @@ import {
     hasActiveSessionListHeaderFilters,
 } from './sessionListFilters';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { deleteSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {
     SESSION_LIST_MEMORY_SEARCH_MIN_QUERY_LENGTH,
     useSessionListMemorySearchAugmentation,
@@ -533,7 +536,16 @@ export function useSessionListViewStateFromPaneState(
     const sessionListIdentityDisplay = useSetting('sessionListIdentityDisplay');
     const sessionListActiveColorMode = useSetting('sessionListActiveColorModeV1');
     const hideInactiveSessions = useSetting('hideInactiveSessions');
+    const sessionReplayEnabled = useSetting('sessionReplayEnabled');
+    const sessionForkReplaySettings = useSettings();
+    const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const forkActionContext = React.useMemo(() => ({
+        settings: sessionForkReplaySettings,
+        replayEnabled: sessionReplayEnabled === true,
+        executionRunsEnabled: executionRunsEnabled === true,
+    }), [executionRunsEnabled, sessionForkReplaySettings, sessionReplayEnabled]);
     const profile = useProfile();
+    const draftScope = useActiveServerAccountScope();
     const navigateToSession = useNavigateToSession();
     const { openMoveSheet } = useSessionListMoveSheet();
     const sessionListA11y = useSessionListA11yAnnouncements();
@@ -1817,6 +1829,17 @@ export function useSessionListViewStateFromPaneState(
         const canUseSessionFolders = resolveSessionListItemOrganizationEligibility(item, {
             foldersFeatureEnabled: folderActionsEnabled,
         }).canUseSessionFolders;
+        const draftServerId = item.serverId ?? draftScope?.serverId ?? null;
+        const draftKey = draftServerId ? sessionTagKey(draftServerId, item.sessionId) : null;
+        const draft = draftKey ? renderModels.existingDraftBySessionKey.get(draftKey) ?? null : null;
+        const deleteDraft = draftScope
+            && (!item.serverId || item.serverId === draftScope.serverId)
+            && draft
+            ? () => deleteSessionDraft({
+                scope: draftScope,
+                address: { kind: 'session', sessionId: item.sessionId },
+            })
+            : undefined;
         return (
             <SessionListRowViewModelBoundary
                 item={item}
@@ -1853,6 +1876,7 @@ export function useSessionListViewStateFromPaneState(
                 identityDisplay={sessionListIdentityDisplay === 'agentLogo' || sessionListIdentityDisplay === 'none'
                     ? sessionListIdentityDisplay
                     : 'avatar'}
+                draft={draft}
                 pinnedSessionKeys={orderingPersistenceState.pinnedKeySet}
                 reachableSessionDisplayById={renderModels.reachableSessionDisplayById}
                 reachableSessionDisplayByKey={renderModels.reachableSessionDisplayByKey}
@@ -1864,11 +1888,13 @@ export function useSessionListViewStateFromPaneState(
                 workingIndicatorMode={sessionListWorkingIndicatorStyle === 'pulse' ? 'pulse' : 'spinner'}
                 workingTextMode={sessionListWorkingStatusAnimatedTextEnabled === false ? 'static' : 'animated'}
                 folderMoveTargets={resolveFolderMoveTargetsForItem(item)}
+                forkActionContext={forkActionContext}
                 onMoveToSessionFolder={canUseSessionFolders ? moveActionHandlers.onMoveToSessionFolder : undefined}
                 onMoveToFolder={canUseSessionFolders ? moveActionHandlers.onMoveToFolder : undefined}
                 onMoveToWorkspaceRoot={canUseSessionFolders ? moveActionHandlers.onMoveToWorkspaceRoot : undefined}
                 onMoveUp={canUseSessionFolders ? moveActionHandlers.onMoveUp : undefined}
                 onMoveDown={canUseSessionFolders ? moveActionHandlers.onMoveDown : undefined}
+                onDeleteDraft={deleteDraft}
             />
         );
     }, [
@@ -1879,13 +1905,16 @@ export function useSessionListViewStateFromPaneState(
         densityViewState.compact,
         densityViewState.compactMinimal,
         densityViewState.rowHeight,
+        draftScope,
         rowSubscriptionKeys,
         selectedSessionId,
         folderActionsEnabled,
+        forkActionContext,
         hideInactiveSessions,
         normalizedShellState.sessionTags,
         orderingPersistenceState.pinnedKeySet,
         renderModels.hasMultipleMachines,
+        renderModels.existingDraftBySessionKey,
         renderModels.reachableSessionDisplayById,
         renderModels.reachableSessionDisplayByKey,
         renderedListItems,

@@ -108,7 +108,6 @@ installSessionShellCommonModuleMocks({
     resolveAgentUiBehavior: () => ({}),
     resolveAgentUiBehaviorFromFlavor: () => ({}),
     resolveAgentUiBehaviorFromSessionMetadata: () => ({}),
-    supportsDetectedMcpConfigScan: () => false,
     supportsEditableSessionGoals: supportsEditableSessionGoalsMock,
   }),
   storage: async () =>
@@ -280,6 +279,7 @@ vi.mock('@/sync/ops', async (importOriginal) => {
     overrides: {
       sessionAbort: (...args: unknown[]) => sessionAbortMock(...args),
       resumeSession: vi.fn(),
+      sessionSwitch: vi.fn(),
       sessionAttachmentsUploadFile: vi.fn(),
     },
   });
@@ -371,9 +371,6 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
 }));
 vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
   supportsSessionModeOverrides: () => false,
-}));
-vi.mock('@/sync/ops/sessionSwitch', () => ({
-  sessionSwitch: vi.fn(),
 }));
 vi.mock('@/sync/domains/automations/automationSessionLink', () => ({
   countEnabledAutomationsLinkedToSession: () => 0,

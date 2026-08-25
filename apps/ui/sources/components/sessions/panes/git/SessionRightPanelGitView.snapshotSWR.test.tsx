@@ -123,12 +123,16 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/components/workspaces/scm/states', () => ({
+    SourceControlStaleSnapshotNotice: () => null,
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
 }));
 
-vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
+// Override only the predicate this suite forces; keep every other export real so
+// `useSessionMachineReachability` can still resolve `resolveSessionMachineReachabilityState`.
+vi.mock('@/components/sessions/model/resolveSessionMachineReachability', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/components/sessions/model/resolveSessionMachineReachability')>()),
     resolveSessionMachineReachability: () => true,
 }));
 

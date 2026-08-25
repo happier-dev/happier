@@ -178,6 +178,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         launcherState: localServiceLauncherState,
         localServicePreviewState,
         pluginBrowserProjection: pluginRuntime.pluginBrowserProjection,
+        pluginUiProjection: pluginRuntime.pluginUiProjection,
         nowMs: props.nowMs,
     }).feed;
     const managedAnnotationCaptureProvider = React.useMemo(() => {

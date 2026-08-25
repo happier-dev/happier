@@ -16,7 +16,7 @@ import {
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     resetSessionDraftValueCachesForTests,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+} from '@/dev/testkit/sessionDraftRepositoryTestkit';
 import {
     resetSessionSurfaceVisibilityForTests,
     setFocusedSessionId,

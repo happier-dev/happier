@@ -178,7 +178,10 @@ function currentParticipantDaemonProjection(entriesById: Readonly<Record<string,
 function createIssueAttachmentTransactionApplier() {
     return createComposerPresentationTransactionApplier({
         composerAttachmentsById: {
-            [issueAttachmentCatalogEntry.id]: issueAttachmentCatalogEntry,
+            [issueAttachmentCatalogEntry.id]: {
+                ...issueAttachmentCatalogEntry,
+                valueValidator: () => true,
+            },
         },
     });
 }

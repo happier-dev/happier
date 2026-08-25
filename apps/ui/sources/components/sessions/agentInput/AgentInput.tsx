@@ -370,6 +370,8 @@ interface AgentInputProps {
     /** Scope-local observer for this mounted input's resolved action-bar layout. */
     onComposerActionBarLayoutChange?: (layout: AgentInputActionBarLayout) => void;
     sessionId?: string;
+    /** The retaining Session surface's existing presented fact; absent hosts are mounted/presented. */
+    surfacePresented?: boolean;
     onSend: (options?: AgentInputSendOptions) => void;
     submitAccessibilityLabel?: string;
     sendIcon?: React.ReactNode;
@@ -435,6 +437,9 @@ interface AgentInputProps {
      */
     instrumentQuota?: SessionInstrumentStripQuota | null;
     statusBadges?: ReadonlyArray<AgentInputStatusBadgeDescriptor>;
+    statusTrailingActions?: React.ReactNode;
+    /** Hosts with an editable permission chip may omit the repeated instrument-strip label. */
+    showStatusPermissionMode?: boolean;
     activeStatusBadgeKey?: string | null;
     onActiveStatusBadgeKeyChange?: (key: string | null) => void;
     /** Eligible suggestion kinds for this composer host. Trigger characters follow from the kinds (INV-1). */
@@ -1811,8 +1816,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const submitDictationActive = dictationActive && Boolean(dictationPressHandler);
     const voiceComposerSessionId = props.sessionId ?? null;
     const voiceComposerPlanet = React.useMemo(
-        () => <VoiceComposerPlanetMount sessionId={voiceComposerSessionId} />,
-        [voiceComposerSessionId],
+        () => <VoiceComposerPlanetMount
+            sessionId={voiceComposerSessionId}
+            isPresented={props.surfacePresented}
+        />,
+        [props.surfacePresented, voiceComposerSessionId],
     );
     const trailingAccessory = props.trailingAccessory
         ?? (mountsVoiceComposerPlanet ? voiceComposerPlanet : null);
@@ -3047,6 +3055,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         actionMenuActions,
         hasActionMenuPopoverSections,
     } = useAgentInputActionMenuControls({
+        actionMenuAnchorRef,
         showActionMenu,
         setShowActionMenu,
         closeSelectionOverlay,
@@ -3467,9 +3476,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     sessionActive={props.sessionActive}
                     currentRunnerProcessIdentity={props.currentRunnerProcessIdentity}
                     connectionStatus={props.connectionStatus ?? null}
-                    permission={instrumentStripPermission}
+                    permission={props.showStatusPermissionMode === false ? null : instrumentStripPermission}
                     quota={props.instrumentQuota ?? null}
                     statusBadges={props.statusBadges}
+                    statusTrailingActions={props.statusTrailingActions}
                     activeStatusBadgeKey={props.activeStatusBadgeKey}
                     onActiveStatusBadgeKeyChange={props.onActiveStatusBadgeKeyChange}
                     onGitPress={props.onFileViewerPress}

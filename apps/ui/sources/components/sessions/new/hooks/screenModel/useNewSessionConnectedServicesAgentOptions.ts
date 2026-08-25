@@ -5,6 +5,7 @@ import {
     useNewSessionConnectedServices,
     type NewSessionConnectedServicesResult,
 } from '@/components/sessions/new/modules/useNewSessionConnectedServices';
+import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
 
 type BackendNewSessionOptionStateByTargetKey = Record<string, Record<string, unknown>>;
 type ConnectedServicesParams = Parameters<typeof useNewSessionConnectedServices>[0];
@@ -12,6 +13,17 @@ type ConnectedServicesParams = Parameters<typeof useNewSessionConnectedServices>
 export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     /** Explicit bundled behavior backing for connected-services controls. */
     staticAgentId?: AgentId | null;
+    /**
+     * The Agent that will actually run the Session. An installed Agent has no
+     * bundled presentation id, so the declared option base must be built from
+     * the operational identity the composer rendered those options under.
+     */
+    runtimeCarrierAgentId?: AgentId | null;
+    /**
+     * The machine the composer is about to spawn on. An installed Agent's
+     * option declaration is a per-machine fact.
+     */
+    selectedMachineId?: string | null;
     /** @deprecated Direct callers without a projected backend entry are bundled-only. */
     agentType?: AgentId;
     targetServerId: string | null;
@@ -28,6 +40,11 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     agentNewSessionOptions: Record<string, unknown> | null;
 }> {
     const staticAgentId = params.staticAgentId ?? params.agentType ?? null;
+    const behaviorAgentId = resolveNewSessionBehaviorAgentId({
+        runtimeCarrierAgentId: params.runtimeCarrierAgentId,
+        staticAgentId,
+    });
+    const selectedMachineId = params.selectedMachineId ?? null;
     const agentCore = React.useMemo(
         () => staticAgentId ? getAgentCore(staticAgentId) : null,
         [staticAgentId],
@@ -51,15 +68,19 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     });
 
     const agentNewSessionOptions = React.useMemo(() => {
-        const base = staticAgentId
-            ? buildNewSessionOptionsFromUiState({ agentId: staticAgentId, agentOptionState: params.agentOptionState }) ?? {}
+        const base = behaviorAgentId
+            ? buildNewSessionOptionsFromUiState({
+                agentId: behaviorAgentId,
+                agentOptionState: params.agentOptionState,
+                machineId: selectedMachineId,
+            }) ?? {}
             : {};
         const merged: Record<string, unknown> = { ...base };
         if (connectedServicesBindingsPayload) {
             merged.connectedServices = connectedServicesBindingsPayload;
         }
         return Object.keys(merged).length > 0 ? merged : null;
-    }, [params.agentOptionState, staticAgentId, connectedServicesBindingsPayload]);
+    }, [params.agentOptionState, behaviorAgentId, selectedMachineId, connectedServicesBindingsPayload]);
 
     return {
         setAgentOptionStateForCurrentAgent,

@@ -156,6 +156,8 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'sourceContextPresentation'
         | 'attachmentFlowId'
         | 'statusBadges'
+        | 'composerTopContent'
+        | 'statusTrailingActions'
     >;
 }>): ReturnType<typeof useNewSessionWizardProps> {
     const {

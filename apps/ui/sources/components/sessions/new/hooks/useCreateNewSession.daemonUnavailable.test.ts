@@ -24,7 +24,6 @@ type NewSessionHarnessStorageState = {
   markSessionOptimisticThinking: ReturnType<typeof vi.fn>;
   updateSessionPermissionMode: ReturnType<typeof vi.fn>;
   updateSessionModelMode: ReturnType<typeof vi.fn>;
-  updateSessionDraft: ReturnType<typeof vi.fn>;
 };
 
 type SpawnNewSessionTestResult =
@@ -80,7 +79,6 @@ async function setupHarness() {
     markSessionOptimisticThinking: vi.fn(),
     updateSessionPermissionMode: vi.fn(),
     updateSessionModelMode: vi.fn(),
-    updateSessionDraft: vi.fn(),
   };
   activeHarnessStorageState.current = storageState;
 

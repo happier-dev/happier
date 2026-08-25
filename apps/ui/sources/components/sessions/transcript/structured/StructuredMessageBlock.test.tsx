@@ -10,6 +10,7 @@ import {
     PluginMessageActionHostProvider,
 } from '@/components/sessions/transcript/messageActions/PluginMessageActions';
 import type { PluginContributedActionCurrentSnapshot } from '@/components/plugins/actions/pluginContributedActionController';
+import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 
 
@@ -39,13 +40,11 @@ vi.mock('@/components/sessions/delegations/messages/DelegateOutputMessageCard', 
     DelegateOutputMessageCard: (props: any) => React.createElement('DelegateOutputMessageCard', props),
 }));
 
-const machinePluginStructuredMessageResolveMock = vi.hoisted(() => vi.fn());
 const machinePluginStructuredMessageActionExecuteMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     getMachineContributionRegistryProjectionRevision: () => 0,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
-    machinePluginStructuredMessageResolve: machinePluginStructuredMessageResolveMock,
     machinePluginStructuredMessageActionExecute: machinePluginStructuredMessageActionExecuteMock,
     machinePluginActionFormConnectedAccountOptionsResolve: vi.fn(),
     machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
@@ -74,7 +73,6 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-    machinePluginStructuredMessageResolveMock.mockReset();
     machinePluginStructuredMessageActionExecuteMock.mockReset();
     machinePluginStructuredMessageActionExecuteMock.mockResolvedValue({
         supported: true,
@@ -109,7 +107,7 @@ describe('StructuredMessageBlock', () => {
 
         expect(screen.findByTestId('plugin-structured-message-declarative')).toBeTruthy();
         expect(screen.findByTestId('plugin-declarative-status')).toBeTruthy();
-        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
+        expect(machinePluginStructuredMessageActionExecuteMock).not.toHaveBeenCalled();
     });
 
     it('does not render a prohibited Field when corrupt content bypasses the upstream parser', async () => {
@@ -174,7 +172,7 @@ describe('StructuredMessageBlock', () => {
         expect(action).toBeTruthy();
         expect(action?.props.disabled).toBe(true);
         expect(screen.findByTestId('plugin-declarative-action-label:acme.preview/open-report')).toBeTruthy();
-        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
+        expect(machinePluginStructuredMessageActionExecuteMock).not.toHaveBeenCalled();
     });
 
     it('dispatches a persisted Action under current host Message intent without inventing a mounted caller', async () => {
@@ -216,6 +214,22 @@ describe('StructuredMessageBlock', () => {
                     }],
                 },
             },
+            // The canonical transcript host always supplies the executable
+            // index alongside the catalog projection; canonical dispatch reads
+            // the Action's execution target from it.
+            resolveContributedAction: createPluginUiProjectedActionResolver({
+                'acme.preview/open-report': {
+                    id: 'open-report',
+                    pluginId: 'acme.preview',
+                    title: 'Current report Action title',
+                    scopes: ['message'],
+                    surfaces: ['ui'],
+                    execution: { target: 'daemon' },
+                    placementBindings: ['message.menu'],
+                    dangerLevel: 'safe',
+                    available: true,
+                },
+            }),
             host: {
                 machineId: 'machine-1',
                 serverId: 'server-1',
@@ -279,7 +293,6 @@ describe('StructuredMessageBlock', () => {
                 currentMessageIntent: messageActionReference,
             },
         });
-        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
     });
 
     it('shows a retired persisted Action as unavailable without rebinding its historical node', async () => {
@@ -368,7 +381,6 @@ describe('StructuredMessageBlock', () => {
             screen.pressByTestId('plugin-declarative-action:acme.preview/open-report');
         });
         expect(machinePluginStructuredMessageActionExecuteMock).not.toHaveBeenCalled();
-        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
     });
 
     it('does not revive an unsupported historical record through the legacy plugin resolver', async () => {
@@ -395,7 +407,7 @@ describe('StructuredMessageBlock', () => {
         );
 
         expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
-        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
+        expect(machinePluginStructuredMessageActionExecuteMock).not.toHaveBeenCalled();
     });
 
     it('skips rendering when structured message props are referentially stable', async () => {
@@ -479,7 +491,7 @@ describe('StructuredMessageBlock', () => {
         />);
 
         expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
-        expect(machinePluginStructuredMessageResolveMock).not.toHaveBeenCalled();
+        expect(machinePluginStructuredMessageActionExecuteMock).not.toHaveBeenCalled();
     });
 
 

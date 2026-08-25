@@ -212,6 +212,7 @@ describe('ActionInputFields', () => {
             input={{ token: 'hidden', endpoint: 'https://example.test', limit: 2 }}
             editable
             resolveFieldOptions={() => []}
+            resolveFieldTestID={(field) => `action-field-${field.path}`}
             onPatch={onPatch}
         />);
 
@@ -221,7 +222,7 @@ describe('ActionInputFields', () => {
         expect(inputs[1]?.props.keyboardType).toBe('url');
         expect(inputs[2]?.props.keyboardType).toBe('numeric');
 
-        inputs[2]?.props.onChangeText?.('7');
+        screen.changeTextByTestId('action-field-limit', '7');
         expect(onPatch).toHaveBeenCalledWith({ limit: 7 });
     });
 

@@ -33,9 +33,7 @@ export type SessionAgentContinuationSessionReason =
 export type SessionAgentContinuationLocalReason =
     | SessionAgentContinuationSessionReason
     /** The chosen target cannot host a Happier Session. */
-    | 'target_no_sessions'
-    /** The target's create/resume/context contract is not proven for in-place continuation. */
-    | 'target_not_proven';
+    | 'target_no_sessions';
 
 /**
  * What the machine has said about one exact target so far.
@@ -187,13 +185,6 @@ export function resolveSessionAgentContinuationEligibility(params: Readonly<{
     if (entry.capabilities?.session?.supported === false) {
         return { status: 'unavailable', kind: 'local', reason: 'target_no_sessions' };
     }
-    // Configured and plugin-provided ACP targets stay visible so the catalog reads the
-    // same everywhere, but in-place continuation waits until their create/resume/context
-    // contract is proven rather than failing at send time.
-    if (entry.kind !== 'builtInAgent') {
-        return { status: 'unavailable', kind: 'local', reason: 'target_not_proven' };
-    }
-
     if (inspection.status === 'checking') {
         return { status: 'checking' };
     }

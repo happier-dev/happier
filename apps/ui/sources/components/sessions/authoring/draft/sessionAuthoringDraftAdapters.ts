@@ -740,6 +740,9 @@ export function buildAutomationTemplateFromSessionAuthoringDraft(draft: SessionA
                     kind: 'git_worktree',
                     displayName: draft.checkoutCreationDraft.displayName.trim(),
                     baseRef: normalizeOptionalString(draft.checkoutCreationDraft.baseRef) ?? null,
+                    ...(draft.checkoutCreationDraft.branchMode
+                        ? { branchMode: draft.checkoutCreationDraft.branchMode }
+                        : {}),
                 },
             }
             : {}),

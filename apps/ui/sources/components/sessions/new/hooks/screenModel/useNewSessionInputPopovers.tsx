@@ -209,6 +209,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
             && canBrowseExternalSessions({
                 agentId: params.agentType,
                 projection: params.pluginProjectionV2,
+                machineId: params.selectedMachineId,
             });
         return {
             renderContent: ({ requestClose }) => (
@@ -234,6 +235,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
                             if (!params.selectedMachineId) return null;
                             const source = resolveExternalSessionBrowseLockedSource({
                                 providerId: params.agentType,
+                                machineId: params.selectedMachineId,
                                 agentOptionState: params.agentOptionState,
                                 profile: accountProfile,
                                 settings: params.settings,

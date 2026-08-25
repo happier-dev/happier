@@ -458,7 +458,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
             structuredInputMetaOverrides && Object.keys(structuredInputMetaOverrides).length > 0,
         );
         if (!hasAttachments && !hasReviewCommentDrafts && !hasStructuredInputMetaOverrides) {
-            submit(options?.inputTextOverride ? { inputTextOverride: options.inputTextOverride } : undefined);
+            submit(promptText ? { inputTextOverride: promptText } : undefined);
             return;
         }
 

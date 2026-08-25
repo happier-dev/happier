@@ -1,6 +1,6 @@
 import { readSessionAgentTransitionDividerV1 } from '@happier-dev/protocol';
 
-import { isBundledAgentId, type AgentId } from '@/agents/registry/registryCore';
+import type { AgentId } from '@/agents/registry/registryCore';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
 /**
@@ -24,9 +24,8 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
  *    `toAgentId`; a row before the earliest divider belongs to that divider's
  *    `fromAgentId`.
  * 2. **Neutral.** Anything else resolves to `null` — a Session that never
- *    switched, a row with no allocated sequence, a divider naming an Agent this
- *    build's catalog does not know, or a span whose two enclosing dividers
- *    disagree about who was running. `null` means "no historical evidence", and
+ *    switched, a row with no allocated sequence, or a span whose two enclosing
+ *    dividers disagree about who was running. `null` means "no historical evidence", and
  *    every consumer then keeps its existing live-metadata behavior. That is
  *    deliberate: an unswitched Session is the overwhelming majority and its
  *    live Agent is already the correct answer, so attribution must never
@@ -85,7 +84,6 @@ function collectSessionTranscriptAgentAttributionBoundaries(
             event: message.event,
         });
         if (!divider) continue;
-        if (!isBundledAgentId(divider.fromAgentId) || !isBundledAgentId(divider.toAgentId)) continue;
         boundaries.push({
             seq,
             fromAgentId: divider.fromAgentId,
@@ -114,10 +112,9 @@ export function createSessionTranscriptAgentAttributionBoundarySignature(
  * Build the boundary index for one transcript. Called once per transcript, not
  * once per row: resolution is a lookup against a list that is empty or tiny.
  *
- * A divider whose Agent ids this build's catalog does not know contributes no
- * boundary. The divider *row* still renders its raw ids (a divider outlives the
- * catalog), but attribution cannot hand an unknown id to a consumer that will
- * look up an Agent core with it.
+ * The protocol reader already validates both open Agent identities. Attribution
+ * keeps those durable identities even when this client has no bundled display
+ * metadata for one of them; presentation resolves its own neutral fallback.
  */
 export function buildSessionTranscriptAgentAttributionIndex(
     messages: Iterable<Message | null | undefined> | null | undefined,

@@ -41,6 +41,41 @@ function rowKey(item: Pick<SessionListSessionIndexItem, 'serverId' | 'sessionId'
 }
 
 describe('buildSessionListRowViewModels', () => {
+    it('projects the repository-owned existing-session draft onto its exact row', () => {
+        const item = {
+            type: 'session',
+            sessionId: 'sess_with_draft',
+            serverId: 'server_a',
+            storageKind: 'persisted',
+            groupKey: 'group-a',
+            groupKind: 'date',
+        } satisfies SessionListIndexItem;
+        const draft = {
+            text: 'Continue this message',
+            preview: 'Continue this message',
+            status: 'clean' as const,
+            conflict: null,
+            updatedAt: 500,
+        };
+
+        const [row] = buildSessionListRowViewModels({
+            listItems: [item],
+            reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([[rowKey(item), createRenderableSession(item.sessionId)]]),
+            relativeNowMs: 1000,
+            runtimeNowMs: 1000,
+            hasMultipleMachines: false,
+            pinnedSessionKeys: new Set(),
+            sessionTags: {},
+            selectedSessionId: null,
+            showServerBadge: false,
+            showPinnedServerBadge: false,
+            existingDraftBySessionKey: new Map([[`${item.serverId}:${item.sessionId}`, draft]]),
+        });
+
+        expect(row?.draft).toBe(draft);
+    });
+
     it('keeps current-session selection derived only from selectedSessionId', () => {
         const firstItem = {
             type: 'session',

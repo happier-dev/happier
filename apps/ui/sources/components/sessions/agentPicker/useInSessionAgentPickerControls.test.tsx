@@ -8,7 +8,7 @@ import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getRes
 import {
     readSessionDraftValue,
     resetSessionDraftValueCachesForTests,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+} from '@/dev/testkit/sessionDraftRepositoryTestkit';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { deleteRawSessionDraftValues } from '@/sync/domains/state/sessionDraftValuesPersistence';
 import { t } from '@/text';
@@ -349,6 +349,27 @@ describe('useInSessionAgentPickerControls', () => {
         expect(codexOption?.closeOnSelectImmediate).toBe(false);
     });
 
+    it('inspects and offers a session-capable installed Agent from the projected catalog', async () => {
+        const installedAgent = entry('ultracode', {
+            kind: 'pluginBackend',
+            builtInAgentId: null,
+            catalogAgentId: null,
+            iconAgentId: null,
+            capabilities: { session: { supported: true } } as ResolvedBackendCatalogEntry['capabilities'],
+            title: 'UltraCode',
+        });
+        const hook = await renderControls({ entries: [entry('claude'), installedAgent] });
+        await openPicker(hook);
+
+        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
+            method: 'session.continuation.inspect',
+            payload: { v: 1, sourceSessionId: 'session-1', selection: { v: 1, agentId: 'ultracode' } },
+        }));
+        expect(optionsOf(hook.getCurrent())).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'backend:ultracode', label: 'UltraCode', disabled: false }),
+        ]));
+    });
+
     it('gives a target Agent its own model detail instead of prose above an empty pane', async () => {
         // Engine and model are one decision: choosing Codex must show Codex's own
         // models, the way New Session shows them, not a paragraph about switching.
@@ -553,6 +574,64 @@ describe('useInSessionAgentPickerControls', () => {
             },
         });
         expect(hook.getCurrent().armedContinuationLocalId).not.toBe(firstLocalId);
+    });
+
+    it('keeps a Provider model literally named default as a real choice, not Automatic', async () => {
+        const hook = await renderControls();
+        await openPicker(hook);
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.onSelectImmediate?.();
+        });
+
+        let resolveChangedSelection: ((value: unknown) => void) | null = null;
+        machineRpcWithServerScope.mockClear();
+        machineRpcWithServerScope.mockImplementation((params: {
+            payload: { selection: Record<string, unknown> };
+        }) => {
+            // The strict transition schema requires a modelId whenever a
+            // connection is set, so dropping `default` here makes the exact
+            // inspection unparseable and the row unarmable.
+            expect(params.payload.selection).toMatchObject({
+                v: 1,
+                agentId: 'codex',
+                modelId: 'default',
+                providerConnectionId: 'provider-1',
+            });
+            return new Promise((resolve) => { resolveChangedSelection = resolve; });
+        });
+
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.renderDetailContent?.({ onRequestClose: () => {} });
+            detailSelectionChangeRef.current?.({
+                modelId: 'default',
+                modelLabel: 'Gateway default',
+                modelSelection: {
+                    v: 1,
+                    updatedAt: 7,
+                    ref: {
+                        agentTargetKey: 'backend:codex',
+                        providerConnectionId: 'provider-1',
+                        modelId: 'default',
+                    },
+                },
+                sessionModeId: null,
+                configOverrides: {},
+            });
+            await Promise.resolve();
+        });
+
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            resolveChangedSelection?.(AVAILABLE);
+            await Promise.resolve();
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(hook.getCurrent().armedContinuation?.selection).toMatchObject({
+            modelId: 'default',
+            providerConnectionId: 'provider-1',
+        });
+        expect(hook.getCurrent().armedContinuationModelLabel).toBe('Gateway default');
     });
 
     it('names the armed row for screen readers instead of wrapping a subtitle under it', async () => {

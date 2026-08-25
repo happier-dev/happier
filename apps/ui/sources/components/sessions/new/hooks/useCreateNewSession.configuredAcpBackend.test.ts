@@ -35,7 +35,6 @@ type ConfiguredBackendStorageState = Readonly<{
     sessions: Record<string, Readonly<{ id: string; active?: boolean }>>;
     updateSessionPermissionMode: ReturnType<typeof vi.fn>;
     updateSessionModelMode: ReturnType<typeof vi.fn>;
-    updateSessionDraft: ReturnType<typeof vi.fn>;
     markSessionOptimisticThinking: ReturnType<typeof vi.fn>;
     upsertPendingMessage: ReturnType<typeof vi.fn>;
 }>;
@@ -66,7 +65,6 @@ async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
         sessions: {},
         updateSessionPermissionMode: vi.fn(),
         updateSessionModelMode: vi.fn(),
-        updateSessionDraft: vi.fn(),
         markSessionOptimisticThinking: vi.fn(),
         upsertPendingMessage: vi.fn(),
     };

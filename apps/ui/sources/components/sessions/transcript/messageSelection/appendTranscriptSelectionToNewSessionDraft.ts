@@ -1,9 +1,7 @@
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import {
-    loadNewSessionDraft as loadPersistedNewSessionDraft,
-    saveNewSessionDraft as savePersistedNewSessionDraft,
-    type NewSessionDraft,
-} from '@/sync/domains/state/persistence';
+    seedNewSessionDraftV1,
+    type NewSessionDraftSeedV1,
+} from '@/components/sessions/new/newSessionDraftSeed';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type AppendTranscriptSelectionToNewSessionDraftInput = Readonly<{
@@ -11,8 +9,8 @@ export type AppendTranscriptSelectionToNewSessionDraftInput = Readonly<{
     sourceServerId: string | null | undefined;
     scope?: ServerAccountScope | null;
     nowMs?: () => number;
-    loadNewSessionDraft?: (scope?: ServerAccountScope | null) => NewSessionDraft | null;
-    saveNewSessionDraft?: (draft: NewSessionDraft, scope?: ServerAccountScope | null) => void;
+    createDraftId?: () => string;
+    writeDraft?: Parameters<typeof seedNewSessionDraftV1>[0]['writeDraft'];
 }>;
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -21,57 +19,22 @@ function normalizeNonEmptyString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-function appendDraftInput(existingInput: string, promptText: string): string {
-    if (existingInput.trim().length === 0) return promptText;
-    return `${existingInput.trimEnd()}\n\n${promptText.trimStart()}`;
-}
-
-function createNewSessionDraft(params: Readonly<{
-    promptText: string;
-    sourceServerId: string | null;
-    updatedAt: number;
-}>): NewSessionDraft {
-    return {
-        input: params.promptText,
-        selectedMachineId: null,
-        selectedPath: null,
-        entryIntent: 'session',
-        selectedProfileId: null,
-        selectedSecretId: null,
-        agentType: DEFAULT_AGENT_ID,
-        permissionMode: 'default',
-        modelSelection: null,
-        acpSessionModeId: null,
-        ...(params.sourceServerId ? { targetServerId: params.sourceServerId } : {}),
-        updatedAt: params.updatedAt,
-    };
-}
-
-export function appendTranscriptSelectionToNewSessionDraft(input: AppendTranscriptSelectionToNewSessionDraftInput): void {
-    const promptText = typeof input.promptText === 'string' ? input.promptText : '';
-    if (!promptText.trim()) return;
-
-    const scope = input.scope ?? null;
-    const loadNewSessionDraft = input.loadNewSessionDraft ?? loadPersistedNewSessionDraft;
-    const saveNewSessionDraft = input.saveNewSessionDraft ?? savePersistedNewSessionDraft;
-    const existingDraft = loadNewSessionDraft(scope);
+/** Creates one fresh exact repository draft for one transcript send-to flow. */
+export function appendTranscriptSelectionToNewSessionDraft(
+    input: AppendTranscriptSelectionToNewSessionDraftInput,
+): string | null {
+    const promptText = normalizeNonEmptyString(input.promptText);
+    if (!promptText) return null;
     const sourceServerId = normalizeNonEmptyString(input.sourceServerId);
-    const updatedAt = input.nowMs?.() ?? Date.now();
-
-    if (existingDraft) {
-        saveNewSessionDraft({
-            ...existingDraft,
-            input: appendDraftInput(existingDraft.input, promptText),
-            entryIntent: 'session',
-            ...(existingDraft.targetServerId || !sourceServerId ? {} : { targetServerId: sourceServerId }),
-            updatedAt,
-        }, scope);
-        return;
-    }
-
-    saveNewSessionDraft(createNewSessionDraft({
-        promptText,
-        sourceServerId,
-        updatedAt,
-    }), scope);
+    const seed: NewSessionDraftSeedV1 = {
+        prompt: { text: promptText, mode: 'replace' },
+        ...(sourceServerId ? { placement: { serverId: sourceServerId } } : {}),
+    };
+    return seedNewSessionDraftV1({
+        seed,
+        scope: input.scope,
+        ...(input.nowMs ? { nowMs: input.nowMs } : {}),
+        ...(input.createDraftId ? { createDraftId: input.createDraftId } : {}),
+        ...(input.writeDraft ? { writeDraft: input.writeDraft } : {}),
+    });
 }

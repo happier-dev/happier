@@ -32,10 +32,13 @@ import type {
     RegisterSessionListTreeRowBounds,
     UnregisterSessionListTreeRowBounds,
 } from './SessionListHeaderFrame';
+import type { ExistingSessionDraftProjection } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { STAGE_SPOTLIGHT_TARGET_IDS } from '@/components/onboarding/tour/stage/stageSpotlightTargetIds';
 import {
     useSpotlightTarget,
 } from '@/components/onboarding/tour/stage/useSpotlightTarget';
+import type { SessionItemProps } from './SessionItem';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 const EMPTY_ROW_RENDERABLES = new Map<string, SessionListRenderableSession>() as ReadonlyMap<string, SessionListRenderableSession>;
 export type SessionListRowViewModelBoundaryProps = Readonly<{
@@ -51,9 +54,11 @@ export type SessionListRowViewModelBoundaryProps = Readonly<{
     dragEnabled: boolean;
     draggingSessionKey: string | null;
     folderMoveTargets: readonly SessionFolderMoveTarget[];
+    forkActionContext?: SessionItemProps['forkActionContext'];
     hasMultipleMachines: boolean;
     hideInactiveSessions?: boolean | null;
     identityDisplay?: 'avatar' | 'agentLogo' | 'none' | null;
+    draft?: ExistingSessionDraftProjection | null;
     item: Extract<SessionListIndexItem, { type: 'session' }>;
     items: ReadonlyArray<SessionListIndexItem>;
     nativeContextMenuSessionKey: string | null;
@@ -61,6 +66,7 @@ export type SessionListRowViewModelBoundaryProps = Readonly<{
     onDragStart: (sessionKey: string) => void;
     onDropResult: (event: UseSessionInlineDragDropResultEvent) => void | Promise<void>;
     onMoveDown?: () => void;
+    onDeleteDraft?: () => void | Promise<void>;
     onMoveToFolder?: () => void;
     onMoveToSessionFolder?: (folderId: string | null) => void | Promise<void>;
     onMoveToWorkspaceRoot?: () => void;
@@ -118,6 +124,10 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
     // list-level surface owns the single earliest-wake registration; rows
     // subscribe to the shared timestamp without adding per-row effects.
     const runtimeNowMs = useSessionListRuntimeNowMs(props.dataActive);
+    const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching', {
+        scopeKind: 'spawn',
+        serverId: props.item.serverId ?? null,
+    });
     const rowViewModel = React.useMemo<SessionListRowViewModel>(() => buildSessionListRowViewModel({
         item: props.item,
         index: props.dataIndex,
@@ -142,6 +152,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         showPinnedServerBadge: props.showPinnedServerBadge,
         attentionStandingEnabled: props.attentionStandingEnabled,
         attentionStandingPolicy: props.attentionStandingPolicy,
+        existingDraft: props.draft,
     }), [
         props.activeColorMode,
         props.attentionStandingEnabled,
@@ -150,6 +161,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         props.hasMultipleMachines,
         props.hideInactiveSessions,
         props.identityDisplay,
+        props.draft,
         props.item,
         props.items,
         props.pinnedSessionKeys,
@@ -170,6 +182,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         <SessionListSessionItem
             item={props.item}
             rowViewModel={rowViewModel}
+            agentSwitchingEnabled={agentSwitchingEnabled}
             rowHeight={props.rowHeight}
             dragEnabled={props.dragEnabled}
             treeRowId={props.treeRowId}
@@ -193,11 +206,13 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
             compactMinimal={props.compactMinimal}
             rowAttentionAnimationEnabled={props.rowAttentionAnimationEnabled}
             folderMoveTargets={props.folderMoveTargets}
+            forkActionContext={props.forkActionContext}
             onMoveToSessionFolder={props.onMoveToSessionFolder}
             onMoveToFolder={props.onMoveToFolder}
             onMoveToWorkspaceRoot={props.onMoveToWorkspaceRoot}
             onMoveUp={props.onMoveUp}
             onMoveDown={props.onMoveDown}
+            onDeleteDraft={props.onDeleteDraft}
             measurementTarget={props.item.groupKind === 'attention' ? {
                 ref: stageSpotlightRef,
                 onLayout: stageSpotlightProps.onLayout,

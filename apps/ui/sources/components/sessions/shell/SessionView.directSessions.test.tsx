@@ -4591,7 +4591,7 @@ describe('SessionView (direct sessions)', () => {
     );
   });
 
-  it('clears composer text at direct-session outbound handoff and leaves it clear after acceptance', async () => {
+  it('keeps composer text until direct-session acceptance, then clears it', async () => {
     installRunnerActiveDirectSubmitStatus();
     let resolveSubmit!: () => void;
     syncSubmitMessageSpy.mockImplementationOnce(
@@ -4611,13 +4611,11 @@ describe('SessionView (direct sessions)', () => {
       agentInput.props.onChangeText('continue this session');
     });
 
-    await act(async () => {
-      agentInput.props.onSend();
-    });
-    await flushHookEffects({ cycles: 1, turns: 1 });
+    agentInput.props.onSend();
+    await vi.waitFor(() => expect(syncSubmitMessageSpy).toHaveBeenCalledTimes(1));
 
     agentInput = findAgentInput(screen);
-    expect(agentInput.props.value).toBe('');
+    expect(agentInput.props.value).toBe('continue this session');
 
     await act(async () => {
       resolveSubmit();
@@ -4733,7 +4731,7 @@ describe('SessionView (direct sessions)', () => {
 
   it('restores submitted text without overwriting newer semantic choices after direct-session handoff failure', async () => {
     installRunnerActiveDirectSubmitStatus();
-    const draftValues = await import('@/sync/domains/input/draftValues/sessionDraftValueStore');
+    const draftValues = await import('@/dev/testkit/sessionDraftRepositoryTestkit');
     const oldRecipient = { kind: 'execution_run' as const, runId: 'run-old' };
     const newRecipient = { kind: 'execution_run' as const, runId: 'run-new' };
     let rejectSubmit!: (error: Error) => void;

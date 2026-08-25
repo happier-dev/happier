@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { NotSourceControlRepositoryState, SourceControlSessionInactiveState, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
+import { NotSourceControlRepositoryState, SourceControlSessionInactiveState, SourceControlStaleSnapshotNotice, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useSessionResumeAction } from '@/components/sessions/model/SessionResumeContext';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
@@ -699,16 +699,27 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             );
         }
 
-        const userFacingDetails =
-            (
-                typeof (scmSnapshotError as { errorCode?: unknown }).errorCode === 'string'
-                    ? (scmSnapshotError as { errorCode: string }).errorCode
-                    : undefined
-            ) === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED
-                ? t('deps.installNotSupported')
-                : scmSnapshotError.message;
+        // `SourceControlUnavailableState` owns the typed body: it resolves user-facing copy from the
+        // structured `errorCode` and only shows `details` as a sanitized supplementary line. This
+        // view used to hand-roll a one-code ternary and pass the raw `.message` as the whole story,
+        // so a transport-level exception was rendered verbatim in the user error slot (`F-UI-2`).
+        // The workspace twin already passes the code through; do the same here rather than keeping a
+        // second mapper for the same concept.
+        const scmSnapshotErrorCode = typeof (scmSnapshotError as { errorCode?: unknown }).errorCode === 'string'
+            ? (scmSnapshotError as { errorCode: string }).errorCode
+            : undefined;
+        const userFacingDetails = scmSnapshotErrorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED
+            ? t('deps.installNotSupported')
+            : scmSnapshotError.message;
 
-        return <SourceControlUnavailableState details={userFacingDetails} onRetry={() => void refreshScmData()} />;
+        return (
+            <SourceControlUnavailableState
+                testID="session-rightpanel-git-unavailable"
+                details={userFacingDetails}
+                {...(scmSnapshotErrorCode ? { errorCode: scmSnapshotErrorCode } : {})}
+                onRetry={() => void refreshScmData()}
+            />
+        );
     }
 
     if (!effectiveScmSnapshot) {
@@ -722,14 +733,29 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         );
     }
 
+    // `F-SCM-2`: the branch above is the only place this view reported a snapshot error, and
+    // `scmStatusSync` stores an error WITHOUT clearing the snapshot — so once anything had been
+    // cached, every later refresh failure was invisible and stale content read as current. From
+    // here on the content is real but possibly stale, so the failure travels WITH it.
+    const staleSnapshotNotice = (
+        <SourceControlStaleSnapshotNotice
+            testID="session-rightpanel-git-stale"
+            error={scmSnapshotError}
+            onRetry={() => void refreshScmData()}
+        />
+    );
+
     if (!effectiveScmSnapshot.repo.isRepo) {
         return (
-            <NotSourceControlRepositoryState
-                canInitializeRepository={scmWriteEnabled && effectiveScmSnapshot.capabilities?.writeRepositoryInit === true}
-                initializeRepositoryBusy={scmOperationBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
-                onInitializeRepository={initializeRepository}
-                onRefresh={refreshScmDataFromMutation}
-            />
+            <View style={{ flex: 1 }}>
+                {staleSnapshotNotice}
+                <NotSourceControlRepositoryState
+                    canInitializeRepository={scmWriteEnabled && effectiveScmSnapshot.capabilities?.writeRepositoryInit === true}
+                    initializeRepositoryBusy={scmOperationBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
+                    onInitializeRepository={initializeRepository}
+                    onRefresh={refreshScmDataFromMutation}
+                />
+            </View>
         );
     }
 
@@ -875,6 +901,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 activeSubTabId={displayActiveGitSubTab}
                 onSelectSubTab={setActiveGitSubTab}
             />
+            {staleSnapshotNotice}
             <View style={{ flex: 1, position: 'relative' }}>
                 <GitSubTabSurface testID="session-rightpanel-git-surface:commit" isActive={displayActiveGitSubTab === 'commit'}>
                     {commitTab}

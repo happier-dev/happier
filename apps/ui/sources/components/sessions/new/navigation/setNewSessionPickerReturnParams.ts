@@ -48,6 +48,8 @@ const NEW_SESSION_PARAM_KEYS = new Set([
     'backendTargetKey',
     'dataId',
     'directory',
+    'draftId',
+    'draftOrigin',
     'machineId',
     'path',
     'profileId',
@@ -110,6 +112,16 @@ export function pickNewSessionRouteParams(params: Readonly<UnknownRouteParams> |
 
     const nextParams = pickRawNewSessionRouteParams(params);
     return normalizeNewSessionRouteParams(nextParams);
+}
+
+export function buildNewSessionPickerFallbackHref(params: Readonly<object> | null | undefined): Readonly<{
+    pathname: '/new';
+    params: RouteParams;
+}> {
+    return {
+        pathname: '/new',
+        params: pickNewSessionRouteParams(params as UnknownRouteParams | null | undefined),
+    };
 }
 
 function pickRawNewSessionRouteParams(params: Readonly<UnknownRouteParams>): RouteParams {

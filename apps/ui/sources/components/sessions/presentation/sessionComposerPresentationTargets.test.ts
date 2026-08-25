@@ -3,7 +3,6 @@ import type {
     ComposerSnapshotV1,
     ComposerTransactionV1,
     ComposerTransactionResultV1,
-    PluginProjectedComposerAttachmentEntryV1,
 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,10 +10,14 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import {
     readSessionDraftValue,
     resetSessionDraftValueCachesForTests,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+} from '@/dev/testkit/sessionDraftRepositoryTestkit';
 import { storage } from '@/sync/domains/state/storage';
-import { loadSessionDrafts, saveSessionDrafts } from '@/sync/domains/state/sessionPersistence';
+import {
+    getSessionDraftSnapshot,
+    writeExistingSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { releaseComposerContent } from '@/sync/domains/transfers/runtime/transferRuntime';
+import type { PluginUiComposerAttachmentProjection } from '@/sync/domains/plugins/ui/projection';
 
 const persistentValues = vi.hoisted(() => new Map<string, string>());
 const activeScopeState = vi.hoisted(() => ({
@@ -70,7 +73,8 @@ function createAttachmentProjectionEntry(input: Readonly<{
     typeLabel: string;
     immutableGenerationId?: string;
     cardinality?: 'one' | 'many';
-}>): PluginProjectedComposerAttachmentEntryV1 {
+    valueValidator?: (value: unknown) => boolean;
+}>): PluginUiComposerAttachmentProjection {
     return {
         id: `${input.pluginId}/${input.localId}`,
         pluginId: input.pluginId,
@@ -83,11 +87,12 @@ function createAttachmentProjectionEntry(input: Readonly<{
             cardinality: input.cardinality ?? 'many',
             valueSchema: { type: 'object' },
         },
+        valueValidator: input.valueValidator ?? (() => true),
     };
 }
 
 function createAttachmentTransactionApplier(
-    ...entries: readonly PluginProjectedComposerAttachmentEntryV1[]
+    ...entries: readonly PluginUiComposerAttachmentProjection[]
 ) {
     return createComposerPresentationTransactionApplier({
         composerAttachmentsById: Object.fromEntries(entries.map((entry) => [entry.id, entry])),
@@ -282,6 +287,65 @@ describe('composer presentation targets', () => {
         expect(target.readCurrent().attachments).toEqual([]);
     });
 
+    it('freezes the CURRENT locale into an admitted attachment type label, not the declaration fallback', () => {
+        const target = createDocumentTarget(createSnapshot());
+        cleanups.push(registerComposerPresentationTarget(
+            { kind: 'session', sessionId: 'session-1' },
+            target,
+        ));
+
+        // 03d1 persists this label as a plain string so replay never depends on
+        // installed plugin translations. That makes resolving the reader's
+        // current locale BEFORE the freeze the whole point.
+        const entry = createAttachmentProjectionEntry({
+            pluginId: 'acme.issues',
+            localId: 'issue',
+            typeLabel: 'Issue',
+        });
+        const localizedEntry = {
+            ...entry,
+            definition: {
+                ...entry.definition,
+                title: { key: 'acme.issues.type', fallback: 'Issue' },
+            },
+        } as PluginUiComposerAttachmentProjection;
+        const applier = createComposerPresentationTransactionApplier({
+            composerAttachmentsById: { [localizedEntry.id]: localizedEntry },
+            localize: (pluginId, value) => (
+                pluginId === 'acme.issues'
+                && typeof value === 'object'
+                && value !== null
+                && (value as { key?: unknown }).key === 'acme.issues.type'
+                    ? 'Ticket'
+                    : 'unresolved'
+            ),
+        });
+
+        expect(applier.apply({
+            ref: { kind: 'session', sessionId: 'session-1' },
+            admittedContributor: admittedContributor({ pluginId: 'acme.issues' }),
+            transaction: {
+                expectedRevision: 1,
+                operations: [{
+                    kind: 'attachment.add',
+                    attachmentLocalId: 'issue',
+                    value: {
+                        key: '42',
+                        value: { issueId: 42 },
+                        presentation: { label: 'Issue #42' },
+                    },
+                }],
+            },
+        })).toMatchObject({ status: 'applied' });
+
+        expect(readComposerPresentationSnapshot({ kind: 'session', sessionId: 'session-1' }))
+            .toMatchObject({
+                attachments: [{
+                    presentation: { label: 'Issue #42', typeLabel: 'Ticket' },
+                }],
+            });
+    });
+
     it('preserves an opaque staged-media claim through the canonical attachment add and draft snapshot', () => {
         const target = createDocumentTarget(createSnapshot());
         cleanups.push(registerComposerPresentationTarget(
@@ -318,6 +382,114 @@ describe('composer presentation targets', () => {
             instanceId: 'host-created-issue-42',
             content: stagedMedia,
         }]);
+    });
+
+    it('rejects an attachment value before allocating an instance id or mutating the document', () => {
+        const createAttachmentInstanceId = vi.fn(() => 'must-not-be-allocated');
+        const target = {
+            ...createDocumentTarget(createSnapshot()),
+            createAttachmentInstanceId,
+        };
+        cleanups.push(registerComposerPresentationTarget(
+            { kind: 'session', sessionId: 'session-1' },
+            target,
+        ));
+        const valueValidator = vi.fn((value: unknown) => (
+            typeof value === 'object'
+            && value !== null
+            && 'issueId' in value
+            && typeof value.issueId === 'string'
+        ));
+        const applier = createAttachmentTransactionApplier(createAttachmentProjectionEntry({
+            pluginId: 'acme.issues',
+            localId: 'issue',
+            typeLabel: 'Issue',
+            valueValidator,
+        }));
+
+        expect(applier.apply({
+            ref: { kind: 'session', sessionId: 'session-1' },
+            admittedContributor: admittedContributor({ pluginId: 'acme.issues' }),
+            transaction: {
+                expectedRevision: 1,
+                operations: [
+                    {
+                        kind: 'attachment.add',
+                        attachmentLocalId: 'issue',
+                        value: {
+                            key: 'valid',
+                            value: { issueId: 'valid' },
+                            presentation: { label: 'Valid issue' },
+                        },
+                    },
+                    {
+                        kind: 'attachment.add',
+                        attachmentLocalId: 'issue',
+                        value: {
+                            key: '42',
+                            value: { issueId: 42 },
+                            presentation: { label: 'Issue #42' },
+                        },
+                    },
+                ],
+            },
+        })).toEqual({
+            status: 'invalidOperation',
+            operationIndex: 1,
+            reason: 'attachment_value_invalid',
+        });
+        expect(valueValidator).toHaveBeenNthCalledWith(1, { issueId: 'valid' });
+        expect(valueValidator).toHaveBeenNthCalledWith(2, { issueId: 42 });
+        expect(createAttachmentInstanceId).not.toHaveBeenCalled();
+        expect(target.readCurrent()).toEqual(createSnapshot());
+    });
+
+    it('rejects an attachment update value through the same normalized declaration validator', () => {
+        const initial = createSnapshot({
+            attachments: [{
+                v: 1,
+                instanceId: 'issue-42',
+                attachment: { pluginId: 'acme.issues', localId: 'issue' },
+                key: '42',
+                value: { issueId: '42' },
+                presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+                availability: { status: 'ready' },
+            }],
+        });
+        const target = createDocumentTarget(initial);
+        cleanups.push(registerComposerPresentationTarget(
+            { kind: 'session', sessionId: 'session-1' },
+            target,
+        ));
+        const applier = createAttachmentTransactionApplier(createAttachmentProjectionEntry({
+            pluginId: 'acme.issues',
+            localId: 'issue',
+            typeLabel: 'Issue',
+            valueValidator: (value) => (
+                typeof value === 'object'
+                && value !== null
+                && 'issueId' in value
+                && typeof value.issueId === 'string'
+            ),
+        }));
+
+        expect(applier.apply({
+            ref: { kind: 'session', sessionId: 'session-1' },
+            admittedContributor: admittedContributor({ pluginId: 'acme.issues' }),
+            transaction: {
+                expectedRevision: 1,
+                operations: [{
+                    kind: 'attachment.update',
+                    instanceId: 'issue-42',
+                    update: { value: { issueId: 42 } },
+                }],
+            },
+        })).toEqual({
+            status: 'invalidOperation',
+            operationIndex: 0,
+            reason: 'attachment_value_invalid',
+        });
+        expect(target.readCurrent()).toEqual(initial);
     });
 
     it('retains staged custody when a contentless add upserts the same attachment key', async () => {
@@ -839,12 +1011,16 @@ function activatePersistentSessionDraft(sessionId: string, text: string): void {
     resetSessionDraftValueCachesForTests();
     activeScopeState.value = persistentSessionScope;
     storage.getState().clearSessionLocalStateScope();
-    saveSessionDrafts({ [sessionId]: text }, persistentSessionScope);
     storage.getState().activateSessionLocalStateScope(persistentSessionScope);
+    writeExistingSessionDraft({ scope: persistentSessionScope, sessionId, patch: { text } });
     storage.setState((state) => ({
         ...state,
         deletedSessionIds: {},
     }));
+}
+
+function readPersistentSessionText(sessionId: string): string {
+    return getSessionDraftSnapshot(persistentSessionScope, { kind: 'session', sessionId })?.document.composer.text.value ?? '';
 }
 
 function readPersistentSessionSnapshot(sessionId: string): ComposerSnapshotV1 {
@@ -911,7 +1087,7 @@ describe('persistent Session composer fallback', () => {
             revision: initial.revision + 1,
             attachmentInstanceIds: [expect.any(String)],
         });
-        expect(loadSessionDrafts(persistentSessionScope)[sessionId]).toBe('@issue-42');
+        expect(readPersistentSessionText(sessionId)).toBe('@issue-42');
         expect(readSessionDraftValue(
             persistentSessionScope,
             sessionId,
@@ -1004,7 +1180,7 @@ describe('persistent Session composer fallback', () => {
         const ref = { kind: 'session', sessionId } as const;
         activatePersistentSessionDraft(sessionId, 'before');
 
-        storage.getState().updateSessionDraft(sessionId, 'after');
+        writeExistingSessionDraft({ scope: persistentSessionScope, sessionId, patch: { text: 'after' } });
         const persisted = readPersistentSessionSnapshot(sessionId);
         const unregister = registerComposerPresentationTarget(ref, createDocumentTarget({
             ...persisted,
@@ -1028,7 +1204,7 @@ describe('persistent Session composer fallback', () => {
         const initial = readPersistentSessionSnapshot(sessionId);
         const observed = vi.fn();
         const dispose = subscribeComposerPresentationTarget(ref, observed);
-        storage.getState().updateSessionDraft(sessionId, 'outside');
+        writeExistingSessionDraft({ scope: persistentSessionScope, sessionId, patch: { text: 'outside' } });
 
         const current = readPersistentSessionSnapshot(sessionId);
         expect(current).toMatchObject({
@@ -1168,7 +1344,7 @@ describe('persistent Session composer fallback', () => {
                 },
             });
             expect(genericApply).not.toHaveBeenCalled();
-            expect(loadSessionDrafts(persistentSessionScope)[sessionId]).toBe('persistent before');
+            expect(readPersistentSessionText(sessionId)).toBe('persistent before');
             expect(pendingTarget.readCurrent()).toMatchObject({
                 revision: persistent.revision,
                 text: 'pending before',

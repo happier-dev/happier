@@ -54,7 +54,7 @@ function createPluginHeaderProjection() {
                         descriptorId: 'run',
                         title: 'Run preview',
                         order: 0,
-                        action: {
+                        command: {
                             kind: 'executeAction',
                             action: { pluginId: 'acme.preview', localId: 'run' },
                         },
@@ -66,7 +66,7 @@ function createPluginHeaderProjection() {
                         descriptorId: 'open',
                         title: 'Open preview',
                         order: 5,
-                        action: {
+                        command: {
                             kind: 'openSurface',
                             destination: { pluginId: 'acme.preview', localId: 'preview' },
                         },
@@ -103,7 +103,7 @@ function createManyPluginHeaderProjection(actionCount: number) {
             descriptorId: localId,
             title: `Action ${index + 1}`,
             order: index,
-            action: {
+            command: {
                 kind: 'executeAction' as const,
                 action: { pluginId: 'acme.preview', localId },
             },

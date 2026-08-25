@@ -16,9 +16,17 @@ type DirectTranscriptStorageSettings = Readonly<Record<string, unknown>>;
  */
 export function supportsDirectTranscriptStorageForNewSession(params: Readonly<{
     agentId: string;
+    /**
+     * The machine that will run the Session. An installed Agent's storage
+     * declaration is a per-machine fact, so a caller that knows the machine
+     * reads that machine's declaration instead of borrowing another one's.
+     * Omitted only by Account-wide surfaces where every machine's declaration
+     * is equally applicable.
+     */
+    machineId?: string | null;
     settings: DirectTranscriptStorageSettings;
 }>): boolean {
-    const supportsTranscriptStorageMode = getAgentBehavior(params.agentId).newSession?.supportsTranscriptStorageMode;
+    const supportsTranscriptStorageMode = getAgentBehavior(params.agentId, params.machineId).newSession?.supportsTranscriptStorageMode;
     return supportsTranscriptStorageMode?.({
         agentId: params.agentId,
         settings: params.settings as Settings,
@@ -29,6 +37,7 @@ export function supportsDirectTranscriptStorageForNewSession(params: Readonly<{
 export function coerceNewSessionTranscriptStorage(params: Readonly<{
     requested: NewSessionTranscriptStorage | null | undefined;
     agentId: string;
+    machineId?: string | null;
     settings: DirectTranscriptStorageSettings;
     externalSessionsEnabled: boolean;
 }>): NewSessionTranscriptStorage {
@@ -36,6 +45,7 @@ export function coerceNewSessionTranscriptStorage(params: Readonly<{
     if (!params.externalSessionsEnabled) return 'persisted';
     return supportsDirectTranscriptStorageForNewSession({
         agentId: params.agentId,
+        machineId: params.machineId,
         settings: params.settings,
     })
         ? 'direct'

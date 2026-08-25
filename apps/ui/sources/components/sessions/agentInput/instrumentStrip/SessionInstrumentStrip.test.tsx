@@ -120,6 +120,18 @@ describe('SessionInstrumentStrip', () => {
         expect(tree!.root.findAll((n) => n.props?.testID === 'ctx')).toHaveLength(1);
     });
 
+    it('renders a host trailing action even when the strip has no other status content', () => {
+        act(() => {
+            tree = create(
+                <SessionInstrumentStrip
+                    statusTrailingActions={React.createElement('HostStatusAction', { testID: 'host-status-action' })}
+                />,
+            );
+        });
+
+        expect(tree!.root.findAll((n) => n.props?.testID === 'host-status-action')).toHaveLength(1);
+    });
+
     it('re-renders on usage ticks via its OWN store subscription (no parent props involved)', () => {
         // The real F-UI-11 ship-gate proof (usage tick does NOT re-render the REAL
         // AgentInput) lives in AgentInput.instrumentStripPerf.test.tsx. This case

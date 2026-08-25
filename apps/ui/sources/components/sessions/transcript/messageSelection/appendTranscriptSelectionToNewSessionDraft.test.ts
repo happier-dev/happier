@@ -1,72 +1,51 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+vi.mock('@/components/sessions/composer/newSessionDraftRepositoryAdapter', () => ({
+    writeNewSessionDraftToRepository: vi.fn(),
+}));
 
 import { appendTranscriptSelectionToNewSessionDraft } from './appendTranscriptSelectionToNewSessionDraft';
 
-function createDraft(overrides: Partial<NewSessionDraft> = {}): NewSessionDraft {
-    return {
-        input: 'Existing draft',
-        selectedMachineId: 'machine-a',
-        selectedPath: '/repo',
-        entryIntent: 'automation',
-        selectedProfileId: 'profile-a',
-        selectedSecretId: 'secret-a',
-        agentType: 'claude',
-        permissionMode: 'default',
-        modelMode: 'default',
-        acpSessionModeId: null,
-        updatedAt: 1,
-        ...overrides,
-    };
-}
-
 describe('appendTranscriptSelectionToNewSessionDraft', () => {
-    it('appends the transcript prompt to an existing scoped new-session draft without losing selections', () => {
+    it('creates a fresh exact repository draft targeting the source server', () => {
+        const writeDraft = vi.fn();
         const scope = { serverId: 'server-a', accountId: 'account-a' };
-        const existingDraft = createDraft({ targetServerId: 'server-existing' });
-        const saveNewSessionDraft = vi.fn();
 
-        appendTranscriptSelectionToNewSessionDraft({
+        const draftId = appendTranscriptSelectionToNewSessionDraft({
             promptText: 'Forwarded transcript',
             sourceServerId: 'server-a',
             scope,
-            nowMs: () => 123,
-            loadNewSessionDraft: vi.fn(() => existingDraft),
-            saveNewSessionDraft,
+            nowMs: () => 456,
+            createDraftId: () => 'draft-a',
+            writeDraft,
         });
 
-        expect(saveNewSessionDraft).toHaveBeenCalledWith({
-            ...existingDraft,
-            input: 'Existing draft\n\nForwarded transcript',
-            entryIntent: 'session',
-            updatedAt: 123,
-        }, scope);
+        expect(draftId).toBe('draft-a');
+        expect(writeDraft).toHaveBeenCalledWith({
+            scope,
+            draftId: 'draft-a',
+            draft: expect.objectContaining({
+                input: 'Forwarded transcript',
+                targetServerId: 'server-a',
+                entryIntent: 'session',
+            }),
+        });
     });
 
-    it('creates a session draft targeting the source server when no draft exists', () => {
-        const saveNewSessionDraft = vi.fn();
-
-        appendTranscriptSelectionToNewSessionDraft({
+    it('does not create a draft without account scope or meaningful text', () => {
+        const writeDraft = vi.fn();
+        expect(appendTranscriptSelectionToNewSessionDraft({
+            promptText: ' ',
+            sourceServerId: 'server-a',
+            scope: { serverId: 'server-a', accountId: 'account-a' },
+            writeDraft,
+        })).toBeNull();
+        expect(appendTranscriptSelectionToNewSessionDraft({
             promptText: 'Forwarded transcript',
             sourceServerId: 'server-a',
             scope: null,
-            nowMs: () => 456,
-            loadNewSessionDraft: vi.fn(() => null),
-            saveNewSessionDraft,
-        });
-
-        expect(saveNewSessionDraft).toHaveBeenCalledWith(expect.objectContaining({
-            input: 'Forwarded transcript',
-            selectedMachineId: null,
-            selectedPath: null,
-            entryIntent: 'session',
-            agentType: 'claude',
-            permissionMode: 'default',
-            modelMode: 'default',
-            acpSessionModeId: null,
-            targetServerId: 'server-a',
-            updatedAt: 456,
-        }), null);
+            writeDraft,
+        })).toBeNull();
+        expect(writeDraft).not.toHaveBeenCalled();
     });
 });

@@ -259,6 +259,7 @@ describe('NewSessionWizard agent input chips', () => {
 
         const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
         expect(props.panelMaxHeightMode).toBe('host-constrained');
+        expect(props.showStatusPermissionMode).toBe(false);
     });
 
     it('provides a screen-local popover boundary for chip popovers (portal scope comes from the /new screen)', async () => {

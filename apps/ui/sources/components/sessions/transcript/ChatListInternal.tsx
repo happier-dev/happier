@@ -3,7 +3,7 @@ import {
     getStorage,
     useSetting,
 } from '@/sync/domains/state/storage';
-import { Dimensions, Platform, View } from 'react-native';
+import { Dimensions, findNodeHandle, Platform, View } from 'react-native';
 import { useCallback } from 'react';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { sync, type SessionViewportAnchorSnapshot } from '@/sync/sync';
@@ -178,6 +178,8 @@ import {
 } from '@/components/sessions/transcript/viewport/lifecycle/transcriptSameSessionHandoff';
 import { useTranscriptScrollObservationHost } from '@/components/sessions/transcript/viewport/lifecycle/host/useTranscriptScrollObservationHost';
 import { useTranscriptJumpHost } from '@/components/sessions/transcript/viewport/jump/host/useTranscriptJumpHost';
+import { focusRegisteredWebTranscriptKeyboardViewport } from '@/components/sessions/transcript/viewport/lifecycle/webTranscriptKeyboardOwner';
+import { focusNativeAccessibilityTarget } from '@/keyboard/focusReturn';
 import {
     runTranscriptPrependOlderLoad,
     type TranscriptPrependOlderLoadOptions,
@@ -392,6 +394,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     const chatListReactId = React.useId();
     const chatListNativeId = React.useMemo(() => buildChatListNativeId(props.sessionId, chatListReactId), [props.sessionId, chatListReactId]);
     const webScrollContainerRef = React.useRef<HTMLElement | null>(null);
+    const transcriptViewportFocusRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const transcriptNavigationRuntimeAnchorsRef = React.useRef<readonly TranscriptNavigationRuntimeAnchor[]>([]);
     // Forward handle to the jump host's single navigation-visibility publication
     // owner: the telemetry host mounts first and only ever TRIGGERS a re-derive.
@@ -1486,6 +1489,19 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
             listRef.current?.armVisibleAnchorHold?.();
         }
     }, []);
+    const returnFocusToTranscriptViewport = React.useCallback(() => {
+        if (Platform.OS === 'web') {
+            const scroller = resolveWebScrollMetrics()?.element ?? null;
+            if (scroller && typeof document !== 'undefined') {
+                focusRegisteredWebTranscriptKeyboardViewport({ document, scroller });
+            }
+            return;
+        }
+        const nativeTarget = findNodeHandle(transcriptViewportFocusRef.current);
+        if (typeof nativeTarget === 'number') {
+            focusNativeAccessibilityTarget(nativeTarget);
+        }
+    }, [resolveWebScrollMetrics]);
     const itemRenderer = useTranscriptItemRenderer({
         buildRowShellSignature,
         expandedToolCallsAnchorMessageIds,
@@ -1500,6 +1516,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         props,
         resolveKindForMessageId,
         resolveThinkingExpanded,
+        returnFocusToTranscriptViewport,
         resolveToolCallMessagesForIds,
         setThinkingExpanded,
         setToolCallsGroupExpanded,
@@ -1839,6 +1856,13 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         return content > layout + 16;
     }, [listContentHeight, listLayoutHeight, resolveWebScrollMetrics]);
     useCommittedTranscriptRef(isScrollableRef, isScrollable);
+    // Initial fill has already advanced the sole older cursor and reported that more rows
+    // exist, but a short viewport cannot produce the threshold observation that normally arms
+    // pagination. Keep the reader action in the existing pager rather than adding another
+    // cursor, retry path, or fill loop here.
+    const canContinueOlderPagination = hasMoreOlder === true
+        && olderPagination.hasMore
+        && !isScrollable();
     const edgeReachedThresholdRatio = React.useMemo(() => {
         if (!Number.isFinite(listLayoutHeight) || listLayoutHeight <= 0) {
             return TRANSCRIPT_EDGE_PREFETCH_FALLBACK_VIEWPORT_RATIO;
@@ -1883,7 +1907,9 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         mainTranscriptListShellFrame,
         olderPaginationIsLoadingOlder: olderPagination.isLoadingOlder,
         olderPaginationLoadFailed: olderPagination.loadFailed,
+        olderPaginationCanContinue: canContinueOlderPagination,
         onRetryOlderPagination: olderPagination.retryLoad,
+        onContinueOlderPagination: olderPagination.continueOlderLoad,
         onRequestSwitchToRemote: props.onRequestSwitchToRemote,
         renderTranscriptItemAtIndex,
         sessionId: props.sessionId,
@@ -2030,6 +2056,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         <TranscriptMotionProvider sessionKey={props.sessionId} config={motionConfig}>
             <InitialPresentationReadinessProvider value={initialRichContentPresentationController.boundary}>
               <View
+                ref={transcriptViewportFocusRef}
                 style={{ flex: 1 }}
                 {...webViewInteractionProps}
               >

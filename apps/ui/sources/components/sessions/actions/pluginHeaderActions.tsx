@@ -26,12 +26,13 @@ import type {
     PluginSurfaceOpenOutcome,
 } from '@/components/plugins/surfaces/openPluginSurface';
 import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
-import type {
-    PluginUiProjectionModel,
-    PluginUiSessionHeaderActionProjection,
+import {
+    createPluginUiProjectedActionResolver,
+    isPluginProjectedActionExecutable,
+    type PluginUiProjectionModel,
+    type PluginUiSessionHeaderActionProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
-import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -165,11 +166,13 @@ export function resolvePluginSessionHeaderActionPresentations(params: Readonly<{
         .sort((left, right) => comparePluginContributionOrder(left.action, right.action))
         .map(({ action, policy }): PluginSessionHeaderActionPresentation => {
             const title = readTitle(action);
-            const actionTarget = action.action.kind === 'executeAction'
-                ? resolveContributedAction(action.action.action)
+            const actionTarget = action.command.kind === 'executeAction'
+                ? resolveContributedAction(action.command.action)
                 : null;
-            const actionEnabled = action.action.kind === 'executeAction'
-                ? actionTarget?.execution.target === 'client'
+            const actionEnabled = action.command.kind === 'executeAction'
+                ? !isPluginProjectedActionExecutable(actionTarget)
+                    ? false
+                    : actionTarget.execution.target === 'client'
                     ? projectionCurrent
                         && params.scopedLaunchFacts?.generation !== null
                         && params.scopedLaunchFacts?.generation !== undefined
@@ -271,7 +274,7 @@ export async function dispatchPluginSessionHeaderAction(params: Readonly<{
         return null;
     }
 
-    const semanticAction = action.action;
+    const semanticAction = action.command;
     if (semanticAction.kind === 'openSurface') {
         if (!params.openSurface) {
             return { ok: false, code: 'unavailable', reason: 'plugin_ui_surface_open_unavailable' };
@@ -290,6 +293,9 @@ export async function dispatchPluginSessionHeaderAction(params: Readonly<{
     );
     const resolveContributedAction = createPluginUiProjectedActionResolver(projection.actionsById);
     const projectedAction = resolveContributedAction(semanticAction.action);
+    if (!isPluginProjectedActionExecutable(projectedAction)) {
+        return { ok: false, code: 'unavailable', reason: 'plugin_ui_action_unavailable' };
+    }
     const scopedMachineId = scopedAuthority?.machineId;
     const scopedGeneration = scopedAuthority?.generation;
     const clientProjectionGeneration = isCurrentSessionHeaderActionProjection(
@@ -315,14 +321,13 @@ export async function dispatchPluginSessionHeaderAction(params: Readonly<{
                 invocationId: `ui-action:${clientProjectionGeneration}`,
             },
             isCurrent,
+            pluginUiProjection: projection,
         })
         : undefined;
     const launched = await launchPluginSurfaceAction({
         callerPluginId: action.pluginId,
         action: semanticAction.action,
-        // `null` is the RPC owner's canonical no-input sentinel. The compiled
-        // action itself retains absence so `openSurface` can distinguish it.
-        input: semanticAction.input ?? null,
+        ...(semanticAction.input === undefined ? {} : { input: semanticAction.input }),
         resolveContributedAction,
         ...(projectedAction?.execution.target === 'daemon'
             ? {

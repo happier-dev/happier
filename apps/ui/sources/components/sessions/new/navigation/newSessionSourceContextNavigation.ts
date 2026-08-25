@@ -3,6 +3,7 @@ import type { SessionForkPoint } from '@happier-dev/protocol';
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import type { ExistingSessionAuthoringSnapshotSession } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
+import { resolveNewSessionDraftRouteIdentity } from './newSessionDraftRouteIdentity';
 
 export type NewSessionSourceContextNavigation = Readonly<{
     pathname: '/new';
@@ -26,6 +27,7 @@ export function buildNewSessionSourceContextNavigation(params: Readonly<{
     machineId: string | null;
     /** Restored user text when the fork point is an editable user message. */
     restoredDraftText?: string | null;
+    createDraftId?: () => string;
 }>): NewSessionSourceContextNavigation {
     const seed = buildNewSessionTempDataFromSessionConfiguration({
         session: params.session,
@@ -56,6 +58,10 @@ export function buildNewSessionSourceContextNavigation(params: Readonly<{
         pathname: '/new',
         params: {
             dataId,
+            draftId: resolveNewSessionDraftRouteIdentity({
+                routeDraftId: undefined,
+                createDraftId: params.createDraftId,
+            }).draftId,
             ...(machineId ? { machineId } : {}),
             ...(directory ? { directory } : {}),
             ...(serverId ? { spawnServerId: serverId } : {}),

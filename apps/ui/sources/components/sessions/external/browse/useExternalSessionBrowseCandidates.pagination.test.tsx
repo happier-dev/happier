@@ -849,13 +849,17 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
         expect(candidatesListSpy).toHaveBeenCalledTimes(2);
     });
 
-    it('cancels cold-index continuation without exposing partial candidates and allows retry', async () => {
+    it('cancels cold-index continuation while retaining served current-generation candidates as stopped and allows retry', async () => {
         const nextChunk = createDeferred<ReturnType<typeof preparationPage>>();
         const observedSignals: AbortSignal[] = [];
         candidatesListSpy
             .mockImplementationOnce((_request, opts: Readonly<{ signal?: AbortSignal }>) => {
                 if (opts.signal) observedSignals.push(opts.signal);
-                return Promise.resolve(preparationPage(50, 100));
+                return Promise.resolve(preparationPage(50, 100, [{
+                    remoteSessionId: 'served-before-cancel',
+                    title: 'Served before cancel',
+                    updatedAtMs: 3,
+                }]));
             })
             .mockImplementationOnce((_request, opts: Readonly<{ signal?: AbortSignal }>) => {
                 if (opts.signal) observedSignals.push(opts.signal);
@@ -868,7 +872,8 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
         const hook = await renderHook(() => useExternalSessionBrowseCandidates(params));
 
         expect(hook.getCurrent()).toMatchObject({
-            candidates: [],
+            candidates: [expect.objectContaining({ remoteSessionId: 'served-before-cancel' })],
+            candidatesAuthoritative: true,
             loading: true,
             preparation: {
                 kind: 'building_candidate_index',
@@ -883,7 +888,9 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
 
         expect(observedSignals.every((signal) => signal.aborted)).toBe(true);
         expect(hook.getCurrent()).toMatchObject({
-            candidates: [],
+            candidates: [expect.objectContaining({ remoteSessionId: 'served-before-cancel' })],
+            candidatesAuthoritative: true,
+            preparationStopped: true,
             loading: false,
             preparation: null,
             error: 'externalSessions.browseIndexingCancelled',
@@ -893,7 +900,9 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
         nextChunk.resolve(preparationPage(100, 100));
         await flushHookEffects();
         expect(candidatesListSpy).toHaveBeenCalledTimes(2);
-        expect(hook.getCurrent().candidates).toEqual([]);
+        expect(hook.getCurrent().candidates).toEqual([
+            expect.objectContaining({ remoteSessionId: 'served-before-cancel' }),
+        ]);
 
         await act(async () => {
             await hook.getCurrent().reload();
@@ -1062,6 +1071,34 @@ describe('useExternalSessionBrowseCandidates pagination', () => {
             loading: false,
             searchIncomplete: false,
         });
+    });
+
+    it('keeps the rows a full-search index already served when its continuation fails', async () => {
+        candidatesListSpy
+            .mockResolvedValueOnce({
+                ...page([{ remoteSessionId: 'fast-hit', title: 'Fast hit', updatedAtMs: 5 }], null),
+                searchIncomplete: true,
+            })
+            .mockResolvedValueOnce(preparationPage(40, 100, [
+                { remoteSessionId: 'served-by-full-search', updatedAtMs: 4 },
+            ]))
+            .mockRejectedValueOnce(new Error('full search continuation failed'));
+        const { useExternalSessionBrowseCandidates } = await import('./useExternalSessionBrowseCandidates');
+        const hook = await renderHook(() => useExternalSessionBrowseCandidates({
+            ...params,
+            searchTerm: 'deep result',
+        }));
+
+        expect(candidatesListSpy).toHaveBeenCalledTimes(3);
+        expect(hook.getCurrent()).toMatchObject({
+            candidates: [expect.objectContaining({ remoteSessionId: 'served-by-full-search' })],
+            candidatesAuthoritative: true,
+            preparationStopped: true,
+            preparation: null,
+            loading: false,
+            searchAugmenting: false,
+        });
+        expect(hook.getCurrent().error).not.toBeNull();
     });
 
     it('bounds automatic empty full-search continuation at twenty pages', async () => {

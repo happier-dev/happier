@@ -14,11 +14,6 @@ import {
     useLocalServiceInventoryStateController,
 } from '@/sync/domains/local/services/inventory/useLocalServiceInventoryState';
 import type { LocalServiceInventoryState } from '@/sync/domains/local/services/inventory/store';
-import type { ManagedLocalServicesState } from '@/sync/domains/local/services/managed/store';
-import {
-    type LocalServiceManagedSnapshotClient,
-    useManagedLocalServicesStateController,
-} from '@/sync/domains/local/services/managed/useManagedLocalServicesState';
 import type { LocalServicePublicPreviewState } from '@/sync/domains/local/services/publicPreview/store';
 import {
     type LocalServicePublicPreviewStatusClient,
@@ -34,11 +29,12 @@ import {
     useDetectedLocalServiceForgetAction,
     useDetectedLocalServiceTerminateAction,
     useLocalServiceCopyUrlAction,
-    useManagedLocalServiceRestartAction,
-    useManagedLocalServiceStopAction,
 } from './lifecycleActions';
 import { useLocalServicePublicPreviewActions } from './publicPreviewActions';
-import { useLocalServicePublicPreviewFeatureEnabled } from './useLocalServicePublicPreviewFeature';
+import {
+    useLocalServiceCapabilityDisabledReasons,
+    useLocalServicePublicPreviewFeatureEnabled,
+} from './useLocalServicePublicPreviewFeature';
 
 export type LocalServicesSurfaceHostProps = Readonly<{
     machineId?: string | null;
@@ -50,8 +46,6 @@ export type LocalServicesSurfaceHostProps = Readonly<{
     scope?: 'workspace' | 'machine';
     inventoryState?: LocalServiceInventoryState;
     inventorySnapshotClient?: LocalServiceInventorySnapshotClient;
-    managedState?: ManagedLocalServicesState;
-    managedSnapshotClient?: LocalServiceManagedSnapshotClient;
     launcherState?: LocalServiceLauncherState | null;
     launcherSnapshotClient?: LocalServiceLauncherSnapshotClient;
     publicPreviewState?: LocalServicePublicPreviewState | null;
@@ -72,6 +66,9 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     const workspaceRoot = props.workspaceRoot ?? null;
     const [scope, setScope] = React.useState<'workspace' | 'machine'>(props.scope ?? 'workspace');
     const publicPreviewFeatureEnabled = useLocalServicePublicPreviewFeatureEnabled(serverId);
+    // Resolved once for the whole surface: the server names which prerequisite is unmet, and the
+    // rows render it instead of one generic sentence for eleven different causes (audit P1-3).
+    const publicPreviewCapabilityDisabledReasons = useLocalServiceCapabilityDisabledReasons(serverId);
     const liveInventoryState = useLocalServiceInventoryStateController({
         machineId,
         serverId,
@@ -95,15 +92,45 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         enabled: props.publicPreviewState === undefined && publicPreviewFeatureEnabled,
         statusClient: props.publicPreviewStatusClient,
     });
-    const liveManagedState = useManagedLocalServicesStateController({
-        machineId,
-        serverId,
-        sessionId,
-        enabled: props.managedState === undefined,
-        snapshotClient: props.managedSnapshotClient,
-    });
+    // The pane's rows are built from the daemon's LAUNCHER feed, and inventory entries only enrich
+    // them — so making the inventory fresh is not enough on its own for a service started after
+    // mount to appear. The launcher feed is derived from the same inventory the daemon just
+    // rescanned, so it needs no push producer of its own: one push source (the inventory watch)
+    // drives the derived read. `generatedAt` advancing is exactly "the daemon rescanned".
+    const inventoryGeneratedAt = liveInventoryState.state.generatedAt;
+    const refreshLauncher = liveLauncherState.refresh;
+    const lastSyncedInventoryGeneratedAtRef = React.useRef<number | null>(null);
+    React.useEffect(() => {
+        if (props.inventoryState !== undefined || inventoryGeneratedAt === null) {
+            return;
+        }
+        if (lastSyncedInventoryGeneratedAtRef.current === inventoryGeneratedAt) {
+            return;
+        }
+        const isFirstObservation = lastSyncedInventoryGeneratedAtRef.current === null;
+        lastSyncedInventoryGeneratedAtRef.current = inventoryGeneratedAt;
+        // The launcher's own mount read already covers the first snapshot; only a later change
+        // needs a derived re-read.
+        if (!isFirstObservation) {
+            refreshLauncher?.();
+        }
+    }, [inventoryGeneratedAt, props.inventoryState, refreshLauncher]);
+
+    // An explicit refresh re-reads both halves directly rather than relying on the derived chain:
+    // an unchanged inventory would otherwise leave the launcher feed untouched, and a user who
+    // pressed refresh is entitled to a real re-read of what they can see.
+    const refreshInventory = liveInventoryState.refresh;
+    const onRefresh = React.useMemo(() => {
+        if (props.inventoryState !== undefined || !refreshInventory) {
+            return undefined;
+        }
+        return () => {
+            refreshInventory();
+            refreshLauncher?.();
+        };
+    }, [props.inventoryState, refreshInventory, refreshLauncher]);
+
     const inventoryState = props.inventoryState ?? liveInventoryState.state;
-    const managedState = props.managedState ?? liveManagedState.state;
     const launcherState = props.launcherState !== undefined ? props.launcherState : liveLauncherState.state;
     // Single front door (FINALIZATION-PLAN §3.1/§12.6): local-service runtime actions dispatch
     // through ActionExecutor.execute via the canonical bridge, so ActionsSettings enablement and
@@ -112,18 +139,6 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         () => props.runtimeActionExecute ?? createFrontDoorRuntimeActionExecutor(),
         [props.runtimeActionExecute],
     );
-    const onStopManagedService = useManagedLocalServiceStopAction({
-        runtimeActionExecute,
-        machineId,
-        serverId,
-        sessionId,
-    });
-    const onRestartManagedService = useManagedLocalServiceRestartAction({
-        runtimeActionExecute,
-        machineId,
-        serverId,
-        sessionId,
-    });
     const onTerminateDetectedService = useDetectedLocalServiceTerminateAction({
         runtimeActionExecute,
         machineId,
@@ -180,21 +195,19 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         <>
             <DetectedLocalServicesPane
                 inventoryState={inventoryState}
-                managedState={managedState}
                 launcherState={launcherState}
                 publicPreviewState={publicPreviewState}
                 sessionId={sessionId}
                 scope={scope}
                 onChangeScope={setScope}
-                onStopManagedService={onStopManagedService}
-                onRestartManagedService={onRestartManagedService}
                 onTerminateDetectedService={onTerminateDetectedService}
                 onForgetDetectedService={onForgetDetectedService}
                 onCopyServiceUrl={onCopyServiceUrl}
                 onStartLauncherTarget={onStartLauncherTarget}
                 onOpenServiceInBrowser={props.onOpenServiceInBrowser}
                 publicPreviewActions={publicPreviewActions}
-                onRefresh={props.inventoryState === undefined ? liveInventoryState.refresh : undefined}
+                publicPreviewCapabilityDisabledReasons={publicPreviewCapabilityDisabledReasons}
+                onRefresh={onRefresh}
                 testID={props.testID}
             />
             <PluginSurfacePlacementStack

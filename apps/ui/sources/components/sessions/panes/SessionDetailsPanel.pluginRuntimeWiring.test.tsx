@@ -86,11 +86,6 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     }),
 }));
 
-vi.mock('@/components/sessions/localServices/LocalServicePreviewFrame', () => ({
-    LocalServicePreviewFrame: (props: Readonly<Record<string, unknown>>) =>
-        React.createElement('LocalServicePreviewFrame', { ...props, testID: props.testID }),
-}));
-
 vi.mock('@/components/browser/diagnostics', () => ({
     BrowserDiagnosticsDrawer: (props: Readonly<Record<string, unknown>>) => React.createElement('BrowserDiagnosticsDrawer', {
         testID: props.testID ?? 'browser-diagnostics-drawer',

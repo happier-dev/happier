@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
+import type { FocusReturnRef } from '@/keyboard/focusReturn';
 
 import {
     hasAgentInputCollapsedOptionsPopoverContent,
@@ -15,6 +16,8 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
     blurInput: () => void;
     openCollapsedOptionsPopover: (chipKey: string) => void;
     resetCorePopovers?: () => void;
+    /** The action menu's own anchor, so a chip that opens a native dialog can return focus to it. */
+    focusReturnRef?: FocusReturnRef;
 }>): Partial<Record<AgentInputControlId, ReadonlyArray<ActionListItem>>> {
     const extraControlActions: Partial<Record<AgentInputControlId, ReadonlyArray<ActionListItem>>> = {};
 
@@ -28,6 +31,7 @@ export function buildCollapsedExtraControlActions(params: Readonly<{
                 dismiss: params.dismiss,
                 blurInput: params.blurInput,
                 openCollapsedPopover: params.openCollapsedOptionsPopover,
+                ...(params.focusReturnRef ? { focusReturnRef: params.focusReturnRef } : {}),
             });
         } else if (
             chip.collapsedOptionsPopover

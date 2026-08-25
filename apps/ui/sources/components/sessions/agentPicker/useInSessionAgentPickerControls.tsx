@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import {
     buildAcpConfigOptionOverridesV1FromConfigOptions,
+    isNativeAutomaticModelSelectionInputV1,
     ProviderConnectionIdSchema,
     type FeatureDecision,
     type SessionAgentTransitionSelectionV1,
@@ -20,16 +21,15 @@ import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 
-import {
-    clearSessionDraftValue,
-    flushSessionDraftValues,
-    readSessionDraftValue,
-    writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
 import type {
     SessionArmedAgentContinuation,
     SessionArmedAgentContinuationSubmission,
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import { SessionArmedAgentContinuationSchema } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import {
+    getSessionDraftSnapshot,
+    writeExistingSessionDraft,
+} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {
     serverAccountScopeKeySuffix,
     type ServerAccountScope,
@@ -60,7 +60,32 @@ import {
  */
 type ArmedAgentContinuation = SessionArmedAgentContinuation;
 
-const ARMED_AGENT_CONTINUATION_FIELD_ID = 'routing.agentContinuation' as const;
+function readPersistedArmedContinuation(
+    scope: ServerAccountScope | null,
+    sessionId: string,
+): ArmedAgentContinuation | undefined {
+    if (!scope) return undefined;
+    const snapshot = getSessionDraftSnapshot(scope, { kind: 'session', sessionId });
+    if (!snapshot || snapshot.document.target.kind !== 'session') return undefined;
+    const parsed = SessionArmedAgentContinuationSchema.safeParse(
+        snapshot.document.target.routing.agentContinuation.value,
+    );
+    return parsed.success ? parsed.data : undefined;
+}
+
+function writePersistedArmedContinuation(
+    scope: ServerAccountScope | null,
+    sessionId: string,
+    value: ArmedAgentContinuation | null,
+): void {
+    if (!scope) return;
+    writeExistingSessionDraft({
+        scope,
+        sessionId,
+        patch: { routing: { agentContinuation: JSON.parse(JSON.stringify(value)) } },
+        materializationIntent: 'userEdit',
+    });
+}
 
 /**
  * The lifetime of one armed choice, as a key. Formed in one place so the value
@@ -154,6 +179,19 @@ const DEFAULT_TARGET_SELECTION: SessionAgentPickerSelection = {
     configOverrides: {},
 };
 
+/**
+ * `default` is the native Agent's "no model choice" sentinel, so it can only
+ * mean Automatic when no Provider connection is bound. A Provider is allowed to
+ * serve a model literally named `default`, and the strict transition schema
+ * requires a `modelId` whenever a connection is set.
+ */
+function isNativeAutomaticSelection(selection: SessionAgentPickerSelection): boolean {
+    return isNativeAutomaticModelSelectionInputV1({
+        providerConnectionId: selection.modelSelection?.ref.providerConnectionId ?? null,
+        modelId: selection.modelId,
+    });
+}
+
 function buildTargetSelection(
     entry: ResolvedBackendCatalogEntry,
     selection: SessionAgentPickerSelection,
@@ -166,7 +204,7 @@ function buildTargetSelection(
     return {
         v: 1,
         agentId: entry.agentId,
-        ...(selection.modelId !== 'default' ? { modelId: selection.modelId } : {}),
+        ...(isNativeAutomaticSelection(selection) ? {} : { modelId: selection.modelId }),
         ...(selection.modelSelection?.ref.providerConnectionId
             ? { providerConnectionId: selection.modelSelection.ref.providerConnectionId }
             : {}),
@@ -228,11 +266,12 @@ function buildArmedContinuation(
 ): ArmedAgentContinuation {
     return {
         backendTargetKey: entry.backendTargetKey,
-        // `default` is the absence of a model choice, so there is no model to
-        // name and the composer's chip names the Agent instead.
-        modelLabel: selection.modelId !== 'default'
-            ? selection.modelLabel ?? null
-            : null,
+        // Native `default` is the absence of a model choice, so there is no model
+        // to name and the composer's chip names the Agent instead. A
+        // Provider-bound model named `default` is a real choice and keeps its label.
+        modelLabel: isNativeAutomaticSelection(selection)
+            ? null
+            : selection.modelLabel ?? null,
         intent: {
             v: 1,
             mode: 'same_session',
@@ -350,8 +389,6 @@ function resolveTargetRowUnavailableText(
     switch (eligibility.reason) {
         case 'target_no_sessions':
             return t('session.agentContinuation.unavailable.targetNoSessions', { agent: agentLabel });
-        case 'target_not_proven':
-            return t('session.agentContinuation.unavailable.targetNotProven', { agent: agentLabel });
         // Facts about this Session, decided before any target is considered.
         case 'read_only':
         case 'external_session':
@@ -395,7 +432,7 @@ export function useInSessionAgentPickerControls(
     const draftSessionId = sessionId.trim().length > 0 ? sessionId.trim() : null;
     const persistedArmedContinuation = draftSessionId === null
         ? undefined
-        : readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+        : readPersistedArmedContinuation(accountScope, draftSessionId);
     // A submitted input remains custody even after the arm that promised a
     // next-message transition loses eligibility. It remains in the one existing
     // draft record until SessionView has reconciled canonical custody.
@@ -416,18 +453,17 @@ export function useInSessionAgentPickerControls(
             return;
         }
         if (next === null) {
-            const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+            const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
             if (persisted?.submission !== undefined) {
                 setArmed(null);
                 return;
             }
             setArmed(null);
-            clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+            writePersistedArmedContinuation(accountScope, draftSessionId, null);
         } else {
             setArmed(next);
-            writeSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID, next);
+            writePersistedArmedContinuation(accountScope, draftSessionId, next);
         }
-        flushSessionDraftValues(accountScope);
     }, [accountScope, draftSessionId]);
     // Whether the composer's Agent picker is on screen. Its only job is to scope
     // the rail decision below to one open popover.
@@ -464,12 +500,12 @@ export function useInSessionAgentPickerControls(
 
     // A Session that cannot continue with any Agent asks its machine nothing, and
     // everything else the local rules already reject — a target that cannot host a
-    // Session, an unproven ACP target — is decided here for free.
+    // Session — is decided here for free.
     const sessionReason = resolveSessionAgentContinuationSessionReason(source);
     const inspectableTargetSelections = React.useMemo(() => (
         sessionReason === null && featureEnabled
             ? targetEntries
-                .filter((entry) => entry.kind === 'builtInAgent' && entry.capabilities?.session?.supported !== false)
+                .filter((entry) => entry.capabilities?.session?.supported !== false)
                 .map((entry) => targetSelectionByTargetKey.get(entry.backendTargetKey))
                 .filter((selection): selection is SessionAgentTransitionSelectionV1 => selection !== undefined)
             : []
@@ -629,10 +665,9 @@ export function useInSessionAgentPickerControls(
         if (draftSessionId === null) {
             return isSameArmedContinuationSubmission(armed?.submission, expected);
         }
-        const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+        const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
         if (!isSameArmedContinuationSubmission(persisted?.submission, expected)) return false;
-        clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
-        flushSessionDraftValues(accountScope);
+        writePersistedArmedContinuation(accountScope, draftSessionId, null);
         return true;
     }, [accountScope, armed?.submission, draftSessionId]);
 
@@ -693,28 +728,18 @@ export function useInSessionAgentPickerControls(
         if (invalidation !== null) {
             invalidatedArmRef.current = null;
             reconciledArmScopeKeyRef.current = armScopeKey;
-            const persisted = readSessionDraftValue(
-                invalidation.accountScope,
-                draftSessionId,
-                ARMED_AGENT_CONTINUATION_FIELD_ID,
-            );
+            const persisted = readPersistedArmedContinuation(invalidation.accountScope, draftSessionId);
             if (isSameArmedContinuation(persisted, invalidation.arm) && persisted?.submission === undefined) {
-                clearSessionDraftValue(
-                    invalidation.accountScope,
-                    draftSessionId,
-                    ARMED_AGENT_CONTINUATION_FIELD_ID,
-                );
-                flushSessionDraftValues(invalidation.accountScope);
+                writePersistedArmedContinuation(invalidation.accountScope, draftSessionId, null);
             }
             return;
         }
 
         if (featureDefinitelyDisabled) {
             reconciledArmScopeKeyRef.current = armScopeKey;
-            const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+            const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
             if (persisted?.submission === undefined && typeof persisted !== 'undefined') {
-                clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
-                flushSessionDraftValues(accountScope);
+                writePersistedArmedContinuation(accountScope, draftSessionId, null);
             }
             return;
         }
@@ -723,7 +748,7 @@ export function useInSessionAgentPickerControls(
         if (!featureEnabled || !railDecisionSettled || currentAgentId === null) return;
         if (armed !== null) return;
 
-        const persisted = readSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
+        const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
         if (typeof persisted === 'undefined') return;
 
         const persistedTargetSelection = projectPersistedArmSelection(persisted);
@@ -759,8 +784,7 @@ export function useInSessionAgentPickerControls(
         }
         reconciledArmScopeKeyRef.current = armScopeKey;
         if (persisted.submission === undefined) {
-            clearSessionDraftValue(accountScope, draftSessionId, ARMED_AGENT_CONTINUATION_FIELD_ID);
-            flushSessionDraftValues(accountScope);
+            writePersistedArmedContinuation(accountScope, draftSessionId, null);
         }
     }, [
         accountScope,

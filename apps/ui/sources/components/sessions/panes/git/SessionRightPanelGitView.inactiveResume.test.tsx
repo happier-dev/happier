@@ -97,6 +97,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 vi.mock('@/components/workspaces/scm/states', () => ({
+    SourceControlStaleSnapshotNotice: () => null,
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
     SourceControlSessionInactiveState: (props: any) => {

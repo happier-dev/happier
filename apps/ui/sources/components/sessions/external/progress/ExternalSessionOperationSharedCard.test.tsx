@@ -30,9 +30,27 @@ vi.mock('react-native', async () => {
     };
 });
 
+const itemFocusNodes = vi.hoisted(() => new Map<string, { focus: ReturnType<typeof vi.fn> }>());
+
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: Record<string, unknown>) =>
-        React.createElement('Item', props),
+    // Test boundary: the real Item forwards `pressableRef` to its Pressable host.
+    // Dropping it here would make every focus-restoration assertion unfalsifiable.
+    Item: ({ pressableRef, ...props }: Record<string, unknown> & {
+        pressableRef?: unknown;
+        testID?: string;
+    }) => {
+        const testID = props.testID ?? '';
+        const node = itemFocusNodes.get(testID) ?? { focus: vi.fn() };
+        itemFocusNodes.set(testID, node);
+        React.useEffect(() => {
+            if (typeof pressableRef === 'function') {
+                (pressableRef as (value: unknown) => void)(node);
+                return () => (pressableRef as (value: unknown) => void)(null);
+            }
+            return undefined;
+        });
+        return React.createElement('Item', props);
+    },
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -91,6 +109,40 @@ describe('ExternalSessionOperationSharedCard accessibility', () => {
             operationId: 'private-operation-id',
             revision: 41,
         });
+    });
+
+    it('returns focus to Dismiss when Check Again resolves the read failure', async () => {
+        accessibilityPlatform.os = 'web';
+        itemFocusNodes.clear();
+        const onCheckAgain = vi.fn();
+        const onDismiss = vi.fn();
+        const { ExternalSessionOperationSharedCard } = await import(
+            './ExternalSessionOperationSharedCard'
+        );
+        const screen = await renderScreen(
+            <ExternalSessionOperationSharedCard
+                presentation={createPresentation({ status: 'completed', phase: 'publishing' })}
+                onDismiss={onDismiss}
+                onCheckAgain={onCheckAgain}
+            />,
+        );
+        expect(screen.findByTestId('external-session-operation-action-check-again')).not.toBeNull();
+
+        await screen.pressByTestIdAsync('external-session-operation-action-check-again');
+        expect(onCheckAgain).toHaveBeenCalledTimes(1);
+
+        await screen.update(
+            <ExternalSessionOperationSharedCard
+                presentation={createPresentation({ status: 'completed', phase: 'publishing' })}
+                onDismiss={onDismiss}
+            />,
+        );
+
+        expect(screen.findByTestId('external-session-operation-action-check-again')).toBeNull();
+        expect(itemFocusNodes.get('external-session-operation-action-dismiss')?.focus)
+            .toHaveBeenCalledTimes(1);
+        expect(itemFocusNodes.get('external-session-operation-action-check-again')?.focus)
+            .not.toHaveBeenCalled();
     });
 
     it.each([

@@ -580,6 +580,50 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(template.sessionEncryptionVariant).toBeUndefined();
     });
 
+    it('preserves an authored existing-branch checkout choice in the automation template', () => {
+        const template = buildAutomationTemplateFromSessionAuthoringDraft({
+            targetType: 'new_session',
+            directory: '/tmp/project',
+            checkoutCreationDraft: {
+                kind: 'git_worktree',
+                displayName: 'feature/auth',
+                baseRef: 'main',
+                branchMode: 'existing',
+            },
+            prompt: 'Open the repository and run checks',
+            displayText: '',
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            transcriptStorage: 'persisted',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: null,
+            permissionModeUpdatedAt: null,
+            modelSelection: modelSelection('backend:codex'),
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            windowsTerminalWindowName: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            existingSessionId: null,
+            sessionEncryptionMode: null,
+            sessionEncryptionKeyBase64: null,
+            sessionEncryptionVariant: null,
+        } satisfies SessionAuthoringDraft);
+
+        expect(template.checkoutCreationDraft).toEqual({
+            kind: 'git_worktree',
+            displayName: 'feature/auth',
+            baseRef: 'main',
+            branchMode: 'existing',
+        });
+    });
+
     it('builds a new-session authoring draft and launch payload from the shared adapter layer', () => {
         const draft = buildNewSessionAuthoringDraft({
             directory: '/tmp/project',

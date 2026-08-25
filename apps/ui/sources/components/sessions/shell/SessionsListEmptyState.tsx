@@ -16,6 +16,8 @@ import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineA
 
 import type { SessionGettingStartedDecisionKind } from '@/components/sessions/guidance/gettingStartedModel';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 
 type SessionsListEmptyStateKind = Extract<
     SessionGettingStartedDecisionKind,
@@ -37,12 +39,14 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
 
     const handleStartSession = React.useCallback((machineId: string) => {
         const serverId = String(activeServer.serverId ?? '').trim();
+        const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         router.push({
             pathname: '/new',
-            params: {
+            params: buildNewSessionLaunchRouteParams({
+                draftId,
                 machineId,
-                ...(serverId ? { spawnServerId: serverId } : {}),
-            },
+                targetServerId: serverId,
+            }),
         } as never);
     }, [activeServer.serverId, router]);
 

@@ -183,6 +183,37 @@ function RecoveredHistoryIndicator(props: Readonly<{ message: Message }>) {
   );
 }
 
+/**
+ * The descriptive byline for one durable plugin-mediated message.
+ *
+ * `SessionMessageProvenanceV1` already carries the external sender and the
+ * content provenance the mediating plugin stamped at `session.send`, so this
+ * reads them rather than adding a plugin-specific byline: every plugin that
+ * mediates an external conversation gets the same descriptive line.
+ *
+ * `forwarded` is not decoration. It changes WHO authored the message, so the
+ * plain "From <sender>" wording would be a false statement about authorship.
+ */
+function readPluginMessageAttributionLabel(
+  provenance: Readonly<{
+    pluginId: string;
+    externalActor?: Readonly<{ kind: 'human' | 'bot'; displayNameSnapshot?: string }>;
+    contentProvenance?: 'original' | 'forwarded' | 'viaBot';
+  }>,
+): string {
+  const externalActor = provenance.externalActor;
+  if (!externalActor) {
+    return t('message.pluginAttribution', { pluginId: provenance.pluginId });
+  }
+  const sender = externalActor.displayNameSnapshot
+    ?? (externalActor.kind === 'bot'
+      ? t('message.pluginAttributionExternalBot')
+      : t('message.pluginAttributionExternalSender'));
+  return provenance.contentProvenance === 'forwarded'
+    ? t('message.pluginAttributionExternalForwarded', { sender, pluginId: provenance.pluginId })
+    : t('message.pluginAttributionExternal', { sender, pluginId: provenance.pluginId });
+}
+
 function PluginMessageAttribution(props: Readonly<{ message: Message }>) {
   const pluginProvenance = React.useMemo(() => {
     if (props.message.kind !== 'user-text') return null;
@@ -191,7 +222,7 @@ function PluginMessageAttribution(props: Readonly<{ message: Message }>) {
   }, [props.message]);
   if (!pluginProvenance) return null;
 
-  const label = t('message.pluginAttribution', { pluginId: pluginProvenance.pluginId });
+  const label = readPluginMessageAttributionLabel(pluginProvenance);
   return (
     <Text
       testID={`transcript-plugin-attribution:${props.message.id}`}

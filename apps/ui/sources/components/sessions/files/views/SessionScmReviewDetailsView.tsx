@@ -21,7 +21,7 @@ import { useScmDiffCacheLimits } from '@/scm/diffCache/useScmDiffCacheLimits';
 import { useScmAdaptivePolling } from '@/scm/refresh/useScmAdaptivePolling';
 import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
+import { NotSourceControlRepositoryState, SourceControlStaleSnapshotNotice, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { t } from '@/text';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
 import { useDerivedSessionChangeSet } from '@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet';
@@ -401,8 +401,29 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         );
     }
 
+    // `F-SCM-3`: the terminal `SourceControlUnavailableState` below was the only place this view
+    // reported a snapshot error, and `scmStatusSync` stores an error WITHOUT clearing the snapshot —
+    // so once a review had been cached, every later refresh failure was invisible and stale content
+    // read as current. Worse here than on the git panes: the `isRepo === false` branch returns
+    // BEFORE that guard, so a cached "not under source control" suppressed it twice over. From here
+    // on the content is real but possibly stale, so the failure travels WITH it — including into
+    // that branch. Mounted unconditionally: the notice owns the "is this stale?" decision and
+    // renders nothing when there is no error.
+    const staleSnapshotNotice = (
+        <SourceControlStaleSnapshotNotice
+            testID="session-scm-review-stale"
+            error={snapshotError}
+            onRetry={() => void scmStatusSync.invalidateFromUser(props.sessionId)}
+        />
+    );
+
     if (effectiveSnapshot && effectiveSnapshot.repo.isRepo === false) {
-        return <NotSourceControlRepositoryState />;
+        return (
+            <View style={{ flex: 1 }}>
+                {staleSnapshotNotice}
+                <NotSourceControlRepositoryState />
+            </View>
+        );
     }
 
     if (!effectiveSnapshot && snapshotError) {
@@ -416,6 +437,7 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
 
     return (
         <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+            {staleSnapshotNotice}
             {changed.showTurnViewToggle
             || changed.showTurnAgentReportedViewToggle
             || changed.showTurnCheckpointViewToggle

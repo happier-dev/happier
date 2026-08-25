@@ -2,7 +2,10 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { registerWebTranscriptKeyboardOwner } from './webTranscriptKeyboardOwner';
+import {
+    focusRegisteredWebTranscriptKeyboardViewport,
+    registerWebTranscriptKeyboardOwner,
+} from './webTranscriptKeyboardOwner';
 
 describe('webTranscriptKeyboardOwner', () => {
     afterEach(() => {
@@ -40,6 +43,27 @@ describe('webTranscriptKeyboardOwner', () => {
         }));
 
         expect(onViewportKeyboardInput).toHaveBeenCalledWith(expectedDirection);
+        unregister();
+    });
+
+    it('returns focus only to the exact mounted, registered transcript scroller', () => {
+        const scroller = document.createElement('div');
+        const unrelatedScroller = document.createElement('div');
+        document.body.append(scroller, unrelatedScroller);
+        const unregister = registerWebTranscriptKeyboardOwner({
+            document,
+            onViewportKeyboardInput: vi.fn(),
+            resolveScroller: () => scroller,
+        });
+
+        expect(focusRegisteredWebTranscriptKeyboardViewport({
+            document,
+            scroller: unrelatedScroller,
+        })).toBe(false);
+        expect(focusRegisteredWebTranscriptKeyboardViewport({ document, scroller })).toBe(true);
+        expect(document.activeElement).toBe(scroller);
+        expect(scroller.getAttribute('tabindex')).toBe('-1');
+
         unregister();
     });
 });

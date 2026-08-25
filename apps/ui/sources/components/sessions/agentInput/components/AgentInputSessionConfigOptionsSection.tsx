@@ -93,6 +93,7 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                                 </View>
                                 <View style={styles.switchWrap}>
                                     <Switch
+                                        accessibilityLabel={option.name}
                                         value={boolValue}
                                         disabled={isDisabled}
                                         onValueChange={(next) => props.onSelectValue?.(

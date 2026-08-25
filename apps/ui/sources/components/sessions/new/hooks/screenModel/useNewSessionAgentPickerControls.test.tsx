@@ -21,13 +21,14 @@ const modalMockState = vi.hoisted(() => ({
     alert: vi.fn(),
 }));
 
+/**
+ * `@/text` deliberately keeps the canonical testkit translation mock. This file
+ * imports the hook eagerly, so `@/text` resolves before the installer body runs
+ * and any per-file `text` override here would be silently inert; the shared
+ * default is what production actually reads. Its convention serializes a
+ * parameterized key as `key(param=value)` — see sources/dev/testkit/runtime/textRuntime.ts.
+ */
 installNewSessionScreenModelCommonModuleMocks({
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string) => key,
-        });
-    },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         const modalMock = createModalModuleMock();
@@ -540,10 +541,7 @@ describe('useNewSessionAgentPickerControls', () => {
                 id: codexEntry.backendTargetKey,
                 disabled: true,
                 muted: true,
-                subtitle: {
-                    key: 'newSession.aiBackendCliNotDetectedOnMachine',
-                    params: { cli: 'agentInput.agent.codex' },
-                },
+                subtitle: 'newSession.aiBackendCliNotDetectedOnMachine(cli=agentInput.agent.codex)',
             },
         ]);
 

@@ -2,12 +2,10 @@ import type { ComposerAttachmentAuthorValueV1 } from '@happier-dev/protocol';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
-import {
-    loadNewSessionDraft,
-    saveNewSessionDraft,
-    type NewSessionDraft,
-} from '@/sync/domains/state/persistence';
+import { writeNewSessionDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 
 /**
  * The ONE way anything outside the New Session screen puts something into that
@@ -164,16 +162,20 @@ export function seedNewSessionDraftV1(input: Readonly<{
     seed: NewSessionDraftSeedV1;
     scope?: ServerAccountScope | null;
     nowMs?: () => number;
-    readDraft?: typeof loadNewSessionDraft;
-    writeDraft?: typeof saveNewSessionDraft;
-}>): boolean {
-    if (!newSessionDraftSeedDeclaresChangeV1(input.seed) || !input.scope) return false;
+    createDraftId?: () => string;
+    writeDraft?: typeof writeNewSessionDraftToRepository;
+}>): string | null {
+    if (!newSessionDraftSeedDeclaresChangeV1(input.seed) || !input.scope) return null;
     const scope = input.scope;
-    const existingDraft = (input.readDraft ?? loadNewSessionDraft)(scope);
-    (input.writeDraft ?? saveNewSessionDraft)(applyNewSessionDraftSeedV1({
+    const draftId = (input.createDraftId ?? randomUUID)();
+    (input.writeDraft ?? writeNewSessionDraftToRepository)({
+        scope,
+        draftId,
+        draft: applyNewSessionDraftSeedV1({
         seed: input.seed,
-        existingDraft,
+        existingDraft: null,
         updatedAt: input.nowMs?.() ?? Date.now(),
-    }), scope);
-    return true;
+        }),
+    });
+    return draftId;
 }

@@ -13,11 +13,13 @@ describe('buildNewSessionLaunchRouteParams', () => {
         expect(
             buildNewSessionLaunchRouteParams({
                 directory: '/repo',
+                draftId: 'draft-id',
                 machineId: 'machine-1',
                 targetServerId: 'server-2',
                 worktree: 'new',
             }),
         ).toEqual({
+            draftId: 'draft-id',
             machineId: 'machine-1',
             directory: '/repo',
             worktree: 'new',
@@ -29,11 +31,13 @@ describe('buildNewSessionLaunchRouteParams', () => {
         expect(
             buildNewSessionLaunchRouteParams({
                 directory: '/repo',
+                draftId: 'draft-id',
                 machineId: null,
                 targetServerId: '',
             }),
         ).toEqual({
             directory: '/repo',
+            draftId: 'draft-id',
         });
     });
 });
@@ -43,11 +47,13 @@ describe('buildMachinePickerRouteParams', () => {
         expect(
             buildMachinePickerRouteParams({
                 dataId: 'draft-1',
+                draftId: 'draft-id',
                 selectedMachineId: 'machine-1',
                 targetServerId: 'server-2',
             }),
         ).toEqual({
             dataId: 'draft-1',
+            draftId: 'draft-id',
             selectedId: 'machine-1',
             spawnServerId: 'server-2',
         });
@@ -69,10 +75,12 @@ describe('buildServerPickerRouteParams', () => {
         expect(
             buildServerPickerRouteParams({
                 dataId: 'draft-1',
+                draftId: 'draft-id',
                 targetServerId: 'server-2',
             }),
         ).toEqual({
             dataId: 'draft-1',
+            draftId: 'draft-id',
             selectedId: 'server-2',
             spawnServerId: 'server-2',
         });
@@ -93,12 +101,14 @@ describe('buildProfilePickerRouteParams', () => {
         expect(
             buildProfilePickerRouteParams({
                 dataId: 'draft-1',
+                draftId: 'draft-id',
                 selectedProfileId: 'profile-1',
                 selectedMachineId: 'machine-1',
                 targetServerId: 'server-2',
             }),
         ).toEqual({
             dataId: 'draft-1',
+            draftId: 'draft-id',
             selectedId: 'profile-1',
             machineId: 'machine-1',
             spawnServerId: 'server-2',
@@ -122,11 +132,13 @@ describe('buildSecretRequirementRouteParams', () => {
         expect(
             buildSecretRequirementRouteParams({
                 dataId: 'draft-1',
+                draftId: 'draft-id',
                 selectedMachineId: 'machine-1',
                 targetServerId: 'server-2',
             }),
         ).toEqual({
             dataId: 'draft-1',
+            draftId: 'draft-id',
             machineId: 'machine-1',
             spawnServerId: 'server-2',
         });

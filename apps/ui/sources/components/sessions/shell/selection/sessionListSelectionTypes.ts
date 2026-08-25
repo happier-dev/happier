@@ -1,49 +1,27 @@
-export type SessionListSelectionKey = string;
+import type {
+    HappierListMultiSelectionActions,
+    HappierListMultiSelectionKey,
+    HappierListMultiSelectionSnapshot,
+    HappierListMultiSelectionState,
+    HappierListMultiSelectionStore,
+} from '@happier-dev/plugin-ui/presentation';
 
-export type SessionListSelectionSnapshot = Readonly<{
-    isSelectionMode: boolean;
-    selectedKeys: ReadonlySet<SessionListSelectionKey>;
-    anchorKey: SessionListSelectionKey | null;
-    focusedKey: SessionListSelectionKey | null;
-    visibleOrderedKeys: readonly SessionListSelectionKey[];
-    eligibleKeys: ReadonlySet<SessionListSelectionKey>;
-    scopeKey: string;
-    version: number;
-    count: number;
-}>;
+/**
+ * The sessions list's names for the ONE keyed multi-selection contract.
+ *
+ * The state machine, its snapshot shape and its subscribable store live at
+ * `@happier-dev/plugin-ui`'s collection owner, where the shared `List` and every
+ * plugin list bind the same rules. These aliases keep the sessions list's local
+ * vocabulary — `SessionListSelection*` reads better at its call sites than the
+ * package-qualified name — without giving the concept a second definition to
+ * drift from.
+ */
+export type SessionListSelectionKey = HappierListMultiSelectionKey;
 
-export type SessionListSelectionState = Readonly<{
-    isSelectionMode: boolean;
-    selectedKeys: ReadonlySet<SessionListSelectionKey>;
-    anchorKey: SessionListSelectionKey | null;
-    focusedKey: SessionListSelectionKey | null;
-    visibleOrderedKeys: readonly SessionListSelectionKey[];
-    eligibleKeys: ReadonlySet<SessionListSelectionKey>;
-    scopeKey: string;
-    version: number;
-}>;
+export type SessionListSelectionSnapshot = HappierListMultiSelectionSnapshot;
 
-export type SessionListSelectionActions = Readonly<{
-    enter: (preselectKey?: SessionListSelectionKey | null) => void;
-    exit: () => void;
-    clear: () => void;
-    replaceWith: (key: SessionListSelectionKey) => void;
-    toggle: (key: SessionListSelectionKey) => void;
-    selectRange: (targetKey: SessionListSelectionKey) => void;
-    addRange: (targetKey: SessionListSelectionKey) => void;
-    selectAllVisible: () => void;
-    setSelectedKeys: (keys: readonly SessionListSelectionKey[]) => void;
-    setFocusedKey: (key: SessionListSelectionKey | null) => void;
-    isSelected: (key: SessionListSelectionKey) => boolean;
-}>;
+export type SessionListSelectionState = HappierListMultiSelectionState;
 
-export type SessionListSelectionStore = SessionListSelectionActions & Readonly<{
-    getSnapshot: () => SessionListSelectionSnapshot;
-    getRowSnapshot: (key: SessionListSelectionKey) => string;
-    subscribe: (listener: () => void) => () => void;
-    updateScope: (params: Readonly<{
-        scopeKey: string;
-        visibleOrderedKeys: readonly SessionListSelectionKey[];
-        eligibleKeys?: readonly SessionListSelectionKey[] | ReadonlySet<SessionListSelectionKey> | null;
-    }>) => void;
-}>;
+export type SessionListSelectionActions = HappierListMultiSelectionActions;
+
+export type SessionListSelectionStore = HappierListMultiSelectionStore;

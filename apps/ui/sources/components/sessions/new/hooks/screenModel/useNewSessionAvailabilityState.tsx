@@ -1,7 +1,6 @@
 import * as React from 'react';
 
 import {
-    buildResumeCapabilityOptionsFromUiState,
     canSelectAgentWithoutDetectedCli,
     getAgentCore,
     getAgentBehavior,
@@ -25,6 +24,7 @@ import {
     isCliWarningDismissed,
     type DismissedCliWarnings,
 } from '@/agents/runtime/cliWarnings';
+import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { canAgentResume } from '@/agents/runtime/resumeCapabilities';
 import {
     isAgentSelectableForNewSession,
@@ -67,6 +67,11 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     settings: Settings;
     /** Explicit bundled behavior backing for static New Session controls. */
     staticAgentId?: AgentId | null;
+    /**
+     * The selected target's operational Agent identity, which an installed
+     * (non-bundled) Agent has even though it has no bundled catalog backing.
+     */
+    runtimeCarrierAgentId?: string | null;
     /** @deprecated Direct callers without a projected backend entry are bundled-only. */
     agentType?: AgentId;
     resumeSessionId: string | null;
@@ -125,16 +130,23 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         }));
     }, [params.selectedMachineId, params.settings]);
 
-    const resumeCapabilityOptionsResolved = React.useMemo(() => {
-        return buildResumeCapabilityOptionsFromUiState({
-            settings: params.settings,
-            results: selectedMachineCapabilitiesSnapshot?.response.results,
-        });
-    }, [params.settings, selectedMachineCapabilitiesSnapshot]);
+    // The Agent this picker describes is the OPERATIONAL runtime carrier, not
+    // the bundled catalog id. `staticAgentId` is null for every installed
+    // Agent, and `canAgentResume`'s non-bundled branch additionally needs the
+    // current projection's Agent capabilities — so the picker could never
+    // appear for one. `useResumeCapabilityOptions` is the single owner of that
+    // capability read; the bundled fallback order is preserved exactly.
+    const resumeAgentId = staticAgentId ?? params.runtimeCarrierAgentId ?? null;
+    const { resumeCapabilityOptions: resumeCapabilityOptionsResolved } = useResumeCapabilityOptions({
+        agentId: resumeAgentId,
+        machineId: params.selectedMachineId,
+        serverId: params.capabilityServerId,
+        settings: params.settings,
+    });
 
     const showResumePicker = React.useMemo(() => {
-        return staticAgentId !== null && canAgentResume(staticAgentId, resumeCapabilityOptionsResolved);
-    }, [resumeCapabilityOptionsResolved, staticAgentId]);
+        return resumeAgentId !== null && canAgentResume(resumeAgentId, resumeCapabilityOptionsResolved);
+    }, [resumeAgentId, resumeCapabilityOptionsResolved]);
 
     const wizardInstallableDeps = React.useMemo(() => {
         if (!params.selectedMachineId || !staticAgentId) return [];

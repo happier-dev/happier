@@ -1,11 +1,11 @@
 import * as React from 'react';
 import {
-    AccessibilityInfo,
     Platform,
     StyleSheet,
     View,
 } from 'react-native';
 
+import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { Text } from '@/components/ui/text/Text';
 
 export const ExternalSessionOperationAccessibilityStatus = React.memo(
@@ -23,12 +23,13 @@ export const ExternalSessionOperationAccessibilityStatus = React.memo(
             ) {
                 return;
             }
+            // The transition is recorded even when nothing is spoken, so a silent
+            // state between two identical messages does not swallow the second one.
             lastIosTransitionRef.current = props.transitionKey;
-            try {
-                AccessibilityInfo.announceForAccessibility(props.announcement);
-            } catch {
-                // Accessibility announcements are best effort on native platforms.
-            }
+            // Canonical imperative announcer: it already drops an empty message —
+            // announcing one only interrupts whatever VoiceOver is reading — and
+            // swallows best-effort platform failures.
+            announceAccessibilityMessage(props.announcement);
         }, [props.announcement, props.transitionKey]);
 
         if (Platform.OS === 'ios') return null;

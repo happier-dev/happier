@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { darkTheme, lightTheme } from '@/theme';
 
 const windowDimensionsState = vi.hoisted(() => ({
     width: 1200,
@@ -86,6 +87,66 @@ describe('WarningActionBanner', () => {
         expect(onSecondary).toHaveBeenCalledTimes(1);
     });
 
+    it('uses the semantic warning surface in both themes without replacing normal copy tokens', async () => {
+        const { WarningActionBanner, resolveWarningActionBannerToneTokens } = await import('./WarningActionBanner');
+
+        expect(resolveWarningActionBannerToneTokens(lightTheme, 'warning')).toEqual({
+            background: lightTheme.colors.state.warning.background,
+            border: lightTheme.colors.state.warning.border,
+            icon: lightTheme.colors.state.warning.foreground,
+        });
+        expect(resolveWarningActionBannerToneTokens(darkTheme, 'warning')).toEqual({
+            background: darkTheme.colors.state.warning.background,
+            border: darkTheme.colors.state.warning.border,
+            icon: darkTheme.colors.state.warning.foreground,
+        });
+
+        const screen = await renderScreen(
+            <WarningActionBanner
+                testID="warning"
+                title="Draft conflict"
+                body="Choose which version to keep."
+            />,
+        );
+        expect(flattenStyle(screen.findByTestId('warning')?.props.style)).toMatchObject({
+            backgroundColor: lightTheme.colors.state.warning.background,
+            borderColor: lightTheme.colors.state.warning.border,
+        });
+        const textNodes = screen.root.findAllByType('Text' as React.ElementType);
+        expect(flattenStyle(textNodes.find((node) => node.props.children === 'Draft conflict')?.props.style)).toMatchObject({
+            color: lightTheme.colors.text.primary,
+        });
+        expect(flattenStyle(textNodes.find((node) => node.props.children === 'Choose which version to keep.')?.props.style)).toMatchObject({
+            color: lightTheme.colors.text.secondary,
+        });
+    });
+
+    it('renders semantic details and keeps quiet actions visually tertiary', async () => {
+        const { WarningActionBanner } = await import('./WarningActionBanner');
+        const screen = await renderScreen(
+            <WarningActionBanner
+                testID="warning"
+                title="Draft conflict"
+                content={React.createElement('View', { testID: 'warning-details' })}
+                secondaryActions={[{
+                    key: 'copy',
+                    testID: 'warning-copy',
+                    label: 'Copy mine',
+                    accessibilityLabel: 'Copy mine',
+                    variant: 'quiet',
+                    onPress: vi.fn(),
+                }]}
+            />,
+        );
+
+        expect(screen.findByTestId('warning-details')).toBeTruthy();
+        expect(flattenStyle(screen.findByTestId('warning-copy')?.props.style({ pressed: false }))).toMatchObject({
+            backgroundColor: lightTheme.colors.button.secondary.background,
+        });
+        const label = screen.findByTestId('warning-copy')?.findByType('Text' as React.ElementType);
+        expect(flattenStyle(label?.props.style)).toMatchObject({ color: lightTheme.colors.text.secondary });
+    });
+
     it('lets a large-text action grow instead of clipping it at the compact visual height', async () => {
         const { WarningActionBanner } = await import('./WarningActionBanner');
 
@@ -143,6 +204,27 @@ describe('WarningActionBanner', () => {
         });
         expect(flattenStyle(screen.findByTestId('warning-primary')?.props.style({ pressed: false })).maxWidth).toBe('100%');
         expect(flattenStyle(screen.findByTestId('warning-check')?.props.style({ pressed: false })).maxWidth).toBe('100%');
+    });
+
+    it('can align composer-conflict actions with the title on desktop', async () => {
+        const { WarningActionBanner } = await import('./WarningActionBanner');
+        const screen = await renderScreen(
+            <WarningActionBanner
+                testID="warning"
+                title="Draft conflict"
+                body="This field changed on another device."
+                actionsPlacement="title"
+                actionTestID="warning-primary"
+                actionLabel="Use synced"
+                onActionPress={vi.fn()}
+            />,
+        );
+
+        expect(flattenStyle(screen.findByTestId('warning')?.props.style)).toMatchObject({
+            flexDirection: 'column',
+            alignItems: 'stretch',
+        });
+        expect(screen.findByTestId('warning-actions-row')).toBeTruthy();
     });
 
     it('wraps a long action run into a right-aligned block beside the copy on desktop', async () => {

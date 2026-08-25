@@ -65,6 +65,7 @@ describe('ComposerPluginSurface', () => {
     it('reuses the one PluginSurfaceHost composer arm with the supplied truthful target', async () => {
         const { ComposerPluginSurface } = await import('./ComposerPluginSurface');
         const catalogEntry = createCatalogEntry();
+        const fallback = React.createElement('FallbackBadge', { testID: 'canonical-composer-badge' });
 
         await renderScreen(<ComposerPluginSurface
             request={{
@@ -88,12 +89,14 @@ describe('ComposerPluginSurface', () => {
             serverId="server-1"
             parentLifetime={lifetime}
             transactionApplier={{ apply: () => ({ status: 'rejected' }) } as never}
+            fallback={fallback}
         />);
 
         expect(pluginSurfaceHostSpy).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-1',
             composerMount: expect.objectContaining({
+                fallback,
                 physicalTarget: { kind: 'app' },
                 mount: expect.objectContaining({
                     kind: 'composer',
@@ -118,6 +121,61 @@ describe('ComposerPluginSurface', () => {
             inspectComposerContent: expect.any(Function),
             releaseComposerContent: expect.any(Function),
         }));
+    });
+
+    it('passes the existing mount/catalog identity to the host for boundary recovery', async () => {
+        const { ComposerPluginSurface } = await import('./ComposerPluginSurface');
+        const renderComposer = (immutableGenerationId: string, projectionGeneration: number) => {
+            const catalogEntry = {
+                ...createCatalogEntry(),
+                immutableGenerationId,
+                projectionGeneration,
+                contributorTargetedContributions: {
+                    target: { pluginId: 'acme.compose', immutableGenerationId },
+                    points: [],
+                },
+            } as DaemonPluginUiComposerSurfaceCatalogEntryV1;
+            return (
+                <ComposerPluginSurface
+                    request={{
+                        contribution: catalogEntry.contribution,
+                        immutableGenerationId,
+                        role: 'region',
+                        input: {
+                            v: 1,
+                            role: 'region',
+                            composer: { kind: 'newSession', instanceId: 'new-session-1' },
+                            regionLocalId: 'summary',
+                        },
+                        instanceKey: 'composer:region:acme.compose/summary',
+                    }}
+                    physicalTarget={{ kind: 'app' }}
+                    projectionGeneration={projectionGeneration}
+                    catalogEntries={[catalogEntry]}
+                    pluginProjectionById={{}}
+                    pluginProjectionV2={{ v: 2, generation: projectionGeneration } as PluginProjectionV2}
+                    machineId="machine-1"
+                    serverId="server-1"
+                    parentLifetime={lifetime}
+                    transactionApplier={{ apply: () => ({ status: 'rejected' }) } as never}
+                />
+            );
+        };
+        const readBoundaryResetKey = (): unknown => (
+            (pluginSurfaceHostSpy.mock.calls.at(-1)?.[0] as Readonly<{
+                composerMount?: Readonly<{ boundaryResetKey?: unknown }>;
+            }>)?.composerMount?.boundaryResetKey
+        );
+
+        const screen = await renderScreen(renderComposer('generation-a', 7));
+        const initialBoundaryResetKey = readBoundaryResetKey();
+        expect(initialBoundaryResetKey).toBeDefined();
+
+        await screen.update(renderComposer('generation-a', 7));
+        expect(readBoundaryResetKey()).toBe(initialBoundaryResetKey);
+
+        await screen.update(renderComposer('generation-b', 8));
+        expect(readBoundaryResetKey()).not.toBe(initialBoundaryResetKey);
     });
 
     // The Composer host is presented by the same web bundle in a plain browser

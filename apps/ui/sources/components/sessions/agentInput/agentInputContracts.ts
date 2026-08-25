@@ -8,6 +8,7 @@ import type {
     ComposerInputLockSnapshotV1,
     PluginUiRendererChainBindingV1,
 } from '@happier-dev/protocol';
+import type { FocusReturnRef } from '@/keyboard/focusReturn';
 
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 import type { SelectionListHeightBehavior, SelectionListStep } from '@/components/ui/selectionList';
@@ -77,7 +78,7 @@ type AgentInputAttachmentRowItemBase = Readonly<{
     label: string;
     testID?: string;
     accessibilityLabel?: string;
-    onPress?: () => void;
+    onPress?: (context?: Readonly<{ focusReturnRef: FocusReturnRef }>) => void;
     /**
      * The row owns the trigger/anchor lifecycle while a caller can compose an
      * incumbent popover at that exact attachment. This stays presentation-only:
@@ -171,7 +172,12 @@ type AgentInputCollapsedOptionsPopoverBase = Readonly<{
     /** Rechecks mount/session currentness immediately before overflow opens. */
     isEnabled?: () => boolean;
     selectedOptionId?: string | null;
-    onSelect: (id: string) => void;
+    /**
+     * Returning `false` means the selection was not applied — a Composer
+     * transaction conflict or a non-editable draft — so the overflow stays open
+     * and the interaction is retained instead of closing as if it succeeded.
+     */
+    onSelect: (id: string) => void | boolean;
     applyLabel?: string;
     railWidth?: number;
     railMaxWidth?: number | `${number}%`;
@@ -216,6 +222,12 @@ export type AgentInputExtraActionChip = Readonly<{
         blurInput: () => void;
         /** Opens this chip's existing collapsed-overlay slot. */
         openCollapsedPopover: (chipKey: string) => void;
+        /**
+         * The action menu's own anchor. An item that opens a native dialog
+         * passes it through so dismissal restores focus to the trigger the
+         * user actually pressed instead of dropping it to the document.
+         */
+        focusReturnRef?: FocusReturnRef;
     }>) => ActionListItem | ReadonlyArray<ActionListItem>;
     collapsedOptionsPopover?: AgentInputCollapsedOptionsPopover;
     collapsedContentPopover?: Readonly<{

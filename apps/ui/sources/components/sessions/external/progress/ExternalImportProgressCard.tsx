@@ -17,6 +17,7 @@ import {
     type ExternalSessionOperationObservationContext,
     type ExternalSessionOperationOriginAvailability,
 } from './externalSessionOperationProgressPresentation';
+import { useExternalSessionOperationActionFocusReturn } from './useExternalSessionOperationActionFocusReturn';
 
 export type ExternalSessionOperationActionRef = Readonly<{
     operationId: string;
@@ -36,6 +37,8 @@ export const ExternalImportProgressCard = React.memo(function ExternalImportProg
     onCancel?: OperationActionHandler;
     onDiscard?: OperationActionHandler;
     onDismiss: OperationActionHandler;
+    /** The transcript row owns focus once this card may remove itself. */
+    onTranscriptOperationActionTransition?: (kind: 'dismiss') => void;
 }>) {
     const actionScope = `${props.progress.operationId}:${props.progress.revision}`;
     const pendingActionRef = React.useRef<Readonly<{
@@ -73,21 +76,6 @@ export const ExternalImportProgressCard = React.memo(function ExternalImportProg
     const pendingAction = pendingActionState?.scope === actionScope
         ? pendingActionState.kind
         : null;
-    const invokeAction = React.useCallback((
-        kind: ExternalSessionOperationActionKind,
-        action: () => Promise<void>,
-    ) => {
-        if (pendingActionRef.current?.scope === actionScope) return;
-        const pending = { scope: actionScope, kind } as const;
-        pendingActionRef.current = pending;
-        setPendingActionState(pending);
-        void action().finally(() => {
-            if (pendingActionRef.current !== pending) return;
-            pendingActionRef.current = null;
-            setPendingActionState(null);
-        });
-    }, [actionScope]);
-
     const detail = presentation.detailKey ? t(presentation.detailKey) : undefined;
     const importProgress = presentation.importProgress;
     const importProgressLabel = importProgress
@@ -107,6 +95,25 @@ export const ExternalImportProgressCard = React.memo(function ExternalImportProg
             : Boolean(availableHandlers[action.kind]);
         return action.enabled && handlerAvailable ? [action.kind] : [];
     });
+    const { actionNodeRef, armActionFocusReturn } = useExternalSessionOperationActionFocusReturn({
+        availableActionKinds,
+        settled: pendingAction === null,
+    });
+    const invokeAction = React.useCallback((
+        kind: ExternalSessionOperationActionKind,
+        action: () => Promise<void>,
+    ) => {
+        if (pendingActionRef.current?.scope === actionScope) return;
+        const pending = { scope: actionScope, kind } as const;
+        pendingActionRef.current = pending;
+        armActionFocusReturn(kind);
+        setPendingActionState(pending);
+        void action().finally(() => {
+            if (pendingActionRef.current !== pending) return;
+            pendingActionRef.current = null;
+            setPendingActionState(null);
+        });
+    }, [actionScope, armActionFocusReturn]);
     const accessibilityAnnouncement = [
         t(presentation.titleKey),
         t(presentation.summaryKey),
@@ -185,8 +192,12 @@ export const ExternalImportProgressCard = React.memo(function ExternalImportProg
                             <Item
                                 key={action.kind}
                                 testID="external-session-operation-action-dismiss"
+                                pressableRef={actionNodeRef(action.kind)}
                                 title={title}
-                                onPress={() => props.onDismiss(actionRef)}
+                                onPress={() => {
+                                    props.onTranscriptOperationActionTransition?.('dismiss');
+                                    props.onDismiss(actionRef);
+                                }}
                                 disabled={pendingAction !== null}
                                 showChevron={false}
                                 accessibilityRole="button"
@@ -220,6 +231,7 @@ export const ExternalImportProgressCard = React.memo(function ExternalImportProg
                         <Item
                             key={action.kind}
                             testID={`external-session-operation-action-${action.kind}`}
+                            pressableRef={actionNodeRef(action.kind)}
                             title={title}
                             onPress={onPress}
                             disabled={!action.enabled || !handler || pendingAction !== null}

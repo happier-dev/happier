@@ -331,7 +331,7 @@ function AttachmentRowPreviewTrigger(props: Readonly<{
             return;
         }
         if (props.item.onPress !== undefined) {
-            props.item.onPress();
+            props.item.onPress({ focusReturnRef: anchorRef });
             return;
         }
         props.fallbackOnPress?.();
@@ -343,7 +343,7 @@ function AttachmentRowPreviewTrigger(props: Readonly<{
     return (
         <>
             {props.children({
-                ...(renderPreviewPopover === undefined ? {} : { anchorRef }),
+                ...(hasPressAction ? { anchorRef } : {}),
                 ...(hasPressAction ? { onPress } : {}),
                 ...(props.item.onRemove === undefined ? {} : { onRemove }),
             })}

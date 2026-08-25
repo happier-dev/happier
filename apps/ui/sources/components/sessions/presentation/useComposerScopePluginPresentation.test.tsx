@@ -570,4 +570,69 @@ describe('useComposerScopePluginPresentation', () => {
 
         await hook.unmount();
     });
+
+    // The host attachment row already renders this instance's label, error
+    // feedback and remove control around the mounted custom display. Handing
+    // that mount a complete attachment row as its failure fallback rendered a
+    // SECOND label and remove control inside the first one. One boundary owns
+    // the row; the mounted child owns only body-level failure content.
+    it('installs no nested attachment-row fallback on a custom attachment display mount', async () => {
+        const { useComposerScopePluginPresentation } = await import('./useComposerScopePluginPresentation');
+        const projection = createProjection();
+        const hook = await renderHook(() => useComposerScopePluginPresentation({
+            composer: { kind: 'session', sessionId: 'session-1' },
+            physicalTarget: { kind: 'session', sessionId: 'session-1' },
+            resourceContext: { kind: 'session', sessionId: 'session-1' },
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            projectionPhase: 'ready',
+            projectionInputs: {
+                pluginProjectionById: {},
+                pluginProjectionV2: projection,
+                composerSurfaceCatalog: [createCatalogEntry()],
+            },
+            accountLifetime: null,
+            isScopeCurrent: () => true,
+            attachmentsEnabled: true,
+            includeSessionActions: false,
+        }));
+
+        const attachment = {
+            v: 1,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.compose', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { typeLabel: 'Issue', label: 'Issue #42' },
+            availability: { status: 'ready' },
+        } as const;
+        const surface = hook.getCurrent().renderAttachmentSurface({
+            attachment,
+            catalog: {
+                identity: attachment.attachment,
+                immutableGenerationId: 'generation-1',
+                display: { kind: 'surface', sizing: 'content', renderer: { chain: [] } },
+            },
+            // Exactly what the row projection offers today: a complete badge
+            // carrying this instance's label and its own remove control.
+            fallback: {
+                kind: 'badge',
+                key: 'composer-attachment:issue-42',
+                label: 'Issue #42',
+                availability: 'ready',
+                onRemove: () => undefined,
+            },
+        } as never);
+
+        const mounted = surface?.renderedContent as React.ReactElement<Record<string, unknown>> | null;
+        expect(mounted).not.toBeNull();
+        // Positive twin: this is still the exact attachment display mount.
+        expect((mounted?.props.request as Readonly<{ role: string }>).role).toBe('attachmentDisplay');
+        expect(surface?.sizing).toBe('content');
+        // The failure boundary keeps the incumbent body-level unavailable
+        // presentation instead of a caller-supplied attachment row.
+        expect(mounted?.props).not.toHaveProperty('fallback');
+
+        await hook.unmount();
+    });
 });

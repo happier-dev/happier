@@ -5,8 +5,6 @@ import type { FeatureDecision, FeatureId, RuntimeActionExecute } from '@happier-
 import {
     buildLocalServiceInventoryRow,
     buildLocalServiceInventoryState,
-    buildManagedLocalServiceRow,
-    buildManagedLocalServicesState,
     pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
@@ -16,7 +14,6 @@ import {
     type LocalServiceLauncherSnapshot,
     type LocalServiceLauncherSnapshotClient,
 } from '@/sync/domains/local/services/launch';
-import type { LocalServiceManagedSnapshotClient } from '@/sync/domains/local/services/managed/useManagedLocalServicesState';
 import {
     applyLocalServicePublicPreviewSnapshot,
     createLocalServicePublicPreviewState,
@@ -96,30 +93,6 @@ function buildLauncherState() {
     });
 }
 
-function buildManagedLauncherState(serviceId = 'managed-service-1') {
-    return applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
-        v: 1,
-        machineId: 'machine-a',
-        sessionId: 'session-a',
-        updatedAt: 3_000,
-        targets: [{
-            id: `managed:${serviceId}`,
-            source: 'managed_service',
-            sourceClass: {
-                kind: 'managed_service',
-                managedServiceId: serviceId,
-            },
-            machineId: 'machine-a',
-            sessionId: 'session-a',
-            title: 'Managed service',
-            subtitle: 'localhost:5174',
-            kind: 'managed_service',
-            confidence: 'high',
-            state: 'available',
-            actions: ['manage'],
-        }],
-    });
-}
 
 function buildPublicPreviewLauncherState() {
     return applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
@@ -201,7 +174,6 @@ describe('SessionRightPanelServicesView', () => {
         const screen = await renderScreen(
             <SessionRightPanelServicesView
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
             />,
         );
@@ -226,7 +198,6 @@ describe('SessionRightPanelServicesView', () => {
                 serverId="server-a"
                 machineId="machine-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 publicPreviewStatusClient={publicPreviewStatusClient}
             />,
@@ -236,58 +207,6 @@ describe('SessionRightPanelServicesView', () => {
         expect(publicPreviewStatusClient).not.toHaveBeenCalled();
     });
 
-    it('builds a stop-managed runtime action request for running managed rows', async () => {
-        const runtimeActionExecute = vi.fn(async () => ({
-            v: 1,
-            requestId: 'request-managed-service-1',
-            action: 'stop_managed',
-            status: 'succeeded',
-            auditEvents: [],
-        })) satisfies RuntimeActionExecute;
-        const screen = await renderScreen(
-            <SessionRightPanelServicesView
-                sessionId="session-a"
-                serverId="server-a"
-                machineId="machine-a"
-                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({
-                    rows: [buildManagedLocalServiceRow({
-                        id: 'managed-service-1',
-                        phase: 'running',
-                        supportedActions: ['stop_managed'],
-                    })],
-                })}
-                launcherState={buildManagedLauncherState('managed-service-1')}
-                runtimeActionExecute={runtimeActionExecute}
-            />,
-        );
-
-        await pressTestInstanceAsync(
-            screen.findByTestId('session-rightpanel-services-row:managed:managed-service-1-stop'),
-            'session-rightpanel-services-row:managed:managed-service-1-stop',
-        );
-
-        expect(runtimeActionExecute).toHaveBeenCalledExactlyOnceWith({
-            actionId: 'localServices.actions.stopManaged',
-            input: {
-                requestId: expect.any(String),
-                target: {
-                    kind: 'managed_service',
-                    managedServiceId: 'managed-service-1',
-                    machineId: 'machine-a',
-                    sessionId: 'session-a',
-                },
-                action: 'stop_managed',
-                force: false,
-                confirmationNonce: expect.any(String),
-            },
-            context: {
-                defaultSessionId: 'session-a',
-                serverId: 'server-a',
-                surface: 'ui',
-            },
-        });
-    });
 
     it('builds a terminate-detected runtime action request for eligible detected rows', async () => {
         const runtimeActionExecute = vi.fn(async () => ({
@@ -332,7 +251,6 @@ describe('SessionRightPanelServicesView', () => {
                 inventoryState={buildLocalServiceInventoryState({
                     rows: [buildLocalServiceInventoryRow({ id: 'inventory-entry-1', state: 'listening' })],
                 })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={launcherState}
                 runtimeActionExecute={runtimeActionExecute}
             />,
@@ -365,73 +283,6 @@ describe('SessionRightPanelServicesView', () => {
         });
     });
 
-    it('loads live managed state and builds a restart-managed runtime action from daemon support', async () => {
-        const managedSnapshotClient = vi.fn(async () => ({
-            ok: true as const,
-            snapshot: {
-                generatedAt: 4_000,
-                refreshState: 'idle' as const,
-                rows: [buildManagedLocalServiceRow({
-                    id: 'managed-service-1',
-                    phase: 'running',
-                    supportedActions: ['stop_managed', 'restart_managed'],
-                })],
-                diagnostics: [],
-            },
-        })) satisfies LocalServiceManagedSnapshotClient;
-        const runtimeActionExecute = vi.fn(async () => ({
-            v: 1,
-            requestId: 'request-managed-service-1',
-            action: 'restart_managed',
-            status: 'succeeded',
-            auditEvents: [],
-        })) satisfies RuntimeActionExecute;
-        const screen = await renderScreen(
-            <SessionRightPanelServicesView
-                sessionId="session-a"
-                serverId="server-a"
-                machineId="machine-a"
-                inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                launcherState={buildManagedLauncherState('managed-service-1')}
-                managedSnapshotClient={managedSnapshotClient}
-                runtimeActionExecute={runtimeActionExecute}
-            />,
-        );
-
-        await vi.waitFor(() => {
-            expect(screen.findByTestId('session-rightpanel-services-row:managed:managed-service-1-restart')).toBeTruthy();
-        });
-        await pressTestInstanceAsync(
-            screen.findByTestId('session-rightpanel-services-row:managed:managed-service-1-restart'),
-            'session-rightpanel-services-row:managed:managed-service-1-restart',
-        );
-
-        expect(managedSnapshotClient).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-a',
-            serverId: 'server-a',
-            sessionId: 'session-a',
-        }));
-        expect(runtimeActionExecute).toHaveBeenCalledExactlyOnceWith({
-            actionId: 'localServices.actions.restartManaged',
-            input: {
-                requestId: expect.any(String),
-                target: {
-                    kind: 'managed_service',
-                    managedServiceId: 'managed-service-1',
-                    machineId: 'machine-a',
-                    sessionId: 'session-a',
-                },
-                action: 'restart_managed',
-                force: false,
-                confirmationNonce: expect.any(String),
-            },
-            context: {
-                defaultSessionId: 'session-a',
-                serverId: 'server-a',
-                surface: 'ui',
-            },
-        });
-    });
 
     it('builds a launcher start runtime action request for daemon-advertised Start targets', async () => {
         const runtimeActionExecute = vi.fn(async () => ({
@@ -453,7 +304,6 @@ describe('SessionRightPanelServicesView', () => {
                 serverId="server-a"
                 machineId="machine-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildLauncherState()}
                 runtimeActionExecute={runtimeActionExecute}
             />,
@@ -506,7 +356,6 @@ describe('SessionRightPanelServicesView', () => {
                 serverId="server-a"
                 machineId="machine-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherSnapshotClient={launcherSnapshotClient}
                 runtimeActionExecute={runtimeActionExecute}
             />,
@@ -569,7 +418,6 @@ describe('SessionRightPanelServicesView', () => {
                 serverId="server-a"
                 machineId="machine-a"
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
-                managedState={buildManagedLocalServicesState({ rows: [] })}
                 launcherState={buildPublicPreviewLauncherState()}
                 publicPreviewState={buildPublicPreviewState()}
                 runtimeActionExecute={runtimeActionExecute}

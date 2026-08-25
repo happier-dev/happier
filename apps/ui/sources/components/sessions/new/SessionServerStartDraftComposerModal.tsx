@@ -5,14 +5,14 @@ import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/protocol/sessi
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
-import { useAllMachines, useSettings } from '@/sync/domains/state/storage';
+import { useAllMachines, useMachineListByServerId, useSettings } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
-import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
 import {
     buildNewSessionAuthoringDraftFromResolvedInputs,
@@ -29,6 +29,7 @@ import type {
     SessionServerStartDraftSeed,
     SessionServerStartDraftTarget,
 } from './serverStartDraftComposer';
+import { resolveSessionServerStartCandidateSelection } from './serverStartDraftCandidateSelection';
 
 type Props = CustomModalInjectedProps & Readonly<{
     seed: SessionServerStartDraftSeed;
@@ -63,17 +64,36 @@ function resolveInitialAgentKey(params: Readonly<{
  */
 export function SessionServerStartDraftComposerModal(props: Props): React.ReactElement {
     const machines = useAllMachines();
+    const machineListByServerId = useMachineListByServerId();
+    const activeServer = useActiveServerSnapshot();
     const settings = useSettings() ?? settingsDefaults;
     const enabledAgentIds = useEnabledAgentIds();
+    const initialCandidateIndex = props.seed.directory === undefined
+        ? -1
+        : props.seed.candidates?.findIndex((candidate) => (
+            candidate.serverId === props.target.serverId
+            && candidate.machineId === props.target.machineId
+            && candidate.rootPath === props.seed.directory
+        )) ?? -1;
+    const [selectedCandidateIndex, setSelectedCandidateIndex] = React.useState(initialCandidateIndex);
+    const selectedPlacementCandidate = selectedCandidateIndex < 0
+        ? undefined
+        : props.seed.candidates?.[selectedCandidateIndex];
+    const selectedPlacement = React.useMemo(() => resolveSessionServerStartCandidateSelection({
+        mountedTarget: props.target,
+        selectedCandidate: selectedPlacementCandidate,
+        activeServerId: String(activeServer.serverId ?? ''),
+        activeMachines: machines,
+        machineListByServerId,
+    }), [activeServer.serverId, machineListByServerId, machines, props.target, selectedPlacementCandidate]);
+    const selectedTarget = selectedPlacement.target;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
-        machineId: props.target.machineId,
-        serverId: props.target.serverId,
+        machineId: selectedTarget.machineId,
+        serverId: selectedTarget.serverId,
         enabled: true,
         staleMs: 0,
     });
-    const machine = React.useMemo(() => (
-        machines.find((candidate) => candidate.id === props.target.machineId) ?? null
-    ), [machines, props.target.machineId]);
+    const machine = selectedPlacement.machine;
     const candidates = React.useMemo<readonly ResolvedAgentCandidate[]>(() => {
         if (daemonMergedProjection.phase !== 'ready') return [];
         return getResolvedBackendCatalogEntries({
@@ -115,7 +135,7 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
         }))
         ?? null;
     const [directory, setDirectory] = React.useState(() => (
-        props.seed.directory ?? machine?.metadata?.homeDir ?? ''
+        props.seed.directory ?? selectedPlacement.directory ?? machine?.metadata?.homeDir ?? ''
     ));
     const [error, setError] = React.useState(false);
 
@@ -131,11 +151,7 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
         }
     }, [directory, machine?.metadata?.homeDir, props.seed.directory]);
 
-    const machineReady = resolveMachineSpawnReadiness({
-        machine,
-        selectedMachineId: props.target.machineId,
-    }).status === 'ready';
-    const canSubmit = machineReady
+    const canSubmit = selectedPlacement.machineReady
         && daemonMergedProjection.phase === 'ready'
         && selectedAgent !== null
         && directory.trim().length > 0;
@@ -175,7 +191,7 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
             });
             props.onResolve(buildSessionServerStartSpawnDraftV1FromAuthoringDraft({
                 draft: authoringDraft,
-                executionTarget: props.target,
+                executionTarget: selectedTarget,
                 agentTarget: selectedAgent.agentTarget,
                 permissionMode,
                 configurationUpdatedAtMs: now,
@@ -184,7 +200,7 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
         } catch {
             setError(true);
         }
-    }, [canSubmit, directory, props, selectedAgent]);
+    }, [canSubmit, directory, props, selectedAgent, selectedTarget]);
     const footer = React.useMemo(() => (
         <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 16, paddingVertical: 12 }}>
             <RoundButton title={t('common.cancel')} display="inverted" onPress={dismiss} />
@@ -202,13 +218,30 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
     return (
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 16 }}>
             <ItemGroup title={t('newSession.selectWorkingDirectoryTitle')}>
+                {props.seed.candidates?.map((candidate, index) => (
+                    <Item
+                        key={'id' in candidate.projectKey
+                            ? candidate.projectKey.id
+                            : `${candidate.serverId}:${candidate.machineId}:${candidate.rootPath}`}
+                        title={candidate.label ?? candidate.rootPath}
+                        subtitle={`${candidate.machineId} · ${candidate.serverId}`}
+                        selected={index === selectedCandidateIndex}
+                        onPress={() => {
+                            setError(false);
+                            setSelectedCandidateIndex(index);
+                            setDirectory(candidate.rootPath);
+                        }}
+                        showChevron={false}
+                        showDivider={true}
+                    />
+                ))}
                 <PathSelectionList
                     initialValue={directory}
                     machineHomeDir={machine?.metadata?.homeDir ?? '/home'}
                     favorites={[]}
                     recents={[]}
                     machineId={machine?.id ?? null}
-                    serverId={props.target.serverId}
+                    serverId={selectedTarget.serverId}
                     machinePlatform={machineMetadataPlatformToTarget(machine?.metadata?.platform)}
                     onCommit={(value) => {
                         setError(false);

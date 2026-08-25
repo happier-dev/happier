@@ -3,6 +3,10 @@ import { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
+import {
+    readReanimatedFrameCallbacks,
+    resetReanimatedFrameCallbacks,
+} from '@/dev/testkit/mocks/reanimated';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 const TRAILING_TEST_ID = 'voice-trailing-accessory';
@@ -34,8 +38,18 @@ installAgentInputCommonModuleMocks({
                 React.createElement('View', props, props.children),
             Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
                 React.createElement('Text', props, props.children),
+            // `Pressable` accepts render-prop children (`({ pressed }) => …`), and the
+            // dictation button uses that form. Rendering the function itself as a child
+            // silently drops the whole visual subtree, so resolve it the way React Native
+            // does before handing children to the host element.
             Pressable: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-                React.createElement('Pressable', props, props.children),
+                React.createElement(
+                    'Pressable',
+                    props,
+                    typeof props.children === 'function'
+                        ? (props.children as (state: { pressed: boolean }) => React.ReactNode)({ pressed: false })
+                        : props.children,
+                ),
             ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
                 React.createElement('ScrollView', props, props.children),
             ActivityIndicator: (props: Record<string, unknown>) =>
@@ -349,7 +363,7 @@ async function renderComposerWithPlanet(
                 )}
                 {...overrides}
             />
-        </VoiceEnergyProvider>,
+        </VoiceEnergyProvider>
     );
 }
 
@@ -673,16 +687,18 @@ async function registerLocalConversationAdapter(): Promise<void> {
     } as never]);
 }
 
-async function renderSessionComposer(
+async function sessionComposerScene(
     overrides: Record<string, unknown> = {},
-): Promise<RenderScreenResult> {
+    energyActive = false,
+): Promise<React.ReactElement> {
     const { AgentInput } = await import('./AgentInput');
     const { VoiceEnergyProvider } = await import('@/components/voice/light/useVoiceEnergy');
-    await registerLocalConversationAdapter();
-    return renderScreen(
+    return (
         <VoiceEnergyProvider
-            state={{ luminosity: 0.4, energized: false, direction: 'none' }}
-            activation={{ providerReady: true, attemptActive: false, micCaptureActive: false }}
+            state={energyActive
+                ? { luminosity: 0.4, energized: true, direction: 'inward' }
+                : { luminosity: 0.4, energized: false, direction: 'none' }}
+            activation={{ providerReady: true, attemptActive: energyActive, micCaptureActive: energyActive }}
         >
             <AgentInput
                 sessionId="session-1"
@@ -694,8 +710,16 @@ async function renderSessionComposer(
                 autocompleteSuggestions={async () => []}
                 {...overrides}
             />
-        </VoiceEnergyProvider>,
+        </VoiceEnergyProvider>
     );
+}
+
+async function renderSessionComposer(
+    overrides: Record<string, unknown> = {},
+    energyActive = false,
+): Promise<RenderScreenResult> {
+    await registerLocalConversationAdapter();
+    return renderScreen(await sessionComposerScene(overrides, energyActive));
 }
 
 /**
@@ -803,6 +827,32 @@ describe('AgentInput mounts the Voice composer', () => {
         // dictation lives, whether or not a conversation could start right now.
         expect(screen.findByTestId(PLANET_TEST_ID)).toBeNull();
         expect(screen.findByTestId(DICTATION_TEST_ID)).not.toBeNull();
+
+        await screen.unmount();
+    });
+
+    it('unmounts the composer Voice leaf while a retained Session is hidden, then restores it when presented', async () => {
+        voiceSettingState.current = READY_VOICE_SETTING;
+        resetReanimatedFrameCallbacks();
+
+        const screen = await renderSessionComposer({ surfacePresented: true }, true);
+        const activations = () => {
+            const callbacks = readReanimatedFrameCallbacks();
+            expect(callbacks).toHaveLength(1);
+            return callbacks[0]!.setActiveCalls;
+        };
+
+        expect(activations()).toEqual([false, true]);
+
+        await screen.update(await sessionComposerScene({ surfacePresented: false }, true));
+        // Retention preserves the draft and the Session owner, not a second mounted
+        // Voice runtime. Hidden composers must leave no Voice subscription/leaf behind.
+        expect(screen.findByTestId(PLANET_TEST_ID)).toBeNull();
+        expect(activations()).toEqual([false, true, false]);
+
+        await screen.update(await sessionComposerScene({ surfacePresented: true }, true));
+        expect(screen.findByTestId(PLANET_TEST_ID)).not.toBeNull();
+        expect(activations()).toEqual([false, true, false, true]);
 
         await screen.unmount();
     });

@@ -204,6 +204,8 @@ export interface NewSessionWizardFooterProps {
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
     connectionStatus?: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
+    composerTopContent?: React.ReactNode;
+    statusTrailingActions?: React.ComponentProps<typeof AgentInput>['statusTrailingActions'];
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
     resumeSessionId?: string | null;
@@ -480,9 +482,6 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         inputMaxHeight,
     } = props.footer;
 
-    // Typing re-renders this wizard and the composer below it — not the screen model above.
-    const sessionPrompt = useNewSessionPromptValue(promptStore);
-
     const machineDisplayName = selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host;
     const { sharedProfilesListProps, profilePopover } = React.useMemo(() => {
         return buildNewSessionProfileSelectionPopover({
@@ -653,9 +652,10 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                     ) : null}
                                     <PluginContextualResourceStoreProvider>
                                         {props.footer.composerDocument?.beforeComposer}
+                                        {props.footer.composerTopContent}
                                         <NewSessionWizardComposerInput
                                         composerReservedHeight={12 + newSessionBottomPadding}
-                                        value={sessionPrompt}
+                                        promptStore={promptStore}
                                         onChangeText={setSessionPrompt}
                                         structuredInputMentions={props.footer.composerDocument?.structuredInputMentions}
                                         onStructuredInputMentionsChange={props.footer.composerDocument?.onStructuredInputMentionsChange}
@@ -706,6 +706,8 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         onAcpConfigOptionChange={props.agent.setAcpConfigOptionOverride}
                                         connectionStatus={connectionStatus}
                                         statusBadges={props.footer.statusBadges}
+                                        statusTrailingActions={props.footer.statusTrailingActions}
+                                        showStatusPermissionMode={false}
                                         machineName={selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host}
                                         machinePopover={props.footer.machinePopover}
                                         onMachineClick={props.footer.machinePopover ? undefined : handleAgentInputMachineClick}
@@ -1277,11 +1279,12 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     );
 });
 
-type NewSessionWizardComposerInputProps = React.ComponentProps<typeof AgentInput> & Readonly<{
+type NewSessionWizardComposerInputProps = Omit<React.ComponentProps<typeof AgentInput>, 'value'> & Readonly<{
     attachmentsUploadsEnabled: boolean;
     composerReservedHeight: number;
     filePickerRef: React.ComponentPropsWithRef<typeof AttachmentFilePicker>['ref'];
     onAttachmentsPicked: React.ComponentProps<typeof AttachmentFilePicker>['onAttachmentsPicked'];
+    promptStore: NewSessionPromptStore;
 }>;
 
 function NewSessionWizardComposerInput(props: NewSessionWizardComposerInputProps) {
@@ -1290,8 +1293,12 @@ function NewSessionWizardComposerInput(props: NewSessionWizardComposerInputProps
         composerReservedHeight,
         filePickerRef,
         onAttachmentsPicked,
+        promptStore,
         ...agentInputProps
     } = props;
+    // Subscribe at the leaf that renders the input so typing does not rebuild the
+    // wizard's machine, path, provider, model, and permission selection sections.
+    const value = useNewSessionPromptValue(promptStore);
     const availablePanelHeight = useComposerAvailablePanelHeight();
     const { height: windowHeight } = useWindowDimensions();
     const maxPanelHeight = computeNewSessionComposerPanelMaxHeight({
@@ -1307,6 +1314,7 @@ function NewSessionWizardComposerInput(props: NewSessionWizardComposerInputProps
         <>
             <AgentInput
                 {...agentInputProps}
+                value={value}
                 maxPanelHeight={maxPanelHeight}
                 panelMaxHeightMode="host-constrained"
                 retainKeyboardLift={retainKeyboardLift}

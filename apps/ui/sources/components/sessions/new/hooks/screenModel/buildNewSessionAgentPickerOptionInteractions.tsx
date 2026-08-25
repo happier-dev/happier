@@ -63,7 +63,12 @@ export function buildNewSessionAgentPickerOptionInteractions(
             const selection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
             return buildSessionAgentPickerDetailContent({
                 backendTarget: params.entry.backendTarget,
-                runtimeCarrierAgentId: params.entry.catalogAgentId,
+                // The OPERATIONAL Agent identity, not the closed built-in
+                // `catalogAgentId` backing (which is `null` for every
+                // plugin-contributed Agent). Every probe in the expanded detail
+                // — models, session modes, ACP configuration options — keys on
+                // the Agent that actually owns the backend at runtime.
+                runtimeCarrierAgentId: params.entry.agentId,
                 selectedMachineId: params.selectedMachineId,
                 capabilityServerId: params.capabilityServerId,
                 cwd: params.selectedPath,

@@ -9,6 +9,7 @@ import {
     readComposerPresentationSnapshot,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { ComposerAttachmentAvailabilityCatalog } from '@/components/sessions/composer/composerScopeAdapters';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { NewSessionPluginAttachmentSeedV1 } from '@/utils/sessions/tempDataStore';
 
 /**
@@ -43,6 +44,8 @@ export function useNewSessionSeededComposerAttachments(params: Readonly<{
     ref: ComposerRefV1;
     /** The exact current daemon projection for this draft's machine/account scope. */
     entriesById: ComposerAttachmentAvailabilityCatalog['entriesById'];
+    /** The projection-bound resolver used by ordinary mounted attachment admission. */
+    localize: PluginLocalizedTextResolver;
     isCurrent: () => boolean;
 }>): void {
     const { ref, entriesById, seeds } = params;
@@ -67,6 +70,7 @@ export function useNewSessionSeededComposerAttachments(params: Readonly<{
         const catalog = entriesById ?? {};
         const applier = createComposerPresentationTransactionApplier({
             composerAttachmentsById: catalog,
+            localize: params.localize,
         });
 
         const applied: NewSessionPluginAttachmentSeedV1[] = [];
@@ -106,5 +110,5 @@ export function useNewSessionSeededComposerAttachments(params: Readonly<{
                 seeds: Object.freeze(pending.filter((seed) => !applied.includes(seed))),
             });
         }
-    }, [entriesById, ref, seedSignature]);
+    }, [entriesById, params.localize, ref, seedSignature]);
 }

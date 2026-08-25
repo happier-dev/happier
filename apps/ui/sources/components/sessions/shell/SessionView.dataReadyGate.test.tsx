@@ -13,7 +13,7 @@ import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import {
     resetSessionDraftValueCachesForTests,
     writeSessionDraftValue,
-} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+} from '@/dev/testkit/sessionDraftRepositoryTestkit';
 import {
     applyComposerPresentationTransaction,
     createComposerPresentationHostHandlers,
@@ -702,6 +702,7 @@ describe('SessionView (data ready gating)', () => {
         }];
         const sharedPresentation: ComposerScopePluginPresentation = {
             attachmentEntriesById: null,
+            localizePluginText: () => '',
             actionController: {
                 list: () => [],
                 listSlashCommands: () => [],

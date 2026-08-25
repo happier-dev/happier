@@ -128,6 +128,8 @@ export type NewSessionSimplePanelProps = Readonly<{
     setAcpConfigOptionOverride?: (configId: string, value: string) => void;
     connectionStatus: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
+    composerTopContent?: React.ReactNode;
+    statusTrailingActions?: React.ComponentProps<typeof AgentInput>['statusTrailingActions'];
     machineName: string | undefined;
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     selectedPath: string;
@@ -376,7 +378,8 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
             ]
             : [
                 {
-                    justifyContent: 'center' as const,
+                    justifyContent: 'flex-start' as const,
+                    paddingTop: 0,
                 },
             ]),
         // The WHOLE modal stops hit-testing the instant dismissal starts, not just the backdrop.
@@ -424,9 +427,6 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                             {
                                 width: '100%',
                                 alignSelf: 'center',
-                                ...(shouldBottomAnchor
-                                    ? null
-                                    : { paddingTop: props.safeAreaTop + props.newSessionTopPadding }),
                             },
                             // The entrance lives on this view, NOT on the scaffold's composer
                             // wrapper: that wrapper carries the keyboard seat (translateY =
@@ -476,7 +476,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                 style={{
                     flex: 1,
                     width: '100%',
-                    justifyContent: shouldBottomAnchor ? 'flex-end' : 'center',
+                    justifyContent: shouldBottomAnchor ? 'flex-end' : 'flex-start',
                 }}
             >
                 {shouldBottomAnchor ? (
@@ -574,6 +574,7 @@ function NewSessionSimplePanelComposer({
                     />
                     <PluginContextualResourceStoreProvider>
                         {props.composerDocument?.beforeComposer}
+                        {props.composerTopContent}
                         <AgentInput
                         value={sessionPrompt}
                         onChangeText={props.setSessionPrompt}
@@ -627,6 +628,8 @@ function NewSessionSimplePanelComposer({
                         onAcpConfigOptionChange={props.setAcpConfigOptionOverride}
                         connectionStatus={props.connectionStatus}
                         statusBadges={props.statusBadges}
+                        statusTrailingActions={props.statusTrailingActions}
+                        showStatusPermissionMode={false}
                         machineName={props.machineName}
                         machinePopover={props.machinePopover}
                         onMachineClick={undefined}

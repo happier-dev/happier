@@ -43,7 +43,6 @@ const loadSessionDraftsMock = vi.hoisted(() => vi.fn(() => ({})));
 const saveSessionDraftsMock = vi.hoisted(() => vi.fn());
 const saveNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const storeTempDataMock = vi.hoisted(() => vi.fn(() => 'temp-recovery-1'));
-const updateSessionDraftMock = vi.hoisted(() => vi.fn());
 const upsertPendingMessageMock = vi.hoisted(() => vi.fn());
 const markSessionOptimisticThinkingMock = vi.hoisted(() => vi.fn());
 const updateSessionPermissionModeMock = vi.hoisted(() => vi.fn());
@@ -130,7 +129,6 @@ installNewSessionScreenModelCommonModuleMocks({
             storage: createStorageStoreMock({
                 settings: settingsDefaults,
                 sessions: storedSessionsState.sessions,
-                updateSessionDraft: updateSessionDraftMock,
                 upsertPendingMessage: upsertPendingMessageMock,
                 markSessionOptimisticThinking: markSessionOptimisticThinkingMock,
                 updateSessionPermissionMode: updateSessionPermissionModeMock,
@@ -302,7 +300,6 @@ afterEach(() => {
     saveSessionDraftsMock.mockClear();
     saveNewSessionDraftMock.mockClear();
     storeTempDataMock.mockClear();
-    updateSessionDraftMock.mockClear();
     upsertPendingMessageMock.mockClear();
     markSessionOptimisticThinkingMock.mockClear();
     updateSessionPermissionModeMock.mockClear();
@@ -1375,7 +1372,6 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(spawnedOptions?.workspaceId).toBeUndefined();
         expect(spawnedOptions?.workspaceLocationId).toBeUndefined();
         expect(spawnedOptions?.workspaceCheckoutId).toBeUndefined();
-        expect(updateSessionDraftMock).not.toHaveBeenCalled();
         expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('session-created', expect.objectContaining({
             forceRefresh: true,
             serverId: 'server-a',
@@ -1487,7 +1483,6 @@ describe('useCreateNewSession (worktree gating)', () => {
             });
         });
 
-        expect(updateSessionDraftMock).not.toHaveBeenCalledWith('session-created', 'Recover this first message');
         expect(storeTempDataMock).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();
         expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
@@ -1588,7 +1583,6 @@ describe('useCreateNewSession (worktree gating)', () => {
 
         expect(saveSessionDraftsMock).not.toHaveBeenCalled();
         expect(saveNewSessionDraftMock).not.toHaveBeenCalled();
-        expect(updateSessionDraftMock).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();
         expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
         expect(routerReplace).not.toHaveBeenCalled();

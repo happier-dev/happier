@@ -1,6 +1,7 @@
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
-import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
+import { resolveAgentUiBehavior, type AgentUiBehavior } from '@/agents/registry/registryUiBehavior';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { resolveSessionModelSelectionDisposition } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
@@ -28,16 +29,33 @@ function resolveCatalogContextWindowTokens(agentId: string, modelId: string): nu
     return normalizeContextWindowTokens(matchingModel?.contextWindowTokens);
 }
 
+/**
+ * The Agent's context-window behavior for the machine that owns this Session.
+ *
+ * An installed Agent's descriptor is a per-machine fact and two machines can
+ * hold different versions of it, so a machine-blind read here would warn a
+ * Session on machine B using machine A's model rules or default window.
+ */
+function resolveSessionContextWindowBehavior(
+    agentId: string,
+    metadata: Metadata | null | undefined,
+): AgentUiBehavior['contextWindow'] {
+    return resolveAgentUiBehavior(agentId, resolveSessionMachineId(metadata)).contextWindow;
+}
+
 function resolveBehaviorContextWindowTokensForModel(
     agentId: string,
+    metadata: Metadata | null | undefined,
     model: Readonly<{ id?: unknown; description?: unknown }> | null | undefined,
 ): number | null {
     const modelId = normalizeModelId(model?.id);
     if (!modelId) return null;
-    return normalizeContextWindowTokens(resolveAgentUiBehavior(agentId).contextWindow?.getContextWindowTokensForModel?.({
-        modelId,
-        description: model?.description,
-    }));
+    return normalizeContextWindowTokens(
+        resolveSessionContextWindowBehavior(agentId, metadata)?.getContextWindowTokensForModel?.({
+            modelId,
+            description: model?.description,
+        }),
+    );
 }
 
 export function toContextWarningWindowTokens(contextWindowTokens: number): number {
@@ -71,7 +89,8 @@ export function resolveContextWindowTokens(params: Readonly<{
     }
 
     const assumed = resolveAssumedContextWindowTokens(params);
-    const bumpForObservedUsage = resolveAgentUiBehavior(params.agentId).contextWindow?.bumpContextWindowTokensForObservedUsage;
+    const bumpForObservedUsage = resolveSessionContextWindowBehavior(params.agentId, params.metadata)
+        ?.bumpContextWindowTokensForObservedUsage;
     return assumed === null || !bumpForObservedUsage
         ? assumed
         : bumpForObservedUsage({
@@ -127,7 +146,7 @@ function resolveAssumedContextWindowTokens(params: Readonly<{
             ? sessionModelsState.availableModels.find((model) => normalizeModelId(model.id) === selectedModelId)
             : null;
         const contextWindowTokens = normalizeContextWindowTokens(matchingModel?.contextWindowTokens)
-            ?? resolveBehaviorContextWindowTokensForModel(params.agentId, matchingModel);
+            ?? resolveBehaviorContextWindowTokensForModel(params.agentId, params.metadata, matchingModel);
         if (contextWindowTokens !== null) {
             return contextWindowTokens;
         }
@@ -135,6 +154,7 @@ function resolveAssumedContextWindowTokens(params: Readonly<{
 
     const behaviorContextWindowTokens = resolveBehaviorContextWindowTokensForModel(
         params.agentId,
+        params.metadata,
         { id: selectedModelId },
     );
     if (behaviorContextWindowTokens !== null) {
@@ -143,7 +163,7 @@ function resolveAssumedContextWindowTokens(params: Readonly<{
 
     return resolveCatalogContextWindowTokens(params.agentId, selectedModelId)
         ?? normalizeContextWindowTokens(
-            resolveAgentUiBehavior(params.agentId).contextWindow?.getDefaultContextWindowTokens?.(),
+            resolveSessionContextWindowBehavior(params.agentId, params.metadata)?.getDefaultContextWindowTokens?.(),
         );
 }
 

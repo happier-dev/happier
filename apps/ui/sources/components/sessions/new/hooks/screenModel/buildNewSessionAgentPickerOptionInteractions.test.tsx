@@ -88,12 +88,19 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModel
     }),
 }));
 
+const capturedConfigOptionsProbe = vi.hoisted(() => ({
+    runtimeCarrierAgentId: undefined as string | null | undefined,
+}));
+
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState', () => ({
-    useNewSessionPreflightConfigOptionsState: () => ({
-        configOptions: [],
-        unavailable: false,
-        probe: { phase: 'idle' },
-    }),
+    useNewSessionPreflightConfigOptionsState: (params: Readonly<{ runtimeCarrierAgentId?: string | null }>) => {
+        capturedConfigOptionsProbe.runtimeCarrierAgentId = params.runtimeCarrierAgentId;
+        return {
+            configOptions: [],
+            unavailable: false,
+            probe: { phase: 'idle' },
+        };
+    },
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -131,7 +138,55 @@ const entry: ResolvedBackendCatalogEntry = {
     subtitle: null,
 };
 
+/**
+ * An installed Agent owns its own `cli.<agentId>` capability, so the expanded
+ * New Session detail must operate under that operational identity. `catalogAgentId`
+ * is the closed built-in UI backing and is `null` for every plugin-contributed
+ * Agent: handing it to the detail erases the identity every probe in that pane
+ * keys on.
+ */
+const pluginEntry: ResolvedBackendCatalogEntry = {
+    backendTarget: { kind: 'backend', backendId: 'acme.review.agent' },
+    backendTargetKey: 'backend:acme.review.agent',
+    kind: 'pluginBackend',
+    backendId: 'acme.review.agent',
+    agentId: 'acme.review.agent',
+    catalogAgentId: null,
+    builtInAgentId: null,
+    iconAgentId: null,
+    title: 'Acme Review',
+    subtitle: null,
+};
+
 describe('buildNewSessionAgentPickerOptionInteractions', () => {
+    it('expands an installed Agent detail under that Agent\'s operational identity', async () => {
+        capturedConfigOptionsProbe.runtimeCarrierAgentId = undefined;
+        const selection: SessionAgentPickerSelection = {
+            modelId: 'default',
+            modelSelection: null,
+            sessionModeId: 'default',
+            configOverrides: {},
+        };
+
+        const { buildNewSessionAgentPickerOptionInteractions } = await import('./buildNewSessionAgentPickerOptionInteractions');
+        const interactions = buildNewSessionAgentPickerOptionInteractions({
+            entry: pluginEntry,
+            disabled: false,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: settingsDefaults,
+            getEngineSelectionForTargetKey: () => selection,
+            selectEngineSelection: vi.fn(),
+        });
+
+        const renderDetailContent = interactions.renderDetailContent;
+        if (!renderDetailContent) throw new Error('renderDetailContent missing');
+        await renderScreen(<>{renderDetailContent({ onRequestClose: vi.fn() })}</>);
+
+        expect(capturedConfigOptionsProbe.runtimeCarrierAgentId).toBe('acme.review.agent');
+    }, 180_000);
+
     it('selects a model without requesting the engine popover close', async () => {
         capturedModelPicker.props = null;
         const onRequestClose = vi.fn();

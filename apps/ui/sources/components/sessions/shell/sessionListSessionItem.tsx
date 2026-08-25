@@ -17,6 +17,7 @@ import type {
     RegisterSessionListTreeRowBounds,
     UnregisterSessionListTreeRowBounds,
 } from './SessionListHeaderFrame';
+import type { SessionItemProps } from './SessionItem';
 
 type SessionListSessionItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'session' }>;
@@ -44,12 +45,15 @@ type SessionListSessionItemProps = Readonly<{
     compact: boolean;
     compactMinimal: boolean;
     rowAttentionAnimationEnabled: boolean;
+    agentSwitchingEnabled?: boolean;
     folderMoveTargets: readonly SessionFolderMoveTarget[];
+    forkActionContext?: SessionItemProps['forkActionContext'];
     onMoveToSessionFolder?: (folderId: string | null) => void | Promise<void>;
     onMoveToFolder?: () => void;
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
     onMoveDown?: () => void;
+    onDeleteDraft?: () => void | Promise<void>;
     measurementTarget?: SessionListRowProps['measurementTarget'];
 }>;
 
@@ -113,6 +117,7 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             onUnregisterTreeRowBounds={props.onUnregisterTreeRowBounds}
             measurementTarget={props.measurementTarget}
             rowViewModel={rowViewModel}
+            agentSwitchingEnabled={props.agentSwitchingEnabled}
             session={session}
             selectionKey={sessionKey}
             subtitleOverride={rowViewModel.subtitleOverride}
@@ -136,11 +141,13 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             compactMinimal={props.compactMinimal}
             rowAttentionAnimationEnabled={props.rowAttentionAnimationEnabled}
             folderMoveTargets={props.folderMoveTargets}
+            forkActionContext={props.forkActionContext}
             onMoveToSessionFolder={props.onMoveToSessionFolder}
             onMoveToFolder={props.onMoveToFolder}
             onMoveToWorkspaceRoot={props.onMoveToWorkspaceRoot}
             onMoveUp={props.onMoveUp}
             onMoveDown={props.onMoveDown}
+            onDeleteDraft={props.onDeleteDraft}
             {...(isIos && sessionKey != null
                 ? {
                     nativeInlineDragEnabled: isIos && props.dragEnabled,

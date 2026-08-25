@@ -116,7 +116,14 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
 
     const supportsPreflightModeProbe = React.useMemo(() => {
         if (!agentType) return false;
-        const kind = getAgentCore(agentType)?.sessionModes.kind;
+        const core = getAgentCore(agentType);
+        // `sessionModes` is a bundled-only declaration, so an installed Agent
+        // has no core to name an ACP mode kind. Treating that absence as a veto
+        // is what makes the session-mode probe structurally unreachable for
+        // every installed Agent; it declares its modes through its own
+        // contribution, exactly as the models probe already assumes.
+        if (!core) return true;
+        const kind = core.sessionModes.kind;
         return kind === 'acpAgentModes' || kind === 'acpPolicyPresets';
     }, [agentType]);
 

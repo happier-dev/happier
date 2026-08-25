@@ -18,7 +18,6 @@ type StorageState = {
   machines: Record<string, { id: string }>;
   updateSessionPermissionMode: ReturnType<typeof vi.fn>;
   updateSessionModelMode: ReturnType<typeof vi.fn>;
-  updateSessionDraft: ReturnType<typeof vi.fn>;
 } & Record<string, unknown>;
 
 let storageState: StorageState = {
@@ -26,7 +25,6 @@ let storageState: StorageState = {
   machines: { m1: { id: 'm1' } },
   updateSessionPermissionMode: vi.fn(),
   updateSessionModelMode: vi.fn(),
-  updateSessionDraft: vi.fn(),
 };
 
 const modalAlertSpy = vi.hoisted(() => vi.fn());
@@ -96,7 +94,6 @@ async function setupHarness(options?: Readonly<{
     machines: { m1: { id: 'm1' } },
     updateSessionPermissionMode: vi.fn(),
     updateSessionModelMode: vi.fn(),
-    updateSessionDraft: vi.fn(),
     ...(options?.storageState ?? {}),
   };
   vi.doMock('@/sync/sync', () => ({
@@ -119,6 +116,7 @@ async function setupHarness(options?: Readonly<{
   vi.doMock('@/components/inbox/actionOperations/actionOperationPresentationRuntime', () => ({
     actionOperationPresentationCoordinator: {
       register: actionOperationPresentationRegisterSpy,
+      acknowledgeRequestPresented: vi.fn(),
     },
   }));
   vi.doMock('@/sync/domains/state/storage', () => ({
@@ -744,6 +742,55 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     await hook.unmount();
   });
 
+  it('does not turn observer socket loss into terminal failure after the canonical store has daemon custody', async () => {
+    const mountedRef = { current: true };
+    vi.doMock('@/hooks/ui/useMountedRef', () => ({
+      useMountedRef: () => mountedRef,
+    }));
+    const {
+      useCreateNewSession,
+      executeSessionSpawnNewActionSpy,
+    } = await setupHarness();
+    const observer = createDeferred<never>();
+    executeSessionSpawnNewActionSpy.mockReturnValueOnce(observer.promise);
+    const setIsCreating = vi.fn();
+    const onAfterCreatedSettled = vi.fn();
+    const hook = await renderHook(() => useCreateNewSession(buildCreateSessionHookParams({
+      setIsCreating,
+      draftScope: { serverId: 'server-a', accountId: 'account-a' },
+      launchUserAttemptId: 'request-owned-by-daemon',
+    }) as any));
+
+    const createPromise = hook.getCurrent().handleCreateSession({
+      initialMessage: 'skip',
+      onAfterCreatedSettled,
+    }) as unknown as Promise<void>;
+    await vi.waitFor(() => expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledTimes(1));
+
+    const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+    act(() => actionOperationStore.mergeSnapshots([{
+      version: 1,
+      operationId: 'operation-owned-by-daemon',
+      revision: 1,
+      actionId: 'session.spawn_new',
+      state: 'accepted',
+      scope: { accountId: 'account-a', machineId: 'm1' },
+      title: 'Create session',
+      requestId: 'request-owned-by-daemon',
+      createdAt: 1,
+      cancellation: 'supported',
+    }]));
+    mountedRef.current = false;
+    observer.reject(new Error('Socket not connected'));
+    await createPromise;
+
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledTimes(1);
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(onAfterCreatedSettled).not.toHaveBeenCalledWith({ status: 'rejected' });
+    actionOperationStore.reset();
+    await hook.unmount();
+  });
+
   it('shows typed update guidance when an older CLI does not implement session.spawn_new', async () => {
     const { useCreateNewSession, executeSessionSpawnNewActionSpy, machineSpawnNewSessionSpy } = await setupHarness();
     executeSessionSpawnNewActionSpy.mockResolvedValue({
@@ -1275,4 +1322,88 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(machineSpawnNewSessionSpy).not.toHaveBeenCalled();
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
+});
+
+/**
+ * Render-to-spawn parity for an INSTALLED (non-bundled) Agent.
+ *
+ * The composer renders an installed Agent's declared new-session options from
+ * the descriptor its machine projected (proved descriptor-side in
+ * `registryUiBehavior.externalAgentParity.test.ts`). This is the other half:
+ * the spawn envelope has to be built for that same Agent, on that same machine.
+ * An Agent whose options are rendered and then dropped before
+ * `session.spawn_new` is assembled silently launches with a configuration the
+ * user did not choose.
+ */
+describe('useCreateNewSession (installed Agent render-to-spawn parity)', () => {
+  const EXTERNAL_AGENT_ID = 'acme.review.agent';
+
+  beforeEach(() => {
+    vi.resetModules();
+    modalAlertSpy.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('spawns an installed Agent with the options it declared, resolved on the selected machine', async () => {
+    const { useCreateNewSession, executeSessionSpawnNewActionSpy } = await setupHarness();
+
+    const { buildSpawnSessionExtrasFromUiState } = await import('@/agents/catalog/catalog');
+    // Stands in for the installed Agent's projected descriptor: it answers only
+    // for that Agent's own identity, only on the machine the session will run
+    // on, and only from the option values the composer collected.
+    (buildSpawnSessionExtrasFromUiState as any).mockImplementation(({ agentId, machineId, newSessionOptions, updatedAt }: {
+      agentId: string;
+      machineId?: string | null;
+      newSessionOptions?: Record<string, unknown> | null;
+      updatedAt?: number;
+    }) => {
+      if (agentId !== EXTERNAL_AGENT_ID || machineId !== 'm1') return {};
+      if (newSessionOptions?.allowIndexing !== true) return {};
+      return {
+        sessionConfigOptionOverrides: {
+          v: 1,
+          updatedAt: updatedAt ?? 0,
+          overrides: { allowIndexing: { value: 'true', updatedAt: updatedAt ?? 0 } },
+        },
+      };
+    });
+
+    const hook = await renderHook(() => useCreateNewSession(buildCreateSessionHookParams({
+      agentType: EXTERNAL_AGENT_ID,
+      runtimeCarrierAgentId: EXTERNAL_AGENT_ID,
+      agentNewSessionOptions: { allowIndexing: true },
+      promptStore: createNewSessionPromptStore('hello'),
+      // The daemon projection is what makes an installed Agent addressable at
+      // the strict Action boundary; without it there is no Agent to spawn.
+      daemonMergedProjectionInputs: {
+        mergedBackendProjectionById: {},
+        mergedProviderProjectionById: {
+          [EXTERNAL_AGENT_ID]: {
+            agentId: EXTERNAL_AGENT_ID,
+            identity: { pluginId: 'acme.tools', localId: 'review-agent' },
+          },
+        },
+      },
+    }) as any));
+    const handleCreateSession = hook.getCurrent().handleCreateSession as unknown as (
+      options?: HandleCreateSessionOptions,
+    ) => Promise<void>;
+
+    await act(async () => {
+      await handleCreateSession({ initialMessage: 'skip' });
+    });
+
+    expect(executeSessionSpawnNewActionSpy).toHaveBeenCalledWith(expect.objectContaining({
+      configuration: expect.objectContaining({
+        options: expect.objectContaining({
+          allowIndexing: expect.objectContaining({ value: 'true' }),
+        }),
+      }),
+    }), expect.objectContaining({ surface: 'ui' }));
+    await hook.unmount();
+  }, 300_000);
 });

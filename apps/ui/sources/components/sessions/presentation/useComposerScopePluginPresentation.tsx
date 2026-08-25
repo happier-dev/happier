@@ -10,6 +10,7 @@ import type {
     PluginProjectedComposerRegionEntryV1,
     PluginResourceContextV1,
 } from '@happier-dev/protocol';
+import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type { PluginSurfaceTarget } from '@happier-dev/plugin-sdk/ui';
 
 import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
@@ -51,7 +52,6 @@ import type {
     ComposerAttachmentRowInteractionPresentation,
 } from '@/components/sessions/composer/composerAttachmentProjection';
 import {
-    composerPresentationTargetKey,
     createComposerPresentationTransactionApplier,
     readComposerPresentationSnapshot,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
@@ -60,6 +60,7 @@ import {
     type ComposerPluginSurfaceMountRequest,
 } from '@/components/sessions/presentation/ComposerPluginSurface';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
+import type { FocusReturnRef } from '@/keyboard/focusReturn';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     createPluginUiProjectedActionResolver,
@@ -68,6 +69,11 @@ import {
 } from '@/sync/domains/plugins/ui/projection';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import {
+    resolvePluginLocalizedText,
+    type PluginLocalizedTextResolver,
+} from '@/sync/domains/plugins/ui/i18n';
+import { getPreferredLanguage } from '@/text';
 
 export type ComposerScopeProjectionInputs = Pick<
     DaemonMergedProjectionInputs,
@@ -114,6 +120,8 @@ function compareOrderedComposerContributions(
 export type ComposerScopePluginPresentation = Readonly<{
     /** Exact current attachment catalog; retained drafts stay separately owned. */
     attachmentEntriesById: Readonly<Record<string, PluginUiComposerAttachmentProjection>> | null;
+    /** Projection-bound localization used by every attachment admission path. */
+    localizePluginText: PluginLocalizedTextResolver;
     /** Existing Session adapters borrow this guarded controller; they do not own a second snapshot. */
     actionController: PluginContributedActionController;
     /** Existing Session physical slots consume this exact normalized region projection. */
@@ -224,7 +232,7 @@ export function useComposerScopePluginPresentation(
     physicalTargetRef.current = params.physicalTarget;
     const resourceContextRef = React.useRef(params.resourceContext);
     resourceContextRef.current = params.resourceContext;
-    const scopeKey = React.useMemo(() => composerPresentationTargetKey(params.composer), [params.composer]);
+    const scopeKey = React.useMemo(() => composerRefV1Key(params.composer), [params.composer]);
     const physicalTargetKey = React.useMemo(() => (
         params.physicalTarget.kind === 'session'
             ? `session:${params.physicalTarget.sessionId}`
@@ -320,6 +328,22 @@ export function useComposerScopePluginPresentation(
     const pluginProjection = React.useMemo(() => normalizePluginUiProjection(
         actionSnapshot ? params.projectionInputs?.pluginProjectionV2 ?? null : null,
     ), [actionSnapshot, params.projectionInputs?.pluginProjectionV2]);
+    // One resolver for every declared Composer string this scope displays:
+    // control labels, choice options, dialog titles, and the attachment type
+    // label frozen at admission. It is referentially stable because it takes
+    // part in the Composer host and applier identity; the projection it reads
+    // is the current one at call time.
+    const pluginProjectionRef = React.useRef(pluginProjection);
+    pluginProjectionRef.current = pluginProjection;
+    const localizePluginText = React.useCallback<PluginLocalizedTextResolver>(
+        (pluginId, value) => resolvePluginLocalizedText({
+            projection: pluginProjectionRef.current,
+            pluginId,
+            value,
+            locale: getPreferredLanguage(),
+        }),
+        [],
+    );
     const attachmentEntriesById = actionSnapshot && params.attachmentsEnabled
         ? pluginProjection.composerAttachmentsById
         : null;
@@ -343,7 +367,8 @@ export function useComposerScopePluginPresentation(
     const composerSurfaceCatalog = params.projectionInputs?.composerSurfaceCatalog ?? [];
     const transactionApplier = React.useMemo(() => createComposerPresentationTransactionApplier({
         composerAttachmentsById: pluginProjection.composerAttachmentsById,
-    }), [pluginProjection.composerAttachmentsById]);
+        localize: localizePluginText,
+    }), [localizePluginText, pluginProjection.composerAttachmentsById]);
     const surfaceLifetime = React.useMemo<BoundPluginSurfaceMountLifetime | null>(() => {
         const snapshot = actionSnapshot;
         if (!snapshot) return null;
@@ -386,7 +411,9 @@ export function useComposerScopePluginPresentation(
     // unsupported instead of resolving after doing nothing.
     const destinationNavigation = usePluginSurfaceDestinationNavigationBinding();
     const openDestinationSurface = destinationNavigation?.openSurface;
-    const renderComposerSurface = React.useCallback((request: ComposerPluginSurfaceMountRequest): React.ReactNode => {
+    const renderComposerSurface = React.useCallback((request: ComposerPluginSurfaceMountRequest & Readonly<{
+        fallback?: React.ReactNode;
+    }>): React.ReactNode => {
         const snapshot = actionSnapshotRef.current;
         const projection = params.projectionInputs?.pluginProjectionV2;
         if (
@@ -398,10 +425,12 @@ export function useComposerScopePluginPresentation(
         ) {
             return null;
         }
+        const { fallback, ...mountRequest } = request;
         return (
             <ComposerPluginSurface
                 key={request.instanceKey}
-                request={request}
+                request={mountRequest}
+                {...(fallback === undefined ? {} : { fallback })}
                 physicalTarget={physicalTargetRef.current}
                 serverId={snapshot.host.serverId}
                 projectionGeneration={projection.generation}
@@ -411,6 +440,17 @@ export function useComposerScopePluginPresentation(
                 machineId={snapshot.host.machineId ?? null}
                 parentLifetime={surfaceLifetime}
                 transactionApplier={transactionApplier}
+                // The same enclosing owner the declarative control host below
+                // uses. Resolving it and not handing it to the physical mount
+                // installed no `openSurface` on the surface that actually
+                // renders the controls, so an enabled row action — Triage's
+                // **View details** — refused every press. Absent owner still
+                // means absent method: the prop is omitted rather than passed
+                // as `undefined`, so the controller keeps reporting the method
+                // as factually unsupported.
+                {...(openDestinationSurface === undefined
+                    ? {}
+                    : { openSurface: openDestinationSurface })}
             />
         );
     }, [
@@ -505,6 +545,7 @@ export function useComposerScopePluginPresentation(
         surfaceKey?: string;
         accessibilityLabel?: string;
         content: React.ReactNode;
+        focusReturnRef?: FocusReturnRef;
     }>): void => {
         const lifetime = surfaceLifetime;
         if (!lifetime || !lifetime.isCurrent()) return;
@@ -524,6 +565,7 @@ export function useComposerScopePluginPresentation(
                 children: input.content,
             },
             closeOnBackdrop: true,
+            focusReturnRef: input.focusReturnRef,
             onRequestClose: () => retirement.dispose(),
             onHostUnmount: () => retirement.dispose(),
         });
@@ -567,6 +609,12 @@ export function useComposerScopePluginPresentation(
                 instance: input.attachment,
             },
             instanceKey: `composer:attachmentDisplay:${input.attachment.instanceId}`,
+            // No fallback is installed on purpose. `AgentInputAttachmentsRow`
+            // is the sole owner of this instance's row chrome — label, error
+            // feedback and removal — and already renders it around this mount.
+            // Handing the mount a second attachment row duplicated both inside
+            // the first, so failure keeps the surface host's incumbent
+            // body-level unavailable/crash presentation instead.
         });
         if (renderedContent === null || renderedContent === undefined) return undefined;
         return { sizing: input.catalog.display.sizing, renderedContent };
@@ -600,23 +648,31 @@ export function useComposerScopePluginPresentation(
                 return { renderPreviewPopover };
             }
             return {
-                onPress: () => {
+                onPress: (context) => {
                     const content = renderAttachmentPreviewSurface(input);
                     if (content === null || content === undefined) return;
-                    openSurfaceDialog({ title: input.attachment.presentation.label, content });
+                    openSurfaceDialog({
+                        title: input.attachment.presentation.label,
+                        content,
+                        focusReturnRef: context?.focusReturnRef,
+                    });
                 },
             };
         }
         if (preview !== undefined || input.catalog.picker === undefined) return undefined;
         return {
-            onPress: () => {
+            onPress: (context) => {
                 const content = renderAttachmentPickerSurface(
                     input.catalog.identity,
                     input.catalog.immutableGenerationId,
                     `composer:attachmentPicker:${input.attachment.instanceId}`,
                 );
                 if (content === null || content === undefined) return;
-                openSurfaceDialog({ title: input.attachment.presentation.label, content });
+                openSurfaceDialog({
+                    title: input.attachment.presentation.label,
+                    content,
+                    focusReturnRef: context?.focusReturnRef,
+                });
             },
         };
     }, [
@@ -628,6 +684,7 @@ export function useComposerScopePluginPresentation(
     const composerControlHost = React.useMemo<PluginComposerControlHost>(() => ({
         scope: params.composer.kind,
         isCurrent: () => surfaceLifetime?.isCurrent() === true,
+        localize: localizePluginText,
         renderControlResourceState: ({ control, children }) => {
             const resource = control.definition.state?.resource;
             const snapshot = actionSnapshotRef.current;
@@ -680,15 +737,26 @@ export function useComposerScopePluginPresentation(
             fireAndForget(openPluginContributedActionReference({
                 controller: actionController,
                 action,
-                input: input ?? null,
+                ...(input === undefined ? {} : { input }),
                 signal: scopeAbort.signal,
             }), { tag: 'ComposerScopePluginPresentation.openControlAction' });
         },
+        // The exact current Composer document decides this, not the control's
+        // own enablement: a read-only Session, a blocked operation, or an
+        // `editAndSubmit` lock all make the transaction owner return
+        // `notEditable`, so a mutating choice must present as disabled.
+        canMutateComposer: () => (
+            surfaceLifetime?.isCurrent() === true
+            && readComposerPresentationSnapshot(params.composer)?.state.editable === true
+        ),
         applyComposer: ({ control, operations }) => {
-            if (surfaceLifetime?.isCurrent() !== true) return;
+            if (surfaceLifetime?.isCurrent() !== true) return { status: 'composerUnavailable' };
             const snapshot = readComposerPresentationSnapshot(params.composer);
-            if (!snapshot) return;
-            transactionApplier.apply({
+            if (!snapshot) return { status: 'composerUnavailable' };
+            // The canonical result is returned, not discarded: a conflict or a
+            // non-editable draft must not present to the user as an applied
+            // selection.
+            return transactionApplier.apply({
                 ref: params.composer,
                 admittedContributor: {
                     identity: control.identity,
@@ -707,24 +775,30 @@ export function useComposerScopePluginPresentation(
             });
         },
         renderSurfaceContent: renderControlSurface,
-        openSurfaceDialog: (presentation) => {
+        openSurfaceDialog: (presentation, options) => {
             const content = renderControlSurface(presentation);
             if (content === null || content === undefined) return;
             openSurfaceDialog({
-                title: presentation.state.label ?? (
-                    typeof presentation.control.definition.label === 'string'
-                        ? presentation.control.definition.label
-                        : presentation.control.definition.label.fallback
+                // A Resource-produced label is already a resolved runtime
+                // string; only the declaration needs the current locale.
+                title: presentation.state.label ?? localizePluginText(
+                    presentation.control.identity.pluginId,
+                    presentation.control.definition.label,
                 ),
                 layout: presentation.layout,
                 surfaceKey: `composer:${presentation.kind}:${presentation.control.id}:dialog`,
                 accessibilityLabel: presentation.state.accessibilityLabel,
                 content,
+                // The control affordance that opened this dialog owns the exact
+                // native focus-return target; the incumbent modal owner
+                // restores it on dismissal.
+                ...(options?.focusReturnRef ? { focusReturnRef: options.focusReturnRef } : {}),
             });
         },
     }), [
         actionController,
         destinationNavigation,
+        localizePluginText,
         openSurfaceDialog,
         params.composer,
         params.onOpenControlAction,
@@ -774,6 +848,7 @@ export function useComposerScopePluginPresentation(
 
     return React.useMemo(() => ({
         attachmentEntriesById,
+        localizePluginText,
         actionController,
         composerRegions,
         getCurrentActionSnapshot,
@@ -787,6 +862,7 @@ export function useComposerScopePluginPresentation(
     }), [
         afterComposer,
         attachmentEntriesById,
+        localizePluginText,
         actionController,
         beforeComposer,
         composerRegions,

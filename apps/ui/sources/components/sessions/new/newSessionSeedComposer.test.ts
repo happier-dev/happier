@@ -69,7 +69,6 @@ describe('readPluginNewSessionSeedV1', () => {
 
 describe('seedAndOpenNewSession', () => {
     function harness(overrides: Partial<Parameters<typeof seedAndOpenNewSession>[0]> = {}) {
-        const readDraft = vi.fn(() => null);
         const writeDraft = vi.fn();
         const navigate = vi.fn();
         const outcome = seedAndOpenNewSession({
@@ -77,12 +76,12 @@ describe('seedAndOpenNewSession', () => {
             scope: { serverId: 'server-a', accountId: 'account-a' },
             isCurrent: () => true,
             navigateToNewSession: navigate,
+            createDraftId: () => '00000000-0000-4000-8000-000000000042',
             nowMs: () => 5,
-            readDraft,
             writeDraft,
             ...overrides,
         });
-        return { outcome, readDraft, writeDraft, navigate };
+        return { outcome, writeDraft, navigate };
     }
 
     it('writes ordinary draft fields through the incumbent draft and hands unresolved input to New Session once', () => {
@@ -90,16 +89,20 @@ describe('seedAndOpenNewSession', () => {
         const { outcome, writeDraft, navigate } = harness();
 
         expect(outcome).toEqual({ kind: 'seeded' });
-        expect(writeDraft).toHaveBeenCalledWith(
-            expect.objectContaining({
+        expect(writeDraft).toHaveBeenCalledWith({
+            scope: { serverId: 'server-a', accountId: 'account-a' },
+            draftId: '00000000-0000-4000-8000-000000000042',
+            draft: expect.objectContaining({
                 input: 'Repair the failing check',
                 entryIntent: 'session',
                 selectedPath: '/work',
             }),
-            { serverId: 'server-a', accountId: 'account-a' },
-        );
+        });
         expect(storeTempDataSpy).not.toHaveBeenCalled();
-        expect(navigate).toHaveBeenCalledWith(null);
+        expect(navigate).toHaveBeenCalledWith({
+            dataId: null,
+            draftId: '00000000-0000-4000-8000-000000000042',
+        });
     });
 
     it('never navigates when the seed is invalid, empty, aborted or the surface is gone', () => {

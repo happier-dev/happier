@@ -26,6 +26,7 @@ import { resolveTranscriptRowPaintedIdentities } from '@/components/sessions/tra
 import { resolveTranscriptUtteranceIdentity } from '@/components/sessions/transcript/motion/transcriptFreshnessGate';
 import { OlderLoadProgressOverlay } from '@/components/sessions/transcript/OlderLoadProgressOverlay';
 import { OlderLoadRetryOverlay } from '@/components/sessions/transcript/OlderLoadRetryOverlay';
+import { OlderLoadContinuationOverlay } from '@/components/sessions/transcript/OlderLoadContinuationOverlay';
 import { CatchUpProgressOverlay } from '@/components/sessions/transcript/CatchUpProgressOverlay';
 import { resolveTranscriptListShellEdgeSlots } from '@/components/sessions/transcript/viewport/shell/transcriptListShellEdgeSlots';
 import {
@@ -62,6 +63,8 @@ type ToolCallsGroupExpansionRequest = Readonly<{
     toolMessageIds: readonly string[];
 }>;
 
+type ExternalSessionOperationFocusTransitionKind = 'dismiss' | 'check_again';
+
 export type TranscriptItemRendererDeps = Readonly<{
     buildRowShellSignature: (item: ChatTranscriptListItem) => TranscriptItemHeightValiditySignature;
     expandedToolCallsAnchorMessageIds: ReadonlySet<string>;
@@ -76,6 +79,8 @@ export type TranscriptItemRendererDeps = Readonly<{
     props: ChatListInternalProps;
     resolveKindForMessageId: (messageId: string) => string | null;
     resolveThinkingExpanded: (messageId: string) => boolean;
+    /** Stable, mounted transcript viewport target for operation cards that retire themselves. */
+    returnFocusToTranscriptViewport: () => void;
     resolveToolCallMessagesForIds: (toolMessageIds: readonly string[]) => ToolCallMessage[];
     setThinkingExpanded: (messageId: string, expanded: boolean) => void;
     setToolCallsGroupExpanded: (request: ToolCallsGroupExpansionRequest) => void;
@@ -97,6 +102,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         measurementReconciler,
         resolveKindForMessageId,
         resolveThinkingExpanded,
+        returnFocusToTranscriptViewport,
         resolveToolCallMessagesForIds,
         setThinkingExpanded,
         setToolCallsGroupExpanded,
@@ -131,6 +137,37 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         sessionId,
         toolChromeCommon,
     } = deps.props;
+    const pendingExternalSessionOperationFocusTransitionRef = React.useRef<Readonly<{
+        itemId: string;
+        kind: ExternalSessionOperationFocusTransitionKind;
+        sessionId: string;
+    }> | null>(null);
+    const armExternalSessionOperationFocusTransition = React.useCallback((
+        itemId: string,
+        kind: ExternalSessionOperationFocusTransitionKind,
+    ) => {
+        pendingExternalSessionOperationFocusTransitionRef.current = {
+            itemId,
+            kind,
+            sessionId,
+        };
+    }, [sessionId]);
+    React.useLayoutEffect(() => {
+        const transition = pendingExternalSessionOperationFocusTransitionRef.current;
+        if (transition === null) return;
+        if (transition.sessionId !== sessionId) {
+            pendingExternalSessionOperationFocusTransitionRef.current = null;
+            return;
+        }
+        const currentItem = listData.find((item) => item.id === transition.itemId) ?? null;
+        const cardRetired = currentItem === null || currentItem.kind !== 'external-session-operation';
+        const checkAgainReplaced = transition.kind === 'check_again'
+            && currentItem?.kind === 'external-session-operation'
+            && currentItem.progress !== null;
+        if (!cardRetired && !checkAgainReplaced) return;
+        pendingExternalSessionOperationFocusTransitionRef.current = null;
+        returnFocusToTranscriptViewport();
+    }, [listData, returnFocusToTranscriptViewport, sessionId]);
     const operationMachineId =
         externalSessionOperationOwnerTarget?.machineId ?? null;
     const sessionServerId =
@@ -312,6 +349,8 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                             observationContext="hydrated"
                             originAvailability={operationRowCapabilities.originAvailability}
                             onDismiss={onDismissExternalSessionOperation}
+                            onTranscriptOperationActionTransition={(kind) =>
+                                armExternalSessionOperationFocusTransition(item.id, kind)}
                             onResume={operationRowCapabilities.canInvokeOwnerActions
                                 ? async (actionRef) =>
                                 await invokeExternalSessionOperationAction(
@@ -345,6 +384,8 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                         <ExternalSessionOperationSharedCard
                             presentation={item.presentation}
                             onDismiss={onDismissExternalSessionOperation}
+                            onTranscriptOperationActionTransition={(kind) =>
+                                armExternalSessionOperationFocusTransition(item.id, kind)}
                             {...(onCheckAgainExternalSessionOperation
                                 ? { onCheckAgain: onCheckAgainExternalSessionOperation }
                                 : {})}
@@ -623,7 +664,9 @@ export type TranscriptItemsEdgeSlotsDeps = Readonly<{
     onRequestSwitchToRemote: ChatListInternalProps['onRequestSwitchToRemote'];
     olderPaginationIsLoadingOlder: boolean;
     olderPaginationLoadFailed: boolean;
+    olderPaginationCanContinue: boolean;
     onRetryOlderPagination: () => void;
+    onContinueOlderPagination: () => void;
     renderTranscriptItemAtIndex: (item: ChatTranscriptListItem, index: number) => React.ReactNode;
     sessionId: string;
     showCatchUpOverlay: boolean;
@@ -644,7 +687,9 @@ export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) 
         onRequestSwitchToRemote,
         olderPaginationIsLoadingOlder,
         olderPaginationLoadFailed,
+        olderPaginationCanContinue,
         onRetryOlderPagination,
+        onContinueOlderPagination,
         renderTranscriptItemAtIndex,
         sessionId,
         showCatchUpOverlay,
@@ -684,6 +729,8 @@ export function useTranscriptItemsEdgeSlots(deps: TranscriptItemsEdgeSlotsDeps) 
             ? <OlderLoadProgressOverlay />
             : olderPaginationLoadFailed
                 ? <OlderLoadRetryOverlay onRetry={onRetryOlderPagination} />
+                : olderPaginationCanContinue
+                    ? <OlderLoadContinuationOverlay onContinue={onContinueOlderPagination} />
                 : null;
     const catchUpOverlay = (
         <CatchUpProgressOverlay

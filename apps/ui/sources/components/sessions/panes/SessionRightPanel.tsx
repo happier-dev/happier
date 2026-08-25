@@ -28,7 +28,7 @@ import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback'
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { SessionRightPanelAgentsView } from '@/components/sessions/panes/agents/SessionRightPanelAgentsView';
 import { SessionTranscriptNavigationPane } from '@/components/sessions/panes/SessionTranscriptNavigationPane';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../shell/sessionScreenTestIds';
 import { SessionRightPanelBrowserView } from './browser/SessionRightPanelBrowserView';
 import { SessionRightPanelServicesView } from './services/SessionRightPanelServicesView';
@@ -46,6 +46,7 @@ import {
     type SessionPaneSurfaceScope,
 } from './useSessionPanePluginRuntime';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
 export type SessionRightPanelProps = Readonly<{
     sessionId: string;
@@ -149,13 +150,23 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
             ? selectPluginRightSidebarTabPlacements(pluginRuntime.pluginUiProjection, 'session')
             : []
     ), [pluginRuntime.pluginUiProjection]);
+    const pluginLocale = getPreferredLanguage();
+    const localizePluginText = React.useMemo(
+        () => createPluginLocalizedTextResolver({
+            projection: pluginRuntime.pluginUiProjection,
+            locale: pluginLocale,
+        }),
+        [pluginLocale, pluginRuntime.pluginUiProjection],
+    );
     const rightPanelTabs = React.useMemo(() => resolveSessionRightSidebarTabs({
         terminalTabAvailable,
         presentation: props.presentation === 'screen' ? 'mobile' : 'desktop',
         pluginPlacements: pluginRightSidebarPlacements,
         projectionGeneration: pluginRuntime.pluginUiProjection?.generation ?? null,
         runtimeAdmission,
+        localize: localizePluginText,
     }), [
+        localizePluginText,
         pluginRuntime.pluginUiProjection?.generation,
         pluginRightSidebarPlacements,
         props.presentation,
