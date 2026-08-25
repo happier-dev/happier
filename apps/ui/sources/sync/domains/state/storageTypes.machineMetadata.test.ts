@@ -38,4 +38,17 @@ describe('MachineMetadataSchema', () => {
 
         expect(parsed.daemonTerminalSessionAttachSupported).toBe(true);
     });
+
+    it('preserves the daemon session-goal capability when advertised', () => {
+        const parsed = MachineMetadataSchema.parse({
+            host: 'host',
+            platform: 'darwin',
+            happyCliVersion: '0.2.10',
+            happyHomeDir: '/tmp/happier',
+            homeDir: '/tmp',
+            daemonSessionGoalControlsSupported: true,
+        });
+
+        expect(parsed.daemonSessionGoalControlsSupported).toBe(true);
+    });
 });

@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { resolveAgentUiBehaviorFromFlavor, resolveSessionGoalActionCapabilityProfile, supportsEditableSessionGoals } from './registryUiBehavior';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
-function createRegistryBehaviorSession(metadata: Session['metadata']): Session {
+function createRegistryBehaviorSession(
+    metadata: Session['metadata'],
+    goalControls: Readonly<{ canSet: boolean; canClear: boolean }> = { canSet: false, canClear: false },
+): Session {
     return {
         id: 's1',
         seq: 1,
@@ -13,7 +16,12 @@ function createRegistryBehaviorSession(metadata: Session['metadata']): Session {
         activeAt: 1,
         metadata,
         metadataVersion: 1,
-        agentState: null,
+        agentState: {
+            capabilities: {
+                sessionGoalSetSupported: goalControls.canSet,
+                sessionGoalClearSupported: goalControls.canClear,
+            },
+        },
         agentStateVersion: 1,
         thinking: false,
         thinkingAt: 0,
@@ -49,7 +57,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
                 path: '/repo',
                 host: 'host',
                 codexBackendMode: 'appServer',
-            }),
+            }, { canSet: true, canClear: true }),
         })).toBe(true);
 
         expect(supportsEditableSessionGoals({
@@ -63,15 +71,13 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
         })).toBe(false);
     });
 
-    it('does NOT restrict the goal action profile for Codex (full controls preserved — no regression)', () => {
-        // Codex declares no goal-action capability profile, so the fallback is null → the goal
-        // popover keeps the full control surface (pause/resume/complete/budget). QA-8.
+    it('intersects the full Codex goal surface with its live runtime controls', () => {
         expect(resolveSessionGoalActionCapabilityProfile({
             agentId: 'codex',
             session: createRegistryBehaviorSession({
                 flavor: 'codex', path: '/repo', host: 'host', codexBackendMode: 'appServer',
-            }),
-        })).toBeNull();
+            }, { canSet: true, canClear: false }),
+        })).toEqual({ canEdit: true, canStop: true, canClear: false, canConfigureBudget: true });
     });
 
     it('restricts the goal action profile for an editable Claude session (edit/clear only, no budget)', () => {
@@ -99,7 +105,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
         })).toBeNull();
     });
 
-    it('allows live codex sessions without persisted runtime identity to attempt native goal controls', () => {
+    it('fails closed for live Codex sessions whose runner does not publish goal controls', () => {
         expect(supportsEditableSessionGoals({
             agentId: 'codex',
             session: createRegistryBehaviorSession({
@@ -107,6 +113,15 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
                 path: '/repo',
                 host: 'host',
             }),
+        })).toBe(false);
+
+        expect(supportsEditableSessionGoals({
+            agentId: 'codex',
+            session: createRegistryBehaviorSession({
+                flavor: 'codex',
+                path: '/repo',
+                host: 'host',
+            }, { canSet: true, canClear: false }),
         })).toBe(true);
     });
 
@@ -137,7 +152,21 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
                 }),
                 active: false,
             },
+            daemonGoalControlsSupported: true,
         })).toBe(true);
+
+        expect(supportsEditableSessionGoals({
+            agentId: 'codex',
+            session: {
+                ...createRegistryBehaviorSession({
+                    flavor: 'codex',
+                    path: '/repo',
+                    host: 'host',
+                    codexBackendMode: 'appServer',
+                }),
+                active: false,
+            },
+        })).toBe(false);
     });
 
     it('uses the generic codex-decision footer behavior for opencode-family flavors', () => {

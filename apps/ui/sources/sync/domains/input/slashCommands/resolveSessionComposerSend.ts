@@ -73,9 +73,9 @@ export function resolveSessionComposerSend(args: {
 
     const goalCommand = resolveGoalCommand(args.input);
     if (goalCommand) {
-        return args.goalControlsAvailable === false
-            ? { kind: 'send', text: args.input }
-            : goalCommand;
+        return args.goalControlsAvailable === true
+            ? goalCommand
+            : { kind: 'send', text: args.input };
     }
 
     // Built-in core slash commands (e.g. /happier-diagnose). Resolved before

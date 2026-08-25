@@ -177,7 +177,6 @@ import {
 } from './processSupervision/sessionRunnerRespawnDescriptor';
 import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { publishShutdownStateBestEffort } from './lifecycle/publishShutdownState';
-import { projectPath } from '@/projectPath';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { selectPreferredTmuxSessionName, TmuxUtilities, isTmuxAvailable } from '@/integrations/tmux';
 import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
@@ -188,7 +187,11 @@ import {
   evaluatePredictiveSoftSwitchTrackedLiveSessionPolicy,
 } from './connectedServices/accountGroups/switching/predictiveSoftSwitchPolicy';
 
-import { getPreferredHostName, initialMachineMetadata } from './machine/metadata';
+import {
+  getPreferredHostName,
+  initialMachineMetadata,
+  refreshMachineMetadataForCurrentDaemon,
+} from './machine/metadata';
 import { createDaemonShutdownController } from './lifecycle/shutdown';
 import { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
 export { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
@@ -8452,32 +8455,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   didRefreshMachineMetadata = true;
                   // Keep machine metadata fresh without clobbering user-provided fields (e.g. displayName) that may exist.
                   await connectedApiMachine.updateMachineMetadata((metadata) => {
-                    const base = (metadata ?? (machine.metadata as any) ?? {}) as any;
-                    const next: MachineMetadata = {
-                      ...base,
-                      host: preferredHost,
-                      platform: os.platform(),
-                      happyCliVersion: packageJson.version,
-                      homeDir: os.homedir(),
-                      happyHomeDir: configuration.happyHomeDir,
-                      happyLibDir: projectPath(),
-                    } as MachineMetadata;
-
-                    // If nothing changes, skip emitting an update entirely.
-                    const current = base as Partial<MachineMetadata>;
-                    const isSame =
-                      current.host === next.host &&
-                      current.platform === next.platform &&
-                      current.happyCliVersion === next.happyCliVersion &&
-                      current.homeDir === next.homeDir &&
-                      current.happyHomeDir === next.happyHomeDir &&
-                      current.happyLibDir === next.happyLibDir;
-
-                    if (isSame) {
-                      return base as MachineMetadata;
-                    }
-
-                    return next;
+                    const base = (metadata ?? machine.metadata ?? {}) as Partial<MachineMetadata>;
+                    return refreshMachineMetadataForCurrentDaemon(base, preferredHost);
                   }).catch((error) => {
                     didRefreshMachineMetadata = false;
                     logger.warn('[DAEMON RUN] Failed to refresh machine metadata on reconnect', error);

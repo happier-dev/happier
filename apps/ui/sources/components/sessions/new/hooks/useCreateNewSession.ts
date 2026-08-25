@@ -45,7 +45,6 @@ import { executeSessionComposerResolution } from '@/sync/domains/input/slashComm
 import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
-import { sessionGoalClear, sessionGoalSet } from '@/sync/ops/sessionGoals';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
@@ -437,6 +436,10 @@ export function useCreateNewSession(params: Readonly<{
                 ? resolveSessionComposerSend({
                     input: sessionPromptText,
                     executionRunsEnabled: current.executionRunsEnabled === true,
+                    // A new session has no live runtime registry yet. Preserve the user's text and
+                    // let the provider handle `/goal` until the attached runner can advertise the
+                    // callable controls used by the local goal UI.
+                    goalControlsAvailable: false,
                     promptInvocationsV1: storage.getState().settings.promptInvocationsV1,
                 })
                 : null;
@@ -1094,9 +1097,6 @@ export function useCreateNewSession(params: Readonly<{
                             navigateToPetSettings: () => {
                                 postSpawnReplacementHref = '/settings/pets';
                             },
-                            openGoalControls: () => {},
-                            setSessionGoal: (sessionId, request) => sessionGoalSet(sessionId, request, { serverId: resolvedTargetServerId }),
-                            clearSessionGoal: (sessionId) => sessionGoalClear(sessionId, { serverId: resolvedTargetServerId }),
                             modalAlert: (title, message) => Modal.alert(title, message),
                         });
                     }
