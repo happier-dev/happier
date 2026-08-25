@@ -267,6 +267,11 @@ async function createClaudeBackendRunRuntimeActivityLifecycle(
 
 export async function runClaude(credentials: Credentials, options: StartOptions = {}): Promise<void> {
     const accountSettingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(credentials);
+    logger.infoFile('[CLAUDE_STARTUP] stage=process_entered', {
+        startedBy: options.startedBy ?? 'terminal',
+        startingMode: options.startingMode ?? 'local',
+        hasExistingSessionId: typeof options.existingSessionId === 'string' && options.existingSessionId.trim().length > 0,
+    });
     logger.debug(`[CLAUDE] ===== CLAUDE MODE STARTING =====`);
     logger.debug(`[CLAUDE] This is the Claude agent, NOT Gemini`);
     
@@ -324,6 +329,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         return;
     }
 
+    logger.infoFile('[CLAUDE_STARTUP] stage=backend_api_context_started');
     const { api, machineId } = await initializeBackendApiContext({
         credentials,
         machineMetadata: initialMachineMetadata,
@@ -333,6 +339,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         // when a daemon is already alive to avoid duplicate /v1/machines contention.
         skipMachineRegistration: options.startedBy === 'daemon',
     });
+    logger.infoFile('[CLAUDE_STARTUP] stage=backend_api_context_completed');
     logger.debug(`Using machineId: ${machineId}`);
     const attachMetadataIdentityPolicy =
         existingSessionId
@@ -487,14 +494,19 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     }
 
     // Create realtime session
+    logger.infoFile('[CLAUDE_STARTUP] stage=runtime_activity_started');
     const runtimeActivity = await createClaudeBackendRunRuntimeActivityLifecycle('supported');
+    logger.infoFile('[CLAUDE_STARTUP] stage=runtime_activity_completed');
     try {
     const activateProviderTaskRuntimeActivity = runtimeActivity.activateProviderRuntime;
     if (!activateProviderTaskRuntimeActivity) {
         throw new Error('Claude runtime Activity producer binding was not configured');
     }
     const session = api.sessionSyncClient(baseSession, runtimeActivity.lifecycle.clientConfig());
+    logger.infoFile('[CLAUDE_STARTUP] stage=session_transport_attach_started');
     await runtimeActivity.lifecycle.attachSession(session);
+    logger.infoFile('[CLAUDE_STARTUP] stage=session_transport_attach_completed');
+    logger.infoFile('[CLAUDE_STARTUP] stage=effective_prompt_started');
     const defaultSystemPromptText = await resolveEffectiveCodingPromptText({
         credentials,
         settings: options.accountSettings ?? null,
@@ -505,6 +517,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         }).state === 'enabled',
         providerId: 'claude',
     });
+    logger.infoFile('[CLAUDE_STARTUP] stage=effective_prompt_completed');
     // A terminal-started runner needs early daemon discovery because the daemon did
     // not launch or track it. A daemon-started runner is already tracked by PID and
     // reports exactly once through the strict readiness boundary after its runtime
@@ -1194,6 +1207,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     });
 
     // Create claude loop
+    logger.infoFile('[CLAUDE_STARTUP] stage=mcp_resolution_started');
     const resolvedMcp = await (async () => {
         try {
             const mcpSession = applyRunnerMcpSessionContext(session, {
@@ -1223,6 +1237,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             throw error;
         }
     })();
+    logger.infoFile('[CLAUDE_STARTUP] stage=mcp_resolution_completed');
     const resolvedMcpPort = parsePortFromUrl(resolvedMcp.happierMcpServer.url);
     const initialClaudeUnifiedTerminalMode = pinClaudeRemoteModeToActiveRuntime(resolveClaudeInstalledRuntimeSessionMode({
         permissionMode: options.permissionMode ?? 'default',
@@ -1259,6 +1274,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         // way the unified-terminal launcher has one, and this flag becomes unconditional with no
         // new mechanism here.
         activeLoopShouldWaitOnTermination = unifiedTerminalRuntimeActive;
+        logger.infoFile('[CLAUDE_STARTUP] stage=provider_loop_started');
         activeLoopPromise = loop({
             path: workingDirectory,
             model: options.model,

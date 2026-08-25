@@ -230,6 +230,7 @@ vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
     debugLargeJson: vi.fn(),
+    infoFile: vi.fn(),
     infoDeveloper: vi.fn(),
     warn: vi.fn(),
     getLogPath: vi.fn(() => '/tmp/happier.log'),
