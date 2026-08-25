@@ -424,13 +424,16 @@ export async function claudeLocal(opts: {
             // Prepare environment variables
             // Note: Local mode uses global Claude installation with --session-id flag
             // Launcher only intercepts fetch for thinking state tracking
-            const env: NodeJS.ProcessEnv = stripNestedSessionDetectionEnv({
-                ...processEnv,
-                // Keep behavior consistent with our wrapper script.
-                DISABLE_AUTOUPDATER: '1',
-                ...resolveClaudeConfigDirEnvOverlay(processEnv),
-                ...(opts.envOverlay ?? {}),
-            })
+            const env = withCurrentHappierSessionId(
+                stripNestedSessionDetectionEnv({
+                    ...processEnv,
+                    // Keep behavior consistent with our wrapper script.
+                    DISABLE_AUTOUPDATER: '1',
+                    ...resolveClaudeConfigDirEnvOverlay(processEnv),
+                    ...(opts.envOverlay ?? {}),
+                }),
+                opts.happierSessionId ?? '',
+            );
             isolateClaudeRuntimeAuthEnv(env);
             // Internal daemon→CLI marker used for strict env filtering in Agent SDK remote mode.
             // Never forward it into the Claude Code subprocess environment.

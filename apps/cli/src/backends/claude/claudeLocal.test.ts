@@ -1296,6 +1296,7 @@ describe('claudeLocal launcher selection', () => {
                 onSessionFound,
                 claudeArgs: [],
                 happierSessionId,
+                envOverlay: { HAPPIER_SESSION_ID: 'overlay-session' },
             });
 
             expect(mockSpawn).toHaveBeenCalled();
@@ -1318,6 +1319,7 @@ describe('claudeLocal launcher selection', () => {
             onSessionFound,
             claudeArgs: [],
             happierSessionId: 'managed-session-1',
+            envOverlay: { HAPPIER_SESSION_ID: 'overlay-session' },
         });
 
         expect(mockSpawn).toHaveBeenCalled();
