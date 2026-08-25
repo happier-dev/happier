@@ -176,6 +176,37 @@ describe('actionCatalog action-definition adapter', () => {
     }
   });
 
+  it('computes immutable host search text once before reusing it across queries', () => {
+    const hostSpec = getActionSpec('action.spec.get');
+    const hostSearchTextPrefix = `${hostSpec.id} ${hostSpec.title}`;
+    const originalToLowerCase = String.prototype.toLowerCase;
+    let hostSearchTextComputations = 0;
+    const toLowerCase = vi.spyOn(String.prototype, 'toLowerCase').mockImplementation(function(this: string) {
+      const value = String(this);
+      if (value.startsWith(hostSearchTextPrefix)) {
+        hostSearchTextComputations += 1;
+      }
+      return originalToLowerCase.call(this);
+    });
+
+    try {
+      const firstSearch = searchSerializedActionSpecsForSurface({
+        surface: 'api',
+        query: hostSpec.id,
+      });
+      const secondSearch = searchSerializedActionSpecsForSurface({
+        surface: 'api',
+        query: hostSpec.id,
+      });
+
+      expect(firstSearch.map((definition) => definition.id)).toContain(hostSpec.id);
+      expect(secondSearch.map((definition) => definition.id)).toContain(hostSpec.id);
+      expect(hostSearchTextComputations).toBe(1);
+    } finally {
+      toLowerCase.mockRestore();
+    }
+  });
+
   it('reuses immutable host projections while evaluating request-current search inputs', () => {
     const hostSpec = getActionSpec('action.spec.get');
     if (!hostSpec.outputSchema) throw new Error('Expected action.spec.get output schema');
