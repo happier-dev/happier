@@ -5,8 +5,6 @@
   
   Run Claude Code, Codex, Gemini, OpenCode (and more) on your computer<br />and continue seamlessly from your phone, browser, or desktop app.
 
-  <p><img src="/.github/supported-ai-providers.png" title="Happier Dev" alt="Happier Dev" width="320" /></p>
-
   **End-to-end encrypted. Self-hostable.<br />
   Built by developers, for developers.**
   <br /><br />
