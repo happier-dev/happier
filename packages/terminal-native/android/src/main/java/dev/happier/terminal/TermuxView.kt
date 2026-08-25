@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.accessibility.AccessibilityEvent
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -19,8 +20,17 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
   private var lineHeightPx = 18.0
   private var accessibilitySummary = ""
   private var accessibilityAccepted = false
+  private var accessibilityRefreshPosted = false
   private val surfaceInvalidator: () -> Unit = {
     postInvalidateOnAnimation()
+    if (!accessibilityRefreshPosted) {
+      accessibilityRefreshPosted = true
+      post {
+        accessibilityRefreshPosted = false
+        refreshAccessibility()
+        sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+      }
+    }
   }
   private val surfaceFocusRequester: () -> Unit = {
     requestNativeViewFocus()

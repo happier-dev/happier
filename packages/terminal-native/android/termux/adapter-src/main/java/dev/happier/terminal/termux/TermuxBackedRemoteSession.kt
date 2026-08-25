@@ -38,6 +38,13 @@ class TermuxBackedRemoteSession(
   private var mouseScrollStartDownTime = 0L
   private var mouseScrollStartX = 1
   private var mouseScrollStartY = 1
+  private var touchDownTime = 0L
+  private var touchDownColumn = -1
+  private var touchDownRow = -1
+  private var selectionStartColumn = -1
+  private var selectionStartRow = -1
+  private var selectionEndColumn = -1
+  private var selectionEndRow = -1
 
   private val output: TerminalOutput = object : TerminalOutput() {
     override fun write(data: ByteArray, offset: Int, count: Int) {
@@ -243,6 +250,41 @@ class TermuxBackedRemoteSession(
       return scrollRows(rowsDown, event)
     }
 
+    if (!event.isFromSource(InputDevice.SOURCE_MOUSE) && !emulator.isMouseTrackingActive) {
+      val column = (event.x / maxOf(1, cellWidthPx)).toInt().coerceIn(0, maxOf(0, cols - 1))
+      val row = (event.y / maxOf(1, cellHeightPx)).toInt().coerceIn(0, maxOf(0, rows - 1))
+      when (event.actionMasked) {
+        MotionEvent.ACTION_DOWN -> {
+          touchDownTime = event.downTime
+          touchDownColumn = column
+          touchDownRow = row
+          return true
+        }
+        MotionEvent.ACTION_MOVE -> {
+          if (event.eventTime - touchDownTime < 500L) return false
+          val starting = selectionStartColumn < 0
+          selectionStartColumn = touchDownColumn
+          selectionStartRow = touchDownRow
+          selectionEndColumn = column
+          selectionEndRow = row
+          if (starting) callbacks.emitSelectionState("started")
+          callbacks.emitSelectionState("changed", selectedText())
+          emitSurfaceReady()
+          return true
+        }
+        MotionEvent.ACTION_UP -> {
+          if (selectionStartColumn >= 0) {
+            selectionEndColumn = column
+            selectionEndRow = row
+            callbacks.emitSelectionState("ended", selectedText())
+            emitSurfaceReady()
+            return true
+          }
+          return emitLinkAt(event)
+        }
+      }
+    }
+
     if (event.action == MotionEvent.ACTION_UP && !event.isFromSource(InputDevice.SOURCE_MOUSE)) {
       if (emulator.isMouseTrackingActive) {
         sendMouseEventCode(event, TerminalEmulator.MOUSE_LEFT_BUTTON, true)
@@ -312,7 +354,11 @@ class TermuxBackedRemoteSession(
   }
 
   override fun copySelection() {
-    callbacks.emitCopy(accessibilitySummary())
+    val selected = selectedText()
+    if (selected.isEmpty()) return
+    callbacks.emitCopy(selected)
+    callbacks.emitSelectionState("copied", selected)
+    clearSelection()
   }
 
   override fun accessibilitySummary(): String {
@@ -332,11 +378,46 @@ class TermuxBackedRemoteSession(
       resizeEmulator(nextCols, nextRows, activeRenderer.fontWidthCompat().toInt(), activeRenderer.fontLineSpacingCompat())
       callbacks.emitResize(nextCols, nextRows)
     }
-    activeRenderer.render(emulator, canvas, topRow, -1, -1, -1, -1)
+    activeRenderer.render(
+      emulator,
+      canvas,
+      topRow,
+      selectionStartRow,
+      selectionEndRow,
+      selectionStartColumn,
+      selectionEndColumn,
+    )
   }
 
   override fun dispose() {
     disposed = true
+  }
+
+  private fun selectedText(): String {
+    if (selectionStartColumn < 0 || selectionEndColumn < 0) return ""
+    val startRow = minOf(selectionStartRow, selectionEndRow)
+    val endRow = maxOf(selectionStartRow, selectionEndRow)
+    val startColumn = if (selectionStartRow <= selectionEndRow) selectionStartColumn else selectionEndColumn
+    val endColumn = if (selectionStartRow <= selectionEndRow) selectionEndColumn else selectionStartColumn
+    return try {
+      emulator.getScreen().getSelectedText(
+        if (startRow == endRow) minOf(startColumn, endColumn) else startColumn,
+        startRow,
+        if (startRow == endRow) maxOf(startColumn, endColumn) else endColumn,
+        endRow,
+      ).toString()
+    } catch (_: Throwable) {
+      ""
+    }
+  }
+
+  private fun clearSelection() {
+    selectionStartColumn = -1
+    selectionStartRow = -1
+    selectionEndColumn = -1
+    selectionEndRow = -1
+    callbacks.emitSelectionState("cleared")
+    emitSurfaceReady()
   }
 
   private fun resizeEmulator(nextCols: Int, nextRows: Int, nextCellWidthPx: Int, nextCellHeightPx: Int) {

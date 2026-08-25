@@ -133,7 +133,7 @@ const expoBuildPropertiesPlugin = [
 const shouldUseAndroidReleaseShrinkerPlugin =
     androidEnableMinifyInReleaseBuilds || androidEnableShrinkResourcesInReleaseBuilds;
 const nativeSshTransportEnabled = readBoolEnv('HAPPIER_ENABLE_NATIVE_SSH', false);
-const terminalNativeRendererEnabled = readBoolEnv('HAPPIER_ENABLE_TERMINAL_NATIVE', false);
+const terminalNativeRendererEnabled = process.env.HAPPIER_ENABLE_TERMINAL_NATIVE === '1';
 const nativeAutolinkingSearchPaths = [
     "../../node_modules",
     "./node_modules",
@@ -449,7 +449,7 @@ const baseExpoConfig = {
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidReactNativeArchitectures.js"),
             require("./plugins/withReactNativeRepackRuntime.js"),
-            ...(terminalNativeRendererEnabled ? ["./plugins/withTerminalNativeGhosttyKit.js"] : []),
+            ...(terminalNativeRendererEnabled ? ["./plugins/withTerminalNativeBuildInputs.js"] : []),
             require("./modules/happier-hardware-keyboard-shortcuts/app.plugin.js"),
             ...(androidReleaseShrinkerPlugin ? [androidReleaseShrinkerPlugin] : []),
             [

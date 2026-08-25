@@ -210,6 +210,15 @@ const config = {
     'node_modules/react-native-unistyles/nitrogen/generated/**/*',
     '**/node_modules/react-native-unistyles/nitrogen/generated',
     '**/node_modules/react-native-unistyles/nitrogen/generated/**/*',
+
+    // Native terminal inputs are materialized during prebuild. Keep the
+    // generated artifacts out of the fingerprint while retaining the policy,
+    // materializer, and plugin source as native-build inputs.
+    'node_modules/@happier-dev/terminal-native/ios/Vendor/GhosttyKit.xcframework',
+    'node_modules/@happier-dev/terminal-native/ios/Vendor/GhosttyKit.xcframework/**/*',
+    'node_modules/@happier-dev/terminal-native/ios/Vendor/GhosttyKit.xcframework.zip',
+    'node_modules/@happier-dev/terminal-native/android/termux/vendor',
+    'node_modules/@happier-dev/terminal-native/android/termux/vendor/**/*',
   ],
   fileHookTransform: (source, chunk, isEndOfFile) => {
     const src = /** @type {FingerprintSource} */ (source ?? {});

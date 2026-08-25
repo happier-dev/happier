@@ -67,6 +67,12 @@ class TermuxRemoteSessionCallbacks(
     }
   }
 
+  fun emitSelectionState(state: String, text: String? = null) {
+    val payload = mutableMapOf<String, Any?>("surfaceId" to surfaceId, "state" to state)
+    if (!text.isNullOrEmpty()) payload["text"] = text
+    emit("selection", payload)
+  }
+
   fun emitTitle(title: String) {
     emit("title", mapOf("surfaceId" to surfaceId, "title" to title))
   }

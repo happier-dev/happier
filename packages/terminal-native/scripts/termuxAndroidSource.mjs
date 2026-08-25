@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+
+import { replaceDirectoryPreservingLastGood } from './atomicNativeBuildInputInstall.mjs';
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const policyPath = join(packageRoot, 'native-renderers.json');
@@ -109,7 +111,7 @@ export async function validateTermuxAndroidSource({ sourceRoot }) {
   };
 }
 
-export async function installTermuxAndroidSource({ sourceRoot, vendorRoot, observedCommit }) {
+export async function installTermuxAndroidSource({ sourceRoot, vendorRoot, observedCommit, sourceArchive }) {
   const policy = await readTermuxAndroidPolicy();
   const expectedCommit = policy.upstream.observedCommit;
   if (observedCommit !== expectedCommit) {
@@ -161,6 +163,7 @@ export async function installTermuxAndroidSource({ sourceRoot, vendorRoot, obser
       license: policy.license,
       licenseClosure: licenseClosure.closure,
       installedBy: policy.sourceStrategy.fetchScript,
+      ...(sourceArchive ? { sourceArchive } : {}),
     };
 
     await writeFile(
@@ -177,15 +180,26 @@ export async function installTermuxAndroidSource({ sourceRoot, vendorRoot, obser
       };
     }
 
-    await rm(vendorRoot, { force: true, recursive: true });
-    await mkdir(dirname(vendorRoot), { recursive: true });
-    await cp(tempRoot, vendorRoot, { recursive: true });
+    const vendorParent = dirname(vendorRoot);
+    await mkdir(vendorParent, { recursive: true });
+    const stagingRoot = await mkdtemp(join(vendorParent, `.${basename(vendorRoot)}-`));
+    const stagedVendorRoot = join(stagingRoot, basename(vendorRoot));
+    try {
+      await cp(tempRoot, stagedVendorRoot, { recursive: true });
+      await replaceDirectoryPreservingLastGood({
+        stagedPath: stagedVendorRoot,
+        destinationPath: vendorRoot,
+        validate: () => validateTermuxAndroidSource({ sourceRoot: vendorRoot }),
+      });
+    } finally {
+      await rm(stagingRoot, { force: true, recursive: true });
+    }
 
     return {
       status: 'ok',
       vendorRoot,
       metadata,
-      validation,
+      validation: await validateTermuxAndroidSource({ sourceRoot: vendorRoot }),
     };
   } finally {
     await rm(tempRoot, { force: true, recursive: true });
@@ -369,7 +383,9 @@ async function validateTermuxVendorProvenance({ sourceRoot, policy, metadata }) 
     || !sameJson(metadata.modules, policy.upstream.modules)
     || !sameJson(metadata.forbiddenModules, policy.forbiddenModules)
     || !sameJson(metadata.sourceStrategy, policy.sourceStrategy)
-    || !sameJson(metadata.license, policy.license)) {
+    || !sameJson(metadata.license, policy.license)
+    || (metadata.sourceArchive !== undefined
+      && !sameJson(metadata.sourceArchive, policy.upstream.sourceArchive))) {
     return {
       reason: 'termux-source-provenance-unverified',
       detail: 'Termux vendor source must record the policy-pinned revision, terminal-only module closure, and license policy.',

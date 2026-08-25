@@ -37,6 +37,7 @@ export type XtermTerminalHandle = Readonly<{
 export type XtermTerminalViewProps = Readonly<{
     onInput: (data: string) => void;
     onPaste?: (data: string) => void | Promise<unknown>;
+    onCopySelection?: (text: string) => void;
     onLink?: (url: string) => void;
     onResize: (cols: number, rows: number) => void;
     onReady: (cols: number, rows: number) => void;
@@ -103,6 +104,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
 
     const onInputRef = React.useRef(props.onInput);
     const onPasteRef = React.useRef(props.onPaste);
+    const onCopySelectionRef = React.useRef(props.onCopySelection);
     const onLinkRef = React.useRef(props.onLink);
     const onResizeRef = React.useRef(props.onResize);
     const onReadyRef = React.useRef(props.onReady);
@@ -111,6 +113,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
     const maxPendingWriteBytesRef = React.useRef(props.maxPendingWriteBytes ?? DEFAULT_XTERM_MAX_PENDING_WRITE_BYTES);
     onInputRef.current = props.onInput;
     onPasteRef.current = props.onPaste;
+    onCopySelectionRef.current = props.onCopySelection;
     onLinkRef.current = props.onLink;
     onResizeRef.current = props.onResize;
     onReadyRef.current = props.onReady;
@@ -341,7 +344,9 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
                 event.stopPropagation();
 
                 const selection = term.getSelection();
-                if (selection && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+                if (selection && onCopySelectionRef.current) {
+                    onCopySelectionRef.current(selection);
+                } else if (selection && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
                     void navigator.clipboard.writeText(selection).catch(() => {});
                 } else if (typeof document !== 'undefined') {
                     try {

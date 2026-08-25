@@ -70,6 +70,11 @@
       "name": "termux-app terminal libraries",
       "url": "https://github.com/termux/termux-app",
       "observedCommit": "401bbe54b8f4e68302b1ff70678015a24628fb1d",
+      "sourceArchive": {
+        "url": "https://github.com/termux/termux-app/archive/401bbe54b8f4e68302b1ff70678015a24628fb1d.tar.gz",
+        "sha256": "fa9000bc04faebb57de2c3e7b4264b1531f7898b47f08675730007bbfbaab6f6",
+        "commit": "401bbe54b8f4e68302b1ff70678015a24628fb1d"
+      },
       "pinRequired": true,
       "modules": [
         {
