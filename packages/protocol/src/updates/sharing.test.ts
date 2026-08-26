@@ -88,7 +88,7 @@ describe('updates sharing', () => {
       ownerMetadata: {
         value: {
           t: 'encrypted',
-          c: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+          c: 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==',
         },
       },
     }).success).toBe(true);
@@ -127,7 +127,7 @@ describe('updates sharing', () => {
       metadataLayoutVersion: 1,
       ownerMetadata: {
         value:
-          'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+          'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==',
       },
     }).success).toBe(false);
   });

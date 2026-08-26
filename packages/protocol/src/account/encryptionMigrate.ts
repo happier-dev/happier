@@ -52,6 +52,11 @@ import {
 import {
   AutomationIdV1Schema,
 } from '../automations/automationIdV1.js';
+import { AutomationRunCauseSchema } from '../automations/automationRunCause.js';
+import {
+  AutomationTriggerIdSchema,
+  AutomationTriggerRevisionSchema,
+} from '../automations/automationTriggerIdentity.js';
 import {
   MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
 } from '../automations/automationEventV1.js';
@@ -1162,21 +1167,15 @@ export type AccountEncryptionMigrateCollectionDirective = z.infer<
  * source facts are explicit, a target is only accepted against those facts,
  * and the Account transition remains the only lifecycle/activation owner.
  */
-const AccountEncryptionMigrateAutomationRunOriginSchema = z.enum([
-  'scheduled',
-  'manual',
-  'pluginEvent',
-  'conversation',
-]);
-
 const AccountEncryptionMigrateAutomationDefinitionContentSchema = z
   .object({
     templateCiphertext:
       ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATION_CONTENT_FIELDS.templateCiphertext,
-    triggerDefinitionEnvelope: z.string()
-      .min(1)
-      .max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES)
-      .nullable(),
+    triggerDefinitionEnvelopes: z.array(z.object({
+      triggerId: AutomationTriggerIdSchema,
+      triggerRevision: AutomationTriggerRevisionSchema,
+      envelope: z.string().min(1).max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES),
+    }).strict()).max(50),
   })
   .strict();
 
@@ -1236,8 +1235,7 @@ export const AccountEncryptionMigrateAutomationInventoryItemSchema =
       runId: asProtocolZod(AutomationIdV1Schema),
       automationId: asProtocolZod(AutomationIdV1Schema),
       revision: NonNegativeSafeIntegerSchema,
-      originKind: AccountEncryptionMigrateAutomationRunOriginSchema,
-      occurrenceKey: z.string().min(1).max(256).nullable(),
+      cause: AutomationRunCauseSchema,
       source: AccountEncryptionMigrateAutomationRunSourceContentSchema,
     }).strict(),
   ]);
@@ -1259,8 +1257,7 @@ export const AccountEncryptionMigrateAutomationStageItemSchema =
       runId: asProtocolZod(AutomationIdV1Schema),
       automationId: asProtocolZod(AutomationIdV1Schema),
       expectedRevision: NonNegativeSafeIntegerSchema,
-      originKind: AccountEncryptionMigrateAutomationRunOriginSchema,
-      occurrenceKey: z.string().min(1).max(256).nullable(),
+      cause: AutomationRunCauseSchema,
       source: AccountEncryptionMigrateAutomationRunSourceContentSchema,
       target: AccountEncryptionMigrateAutomationRunTargetContentSchema,
     }).strict(),

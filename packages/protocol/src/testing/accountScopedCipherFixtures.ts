@@ -6,6 +6,7 @@ import {
   deriveAccountMachineKeyFromRecoverySecret,
   type AccountScopedCryptoMaterial,
 } from '../crypto/accountScopedCipher.js';
+import { getAccountScopedBlobKindByte } from '../crypto/accountScopedCipherEnvelope.js';
 import { encodeBase64 } from '../crypto/base64.js';
 
 const ACCOUNT_SCOPED_MAGIC_V1 = 0xa1;
@@ -55,7 +56,7 @@ export function sealLegacyConnectedServiceQuotaSnapshotFixtureCiphertext(params:
   return encodeBase64(out, 'base64');
 }
 
-/** Independent fixture writer for the canonical kind-10 Session owner domain. */
+/** Independent fixture writer for the canonical Session owner domain. */
 export function sealSessionOwnerMetadataFixtureCiphertext(
   params: Readonly<{
     material: AccountScopedCryptoMaterial;
@@ -80,7 +81,7 @@ export function sealSessionOwnerMetadataFixtureCiphertext(
   );
   const out = new Uint8Array(2 + nonce.length + boxed.length);
   out[0] = ACCOUNT_SCOPED_MAGIC_V1;
-  out[1] = 10;
+  out[1] = getAccountScopedBlobKindByte('session_owner_metadata');
   out.set(nonce, 2);
   out.set(boxed, 2 + nonce.length);
   return encodeBase64(out, 'base64');

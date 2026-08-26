@@ -61,7 +61,7 @@ installDbModuleMock(() => ({
 
 const STORED_OWNER_METADATA_ENVELOPE_V1 = JSON.stringify({
     t: "encrypted",
-    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+    c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
 });
 const STORED_SHARED_METADATA_V1 = JSON.stringify({ v: 1 });
 const CURRENT_STORED_CONTENT_COMPATIBILITY = {

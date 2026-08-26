@@ -47,7 +47,7 @@ const ACCOUNT_SCOPED_KIND_BYTE = Object.freeze({
   session_organization_display: 7,
   session_first_intent: 8,
   qualified_connected_account_configuration: 9,
-  session_owner_metadata: 10,
+  account_session_draft_private_payload: 10,
   review_comment_sensitive: 11,
   review_comment_event_sensitive: 12,
   plugin_declarative_settings: 13,
@@ -62,7 +62,7 @@ const ACCOUNT_SCOPED_KIND_BYTE = Object.freeze({
   automation_run_failure_detail: 22,
   action_operation_snapshot: 23,
   qualified_connected_account_attempt_transaction: 24,
-  account_session_draft_private_payload: 25,
+  session_owner_metadata: 26,
 } satisfies Record<AccountScopedBlobKind, number>);
 
 /**
