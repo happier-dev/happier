@@ -34,7 +34,6 @@ import { mergeVoiceAgentRunMetadataFromExecutionRun } from './voiceAgentRunMetad
 import {
     createSessionClientTranscriptApi,
     type SessionClientTranscriptApi,
-    type SessionInputAdmissionSettlement,
     type SessionInputTransformBeforeCommitResult,
 } from './client/transcript/sessionClientTranscriptApi';
 import type { SendAgentSessionMediaCommittedRequest } from './client/transcript/sessionMediaBridge';
@@ -1026,7 +1025,7 @@ export class ApiSessionClient extends EventEmitter {
                 inputAdmission,
             }) => {
                 const settle = async (
-                    phase: keyof SessionInputAdmissionSettlement,
+                    phase: 'onAccepted' | 'onDefinitiveAdmissionFailure',
                 ): Promise<void> => {
                     const callback = settlement?.[phase];
                     if (!callback) return;
