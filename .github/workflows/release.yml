@@ -54,13 +54,26 @@ on:
           - none
           - build_only
           - build_and_publish
-      bump:
-        description: "Version bump admission — Final releases require none; materialize and commit changelog and version updates before dispatch."
+      waive_ci:
+        description: "Maintainer override — waive exact-SHA CI evidence for this candidate"
         required: true
-        type: choice
-        default: none
-        options:
-          - none
+        default: false
+        type: boolean
+      include_validation_suites:
+        description: "Validation — additional suite IDs to require (comma-separated)"
+        required: false
+        default: ""
+        type: string
+      waive_validation_suites:
+        description: "Maintainer override — risk-selected suite IDs to waive (comma-separated)"
+        required: false
+        default: ""
+        type: string
+      override_reason:
+        description: "Maintainer override — required reason for waived CI or validation evidence"
+        required: false
+        default: ""
+        type: string
       authorized_promotion_source_sha:
         description: "Safety — exact source branch SHA approved for promotion"
         required: false
@@ -187,6 +200,7 @@ jobs:
   snapshot_release_issues:
     name: Snapshot issues eligible for this channel release
     needs: [release_actor_guard]
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -301,18 +315,35 @@ jobs:
           HMAINT_OPERATION_ID: ${{ inputs.hmaint_operation_id }}
           HMAINT_ATTEMPT_ID: ${{ inputs.hmaint_attempt_id }}
           RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
-          BUMP: ${{ inputs.bump }}
+          BUMP: none
           QUALIFIED_V4_ACTIVATION_APPROVAL: ${{ inputs.qualified_v4_activation_approval }}
           CONFIRM: ${{ inputs.confirm }}
           DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
           ENVIRONMENT: ${{ inputs.environment }}
           DRY_RUN: ${{ inputs.dry_run }}
+          WAIVE_CI: ${{ inputs.waive_ci }}
+          INCLUDE_VALIDATION_SUITES: ${{ inputs.include_validation_suites }}
+          WAIVE_VALIDATION_SUITES: ${{ inputs.waive_validation_suites }}
+          OVERRIDE_REASON: ${{ inputs.override_reason }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/validate-release-dispatch.mjs
+      - name: Record explicit maintainer overrides
+        if: ${{ inputs.waive_ci == true || inputs.waive_validation_suites != '' }}
+        env:
+          WAIVE_CI: ${{ inputs.waive_ci }}
+          WAIVE_VALIDATION_SUITES: ${{ inputs.waive_validation_suites }}
+          OVERRIDE_REASON: ${{ inputs.override_reason }}
+        run: |
+          {
+            echo '### Maintainer release overrides'
+            if [ "$WAIVE_CI" = "true" ]; then echo '- Exact-SHA CI evidence: **WAIVED**'; fi
+            if [ -n "$WAIVE_VALIDATION_SUITES" ]; then echo "- Validation suites: **WAIVED** ($WAIVE_VALIDATION_SUITES)"; fi
+            echo "- Reason: $OVERRIDE_REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Verify successful existing CI for exact source
         id: existing_ci
-        if: ${{ inputs.dry_run != true }}
+        if: ${{ inputs.dry_run != true && inputs.waive_ci != true }}
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
@@ -328,8 +359,8 @@ jobs:
 
   plan:
     name: Release Plan (inputs + changes + bump/publish decisions)
-    needs: [release_actor_guard, resolve_resume, resolve_validation_profile, ci, snapshot_release_issues]
-    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_resume.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' && needs.snapshot_release_issues.result == 'success' }}
+    needs: [release_actor_guard, resolve_resume, resolve_validation_profile, ci]
+    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_resume.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -459,7 +490,6 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           ENVIRONMENT: ${{ inputs.environment }}
           FORCE_DEPLOY: ${{ inputs.force_deploy }}
-          RELEASE_BUMP: ${{ inputs.bump }}
           STACK_BASELINE_TAG: ${{ steps.versioned_plan.outputs.stack_baseline_tag || 'none' }}
           UI_EXPO_ACTION: ${{ inputs.ui_expo_action }}
           VERSIONED_APP_CHANGED: ${{ steps.versioned_plan.outputs.changed_app }}
@@ -479,7 +509,6 @@ jobs:
             echo "- dry_run: \`$DRY_RUN\`"
             echo "- deploy_targets: \`$DEPLOY_TARGETS\`"
             echo "- force_deploy: \`$FORCE_DEPLOY\`"
-            echo "- bump: \`$RELEASE_BUMP\`"
             echo "- ui_expo_action: \`$UI_EXPO_ACTION\` (builder=\`eas_cloud\`, platform=\`all\`, profile=\`auto\`, android_release_status=\`draft\`)"
             echo "- desktop_mode: \`$DESKTOP_MODE\`"
             echo ""
@@ -505,7 +534,7 @@ jobs:
         id: bump_plan
         env:
           ENVIRONMENT: ${{ inputs.environment }}
-          BUMP_PRESET: ${{ inputs.bump }}
+          BUMP_PRESET: none
           BUMP_APP_OVERRIDE: preset
           BUMP_CLI_OVERRIDE: preset
           BUMP_STACK_OVERRIDE: preset
@@ -1012,6 +1041,8 @@ jobs:
       risk_cli_upgrade: ${{ needs.plan.outputs.risk_cli_upgrade == 'true' }}
       risk_session_continuity: ${{ needs.plan.outputs.risk_session_continuity == 'true' }}
       risk_relay_upgrade: ${{ needs.plan.outputs.risk_relay_upgrade == 'true' }}
+      include_validation_suites: ${{ inputs.include_validation_suites }}
+      waive_validation_suites: ${{ inputs.waive_validation_suites }}
 
   verify_resume_candidates:
     name: Verify successful immutable siblings for resume
@@ -1166,21 +1197,13 @@ jobs:
       verify_stack_release: ${{ needs.promote_hstack_binaries.result == 'success' }}
       verify_deploy_server: ${{ needs.deploy_server.result == 'success' }}
       server_api_version_url: ${{ inputs.environment == 'production' && vars.HAPPIER_SERVER_API_PRODUCTION_VERSION_URL || vars.HAPPIER_SERVER_API_PREVIEW_VERSION_URL }}
-      run_installers_smoke: false
-      run_binary_smoke: false
-      run_cli_update_continuity: false
-      run_daemon_continuity: false
-      run_session_continuity: false
-      run_release_assets_docker: false
-      run_self_host_systemd: false
-      run_self_host_launchd: false
-      run_self_host_schtasks: false
-      run_self_host_daemon: false
+      validation_profile: integrated
 
   advance_release_issues:
     name: Advance issues to the released channel
     if: ${{ needs.release_verify.result == 'success' && needs.snapshot_release_issues.outputs.eligible == 'true' }}
     needs: [snapshot_release_issues, release_verify]
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read

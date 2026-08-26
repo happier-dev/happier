@@ -29,6 +29,12 @@ test('pipeline CLI release dry-run reports hosted deploy inputs without predicti
         'happier-dev/happier',
         '--release-notes-id',
         'test-release',
+        '--waive-ci',
+        'true',
+        '--waive-validation-suites',
+        'docker-release-assets',
+        '--override-reason',
+        'Maintainer accepted the bounded release risk.',
         '--dry-run',
       ],
       {
@@ -56,6 +62,9 @@ test('pipeline CLI release dry-run reports hosted deploy inputs without predicti
     assert.match(out, /\[pipeline\] dry-run: hosted dispatch inputs/);
     assert.match(out, /- deploy_targets: server/);
     assert.match(out, /- force_deploy: true/);
+    assert.match(out, /- waive_ci: true/);
+    assert.match(out, /- waive_validation_suites: docker-release-assets/);
+    assert.match(out, /- override_reason: Maintainer accepted the bounded release risk\./);
     assert.doesNotMatch(out, /runDeployServer|runPublish/);
   } finally {
     stub.cleanup();
@@ -140,7 +149,7 @@ test('pipeline CLI rejects the manual deep profile before release work begins', 
   assert.match(result.stderr, /manual comprehensive certification/i);
 });
 
-test('pipeline CLI rejects automatic version bumps even for dry-run release planning', () => {
+test('pipeline CLI does not expose a release-time version bump option', () => {
   const stub = createReleaseCliDryRunEnv();
   try {
     const result = spawnSync(
@@ -170,7 +179,7 @@ test('pipeline CLI rejects automatic version bumps even for dry-run release plan
     );
 
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /Materialize and commit changelog and version updates, then rerun with --bump none\./);
+    assert.match(result.stderr, /Unknown option '--bump'/);
   } finally {
     stub.cleanup();
   }

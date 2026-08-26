@@ -52,6 +52,12 @@ caller cannot select a second checks profile. MySQL, cross-platform service,
 and installer/updater trust-root gates are selected by the affected diff rather
 than every server, CLI, preview, or stable candidate.
 
+An explicit maintainer may refine the heavy upgrade/continuity suite selection
+or waive exact-SHA CI with a bounded reason. The workflow reports that evidence
+as `WAIVED`, never `PASS`. Candidate identity, artifact integrity, signing,
+release authorization, MySQL migration admission, and trust-root checks remain
+hard contracts on this shipping line.
+
 The slow test lane contains two pinned server-v0.2.1 regressions for pending
 queue and first-prompt behavior. They are exact tests, not a general
 compatibility verdict. The release agent selects them when the actual diff can

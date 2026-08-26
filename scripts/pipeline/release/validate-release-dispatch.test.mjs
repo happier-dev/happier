@@ -17,6 +17,10 @@ const base = {
   eventName: 'workflow_dispatch',
   refName: 'dev',
   qualifiedV4ActivationApproval: false,
+  waiveCi: false,
+  includeValidationSuites: '',
+  waiveValidationSuites: '',
+  overrideReason: '',
 };
 
 test('resolves preview source and comparison refs', () => {
@@ -26,6 +30,7 @@ test('resolves preview source and comparison refs', () => {
     baseRef: 'preview',
     compareLabel: 'preview..dev',
     deployTargets: ['ui', 'server'],
+    overrides: { waiveCi: false, includeValidationSuiteIds: [], waiveValidationSuiteIds: [], reason: '' },
   });
 });
 
@@ -37,8 +42,25 @@ test('accepts an exact resume run identifier', () => {
   assert.equal(validateReleaseDispatch({ ...base, attemptId: 'attempt_2', resumeRunId: '1234' }).sourceRef, 'dev');
 });
 
-test('rejects old bump selection and untrusted refs', () => {
-  assert.throws(() => validateReleaseDispatch({ ...base, bump: 'patch' }), /materialized/u);
+test('rejects untrusted refs and unsupported irreversible activation', () => {
   assert.throws(() => validateReleaseDispatch({ ...base, refName: 'feature/release' }), /untrusted ref/u);
   assert.throws(() => validateReleaseDispatch({ ...base, qualifiedV4ActivationApproval: true }), /not implemented/u);
+});
+
+test('accepts explicit reasoned waivers and rejects unknown or identity-critical suite waivers', () => {
+  assert.deepEqual(validateReleaseDispatch({
+    ...base,
+    waiveCi: true,
+    includeValidationSuites: 'installers-smoke',
+    waiveValidationSuites: 'docker-release-assets',
+    overrideReason: 'Maintainer accepted the bounded release risk.',
+  }).overrides, {
+    waiveCi: true,
+    includeValidationSuiteIds: ['installers-smoke'],
+    waiveValidationSuiteIds: ['docker-release-assets'],
+    reason: 'Maintainer accepted the bounded release risk.',
+  });
+  assert.throws(() => validateReleaseDispatch({ ...base, waiveCi: true }), /override_reason is required/);
+  assert.throws(() => validateReleaseDispatch({ ...base, waiveValidationSuites: 'unknown', overrideReason: 'reason' }), /Unknown release validation suite/);
+  assert.throws(() => validateReleaseDispatch({ ...base, waiveValidationSuites: 'binary-smoke', overrideReason: 'reason' }), /cannot be waived/);
 });

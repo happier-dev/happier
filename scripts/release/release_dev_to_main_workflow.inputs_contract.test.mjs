@@ -24,7 +24,7 @@ test('release workflow uses compact grouped inputs', async () => {
   const { parsed } = await loadWorkflow();
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
 
-  for (const key of ['validation_profile', 'deploy_targets', 'force_deploy', 'ui_expo_action', 'desktop_mode', 'bump', 'confirm', 'authorized_promotion_source_sha', 'workflow_control_sha']) {
+  for (const key of ['validation_profile', 'deploy_targets', 'force_deploy', 'ui_expo_action', 'desktop_mode', 'waive_ci', 'include_validation_suites', 'waive_validation_suites', 'override_reason', 'confirm', 'authorized_promotion_source_sha', 'workflow_control_sha']) {
     assert.ok(inputs[key], `expected grouped input ${key}`);
   }
   assert.equal(inputs.checks_profile, undefined, 'the public release profile owns its checks mapping');
@@ -33,6 +33,7 @@ test('release workflow uses compact grouped inputs', async () => {
   assert.equal(inputs.workflow_control_sha.required, false);
   assert.equal(inputs.workflow_control_sha.default, '');
   assert.equal(inputs.release_message, undefined, 'release notes must come from the exact candidate rather than a manual input');
+  assert.equal(inputs.bump, undefined, 'versions must already be materialized; maintainers do not choose a bump at dispatch');
 
   for (const legacyKey of [
     'custom_checks',

@@ -33,14 +33,17 @@ export const COMMAND_HELP_ORCHESTRATORS = {
   release: {
     summary: 'Orchestrate a full dev/preview/production release (recommended entrypoint).',
     usage:
-      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--source-sha <sha>] [--workflow-control-sha <sha>] [--resume-run-id <run-id>] [--operation-id <id>] [--attempt-id <attempt_n>] [--release-notes-id <id>] [--qualified-v4-activation-approval <bool>] [--dry-run] [--json]',
+      'node scripts/pipeline/run.mjs release --confirm <action> --repository <owner/repo> [--deploy-environment dev|preview|production] [--deploy-targets <csv>] [--source-sha <sha>] [--workflow-control-sha <sha>] [--resume-run-id <run-id>] [--operation-id <id>] [--attempt-id <attempt_n>] [--release-notes-id <id>] [--waive-ci <bool>] [--include-validation-suites <csv>] [--waive-validation-suites <csv>] [--override-reason <text>] [--dry-run] [--json]',
     options: [
       '--confirm <action>                Required safety confirmation.',
       '--repository <owner/repo>         Required; e.g. happier-dev/happier.',
       "--deploy-environment <env>        dev|preview|production (default: preview).",
       '--deploy-targets <csv>            ui,server,website,docs,cli,stack,server_runner (default: ui,server,website,docs).',
       '--force-deploy <bool>             true|false (default: false).',
-      '--bump <preset>                   Final releases require none; materialize version/changelog updates before dispatch.',
+      '--waive-ci <bool>                Explicit maintainer waiver for exact-SHA CI evidence (default: false).',
+      '--include-validation-suites <csv> Add heavy validation beyond the risk-selected defaults.',
+      '--waive-validation-suites <csv>  Explicitly waive waivable risk-selected suites.',
+      '--override-reason <text>         Required single-line reason for a waiver.',
       '--ui-expo-action <mode>           none|ota|native|native_submit (default: none).',
       '--desktop-mode <mode>             none|build_only|build_and_publish (default: none).',
       '--release-profile <profile>       integrated|stable|deep (default: integrated for dev/preview, stable for production; deep is manual-only).',
