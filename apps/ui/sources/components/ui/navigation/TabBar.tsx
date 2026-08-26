@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Pressable } from 'react-native';
+import { Platform, View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -38,7 +38,6 @@ const styles = StyleSheet.create((theme) => ({
     tab: {
         alignItems: 'center',
         justifyContent: 'center',
-        minWidth: 50,
         flexShrink: 1,
     },
     tabContent: {
@@ -81,7 +80,7 @@ export const TabBar = React.memo(({ activeTab, onTabPress, trailingAccessory }: 
     const inboxHasContent = useInboxHasContent();
     const friendsBadgeEnabled = useSetting('tabBarFriendsBadgeEnabled');
     const inboxBadgeEnabled = useSetting('tabBarInboxBadgeEnabled');
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
 
     const tabs: { key: TabType; label: string }[] = React.useMemo(() => {
         const tabKeys = resolveTabBarTabs({ inboxEnabled, friendsEnabled });
@@ -110,7 +109,12 @@ export const TabBar = React.memo(({ activeTab, onTabPress, trailingAccessory }: 
                         <Pressable
                             key={tab.key}
                             testID={`tabbar-tab-${tab.key}`}
-                            style={[styles.tab, { paddingVertical: metrics.tabPaddingVertical, paddingHorizontal: metrics.tabPaddingHorizontal }]}
+                            style={[styles.tab, {
+                                minWidth: metrics.tabMinWidth,
+                                minHeight: metrics.tabMinHeight,
+                                paddingVertical: metrics.tabPaddingVertical,
+                                paddingHorizontal: metrics.tabPaddingHorizontal,
+                            }]}
                             onPress={() => onTabPress(tab.key)}
                             hitSlop={8}
                         >
