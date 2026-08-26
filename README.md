@@ -1,47 +1,31 @@
+# This version is HEAVILY WIP and unstable
+
 <div align="center">
   <img src="/.github/logotype-dark.png" title="Happier Dev" alt="Happier Dev" width="280" />
 
-  ### Open-source mobile, web, and desktop companion for AI coding agents
+  ### Mobile, Web and Desktop client for Claude Code, Codex, OpenCode, Pi, Cursor, ...
   
-  Run Claude Code, Codex, Gemini, OpenCode (and more) on your computer<br />and continue seamlessly from your phone, browser, or desktop app.
+  Run Claude Code, Codex, Gemini, OpenCode (and more) on your computer and continue seamlessly from your phone, browser, or desktop app.
 
-  <p><img src="/.github/supported-ai-providers.png" title="Happier Dev" alt="Happier Dev" width="320" /></p>
-  
-  **Claude, Codex, OpenCode mobile client · Voice assistant<br />
-  Full Git client · File editor · Subagents · Session sharing<br />
-  Entreprise-ready**
+  **End-to-end encrypted. Self-hostable.<br />
+  Built by developers, for developers.**
+  <br /><br />
 
-  Mode-aware privacy. Self-hostable.<br />
-  Built by developers, for developers.
-
-  <p><img src="/.github/illustration.png" title="Happier Dev" alt="Happier Dev" width="650" /></p>
+  <p><img src="/.github/mobile-2000.png" title="Happier Dev" alt="Happier Dev" width="640" /></p>
+  <p><img src="/.github/desktop-2000.png" title="Happier Dev" alt="Happier Dev" width="850" /></p>
 </div>
-
-## Happier is in alpha preview stage: https://discord.gg/W6Pb8KuHfg
-
-We are iterating fast and adding new features, improvements and bug fixes constantly.
-
-Make sure to star the repo and [subscribe to the announcements channel](https://github.com/happier-dev/happier/discussions/categories/announcements) to be informed of all the latest changes.
-
-You can also [join the Discord](https://discord.gg/W6Pb8KuHfg) channel to ask any questions or report any issues that you might have.
-
-### We want to hear your feedback!
-
-This project exists because we needed it ourselves, and **we want it to evolve through real feedback**. We aim to keep the community welcoming, and contributor-friendly, whether you’re signaling an issue or proposing a larger idea.
-
-If something feels broken, missing, or awkward, **we really want to hear about it**.
-Happier grows through shared experience and collaboration.
-
-Learn more about the best ways to contribute in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What is Happier?
 
-**Happier** is an open-source companion app for AI coding agents with explicit
-end-to-end encrypted and plaintext storage modes.
+**Happier** is an open-source, end-to-end encrypted, cross-device companion app and client for your AI coding agents.
 
 It lets you run AI coding sessions **locally on your computer**, then **continue and control them remotely** — from your phone, web UI, or desktop app, without losing context.
 
 Whether you’re stepping away for a coffee or switching devices mid-task, Happier keeps your AI coding sessions alive and accessible.
+
+**[Join the Discord](https://discord.gg/W6Pb8KuHfg)** to hear all of the latest news about Happier, report issues, discuss new ideas and request features. It would truly make us _happier_ to hear your thoughts and feedback! ;)
+
+<h3 align="center"><a href="https://github.com/happier-dev/happier/discussions/226">Latest Happier project update</a></h3>
 
 ## Installation
 
@@ -59,7 +43,7 @@ Play Store app is in private beta, to access it:
 
 #### Android APK
 
-[Download the APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview-android.apk)
+[Download the APK](https://github.com/happier-dev/happier/releases/download/ui-mobile-preview/happier-preview.apk)
 
 ### Step 2: Install the CLI on your computer
 
@@ -85,9 +69,7 @@ happier auth login
 ```
 
 Recommended first run:
-- Prefer **mobile** when asked about it. E2EE accounts keep their real encryption
-  material on authorized devices; plaintext accounts use token-only credentials and
-  have no Account E2EE key.
+- Prefer **mobile** when asked about it, so your account and secret key are then securely stored on your mobile device.
 - If you already use Happier on another device, sign in with that same account.
 - If you open the terminal-connect link while logged out, Happier will send you through sign in/create account and then return you to terminal approval.
 
@@ -117,6 +99,20 @@ happier qwen
 
 Code solo, or invite a friend to jump into the session with you.
 Happier acts as a secure bridge between your local development environment and your other devices.
+
+## We want to hear your feedback!
+
+Happier is in alpha preview stage and might be buggy here and there.
+We are iterating fast and adding new features, improvements and bug fixes constantly.
+
+You can also **[join the Discord](https://discord.gg/W6Pb8KuHfg) to ask any questions or report any issues that you might have**.
+
+This project exists because we needed it ourselves, and **we want it to evolve through real feedback**. We aim to keep the community welcoming, and contributor-friendly, whether you’re signaling an issue or proposing a larger idea.
+
+If something feels broken, missing, or awkward, **we really want to hear about it**.
+Happier grows through shared experience and collaboration.
+
+Learn more about the best ways to contribute in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Why “Happier”?
 
@@ -161,7 +157,7 @@ Happier is about exploring a faster-moving, more collaborative direction, while 
   Launch parallel review, plan, or delegate runs from any session. Create and manage Claude teams, send messages to individual teammates, and monitor all subagents from the Agents panel.
 
 - **Voice assistant — a real AI colleague, not just speech-to-text**<br />
-  The voice agent is a first-class assistant backed by the same action system as the UI and CLI. It monitors all your running sessions, can switch focus between them, announces pending permission requests so you can approve or deny them in the session UI, sends messages to any session you dictate to, and discusses what your agents are doing with full access to recent session context. Every supported action it can take maps to a Happier action that can be individually approval-gated. Runs on a daemon-backed AI brain (Claude or any configured backend) or a local OpenAI-compatible endpoint, with ElevenLabs realtime, BYO ElevenLabs, Kokoro neural TTS, and device/Google STT as the voice layer.
+  The voice agent is a first-class assistant backed by the same action system as the UI and CLI. It monitors all your running sessions, can switch focus between them, reads pending permission requests and answers them on your behalf, sends messages to any session you dictate to, and discusses what your agents are doing with full access to recent session context. Every action it can take maps to a Happier action that can be individually approval-gated. Runs on a daemon-backed AI brain (Claude or any configured backend) or a local OpenAI-compatible endpoint, with ElevenLabs realtime, BYO ElevenLabs, Kokoro neural TTS, and device/Google STT as the voice layer.
 
 - **Inbox**<br />
   A global attention center for permission requests, user-action prompts (`AskUserQuestion`, `ExitPlanMode`), approval-gated actions, and unread sessions — across all sessions and machines at once.
@@ -225,15 +221,12 @@ Happier is about exploring a faster-moving, more collaborative direction, while 
 
 Happier is designed with privacy as a foundation, not an afterthought.
 
-- **E2EE cryptography**
+- **End-to-end encryption**  
   Built using modern cryptography (TweetNaCl).
 
-- **Explicit privacy modes**
-  In E2EE mode, content is encrypted on your devices and remains opaque to the
-  Happier server. In plaintext mode, content is intentionally server-readable and
-  may optionally be sealed with a server-owned key at rest. Device-local secrets do
-  not turn a plaintext account into an E2EE account and are never uploaded as
-  Account keys.
+- **Zero-knowledge architecture**  
+  Your code is encrypted on your devices before it ever hits the wire.  
+  Servers cannot read your data. Encryption keys never leave your devices.
 
 - **Built with love from Switzerland**  
   Developed in Switzerland, with a strong focus on data protection and developer transparency.
@@ -303,10 +296,7 @@ alias happier='hdev'
 
 ## Self-Hosting the Server Relay
 
-Happier is 100% self-hostable. It's even the most recommended way to run it, even if
-we also offer Happier Cloud (app.happier.dev / api.happier.dev). E2EE content remains
-opaque to either hosted or self-hosted servers; plaintext content is readable by the
-server operator in both deployment models.
+Happier is 100% self-hostable. It's even the most recommended way to run it, even if we also offer an end-to-end encrypted cloud server (app.happier.dev / api.happier.dev).
 
 Think of the relay server as the long-running process which allows your mobile device/UI to connect to your machines. It stores all your sessions, messages and settings.
 
@@ -351,7 +341,7 @@ These scripts wrap `hstack` with repo-local defaults so you can run from source 
 Most-used commands:
 
 - `yarn dev`: local dev stack (server + UI + daemon)
-- `yarn tui`: dev stack in the integrated TUI with web + installed dev-client support (`yarn tui --no-mobile` for web only; `yarn tui:with-mobile` remains an alias)
+- `yarn tui`, `yarn tui:with-mobile`: dev stack in the integrated TUI (logs + controls)
 - `yarn tui --rescue`: macOS/Linux recovery mode that prioritizes stack controls during severe system load
 - `yarn build`, `yarn start`, `yarn stop`: prod-like build/start/stop flows
 - `yarn auth login`, `yarn daemon`, `yarn happier`: auth + daemon + CLI flows
@@ -379,7 +369,7 @@ Arguments:
 ## Documentation
 
 - [Getting started](https://docs.happier.dev/getting-started/onboarding)
-- [Installing Claude Code, Codex, OpenCode, and other Agent CLIs](https://docs.happier.dev/providers)
+- [Installing Claude Code, Codex, OpenCode and other providers CLIs](https://docs.happier.dev/providers)
 - [Installing and using the CLI](https://docs.happier.dev/clients/cli)
 - [What is the daemon and how to install it?](https://docs.happier.dev/clients/daemon)
 - [Happier Voice](https://docs.happier.dev/features/voice)
