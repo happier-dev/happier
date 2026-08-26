@@ -1,4 +1,5 @@
 import {
+  constants,
   cpSync,
   copyFileSync,
   existsSync,
@@ -568,7 +569,7 @@ export function copyDirDereferenceContainedSync({
     }
 
     mkdirSync(dirname(targetPath), { recursive: true });
-    copyFileSync(sourcePath, targetPath);
+    copyFileSync(sourcePath, targetPath, constants.COPYFILE_FICLONE);
   };
 
   assertPhysicalPathWithinApprovedRoot({

@@ -98,6 +98,19 @@ afterEach(async () => {
 });
 
 describe('generic GitHub release binary managed source adapter', () => {
+  it('selects the Codex ACP host adapter by its installable identity without consulting Agent catalog hooks', async () => {
+    const { CODEX_ACP_INSTALLABLE_DESCRIPTOR } = await import(
+      '@happier-dev/plugins-codex/agent/installables/codexAcp'
+    );
+    const { getGitHubReleaseBinaryRuntimeInstallableAdapter } = await import('./githubReleaseBinary');
+
+    const adapter = await getGitHubReleaseBinaryRuntimeInstallableAdapter(
+      CODEX_ACP_INSTALLABLE_DESCRIPTOR,
+    );
+
+    expect(adapter?.detectCapabilityStatus).toBeTypeOf('function');
+  });
+
   it('keeps concurrent installs isolated until their serialized promotions commit', async () => {
     configurationState.happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-github-release-adapter-'));
     tempDirs.add(configurationState.happyHomeDir);

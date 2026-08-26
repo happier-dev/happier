@@ -3,7 +3,7 @@ import { constants as fsConstants } from 'node:fs';
 import { basename, dirname, join, delimiter as PATH_DELIMITER } from 'node:path';
 
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
-import { GH_INSTALLABLE_DESCRIPTOR } from '@happier-dev/protocol';
+import { GH_INSTALLABLE_DESCRIPTOR, INSTALLABLE_KEYS } from '@happier-dev/protocol';
 import {
   createManagedToolScratchDir,
   downloadGitHubReleaseAsset,
@@ -14,8 +14,8 @@ import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
 
 import { configuration } from '@/configuration';
-import { readCatalogEntriesSnapshot } from '@/agent/catalog/registry';
 import { ghRuntimeInstallable } from '../ghRuntimeInstallable';
+import { createCodexAcpRuntimeInstallableAdapter } from './codexAcpRuntimeInstallable';
 import type { RuntimeInstallableAdapter } from '../registry';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
 import { writeRuntimeInstallableLastCheckAtMs } from '../updateState';
@@ -331,9 +331,8 @@ export async function getGitHubReleaseBinaryRuntimeInstallableAdapter(
   if (!isGitHubReleaseBinaryDescriptor(descriptor)) {
     return null;
   }
-  for (const entry of Object.values(readCatalogEntriesSnapshot())) {
-    const projectedAdapter = await entry.getRuntimeInstallableAdapter?.(descriptor);
-    if (projectedAdapter) return projectedAdapter;
+  if (descriptor.key === INSTALLABLE_KEYS.CODEX_ACP) {
+    return createCodexAcpRuntimeInstallableAdapter(descriptor);
   }
   if (descriptor.key === GH_INSTALLABLE_DESCRIPTOR.key) {
     return ghRuntimeInstallable;

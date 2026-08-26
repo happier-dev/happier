@@ -2,7 +2,16 @@ import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 
 import { createSpawnHappyCliEnvScope } from '@/testkit/process/spawnHappyCliHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -389,6 +398,48 @@ describe('spawnHappyCLI fallback invocation', () => {
 
       expect(pinnedEntrypoint).toContain(join(stackCliHome, '.runner-snapshots'));
       expect(existsSync(join(runtimeRoot, '.runner-snapshots'))).toBe(false);
+    });
+  });
+
+  it('requests copy-on-write cloning while pinning a runtime-backed daemon closure', async () => {
+    await withTempDir('happier-runtime-backed-runner-clone-', async (root) => {
+      const runtimeRoot = join(root, 'runtime', 'builds', 'snapshot-a', 'cli');
+      const stackCliHome = join(root, 'stack', 'cli');
+      const entrypoint = writeTinyDist(runtimeRoot);
+      writeTinyRuntimeAssets(runtimeRoot);
+      const fingerprint = writeDistBuildManifest(entrypoint);
+      const runtimeStatePath = join(root, 'stack', 'stack.runtime.json');
+      mkdirSync(dirname(runtimeStatePath), { recursive: true });
+      writeStackRuntimeFingerprint(runtimeStatePath, fingerprint);
+      patchFreshDistEnv(entrypoint, runtimeStatePath, fingerprint);
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
+        HAPPIER_HOME_DIR: stackCliHome,
+      });
+
+      const copyModes: Array<number | undefined> = [];
+      vi.doMock('node:fs', async () => {
+        const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+        return {
+          ...actual,
+          copyFileSync: (...args: Parameters<typeof actual.copyFileSync>) => {
+            copyModes.push(args[2]);
+            return actual.copyFileSync(...args);
+          },
+        };
+      });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      const invocation = mod.buildHappyCliSubprocessInvocation(
+        ['daemon', 'start-sync'],
+        { allowAdmittedDaemonStartupClosure: true },
+      );
+
+      expect(invocation.argv).toEqual(expect.arrayContaining([
+        expect.stringContaining(join(stackCliHome, '.runner-snapshots')),
+      ]));
+      expect(copyModes.length).toBeGreaterThan(0);
+      expect(copyModes.every((mode) => mode === constants.COPYFILE_FICLONE)).toBe(true);
     });
   });
 

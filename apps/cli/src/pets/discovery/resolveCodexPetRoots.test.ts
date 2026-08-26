@@ -3,6 +3,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { CODEX_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-codex/agent/contributions/catalog';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const createdRoots = new Set<string>();
@@ -29,10 +30,12 @@ async function loadRootsModule() {
 }
 
 describe('resolveCodexPetRoots', () => {
-  it('expands CODEX_HOME with the environment home directory used by the configured Codex home resolver', async () => {
+  it('uses Codex-owned home resolution instead of an Agent runtime pet-discovery contribution', async () => {
     const root = tempRoot();
     const userCodexHome = join(root, 'custom-codex');
     await mkdir(join(userCodexHome, 'pets'), { recursive: true });
+
+    expect(CODEX_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('petDiscovery');
 
     const mod = await loadRootsModule();
     const roots = await mod.resolveCodexPetRoots({

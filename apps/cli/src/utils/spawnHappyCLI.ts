@@ -51,6 +51,7 @@
 
 import { spawn, SpawnOptions, type ChildProcess } from 'child_process';
 import {
+  constants,
   copyFileSync,
   mkdirSync,
   readdirSync,
@@ -467,7 +468,7 @@ function copyDirectoryContents(sourceDir: string, targetDir: string, options: { 
     }
     if (!entry.isFile() && !entry.isSymbolicLink()) continue;
     mkdirSync(dirname(targetPath), { recursive: true });
-    copyFileSync(sourcePath, targetPath);
+    copyFileSync(sourcePath, targetPath, constants.COPYFILE_FICLONE);
   }
 }
 
@@ -478,7 +479,7 @@ function copyRuntimeAsset(sourcePath: string, targetPath: string): void {
     return;
   }
   mkdirSync(dirname(targetPath), { recursive: true });
-  copyFileSync(sourcePath, targetPath);
+  copyFileSync(sourcePath, targetPath, constants.COPYFILE_FICLONE);
 }
 
 function copyCliRuntimeAssetsToPinnedSnapshot(runtimeRoot: string, snapshotRoot: string): void {

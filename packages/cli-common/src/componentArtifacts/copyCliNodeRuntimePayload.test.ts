@@ -1,4 +1,5 @@
 import {
+  constants,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -10,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 
 import { findUnservableBundledPluginPackageResources } from '../../bundledPluginResources.mjs';
 
@@ -50,6 +51,39 @@ it('orders Unicode sibling names by code units for a locale-independent runtime 
   // U+10000 begins with a surrogate code unit below U+E000, unlike code-point
   // or UTF-8 byte ordering.
   expect(compareCliNodeRuntimePayloadEntryNames('\u{10000}', '\uE000')).toBeLessThan(0);
+});
+
+it('requests copy-on-write cloning while staging an admitted runtime tree', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-cli-runtime-clone-'));
+  try {
+    const sourceDir = join(root, 'source');
+    const payloadDir = join(root, 'payload');
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(join(sourceDir, 'runtime.mjs'), 'export const runtime = true;\n', 'utf8');
+
+    const copyModes: Array<number | undefined> = [];
+    vi.resetModules();
+    vi.doMock('node:fs', async () => {
+      const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+      return {
+        ...actual,
+        copyFileSync: (...args: Parameters<typeof actual.copyFileSync>) => {
+          copyModes.push(args[2]);
+          return actual.copyFileSync(...args);
+        },
+      };
+    });
+
+    const { copyDirDereferenceContainedSync } = await import('../../workspaceRuntimeDependencies.mjs');
+    copyDirDereferenceContainedSync({ sourceDir, destDir: payloadDir });
+
+    expect(readFileSync(join(payloadDir, 'runtime.mjs'), 'utf8')).toBe('export const runtime = true;\n');
+    expect(copyModes).toEqual([constants.COPYFILE_FICLONE]);
+  } finally {
+    vi.doUnmock('node:fs');
+    vi.resetModules();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 it('rejects workspace package bytes that do not match the admitted runtime identity', () => {
