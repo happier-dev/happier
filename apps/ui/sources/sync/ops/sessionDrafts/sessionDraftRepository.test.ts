@@ -1142,6 +1142,122 @@ describe('sessionDraftRepository', () => {
         expect(snapshot.document.target.routing.recipient.value).toEqual({ kind: 'user', userId: 'elsewhere' });
     });
 
+    it('rebases a first-prefix CAS conflict from the latest local text typed while the request was in flight', async () => {
+        const cipher = plainCipher();
+        const firstPrefixSubmitted = createDeferred<void>();
+        const firstConflictReleased = createDeferred<void>();
+        const submittedTexts: string[] = [];
+        let mutationCount = 0;
+        const transport: SessionDraftRepositoryTransport = {
+            read: vi.fn(async () => ({
+                status: 'deleted' as const,
+                record: { address: sessionAddress, revision: 1, content: null, createdAt: 1, updatedAt: 1 },
+            })),
+            list: vi.fn(async () => ({ items: [], nextAfter: undefined })),
+            mutate: vi.fn(async ({ expectedRevision, content }) => {
+                mutationCount += 1;
+                if (!content || content.t !== 'plain') throw new Error('expected plain submitted document');
+                submittedTexts.push(content.v.document.composer.text.value as string);
+                if (mutationCount === 1) {
+                    expect(expectedRevision).toBe('absent');
+                    firstPrefixSubmitted.resolve();
+                    await firstConflictReleased.promise;
+                    return {
+                        status: 'conflict' as const,
+                        current: { address: sessionAddress, revision: 1, content: null, createdAt: 1, updatedAt: 1 },
+                    };
+                }
+                expect(expectedRevision).toBe(1);
+                return {
+                    status: 'updated' as const,
+                    record: { address: sessionAddress, revision: 2, content, createdAt: 1, updatedAt: 2 },
+                };
+            }),
+        };
+        const generated = [uuid(311), uuid(312), uuid(313), uuid(314), uuid(315), uuid(316)];
+        const repository = createSessionDraftRepository({
+            storage: createMemoryStorage(),
+            transport,
+            syncEnabled: true,
+            cipher,
+            randomUUID: () => generated.shift() ?? uuid(317),
+            now: () => 4,
+        });
+
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 't' } });
+        const flush = repository.flushSessionDraft({ scope, address: sessionAddress });
+        await firstPrefixSubmitted.promise;
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'trace-switch' } });
+        firstConflictReleased.resolve();
+
+        expect(await flush).toEqual({ status: 'clean' });
+        expect(submittedTexts).toEqual(['t', 'trace-switch']);
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)).toMatchObject({
+            status: 'clean',
+            conflict: null,
+            document: { composer: { text: { value: 'trace-switch' } } },
+        });
+    });
+
+    it('preserves text typed while an earlier empty-draft tombstone is in flight', async () => {
+        const cipher = plainCipher();
+        const baseDocument = createSessionDocument('base', uuid(303));
+        const tombstoneSubmitted = createDeferred<void>();
+        const tombstoneReleased = createDeferred<void>();
+        let revision = 1;
+        const transport: SessionDraftRepositoryTransport = {
+            read: vi.fn(async () => ({
+                status: 'present' as const,
+                record: {
+                    address: sessionAddress,
+                    revision,
+                    content: await cipher.seal(sessionAddress, baseDocument),
+                    createdAt: 1,
+                    updatedAt: 1,
+                },
+            })),
+            list: vi.fn(async () => ({ items: [], nextAfter: undefined })),
+            mutate: vi.fn(async ({ content }) => {
+                revision += 1;
+                if (content === null) {
+                    tombstoneSubmitted.resolve();
+                    await tombstoneReleased.promise;
+                    return {
+                        status: 'updated' as const,
+                        record: { address: sessionAddress, revision, content: null, createdAt: 1, updatedAt: revision },
+                    };
+                }
+                return {
+                    status: 'updated' as const,
+                    record: { address: sessionAddress, revision, content, createdAt: 1, updatedAt: revision },
+                };
+            }),
+        };
+        const generated = [uuid(304), uuid(305), uuid(306), uuid(307), uuid(308), uuid(309)];
+        const repository = createSessionDraftRepository({
+            storage: createMemoryStorage(),
+            transport,
+            syncEnabled: true,
+            cipher,
+            randomUUID: () => generated.shift() ?? uuid(310),
+            now: () => 4,
+        });
+        await repository.materializeExact(scope, sessionAddress);
+
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: '' } });
+        const flush = repository.flushSessionDraft({ scope, address: sessionAddress });
+        await tombstoneSubmitted.promise;
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: 'hello world' } });
+        tombstoneReleased.resolve();
+
+        expect(await flush).toEqual({ status: 'clean' });
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)).toMatchObject({
+            status: 'clean',
+            document: { composer: { text: { value: 'hello world' } } },
+        });
+        expect(transport.mutate).toHaveBeenCalledTimes(2);
+    });
+
     it('reconciles a remotely tombstoned row missing from the active snapshot', async () => {
         const cipher = plainCipher();
         const document = createSessionDocument('delete remotely', uuid(70));

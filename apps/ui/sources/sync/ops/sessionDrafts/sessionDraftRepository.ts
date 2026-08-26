@@ -45,6 +45,21 @@ export type SessionDraftCurrentness = Readonly<{
     mutationIds: Readonly<Record<string, string>>;
 }>;
 
+export function areSessionDraftCurrentnessCapturesEqual(
+    left: SessionDraftCurrentness | null,
+    right: SessionDraftCurrentness | null,
+): boolean {
+    if (!left || !right || left.address.kind !== right.address.kind) return left === right;
+    if (left.address.kind === 'session') {
+        if (right.address.kind !== 'session' || left.address.sessionId !== right.address.sessionId) return false;
+    } else if (right.address.kind !== 'newSession' || left.address.draftId !== right.address.draftId) {
+        return false;
+    }
+    const leftEntries = Object.entries(left.mutationIds);
+    return leftEntries.length === Object.keys(right.mutationIds).length
+        && leftEntries.every(([fieldId, mutationId]) => right.mutationIds[fieldId] === mutationId);
+}
+
 export type SessionDraftLaunchCurrentnessCapture = Readonly<{
     userAttemptId: string;
     currentness: SessionDraftCurrentness;
@@ -907,8 +922,27 @@ export class SessionDraftRepository {
             }
             if (response.status === 'updated') {
                 if (response.record.content === null) {
-                    this.deleteReplica(params.scope, params.address);
-                    return { status: 'clean' };
+                    const latest = this.readReplica(params.scope, params.address) ?? replica;
+                    const acknowledged = new Map(submittedMutations.map((mutation) => [pathKey(mutation.path), mutation.mutationId]));
+                    const remaining = latest.pendingFieldMutations
+                        .filter((mutation) => acknowledged.get(pathKey(mutation.path)) !== mutation.mutationId)
+                        .map((mutation) => acknowledged.has(pathKey(mutation.path))
+                            ? { ...mutation, baseMutationId: null }
+                            : mutation);
+                    if (!latest.localRawDocument || !hasMeaningfulContent(latest.localRawDocument) || remaining.length === 0) {
+                        this.deleteReplica(params.scope, params.address);
+                        return { status: 'clean' };
+                    }
+                    this.writeReplica(params.scope, {
+                        ...latest,
+                        baseRevision: response.record.revision,
+                        baseRawDocument: null,
+                        pendingFieldMutations: remaining,
+                        status: 'pending',
+                        conflict: null,
+                        createdAt: response.record.createdAt,
+                    });
+                    continue;
                 }
                 const latest = this.readReplica(params.scope, params.address) ?? replica;
                 const acknowledged = new Map(submittedMutations.map((mutation) => [pathKey(mutation.path), mutation.mutationId]));
@@ -952,11 +986,12 @@ export class SessionDraftRepository {
     ): Promise<'rebased' | 'conflict' | 'error'> {
         const remoteRecord = 'status' in current ? null : current;
         const remoteDocument = remoteRecord?.content ? await this.cipher.open(address, remoteRecord.content) : null;
+        const latestReplica = this.readReplica(scope, address) ?? replica;
         if (remoteRecord?.content && !remoteDocument) {
-            this.writeReplica(scope, { ...replica, status: 'error' });
+            this.writeReplica(scope, { ...latestReplica, status: 'error' });
             return 'error';
         }
-        return this.rebaseConflictWithDocument(scope, address, replica, remoteRecord, remoteDocument);
+        return this.rebaseConflictWithDocument(scope, address, latestReplica, remoteRecord, remoteDocument);
     }
 
     private rebaseConflictWithDocument(

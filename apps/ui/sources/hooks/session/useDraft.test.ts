@@ -100,7 +100,10 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 });
 
-vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/sync/ops/sessionDrafts/sessionDraftRepository')>();
+  return {
+  areSessionDraftCurrentnessCapturesEqual: actual.areSessionDraftCurrentnessCapturesEqual,
   subscribeSessionDraft: (_scope: unknown, address: { sessionId: string }, listener: () => void) =>
     draftRepositoryHarness.subscribe(address.sessionId, listener),
   getSessionDraftSnapshot: (_scope: unknown, address: { sessionId: string }) => {
@@ -165,7 +168,8 @@ vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
     draftRepositoryHarness.notify(address.sessionId);
     return true;
   },
-}));
+  };
+});
 
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -777,6 +781,29 @@ describe('useDraft', () => {
     harness.unmount();
   });
 
+  it('does not let a pre-handoff passive save resurrect text after currentness clear', async () => {
+    sessionsById = {
+      s1: { draft: null, metadata: {} },
+    };
+
+    const harness = await renderHarness({ initialSessionId: 's1' });
+    onHarnessLayoutEffect = () => {
+      onHarnessLayoutEffect = null;
+      const snapshot = harness.getCurrent().captureDraftForOutboundHandoff?.();
+      expect(snapshot?.text).toBe('submitted prompt');
+      expect(snapshot && harness.getCurrent().clearDraftCurrentness?.(snapshot)).toBe(true);
+    };
+
+    await act(async () => {
+      harness.getCurrent().setDraftValue?.('submitted prompt');
+    });
+    await flushHookEffects({ cycles: 2, turns: 2 });
+
+    expect(harness.getCurrent().value).toBe('');
+    expect(sessionsById.s1?.draft).toBeNull();
+    harness.unmount();
+  });
+
   it('does not re-adopt a stale saved draft while the user clears the composer', async () => {
     sessionsById = {
       s1: { draft: null, metadata: {} },
@@ -1128,11 +1155,13 @@ describe('useDraft', () => {
     await act(async () => harness.getCurrent().setValue('A'));
     await flushHookEffects({ cycles: 1, turns: 1 });
 
+    let cleared = true;
     await act(async () => {
-      if (snapshot) harness.getCurrent().clearDraftCurrentness?.(snapshot);
+      if (snapshot) cleared = harness.getCurrent().clearDraftCurrentness?.(snapshot) ?? true;
     });
     await flushHookEffects({ cycles: 1, turns: 1 });
 
+    expect(cleared).toBe(false);
     expect(harness.getCurrent().value).toBe('A');
     expect(sessionsById.s1?.draft).toBe('A');
     harness.unmount();
