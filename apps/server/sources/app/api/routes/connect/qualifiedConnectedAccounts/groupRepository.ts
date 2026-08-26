@@ -620,7 +620,11 @@ export async function createQualifiedConnectedAccountGroup(
                     : params.activeConnectedAccountId ?? null,
             },
             select: { id: true },
+        }).catch((error: unknown) => {
+            if (isPrismaErrorCode(error, "P2002")) return null;
+            throw error;
         });
+        if (created === null) return { status: "already_exists" };
         if (initialMembers.length > 0) {
             await tx.connectedServiceAuthGroupMember.createMany({
                 data: initialMembers.map((member) => {

@@ -113,8 +113,10 @@ export type ConnectedAccountRequestAuthServiceDependencies = Readonly<{
         failure: ConnectedAccountQuotaFailureRequestV1['normalizedFailure'];
         signal: AbortSignal;
     }>) => Promise<RequestAuthFailureOutcomeV1>;
-    /** Internal owner deadline; it remains below the generated wrapper's 30 second transport wait. */
+    /** Ordinary internal owner deadline; it remains below the generated wrapper's 30 second transport wait. */
     operationDeadlineMs?: number;
+    /** OAuth rotation and provider evidence are bounded separately from ordinary lookup and quota operations. */
+    authFailureOperationDeadlineMs?: number;
     nowMs?: () => number;
 }>;
 
@@ -154,7 +156,11 @@ export type ConnectedAccountRequestAuthService = Readonly<{
 
 const MAX_CURRENTNESS_RETRIES = 8;
 const MAX_CACHED_CREDENTIAL_LEASES = 64;
-const DEFAULT_REQUEST_AUTH_OPERATION_DEADLINE_MS = 20_000;
+export const DEFAULT_REQUEST_AUTH_OPERATION_DEADLINE_MS = 20_000;
+// A legacy Claude recovery may perform two sequential provider calls, each with the
+// canonical 120-second ceiling, plus bounded account projection work. The generated
+// client owns a slightly larger 310-second transport ceiling.
+export const DEFAULT_REQUEST_AUTH_RECOVERY_DEADLINE_MS = 300_000;
 
 class RequestAuthOperationAbortedError extends Error {
     constructor() {
@@ -370,6 +376,14 @@ export function createConnectedAccountRequestAuthService(
         && configuredOperationDeadlineMs > 0
         ? configuredOperationDeadlineMs
         : DEFAULT_REQUEST_AUTH_OPERATION_DEADLINE_MS;
+    const configuredAuthFailureOperationDeadlineMs =
+        dependencies.authFailureOperationDeadlineMs;
+    const authFailureOperationDeadlineMs =
+        configuredAuthFailureOperationDeadlineMs !== undefined
+        && Number.isSafeInteger(configuredAuthFailureOperationDeadlineMs)
+        && configuredAuthFailureOperationDeadlineMs > 0
+            ? configuredAuthFailureOperationDeadlineMs
+            : DEFAULT_REQUEST_AUTH_RECOVERY_DEADLINE_MS;
     const leases = new Map<string, CachedBearerMaterial>();
     const fills = new Map<string, RequestAuthSharedOperation<CachedBearerMaterial>>();
     const authFailures = new Map<string, Readonly<{
@@ -393,9 +407,10 @@ export function createConnectedAccountRequestAuthService(
     const createSharedOperation = <T>(
         run: (signal: AbortSignal) => Promise<T>,
         onSettled: (operation: RequestAuthSharedOperation<T>) => void,
+        deadlineMs = operationDeadlineMs,
     ): RequestAuthSharedOperation<T> => {
         const lifetime = createRequestAuthOperationLifetime({
-            deadlineMs: operationDeadlineMs,
+            deadlineMs,
         });
         let operation!: RequestAuthSharedOperation<T>;
         const promise = startRequestAuthOperation(
@@ -750,7 +765,7 @@ export function createConnectedAccountRequestAuthService(
     const refreshAfterAuthFailure: ConnectedAccountRequestAuthService['refreshAfterAuthFailure'] = async (input) => {
         const lifetime = createRequestAuthOperationLifetime({
             signal: input.signal,
-            deadlineMs: operationDeadlineMs,
+            deadlineMs: authFailureOperationDeadlineMs,
         });
         try {
             const request = ConnectedAccountAuthFailureRequestV1Schema.parse(input.request);
@@ -810,7 +825,7 @@ export function createConnectedAccountRequestAuthService(
                 if (current?.operation === settledOperation) {
                     authFailures.delete(context.failureKey);
                 }
-            });
+            }, authFailureOperationDeadlineMs);
             const active = Object.freeze({
                 cacheKey: context.cacheKey,
                 failingAccessTokenFingerprint:

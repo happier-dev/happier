@@ -138,6 +138,61 @@ describe('Connected Account attempt transaction API', () => {
     });
   });
 
+  it('surfaces a retained unreadable transaction as a typed failure for every operation', async () => {
+    const api = createConnectedAccountAttemptTransactionApi({
+      token: 'account-token',
+    });
+    const unreadable = {
+      status: 409,
+      data: {
+        error: 'connected_account_attempt_transaction_unreadable',
+      },
+    };
+    vi.mocked(axios.post).mockResolvedValue(unreadable);
+    vi.mocked(axios.get).mockResolvedValue(unreadable);
+    vi.mocked(axios.patch).mockResolvedValue(unreadable);
+    vi.mocked(axios.delete).mockResolvedValue(unreadable);
+
+    await expect(api.create({
+      kind: 'oauth',
+      attemptId: 'retained-unreadable',
+      content: { t: 'encrypted', c: 'opaque' },
+      expiresAtMs: 123_456,
+    })).rejects.toMatchObject({
+      name: ConnectedAccountAttemptTransactionApiError.name,
+      code: 'connected_account_attempt_transaction_unreadable',
+    });
+    await expect(api.read({
+      kind: 'oauth',
+      attemptId: 'retained-unreadable',
+    })).rejects.toMatchObject({
+      name: ConnectedAccountAttemptTransactionApiError.name,
+      code: 'connected_account_attempt_transaction_unreadable',
+    });
+    await expect(api.replace({
+      kind: 'oauth',
+      attemptId: 'retained-unreadable',
+      expectedRevision: 1,
+      content: { t: 'encrypted', c: 'opaque-replacement' },
+      expiresAtMs: 123_456,
+    })).rejects.toMatchObject({
+      name: ConnectedAccountAttemptTransactionApiError.name,
+      code: 'connected_account_attempt_transaction_unreadable',
+    });
+    await expect(api.delete({
+      kind: 'oauth',
+      attemptId: 'retained-unreadable',
+      expectedRevision: 1,
+    })).rejects.toMatchObject({
+      name: ConnectedAccountAttemptTransactionApiError.name,
+      code: 'connected_account_attempt_transaction_unreadable',
+    });
+    expect(vi.mocked(axios.get).mock.calls[0]?.[1]).toMatchObject({
+      validateStatus: expect.any(Function),
+    });
+    expect(vi.mocked(axios.get).mock.calls[0]?.[1]?.validateStatus?.(409)).toBe(true);
+  });
+
   it('accepts an exact absent record as successful terminal cleanup and still rejects a conflict', async () => {
     const api = createConnectedAccountAttemptTransactionApi({
       token: 'account-token',

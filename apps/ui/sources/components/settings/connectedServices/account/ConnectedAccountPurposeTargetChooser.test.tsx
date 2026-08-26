@@ -136,11 +136,14 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
   }),
 }));
 vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
-  getConnectedAccountAuthenticationMode: () => ({
-    id: 'oauth',
-    kind: 'oauthAuthorizationCode',
-    pkce: 'required',
-    outcomeReconciliation: 'none',
+  getConnectedAccountAuthentication: () => ({
+    defaultModeId: 'oauth',
+    modes: [{
+      id: 'oauth',
+      kind: 'oauthAuthorizationCode',
+      pkce: 'required',
+      outcomeReconciliation: 'none',
+    }],
   }),
   getQualifiedConnectedServiceRegistryEntry: () => null,
   getLegacyConnectedServiceRegistryEntry: () => ({

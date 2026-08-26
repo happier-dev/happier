@@ -4,9 +4,11 @@ import {
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
   isQualifiedConnectedAccountProfileActiveV4,
+  isQualifiedConnectedAccountProfileUsableV4,
   resolveQualifiedConnectedAccountGroupActiveAccountV4,
   sameQualifiedConnectedAccountRef,
   type ConnectedServiceId,
+  type PluginConnectedAccountAuthenticationV2,
   type QualifiedConnectedAccountGroupV4,
   type QualifiedConnectedAccountProfileV4,
   type QualifiedConnectedAccountPurposeV1,
@@ -80,6 +82,7 @@ type ResolvedDaemonConnectedAccountService = Readonly<{
   service: QualifiedConnectedAccountRef['service'];
   legacyServiceId: ConnectedServiceId | null;
   availability: 'available' | 'unavailable';
+  authentication: PluginConnectedAccountAuthenticationV2;
 }>;
 type DaemonConnectedAccountSelectionProfile = Readonly<{
   profileId: string;
@@ -213,6 +216,7 @@ function createRuntimeRegistryAccess(
             availability: entry.availability.state === 'available'
               ? 'available' as const
               : 'unavailable' as const,
+            authentication: entry.authentication,
           });
         },
         listServices() {
@@ -235,6 +239,7 @@ function createRuntimeRegistryAccess(
               availability: entry.availability.state === 'available'
                 ? 'available' as const
                 : 'unavailable' as const,
+              authentication: entry.authentication,
             })];
           }));
         },
@@ -245,12 +250,6 @@ function createRuntimeRegistryAccess(
   return Object.freeze(access);
 }
 
-/**
- * The V4 account list response is bounded by its canonical projection schema and
- * publishes no resumable cursor, so a response at that bound cannot be proven
- * complete.
- */
-const QUALIFIED_CONNECTED_ACCOUNT_LIST_RESPONSE_BOUND = 500;
 /** Shared ceiling for the authorized account inventory exposed to one purpose. */
 const CONNECTED_ACCOUNT_AUTHORIZED_INVENTORY_BOUND = 256;
 const CONNECTED_ACCOUNT_DISPLAY_NAME_MAX_LENGTH = 512;
@@ -265,8 +264,6 @@ type DaemonConnectedAccountInventoryEntry = Readonly<{
 
 type DaemonConnectedAccountInventory = Readonly<{
   entries: readonly DaemonConnectedAccountInventoryEntry[];
-  /** True when a bounded upstream response may have elided authorized rows. */
-  elided: boolean;
 }>;
 
 function inventoryKey(account: QualifiedConnectedAccountRef): string {
@@ -303,6 +300,7 @@ function isRevisionedLegacyConnectedAccountProfileActive(profile: Readonly<{
  */
 function listedQualifiedConnectedAccountState(
   profile: QualifiedConnectedAccountProfileV4,
+  authentication: PluginConnectedAccountAuthenticationV2,
 ): PluginConnectedAccountListedState {
   if (profile.status === 'needs_reauth') return 'reconnectRequired';
   if (profile.status !== 'connected') return 'unavailable';
@@ -311,8 +309,13 @@ function listedQualifiedConnectedAccountState(
       ? 'expired'
       : 'unavailable';
   }
-  if (profile.configurationReady === false) return 'unavailable';
-  return 'connected';
+  return isQualifiedConnectedAccountProfileUsableV4({
+    profile,
+    authentication,
+    now: Date.now(),
+  })
+    ? 'connected'
+    : 'unavailable';
 }
 
 function listedRevisionedLegacyConnectedAccountState(profile: Readonly<{
@@ -477,7 +480,11 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
       const profile = result.accounts.find((candidate) =>
         sameQualifiedConnectedAccountRef(candidate.ref, account),
       );
-      if (!profile || !isQualifiedConnectedAccountProfileActiveV4(profile, Date.now())) {
+      if (!profile || !isQualifiedConnectedAccountProfileUsableV4({
+        profile,
+        authentication: service.authentication,
+        now: Date.now(),
+      })) {
         return null;
       }
       return Object.freeze({
@@ -557,6 +564,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     const activeAccount = resolveQualifiedConnectedAccountGroupActiveAccountV4({
       group,
       accounts: accountResult.accounts,
+      authentication: service.authentication,
       now: Date.now(),
     });
     if (!activeAccount) return null;
@@ -621,7 +629,11 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
             return [
               qualifiedAccounts.map((profile) => Object.freeze({
                 profileId: profile.ref.accountId,
-                active: isQualifiedConnectedAccountProfileActiveV4(profile, now),
+                active: isQualifiedConnectedAccountProfileUsableV4({
+                  profile,
+                  authentication: service.authentication,
+                  now,
+                }),
                 providerAccountId: profile.providerIdentity?.accountId,
                 providerEmail: profile.providerIdentity?.email,
                 displayName: profile.displayName,
@@ -632,6 +644,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
                 resolvable: resolveQualifiedConnectedAccountGroupActiveAccountV4({
                   group,
                   accounts: qualifiedAccounts,
+                  authentication: service.authentication,
                   now,
                 }) !== null,
               })),
@@ -762,7 +775,6 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     signal: AbortSignal;
   }>): Promise<DaemonConnectedAccountInventory> => {
     const entries = new Map<string, DaemonConnectedAccountInventoryEntry>();
-    let elided = false;
     const add = (entry: DaemonConnectedAccountInventoryEntry): void => {
       entries.set(inventoryKey(entry.account), entry);
     };
@@ -790,9 +802,6 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         ) {
           throw new Error('Qualified Connected Account inventory returned a different service');
         }
-        if (result.accounts.length >= QUALIFIED_CONNECTED_ACCOUNT_LIST_RESPONSE_BOUND) {
-          elided = true;
-        }
         for (const profile of result.accounts) {
           if (
             profile.ref.service.pluginId !== service.service.pluginId
@@ -809,7 +818,10 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
                 ?? profile.providerIdentity?.accountId,
               profile.ref.accountId,
             ),
-            state: listedQualifiedConnectedAccountState(profile),
+            state: listedQualifiedConnectedAccountState(
+              profile,
+              service.authentication,
+            ),
             qualified: true,
           });
         }
@@ -851,7 +863,6 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
           .sort(([left], [right]) => left.localeCompare(right))
           .map(([, entry]) => entry),
       ),
-      elided,
     });
   };
 
@@ -913,17 +924,16 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
           entries: Object.freeze(inventory.entries.filter((entry) => (
             inventoryKey(entry.account) === targetAccountKey
           ))),
-          elided: inventory.elided,
         });
       }
       if (!params.qualifiedApi) {
-        return Object.freeze({ entries: Object.freeze([]), elided: inventory.elided });
+        return Object.freeze({ entries: Object.freeze([]) });
       }
       const targetService = target.service;
       const targetGroupId = target.groupId;
       const service = lease.resolveService(targetService);
       if (!service || service.availability !== 'available') {
-        return Object.freeze({ entries: Object.freeze([]), elided: inventory.elided });
+        return Object.freeze({ entries: Object.freeze([]) });
       }
       const group = await params.qualifiedApi.readGroup({
         service: service.service,
@@ -936,7 +946,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         || group.ref.service.pluginId !== targetService.pluginId
         || group.ref.service.localId !== targetService.localId
       ) {
-        return Object.freeze({ entries: Object.freeze([]), elided: inventory.elided });
+        return Object.freeze({ entries: Object.freeze([]) });
       }
       const memberIds = new Set(
         group.members
@@ -949,7 +959,6 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
           && entry.account.service.localId === targetService.localId
           && memberIds.has(entry.account.accountId)
         ))),
-        elided: inventory.elided,
       });
     } finally {
       await lease.release();
@@ -1004,7 +1013,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
       }));
     }
     return Object.freeze({
-      status: inventory.elided || page.length < inventory.entries.length
+      status: page.length < inventory.entries.length
         ? 'truncated' as const
         : 'complete' as const,
       accounts: Object.freeze(accounts),

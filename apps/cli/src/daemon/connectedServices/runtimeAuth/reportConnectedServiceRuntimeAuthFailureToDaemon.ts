@@ -70,7 +70,10 @@ export type ConnectedServiceRuntimeAuthFailureDaemonReport = Readonly<{
   projection?: ConnectedServiceRuntimeAuthRecoveryProjection;
 }>;
 
-export const CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS = 120_000;
+// The daemon may perform the same bounded OAuth rotation/evidence sequence as the
+// request-auth owner. This report is a recovery transport, not a model-turn timeout;
+// keep it just above the 300-second daemon recovery ceiling.
+export const CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS = 310_000;
 
 // Incident Jun-11 H-C / FIX-2: one failed turn can be observed by multiple independent
 // triggers, each of which calls this shared report path. Dedupe lives HERE — the single

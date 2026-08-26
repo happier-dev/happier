@@ -396,7 +396,7 @@ async function patchConnectedServiceCredentialHealth(params: Readonly<{
     expect(response.data?.success).toBe(true);
 }
 
-async function expectRealSwitchSessionEventRecorded(params: Readonly<{
+async function expectRealSwitchAttemptSessionEventRecorded(params: Readonly<{
     baseUrl: string;
     token: string;
     sessionId: string;
@@ -416,7 +416,7 @@ async function expectRealSwitchSessionEventRecorded(params: Readonly<{
         expect(response.status).toBe(200);
         const messages = Array.isArray(response.data?.messages) ? response.data.messages : [];
         const localIdPrefix = [
-            'connected-service-account-switch',
+            'connected-service-account-switch-attempt',
             params.serviceId,
             params.groupId,
         ].join(':');
@@ -428,7 +428,7 @@ async function expectRealSwitchSessionEventRecorded(params: Readonly<{
         });
     }, {
         timeoutMs: 30_000,
-        context: 'real auth-group switch path records a session event',
+        context: 'auth-group switch with restart-required runtime records an attempt event',
     });
 }
 
@@ -967,7 +967,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
                 timeoutMs: 30_000,
                 context: 'auth-group switch commits backup active profile',
             });
-            await expectRealSwitchSessionEventRecorded({
+            await expectRealSwitchAttemptSessionEventRecorded({
                 baseUrl: server.baseUrl,
                 token: authToken,
                 sessionId,

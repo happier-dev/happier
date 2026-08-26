@@ -27,7 +27,22 @@ export type ConnectedAccountAttemptTransactionMutationResult =
         status: "ok";
         record: ConnectedAccountAttemptTransactionRecord;
     }>
-    | Readonly<{ status: "not_found" | "conflict" | "storage_mode_mismatch" }>;
+    | Readonly<{
+        status:
+            | "not_found"
+            | "conflict"
+            | "storage_mode_mismatch"
+            | "unreadable";
+    }>;
+
+export type ConnectedAccountAttemptTransactionReadResult =
+    | Readonly<{
+        status: "ok";
+        record: ConnectedAccountAttemptTransactionRecord;
+    }>
+    | Readonly<{
+        status: "not_found" | "storage_mode_mismatch" | "unreadable";
+    }>;
 
 const StoredConnectedAccountAttemptTransactionSchema = z.object({
     version: z.literal(1),
@@ -123,15 +138,22 @@ function parseRecord(
     value: string,
     expiresAt: Date,
     keyPath: string[],
-): ConnectedAccountAttemptTransactionRecord | null {
+):
+    | Readonly<{
+        status: "ok";
+        record: ConnectedAccountAttemptTransactionRecord;
+    }>
+    | Readonly<{ status: "unreadable" }> {
     let decoded: unknown;
     try {
         decoded = JSON.parse(value);
     } catch {
-        return null;
+        return Object.freeze({ status: "unreadable" as const });
     }
     const parsed = StoredConnectedAccountAttemptTransactionSchema.safeParse(decoded);
-    if (!parsed.success) return null;
+    if (!parsed.success) {
+        return Object.freeze({ status: "unreadable" as const });
+    }
     let content: StoredJsonContentEnvelope;
     try {
         content = decodeAccountContentFromAtRestStorage({
@@ -139,31 +161,55 @@ function parseRecord(
             value: parsed.data.content,
         });
     } catch {
-        return null;
+        return Object.freeze({ status: "unreadable" as const });
     }
     return Object.freeze({
-        revision: parsed.data.revision,
-        content,
-        expiresAtMs: expiresAt.getTime(),
+        status: "ok" as const,
+        record: Object.freeze({
+            revision: parsed.data.revision,
+            content,
+            expiresAtMs: expiresAt.getTime(),
+        }),
     });
 }
 
 async function readCurrent(
     tx: Tx,
+    accountId: string,
     key: string,
     nowMs: number,
     keyPath: string[],
-) {
+): Promise<
+    | Readonly<{
+        status: "ok";
+        row: Readonly<{ value: string; expiresAt: Date }>;
+        record: ConnectedAccountAttemptTransactionRecord;
+    }>
+    | Readonly<{
+        status: "not_found" | "storage_mode_mismatch" | "unreadable";
+    }>
+> {
     const row = await tx.repeatKey.findUnique({ where: { key } });
-    if (!row) return null;
+    if (!row) return Object.freeze({ status: "not_found" as const });
     if (row.expiresAt.getTime() <= nowMs) {
         await tx.repeatKey.deleteMany({
             where: { key, value: row.value },
         });
-        return null;
+        return Object.freeze({ status: "not_found" as const });
     }
-    const record = parseRecord(row.value, row.expiresAt, keyPath);
-    return record ? Object.freeze({ row, record }) : null;
+    const parsed = parseRecord(row.value, row.expiresAt, keyPath);
+    if (parsed.status !== "ok") return parsed;
+    const admission = await readAccountEnvelopeAdmission(
+        tx,
+        accountId,
+        parsed.record.content,
+    );
+    if (admission.status !== "ok") return admission;
+    return Object.freeze({
+        status: "ok" as const,
+        row: Object.freeze({ value: row.value, expiresAt: row.expiresAt }),
+        record: parsed.record,
+    });
 }
 
 /**
@@ -227,15 +273,19 @@ export async function readConnectedAccountAttemptTransaction(input: Readonly<{
     kind: ConnectedAccountAttemptTransactionKind;
     attemptId: string;
     nowMs: number;
-}>): Promise<ConnectedAccountAttemptTransactionRecord | null> {
-    return await inTx(async (tx) => (
-        await readCurrent(
+}>): Promise<ConnectedAccountAttemptTransactionReadResult> {
+    return await inTx(async (tx) => {
+        const current = await readCurrent(
             tx,
+            input.accountId,
             transactionKey(input),
             input.nowMs,
             transactionStorageKeyPath(input),
-        )
-    )?.record ?? null);
+        );
+        return current.status === "ok"
+            ? Object.freeze({ status: "ok" as const, record: current.record })
+            : current;
+    });
 }
 
 /**
@@ -262,8 +312,16 @@ export async function replaceConnectedAccountAttemptTransaction(input: Readonly<
         }
         const key = transactionKey(input);
         const keyPath = transactionStorageKeyPath(input);
-        const current = await readCurrent(tx, key, input.nowMs, keyPath);
-        if (!current) return Object.freeze({ status: "not_found" as const });
+        const current = await readCurrent(
+            tx,
+            input.accountId,
+            key,
+            input.nowMs,
+            keyPath,
+        );
+        if (current.status !== "ok") {
+            return Object.freeze({ status: current.status });
+        }
         if (current.record.revision !== input.expectedRevision) {
             return Object.freeze({ status: "conflict" as const });
         }
@@ -311,16 +369,26 @@ export async function deleteConnectedAccountAttemptTransaction(input: Readonly<{
     attemptId: string;
     expectedRevision: number;
     nowMs: number;
-}>): Promise<Readonly<{ status: "deleted" | "not_found" | "conflict" }>> {
+}>): Promise<Readonly<{
+    status:
+        | "deleted"
+        | "not_found"
+        | "conflict"
+        | "storage_mode_mismatch"
+        | "unreadable";
+}>> {
     return await inTx(async (tx) => {
         const key = transactionKey(input);
         const current = await readCurrent(
             tx,
+            input.accountId,
             key,
             input.nowMs,
             transactionStorageKeyPath(input),
         );
-        if (!current) return Object.freeze({ status: "not_found" as const });
+        if (current.status !== "ok") {
+            return Object.freeze({ status: current.status });
+        }
         if (current.record.revision !== input.expectedRevision) {
             return Object.freeze({ status: "conflict" as const });
         }

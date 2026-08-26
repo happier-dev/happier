@@ -12,7 +12,7 @@ import {
   useProjectedConnectedServicesRegistry,
   useProjectedPluginLocalizedTextResolver,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { getConnectedAccountAuthenticationMode } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
@@ -68,10 +68,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     groups,
     labelsByKey: settings.connectedServicesProfileLabelByKey,
     serviceTitle,
-    resolveAuthenticationMode: (account) => getConnectedAccountAuthenticationMode(
-      account.ref.service,
-      account.authenticationModeId,
-    ),
+    resolveAuthentication: getConnectedAccountAuthentication,
   }), [
     accounts,
     groups,
@@ -79,7 +76,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     props.value,
     serviceTitle,
     settings.connectedServicesProfileLabelByKey,
-    // The registry is the descriptor/currentness owner for authentication mode.
+    // The registry is the descriptor/currentness owner for authentication.
     registry,
   ]);
   const selectedId = connectedAccountPurposeTargetChoiceId(props.value);

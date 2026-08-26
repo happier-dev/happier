@@ -396,4 +396,104 @@ describe("Connected Account attempt transaction routes", () => {
         const rows = await db.repeatKey.findMany();
         expect(rows).toHaveLength(1);
     });
+
+    it("does not reopen, replace, or delete a retained attempt after its Account mode changes", async () => {
+        const account = await createE2eeAccount();
+        const app = createTestApp();
+        await app.ready();
+        const url = "/v2/connect/connected-account-attempt-transactions/oauth/mode-drift";
+        const headers = {
+            "content-type": "application/json",
+            "x-test-user-id": account.id,
+        };
+        const expiresAtMs = Date.now() + 15 * 60_000;
+        const content = { t: "encrypted", c: "predecessor-ciphertext" } as const;
+        expect((await app.inject({
+            method: "POST",
+            url,
+            headers,
+            payload: { content, expiresAtMs },
+        })).statusCode).toBe(200);
+
+        await db.account.update({
+            where: { id: account.id },
+            data: { encryptionMode: "plain" },
+        });
+
+        for (const request of [{ method: "GET" as const }, {
+            method: "PATCH" as const,
+            payload: {
+                expectedRevision: 1,
+                content: { t: "plain", v: { replacement: true } },
+                expiresAtMs,
+            },
+        }, {
+            method: "DELETE" as const,
+            payload: { expectedRevision: 1 },
+        }]) {
+            const response = await app.inject({
+                method: request.method,
+                url,
+                headers,
+                ...(request.payload ? { payload: request.payload } : {}),
+            });
+            expect(response.statusCode).toBe(409);
+            expect(response.json()).toEqual({
+                error: "connected_account_attempt_transaction_storage_mode_mismatch",
+            });
+        }
+        expect(await db.repeatKey.count()).toBe(1);
+    });
+
+    it("reports retained corrupt predecessor attempts as unreadable rather than absent", async () => {
+        const account = await createPlainAccount();
+        const app = createTestApp();
+        await app.ready();
+        const url = "/v2/connect/connected-account-attempt-transactions/device/corrupt-predecessor";
+        const headers = {
+            "content-type": "application/json",
+            "x-test-user-id": account.id,
+        };
+        const expiresAtMs = Date.now() + 15 * 60_000;
+        expect((await app.inject({
+            method: "POST",
+            url,
+            headers,
+            payload: {
+                content: { t: "plain", v: { verifier: "preserve" } },
+                expiresAtMs,
+            },
+        })).statusCode).toBe(200);
+        const stored = await db.repeatKey.findFirstOrThrow({
+            select: { key: true },
+        });
+        await db.repeatKey.update({
+            where: { key: stored.key },
+            data: { value: "not-json" },
+        });
+
+        for (const request of [{ method: "GET" as const }, {
+            method: "PATCH" as const,
+            payload: {
+                expectedRevision: 1,
+                content: { t: "plain", v: { verifier: "replacement" } },
+                expiresAtMs,
+            },
+        }, {
+            method: "DELETE" as const,
+            payload: { expectedRevision: 1 },
+        }]) {
+            const response = await app.inject({
+                method: request.method,
+                url,
+                headers,
+                ...(request.payload ? { payload: request.payload } : {}),
+            });
+            expect(response.statusCode).toBe(409);
+            expect(response.json()).toEqual({
+                error: "connected_account_attempt_transaction_unreadable",
+            });
+        }
+        expect(await db.repeatKey.count()).toBe(1);
+    });
 });

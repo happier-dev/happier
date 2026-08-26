@@ -150,6 +150,12 @@ export type ExecutionRunConnectedServicesBridge = Readonly<{
 
 type RunReleaseEntry = {
     activationId: string;
+    /**
+     * A failed daemon-replacement adoption may retain only exact root-cleanup
+     * custody. It must never be mistaken for fresh purpose/request-auth/run
+     * target authority on a later idempotent recovery attempt.
+     */
+    authorityActive: boolean;
     runKey: string;
     runnerPid: number;
     runnerIdentity: object;
@@ -488,6 +494,7 @@ export function createExecutionRunConnectedServicesBridge(
             }
             entry = {
                 activationId: input.activationId,
+                authorityActive: true,
                 runKey: input.runKey,
                 runnerPid: input.runnerPid,
                 runnerIdentity: input.runner.identity,
@@ -555,7 +562,7 @@ export function createExecutionRunConnectedServicesBridge(
             });
             if (!runner || !runner.isCurrent()) return false;
             const current = retainedCleanupByRunKey.get(registration.runKey);
-            if (
+            const matchesCurrentRunner = Boolean(
                 current
                 && !current.retiring
                 && current.runnerPid === input.runnerPid
@@ -565,8 +572,74 @@ export function createExecutionRunConnectedServicesBridge(
                     registration.activationId === undefined
                     || current.activationId === registration.activationId
                 )
-            ) {
+            );
+            if (matchesCurrentRunner && current?.authorityActive) {
                 return true;
+            }
+
+            // A run key names one execution-run materialization. A distinct
+            // live runner claiming that key cannot safely inherit or replace
+            // the incumbent's cleanup: doing either would either delete the
+            // incumbent root or leave the newly discovered root without a
+            // release/exit fence. Refuse before creating an unowned cleanup
+            // closure; the existing entry remains the sole exact custody.
+            if (current && !matchesCurrentRunner) {
+                logger.debug(
+                    '[DAEMON RUN] Execution-run adoption refused for conflicting live run-key custody',
+                    { runId: input.runId, runnerPid: input.runnerPid },
+                );
+                return false;
+            }
+
+            // Retain only the exact existing materialized-root custody before
+            // checking whether fresh authority can be reconstructed. A live
+            // runner proves the root still needs cleanup, but does not prove a
+            // current registry declaration may become its authority.
+            let cleanupOnExit: (() => void | Promise<void>) | null = null;
+            let cleanupOnlyEntry: RunReleaseEntry | null = null;
+            if (registration.materializedRoot) {
+                cleanupOnExit = matchesCurrentRunner && current
+                    ? current.cleanupOnExit
+                    : deps.createAdoptedRootCleanup({
+                        runKey: registration.runKey,
+                        agentId: registrationAgentId,
+                        materializedRoot: registration.materializedRoot,
+                    });
+                if (!cleanupOnExit) {
+                    logger.debug(
+                        '[DAEMON RUN] Execution-run adoption refused without exact adopted-root cleanup custody',
+                        { runId: input.runId, runnerPid: input.runnerPid },
+                    );
+                    return false;
+                }
+                if (!current) {
+                    cleanupOnlyEntry = {
+                        activationId: registration.activationId ?? randomUUID(),
+                        authorityActive: false,
+                        runKey: registration.runKey,
+                        runnerPid: input.runnerPid,
+                        runnerIdentity: runner.identity,
+                        agentId: registrationAgentId,
+                        cleanupOnFailure: null,
+                        cleanupOnExit,
+                        cleanupPromise: null,
+                        retiring: false,
+                        targetsMayBeRegistered: false,
+                        purposeBindingLease: null,
+                        requestAuthCapability: null,
+                        requestAuthCapabilityRetired: false,
+                        redactionLease: null,
+                        redactionLeaseClosed: false,
+                        contributionLease: null,
+                        contributionLeaseReleased: false,
+                    };
+                    retainedCleanupByRunKey.set(
+                        registration.runKey,
+                        cleanupOnlyEntry,
+                    );
+                } else if (matchesCurrentRunner) {
+                    cleanupOnlyEntry = current;
+                }
             }
             // A live runner proves only that a process still exists, never which build of the
             // Agent it is executing. Purposes and request-auth uses below are derived from the
@@ -574,9 +647,26 @@ export function createExecutionRunConnectedServicesBridge(
             // offers the exact contribution generation this run was launched with. A record whose
             // writer could not prove one — including a predecessor-shaped marker — is unproven
             // and must not be upgraded into fresh request-auth authority.
-            const contributionLease = await deps.acquireAgentPurposeContributions({
-                agentId: registrationAgentId,
-            });
+            let contributionLease: Awaited<ReturnType<
+                CreateExecutionRunConnectedServicesBridgeDeps[
+                    'acquireAgentPurposeContributions'
+                ]
+            >>;
+            try {
+                contributionLease = await deps.acquireAgentPurposeContributions({
+                    agentId: registrationAgentId,
+                });
+            } catch (error) {
+                logger.debug(
+                    '[DAEMON RUN] Execution-run adoption refused while recovering Agent contribution authority',
+                    {
+                        runId: input.runId,
+                        runnerPid: input.runnerPid,
+                        error: error instanceof Error ? error.message : String(error),
+                    },
+                );
+                return false;
+            }
             const releaseUnusedLease = async (reason: string): Promise<false> => {
                 await contributionLease.release().catch(() => undefined);
                 logger.debug(
@@ -603,20 +693,11 @@ export function createExecutionRunConnectedServicesBridge(
                 return await releaseUnusedLease('current_generation_differs');
             }
 
-            if (!(await cleanupPriorRunKey(registration.runKey))) {
+            // The cleanup-only entry above is this exact root's existing
+            // custody. Reusing it through the authority transition prevents a
+            // valid A→B recovery from deleting B's root before it is admitted.
+            if (!cleanupOnlyEntry && !(await cleanupPriorRunKey(registration.runKey))) {
                 return await releaseUnusedLease('prior_run_cleanup_failed');
-            }
-
-            let cleanupOnExit: (() => void | Promise<void>) | null = null;
-            if (registration.materializedRoot) {
-                cleanupOnExit = deps.createAdoptedRootCleanup({
-                    runKey: registration.runKey,
-                    agentId: registrationAgentId,
-                    materializedRoot: registration.materializedRoot,
-                });
-                if (!cleanupOnExit) {
-                    return await releaseUnusedLease('adopted_root_cleanup_unavailable');
-                }
             }
             let entry: RunReleaseEntry | null = null;
             try {

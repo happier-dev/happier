@@ -1,142 +1,59 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import type { ConnectedServiceId } from "@happier-dev/protocol";
-
 import { db } from "@/storage/db";
-import { connectRoutes } from "./connectRoutes";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { connectRoutes } from "./connectRoutes";
+import { readProviderAccountUsageRecord } from "./providerAccountUsage";
 import {
     closeProviderAccountUsageTrackedApps,
     createProviderAccountUsageRecordKey,
     createProviderAccountUsageTestApp,
     createUsageSnapshot,
-    createV3ProviderAccountUsagePayload,
 } from "./providerAccountUsageTestkit";
-import { readProviderAccountUsageRecord } from "./providerAccountUsage";
-import {
-    readExactQualifiedConnectedServiceUsageSource,
-} from "./qualifiedConnectedAccounts/usageRepository";
 import {
     resolveLegacyQualifiedConnectedAccountService,
 } from "./qualifiedConnectedAccounts/identity";
-import {
-    createLegacyCredentialFixtureIdentity,
-    createLegacyGroupFixtureIdentity,
-    createLegacyGroupMemberFixtureIdentity,
-} from "./testkit/qualifiedConnectedAccountFixtureIdentity";
 
-async function readConnectedServiceUsageSource(params: Readonly<{
-    accountId: string;
-    serviceId: ConnectedServiceId;
-    profileId: string;
-}>): Promise<Readonly<{
-    providerAccountUsageRecordId: string;
-    bindingKind: "profile";
-}> | null> {
-    const result = await readExactQualifiedConnectedServiceUsageSource({
-        accountId: params.accountId,
-        source: {
-            ref: {
-                service:
-                    resolveLegacyQualifiedConnectedAccountService(
-                        params.serviceId,
-                    ),
-                accountId: params.profileId,
-            },
-            bindingKind: "account",
-        },
-    });
-    return result
-        ? {
-            providerAccountUsageRecordId: result.recordId,
-            bindingKind: "profile",
-        }
-        : null;
+function createQualifiedLegacyRef(profileId: string = "work") {
+    return {
+        service: resolveLegacyQualifiedConnectedAccountService("openai-codex"),
+        accountId: profileId,
+    };
 }
 
-async function createConnectedServiceProfileBinding(
-    accountId: string,
-    profileId: string = "work",
-    params: Readonly<{ providerAccountId?: string | null }> = {},
-): Promise<{ id: string }> {
-    return await db.serviceAccountToken.create({
-        data: {
-            accountId,
-            vendor: "openai-codex",
-            profileId,
-            ...createLegacyCredentialFixtureIdentity({
-                serviceId: "openai-codex",
-                profileId,
-                credentialKind: "oauth",
-            }),
-            token: Buffer.from(`token:openai-codex:${profileId}`, "utf8"),
+async function createQualifiedPlainCredential(params: Readonly<{
+    app: ReturnType<typeof createProviderAccountUsageTestApp>;
+    accountId: string;
+    providerAccountId: string;
+}>) {
+    const ref = createQualifiedLegacyRef();
+    const created = await params.app.inject({
+        method: "POST",
+        url: "/v4/connect/qualified/credential",
+        headers: {
+            "content-type": "application/json",
+            "x-test-user-id": params.accountId,
+        },
+        payload: {
+            ref,
+            authenticationModeId: "oauth",
+            expectedCredentialRevision: null,
+            content: { t: "plain", v: { token: "v4-credential" } },
             metadata: {
-                v: 3,
-                storage: "plain_json_v1",
-                kind: "oauth",
-                ...(params.providerAccountId !== null ? { providerAccountId: params.providerAccountId ?? "acct_provider_subject" } : {}),
-                credentialRevision: "csr_abcdefghijklmnopqrstuvwxyz",
+                scopes: ["quota.read"],
+                providerIdentity: { accountId: params.providerAccountId },
+            },
+            initialConfiguration: {
+                expectedConfigurationRevision: null,
+                replacementContentEnvelope: {
+                    t: "plain",
+                    v: { region: "eu" },
+                },
             },
         },
-        select: { id: true },
     });
-}
-
-async function createConnectedServiceGroupMember(params: Readonly<{
-    accountId: string;
-    profileId?: string;
-    groupId?: string;
-    generation?: number;
-}>): Promise<void> {
-    const profileId = params.profileId ?? "work";
-    const groupId = params.groupId ?? "team";
-    const credential = await db.serviceAccountToken.findUniqueOrThrow({
-        where: {
-            accountId_vendor_profileId: {
-                accountId: params.accountId,
-                vendor: "openai-codex",
-                profileId,
-            },
-        },
-        select: { id: true },
-    });
-    const group = await db.connectedServiceAuthGroup.create({
-        data: {
-            accountId: params.accountId,
-            vendor: "openai-codex",
-            groupId,
-            ...createLegacyGroupFixtureIdentity({
-                serviceId: "openai-codex",
-                groupId,
-            }),
-            displayName: null,
-            policyJson: JSON.stringify({ v: 1, strategy: "priority", autoSwitch: true }),
-            activeProfileId: profileId,
-            activeConnectedAccountId: profileId,
-            generation: params.generation ?? 0,
-            stateJson: null,
-        },
-        select: { id: true },
-    });
-    await db.connectedServiceAuthGroupMember.create({
-        data: {
-            groupDbId: group.id,
-            accountId: params.accountId,
-            vendor: "openai-codex",
-            groupId,
-            profileId,
-            ...createLegacyGroupMemberFixtureIdentity({
-                serviceId: "openai-codex",
-                profileId,
-                groupId,
-                credentialId: credential.id,
-                credentialKind: "oauth",
-            }),
-            priority: 10,
-            enabled: true,
-            stateJson: null,
-        },
-    });
+    expect(created.statusCode, created.body).toBe(200);
+    return { ref, ...created.json() };
 }
 
 describe("connectRoutes (connected services quotas v3) plaintext quota endpoints", () => {
@@ -164,7 +81,7 @@ describe("connectRoutes (connected services quotas v3) plaintext quota endpoints
         await db.account.deleteMany().catch(() => {});
     });
 
-    it("returns a plaintext quota view backed by canonical provider-account usage", async () => {
+    it("returns the released plaintext profile quota from a V4 qualified usage record", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -175,99 +92,117 @@ describe("connectRoutes (connected services quotas v3) plaintext quota endpoints
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
         });
-        await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v3_projection" });
-        const snapshot = createUsageSnapshot({
-            fetchedAt: Date.now(),
-            recordKey: createProviderAccountUsageRecordKey({ accountSubjectId: "acct_quota_v3_projection" }),
-            planLabel: "plan-secret-12345",
-        });
-
         const app = createProviderAccountUsageTestApp();
-        connectRoutes(app as any);
+        connectRoutes(app as never);
         await app.ready();
 
-        const register = await app.inject({
+        const credential = await createQualifiedPlainCredential({
+            app,
+            accountId: user.id,
+            providerAccountId: "acct_quota_v3_projection",
+        });
+        const snapshot = createUsageSnapshot({
+            fetchedAt: Date.now(),
+            recordKey: createProviderAccountUsageRecordKey({
+                accountSubjectId: "acct_quota_v3_projection",
+            }),
+            planLabel: "plan-secret-12345",
+        });
+        const write = await app.inject({
             method: "POST",
-            url: `/v3/connect/provider-account-usage/${snapshot.recordId}`,
-            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            url: "/v4/connect/qualified/provider-account-usage",
+            headers: {
+                "content-type": "application/json",
+                "x-test-user-id": user.id,
+            },
             payload: {
-                ...createV3ProviderAccountUsagePayload({ snapshot }),
-                source: {
-                    serviceId: "openai-codex",
-                    profileId: "work",
-                    bindingKind: "profile",
-                },
+                source: { ref: credential.ref, bindingKind: "account" },
+                expectedCredentialRevision: credential.credentialRevision,
+                expectedConfigurationRevision: credential.configurationRevision,
+                recordId: snapshot.recordId,
+                recordKey: snapshot.recordKey,
+                payloadMode: "plain_json_v1",
+                status: "ok",
+                snapshot,
+                fetchedAt: snapshot.fetchedAtMs,
+                staleAfterMs: snapshot.staleAfterMs,
+                metadata: { materialFingerprint: "v4:v3:projection" },
             },
         });
-        expect(register.statusCode).toBe(200);
-        expect(register.json()).toEqual({
+        expect(write.statusCode, write.body).toBe(200);
+        expect(write.json()).toEqual({
             success: true,
             source: { status: "linked" },
         });
 
-        const getOne = await app.inject({
+        const read = await app.inject({
             method: "GET",
             url: "/v3/connect/openai-codex/profiles/work/quotas",
             headers: { "x-test-user-id": user.id },
         });
-        expect(getOne.statusCode).toBe(200);
-        expect(getOne.json()).toEqual({
-            content: { t: "plain", v: expect.objectContaining({ serviceId: "openai-codex", profileId: "work", planLabel: "plan-secret-12345" }) },
+        expect(read.statusCode).toBe(200);
+        expect(read.json()).toEqual({
+            content: {
+                t: "plain",
+                v: expect.objectContaining({
+                    serviceId: "openai-codex",
+                    profileId: "work",
+                    planLabel: "plan-secret-12345",
+                }),
+            },
             metadata: {
                 fetchedAt: snapshot.fetchedAtMs,
                 staleAfterMs: snapshot.staleAfterMs,
                 status: "ok",
             },
         });
-
-        const source = await readConnectedServiceUsageSource({
-            accountId: user.id,
-            serviceId: "openai-codex",
-            profileId: "work",
-        });
-        expect(source).toEqual(expect.objectContaining({
-            providerAccountUsageRecordId: expect.any(String),
-        }));
-        expect(source?.providerAccountUsageRecordId).toEqual(expect.any(String));
-
-        await expect(readProviderAccountUsageRecord({
-            accountId: user.id,
-            recordId: source?.providerAccountUsageRecordId ?? "",
-        })).resolves.toEqual(expect.objectContaining({
-            payloadMode: "plain_json_v1",
-        }));
     });
 
-    it("refreshes through the linked source relation and does not create placeholder rows", async () => {
+    it("refreshes and deletes the released plaintext profile quota without deleting its V4 record", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
             HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
             HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: "none",
         });
-        const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
-        await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v3_refresh" });
-        const snapshot = createUsageSnapshot({
-            fetchedAt: Date.now(),
-            recordKey: createProviderAccountUsageRecordKey({ accountSubjectId: "acct_quota_v3_refresh" }),
-            planLabel: "refresh-source",
+        const user = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
         });
-
         const app = createProviderAccountUsageTestApp();
-        connectRoutes(app as any);
+        connectRoutes(app as never);
         await app.ready();
 
+        const credential = await createQualifiedPlainCredential({
+            app,
+            accountId: user.id,
+            providerAccountId: "acct_quota_v3_refresh",
+        });
+        const snapshot = createUsageSnapshot({
+            fetchedAt: Date.now(),
+            recordKey: createProviderAccountUsageRecordKey({
+                accountSubjectId: "acct_quota_v3_refresh",
+            }),
+            planLabel: "refresh-source",
+        });
         expect((await app.inject({
             method: "POST",
-            url: `/v3/connect/provider-account-usage/${snapshot.recordId}`,
-            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            url: "/v4/connect/qualified/provider-account-usage",
+            headers: {
+                "content-type": "application/json",
+                "x-test-user-id": user.id,
+            },
             payload: {
-                ...createV3ProviderAccountUsagePayload({ snapshot }),
-                source: {
-                    serviceId: "openai-codex",
-                    profileId: "work",
-                    bindingKind: "profile",
-                },
+                source: { ref: credential.ref, bindingKind: "account" },
+                expectedCredentialRevision: credential.credentialRevision,
+                expectedConfigurationRevision: credential.configurationRevision,
+                recordId: snapshot.recordId,
+                recordKey: snapshot.recordKey,
+                payloadMode: "plain_json_v1",
+                status: "ok",
+                snapshot,
+                fetchedAt: snapshot.fetchedAtMs,
+                staleAfterMs: snapshot.staleAfterMs,
             },
         })).statusCode).toBe(200);
 
@@ -278,54 +213,10 @@ describe("connectRoutes (connected services quotas v3) plaintext quota endpoints
         });
         expect(refresh.statusCode).toBe(200);
         expect(refresh.json()).toEqual({ success: true });
-
-        const source = await readConnectedServiceUsageSource({
+        expect((await readProviderAccountUsageRecord({
             accountId: user.id,
-            serviceId: "openai-codex",
-            profileId: "work",
-        });
-        const recordId = source?.providerAccountUsageRecordId ?? "";
-        expect((await readProviderAccountUsageRecord({ accountId: user.id, recordId }))?.refreshRequestedAt).toEqual(expect.any(Number));
-    });
-
-    it("deletes the quota view by unlinking the source and preserving the provider record", async () => {
-        harness.resetEnv({
-            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
-            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
-            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
-            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: "none",
-        });
-        const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
-        await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v3_unlink" });
-        const snapshot = createUsageSnapshot({
-            fetchedAt: Date.now(),
-            recordKey: createProviderAccountUsageRecordKey({ accountSubjectId: "acct_quota_v3_unlink" }),
-            planLabel: "unlink-only",
-        });
-
-        const app = createProviderAccountUsageTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        expect((await app.inject({
-            method: "POST",
-            url: `/v3/connect/provider-account-usage/${snapshot.recordId}`,
-            headers: { "content-type": "application/json", "x-test-user-id": user.id },
-            payload: {
-                ...createV3ProviderAccountUsagePayload({ snapshot, fingerprint: "unlink-only" }),
-                source: {
-                    serviceId: "openai-codex",
-                    profileId: "work",
-                    bindingKind: "profile",
-                },
-            },
-        })).statusCode).toBe(200);
-
-        const storedRecordBeforeDelete = await db.providerAccountUsageRecord.findFirst({
-            where: { accountId: user.id },
-            select: { recordId: true },
-        });
-        const recordId = storedRecordBeforeDelete?.recordId ?? "";
+            recordId: snapshot.recordId,
+        }))?.refreshRequestedAt).toEqual(expect.any(Number));
 
         const deleted = await app.inject({
             method: "DELETE",
@@ -334,75 +225,20 @@ describe("connectRoutes (connected services quotas v3) plaintext quota endpoints
         });
         expect(deleted.statusCode).toBe(200);
         expect(deleted.json()).toEqual({ success: true });
-
-        await expect(readProviderAccountUsageRecord({ accountId: user.id, recordId })).resolves.toEqual(expect.objectContaining({
-            recordId,
+        await expect(readProviderAccountUsageRecord({
+            accountId: user.id,
+            recordId: snapshot.recordId,
+        })).resolves.toEqual(expect.objectContaining({
+            recordId: snapshot.recordId,
             payloadMode: "plain_json_v1",
         }));
-        await expect(readConnectedServiceUsageSource({
-            accountId: user.id,
-            serviceId: "openai-codex",
-            profileId: "work",
-        })).resolves.toBeNull();
-    });
 
-    it("preserves explicit group-member source context on canonical plaintext provider-account usage writes", async () => {
-        harness.resetEnv({
-            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
-            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
-            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
-            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: "none",
+        const missing = await app.inject({
+            method: "GET",
+            url: "/v3/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
         });
-        const user = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
-        await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v3_group_member" });
-        await createConnectedServiceGroupMember({ accountId: user.id, profileId: "work", groupId: "team", generation: 4 });
-        const snapshot = createUsageSnapshot({
-            fetchedAt: Date.now(),
-            recordKey: createProviderAccountUsageRecordKey({ accountSubjectId: "acct_quota_v3_group_member" }),
-            planLabel: "group-member-source",
-        });
-
-        const app = createProviderAccountUsageTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const write = await app.inject({
-            method: "POST",
-            url: `/v3/connect/provider-account-usage/${snapshot.recordId}`,
-            headers: { "content-type": "application/json", "x-test-user-id": user.id },
-            payload: {
-                ...createV3ProviderAccountUsagePayload({ snapshot }),
-                source: {
-                    serviceId: "openai-codex",
-                    profileId: "work",
-                    bindingKind: "group_member",
-                    groupId: "team",
-                    groupGeneration: 4,
-                },
-            },
-        });
-
-        expect(write.statusCode).toBe(200);
-        await expect(readExactQualifiedConnectedServiceUsageSource({
-            accountId: user.id,
-            source: {
-                ref: {
-                    service:
-                        resolveLegacyQualifiedConnectedAccountService(
-                            "openai-codex",
-                        ),
-                    accountId: "work",
-                },
-                bindingKind: "group_member",
-                groupId: "team",
-                groupGeneration: 4,
-            },
-        })).resolves.toEqual(expect.objectContaining({
-            source: expect.objectContaining({
-                bindingKind: "group_member",
-                groupId: "team",
-                groupGeneration: 4,
-            }),
-        }));
+        expect(missing.statusCode).toBe(404);
+        expect(missing.json()).toEqual({ error: "connect_quotas_not_found" });
     });
 });

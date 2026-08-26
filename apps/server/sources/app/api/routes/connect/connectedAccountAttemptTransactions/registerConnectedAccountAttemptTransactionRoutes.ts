@@ -68,6 +68,7 @@ const TransactionErrorSchema = z.object({
         "connected_account_attempt_transaction_conflict",
         "connected_account_attempt_transaction_expiry_invalid",
         "connected_account_attempt_transaction_storage_mode_mismatch",
+        "connected_account_attempt_transaction_unreadable",
     ]),
 }).strict();
 
@@ -78,7 +79,11 @@ function expiryIsValid(expiresAtMs: number, nowMs: number): boolean {
 
 function sendMutationError(
     reply: FastifyReply,
-    status: "not_found" | "conflict" | "storage_mode_mismatch",
+    status:
+        | "not_found"
+        | "conflict"
+        | "storage_mode_mismatch"
+        | "unreadable",
 ): FastifyReply {
     if (status === "not_found") {
         return reply.code(404).send({
@@ -90,7 +95,9 @@ function sendMutationError(
     return reply.code(409).send({
         error: status === "storage_mode_mismatch"
             ? "connected_account_attempt_transaction_storage_mode_mismatch"
-            : "connected_account_attempt_transaction_conflict",
+            : status === "unreadable"
+                ? "connected_account_attempt_transaction_unreadable"
+                : "connected_account_attempt_transaction_conflict",
     });
 }
 
@@ -150,19 +157,19 @@ export function registerConnectedAccountAttemptTransactionRoutes(
             response: {
                 200: TransactionRecordSchema,
                 404: TransactionErrorSchema,
+                409: TransactionErrorSchema,
             },
         },
     }, async (request, reply) => {
-        const record = await readConnectedAccountAttemptTransaction({
+        const result = await readConnectedAccountAttemptTransaction({
             accountId: request.userId,
             ...request.params,
             nowMs: Date.now(),
         });
-        return record
-            ? reply.send(record)
-            : reply.code(404).send({
-                error: "connected_account_attempt_transaction_not_found",
-            });
+        if (result.status !== "ok") {
+            return sendMutationError(reply, result.status);
+        }
+        return reply.send(result.record);
     });
 
     app.patch("/v2/connect/connected-account-attempt-transactions/:kind/:attemptId", {

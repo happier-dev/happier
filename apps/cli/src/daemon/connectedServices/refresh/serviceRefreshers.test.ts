@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 
 import {
+  CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS,
   isRevisionedLegacyOauthRefreshService,
   refreshReleasedPeerLegacyConnectedAccountOauthTokens,
 } from './serviceRefreshers';
@@ -53,6 +54,10 @@ function installGlobalFetchMock<TArgs extends readonly unknown[]>(
 }
 
 describe('serviceRefreshers', () => {
+  it('allows slow-but-valid provider OAuth refresh responses', () => {
+    expect(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS).toBe(120_000);
+  });
+
   it('admits only revisioned legacy OAuth refresh services, never PAT services', () => {
     expect(isRevisionedLegacyOauthRefreshService('openai-codex'))
       .toBe(true);

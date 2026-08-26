@@ -9,6 +9,12 @@ import { t } from '@/text';
 import { parseOauthCallbackUrl } from '@/utils/auth/oauthCore';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
+import {
+    connectedAccountFieldErrorId,
+    useConnectedAccountInvalidFieldFocus,
+} from './useConnectedAccountInvalidFieldFocus';
+import { useConnectedAccountDraftNavigationGuard } from './useConnectedAccountDraftNavigationGuard';
+
 const stylesheet = StyleSheet.create((theme) => ({
     input: {
         minHeight: 42,
@@ -30,20 +36,33 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export const ConnectedAccountOAuthForm = React.memo(function ConnectedAccountOAuthForm(props: Readonly<{
+type ConnectedAccountOAuthFormProps = Readonly<{
     authorizationUrl: string;
     callbackUrl: string;
     submitting: boolean;
+    navigation?: unknown;
     onSubmit(completion: Readonly<{
         code: string;
         callbackUrl: string;
         state: string;
-    }>): Promise<void> | void;
-}>) {
+    }>): Promise<boolean | void> | boolean | void;
+}>;
+
+function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [callbackInput, setCallbackInput] = React.useState('');
     const [validationFailed, setValidationFailed] = React.useState(false);
+    const [openFailed, setOpenFailed] = React.useState(false);
+    const callbackErrorId = connectedAccountFieldErrorId(
+        'connected-account-oauth',
+        'callback',
+    );
+    const callbackInvalidFieldIds = validationFailed ? ['callback'] : [];
+    const registerInvalidFieldTarget = useConnectedAccountInvalidFieldFocus({
+        invalidFieldIds: callbackInvalidFieldIds,
+        announcement: t('connectedServices.oauthPaste.invalidConfig'),
+    });
 
     const submit = React.useCallback(async () => {
         const parsed = parseOauthCallbackUrl({
@@ -52,14 +71,36 @@ export const ConnectedAccountOAuthForm = React.memo(function ConnectedAccountOAu
         });
         if (!parsed.code || !parsed.state || parsed.error) {
             setValidationFailed(true);
-            return;
+            return false;
         }
-        await props.onSubmit({
+        const accepted = await props.onSubmit({
             code: parsed.code,
             callbackUrl: props.callbackUrl,
             state: parsed.state,
         });
+        return accepted !== false;
     }, [callbackInput, props]);
+    const discardDraft = React.useCallback(() => {
+        setCallbackInput('');
+        setValidationFailed(false);
+    }, []);
+    useConnectedAccountDraftNavigationGuard({
+        navigation: props.navigation,
+        isDirty: callbackInput.length > 0,
+        onDiscard: discardDraft,
+        onSave: submit,
+        tag: 'ConnectedAccountOAuthForm',
+    });
+    const openAuthorizationUrl = React.useCallback(async () => {
+        setOpenFailed(false);
+        try {
+            if (!await openExternalUrl(props.authorizationUrl)) {
+                setOpenFailed(true);
+            }
+        } catch {
+            setOpenFailed(true);
+        }
+    }, [props.authorizationUrl]);
 
     return (
         <>
@@ -75,10 +116,18 @@ export const ConnectedAccountOAuthForm = React.memo(function ConnectedAccountOAu
                         testID="connected-account-oauth:open"
                         title={t('connectedServices.oauthPaste.openAuthorizationUrl')}
                         disabled={props.submitting || !props.authorizationUrl}
-                        onPress={() => {
-                            void openExternalUrl(props.authorizationUrl);
-                        }}
+                        onPress={() => void openAuthorizationUrl()}
                     />
+                    {openFailed ? (
+                        <Text
+                            testID="connected-account-oauth:open-error"
+                            accessibilityRole="alert"
+                            accessibilityLiveRegion="assertive"
+                            style={[styles.description, { color: theme.colors.text.secondary }]}
+                        >
+                            {t('connectedServices.oauthPaste.alerts.failedToOpenUrl')}
+                        </Text>
+                    ) : null}
                 </View>
             </ItemGroup>
             <ItemGroup
@@ -93,6 +142,14 @@ export const ConnectedAccountOAuthForm = React.memo(function ConnectedAccountOAu
                     </Text>
                     <TextInput
                         testID="connected-account-oauth:callback"
+                        ref={registerInvalidFieldTarget('callback')}
+                        nativeID="connected-account-oauth:callback"
+                        accessibilityLabel={validationFailed
+                            ? `${t('connectedServices.oauthPaste.pasteRedirectUrl')}: ${t('connectedServices.oauthPaste.invalidConfig')}`
+                            : t('connectedServices.oauthPaste.pasteRedirectUrl')}
+                        accessibilityHint={validationFailed
+                            ? t('connectedServices.oauthPaste.invalidConfig')
+                            : t('connectedServices.oauthPaste.pasteRedirectUrlPromptBody')}
                         value={callbackInput}
                         onChangeText={(value) => {
                             setCallbackInput(value);
@@ -105,6 +162,17 @@ export const ConnectedAccountOAuthForm = React.memo(function ConnectedAccountOAu
                         editable={!props.submitting}
                         style={styles.input}
                     />
+                    {validationFailed ? (
+                        <Text
+                            testID={callbackErrorId}
+                            nativeID={callbackErrorId}
+                            accessibilityRole="alert"
+                            accessibilityLiveRegion="assertive"
+                            style={[styles.description, { color: theme.colors.text.secondary }]}
+                        >
+                            {t('connectedServices.oauthPaste.invalidConfig')}
+                        </Text>
+                    ) : null}
                     <RoundButton
                         testID="connected-account-oauth:submit"
                         title={t('common.continue')}
@@ -116,4 +184,15 @@ export const ConnectedAccountOAuthForm = React.memo(function ConnectedAccountOAu
             </ItemGroup>
         </>
     );
+}
+
+/** A changed OAuth redirect contract starts a new callback-paste lifetime. */
+export const ConnectedAccountOAuthForm = React.memo(function ConnectedAccountOAuthForm(
+    props: ConnectedAccountOAuthFormProps,
+) {
+    const draftKey = React.useMemo(
+        () => JSON.stringify([props.authorizationUrl, props.callbackUrl]),
+        [props.authorizationUrl, props.callbackUrl],
+    );
+    return <ConnectedAccountOAuthFormBody key={draftKey} {...props} />;
 });

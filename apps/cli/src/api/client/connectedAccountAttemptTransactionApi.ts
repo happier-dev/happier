@@ -47,6 +47,7 @@ export type ConnectedAccountAttemptTransactionApiErrorCode =
   | 'connected_account_attempt_transaction_conflict'
   | 'connected_account_attempt_transaction_expiry_invalid'
   | 'connected_account_attempt_transaction_storage_mode_mismatch'
+  | 'connected_account_attempt_transaction_unreadable'
   | 'connected_account_attempt_transaction_contract_invalid';
 
 export class ConnectedAccountAttemptTransactionApiError extends Error {
@@ -71,6 +72,7 @@ const TransactionErrorSchema = z.object({
     'connected_account_attempt_transaction_conflict',
     'connected_account_attempt_transaction_expiry_invalid',
     'connected_account_attempt_transaction_storage_mode_mismatch',
+    'connected_account_attempt_transaction_unreadable',
   ]),
 }).strict();
 
@@ -126,7 +128,9 @@ export function createConnectedAccountAttemptTransactionApi(
         transactionUrl(input.kind, input.attemptId),
         {
           ...options,
-          validateStatus: (status) => status === 200 || status === 404,
+          validateStatus: (status) => (
+            status === 200 || status === 404 || status === 409
+          ),
         },
       );
       if (response.status === 404) {
@@ -141,6 +145,7 @@ export function createConnectedAccountAttemptTransactionApi(
         }
         return null;
       }
+      if (response.status !== 200) throwResponseError(response.data);
       return TransactionRecordSchema.parse(response.data);
     },
     async replace(input) {

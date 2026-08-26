@@ -1,5 +1,5 @@
 import type {
-  PluginConnectedAccountAuthenticationModeV2,
+  PluginConnectedAccountAuthenticationV2,
   PluginContributionIdentityV1,
   QualifiedConnectedAccountGroupV4,
   QualifiedConnectedAccountProfileV4,
@@ -89,9 +89,9 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
   labelsByKey: Readonly<Record<string, string | undefined>>;
   /** Applied descriptor title for the declaration service, never an installed-manifest guess. */
   serviceTitle: string;
-  resolveAuthenticationMode: (
-    account: QualifiedConnectedAccountProfileV4,
-  ) => PluginConnectedAccountAuthenticationModeV2 | null;
+  resolveAuthentication: (
+    service: PluginContributionIdentityV1,
+  ) => PluginConnectedAccountAuthenticationV2 | null;
 }>): readonly ConnectedAccountPurposeTargetChoice[] {
   const candidates: ConnectedAccountPurposeTargetChoice[] = [];
   if (!input.declaration.required) {
@@ -122,7 +122,7 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
       declaredServices,
       accounts: input.accounts,
       groups: input.groups,
-      resolveAuthenticationMode: input.resolveAuthenticationMode,
+      resolveAuthentication: input.resolveAuthentication,
     });
     return {
       id: connectedAccountPurposeTargetChoiceId(target),
@@ -157,7 +157,7 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
       declaredServices,
       accounts: input.accounts,
       groups: input.groups,
-      resolveAuthenticationMode: input.resolveAuthenticationMode,
+      resolveAuthentication: input.resolveAuthentication,
     });
     return {
       id: connectedAccountPurposeTargetChoiceId(target),

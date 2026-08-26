@@ -19,7 +19,7 @@ import {
 import { readSafeOauthProviderErrorCode } from '@/cloud/safeOauthProviderError';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
 
-const CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
+export const CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS = 120_000;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 

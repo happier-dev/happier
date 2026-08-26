@@ -7,7 +7,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ConnectedServiceCredentialRecordV1Schema,
   FeaturesResponseSchema,
+  PluginConnectedAccountAuthenticationV2Schema,
   sealQualifiedConnectedAccountContentEnvelope,
+  type PluginConnectedAccountAuthenticationV2,
   type QualifiedConnectedAccountGroupV4,
   type QualifiedConnectedAccountProfileV4,
   type QualifiedConnectedAccountPurposeBindingsV1,
@@ -100,19 +102,57 @@ const unavailableLegacyMaterializationOwner = {
     throw new Error('legacy materialization must not be invoked');
   },
 };
+const testAuthentication = PluginConnectedAccountAuthenticationV2Schema.parse({
+  defaultModeId: 'api-key',
+  modes: [{
+    id: 'api-key',
+    kind: 'manual',
+    outcomeReconciliation: 'none',
+    fields: [{
+      id: 'token',
+      title: 'Token',
+      schema: { type: 'string', minLength: 1 },
+      secret: true,
+    }],
+  }],
+});
+const accountScopedConfigurationAuthentication =
+  PluginConnectedAccountAuthenticationV2Schema.parse({
+    defaultModeId: 'configured',
+    modes: [{
+      id: 'configured',
+      kind: 'oauthDeviceCode',
+      outcomeReconciliation: 'none',
+      configuration: {
+        scope: 'account',
+        changeBehavior: 'refresh',
+        fields: [{
+          id: 'tenant',
+          title: 'Tenant',
+          schema: { type: 'string', minLength: 1 },
+          secret: false,
+          default: 'main',
+          required: true,
+          presentation: { control: 'text' },
+        }],
+      },
+    }],
+  });
 function testQualifiedProfile(input: Readonly<{
   accountId?: string;
   status?: QualifiedConnectedAccountProfileV4['status'];
   expiresAt?: number | null;
   displayName?: string;
+  authenticationModeId?: string | null;
+  configurationReady?: boolean;
 }> = {}): QualifiedConnectedAccountProfileV4 {
   return {
     ref: { service: openAiService, accountId: input.accountId ?? 'standard-openai' },
     status: input.status ?? 'connected',
-    authenticationModeId: 'api-key',
+    authenticationModeId: input.authenticationModeId ?? 'api-key',
     revisionSemantics: 'revisioned',
     credentialRevision: 'csr_abcdefghijklmnopqrstuv',
-    configurationReady: true,
+    configurationReady: input.configurationReady ?? true,
     configurationRevision: null,
     kind: 'token',
     expiresAt: input.expiresAt ?? null,
@@ -366,6 +406,7 @@ function createSelectionRuntime(
   store: ConnectedAccountPurposeBindingStore,
   v4Support: 'advertised' | 'absent' | 'indeterminate' = 'advertised',
   qualifiedApi = testQualifiedApi(),
+  authentication: PluginConnectedAccountAuthenticationV2 = testAuthentication,
 ) {
   return createDaemonConnectedAccountPurposeBindingRuntime({
     resolveQualifiedConnectedAccountV4Support: () => v4Support,
@@ -417,6 +458,7 @@ function createSelectionRuntime(
                 service: openAiService,
                 legacyServiceId: 'openai' as const,
                 availability: 'available' as const,
+                authentication,
               }
             : null,
           release: vi.fn(async () => {}),
@@ -430,6 +472,7 @@ function createInventoryRuntime(input: Readonly<{
   accounts?: readonly QualifiedConnectedAccountProfileV4[];
   group?: QualifiedConnectedAccountGroupV4;
   store?: ConnectedAccountPurposeBindingStore;
+  authentication?: PluginConnectedAccountAuthenticationV2;
   originsByAccountId?: Readonly<Record<string, readonly string[]>>;
   omitOriginReader?: boolean;
   invokeWithReceipt?: () => Promise<unknown>;
@@ -486,6 +529,7 @@ function createInventoryRuntime(input: Readonly<{
                 service: openAiService,
                 legacyServiceId: 'openai' as const,
                 availability: 'available' as const,
+                authentication: input.authentication ?? testAuthentication,
               }
             : null,
           release: vi.fn(async () => {}),
@@ -539,6 +583,7 @@ function createActionFormRuntime(input: Readonly<{
                 service: openAiService,
                 legacyServiceId: 'openai' as const,
                 availability: 'available' as const,
+                authentication: testAuthentication,
               }
             : null,
           release: vi.fn(async () => {}),
@@ -682,6 +727,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
             service: openAiService,
             legacyServiceId: 'openai',
             availability: 'available',
+            authentication: testAuthentication,
           }),
           release: vi.fn(async () => {}),
         };
@@ -908,6 +954,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
                   service: openAiService,
                   legacyServiceId: 'openai' as const,
                   availability: 'available' as const,
+                  authentication: testAuthentication,
                 }
               : null,
             release: vi.fn(async () => {}),
@@ -1034,6 +1081,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
                   service: openAiService,
                   legacyServiceId: 'openai' as const,
                   availability: 'available' as const,
+                  authentication: testAuthentication,
                 }
               : null,
             release: vi.fn(async () => {}),
@@ -1321,6 +1369,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
                         service,
                         legacyServiceId,
                         availability: 'available' as const,
+                        authentication: testAuthentication,
                       }
                     : null
                 ),
@@ -1912,6 +1961,126 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     expect(invokeWithReceipt).toHaveBeenCalledOnce();
   });
 
+  it('keeps a configuration-free V4 account usable when its configuration projection is absent', async () => {
+    const profile = testQualifiedProfile({ configurationReady: false });
+    const selectionStore = emptyStore();
+    const selectionRuntime = createSelectionRuntime(
+      selectionStore,
+      'advertised',
+      testQualifiedApi({ accounts: [profile] }),
+      testAuthentication,
+    );
+    const interactions = new TestInteractions(async (request) => {
+      if (request.kind !== 'questions') throw new Error('questions expected');
+      const question = request.questions[0];
+      if (!question || question.type !== 'singleChoice') {
+        throw new Error('single choice expected');
+      }
+      const choice = question.choices.find((candidate) => (
+        candidate.label === 'acct-standard'
+      ));
+      if (!choice) throw new Error('configuration-free account choice expected');
+      return {
+        requestId: 'configuration-free-selection',
+        kind: 'questions',
+        status: 'answered',
+        answers: {
+          [question.id]: {
+            kind: 'singleChoice',
+            answer: { kind: 'choice', choiceId: choice.id },
+          },
+        },
+      };
+    });
+
+    await expect(selectionRuntime.owner.requestSelection({
+      purpose,
+      serviceRefs: [openAiService],
+      currentSession: { interactions },
+      assertGenerationCurrent: () => undefined,
+      reason: 'Choose configuration-free auth',
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({
+      account: { service: openAiService, accountId: 'standard-openai' },
+      target: { kind: 'account' },
+    });
+    expect(selectionStore.current().bindings).toEqual([{
+      purpose,
+      target: {
+        kind: 'account',
+        account: { service: openAiService, accountId: 'standard-openai' },
+      },
+    }]);
+
+    const { runtime, invokeWithReceipt } = createInventoryRuntime({
+      accounts: [profile],
+      authentication: testAuthentication,
+    });
+    const listed = await runtime.owner.listAccounts({
+      purpose,
+      serviceRefs: [openAiService],
+      limit: 256,
+      signal: new AbortController().signal,
+    });
+
+    expect(listed).toMatchObject({
+      status: 'complete',
+      accounts: [{
+        account: { service: openAiService, accountId: 'standard-openai' },
+        state: 'connected',
+      }],
+    });
+    await expect(runtime.owner.materializeListedAccount({
+      purpose,
+      serviceRefs: [openAiService],
+      account: { service: openAiService, accountId: 'standard-openai' },
+      request: { kind: 'environment', keys: ['OPENAI_API_KEY'] },
+      signal: new AbortController().signal,
+    })).resolves.toEqual({
+      kind: 'environment',
+      env: { OPENAI_API_KEY: 'sk-listed' },
+    });
+    expect(invokeWithReceipt).toHaveBeenCalledOnce();
+  });
+
+  it('excludes an unconfigured account-scoped V4 mode from selection and group resolution', async () => {
+    const profile = testQualifiedProfile({
+      authenticationModeId: 'configured',
+      configurationReady: false,
+    });
+    const interactions = new TestInteractions(async () => {
+      throw new Error('An account-scoped unconfigured profile must not be offered');
+    });
+    const selectionRuntime = createSelectionRuntime(
+      emptyStore(),
+      'advertised',
+      testQualifiedApi({ accounts: [profile] }),
+      accountScopedConfigurationAuthentication,
+    );
+
+    await expect(selectionRuntime.owner.requestSelection({
+      purpose,
+      serviceRefs: [openAiService],
+      currentSession: { interactions },
+      assertGenerationCurrent: () => undefined,
+      reason: 'Choose realtime auth',
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      code: 'plugin_host_access_resource_not_selected',
+    } satisfies Partial<PluginError>);
+
+    const { runtime } = createInventoryRuntime({
+      accounts: [profile],
+      authentication: accountScopedConfigurationAuthentication,
+      store: selectedGroupStore(),
+    });
+    await expect(runtime.owner.getBinding({
+      purpose,
+      serviceRefs: [openAiService],
+      signal: new AbortController().signal,
+    })).resolves.toBeNull();
+  });
+
   it('reports honest non-connected states instead of silently omitting accounts', async () => {
     const group = testQualifiedGroup({
       activeAccountId: 'standard-openai',
@@ -1979,8 +2148,8 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     });
   });
 
-  it('reports truncated when the bounded upstream inventory response may have elided rows', async () => {
-    const accountIds = Array.from({ length: 500 }, (_unused, index) => (
+  it('reports a complete retained inventory above the removed upstream response cap', async () => {
+    const accountIds = Array.from({ length: 501 }, (_unused, index) => (
       `account-${String(index).padStart(3, '0')}`
     ));
     const group = testQualifiedGroup({
@@ -1996,12 +2165,12 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     const result = await runtime.owner.listAccounts({
       purpose,
       serviceRefs: [openAiService],
-      limit: 500,
+      limit: 501,
       signal: new AbortController().signal,
     });
 
-    expect(result.status).toBe('truncated');
-    expect(result.accounts).toHaveLength(500);
+    expect(result.status).toBe('complete');
+    expect(result.accounts).toHaveLength(501);
   });
 
   it('fails a listing closed when no host-owned configured-origin projection is available', async () => {
@@ -2158,6 +2327,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
               service: openAiService,
               legacyServiceId: 'openai' as const,
               availability: 'available' as const,
+              authentication: testAuthentication,
             }),
             release: vi.fn(async () => {}),
           };

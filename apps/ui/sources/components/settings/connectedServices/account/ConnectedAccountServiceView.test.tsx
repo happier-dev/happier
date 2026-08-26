@@ -73,6 +73,59 @@ const profileState = vi.hoisted(() => ({
         profiles: readonly Readonly<Record<string, unknown>>[];
     }>>,
 }));
+const activeAccountScopeState = vi.hoisted(() => {
+    type Scope = Readonly<{ serverId: string; accountId: string }> | null;
+    type Lifetime = Readonly<{
+        isCurrent(): boolean;
+        onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
+        retire(): void;
+    }>;
+    const createLifetime = (): Lifetime => {
+        let current = true;
+        const cancellations = new Set<() => void>();
+        return {
+            isCurrent: () => current,
+            onRetire: (cancel) => {
+                if (!current) {
+                    cancel();
+                    return { dispose: () => {} };
+                }
+                cancellations.add(cancel);
+                return {
+                    dispose: () => {
+                        cancellations.delete(cancel);
+                    },
+                };
+            },
+            retire: () => {
+                if (!current) return;
+                current = false;
+                for (const cancel of [...cancellations]) cancel();
+                cancellations.clear();
+            },
+        };
+    };
+    let scope: Scope = { serverId: 'server-a', accountId: 'account-a' };
+    let lifetime = createLifetime();
+    return {
+        get scope(): Scope {
+            return scope;
+        },
+        get lifetime(): Lifetime {
+            return lifetime;
+        },
+        setScope(next: Scope): void {
+            lifetime.retire();
+            scope = next;
+            lifetime = createLifetime();
+        },
+        reset(): void {
+            lifetime.retire();
+            scope = { serverId: 'server-a', accountId: 'account-a' };
+            lifetime = createLifetime();
+        },
+    };
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -181,6 +234,7 @@ vi.mock('@/sync/store/hooks', async () => {
         useAllMachines: () => machineState.current,
         useMachineListByServerId: () => ({ 'server-a': machineState.current }),
         useProfile: () => profileState,
+        useActiveServerAccountScope: () => activeAccountScopeState.scope,
         useSessions: () => [],
         useSettings: () => settingsState.current,
         // Account blocks read individual synced settings (pinned usage meters,
@@ -195,6 +249,9 @@ vi.mock('@/sync/store/hooks', async () => {
 });
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,
+}));
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeCurrentness: () => activeAccountScopeState.lifetime,
 }));
 vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
     useMachineAdministrationTargetSelection: () => ({
@@ -284,6 +341,11 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
         entries: [currentRegistryEntry()],
         errorReason: null,
     }),
+    useProjectedPluginLocalizedTextResolver: () => (
+        (_pluginId: string, value: string | Readonly<{ fallback: string }>) => (
+            typeof value === 'string' ? value : value.fallback
+        )
+    ),
 }));
 vi.mock('@/sync/ops/connectedAccounts/connectedAccountDaemon', async (importOriginal) => {
     const original = await importOriginal<typeof import('@/sync/ops/connectedAccounts/connectedAccountDaemon')>();
@@ -451,6 +513,7 @@ describe('ConnectedAccountServiceView', () => {
             connectedServicesProfileLabelByKey: {},
         };
         profileState.connectedServicesV2 = [];
+        activeAccountScopeState.reset();
     });
 
     it('runs account operations only on the exact Administration-selected server and machine', async () => {
@@ -1381,6 +1444,107 @@ describe('ConnectedAccountServiceView', () => {
             node.props.testID === 'connected-account-mode:manual'
         )).length).toBeGreaterThan(0);
         expect(runAuthenticationMock).toHaveBeenCalledOnce();
+    });
+
+    it('retires the prior Account controller before same-server Account B can receive a late authentication result', async () => {
+        const service = { pluginId: 'acme.accounts', localId: 'work' };
+        const manualMode = {
+            id: 'manual',
+            kind: 'manual',
+            outcomeReconciliation: 'none',
+            fields: [{
+                id: 'token',
+                title: 'Token',
+                schema: { type: 'string', minLength: 1 },
+                secret: true,
+            }],
+        };
+        const accountA = {
+            ref: { service, accountId: 'account-a' },
+            status: 'connected',
+            authenticationModeId: 'manual',
+            revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+            configurationReady: true,
+            configurationRevision: null,
+            scopes: [],
+        };
+        const accountB = {
+            ...accountA,
+            ref: { service, accountId: 'account-b' },
+        };
+        runControlMock
+            .mockResolvedValueOnce({
+                status: 'described',
+                service,
+                descriptor: {
+                    id: 'work',
+                    title: 'Acme A',
+                    authentication: {
+                        defaultModeId: 'manual',
+                        modes: [manualMode],
+                    },
+                },
+                generation: 'generation-a',
+                immutableGenerationId: 'artifact-a',
+                accounts: [accountA],
+            })
+            .mockResolvedValueOnce({
+                status: 'described',
+                service,
+                descriptor: {
+                    id: 'work',
+                    title: 'Acme B',
+                    authentication: {
+                        defaultModeId: 'manual',
+                        modes: [manualMode],
+                    },
+                },
+                generation: 'generation-b',
+                immutableGenerationId: 'artifact-b',
+                accounts: [accountB],
+            });
+        let settleAuthentication!: (
+            response: Readonly<{
+                status: 'awaitingManual';
+                attemptId: string;
+            }>,
+        ) => void;
+        runAuthenticationMock.mockReturnValueOnce(new Promise((resolve) => {
+            settleAuthentication = resolve;
+        }));
+
+        const { ConnectedAccountServiceView } = await import('./ConnectedAccountServiceView');
+        const rendered = await renderScreen(<ConnectedAccountServiceView />);
+        await vi.waitFor(() => expect(runControlMock).toHaveBeenCalledOnce());
+        await pressTestInstanceAsync(rendered.tree.find((node) => (
+            node.props.testID === 'connected-account-mode:manual'
+        )));
+        await vi.waitFor(() => expect(runAuthenticationMock).toHaveBeenCalledOnce());
+        const authenticationInput = runAuthenticationMock.mock.calls[0]?.[0] as Readonly<{
+            signal: AbortSignal;
+        }>;
+
+        activeAccountScopeState.setScope({ serverId: 'server-a', accountId: 'account-b' });
+        await rendered.update(<ConnectedAccountServiceView />);
+        await vi.waitFor(() => expect(runControlMock).toHaveBeenCalledTimes(2));
+        expect(authenticationInput.signal.aborted).toBe(true);
+        await act(async () => {
+            settleAuthentication({
+                status: 'awaitingManual',
+                attemptId: 'attempt-a',
+            });
+        });
+
+        await vi.waitFor(() => expect(rendered.tree.find(
+            (node) => node.props.testID === 'connected-account:account-b',
+        )).toBeTruthy());
+        expect(rendered.tree.findAll((node) => (
+            node.props.testID === 'connected-account:account-a'
+        ))).toHaveLength(0);
+        expect(rendered.tree.findAll((node) => (
+            node.props.testID === 'connected-account-manual:submit'
+        ))).toHaveLength(0);
     });
 
     it('drops an in-flight authentication controller when the Administration target changes', async () => {

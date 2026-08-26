@@ -52,6 +52,10 @@ import { resolveTrackedConnectedServiceVendorResumeId } from './resolveTrackedCo
 import { isConnectedServiceRestartSignalStaleProcessError } from './requestConnectedServiceSessionRestartSignal';
 import { resolveSwitchUxDiagnosticSource } from './resolveSwitchUxDiagnosticSource';
 import {
+  resolveFailedSwitchAttemptEventProjection,
+  resolveFailedSwitchAttemptPartialState,
+} from './events/resolveFailedSwitchAttemptEventProjection';
+import {
   type AcceptedConnectedServiceAccountVerification,
   type AcceptedConnectedServiceAccountVerificationByServiceId,
 } from '../accountTransitions/acceptedConnectedServiceAccountVerification';
@@ -1648,78 +1652,6 @@ async function emitSwitchEvents(input: Readonly<{
   }
 }
 
-type ConnectedServiceSwitchAttemptEventProjection = Readonly<{
-  action: ConnectedServiceSwitchAttemptAction;
-  attemptedContinuityMode: 'hot_apply' | 'restart' | 'metadata_only';
-  outcome: 'failed';
-  outcomeAction: 'none';
-}>;
-
-function switchAttemptEventProjectionForAction(
-  action: ConnectedServiceSwitchAttemptAction,
-): ConnectedServiceSwitchAttemptEventProjection | null {
-  switch (action) {
-    case 'hot_applied':
-      return {
-        action,
-        attemptedContinuityMode: 'hot_apply',
-        outcome: 'failed',
-        outcomeAction: 'none',
-      };
-    case 'restart_requested':
-      return {
-        action,
-        attemptedContinuityMode: 'restart',
-        outcome: 'failed',
-        outcomeAction: 'none',
-      };
-    case 'metadata_updated':
-      return null;
-  }
-}
-
-function resolveFailedSwitchAttemptEventProjection(
-  result: Extract<SessionConnectedServiceAuthSwitchResult, { ok: false }>,
-): ConnectedServiceSwitchAttemptEventProjection | null {
-  const attemptedAction = result.diagnostics?.attemptedAction;
-  if (attemptedAction) return switchAttemptEventProjectionForAction(attemptedAction);
-
-  const applicationPhase = result.diagnostics?.application?.phase;
-  if (
-    result.errorCode === 'hot_apply_failed'
-    || result.errorCode === 'hot_apply_succeeded_but_recovery_failed'
-    || applicationPhase === 'hot_apply'
-  ) {
-    return {
-      action: 'hot_applied',
-      attemptedContinuityMode: 'hot_apply',
-      outcome: 'failed',
-      outcomeAction: 'none',
-    };
-  }
-  if (result.errorCode === 'restart_failed' || applicationPhase === 'restart') {
-    return {
-      action: 'restart_requested',
-      attemptedContinuityMode: 'restart',
-      outcome: 'failed',
-      outcomeAction: 'none',
-    };
-  }
-  if (result.errorCode === 'metadata_update_failed') {
-    return null;
-  }
-  return null;
-}
-
-function resolveFailedSwitchAttemptPartialState(
-  result: Extract<SessionConnectedServiceAuthSwitchResult, { ok: false }>,
-): 'runtime_auth_partially_applied' | null {
-  return result.errorCode === 'partial_applied_pending_reconciliation'
-    || result.diagnostics?.application?.status === 'partial_applied_pending_reconciliation'
-    ? 'runtime_auth_partially_applied'
-    : null;
-}
-
 async function emitFailedSwitchAttemptEvent(input: Readonly<{
   emitSessionEvent: (sessionId: string, event: unknown) => void | Promise<void>;
   sessionId: string;
@@ -1737,7 +1669,11 @@ async function emitFailedSwitchAttemptEvent(input: Readonly<{
   // stay loud, and the returned result/diagnostics are unchanged so coordinator retry bookkeeping still
   // works. Symmetric with predictive soft-threshold switches staying silent on the success path.
   if (input.reason === 'soft_threshold' && input.result.errorCode === 'hot_apply_failed') return;
-  const projection = resolveFailedSwitchAttemptEventProjection(input.result);
+  const projection = resolveFailedSwitchAttemptEventProjection({
+    errorCode: input.result.errorCode,
+    attemptedAction: input.result.diagnostics?.attemptedAction,
+    applicationPhase: input.result.diagnostics?.application?.phase,
+  });
   if (!projection) return;
   await input.emitSessionEvent(input.sessionId, {
     type: 'connected_service_account_switch_attempt',
@@ -1751,7 +1687,10 @@ async function emitFailedSwitchAttemptEvent(input: Readonly<{
     // The transcript entry must agree with the settled outcome: a post-effect partial already
     // changed real authority, so reporting `partialState: null` there would tell the user the
     // attempt left nothing behind while the session badge says otherwise.
-    partialState: resolveFailedSwitchAttemptPartialState(input.result),
+    partialState: resolveFailedSwitchAttemptPartialState({
+      errorCode: input.result.errorCode,
+      applicationStatus: input.result.diagnostics?.application?.status,
+    }),
     ...(input.result.diagnostics?.uxDiagnostic
       ? { diagnostic: input.result.diagnostics.uxDiagnostic }
       : {}),

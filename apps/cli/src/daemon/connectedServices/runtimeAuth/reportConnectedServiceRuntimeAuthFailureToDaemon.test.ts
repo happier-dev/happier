@@ -4,9 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import {
+  CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
   reportConnectedServiceRuntimeAuthFailureToDaemon,
   resetConnectedServiceRuntimeAuthFailureReportDedupeForTests,
 } from './reportConnectedServiceRuntimeAuthFailureToDaemon';
+import { DEFAULT_REQUEST_AUTH_RECOVERY_DEADLINE_MS } from '../requestAuth/ConnectedAccountRequestAuthService';
 import { buildRuntimeAuthRecoveryScheduledResult } from './projection/connectedServiceRuntimeAuthRecoveryProjection';
 import {
   enqueueRuntimeAuthFailureReportOutboxItem,
@@ -26,6 +28,12 @@ const classification = {
 } satisfies ConnectedServiceRuntimeFailureClassification;
 
 describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
+  it('keeps the recovery-report transport above the daemon recovery owner', () => {
+    expect(CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS).toBeGreaterThan(
+      DEFAULT_REQUEST_AUTH_RECOVERY_DEADLINE_MS,
+    );
+  });
+
   it('preserves the daemon stable recovery receipt for exact cancellation projection', async () => {
     const report = await reportConnectedServiceRuntimeAuthFailureToDaemon({
       sessionId: 'sess_receipt',
@@ -581,7 +589,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
       switchesThisTurn: 2,
       classification,
     }, {
-      timeoutMs: 120_000,
+      timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
     });
     expect(report.handled).toBe(true);
     expect(report.statusCode).toBe('recovery_retry_scheduled');
@@ -684,7 +692,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
       classification,
       resumePromptMode: 'custom',
     }, {
-      timeoutMs: 120_000,
+      timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
     });
     expect(report).toMatchObject({
       resumePromptMode: 'custom',
@@ -711,7 +719,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
       switchesThisTurn: 1,
       classification,
     }, {
-      timeoutMs: 120_000,
+      timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
     });
     expect(report).not.toHaveProperty('resumePromptMode');
   });
@@ -733,7 +741,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     });
 
     expect(notify).toHaveBeenCalledWith(expect.any(Object), {
-      timeoutMs: 120_000,
+      timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
     });
   });
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
     createQualifiedConnectedAccountGroupDigest,
@@ -6,6 +6,7 @@ import {
     createQualifiedConnectedAccountServiceDigest,
 } from "./identity";
 import {
+    createQualifiedConnectedAccountGroup,
     listAllQualifiedConnectedAccountGroupsInTx,
     toQualifiedConnectedAccountGroup,
 } from "./groupRepository";
@@ -100,6 +101,26 @@ function storageHolding(groupCount: number): GroupListStorage {
     } as unknown as GroupListStorage;
 }
 
+const { uniqueConflictTransaction } = vi.hoisted(() => ({
+    uniqueConflictTransaction: {
+        connectedServiceAuthGroup: {
+            findUnique: vi.fn(async () => null),
+            create: vi.fn(async () => {
+                throw Object.assign(
+                    new Error("qualified group already exists"),
+                    { code: "P2002" },
+                );
+            }),
+        },
+    },
+}));
+
+vi.mock("@/storage/inTx", () => ({
+    inTx: async (
+        callback: (tx: typeof uniqueConflictTransaction) => Promise<unknown>,
+    ) => await callback(uniqueConflictTransaction),
+}));
+
 describe("qualified Connected Account group repository", () => {
     it("projects one strict structured service identity", () => {
         expect(toQualifiedConnectedAccountGroup(row())).toMatchObject({
@@ -149,5 +170,18 @@ describe("qualified Connected Account group repository", () => {
         await expect(listAllQualifiedConnectedAccountGroupsInTx(storage, {
             accountId: "owner",
         })).resolves.toHaveLength(1_200);
+    });
+});
+
+describe("createQualifiedConnectedAccountGroup", () => {
+    it("maps a concurrent unique group-create conflict to the documented result", async () => {
+        await expect(createQualifiedConnectedAccountGroup({
+            accountId: "account-concurrent-create",
+            service: {
+                pluginId: "example.connected-accounts",
+                localId: "service",
+            },
+            group: { groupId: "primary" },
+        })).resolves.toEqual({ status: "already_exists" });
     });
 });

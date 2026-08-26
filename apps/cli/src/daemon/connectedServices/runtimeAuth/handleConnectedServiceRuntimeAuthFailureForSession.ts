@@ -23,6 +23,7 @@ import {
   type ConnectedServiceSessionAuthSwitchCore,
 } from './connectedServiceSessionAuthSwitchCore';
 import { buildConnectedServiceSwitchContinuationAttemptId } from '../sessionAuthSwitch/buildConnectedServiceSwitchContinuationAttemptId';
+import { resolveFailedSwitchAttemptEventProjection } from '../sessionAuthSwitch/events/resolveFailedSwitchAttemptEventProjection';
 import {
   isGroupRuntimeRecoverySelection,
   resolveConnectedServiceRuntimeAuthRecoverySelection,
@@ -377,6 +378,34 @@ function findTrackedSession(
   const normalized = normalizeSessionId(sessionId);
   if (!normalized) return null;
   return children.find((child) => normalizeSessionId(child.happySessionId) === normalized) ?? null;
+}
+
+async function emitRuntimeGroupSwitchApplyFailureEvent(input: Readonly<{
+  emitSessionEvent?: ((sessionId: string, event: unknown) => void | Promise<void>) | null;
+  sessionId: string;
+  reason: ConnectedServiceRuntimeFailureClassification['kind'];
+  result: ConnectedServiceAuthGroupSwitchResult;
+}>): Promise<void> {
+  if (input.result.status !== 'generation_apply_failed' || !input.emitSessionEvent) return;
+  const projection = resolveFailedSwitchAttemptEventProjection({
+    errorCode: input.result.errorCode,
+    ...(input.result.errorCode.startsWith('hot_apply_')
+      ? { attemptedAction: 'hot_applied' as const }
+      : {}),
+  });
+  if (!projection) return;
+  await input.emitSessionEvent(input.sessionId, {
+    type: 'connected_service_account_switch_attempt',
+    ok: false,
+    action: projection.action,
+    reason: input.reason,
+    attemptedContinuityMode: projection.attemptedContinuityMode,
+    outcome: projection.outcome,
+    outcomeAction: projection.outcomeAction,
+    errorCode: input.result.errorCode,
+    groupGeneration: input.result.generation,
+    partialState: null,
+  });
 }
 
 async function maybeRestartAfterRuntimeGroupSwitch(input: Readonly<{
@@ -836,6 +865,12 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
       profileId: observedProfileId,
       credentialRevision: classification.expectedCredentialRevision ?? null,
       resultStatus: result.result.status,
+    });
+    await emitRuntimeGroupSwitchApplyFailureEvent({
+      emitSessionEvent: input.emitSessionEvent ?? null,
+      sessionId: input.sessionId,
+      reason: classification.kind,
+      result: result.result,
     });
     let supersedingGenerationSettled = false;
     if (

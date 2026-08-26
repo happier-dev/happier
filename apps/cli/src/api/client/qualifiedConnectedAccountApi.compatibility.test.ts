@@ -1,14 +1,12 @@
 import {
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
     FeaturesResponseSchema,
-    type ConnectedServiceUsageSourceV1,
 } from "@happier-dev/protocol";
 import { describe, expect, it, vi } from "vitest";
 
 import type { CliServerFeaturesSnapshot } from "@/features/serverFeaturesClient";
 import {
     executeQualifiedConnectedAccountNegotiatedOperation,
-    resolveProviderAccountUsageWriteTransport,
     resolveQualifiedConnectedAccountAtomicV4Negotiation,
     resolveQualifiedConnectedAccountOperationTransport,
     resolveQualifiedConnectedAccountPeerClass,
@@ -29,12 +27,6 @@ const githubService =
 const bitbucketService =
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID.bitbucket
         .service;
-const novelUsageSource = {
-    serviceId: novelService.localId,
-    profileId: "work",
-    bindingKind: "profile",
-} as unknown as ConnectedServiceUsageSourceV1;
-
 function ready(
     connectedServices: Readonly<Record<string, unknown>>,
 ): CliServerFeaturesSnapshot {
@@ -68,122 +60,6 @@ const exactOldServerContract = {
 };
 
 describe("qualified Connected Account operation negotiation", () => {
-    it("selects V4 and revisioned PAU transports while refusing exact-old quota writes", () => {
-        expect(resolveProviderAccountUsageWriteTransport({
-            snapshot: ready({
-                qualifiedAccounts: { protocolVersion: 4 },
-            }),
-            source: {
-                serviceId: "openai-codex",
-                profileId: "work",
-                bindingKind: "profile",
-            },
-            providerAccountUsageRoute: "available",
-        })).toEqual({
-            kind: "provider_account_usage",
-            legacyQuotaCompatibility: true,
-        });
-        expect(() => resolveProviderAccountUsageWriteTransport({
-            snapshot: exactOldServer,
-            serverContract: exactOldServerContract,
-            source: {
-                serviceId: "openai-codex",
-                profileId: "work",
-                bindingKind: "profile",
-            },
-            providerAccountUsageRoute: "absent",
-        })).toThrow(expect.objectContaining({
-            code: "connected_account_legacy_operation_unsupported",
-        }));
-        expect(resolveProviderAccountUsageWriteTransport({
-            snapshot: ready({
-                credentialDelete: { revisionGuard: true },
-            }),
-            source: {
-                serviceId: "openai-codex",
-                profileId: "work",
-                bindingKind: "profile",
-            },
-            providerAccountUsageRoute: "available",
-        })).toEqual({
-            kind: "provider_account_usage",
-            legacyQuotaCompatibility: false,
-        });
-        expect(resolveProviderAccountUsageWriteTransport({
-            snapshot: ready({
-                credentialDelete: { revisionGuard: true },
-            }),
-            source: {
-                serviceId: "github",
-                profileId: "work",
-                bindingKind: "profile",
-            },
-            providerAccountUsageRoute: "available",
-        })).toEqual({
-            kind: "provider_account_usage",
-            legacyQuotaCompatibility: false,
-        });
-    });
-
-    it("fails closed before quota writes for indeterminate, exact-old, novel, or unsupported revisioned sources", () => {
-        expect(() => resolveProviderAccountUsageWriteTransport({
-            snapshot: {
-                status: "error",
-                reason: "network",
-            },
-            source: {
-                serviceId: "openai-codex",
-                profileId: "work",
-                bindingKind: "profile",
-            },
-            providerAccountUsageRoute: "indeterminate",
-        })).toThrow(expect.objectContaining({
-            code: "connected_account_capability_indeterminate",
-        }));
-        expect(() => resolveProviderAccountUsageWriteTransport({
-            snapshot: ready({
-                credentialDelete: { revisionGuard: true },
-            }),
-            providerAccountUsageRoute: "available",
-        })).toThrow(expect.objectContaining({
-            code: "connected_account_service_identity_unsupported",
-        }));
-        expect(() => resolveProviderAccountUsageWriteTransport({
-            snapshot: ready({
-                credentialDelete: { revisionGuard: true },
-            }),
-            source: novelUsageSource,
-            providerAccountUsageRoute: "available",
-        })).toThrow(expect.objectContaining({
-            code: "connected_account_service_identity_unsupported",
-        }));
-        expect(() => resolveProviderAccountUsageWriteTransport({
-            snapshot: ready({
-                credentialDelete: { revisionGuard: true },
-            }),
-            source: {
-                serviceId: "bitbucket",
-                profileId: "work",
-                bindingKind: "profile",
-            },
-            providerAccountUsageRoute: "available",
-        })).toThrow(expect.objectContaining({
-            code: "connected_account_service_identity_unsupported",
-        }));
-        expect(() => resolveProviderAccountUsageWriteTransport({
-            snapshot: exactOldServer,
-            serverContract: exactOldServerContract,
-            source: {
-                serviceId: "openai-codex",
-                profileId: "work",
-                bindingKind: "profile",
-            },
-            providerAccountUsageRoute: "indeterminate",
-        })).toThrow(expect.objectContaining({
-            code: "connected_account_capability_indeterminate",
-        }));
-    });
-
     it("classifies uncertainty separately from proven V4 absence", () => {
         const releasedSnapshotWithoutConnectedServices = {
             status: "ready",

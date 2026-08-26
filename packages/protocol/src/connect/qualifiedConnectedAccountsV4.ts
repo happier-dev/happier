@@ -4,6 +4,7 @@ import type { PluginContributionIdentityV1 } from '../plugins/contributionIdenti
 
 import { StoredJsonContentEnvelopeSchema } from '../storage/storedJsonContentEnvelope.js';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
+import type { PluginConnectedAccountAuthenticationV2 } from './pluginConnectedAccountAuthenticationV2.js';
 import {
   ConnectedServiceAuthGroupIdSchema,
   ConnectedServiceAuthGroupPolicyV1Schema,
@@ -589,6 +590,29 @@ export function isQualifiedConnectedAccountProfileActiveV4(
 }
 
 /**
+ * Determines whether a current V4 credential can be used for a purpose under
+ * the exact descriptor mode that created it. `configurationReady` remains a
+ * projection fact: it gates only modes whose configuration is account-scoped.
+ */
+export function isQualifiedConnectedAccountProfileUsableV4(input: Readonly<{
+  profile: QualifiedConnectedAccountProfileV4;
+  authentication: PluginConnectedAccountAuthenticationV2;
+  now: number;
+}>): boolean {
+  if (!isQualifiedConnectedAccountProfileActiveV4(input.profile, input.now)) {
+    return false;
+  }
+  const authenticationModeId = input.profile.authenticationModeId;
+  if (authenticationModeId === null) return false;
+  const mode = input.authentication.modes.find((candidate) => (
+    candidate.id === authenticationModeId
+  ));
+  if (!mode) return false;
+  return mode.configuration?.scope !== 'account'
+    || input.profile.configurationReady;
+}
+
+/**
  * Resolve the one account that makes a qualified group passively usable.
  * Group runtime status is diagnostic state; authority comes from the active,
  * enabled member and a current connected revisioned account projection.
@@ -596,6 +620,7 @@ export function isQualifiedConnectedAccountProfileActiveV4(
 export function resolveQualifiedConnectedAccountGroupActiveAccountV4(input: Readonly<{
   group: QualifiedConnectedAccountGroupV4;
   accounts: readonly QualifiedConnectedAccountProfileV4[];
+  authentication: PluginConnectedAccountAuthenticationV2;
   now: number;
 }>): QualifiedConnectedAccountProfileV4 | null {
   const activeAccountId = input.group.activeConnectedAccountId;
@@ -610,7 +635,11 @@ export function resolveQualifiedConnectedAccountGroupActiveAccountV4(input: Read
   };
   return input.accounts.find((account) => (
     sameQualifiedConnectedAccountRef(account.ref, activeAccountRef)
-    && isQualifiedConnectedAccountProfileActiveV4(account, input.now)
+    && isQualifiedConnectedAccountProfileUsableV4({
+      profile: account,
+      authentication: input.authentication,
+      now: input.now,
+    })
   )) ?? null;
 }
 export type QualifiedConnectedServiceUsageSourceV4 = z.infer<

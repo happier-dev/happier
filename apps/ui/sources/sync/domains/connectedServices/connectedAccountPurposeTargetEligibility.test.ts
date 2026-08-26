@@ -3,6 +3,7 @@ import {
   QualifiedConnectedAccountGroupV4Schema,
   QualifiedConnectedAccountProfileV4Schema,
   type PluginConnectedAccountAuthenticationModeV2,
+  type PluginConnectedAccountAuthenticationV2,
   type QualifiedConnectedAccountProfileV4,
 } from '@happier-dev/protocol';
 
@@ -84,18 +85,29 @@ const accountScopedConfigurationMode: PluginConnectedAccountAuthenticationModeV2
   configuration: { scope: 'account', fields: [{ id: 'endpoint', title: 'Endpoint', schema: { type: 'string' } }] },
 } as PluginConnectedAccountAuthenticationModeV2;
 
+function authenticationWith(
+  mode: PluginConnectedAccountAuthenticationModeV2 = oauthMode,
+): PluginConnectedAccountAuthenticationV2 {
+  return {
+    defaultModeId: mode.id,
+    modes: [mode],
+  };
+}
+
 function resolve(input: Readonly<{
   target: Parameters<typeof resolveConnectedAccountPurposeTargetEligibility>[0]['target'];
   accounts: readonly QualifiedConnectedAccountProfileV4[];
   groups?: Parameters<typeof resolveConnectedAccountPurposeTargetEligibility>[0]['groups'];
-  mode?: PluginConnectedAccountAuthenticationModeV2 | null;
+  authentication?: PluginConnectedAccountAuthenticationV2 | null;
 }>) {
   return resolveConnectedAccountPurposeTargetEligibility({
     target: input.target,
     declaredServices: [service],
     accounts: input.accounts,
     groups: input.groups ?? [],
-    resolveAuthenticationMode: () => (input.mode === undefined ? oauthMode : input.mode),
+    resolveAuthentication: () => (
+      input.authentication === undefined ? authenticationWith() : input.authentication
+    ),
   });
 }
 
@@ -105,6 +117,14 @@ describe('resolveConnectedAccountPurposeTargetEligibility', () => {
       target: { kind: 'account', account: { service, accountId: 'work' } },
       accounts: [connectedAccount],
     })).toBe('usable');
+  });
+
+  it('reports unknown for a current direct account whose descriptor is unavailable', () => {
+    expect(resolve({
+      target: { kind: 'account', account: { service, accountId: 'work' } },
+      accounts: [connectedAccount],
+      authentication: null,
+    })).toBe('unknown');
   });
 
   it('refuses a direct account whose credential has expired', () => {
@@ -129,7 +149,7 @@ describe('resolveConnectedAccountPurposeTargetEligibility', () => {
       target: { kind: 'group', service, groupId: 'team' },
       accounts: [configurationBlockedAccount],
       groups: [groupWith('work')],
-      mode: accountScopedConfigurationMode,
+      authentication: authenticationWith(accountScopedConfigurationMode),
     })).toBe('unusable');
   });
 
@@ -138,7 +158,7 @@ describe('resolveConnectedAccountPurposeTargetEligibility', () => {
       target: { kind: 'group', service, groupId: 'team' },
       accounts: [connectedAccount],
       groups: [groupWith('work')],
-      mode: null,
+      authentication: null,
     })).toBe('unknown');
   });
 
@@ -147,7 +167,7 @@ describe('resolveConnectedAccountPurposeTargetEligibility', () => {
       target: { kind: 'group', service, groupId: 'team' },
       accounts: [connectedAccount],
       groups: [groupWith('work')],
-      mode: accountScopedConfigurationMode,
+      authentication: authenticationWith(accountScopedConfigurationMode),
     })).toBe('usable');
   });
 });

@@ -1271,12 +1271,12 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         expect(switchAfterClassifiedFailure).not.toHaveBeenCalled();
     });
 
-    it('routes tracked group session failures into the switch coordinator with structured recovery context', async () => {
+    it('surfaces a failed tracked runtime group apply as a switch-attempt transcript event', async () => {
         const switchAfterClassifiedFailure = vi.fn(async () => ({
-            status: 'switched' as const,
+            status: 'generation_apply_failed' as const,
             activeProfileId: 'backup',
             generation: 2,
-            mode: 'hot_apply' as const,
+            errorCode: 'hot_apply_restart_required',
         }));
         const emitSessionEvent = vi.fn();
 
@@ -1321,7 +1321,12 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             },
         })).resolves.toEqual({
             status: 'switch_attempted',
-            result: { status: 'switched', activeProfileId: 'backup', generation: 2, mode: 'hot_apply' },
+            result: {
+                status: 'generation_apply_failed',
+                activeProfileId: 'backup',
+                generation: 2,
+                errorCode: 'hot_apply_restart_required',
+            },
         });
 
         expect(switchAfterClassifiedFailure).toHaveBeenCalledWith(expect.objectContaining({
@@ -1339,7 +1344,18 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             planType: null,
             switchesThisTurn: 0,
         }));
-        expect(emitSessionEvent).not.toHaveBeenCalled();
+        expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', {
+            type: 'connected_service_account_switch_attempt',
+            ok: false,
+            action: 'hot_applied',
+            reason: 'usage_limit',
+            attemptedContinuityMode: 'hot_apply',
+            outcome: 'failed',
+            outcomeAction: 'none',
+            errorCode: 'hot_apply_restart_required',
+            groupGeneration: 2,
+            partialState: null,
+        });
     });
 
     it('resolves canonical group context without replacing the provider-reported failed profile', async () => {

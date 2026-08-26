@@ -2,7 +2,6 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import axios from "axios";
 import {
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
-    ConnectedServiceUsageSourceV1Schema,
     QualifiedConnectedAccountConfigurationPatchV4Schema,
     QualifiedConnectedAccountConfigurationSnapshotV4Schema,
     QualifiedConnectedAccountConfigurationTargetV4Schema,
@@ -31,7 +30,6 @@ import {
     QualifiedProviderAccountUsageWriteSuccessV4Schema,
     QualifiedProviderAccountUsageWriteV4Schema,
     encodeQualifiedConnectedAccountV4StructuredQueryValue,
-    type ConnectedServiceUsageSourceV1,
     type BuiltInLegacyConnectedAccountOperation,
     type BuiltInLegacyConnectedServiceId,
     type QualifiedConnectedAccountConfigurationTargetV4,
@@ -344,100 +342,6 @@ export function resolveQualifiedConnectedAccountPeerOperationTransport(
         kind: "legacy",
         peerClass,
         serviceId,
-    };
-}
-
-export type ProviderAccountUsageWriteTransport = Readonly<{
-    kind: "provider_account_usage";
-    legacyQuotaCompatibility: boolean;
-}>;
-
-/**
- * Chooses the quota persistence wire before any request is sent.
- *
- * Exact v0.2.1 never receives PAU/quota writes. A revisioned V2/V3 peer may
- * receive the PAU write only through its route and the generated operation
- * contract. There is no request-then-fallback write path.
- */
-export function resolveProviderAccountUsageWriteTransport(
-    params: Readonly<{
-        snapshot: CliServerFeaturesSnapshot | undefined;
-        serverContract?:
-            SessionSyncPendingInputServerContractResult | null;
-        source?: ConnectedServiceUsageSourceV1;
-        providerAccountUsageRoute: "available" | "absent" | "indeterminate";
-    }>,
-): ProviderAccountUsageWriteTransport {
-    const peerClass =
-        resolveQualifiedConnectedAccountPeerClass(
-            params.snapshot,
-            params.serverContract,
-        );
-    if (
-        params.providerAccountUsageRoute === "indeterminate"
-        || peerClass === "indeterminate"
-        || (
-            peerClass === "advertised_v4"
-            && params.providerAccountUsageRoute !== "available"
-        )
-    ) {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_capability_indeterminate",
-        );
-    }
-    if (peerClass === "advertised_v4") {
-        return {
-            kind: "provider_account_usage",
-            legacyQuotaCompatibility: true,
-        };
-    }
-    if (peerClass === "exact_v0_2_1") {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_legacy_operation_unsupported",
-        );
-    }
-    if (params.providerAccountUsageRoute !== "available") {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_legacy_operation_unsupported",
-        );
-    }
-    if (!params.source) {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_service_identity_unsupported",
-        );
-    }
-    const sourceServiceId =
-        typeof params.source.serviceId === "string"
-            ? params.source.serviceId
-            : "";
-    const compatibility =
-        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
-            sourceServiceId as BuiltInLegacyConnectedServiceId
-        ];
-    if (!compatibility) {
-        throw new QualifiedConnectedAccountCompatibilityError(
-            "connected_account_service_identity_unsupported",
-        );
-    }
-    const source = ConnectedServiceUsageSourceV1Schema.parse(
-        params.source,
-    );
-    if (!isBuiltInLegacyConnectedAccountPeerOperationSupported({
-        serviceId: source.serviceId,
-        peerClass: "revisioned_v2_v3",
-        operation: "provider_account_usage_write",
-    })) {
-        const operations =
-            compatibility.peerOperations.revisionedV2V3;
-        throw new QualifiedConnectedAccountCompatibilityError(
-            operations.length === 0
-                ? "connected_account_service_identity_unsupported"
-                : "connected_account_legacy_operation_unsupported",
-        );
-    }
-    return {
-        kind: "provider_account_usage",
-        legacyQuotaCompatibility: false,
     };
 }
 

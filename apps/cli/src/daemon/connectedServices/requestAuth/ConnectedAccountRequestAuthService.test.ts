@@ -5,9 +5,12 @@ import type {
     QualifiedConnectedAccountPurposeBindingV1,
     QualifiedConnectedAccountPurposeV1,
 } from '@happier-dev/protocol';
+import { buildConnectedAccountRequestAuthClientSource } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
     ConnectedAccountRequestAuthError,
+    DEFAULT_REQUEST_AUTH_OPERATION_DEADLINE_MS,
+    DEFAULT_REQUEST_AUTH_RECOVERY_DEADLINE_MS,
     createConnectedAccountRequestAuthService,
     type ConnectedAccountRequestAuthResolvedBinding,
     type ConnectedAccountRequestAuthSubject,
@@ -123,6 +126,61 @@ function pendingUntilAborted(signal: AbortSignal | undefined): Promise<never> {
 }
 
 describe('ConnectedAccountRequestAuthService', () => {
+    it('keeps each daemon owner deadline below its generated client transport deadline', () => {
+        const generatedClientSource = buildConnectedAccountRequestAuthClientSource({
+            capabilityPathEnv: 'HAPPIER_TEST_REQUEST_AUTH_CAPABILITY_PATH',
+        });
+        const timeoutMatch = /const CONNECTED_ACCOUNT_REQUEST_AUTH_TIMEOUT_MS = (\d+);/u.exec(
+            generatedClientSource,
+        );
+        const recoveryTimeoutMatch = /const CONNECTED_ACCOUNT_REQUEST_AUTH_RECOVERY_TIMEOUT_MS = (\d+);/u.exec(
+            generatedClientSource,
+        );
+        expect(timeoutMatch).not.toBeNull();
+        expect(recoveryTimeoutMatch).not.toBeNull();
+        const transportDeadlineMs = Number(timeoutMatch?.[1]);
+        const recoveryTransportDeadlineMs = Number(recoveryTimeoutMatch?.[1]);
+        expect(DEFAULT_REQUEST_AUTH_OPERATION_DEADLINE_MS).toBeLessThan(
+            transportDeadlineMs,
+        );
+        expect(DEFAULT_REQUEST_AUTH_RECOVERY_DEADLINE_MS).toBeLessThan(
+            recoveryTransportDeadlineMs,
+        );
+    });
+
+    it('uses the longer owner deadline only for authentication recovery', async () => {
+        let recoverySignal: AbortSignal | undefined;
+        const owner = createConnectedAccountRequestAuthService({
+            operationDeadlineMs: 25,
+            authFailureOperationDeadlineMs: 100,
+            resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
+            materializeBearer: async () => ({ accessToken: 'access' }),
+            refreshAfterAuthFailure: async (input: Readonly<{ signal?: AbortSignal }>) => {
+                recoverySignal = input.signal;
+                return await pendingUntilAborted(input.signal);
+            },
+            reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
+        });
+        const capability = subject(accountBinding());
+        const lease = await owner.lookupRequestAuth({ subject: capability, purpose });
+        const recovery = owner.refreshAfterAuthFailure({
+            subject: capability,
+            request: {
+                credentialContext: lease.credentialContext,
+                normalizedFailure: {
+                    class: 'authentication',
+                    evidence: structuredAuthEvidence,
+                },
+            },
+        });
+
+        await vi.waitFor(() => expect(recoverySignal).toBeDefined());
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        expect(recoverySignal?.aborted).toBe(false);
+        await vi.waitFor(() => expect(recoverySignal?.aborted).toBe(true), { timeout: 500 });
+        await expect(recovery).resolves.toEqual({ status: 'denied' });
+    });
+
     it.each([
         ['account', accountBinding()],
         ['group', groupBinding()],
@@ -928,6 +986,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         const quotaSignals: AbortSignal[] = [];
         const dependencies = {
             operationDeadlineMs: 25,
+            authFailureOperationDeadlineMs: 25,
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
             materializeBearer: async () => ({
                 accessToken: `token-${++materializations}`,

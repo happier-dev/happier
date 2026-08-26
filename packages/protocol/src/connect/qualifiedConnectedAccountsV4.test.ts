@@ -27,10 +27,12 @@ import {
   QualifiedConnectedAccountRefSchema,
   QualifiedConnectedServiceUsageSourceV4Schema,
   isQualifiedConnectedAccountProfileActiveV4,
+  isQualifiedConnectedAccountProfileUsableV4,
   openQualifiedConnectedAccountQuotaResponseV4,
   projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4,
   resolveQualifiedConnectedAccountGroupActiveAccountV4,
 } from './qualifiedConnectedAccountsV4.js';
+import { PluginConnectedAccountAuthenticationV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { ConnectedServicesCapabilitiesSchema } from '../features/payload/capabilities/connectedServicesCapabilities.js';
 import {
   buildProviderAccountUsageRecordId,
@@ -46,6 +48,14 @@ const credentialRevision = 'csr_abcdefghijklmnopqrstuvwxyz';
 
 describe('qualified connected-account V4 wire contract', () => {
   it('uses one revision-fenced active-account predicate for direct and group targets', () => {
+    const authentication = PluginConnectedAccountAuthenticationV2Schema.parse({
+      defaultModeId: 'oauth',
+      modes: [{
+        id: 'oauth',
+        kind: 'oauthDeviceCode',
+        outcomeReconciliation: 'none',
+      }],
+    });
     const active = QualifiedConnectedAccountProfileV4Schema.parse({
       ref: { service, accountId: 'team/primary' },
       status: 'connected',
@@ -90,8 +100,86 @@ describe('qualified connected-account V4 wire contract', () => {
     expect(resolveQualifiedConnectedAccountGroupActiveAccountV4({
       group,
       accounts: [legacyUnfenced],
+      authentication,
       now: 100,
     })).toBeNull();
+  });
+
+  it('derives V4 usability from the selected descriptor mode without redefining configuration readiness', () => {
+    const authentication = PluginConnectedAccountAuthenticationV2Schema.parse({
+      defaultModeId: 'no-config',
+      modes: [{
+        id: 'no-config',
+        kind: 'oauthDeviceCode',
+        outcomeReconciliation: 'none',
+      }, {
+        id: 'account-config',
+        kind: 'oauthDeviceCode',
+        outcomeReconciliation: 'none',
+        configuration: {
+          scope: 'account',
+          changeBehavior: 'refresh',
+          fields: [{
+            id: 'tenant',
+            title: 'Tenant',
+            schema: { type: 'string', minLength: 1 },
+            secret: false,
+            default: 'main',
+            required: true,
+            presentation: { control: 'text' },
+          }],
+        },
+      }, {
+        id: 'service-config',
+        kind: 'oauthDeviceCode',
+        outcomeReconciliation: 'none',
+        configuration: {
+          scope: 'service',
+          changeBehavior: 'refresh',
+          fields: [{
+            id: 'baseUrl',
+            title: 'Base URL',
+            schema: { type: 'string', minLength: 1 },
+            secret: false,
+            default: 'https://example.test',
+            required: true,
+            presentation: { control: 'text' },
+          }],
+        },
+      }],
+    });
+    const profile = QualifiedConnectedAccountProfileV4Schema.parse({
+      ref: { service, accountId: 'team/configuration' },
+      status: 'connected',
+      authenticationModeId: 'no-config',
+      revisionSemantics: 'revisioned',
+      credentialRevision,
+      configurationRevision: null,
+      configurationReady: false,
+      displayName: 'Configuration test',
+      scopes: [],
+    });
+
+    expect(isQualifiedConnectedAccountProfileUsableV4({
+      profile,
+      authentication,
+      now: 100,
+    })).toBe(true);
+    expect(isQualifiedConnectedAccountProfileUsableV4({
+      profile: { ...profile, authenticationModeId: 'account-config' },
+      authentication,
+      now: 100,
+    })).toBe(false);
+    expect(isQualifiedConnectedAccountProfileUsableV4({
+      profile: { ...profile, authenticationModeId: 'service-config' },
+      authentication,
+      now: 100,
+    })).toBe(true);
+    expect(isQualifiedConnectedAccountProfileUsableV4({
+      profile: { ...profile, authenticationModeId: 'removed-mode' },
+      authentication,
+      now: 100,
+    })).toBe(false);
   });
 
   it('keeps qualified identity structured and strict even when ids contain path separators', () => {

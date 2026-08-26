@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import type { PluginConfigurationSettingFieldV2 } from '@happier-dev/protocol';
@@ -8,6 +8,10 @@ import type { PluginConfigurationSettingFieldV2 } from '@happier-dev/protocol';
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
+});
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock();
 });
 
 vi.mock('react-native-unistyles', () => ({
@@ -81,6 +85,11 @@ const fields = [
 ] satisfies PluginConfigurationSettingFieldV2[];
 
 describe('ConnectedAccountConfigurationForm', () => {
+    afterEach(async () => {
+        const { clearActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
+        clearActiveUnsavedChangesGuard();
+    });
+
     it('submits descriptor-derived values and only explicit secret replacements', async () => {
         const onSubmit = vi.fn(async () => {});
         const { ConnectedAccountConfigurationForm } = await import('./ConnectedAccountConfigurationForm');
@@ -174,5 +183,100 @@ describe('ConnectedAccountConfigurationForm', () => {
                 value: false,
             },
         ]);
+    });
+
+    it('associates exact invalid configuration field errors with their controls', async () => {
+        const { ConnectedAccountConfigurationForm } = await import('./ConnectedAccountConfigurationForm');
+        const tree = (await renderScreen(
+            <ConnectedAccountConfigurationForm
+                title="Configuration"
+                fields={fields}
+                values={{ enabled: false, region: 'eu' }}
+                configuredSecretFieldIds={[]}
+                saving={false}
+                onSubmit={vi.fn()}
+            />,
+        )).tree;
+
+        await pressTestInstanceAsync(
+            tree.find((node) => node.props.testID === 'connected-account-configuration:save'),
+        );
+
+        const endpoint = tree.find(
+            (node) => node.props.testID === 'connected-account-configuration:endpoint',
+        );
+        expect(endpoint.props.accessibilityLabel)
+            .toBe('Endpoint: connectedServices.account.configurationInvalid');
+        expect(endpoint.props.accessibilityHint)
+            .toBe('connectedServices.account.configurationInvalid');
+        const secretError = tree.find(
+            (node) => node.props.testID === 'connected-account-configuration:clientSecret:error',
+        );
+        expect(secretError.props.accessibilityRole).toBe('alert');
+        expect(secretError.props.accessibilityLiveRegion).toBe('assertive');
+    });
+
+    it('registers an entered configuration secret with the shared shell-navigation guard', async () => {
+        const { ConnectedAccountConfigurationForm } = await import('./ConnectedAccountConfigurationForm');
+        const tree = (await renderScreen(
+            <ConnectedAccountConfigurationForm
+                title="Configuration"
+                fields={fields}
+                values={{ endpoint: 'https://old.example', enabled: false, region: 'eu' }}
+                configuredSecretFieldIds={['clientSecret']}
+                saving={false}
+                onSubmit={vi.fn()}
+            />,
+        )).tree;
+
+        await act(async () => {
+            tree.find(
+                (node) => node.props.testID === 'connected-account-configuration:clientSecret',
+            ).props.onChangeText('replacement-secret');
+        });
+
+        const { getActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current).toBe(true);
+    });
+
+    it('clears configuration drafts when a same-route descriptor/configuration update replaces the form contract', async () => {
+        const { ConnectedAccountConfigurationForm } = await import('./ConnectedAccountConfigurationForm');
+        const screen = await renderScreen(
+            <ConnectedAccountConfigurationForm
+                title="Configuration"
+                fields={fields}
+                values={{ endpoint: 'https://old.example', enabled: false, region: 'eu' }}
+                configuredSecretFieldIds={['clientSecret']}
+                saving={false}
+                onSubmit={vi.fn()}
+            />,
+        );
+
+        await act(async () => {
+            screen.tree.find(
+                (node) => node.props.testID === 'connected-account-configuration:clientSecret',
+            ).props.onChangeText('replacement-secret');
+        });
+        await act(async () => {
+            screen.tree.update(
+                <ConnectedAccountConfigurationForm
+                    title="Configuration"
+                    fields={fields}
+                    values={{ endpoint: 'https://updated.example', enabled: true, region: 'us' }}
+                    configuredSecretFieldIds={['clientSecret']}
+                    saving={false}
+                    onSubmit={vi.fn()}
+                />,
+            );
+        });
+
+        expect(screen.tree.find(
+            (node) => node.props.testID === 'connected-account-configuration:clientSecret',
+        ).props.value).toBe('');
+        expect(screen.tree.find(
+            (node) => node.props.testID === 'connected-account-configuration:endpoint',
+        ).props.value).toBe('https://updated.example');
+        const { getActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
+        expect(getActiveUnsavedChangesGuard()?.isDirtyRef.current ?? false).toBe(false);
     });
 });

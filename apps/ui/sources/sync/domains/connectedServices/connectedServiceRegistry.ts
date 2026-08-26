@@ -3,6 +3,7 @@ import {
   buildQualifiedPluginContributionKey,
   ConnectedServiceIdSchema,
   type PluginConnectedAccountAuthenticationModeV2,
+  type PluginConnectedAccountAuthenticationV2,
   type ConnectedServiceId,
   type ConnectedAccountUiProjectionEntryV1,
   type PluginContributionIdentityV1,
@@ -364,7 +365,20 @@ export function getConnectedAccountAuthenticationMode(
   authenticationModeId: string | null,
 ): PluginConnectedAccountAuthenticationModeV2 | null {
   if (!authenticationModeId) return null;
+  return getConnectedAccountAuthentication(service)?.modes.find(
+    (mode) => mode.id === authenticationModeId,
+  ) ?? null;
+}
+
+/**
+ * Returns the exact daemon-projected authentication descriptor for a qualified
+ * service. A conflicted or incomplete projection must remain unknown rather
+ * than borrowing a mode from a similarly named descriptor.
+ */
+export function getConnectedAccountAuthentication(
+  service: Readonly<{ pluginId: string; localId: string }>,
+): PluginConnectedAccountAuthenticationV2 | null {
   const entry = getQualifiedConnectedServiceRegistryEntry(service);
   if (!entry || (entry.projectedDescriptorCandidates?.length ?? 0) > 1) return null;
-  return entry.authenticationModes?.find((mode) => mode.id === authenticationModeId) ?? null;
+  return entry.projectedDescriptor?.authentication ?? null;
 }

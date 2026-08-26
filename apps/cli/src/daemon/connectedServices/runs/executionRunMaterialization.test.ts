@@ -1170,6 +1170,132 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         expect(release).toHaveBeenCalled();
     });
 
+    it('retains exact adopted-root cleanup when authority activation is rejected', async () => {
+        const adoptedCleanup = vi.fn(async () => undefined);
+        const activatePurposeBindings = vi.fn();
+        const requestAuthRegistry = { activate: vi.fn(), retire: vi.fn() };
+        const release = vi.fn(async () => undefined);
+        const {
+            bridge,
+            registerRunTargets,
+            runnerIdentity,
+            unregisterRunTargets,
+        } = createBridge({
+            createAdoptedRootCleanup: ({ materializedRoot }) =>
+                materializedRoot === '/materialized/run_abc/codex'
+                    ? adoptedCleanup
+                    : null,
+            acquireAgentPurposeContributions: async () => ({
+                contributions: REQUEST_AUTH_CONTRIBUTIONS,
+                resolveAgentContributionIdentity: async () => ({
+                    ...AGENT_CONTRIBUTION_IDENTITY,
+                    immutableGenerationId: 'gen-2',
+                }),
+                isCurrent: () => true,
+                release,
+            }),
+            purposeBindingOwner: { activatePurposeBindings } as never,
+            requestAuthRegistry: requestAuthRegistry as never,
+        });
+        const registration = {
+            v: 1 as const,
+            activationId: '44444444-4444-4444-8444-444444444444',
+            runKey: 'run_abc',
+            agentId: 'codex' as const,
+            agentContribution: AGENT_CONTRIBUTION_IDENTITY,
+            materializationKey: 'run_abc',
+            connectedServicesBindings: RUN_BINDINGS,
+            connectedServiceSelectionsEnv: {
+                [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: '[]',
+            },
+            sessionDirectory: '/tmp/project',
+            materializedRoot: '/materialized/run_abc/codex',
+        };
+
+        await expect(bridge.adoptLiveMaterialization({
+            runId: 'run_abc',
+            runnerPid: 4242,
+            sessionId: 'session-1',
+            persistedLaunch: registration,
+        })).resolves.toBe(false);
+
+        // A rejected authority adoption is cleanup-only: it must not activate
+        // targets, purpose bindings, or fresh request-auth capability state.
+        expect(activatePurposeBindings).not.toHaveBeenCalled();
+        expect(requestAuthRegistry.activate).not.toHaveBeenCalled();
+        expect(registerRunTargets).not.toHaveBeenCalled();
+        expect(adoptedCleanup).not.toHaveBeenCalled();
+        expect(release).toHaveBeenCalledOnce();
+
+        await expect(bridge.release({
+            runId: 'run_abc',
+            runnerPid: 4242,
+            activationId: registration.activationId,
+        })).resolves.toEqual({ ok: true, released: true });
+        await bridge.releaseForRunnerExit({
+            runnerPid: 4242,
+            runnerIdentity,
+        });
+
+        expect(unregisterRunTargets).not.toHaveBeenCalled();
+        expect(adoptedCleanup).toHaveBeenCalledOnce();
+    });
+
+    it('refuses a conflicting live run key without displacing incumbent cleanup custody', async () => {
+        const incumbentCleanup = vi.fn(async () => undefined);
+        const createAdoptedRootCleanup = vi.fn(() =>
+            vi.fn(async () => undefined),
+        );
+        const incumbentRunnerIdentity = Object.freeze({
+            kind: 'incumbent-runner',
+        });
+        const conflictingRunnerIdentity = Object.freeze({
+            kind: 'conflicting-runner',
+        });
+        const { bridge } = createBridge({
+            captureRunnerIdentity: ({ runnerPid }) => ({
+                identity: runnerPid === 4242
+                    ? incumbentRunnerIdentity
+                    : conflictingRunnerIdentity,
+                parentSessionId: 'session-1',
+                isCurrent: () => true,
+            }),
+            createAdoptedRootCleanup,
+            resolveAuthForSpawn: async () => ({
+                env: {
+                    [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: '[]',
+                },
+                cleanupOnFailure: null,
+                cleanupOnExit: incumbentCleanup,
+                connectedServicesBindings: RUN_BINDINGS,
+                targetMaterializedRoot: null,
+            }),
+        });
+        const incumbent = await bridge.materialize(MATERIALIZE_INPUT);
+        if (!incumbent.ok) throw new Error('expected incumbent materialization');
+
+        await expect(bridge.adoptLiveMaterialization({
+            runId: 'run_abc',
+            runnerPid: 4343,
+            sessionId: 'session-1',
+            persistedLaunch: {
+                ...incumbent.registration,
+                materializedRoot: '/materialized/conflicting-run/codex',
+            },
+        })).resolves.toBe(false);
+
+        // The collision cannot safely become a second owner under the same
+        // run key. It must neither manufacture an unowned cleanup closure nor
+        // evict the incumbent's exact release/exit cleanup.
+        expect(createAdoptedRootCleanup).not.toHaveBeenCalled();
+        await expect(bridge.release({
+            runId: 'run_abc',
+            runnerPid: 4242,
+            activationId: incumbent.activationId,
+        })).resolves.toEqual({ ok: true, released: true });
+        expect(incumbentCleanup).toHaveBeenCalledOnce();
+    });
+
     // A predecessor-shaped record carries no Agent generation at all, so it is unproven by
     // construction. Its runner keeps running; it simply does not receive fresh authority.
     it('refuses to upgrade a predecessor-shaped record into fresh request-auth authority', async () => {

@@ -11,6 +11,12 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
 
+import {
+    connectedAccountFieldErrorId,
+    useConnectedAccountInvalidFieldFocus,
+} from './useConnectedAccountInvalidFieldFocus';
+import { useConnectedAccountDraftNavigationGuard } from './useConnectedAccountDraftNavigationGuard';
+
 const stylesheet = StyleSheet.create((theme) => ({
     field: {
         paddingHorizontal: 16,
@@ -78,21 +84,27 @@ function isValidFieldValue(field: ManualAuthenticationField, value: string): boo
     return true;
 }
 
-export const ConnectedAccountManualForm = React.memo(function ConnectedAccountManualForm(props: Readonly<{
+type ConnectedAccountManualFormProps = Readonly<{
     title: string;
     localize?: (value: Parameters<typeof resolveProjectedLocalizedText>[0]) => string;
     fields: readonly ManualAuthenticationField[];
     submitting: boolean;
+    navigation?: unknown;
     onSubmit(input: Readonly<{
         fields: Readonly<Record<string, string>>;
-    }>): Promise<void> | void;
-}>) {
+    }>): Promise<boolean | void> | boolean | void;
+}>;
+
+function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const [draft, setDraft] = React.useState<Readonly<Record<string, string>>>(() => (
+    const initialDraft = React.useMemo(() => (
         Object.fromEntries(props.fields.map((field) => [field.id, '']))
+    ), [props.fields]);
+    const [draft, setDraft] = React.useState<Readonly<Record<string, string>>>(() => (
+        initialDraft
     ));
-    const [validationFailed, setValidationFailed] = React.useState(false);
+    const [invalidFieldIds, setInvalidFieldIds] = React.useState<readonly string[]>([]);
 
     const fields = React.useMemo(
         () => [...props.fields]
@@ -104,33 +116,65 @@ export const ConnectedAccountManualForm = React.memo(function ConnectedAccountMa
         const values = Object.fromEntries(
             props.fields.map((field) => [field.id, draft[field.id] ?? '']),
         );
-        if (props.fields.some((field) => !isValidFieldValue(field, values[field.id] ?? ''))) {
-            setValidationFailed(true);
-            return;
+        const invalid = fields
+            .filter((field) => !isValidFieldValue(field, values[field.id] ?? ''))
+            .map((field) => field.id);
+        if (invalid.length > 0) {
+            setInvalidFieldIds(invalid);
+            return false;
         }
-        await props.onSubmit({ fields: values });
-    }, [draft, props]);
+        const accepted = await props.onSubmit({ fields: values });
+        return accepted !== false;
+    }, [draft, fields, props]);
+    const discardDraft = React.useCallback(() => {
+        setDraft(initialDraft);
+        setInvalidFieldIds([]);
+    }, [initialDraft]);
+    const isDirty = props.fields.some((field) => (
+        (draft[field.id] ?? '') !== (initialDraft[field.id] ?? '')
+    ));
+    useConnectedAccountDraftNavigationGuard({
+        navigation: props.navigation,
+        isDirty,
+        onDiscard: discardDraft,
+        onSave: submit,
+        tag: 'ConnectedAccountManualForm',
+    });
+    const registerInvalidFieldTarget = useConnectedAccountInvalidFieldFocus({
+        invalidFieldIds,
+        announcement: t('common.error'),
+    });
 
     return (
         <ItemGroup
             title={props.title}
-            footer={validationFailed ? t('common.error') : undefined}
+            footer={invalidFieldIds.length > 0 ? t('common.error') : undefined}
         >
             {fields.map((field) => {
                 const title = resolveProjectedLocalizedText(field.title, props.localize);
                 const description = resolveProjectedLocalizedText(field.description, props.localize);
                 const multiline = field.presentation?.control === 'textarea';
+                const invalid = invalidFieldIds.includes(field.id);
+                const errorId = connectedAccountFieldErrorId(
+                    'connected-account-manual',
+                    field.id,
+                );
                 return (
                     <View key={field.id} style={styles.field}>
                         <Text style={styles.label}>{title}</Text>
                         {description ? <Text style={styles.description}>{description}</Text> : null}
                         <TextInput
                             testID={`connected-account-manual:${field.id}`}
-                            accessibilityLabel={title}
+                            ref={registerInvalidFieldTarget(field.id)}
+                            nativeID={`connected-account-manual:${field.id}`}
+                            accessibilityLabel={invalid ? `${title}: ${t('common.error')}` : title}
+                            accessibilityHint={invalid
+                                ? t('common.error')
+                                : description || undefined}
                             value={draft[field.id] ?? ''}
                             onChangeText={(value) => {
                                 setDraft((current) => ({ ...current, [field.id]: value }));
-                                setValidationFailed(false);
+                                setInvalidFieldIds((current) => current.filter((id) => id !== field.id));
                             }}
                             editable={!props.submitting}
                             secureTextEntry={field.secret === true}
@@ -149,6 +193,17 @@ export const ConnectedAccountManualForm = React.memo(function ConnectedAccountMa
                                 },
                             ]}
                         />
+                        {invalid ? (
+                            <Text
+                                testID={errorId}
+                                nativeID={errorId}
+                                accessibilityRole="alert"
+                                accessibilityLiveRegion="assertive"
+                                style={styles.description}
+                            >
+                                {t('common.error')}
+                            </Text>
+                        ) : null}
                     </View>
                 );
             })}
@@ -163,4 +218,16 @@ export const ConnectedAccountManualForm = React.memo(function ConnectedAccountMa
             </View>
         </ItemGroup>
     );
+}
+
+/**
+ * Manual credential fields can change while the route stays mounted (for
+ * example after a daemon descriptor refresh). A semantic descriptor key gives
+ * the form a fresh local lifetime, so no secret draft survives into a new mode.
+ */
+export const ConnectedAccountManualForm = React.memo(function ConnectedAccountManualForm(
+    props: ConnectedAccountManualFormProps,
+) {
+    const draftKey = React.useMemo(() => JSON.stringify(props.fields), [props.fields]);
+    return <ConnectedAccountManualFormBody key={draftKey} {...props} />;
 });

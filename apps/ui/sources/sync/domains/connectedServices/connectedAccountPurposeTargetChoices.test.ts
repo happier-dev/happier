@@ -63,11 +63,14 @@ const group = Object.freeze(
   }),
 );
 
-const resolveAuthenticationMode = () => ({
-  id: 'oauth',
-  kind: 'oauthAuthorizationCode' as const,
-  pkce: 'required' as const,
-  outcomeReconciliation: 'none' as const,
+const resolveAuthentication = () => ({
+  defaultModeId: 'oauth',
+  modes: [{
+    id: 'oauth',
+    kind: 'oauthAuthorizationCode' as const,
+    pkce: 'required' as const,
+    outcomeReconciliation: 'none' as const,
+  }],
 });
 
 describe('buildConnectedAccountPurposeTargetChoices', () => {
@@ -79,7 +82,7 @@ describe('buildConnectedAccountPurposeTargetChoices', () => {
       groups: [group],
       labelsByKey: {},
       serviceTitle: 'Acme Gateway',
-      resolveAuthenticationMode,
+      resolveAuthentication,
     });
 
     expect(choices.map((choice) => ({
@@ -106,7 +109,7 @@ describe('buildConnectedAccountPurposeTargetChoices', () => {
       groups: [],
       labelsByKey: {},
       serviceTitle: 'Acme Gateway',
-      resolveAuthenticationMode,
+      resolveAuthentication,
     });
 
     expect(choices).toEqual(expect.arrayContaining([
@@ -132,7 +135,7 @@ describe('buildConnectedAccountPurposeTargetChoices', () => {
       groups: [groupWithoutRuntimeStatus],
       labelsByKey: {},
       serviceTitle: 'Acme Gateway',
-      resolveAuthenticationMode,
+      resolveAuthentication,
     };
 
     expect(buildConnectedAccountPurposeTargetChoices(input))
@@ -204,7 +207,7 @@ describe('buildConnectedAccountPurposeTargetChoices', () => {
       selectedTarget: null,
       accounts: [opaqueAccount],
       groups: [opaqueGroup],
-      resolveAuthenticationMode,
+      resolveAuthentication,
       labelsByKey,
       serviceTitle: 'Acme Gateway',
     };
