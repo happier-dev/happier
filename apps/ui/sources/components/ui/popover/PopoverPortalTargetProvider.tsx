@@ -4,6 +4,7 @@ import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { OverlayPortalHost, OverlayPortalProvider } from './OverlayPortal';
 import { PopoverPortalTargetContextProvider } from './PopoverPortalTarget';
+import { POPOVER_PORTAL_Z_INDEX } from './portal';
 
 /**
  * Creates a screen-local portal host for native popovers/dropdowns.
@@ -33,6 +34,7 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
                 height: '0px',
                 overflow: 'visible',
                 pointerEvents: 'none',
+                zIndex: String(POPOVER_PORTAL_Z_INDEX),
             } satisfies Partial<CSSStyleDeclaration>);
             return host;
         }, []);

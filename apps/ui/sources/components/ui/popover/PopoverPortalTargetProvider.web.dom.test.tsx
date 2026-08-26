@@ -28,6 +28,33 @@ const requireForTest = createRequire(import.meta.url);
 const { Drawer: CjsDrawer } = requireForTest('vaul') as typeof import('vaul');
 
 describe('PopoverPortalTargetProvider (web dom)', () => {
+    it('layers the screen-local portal host above later composer siblings', async () => {
+        const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+
+        try {
+            await act(async () => {
+                root.render(
+                    <PopoverPortalTargetProvider>
+                        <div data-testid="screen-content" />
+                        <div data-testid="composer" style={{ position: 'relative', zIndex: 1 }} />
+                    </PopoverPortalTargetProvider>,
+                );
+            });
+
+            const host = document.querySelector('[data-happy-popover-portal-host]') as HTMLElement | null;
+            expect(host).not.toBeNull();
+            expect(Number(host?.style.zIndex)).toBeGreaterThan(1);
+        } finally {
+            await act(async () => {
+                root.unmount();
+            });
+            container.remove();
+        }
+    });
+
     it('keeps its portal target inside an Expo Router drawer before styles are observable', async () => {
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
         const { useModalPortalTarget } = await import('@/modal/portal/ModalPortalTarget');

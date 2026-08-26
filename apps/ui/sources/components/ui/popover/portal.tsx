@@ -4,6 +4,8 @@ import { Platform } from 'react-native';
 import { requireReactDOM } from '@/utils/web/reactDomCjs';
 import { areReactNodesStructurallyEqual } from '@/utils/react/areReactNodesStructurallyEqual';
 
+export const POPOVER_PORTAL_Z_INDEX = 200000;
+
 type OverlayPortalDispatch = Readonly<{
     setPortalNode: (id: string, node: React.ReactNode) => void;
     removePortalNode: (id: string) => void;

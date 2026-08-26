@@ -35,7 +35,7 @@ import type {
 import { getFallbackBoundaryRect, measureInWindow, measureLayoutRelativeTo } from './measure';
 import { resolvePortalRelativeAnchorRect } from './resolvePortalRelativeAnchor';
 import { PopoverBackdrop } from './backdrop';
-import { tryRenderWebPortal, useNativeOverlayPortalNode } from './portal';
+import { POPOVER_PORTAL_Z_INDEX, tryRenderWebPortal, useNativeOverlayPortalNode } from './portal';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import {
     readDocumentFocusReturnTarget,
@@ -1446,7 +1446,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     const contentContainerMaxWidth = computed.maxWidth + (nativePortalShadowOutset * 2);
 
     // Must be above BaseModal (100000) and other header overlays.
-    const portalZ = 200000;
+    const portalZ = POPOVER_PORTAL_Z_INDEX;
 
     const backdropEnabled =
         typeof backdrop === 'boolean'
