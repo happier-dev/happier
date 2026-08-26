@@ -1164,8 +1164,12 @@ enum AutomationRunState {
 
 enum AutomationTriggerKind {
     schedule
-    manual
     pluginEvent
+    sessionLifecycle
+}
+
+enum AutomationSessionLifecycleEvent {
+    parentTurnCompleted
 }
 
 enum AutomationObservationTransport {
@@ -1173,10 +1177,9 @@ enum AutomationObservationTransport {
     durablePush
 }
 
-enum AutomationRunOriginKind {
-    scheduled
+enum AutomationRunCauseKind {
+    trigger
     manual
-    pluginEvent
     conversation
 }
 
@@ -1221,38 +1224,57 @@ model Automation {
     description      String?
     enabled          Boolean                @default(true)
     deletedAt        DateTime?
-    scheduleKind     AutomationScheduleKind?
-    scheduleExpr     String?
-    everyMs          Int?
-    timezone         String?
     targetType       AutomationTargetType
     templateCiphertext String
     templateVersion  Int                    @default(0)
-    triggerKind                    AutomationTriggerKind @default(schedule)
-    triggerEventPluginId           String?
-    triggerEventLocalId            String?
-    triggerSourceSelectorId        String?
-    triggerSourceContractVersion   Int?
-    triggerObservationTransport    AutomationObservationTransport?
-    triggerWebhookEndpointId       String?
-    triggerObservationStartsAt     DateTime?
-    watcherMachineId               String?
-    watcherMachineInstallationId   String?
-    watcherPluginId                String?
-    watcherMaterializationId       String?
-    triggerDefinitionEnvelope      String?
-    nextRunAt        DateTime?
     lastRunAt        DateTime?
     createdAt        DateTime               @default(now())
     updatedAt        DateTime               @updatedAt
     assignments      AutomationAssignment[]
+    triggers         AutomationTrigger[]
     runs             AutomationRun[]
-    eventSourceStatuses AutomationEventSourceStatus[]
 
     @@index([accountId, enabled, updatedAt(sort: Desc)])
-    @@index([accountId, nextRunAt])
-    @@index([accountId, enabled, triggerKind, triggerEventPluginId, triggerEventLocalId], map: "Automation_event_trigger_lookup_idx")
-    @@index([accountId, enabled, watcherMachineId, watcherMaterializationId], map: "Automation_watcher_materialization_lookup_idx")
+}
+
+model AutomationTrigger {
+    id                           String @id @default(cuid())
+    automationId                 String
+    automation                   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+    kind                         AutomationTriggerKind
+    enabled                      Boolean @default(true)
+    revision                     Int @default(0)
+    deletedAt                    DateTime?
+    scheduleKind                 AutomationScheduleKind?
+    scheduleExpr                 String?
+    everyMs                      Int?
+    timezone                     String?
+    nextRunAt                    DateTime?
+    eventPluginId                String?
+    eventLocalId                 String?
+    sourceSelectorId             String?
+    sourceContractVersion        Int?
+    observationTransport         AutomationObservationTransport?
+    webhookEndpointId            String?
+    observationStartsAt          DateTime?
+    watcherMachineId             String?
+    watcherMachineInstallationId String?
+    watcherPluginId              String?
+    watcherMaterializationId     String?
+    filterEnvelope               String?
+    definitionEnvelope           String?
+    sessionLifecycleEvent        AutomationSessionLifecycleEvent?
+    sourceSessionId              String?
+    sourceTurnId                 String?
+    createdAt                    DateTime @default(now())
+    updatedAt                    DateTime @updatedAt
+    eventSourceStatus            AutomationEventSourceStatus?
+
+    @@index([automationId, enabled, updatedAt(sort: Desc)])
+    @@index([automationId, enabled, kind, eventPluginId, eventLocalId], map: "AutomationTrigger_event_lookup_idx")
+    @@index([automationId, enabled, watcherMachineId, watcherMaterializationId], map: "AutomationTrigger_watcher_lookup_idx")
+    @@index([automationId, enabled, nextRunAt], map: "AutomationTrigger_schedule_due_idx")
+    @@index([sourceSessionId, sourceTurnId], map: "AutomationTrigger_session_lifecycle_lookup_idx")
 }
 
 model AutomationAssignment {
@@ -1278,12 +1300,18 @@ model AutomationRun {
     accountId          String
     account            Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
     state              AutomationRunState @default(queued)
-    originKind         AutomationRunOriginKind @default(scheduled)
-    originOccurredAt   DateTime?
+    triggerId          String?
+    causeKind          AutomationRunCauseKind @default(trigger)
+    causeTriggerKind   AutomationTriggerKind?
+    causeTriggerRevision Int?
+    causeOccurredAt    DateTime?
+    causeSessionLifecycleEvent AutomationSessionLifecycleEvent?
+    causeSourceSessionId String?
+    causeSourceTurnId String?
     occurrenceKey      String?
     legacyManualIdempotencyKey String? @map("idempotencyKey")
     occurrenceEvidenceEqualityTag String?
-    originSourceSelectorId String?
+    causeSourceSelectorId String?
     triggerEvidenceEnvelope String?
     executionInputEnvelope String?
     executionDispatchState AutomationExecutionDispatchState?
@@ -1326,12 +1354,13 @@ model AutomationRun {
     events             AutomationRunEvent[]
 
     @@index([accountId, state, dueAt])
-    @@index([accountId, originKind, state])
+    @@index([accountId, causeKind, state])
     @@index([automationId, dueAt])
     @@index([claimedByMachineId, leaseExpiresAt])
     @@index([state, finishedAt])
     @@index([state, dueAt])
     @@index([replyHandoffState, replyHandoffDueAt])
+    @@unique([triggerId, occurrenceKey])
     @@unique([automationId, occurrenceKey])
     @@unique([automationId, legacyManualIdempotencyKey], map: "AutomationRun_automationId_idempotencyKey_key")
 }
@@ -1355,8 +1384,8 @@ model AutomationEventCatalogState {
 }
 
 model AutomationEventSourceStatus {
-    automationId                    String
-    automation                      Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+    triggerId                       String @id
+    trigger                         AutomationTrigger @relation(fields: [triggerId], references: [id], onDelete: Cascade)
     eventPluginId                   String
     eventLocalId                    String
     sourceSelectorId                String
@@ -1375,7 +1404,6 @@ model AutomationEventSourceStatus {
     skippedCount                    Int @default(0)
     revision                        Int @default(0)
 
-    @@id([automationId, eventPluginId, eventLocalId, sourceSelectorId])
     @@index([state, nextRetryAt])
 }
 

@@ -8,9 +8,12 @@ import {
   deriveAutomationOccurrenceEvidenceEqualityTagV1,
   deriveAutomationOccurrenceKeyV1,
   AutomationOccurrenceEvidenceV1Schema,
+  type AutomationConversationOccurrenceEvidenceV1,
   type AutomationOccurrenceEvidenceEqualityTagV1,
   type AutomationOccurrenceEvidenceV1,
+  type AutomationPluginEventOccurrenceEvidenceV1,
 } from './automationOccurrenceV1.js';
+import { AutomationTriggerIdSchema } from './automationTriggerIdentity.js';
 import {
   AutomationRunTriggerEvidenceV1Schema,
   type AutomationRunTriggerEvidenceV1,
@@ -86,20 +89,36 @@ export function isAutomationTriggerEvidenceCiphertextV1(
  * Produces the opaque E2EE rejoin tag with the dedicated Account-content
  * derivation. The server compares the tag but cannot calculate it.
  */
-export function deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1(params: Readonly<{
-  material: AccountScopedCryptoMaterial;
-  accountId: string;
-  automationId: string;
-  evidence: AutomationOccurrenceEvidenceV1;
-}>): AutomationOccurrenceEvidenceEqualityTagV1 {
+export function deriveAutomationOccurrenceTriggerEvidenceEqualityTagV1(params:
+  | Readonly<{
+    material: AccountScopedCryptoMaterial;
+    accountId: string;
+    automationId: string;
+    triggerId: string;
+    evidence: AutomationPluginEventOccurrenceEvidenceV1;
+  }>
+  | Readonly<{
+    material: AccountScopedCryptoMaterial;
+    accountId: string;
+    automationId: string;
+    evidence: AutomationConversationOccurrenceEvidenceV1;
+  }>
+): AutomationOccurrenceEvidenceEqualityTagV1 {
   const evidence = AutomationOccurrenceEvidenceV1Schema.parse(params.evidence);
+  const occurrenceKey = evidence.kind === 'pluginEvent'
+    ? deriveAutomationOccurrenceKeyV1({
+      triggerId: AutomationTriggerIdSchema.parse('triggerId' in params ? params.triggerId : undefined),
+      evidence,
+    })
+    : deriveAutomationOccurrenceKeyV1(evidence);
   return deriveAutomationOccurrenceEvidenceEqualityTagV1({
     purposeSeparatedAccountKey: deriveAutomationTriggerEvidenceEqualityKeyV1({
       material: params.material,
     }),
     accountId: params.accountId,
     automationId: params.automationId,
-    occurrenceKey: deriveAutomationOccurrenceKeyV1(evidence),
+    ...('triggerId' in params ? { triggerId: params.triggerId } : {}),
+    occurrenceKey,
     evidence,
   });
 }

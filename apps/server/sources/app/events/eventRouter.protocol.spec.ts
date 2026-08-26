@@ -220,7 +220,7 @@ describe("eventRouter payloads (protocol container)", () => {
                 metadataLayoutVersion: 1,
                 ownerMetadata: {
                     t: "encrypted",
-                    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                    c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
                 },
                 agentState: "owner-state",
                 agentStateVersion: 9,
@@ -246,7 +246,7 @@ describe("eventRouter payloads (protocol container)", () => {
             ownerMetadata: {
                 value: {
                     t: "encrypted",
-                    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                    c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
                 },
             },
             agentState: { value: "owner-state", version: 9 },
@@ -271,7 +271,7 @@ describe("eventRouter payloads (protocol container)", () => {
                 metadataLayoutVersion: 1,
                 ownerMetadata: {
                     t: "encrypted",
-                    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                    c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
                 },
             },
         )).toThrow();

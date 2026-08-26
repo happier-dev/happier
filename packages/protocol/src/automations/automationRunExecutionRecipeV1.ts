@@ -5,10 +5,12 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import {
   AutomationConversationOccurrenceEvidenceV1Schema,
   AutomationPluginEventOccurrenceEvidenceV1Schema,
-  AutomationOccurrenceKeyV1Schema,
-  AutomationSourceSelectorIdV1Schema,
   deriveAutomationOccurrenceKeyV1,
 } from './automationOccurrenceV1.js';
+import {
+  AutomationRunCauseSchema,
+  type AutomationRunCause,
+} from './automationRunCause.js';
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationEventDeclarationV1.js';
 import { AutomationAccountCurrentnessWitnessV1Schema } from './automationAccountCurrentnessV1.js';
 import {
@@ -283,36 +285,6 @@ export function materializeAutomationRunPromptV1(params: Readonly<{
     mentions: admitMentionRefsV1ForText(prompt, template.data.mentions ?? []),
   };
 }
-
-/**
- * The durable Run origin retained outside the private recipe. It is deliberately
- * small: source payload and raw source identity remain inside the independently
- * protected trigger-evidence envelope.
- */
-export const AutomationRunExecutionRecipeOriginV1Schema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('scheduled'),
-    scheduledFor: TIMESTAMP_SCHEMA,
-  }).strict(),
-  z.object({
-    kind: z.literal('manual'),
-    invokedAt: TIMESTAMP_SCHEMA,
-  }).strict(),
-  z.object({
-    kind: z.literal('pluginEvent'),
-    occurrenceKey: AutomationOccurrenceKeyV1Schema,
-    sourceSelectorId: AutomationSourceSelectorIdV1Schema,
-    occurredAt: TIMESTAMP_SCHEMA,
-  }).strict(),
-  z.object({
-    kind: z.literal('conversation'),
-    occurrenceKey: AutomationOccurrenceKeyV1Schema,
-    occurredAt: TIMESTAMP_SCHEMA,
-  }).strict(),
-]);
-export type AutomationRunExecutionRecipeOriginV1 = z.infer<
-  typeof AutomationRunExecutionRecipeOriginV1Schema
->;
 
 export const AutomationRunExecutionTargetV1Schema = z.discriminatedUnion('kind', [
   z.object({
@@ -593,30 +565,33 @@ function readRecipeContent(params: Readonly<{
     : { kind: 'contentInvalid' };
 }
 
-function matchesOriginEvidence(
-  origin: AutomationRunExecutionRecipeOriginV1,
+function matchesCauseEvidence(
+  cause: AutomationRunCause,
   triggerEvidence: AutomationRunTriggerEvidenceV1 | null,
 ): boolean {
-  switch (origin.kind) {
-    case 'scheduled':
+  switch (cause.kind) {
     case 'manual':
       return triggerEvidence === null;
-    case 'pluginEvent':
+    case 'trigger':
+      if (cause.triggerKind !== 'pluginEvent') return triggerEvidence === null;
       return triggerEvidence?.kind === 'pluginEvent'
-        && triggerEvidence.sourceSelectorId === origin.sourceSelectorId
-        && triggerEvidence.occurredAt === origin.occurredAt
+        && triggerEvidence.sourceSelectorId === cause.evidence.sourceSelectorId
+        && triggerEvidence.occurredAt === cause.occurredAt
         && deriveAutomationOccurrenceKeyV1({
-          v: triggerEvidence.v,
-          kind: triggerEvidence.kind,
-          eventRef: triggerEvidence.eventRef,
-          sourceSelectorId: triggerEvidence.sourceSelectorId,
-          occurrenceId: triggerEvidence.occurrenceId,
-          occurredAt: triggerEvidence.occurredAt,
-          payload: triggerEvidence.payload,
-        }) === origin.occurrenceKey;
+          triggerId: cause.triggerId,
+          evidence: {
+            v: triggerEvidence.v,
+            kind: triggerEvidence.kind,
+            eventRef: triggerEvidence.eventRef,
+            sourceSelectorId: triggerEvidence.sourceSelectorId,
+            occurrenceId: triggerEvidence.occurrenceId,
+            occurredAt: triggerEvidence.occurredAt,
+            payload: triggerEvidence.payload,
+          },
+        }) === cause.occurrenceKey;
     case 'conversation':
       return triggerEvidence?.kind === 'conversation'
-        && triggerEvidence.occurredAt === origin.occurredAt
+        && triggerEvidence.occurredAt === cause.occurredAt
         && deriveAutomationOccurrenceKeyV1({
           v: triggerEvidence.v,
           kind: triggerEvidence.kind,
@@ -626,7 +601,7 @@ function matchesOriginEvidence(
           caller: triggerEvidence.caller,
           input: triggerEvidence.input,
           replyContextIdentity: triggerEvidence.replyContextIdentity,
-        }) === origin.occurrenceKey;
+        }) === cause.occurrenceKey;
   }
 }
 
@@ -654,7 +629,7 @@ export type AutomationRunExecutionRecipeMaterializationResultV1 =
  */
 export function materializeAutomationRunExecutionRecipeV1(params: Readonly<{
   recipe: unknown;
-  origin: unknown;
+  cause: unknown;
   accountCurrentness: unknown;
   runId: unknown;
   openedContent?: unknown;
@@ -664,9 +639,9 @@ export function materializeAutomationRunExecutionRecipeV1(params: Readonly<{
     accountCurrentness: params.accountCurrentness,
   });
   if (outer.kind !== 'available') return outer;
-  const origin = AutomationRunExecutionRecipeOriginV1Schema.safeParse(params.origin);
+  const cause = AutomationRunCauseSchema.safeParse(params.cause);
   const runId = AUTOMATION_RUN_ID_SCHEMA.safeParse(params.runId);
-  if (!origin.success || !runId.success) return { kind: 'contentInvalid' };
+  if (!cause.success || !runId.success) return { kind: 'contentInvalid' };
 
   const content = readRecipeContent({
     recipe: outer.recipe,
@@ -681,7 +656,7 @@ export function materializeAutomationRunExecutionRecipeV1(params: Readonly<{
     return { kind: 'contentInvalid' };
   }
   const parsedEvidence = triggerEvidence?.data ?? null;
-  if (!matchesOriginEvidence(origin.data, parsedEvidence)) return { kind: 'contentInvalid' };
+  if (!matchesCauseEvidence(cause.data, parsedEvidence)) return { kind: 'contentInvalid' };
 
   const prompt = materializeAutomationRunPromptV1({
     template: template.data,

@@ -135,6 +135,94 @@ describe("Event Automations persistence contract", () => {
         "prisma/mysql/schema.prisma",
     ] as const;
 
+    it.each(schemaPaths)("moves automatic admission state to one AutomationTrigger owner in %s", async (schemaPath) => {
+        const schema = await read(schemaPath);
+        const automation = model(schema, "Automation");
+        const trigger = model(schema, "AutomationTrigger");
+        const run = model(schema, "AutomationRun");
+
+        expect(schema).toMatch(
+            /enum AutomationTriggerKind \{\s+schedule\s+pluginEvent\s+sessionLifecycle\s+\}/m,
+        );
+        expect(schema).toMatch(
+            /enum AutomationRunCauseKind \{\s+trigger\s+manual\s+conversation\s+\}/m,
+        );
+
+        for (const field of [
+            "id",
+            "automationId",
+            "kind",
+            "enabled",
+            "revision",
+            "deletedAt",
+            "scheduleKind",
+            "scheduleExpr",
+            "everyMs",
+            "timezone",
+            "nextRunAt",
+            "eventPluginId",
+            "eventLocalId",
+            "sourceSelectorId",
+            "sourceContractVersion",
+            "observationTransport",
+            "webhookEndpointId",
+            "observationStartsAt",
+            "watcherMachineId",
+            "watcherMachineInstallationId",
+            "watcherPluginId",
+            "watcherMaterializationId",
+            "filterEnvelope",
+            "definitionEnvelope",
+            "sessionLifecycleEvent",
+            "sourceSessionId",
+            "sourceTurnId",
+            "createdAt",
+            "updatedAt",
+        ]) {
+            expect(trigger).toMatch(new RegExp(`^\\s*${field}\\s+`, "m"));
+        }
+        expect(trigger).toMatch(/@@index\(\[automationId, enabled, updatedAt(?:\(sort: Desc\))?\]\)/);
+        expect(trigger).toContain(
+            "@@index([automationId, enabled, kind, eventPluginId, eventLocalId], map: \"AutomationTrigger_event_lookup_idx\")",
+        );
+        expect(trigger).toContain(
+            "@@index([automationId, enabled, watcherMachineId, watcherMaterializationId], map: \"AutomationTrigger_watcher_lookup_idx\")",
+        );
+
+        for (const formerTriggerField of [
+            "scheduleKind",
+            "scheduleExpr",
+            "everyMs",
+            "timezone",
+            "nextRunAt",
+            "triggerKind",
+            "triggerEventPluginId",
+            "triggerSourceSelectorId",
+            "triggerDefinitionEnvelope",
+        ]) {
+            expect(automation).not.toMatch(new RegExp(`^\\s*${formerTriggerField}\\s+`, "m"));
+        }
+        expect(automation).toMatch(/^\s*triggers\s+AutomationTrigger\[\]\s*$/m);
+
+        expect(run).toMatch(/^\s*triggerId\s+String\?(?:\s|$)/m);
+        expect(run).toMatch(/^\s*causeKind\s+AutomationRunCauseKind(?:\s|$)/m);
+        expect(run).toMatch(/^\s*causeTriggerKind\s+AutomationTriggerKind\?(?:\s|$)/m);
+        expect(run).toMatch(/^\s*causeTriggerRevision\s+Int\?(?:\s|$)/m);
+        expect(run).toMatch(/^\s*causeOccurredAt\s+DateTime\?(?:\s|$)/m);
+        expect(run).toMatch(/^\s*causeSessionLifecycleEvent\s+AutomationSessionLifecycleEvent\?(?:\s|$)/m);
+        expect(run).toMatch(/^\s*causeSourceSessionId\s+String\?(?:\s|$)/m);
+        expect(run).toMatch(/^\s*causeSourceTurnId\s+String\?(?:\s|$)/m);
+        expect(run).not.toMatch(/^\s*origin(?:Kind|OccurredAt|SourceSelectorId)\s+/m);
+        expect(run).toContain("@@unique([triggerId, occurrenceKey])");
+        expect(run).not.toMatch(/^\s*trigger\s+AutomationTrigger/m);
+        expect(trigger).not.toMatch(/^\s*sourceSession\s+Session/m);
+
+        const sourceStatus = model(schema, "AutomationEventSourceStatus");
+        expect(sourceStatus).toMatch(/^\s*triggerId\s+String(?:\s|$)/m);
+        expect(sourceStatus).toMatch(/^\s*trigger\s+AutomationTrigger\s+@relation\(/m);
+        expect(sourceStatus).not.toMatch(/^\s*automationId\s+/m);
+    });
+
     it.each(schemaPaths)("keeps one origin-aware AutomationRun owner in %s", async (schemaPath) => {
         const schema = await read(schemaPath);
         const automation = model(schema, "Automation");

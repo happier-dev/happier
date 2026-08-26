@@ -58,11 +58,17 @@ export type AutomationRunState = (typeof AutomationRunState)[keyof typeof Automa
 
 export const AutomationTriggerKind = {
     schedule: "schedule",
-    manual: "manual",
     pluginEvent: "pluginEvent",
+    sessionLifecycle: "sessionLifecycle",
 } as const;
 
 export type AutomationTriggerKind = (typeof AutomationTriggerKind)[keyof typeof AutomationTriggerKind];
+
+export const AutomationSessionLifecycleEvent = {
+    parentTurnCompleted: "parentTurnCompleted",
+} as const;
+
+export type AutomationSessionLifecycleEvent = (typeof AutomationSessionLifecycleEvent)[keyof typeof AutomationSessionLifecycleEvent];
 
 export const AutomationObservationTransport = {
     checkpointedPull: "checkpointedPull",
@@ -71,14 +77,13 @@ export const AutomationObservationTransport = {
 
 export type AutomationObservationTransport = (typeof AutomationObservationTransport)[keyof typeof AutomationObservationTransport];
 
-export const AutomationRunOriginKind = {
-    scheduled: "scheduled",
+export const AutomationRunCauseKind = {
+    trigger: "trigger",
     manual: "manual",
-    pluginEvent: "pluginEvent",
     conversation: "conversation",
 } as const;
 
-export type AutomationRunOriginKind = (typeof AutomationRunOriginKind)[keyof typeof AutomationRunOriginKind];
+export type AutomationRunCauseKind = (typeof AutomationRunCauseKind)[keyof typeof AutomationRunCauseKind];
 
 export const AutomationExecutionDispatchState = {
     notStarted: "notStarted",

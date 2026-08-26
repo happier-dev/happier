@@ -214,6 +214,77 @@ describe('createAutomationClaimClient', () => {
     );
   });
 
+  it('preserves one server-admitted session-lifecycle trigger cause without re-evaluating it in the worker', async () => {
+    axiosGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
+    const cause = {
+      kind: 'trigger' as const,
+      triggerId: 'trigger-parent-turn',
+      triggerRevision: 7,
+      triggerKind: 'sessionLifecycle' as const,
+      occurrenceKey: 'parent-turn-completed:session-1:turn-1',
+      occurredAt: 1_723_247_201_000,
+      evidence: {
+        event: 'parentTurnCompleted' as const,
+        sourceSessionId: 'session-1',
+        sourceTurnId: 'turn-1',
+      },
+    };
+    axiosPost.mockResolvedValue({
+      data: {
+        run: {
+          id: 'run-parent-turn',
+          automationId: 'automation-parent-turn',
+          attempt: 1,
+          cause,
+          executionInputEnvelope: JSON.stringify({ v: 1 }),
+        },
+        automation: { id: 'automation-parent-turn', name: 'After parent turn', enabled: true },
+        accountCurrentness: CLAIM_CURRENTNESS,
+      },
+    });
+
+    const client = createAutomationClaimClient({ token: 'token-parent-turn' });
+    await client.fetchAssignments('machine-parent-turn');
+
+    await expect(client.claimRun({ machineId: 'machine-parent-turn', leaseDurationMs: 45_000 })).resolves.toEqual({
+      protocol: 'v3',
+      run: {
+        id: 'run-parent-turn',
+        automationId: 'automation-parent-turn',
+        attempt: 1,
+        cause,
+        executionInputEnvelope: JSON.stringify({ v: 1 }),
+        resultDelivery: { kind: 'none' },
+      },
+      automation: { id: 'automation-parent-turn', name: 'After parent turn', enabled: true },
+      accountCurrentness: CLAIM_CURRENTNESS,
+    });
+  });
+
+  it('rejects a V3 legacy origin instead of deciding that a cause-free automatic Run is safe to retry through V2', async () => {
+    axiosGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
+    axiosPost.mockResolvedValue({
+      data: {
+        run: {
+          id: 'run-legacy-origin',
+          automationId: 'automation-legacy-origin',
+          attempt: 1,
+          origin: { kind: 'scheduled', scheduledFor: 1_723_247_201_000 },
+          executionInputEnvelope: JSON.stringify({ v: 1 }),
+        },
+        automation: { id: 'automation-legacy-origin', name: 'Legacy', enabled: true },
+        accountCurrentness: CLAIM_CURRENTNESS,
+      },
+    });
+
+    const client = createAutomationClaimClient({ token: 'token-legacy-origin' });
+    await client.fetchAssignments('machine-legacy-origin');
+
+    await expect(client.claimRun({ machineId: 'machine-legacy-origin', leaseDurationMs: 45_000 })).rejects.toThrow();
+    expect(axiosPost).toHaveBeenCalledTimes(1);
+    expect(axiosPost.mock.calls[0]?.[0]).toMatch(/\/v3\/automations\/runs\/claim$/);
+  });
+
   it('preserves the server-frozen final-result correspondence on a V3 claim', async () => {
     axiosGet.mockResolvedValue({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
     axiosPost.mockResolvedValue({
@@ -355,6 +426,47 @@ describe('createAutomationClaimClient', () => {
       { machineId: 'machine-1', leaseDurationMs: 30_000 },
       expect.anything(),
     );
+  });
+
+  it('keeps the released V2 claim projection cause-free even if an incompatible server injects a V3 key', async () => {
+    axiosGet
+      .mockImplementationOnce((url: unknown) => Promise.reject(createAxios404(String(url))))
+      .mockResolvedValueOnce({
+        data: {
+          assignments: [{
+            machineId: 'machine-v2',
+            automation: { id: 'automation-v2', nextRunAt: 1234 },
+          }],
+        },
+      });
+    axiosPost.mockResolvedValue({
+      data: {
+        run: {
+          id: 'run-v2',
+          automationId: 'automation-v2',
+          attempt: 1,
+          cause: {
+            kind: 'trigger',
+            triggerId: 'must-not-cross-v2',
+            triggerRevision: 1,
+            triggerKind: 'schedule',
+            occurrenceKey: 'v2-rogue-cause',
+            occurredAt: 1_723_247_201_000,
+            evidence: { scheduledFor: 1_723_247_201_000 },
+          },
+        },
+        automation: { id: 'automation-v2', name: 'V2 schedule', enabled: true },
+      },
+    });
+
+    const client = createAutomationClaimClient({ token: 'token-v2-negative-keys' });
+    await client.fetchAssignments('machine-v2');
+
+    await expect(client.claimRun({ machineId: 'machine-v2', leaseDurationMs: 30_000 })).resolves.toEqual({
+      protocol: 'v2',
+      run: { id: 'run-v2', automationId: 'automation-v2', attempt: 1 },
+      automation: { id: 'automation-v2', name: 'V2 schedule', enabled: true },
+    });
   });
 
   it('re-probes V3 assignments after a V2 fallback so a server upgrade exposes current work without restarting the daemon', async () => {

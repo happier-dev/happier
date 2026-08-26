@@ -1,6 +1,7 @@
-CREATE TYPE "AutomationTriggerKind" AS ENUM ('schedule', 'manual', 'pluginEvent');
+CREATE TYPE "AutomationTriggerKind" AS ENUM ('schedule', 'pluginEvent', 'sessionLifecycle');
+CREATE TYPE "AutomationSessionLifecycleEvent" AS ENUM ('parentTurnCompleted');
 CREATE TYPE "AutomationObservationTransport" AS ENUM ('checkpointedPull', 'durablePush');
-CREATE TYPE "AutomationRunOriginKind" AS ENUM ('scheduled', 'manual', 'pluginEvent', 'conversation');
+CREATE TYPE "AutomationRunCauseKind" AS ENUM ('trigger', 'manual', 'conversation');
 CREATE TYPE "AutomationExecutionDispatchState" AS ENUM ('notStarted', 'dispatchPermitted', 'retryWaiting', 'started', 'settled', 'outcomeUnknown');
 CREATE TYPE "AutomationRunReplyHandoffState" AS ENUM ('none', 'awaitingResult', 'ready', 'handingOff', 'accepted', 'suppressed', 'blocked');
 CREATE TYPE "AutomationEventSourceStatusState" AS ENUM ('uninitialized', 'baselined', 'observing', 'backingOff', 'attention');
@@ -15,27 +16,20 @@ ALTER TYPE "AutomationRunState" ADD VALUE 'missed';
 ALTER TYPE "AutomationRunState" ADD VALUE 'outcome_uncertain';
 
 ALTER TABLE "Automation"
-    ADD COLUMN "deletedAt" TIMESTAMP(3),
-    ADD COLUMN "triggerKind" "AutomationTriggerKind" NOT NULL DEFAULT 'schedule',
-    ADD COLUMN "triggerEventPluginId" TEXT,
-    ADD COLUMN "triggerEventLocalId" TEXT,
-    ADD COLUMN "triggerSourceSelectorId" TEXT,
-    ADD COLUMN "triggerSourceContractVersion" INTEGER,
-    ADD COLUMN "triggerObservationTransport" "AutomationObservationTransport",
-    ADD COLUMN "triggerWebhookEndpointId" TEXT,
-    ADD COLUMN "triggerObservationStartsAt" TIMESTAMP(3),
-    ADD COLUMN "watcherMachineId" TEXT,
-    ADD COLUMN "watcherMachineInstallationId" TEXT,
-    ADD COLUMN "watcherPluginId" TEXT,
-    ADD COLUMN "watcherMaterializationId" TEXT,
-    ADD COLUMN "triggerDefinitionEnvelope" TEXT;
+    ADD COLUMN "deletedAt" TIMESTAMP(3);
 
 ALTER TABLE "AutomationRun"
-    ADD COLUMN "originKind" "AutomationRunOriginKind" NOT NULL DEFAULT 'scheduled',
-    ADD COLUMN "originOccurredAt" TIMESTAMP(3),
+    ADD COLUMN "triggerId" TEXT,
+    ADD COLUMN "causeKind" "AutomationRunCauseKind" NOT NULL DEFAULT 'trigger',
+    ADD COLUMN "causeTriggerKind" "AutomationTriggerKind",
+    ADD COLUMN "causeTriggerRevision" INTEGER,
+    ADD COLUMN "causeOccurredAt" TIMESTAMP(3),
+    ADD COLUMN "causeSessionLifecycleEvent" "AutomationSessionLifecycleEvent",
+    ADD COLUMN "causeSourceSessionId" TEXT,
+    ADD COLUMN "causeSourceTurnId" TEXT,
     ADD COLUMN "occurrenceKey" TEXT,
     ADD COLUMN "occurrenceEvidenceEqualityTag" TEXT,
-    ADD COLUMN "originSourceSelectorId" TEXT,
+    ADD COLUMN "causeSourceSelectorId" TEXT,
     ADD COLUMN "triggerEvidenceEnvelope" TEXT,
     ADD COLUMN "executionInputEnvelope" TEXT,
     ADD COLUMN "executionDispatchState" "AutomationExecutionDispatchState",
@@ -57,30 +51,97 @@ ALTER TABLE "AutomationRun"
     ADD COLUMN "replyHandoffAttempt" INTEGER NOT NULL DEFAULT 0,
     ADD COLUMN "replyHandoffDueAt" TIMESTAMP(3),
     ADD COLUMN "replyHandoffReceiptEnvelope" TEXT,
+    ADD COLUMN "contentRemovedAt" TIMESTAMP(3),
     ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0;
 
--- V2 keeps its incumbent `scheduledAt` wire projection. V3 Event and
--- Conversation projections use their separately retained source occurrence time.
+CREATE TABLE "AutomationTrigger" (
+    "id" TEXT NOT NULL,
+    "automationId" TEXT NOT NULL,
+    "kind" "AutomationTriggerKind" NOT NULL,
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "revision" INTEGER NOT NULL DEFAULT 0,
+    "deletedAt" TIMESTAMP(3),
+    "scheduleKind" "AutomationScheduleKind",
+    "scheduleExpr" TEXT,
+    "everyMs" INTEGER,
+    "timezone" TEXT,
+    "nextRunAt" TIMESTAMP(3),
+    "eventPluginId" TEXT,
+    "eventLocalId" TEXT,
+    "sourceSelectorId" TEXT,
+    "sourceContractVersion" INTEGER,
+    "observationTransport" "AutomationObservationTransport",
+    "webhookEndpointId" TEXT,
+    "observationStartsAt" TIMESTAMP(3),
+    "watcherMachineId" TEXT,
+    "watcherMachineInstallationId" TEXT,
+    "watcherPluginId" TEXT,
+    "watcherMaterializationId" TEXT,
+    "filterEnvelope" TEXT,
+    "definitionEnvelope" TEXT,
+    "sessionLifecycleEvent" "AutomationSessionLifecycleEvent",
+    "sourceSessionId" TEXT,
+    "sourceTurnId" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "AutomationTrigger_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "AutomationTrigger_automationId_fkey"
+        FOREIGN KEY ("automationId") REFERENCES "Automation"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "AutomationTrigger_arm_check" CHECK (
+        ("kind" = 'schedule' AND "scheduleKind" IS NOT NULL
+            AND "eventPluginId" IS NULL AND "eventLocalId" IS NULL AND "sourceSelectorId" IS NULL
+            AND "sourceContractVersion" IS NULL AND "observationTransport" IS NULL
+            AND "webhookEndpointId" IS NULL AND "observationStartsAt" IS NULL
+            AND "watcherMachineId" IS NULL AND "watcherMachineInstallationId" IS NULL
+            AND "watcherPluginId" IS NULL AND "watcherMaterializationId" IS NULL
+            AND "filterEnvelope" IS NULL AND "definitionEnvelope" IS NULL
+            AND "sessionLifecycleEvent" IS NULL AND "sourceSessionId" IS NULL AND "sourceTurnId" IS NULL)
+        OR
+        ("kind" = 'pluginEvent' AND "scheduleKind" IS NULL AND "scheduleExpr" IS NULL
+            AND "everyMs" IS NULL AND "timezone" IS NULL AND "nextRunAt" IS NULL
+            AND "eventPluginId" IS NOT NULL AND "eventLocalId" IS NOT NULL
+            AND "sourceSelectorId" IS NOT NULL AND "sourceContractVersion" IS NOT NULL
+            AND "observationTransport" IS NOT NULL AND "definitionEnvelope" IS NOT NULL
+            AND "sessionLifecycleEvent" IS NULL AND "sourceSessionId" IS NULL AND "sourceTurnId" IS NULL
+            AND (("observationTransport" = 'checkpointedPull' AND "webhookEndpointId" IS NULL
+                    AND "observationStartsAt" IS NULL
+                    AND (("watcherMachineId" IS NULL AND "watcherMachineInstallationId" IS NULL
+                            AND "watcherPluginId" IS NULL AND "watcherMaterializationId" IS NULL)
+                        OR ("watcherMachineId" IS NOT NULL AND "watcherMachineInstallationId" IS NOT NULL
+                            AND "watcherPluginId" IS NOT NULL AND "watcherMaterializationId" IS NOT NULL)))
+                OR ("observationTransport" = 'durablePush' AND "webhookEndpointId" IS NOT NULL
+                    AND "observationStartsAt" IS NOT NULL AND "watcherMachineId" IS NULL
+                    AND "watcherMachineInstallationId" IS NULL AND "watcherPluginId" IS NULL
+                    AND "watcherMaterializationId" IS NULL)))
+        OR
+        ("kind" = 'sessionLifecycle' AND "scheduleKind" IS NULL AND "scheduleExpr" IS NULL
+            AND "everyMs" IS NULL AND "timezone" IS NULL AND "nextRunAt" IS NULL
+            AND "eventPluginId" IS NULL AND "eventLocalId" IS NULL AND "sourceSelectorId" IS NULL
+            AND "sourceContractVersion" IS NULL AND "observationTransport" IS NULL
+            AND "webhookEndpointId" IS NULL AND "observationStartsAt" IS NULL
+            AND "watcherMachineId" IS NULL AND "watcherMachineInstallationId" IS NULL
+            AND "watcherPluginId" IS NULL AND "watcherMaterializationId" IS NULL
+            AND "filterEnvelope" IS NULL AND "definitionEnvelope" IS NULL
+            AND "sessionLifecycleEvent" = 'parentTurnCompleted'
+            AND "sourceSessionId" IS NOT NULL AND "sourceTurnId" IS NOT NULL)
+    )
+);
+
+INSERT INTO "AutomationTrigger" (
+    "id", "automationId", "kind", "enabled", "scheduleKind", "scheduleExpr",
+    "everyMs", "timezone", "nextRunAt", "createdAt", "updatedAt"
+)
+SELECT "id", "id", 'schedule', "enabled", "scheduleKind", "scheduleExpr",
+    "everyMs", "timezone", "nextRunAt", "createdAt", "updatedAt"
+FROM "Automation";
+
+UPDATE "AutomationRun"
+SET "triggerId" = "automationId", "causeTriggerKind" = 'schedule',
+    "causeTriggerRevision" = 0, "causeOccurredAt" = "scheduledAt";
+
 ALTER TABLE "Automation"
-    ALTER COLUMN "scheduleKind" DROP NOT NULL;
-
--- The preview predecessor represented manual definitions as a schedule arm.
--- Adopt those rows into the V3 trigger union before enforcing its invariant.
-UPDATE "AutomationRun" AS run
-SET "originKind" = 'manual'
-FROM "Automation" AS automation
-WHERE run."automationId" = automation."id"
-  AND automation."scheduleKind" = 'manual';
-
-UPDATE "Automation"
-SET
-    "triggerKind" = 'manual',
-    "scheduleKind" = NULL,
-    "scheduleExpr" = NULL,
-    "everyMs" = NULL,
-    "timezone" = NULL,
-    "nextRunAt" = NULL
-WHERE "scheduleKind" = 'manual';
+    DROP COLUMN "scheduleKind", DROP COLUMN "scheduleExpr", DROP COLUMN "everyMs",
+    DROP COLUMN "timezone", DROP COLUMN "nextRunAt";
 
 -- A retained Run is the durable execution/history owner. Automations become
 -- soft-deleted while Runs remain, rather than cascading that history away.

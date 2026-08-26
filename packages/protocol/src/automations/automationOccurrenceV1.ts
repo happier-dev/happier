@@ -37,6 +37,10 @@ import {
   AutomationSourceSelectorIdV1Schema,
   type AutomationSourceSelectorIdV1,
 } from './automationEventDeclarationV1.js';
+import {
+  AutomationTriggerIdSchema,
+  type AutomationTriggerId,
+} from './automationTriggerIdentity.js';
 
 export {
   AutomationSourceSelectorIdV1JsonSchema,
@@ -249,20 +253,32 @@ export type AutomationOccurrenceEvidenceV1 = z.infer<
   typeof AutomationOccurrenceEvidenceV1Schema
 >;
 
-const AutomationOccurrenceEvidenceEqualityInputV1Schema = z.object({
-  accountId: asProtocolZod(AutomationHostIdentifierV1Schema),
-  automationId: asProtocolZod(AutomationIdV1Schema),
-  occurrenceKey: AutomationOccurrenceKeyV1Schema,
-  evidence: AutomationOccurrenceEvidenceV1Schema,
-}).strict();
+const AutomationOccurrenceEvidenceEqualityInputV1Schema = z.union([
+  z.object({
+    accountId: asProtocolZod(AutomationHostIdentifierV1Schema),
+    automationId: asProtocolZod(AutomationIdV1Schema),
+    triggerId: AutomationTriggerIdSchema,
+    occurrenceKey: AutomationOccurrenceKeyV1Schema,
+    evidence: AutomationPluginEventOccurrenceEvidenceV1Schema,
+  }).strict(),
+  z.object({
+    accountId: asProtocolZod(AutomationHostIdentifierV1Schema),
+    automationId: asProtocolZod(AutomationIdV1Schema),
+    occurrenceKey: AutomationOccurrenceKeyV1Schema,
+    evidence: AutomationConversationOccurrenceEvidenceV1Schema,
+  }).strict(),
+]);
 
-function occurrenceKeyParts(
-  evidence: AutomationOccurrenceEvidenceV1,
+function occurrenceKeyParts(input:
+  | Readonly<{ triggerId: AutomationTriggerId; evidence: AutomationPluginEventOccurrenceEvidenceV1 }>
+  | AutomationConversationOccurrenceEvidenceV1,
 ): readonly string[] {
+  const evidence = 'evidence' in input ? input.evidence : input;
   if (evidence.kind === 'pluginEvent') {
     return [
       '1',
       evidence.kind,
+      input.triggerId,
       evidence.eventRef.pluginId,
       evidence.eventRef.localId,
       evidence.sourceSelectorId,
@@ -287,13 +303,23 @@ function occurrenceKeyParts(
  * same provider occurrence rejoins after a definition refresh.
  */
 export function deriveAutomationOccurrenceKeyV1(
-  input: AutomationOccurrenceEvidenceV1,
+  input:
+    | Readonly<{
+      triggerId: z.input<typeof AutomationTriggerIdSchema>;
+      evidence: z.input<typeof AutomationPluginEventOccurrenceEvidenceV1Schema>;
+    }>
+    | z.input<typeof AutomationConversationOccurrenceEvidenceV1Schema>,
 ): AutomationOccurrenceKeyV1 {
-  const evidence = AutomationOccurrenceEvidenceV1Schema.parse(input);
+  const parsed = 'triggerId' in input
+    ? {
+      triggerId: AutomationTriggerIdSchema.parse(input.triggerId),
+      evidence: AutomationPluginEventOccurrenceEvidenceV1Schema.parse(input.evidence),
+    }
+    : AutomationConversationOccurrenceEvidenceV1Schema.parse(input);
   return AutomationOccurrenceKeyV1Schema.parse(
     computeCanonicalDomainSeparatedDigest(
       AUTOMATION_OCCURRENCE_KEY_DOMAIN_V1,
-      occurrenceKeyParts(evidence),
+      occurrenceKeyParts(parsed),
     ),
   );
 }
@@ -302,7 +328,10 @@ function encodeAutomationOccurrenceEvidenceEqualityInputV1(
   input: z.input<typeof AutomationOccurrenceEvidenceEqualityInputV1Schema>,
 ): Uint8Array {
   const parsed = AutomationOccurrenceEvidenceEqualityInputV1Schema.parse(input);
-  if (parsed.occurrenceKey !== deriveAutomationOccurrenceKeyV1(parsed.evidence)) {
+  const derivedOccurrenceKey = parsed.evidence.kind === 'pluginEvent'
+    ? deriveAutomationOccurrenceKeyV1({ triggerId: parsed.triggerId, evidence: parsed.evidence })
+    : deriveAutomationOccurrenceKeyV1(parsed.evidence);
+  if (parsed.occurrenceKey !== derivedOccurrenceKey) {
     throw new TypeError('Automation occurrence equality input must use the occurrence key derived from its evidence');
   }
   return encodeCanonicalLengthDelimited([
@@ -310,6 +339,7 @@ function encodeAutomationOccurrenceEvidenceEqualityInputV1(
     '1',
     parsed.accountId,
     parsed.automationId,
+    parsed.evidence.kind === 'pluginEvent' ? parsed.triggerId : '',
     parsed.occurrenceKey,
     createCanonicalJsonSigningInput(parsed.evidence),
   ]);

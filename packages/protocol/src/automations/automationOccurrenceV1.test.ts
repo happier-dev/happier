@@ -43,6 +43,13 @@ const conversationOccurrence = {
 } as const;
 
 describe('Automation occurrence V1', () => {
+  it('scopes automatic occurrence identity to the stable trigger id', () => {
+    const evidence = buildAutomationPluginEventOccurrenceEvidenceV1(eventOccurrence);
+
+    const first = deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1', evidence });
+    expect(deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-1', evidence })).toBe(first);
+    expect(deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger-2', evidence })).not.toBe(first);
+  });
   it('normalizes and bounds the shared manual idempotency contract by UTF-8 bytes', () => {
     expect(AutomationManualIdempotencyKeyV1Schema.parse('  ci-build-42  '))
       .toBe('ci-build-42');
