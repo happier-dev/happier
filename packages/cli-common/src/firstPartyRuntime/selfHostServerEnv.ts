@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { join, win32 as win32Path } from 'node:path';
+import { dirname, join, win32 as win32Path } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const DEFAULT_PRISMA_SQLITE_BUSY_TIMEOUT_MS = 30_000;
@@ -7,13 +7,43 @@ export const DEFAULT_SERVER_LIGHT_SQLITE_CONNECTION_LIMIT = 1;
 const PRISMA_SQLITE_BUSY_TIMEOUT_MS_MAX = 600_000;
 const PRISMA_SQLITE_CONNECTION_LIMIT_MAX = 64;
 
+export type SelfHostServerMigrationPlan = Readonly<{
+    command: string;
+    args: readonly string[];
+}>;
+
+export function resolveSelfHostServerMigrationPlan(params: Readonly<{
+    serverBinaryPath: string;
+    env: Readonly<Record<string, unknown>>;
+    platform?: NodeJS.Platform;
+}>): SelfHostServerMigrationPlan | null {
+    const platform = params.platform ?? process.platform;
+    const rawProvider = String(params.env.HAPPIER_DB_PROVIDER ?? params.env.HAPPY_DB_PROVIDER ?? 'sqlite').trim().toLowerCase();
+    const provider = rawProvider === 'postgresql' ? 'postgres' : rawProvider;
+    if (!['postgres', 'mysql', 'pglite', 'sqlite'].includes(provider)) {
+        throw new Error(`[self-host] unsupported database provider: ${rawProvider || '<empty>'}`);
+    }
+    if (provider === 'sqlite') {
+        const rawAutoMigrate = String(
+            params.env.HAPPIER_SQLITE_AUTO_MIGRATE ?? params.env.HAPPY_SQLITE_AUTO_MIGRATE ?? '1',
+        ).trim().toLowerCase();
+        if (!['0', 'false', 'no', 'off'].includes(rawAutoMigrate)) return null;
+        return { command: params.serverBinaryPath, args: ['--migrate-only'] };
+    }
+
+    const serverBinDir = platform === 'win32' ? win32Path.dirname(params.serverBinaryPath) : dirname(params.serverBinaryPath);
+    return {
+        command: platform === 'win32'
+            ? win32Path.join(serverBinDir, 'happier-server-migrate.exe')
+            : join(serverBinDir, 'happier-server-migrate'),
+        args: [],
+    };
+}
+
 // Entries here are regenerated (or intentionally removed) on every managed
 // relay update. Operator-owned configuration must remain outside this set so a
 // bare `relay host install` is an idempotent update.
 const SELF_HOST_SERVER_ENV_REGENERATED_KEYS = new Set<string>([
-    'DATABASE_URL',
-    'HAPPIER_DB_PROVIDER',
-    'HAPPIER_FILES_BACKEND',
     'HAPPIER_SERVER_UI_DIR',
     'HAPPIER_SERVER_UI_DEPLOYMENT_ID',
     'HAPPIER_SQLITE_AUTO_MIGRATE',

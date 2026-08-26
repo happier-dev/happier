@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
+import { spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, win32 as win32Path } from 'node:path';
 
@@ -22,6 +23,7 @@ import {
     mergeSelfHostServerEnvText,
     parseEnvText,
     renderSelfHostServerEnvText,
+    resolveSelfHostServerMigrationPlan,
     resolveConfiguredSelfHostBaseUrl,
 } from './selfHostServerEnv.js';
 
@@ -707,6 +709,12 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
     legacyInstallRoot?: string;
     runServiceCommands?: boolean;
     skipHealthCheck?: boolean;
+    runMigrationCommand?: (params: Readonly<{
+        command: string;
+        args: readonly string[];
+        cwd: string;
+        env: Record<string, string>;
+    }>) => Promise<void>;
 }>): Promise<Readonly<{ baseUrl: string; version: string | null }>> {
     const platform = (String(params.platform ?? '').trim() || process.platform) as NodeJS.Platform;
     const homeDir = String(params.homeDir ?? '').trim() || homedir();
@@ -895,6 +903,32 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
         });
         await writeFile(configEnvPath, envText, 'utf8');
         const env = parseEnvText(envText);
+        const migrationPlan = resolveSelfHostServerMigrationPlan({
+            serverBinaryPath: installServerBinaryPath,
+            env,
+            platform,
+        });
+        if (migrationPlan) {
+            if (params.runMigrationCommand) {
+                await params.runMigrationCommand({
+                    ...migrationPlan,
+                    cwd: defaults.installRoot,
+                    env,
+                });
+            } else {
+                const completion = spawnSync(migrationPlan.command, [...migrationPlan.args], {
+                    cwd: defaults.installRoot,
+                    env: { ...process.env, ...env },
+                    stdio: 'inherit',
+                });
+                if (completion.error) {
+                    throw new Error(`[relay-runtime] database migration failed to start: ${completion.error.message}`);
+                }
+                if (completion.status !== 0) {
+                    throw new Error(`[relay-runtime] database migration exited with status ${completion.status ?? 'unknown'}`);
+                }
+            }
+        }
 
         await rm(startupReceiptPath, { force: true });
         const serviceSpec = buildRelayRuntimeServiceSpec({

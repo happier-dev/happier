@@ -149,6 +149,44 @@ describe('installOrUpdateRelayRuntimeLocal sequencing', () => {
         }
     });
 
+    it('runs the canonical provider migration plan after payload promotion and before service activation', async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-migration-'));
+        try {
+            const payloadRoot = join(homeDir, 'payload');
+            await mkdir(payloadRoot, { recursive: true });
+            const serverBinaryPath = join(payloadRoot, 'happier-server');
+            await writeFile(serverBinaryPath, '#!/bin/sh\n', 'utf8');
+            await writeFile(join(payloadRoot, 'happier-server-migrate'), '#!/bin/sh\n', 'utf8');
+            const migrations = [] as Array<{ command: string; args: readonly string[]; provider: string }>;
+
+            await installOrUpdateRelayRuntimeLocal({
+                serverBinaryPath,
+                channel: 'preview',
+                mode: 'user',
+                platform: 'linux',
+                homeDir,
+                env: {
+                    HAPPIER_DB_PROVIDER: 'postgres',
+                    DATABASE_URL: 'postgresql://operator:secret@db.example.test/happier',
+                },
+                runServiceCommands: false,
+                skipHealthCheck: true,
+                runMigrationCommand: async ({ command, args, env }) => {
+                    migrations.push({ command, args, provider: env.HAPPIER_DB_PROVIDER });
+                },
+            });
+
+            const defaults = resolveRelayRuntimeDefaults({ platform: 'linux', mode: 'user', channel: 'preview', homeDir });
+            expect(migrations).toEqual([{
+                command: join(defaults.installRoot, 'bin', 'happier-server-migrate'),
+                args: [],
+                provider: 'postgres',
+            }]);
+        } finally {
+            await rm(homeDir, { recursive: true, force: true });
+        }
+    });
+
     it('stops the existing relay service before replacing the persistent runtime payload', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-runtime-sequence-'));
         try {

@@ -106,9 +106,10 @@ export {
   parseEnvText,
   renderPrismaCompatibleSqliteDatabaseUrl,
   renderSelfHostServerEnvText,
+  resolveSelfHostServerMigrationPlan,
   resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
   resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
 } from './selfHostServerEnv.js';
-export type { PrismaSqliteDatabaseUrlOptions } from './selfHostServerEnv.js';
+export type { PrismaSqliteDatabaseUrlOptions, SelfHostServerMigrationPlan } from './selfHostServerEnv.js';
 
 export { installOrUpdateRelayRuntimeLocal } from './relayRuntimeInstall.js';
