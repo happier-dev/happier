@@ -66,7 +66,6 @@ function renderPortForwards(portForwards) {
   return portForwards.map((entry) => ({
     guestPortRange: [entry.guestStart, entry.guestEnd],
     hostPortRange: [entry.hostStart, entry.hostEnd],
-    static: true,
   }));
 }
 

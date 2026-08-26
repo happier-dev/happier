@@ -132,6 +132,24 @@ export function resolveExecutionHostProfilePath(env = process.env) {
   return join(getHappyStacksHomeDir(env), PROFILE_FILE);
 }
 
+export function resolveExecutionHostSetupConfiguration({ current, requested = {}, defaults = {} }) {
+  if (current?.activation === 'active') {
+    throw new Error('[execution-host] cannot reconfigure an active execution host through candidate setup');
+  }
+  const choose = (field) => requested[field] || current?.[field] || defaults[field];
+  const requestedWorkspaces = Array.isArray(requested.workspaces) ? requested.workspaces : [];
+  const currentWorkspaces = current?.version === 2 ? current.workspaces : [];
+  return {
+    instance: choose('instance'),
+    limaHome: choose('limaHome'),
+    profile: choose('profile'),
+    pressureProfile: choose('pressureProfile'),
+    guestWorkspaceDir: choose('guestWorkspaceDir'),
+    mirrorWorkspaceDir: choose('mirrorWorkspaceDir'),
+    workspaces: requestedWorkspaces.length > 0 ? requestedWorkspaces : currentWorkspaces,
+  };
+}
+
 export function readExecutionHostProfile(env = process.env) {
   const path = resolveExecutionHostProfilePath(env);
   if (!existsSync(path)) return null;

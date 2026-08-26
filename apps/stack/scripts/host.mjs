@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import {
   readExecutionHostProfile,
+  resolveExecutionHostSetupConfiguration,
   resolveExecutionHostProfilePath,
   writeCandidateExecutionHostProfile,
 } from './utils/execution_host/config.mjs';
@@ -93,10 +94,30 @@ async function main() {
 
   if (command === 'setup') {
     const stackHome = getHappyStacksHomeDir(process.env);
+    const current = readExecutionHostProfile(process.env);
+    const requested = {
+      instance: flagValue(argv, '--instance').trim(),
+      limaHome: flagValue(argv, '--lima-home').trim(),
+      profile: flagValue(argv, '--profile').trim(),
+      pressureProfile: flagValue(argv, '--pressure-profile').trim(),
+      guestWorkspaceDir: flagValue(argv, '--guest-workspace-dir').trim(),
+      mirrorWorkspaceDir: flagValue(argv, '--mirror-workspace-dir').trim(),
+    };
+    const selected = resolveExecutionHostSetupConfiguration({
+      current,
+      requested,
+      defaults: {
+        instance: 'happier-agent-primary',
+        limaHome: join(stackHome, 'lima'),
+        profile: 'balanced',
+        pressureProfile: 'none',
+        mirrorWorkspaceDir: join(stackHome, 'workspace-mirror'),
+      },
+    });
     const runtimeConfig = {
-      instance: flagValue(argv, '--instance').trim() || 'happier-agent-primary',
-      limaHome: flagValue(argv, '--lima-home').trim() || join(stackHome, 'lima'),
-      profile: flagValue(argv, '--profile').trim() || 'balanced',
+      instance: selected.instance,
+      limaHome: selected.limaHome,
+      profile: selected.profile,
     };
     const guestProvisionScriptSource = await readFile(
       new URL('./provision/linux-ubuntu-provision.sh', import.meta.url),
@@ -106,7 +127,7 @@ async function main() {
       new URL('./provision/linux-guest-pressure.sh', import.meta.url),
       'utf8',
     );
-    const pressureProfile = flagValue(argv, '--pressure-profile').trim() || 'none';
+    const pressureProfile = selected.pressureProfile;
     const runtime = await setupManagedLimaRuntime({
       executor: executorFor(runtimeConfig),
       instance: runtimeConfig.instance,
@@ -116,14 +137,24 @@ async function main() {
       guestPressureScriptSource,
       pressureProfileName: pressureProfile,
     });
-    const guestWorkspaceDir = flagValue(argv, '--guest-workspace-dir').trim()
+    const guestWorkspaceDir = selected.guestWorkspaceDir
       || join(runtime.guest.homeDir, '.happier-stack', 'workspace');
-    const mirrorWorkspaceDir = flagValue(argv, '--mirror-workspace-dir').trim()
-      || join(stackHome, 'workspace-mirror');
-    const workspaces = resolveNamedWorkspaceConfiguration({
+    const mirrorWorkspaceDir = selected.mirrorWorkspaceDir;
+    const requestedWorkspaces = resolveNamedWorkspaceConfiguration({
       argv,
       guestWorkspaceDir,
       mirrorWorkspaceDir,
+    });
+    const { workspaces } = resolveExecutionHostSetupConfiguration({
+      current,
+      requested: { ...requested, workspaces: requestedWorkspaces },
+      defaults: {
+        ...runtimeConfig,
+        pressureProfile,
+        guestWorkspaceDir,
+        mirrorWorkspaceDir,
+        workspaces: [],
+      },
     });
     const profile = {
       version: workspaces.length > 0 ? 2 : 1,

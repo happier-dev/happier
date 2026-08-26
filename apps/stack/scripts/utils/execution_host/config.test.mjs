@@ -6,6 +6,7 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import {
   activateExecutionHostProfile,
   readExecutionHostProfile,
+  resolveExecutionHostSetupConfiguration,
   resolveExecutionHostProfilePath,
   writeCandidateExecutionHostProfile,
 } from './config.mjs';
@@ -70,6 +71,45 @@ test('execution host profile is machine-global Stack state and defaults to absen
   const env = { HAPPIER_STACK_HOME_DIR: fixture.path('stack-home') };
   assert.equal(resolveExecutionHostProfilePath(env), fixture.path('stack-home', 'execution-host.json'));
   assert.equal(readExecutionHostProfile(env), null);
+});
+
+test('execution host setup preserves omitted retained-candidate identity and workspace configuration', () => {
+  const current = namedCandidate({
+    instance: 'retained-worker',
+    limaHome: '/Users/example/.happier/stacks/repo-dev/lima',
+    profile: 'balanced',
+    pressureProfile: 'swap64',
+  });
+
+  assert.deepEqual(resolveExecutionHostSetupConfiguration({
+    current,
+    requested: { profile: 'performance', workspaces: [] },
+    defaults: {
+      instance: 'happier-agent-primary',
+      limaHome: '/Users/example/.happier-stack/lima',
+      profile: 'balanced',
+      pressureProfile: 'none',
+      guestWorkspaceDir: '/home/example/.happier-stack/workspace',
+      mirrorWorkspaceDir: '/Users/example/.happier-stack/workspace-mirror',
+    },
+  }), {
+    instance: 'retained-worker',
+    limaHome: '/Users/example/.happier/stacks/repo-dev/lima',
+    profile: 'performance',
+    pressureProfile: 'swap64',
+    guestWorkspaceDir: current.guestWorkspaceDir,
+    mirrorWorkspaceDir: current.mirrorWorkspaceDir,
+    workspaces: current.workspaces,
+  });
+
+  assert.throws(
+    () => resolveExecutionHostSetupConfiguration({
+      current: { ...current, activation: 'active' },
+      requested: {},
+      defaults: {},
+    }),
+    /cannot reconfigure an active execution host/,
+  );
 });
 
 test('candidate execution host writes atomically with restrictive permissions and cannot carry Stack authority', async (t) => {

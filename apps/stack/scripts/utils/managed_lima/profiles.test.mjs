@@ -43,7 +43,7 @@ test('managed Lima balanced profile is bounded, mount-free, ARM64 VZ, and contai
     '--set', '.vmOpts.vz.diskImageFormat = "raw"',
     '--set', '.ssh.forwardAgent = false',
     '--set', '.vmOpts.vz.rosetta.enabled = false | .vmOpts.vz.rosetta.binfmt = false',
-    '--set', '.portForwards = [{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004],"static":true},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080],"static":true}]',
+    '--set', '.portForwards = [{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004]},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080]}]',
     'template:ubuntu-24.04',
   ]);
 });
@@ -74,7 +74,7 @@ test('managed Lima edit args update only mutable retained-instance settings', ()
     '--set', '.ssh.forwardAgent = false',
     '--set', '.vmOpts.vz.rosetta.enabled = false | .vmOpts.vz.rosetta.binfmt = false',
     '--set', '.containerd.user = false | .containerd.system = false',
-    '--set', '.portForwards = [{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004],"static":true},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080],"static":true}]',
+    '--set', '.portForwards = [{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004]},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080]}]',
     'happier-agent-primary',
   ]);
 });

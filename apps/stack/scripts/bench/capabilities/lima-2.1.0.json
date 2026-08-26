@@ -25,8 +25,8 @@
       "sources": ["https://lima-vm.io/docs/config/multi-arch/", "https://github.com/lima-vm/lima/discussions/4312"]
     },
     "networking": {
-      "status": "verified",
-      "finding": "Default user-mode networking and static localhost port forwards are supported; vzNAT is optional and is not required by the initial profile.",
+      "status": "observed",
+      "finding": "Default user-mode networking and localhost port forwarding are supported; vzNAT is optional. Singular fixed ports may use static forwarding, but a port-range rule must remain dynamic: Lima 2.1.0 accepted static=true on a range yet reduced the host-agent rule to guest=0/host=0. Dynamic canonical server and Expo ranges were verified live from guest loopback through macOS loopback.",
       "sources": ["https://lima-vm.io/docs/config/network/", "https://github.com/lima-vm/lima/discussions/4312"]
     },
     "memoryReclamation": {
