@@ -25,6 +25,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
         useActiveServerAccountScope: () => ({ accountId: 'account-1', serverId: 'server-1' }),
         useAllMachines: () => [],
         useAllSessions: () => [],
+        useAllSessionListRenderables: () => [],
     });
 });
 
