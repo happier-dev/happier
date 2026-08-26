@@ -247,6 +247,7 @@ function resolvedSpawn(): ExternalTakeoverSpawnResolution {
         directory: '/tmp/external-session',
         existingSessionId: 'session-1',
       },
+      remoteSessionId: 'remote-1',
       origin: {
         agentId: 'claude',
         pluginId: 'claude',
