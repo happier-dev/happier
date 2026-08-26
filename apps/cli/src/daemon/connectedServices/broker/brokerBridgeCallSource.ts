@@ -1,3 +1,7 @@
+import {
+  CONNECTED_SERVICE_RUNTIME_AUTH_RECOVERY_TRANSPORT_TIMEOUT_MS,
+} from '@/daemon/connectedServices/runtimeAuth/connectedServiceRuntimeAuthTimeouts';
+
 /**
  * Shared, provider-agnostic bridge-call source for connected-service auth brokers.
  *
@@ -26,6 +30,15 @@
  */
 export const CONNECTED_SERVICE_BROKER_LOADED_HANDSHAKE_PATH =
   '/connected-service-auth/broker/loaded';
+
+/**
+ * The broker waits for the complete daemon-owned auth operation, which can include one bounded
+ * server profile-health lookup plus token rotation and optional provider evidence. Keep this outer
+ * budget above those inner waits so a slow-but-valid result is not abandoned and retried while the
+ * daemon is still completing the original request.
+ */
+export const CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS =
+  CONNECTED_SERVICE_RUNTIME_AUTH_RECOVERY_TRANSPORT_TIMEOUT_MS;
 
 function jsString(value: string): string {
   return JSON.stringify(value);
@@ -61,7 +74,7 @@ export function buildBrokerBridgeCallSource(params: Readonly<{
   const accountIdResultFields = params.accountIdResultFields ?? ['accountId'];
   return `const PROVIDER = ${jsString(params.providerTag)};
 const BRIDGE_PATH = ${jsString(params.bridgePath)};
-const BRIDGE_FETCH_TIMEOUT_MS = 30000;
+const BRIDGE_FETCH_TIMEOUT_MS = ${CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS};
 const SERVICE_ID = ${jsString(params.serviceId)};
 const SELECTIONS_ENV = ${jsString(params.selectionsEnv)};
 const BROKER_STATE_PATH_ENV = ${jsString(params.brokerStatePathEnv)};

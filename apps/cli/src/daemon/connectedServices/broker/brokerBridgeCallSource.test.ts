@@ -5,7 +5,17 @@ import { pathToFileURL } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildBrokerBridgeCallSource } from './brokerBridgeCallSource';
+import {
+  MAX_CONNECTED_SERVICES_SERVER_API_TIMEOUT_MS,
+} from '@/api/connectedServices/serverApiTimeout';
+import {
+  CONNECTED_SERVICE_OAUTH_REFRESH_FETCH_TIMEOUT_MS,
+} from '@/daemon/connectedServices/refresh/serviceRefreshers';
+
+import {
+  CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS,
+  buildBrokerBridgeCallSource,
+} from './brokerBridgeCallSource';
 
 /**
  * The shared bridge-call source is provider-agnostic JS embedded by BOTH the OpenCode plugin and the
@@ -81,11 +91,20 @@ describe('brokerBridgeCallSource (shared bridge-call, exercised live)', () => {
     delete process.env[SELECTION_IDENTITY_ENV];
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     globalThis.fetch = originalFetch;
     delete process.env[SELECTIONS_ENV];
     delete process.env[BROKER_STATE_PATH_ENV];
     delete process.env[PLUGIN_VERSION_ENV];
     delete process.env[SELECTION_IDENTITY_ENV];
+  });
+
+  it('keeps the outer bridge deadline above every reachable bounded auth wait', () => {
+    expect(CONNECTED_SERVICE_OAUTH_REFRESH_FETCH_TIMEOUT_MS).toBe(120_000);
+    expect(CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS).toBeGreaterThan(
+      MAX_CONNECTED_SERVICES_SERVER_API_TIMEOUT_MS
+        + (2 * CONNECTED_SERVICE_OAUTH_REFRESH_FETCH_TIMEOUT_MS),
+    );
   });
 
   it('reads one minimal broker descriptor, sends the SCOPED token, and POSTs caller-owned bridge metadata', async () => {
@@ -215,6 +234,7 @@ describe('brokerBridgeCallSource (shared bridge-call, exercised live)', () => {
   });
 
   it('bounds the bridge fetch with an abort signal (RR-7: no unbounded wait in the provider auth path)', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     process.env[BROKER_STATE_PATH_ENV] = await writeBrokerStateFile({
       brokerRefreshToken: 'scoped-broker-token',
     });
@@ -243,6 +263,7 @@ describe('brokerBridgeCallSource (shared bridge-call, exercised live)', () => {
     // timeout-bound AbortSignal by construction.
     expect(signals).toHaveLength(1);
     expect(signals[0]).toBeInstanceOf(AbortSignal);
+    expect(timeoutSpy).toHaveBeenCalledWith(CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS);
   });
 
   it('uses the replacement daemon port and scoped capability from the same current state snapshot', async () => {

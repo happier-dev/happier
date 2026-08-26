@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS } from '../broker/brokerBridgeCallSource';
+
 import {
+  CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
   reportConnectedServiceRuntimeAuthFailureToDaemon,
   resetConnectedServiceRuntimeAuthFailureReportDedupeForTests,
 } from './reportConnectedServiceRuntimeAuthFailureToDaemon';
@@ -22,6 +25,12 @@ const classifiedFailure = {
 } as const;
 
 describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
+  it('uses the same outer recovery budget as the generated provider bridge', () => {
+    expect(CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS).toBe(
+      CONNECTED_SERVICE_BROKER_BRIDGE_FETCH_TIMEOUT_MS,
+    );
+  });
+
   it('does not emit a legacy launcher-daemon incarnation from the runner environment', async () => {
     const outboxDir = await createTempDir('happier-runtime-auth-generation-bound-');
     const notify = vi.fn(async () => ({
@@ -575,7 +584,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
       switchesThisTurn: 2,
       classification,
     }, {
-      timeoutMs: 120_000,
+      timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
     });
   });
 
@@ -615,7 +624,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
       classification,
       resumePromptMode: 'custom',
     }, {
-      timeoutMs: 120_000,
+      timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
     });
   });
 
@@ -646,7 +655,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     })).resolves.not.toHaveProperty('resumePromptMode');
     expect(notify).toHaveBeenCalledWith(
       expect.not.objectContaining({ resumePromptMode: expect.anything() }),
-      { timeoutMs: 120_000 },
+      { timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS },
     );
   });
 
@@ -672,7 +681,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     });
 
     expect(notify).toHaveBeenCalledWith(expect.any(Object), {
-      timeoutMs: 120_000,
+      timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
     });
   });
 
