@@ -40,6 +40,20 @@ const ViewWithClick = View as unknown as React.ComponentType<
 
 const REVIEW_DIFF_LIST_DRAW_DISTANCE_MULTIPLIER = 0.75;
 
+export function selectChangedFilesReviewWebRootCandidate(params: Readonly<{
+    imperativeHost: Element | null;
+    queriedHost: Element | null;
+}>): Element | null {
+    return params.imperativeHost ?? params.queriedHost;
+}
+
+export function resolveChangedFilesReviewCurrentWebScrollRoot<T>(params: Readonly<{
+    resolveCurrent: () => T | null;
+    retained: T | null;
+}>): T | null {
+    return params.resolveCurrent() ?? params.retained;
+}
+
 type ChangedFilesReviewTheme = Readonly<{
     colors: Readonly<{
         surface: Readonly<{
@@ -483,7 +497,10 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         if (!win) return null;
         const doc = win.document as Document | undefined;
         const listHost = (doc?.querySelector?.('[data-testid="scm-review-list"]') as Element | null) ?? null;
-        const rootCandidate: Element | null = listHost ?? (host as Element | null);
+        const rootCandidate = selectChangedFilesReviewWebRootCandidate({
+            imperativeHost: host as Element | null,
+            queriedHost: listHost,
+        });
         if (!rootCandidate) return null;
 
         const disableOverflowAnchor = (el: any) => {
@@ -517,7 +534,10 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             return;
         }
 
-        const scrollRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
+        const scrollRoot = resolveChangedFilesReviewCurrentWebScrollRoot({
+            resolveCurrent: resolveWebScrollRoot,
+            retained: webScrollRootRef.current,
+        });
         const doc = (globalThis as any).window?.document as Document | undefined;
         const rowTestId = `scm-change-row-${toTestIdSafeValue(path)}`;
         const row = doc?.querySelector?.(`[data-testid="${rowTestId}"]`) as HTMLElement | null;

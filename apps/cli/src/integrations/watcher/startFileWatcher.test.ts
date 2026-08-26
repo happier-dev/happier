@@ -6,6 +6,8 @@ import { logger } from '@/ui/logger';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startFileWatcher } from './startFileWatcher';
 
+const realSetTimeout = setTimeout;
+
 async function waitFor(condition: () => boolean, opts?: { timeoutMs?: number; intervalMs?: number }): Promise<void> {
   const timeoutMs = opts?.timeoutMs ?? 5_000;
   const intervalMs = opts?.intervalMs ?? 25;
@@ -33,7 +35,10 @@ async function advanceMissingParentRetriesUntilExpired(debugSpy: ReturnType<type
       return;
     }
     await vi.advanceTimersByTimeAsync(1_000);
-    await Promise.resolve();
+    // The retry timer is fake, but each retry performs a real fs.stat. Give
+    // libuv a bounded amount of real time before advancing the next fake
+    // second so the test cannot outrun filesystem callbacks on a loaded runner.
+    await new Promise<void>((resolve) => realSetTimeout(resolve, 10));
   }
 
   throw new Error(`Timed out waiting for missing-parent watcher expiry. Logs:\n${watcherDebugMessages(debugSpy).join('\n')}`);

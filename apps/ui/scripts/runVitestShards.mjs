@@ -23,7 +23,7 @@ export function resolveVitestShardCount(env) {
   // The UI suite has a large module graph (React Native stubs + Expo/web shims).
   // Running too many files in a single Vitest process can cause heap growth over time,
   // even with `isolate: true`. More shards keeps each process smaller and avoids OOMs.
-  return override ?? 24;
+  return override ?? 32;
 }
 
 export function resolveVitestShardRange(env, shardCount) {

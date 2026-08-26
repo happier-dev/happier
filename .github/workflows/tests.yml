@@ -192,11 +192,11 @@ env:
 jobs:
   ui-e2e:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui_e2e }}
-    name: UI E2E (Playwright) / shard ${{ matrix.shard }}/9
+    name: UI E2E (Playwright) / shard ${{ matrix.shard }}/18
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.ui_e2e_specs != '' && '[1]' || '[1,2,3,4,5,6,7,8,9]') }}
+        shard: ${{ fromJSON(inputs.ui_e2e_specs != '' && '[1]' || '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
@@ -277,7 +277,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$UI_E2E_SPECS" ]; then
-            yarn -s test:e2e:ui -- --shard=${{ matrix.shard }}/9
+            yarn -s test:e2e:ui -- --shard=${{ matrix.shard }}/18
             exit 0
           fi
 
@@ -306,7 +306,7 @@ jobs:
         if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-9
+          name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-18
           compression-level: 0
           path: |
             packages/tests/.project/logs/e2e/ui-playwright

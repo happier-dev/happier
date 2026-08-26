@@ -469,6 +469,17 @@ if (argv.includes('--version') || argv.includes('-v')) {
   process.exit(0);
 }
 
+if (argv.includes('--help') || argv.includes('-h')) {
+  process.stdout.write([
+    'Usage: claude [options] [prompt]',
+    '  --output-format <format>',
+    '  --input-format <format>',
+    '  --permission-mode <mode>',
+    '',
+  ].join('\n'));
+  process.exit(0);
+}
+
 if (requireNativeOauth) {
   const nativeAuthContract = inspectNativeOauthContract();
   safeAppendJsonl(logPath, nativeAuthContract);

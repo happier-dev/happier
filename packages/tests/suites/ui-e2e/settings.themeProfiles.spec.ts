@@ -151,7 +151,7 @@ test.describe('ui e2e: custom theme profiles', () => {
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/session?happier_hmr=0`, 180_000);
     await expectVisibleTestId(page, 'settings-session-sessionListDensity-trigger');
     await openThemeProfiles({ page, uiBaseUrl });
-    await (await expectVisibleTestId(page, `settings-theme-profile-custom-${profileId}`)).click();
+    await (await expectVisibleTestId(page, `settings-theme-edit-${profileId}`)).click();
     await expectVisibleTestId(page, 'settings-theme-profile-editor');
 
     await (await expectVisibleTestId(page, `settings-theme-profile-export-${profileId}`)).click();

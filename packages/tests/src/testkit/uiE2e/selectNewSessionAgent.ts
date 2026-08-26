@@ -134,6 +134,9 @@ export async function selectNewSessionAgent(params: Readonly<{
         .getByTestId(AGENT_PICKER_POPOVER_TEST_ID)
         .getByRole('button', { name: new RegExp(escapedAgentId, 'i') }),
       250,
+    ) ?? await findActionableLocator(
+      params.page.getByRole('button', { name: new RegExp(`^${escapedAgentId}(?:\\s|$)`, 'i') }),
+      250,
     );
     if (semanticOption) {
       await semanticOption.click({ timeout: 1_000 });

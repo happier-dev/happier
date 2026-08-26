@@ -196,7 +196,9 @@ async function openPathBrowserFromNewSession(page: Page): Promise<void> {
     if (await modernPathChip.count()) {
         await expect(modernPathChip).toBeVisible({ timeout: 60_000 });
         await modernPathChip.click();
-        const treeBrowserButton = page.getByTestId('path-selection-list:open-tree-browser').first();
+        const activePopover = page.getByTestId('agent-input-content-popover');
+        await expect(activePopover).toHaveCount(1, { timeout: 60_000 });
+        const treeBrowserButton = activePopover.getByTestId('path-selection-list:open-tree-browser');
         await expect(treeBrowserButton).toBeVisible({ timeout: 60_000 });
         await treeBrowserButton.click();
         return;

@@ -237,6 +237,39 @@ describe('fake Claude fixture helpers', () => {
     expect(fixturePath.endsWith('fake-claude-code-cli.js')).toBe(true);
   });
 
+  it('answers the installed-runtime help probe and exits instead of entering interactive mode', async () => {
+    await withTempDir({ prefix: 'fake-claude-help-probe-' }, async ({ path: dir }) => {
+      const child = spawn(process.execPath, [fakeClaudeFixturePath(), '--help'], {
+        cwd: dir,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      const result = await new Promise<{ code: number | null; stdout: string }>((resolve, reject) => {
+        let stdout = '';
+        const timeout = setTimeout(() => {
+          child.kill('SIGTERM');
+          reject(new Error(`Timed out waiting for fake Claude --help; stdout=${JSON.stringify(stdout)}`));
+        }, 2_000);
+        child.stdout.setEncoding('utf8');
+        child.stdout.on('data', (chunk: string) => {
+          stdout += chunk;
+        });
+        child.on('error', (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+        child.on('exit', (code) => {
+          clearTimeout(timeout);
+          resolve({ code, stdout });
+        });
+      });
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('--input-format');
+    });
+  });
+
   it('renders an idle local composer so unified-terminal startup readiness can inject prompts', async () => {
     await withTempDir({ prefix: 'fake-claude-local-readiness-' }, async ({ path: dir }) => {
       const logPath = join(dir, 'fake-claude.jsonl');
