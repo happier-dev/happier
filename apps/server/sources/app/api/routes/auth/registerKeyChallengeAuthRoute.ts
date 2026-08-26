@@ -21,6 +21,7 @@ import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/pub
 import {
     admitAccountContentKey,
     deriveAccountEncryptionCurrentnessFromRow,
+    isAccountContentKeyBindingRecoveryRequired,
     verifyAccountContentKeyBinding,
     type VerifiedAccountContentKeyBinding,
 } from "@/app/encryption/accountContentKeyAdmission";
@@ -203,11 +204,10 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
             });
             v2ChallengeId = challenge.id;
         } else {
-            // COMPAT(key-challenge-v1): retain the released raw assertion only while the
-            // minimum supported authenticating frontier includes ui-web-v0.2.10-dev.290 /
-            // server-v0.2.10-dev.74 (04b48d57cd9717cbf42170448bf15ff59a795fc4).
-            // Remove once that frontier is later and every supported authenticating client
-            // advertises challenge v2; then return the typed update requirement at this seam.
+            // COMPAT(key-challenge-v1): retain the raw assertion while an immutable supported
+            // stable/preview client artifact or the current remote-dev predecessor can emit it.
+            // Remove only after that release frontier no longer needs v1; clients do not
+            // advertise their challenge version. Return the typed update requirement here then.
             if (String(authRequest.challenge).length > 4096) {
                 return reply.code(401).send({ error: 'Invalid signature' });
             }
@@ -374,11 +374,21 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
             }
         }
 
+        let canRepairMissingE2eeContentKeyBinding = false;
         if (existingAccount) {
-            if (
+            const existingCurrentness =
                 deriveAccountEncryptionCurrentnessFromRow(
                     existingAccount,
-                ).status !== "ready"
+                );
+            canRepairMissingE2eeContentKeyBinding =
+                contentKeyBinding !== null
+                && isAccountContentKeyBindingRecoveryRequired(
+                    existingAccount,
+                    existingCurrentness,
+                );
+            if (
+                existingCurrentness.status !== "ready"
+                && !canRepairMissingE2eeContentKeyBinding
             ) {
                 return reply.code(401).send({
                     error: "Invalid token",
@@ -435,6 +445,44 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
             ) {
                 return reply.code(400).send({
                     error: "Invalid contentPublicKeySig",
+                });
+            }
+        }
+        if (canRepairMissingE2eeContentKeyBinding) {
+            if (!contentKeyBinding) {
+                return reply.code(401).send({
+                    error: "Invalid token",
+                });
+            }
+            const repairedAccount = await db.account.findUnique({
+                where: { id: user.id },
+                select: {
+                    publicKey: true,
+                    encryptionMode: true,
+                    contentPublicKey: true,
+                    contentPublicKeySig: true,
+                },
+            });
+            const repairedCurrentness = repairedAccount
+                ? deriveAccountEncryptionCurrentnessFromRow(repairedAccount)
+                : null;
+            if (
+                !repairedCurrentness
+                || repairedCurrentness.status !== "ready"
+                || repairedCurrentness.currentness.encryptionMode !== "e2ee"
+                || repairedCurrentness.currentness.contentPublicKey === null
+                || repairedCurrentness.currentness.contentPublicKeySignature === null
+                || !bytesEqual(
+                    repairedCurrentness.currentness.contentPublicKey,
+                    contentKeyBinding.contentPublicKey,
+                )
+                || !bytesEqual(
+                    repairedCurrentness.currentness.contentPublicKeySignature,
+                    contentKeyBinding.contentPublicKeySignature,
+                )
+            ) {
+                return reply.code(401).send({
+                    error: "Invalid token",
                 });
             }
         }

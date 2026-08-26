@@ -313,3 +313,26 @@ export function deriveAccountEncryptionCurrentnessFromRow(
         },
     };
 }
+
+/**
+ * The only E2EE inconsistency that an ordinary verified Secret Key login can
+ * repair is a valid signing anchor with both content-key binding fields absent.
+ * Every other inconsistency remains fail-closed and must not be advertised as
+ * a recovery path.
+ */
+export function isAccountContentKeyBindingRecoveryRequired(
+    account: Readonly<{
+        publicKey: string | null;
+        encryptionMode: string | null;
+        contentPublicKey: Uint8Array | null;
+        contentPublicKeySig: Uint8Array | null;
+    }>,
+    currentness: AccountEncryptionCurrentnessResult =
+        deriveAccountEncryptionCurrentnessFromRow(account),
+): boolean {
+    return account.encryptionMode === "e2ee"
+        && account.contentPublicKey === null
+        && account.contentPublicKeySig === null
+        && currentness.status === "inconsistent"
+        && currentness.reason === "missing_content_key_binding";
+}

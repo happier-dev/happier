@@ -29,9 +29,11 @@ import {
     isTokenOnlyAuthCredentials,
 } from '@/auth/storage/tokenStorage';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import {
     fetchAccountEncryptionCurrentness,
     fetchAccountEncryptionMode,
+    getAccountEncryptionModeScopeKey,
 } from '@/sync/api/account/apiAccountEncryptionMode';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
@@ -92,6 +94,11 @@ import {
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { runAccountEncryptionModeMigration } from '@/sync/ops/account/runAccountEncryptionModeMigration';
 
+type AccountEncryptionModePresentation = Readonly<{
+    scope: string | null;
+    mode: 'e2ee' | 'plain' | null;
+    recoveryRequired: boolean;
+}>;
 
 export default React.memo(() => {
     const { theme } = useUnistyles();
@@ -109,10 +116,44 @@ export default React.memo(() => {
     const applyProfile = storage((state) => state.applyProfile);
     const encryptionAccountOptOutEnabled = useFeatureEnabled('encryption.accountOptOut');
     const sessionDraftSyncEnabled = useFeatureEnabled('sessions.drafts');
+    const activeServer = useActiveServerSnapshot(
+        encryptionAccountOptOutEnabled,
+    );
+    const accountEncryptionScope = auth.credentials
+        ? getAccountEncryptionModeScopeKey(auth.credentials, activeServer)
+        : null;
 
-    const [accountEncryptionMode, setAccountEncryptionMode] = useState<'e2ee' | 'plain' | null>(null);
+    const [accountEncryptionPresentation, setAccountEncryptionPresentation] =
+        useState<AccountEncryptionModePresentation>({
+            scope: null,
+            mode: null,
+            recoveryRequired: false,
+        });
     const [accountEncryptionModeLoading, setAccountEncryptionModeLoading] = useState(false);
     const [accountEncryptionModeSaving, setAccountEncryptionModeSaving] = useState(false);
+    const accountEncryptionPresentationIsCurrent =
+        accountEncryptionScope !== null
+        && accountEncryptionPresentation.scope === accountEncryptionScope;
+    const accountEncryptionMode = accountEncryptionPresentationIsCurrent
+        ? accountEncryptionPresentation.mode
+        : null;
+    const accountEncryptionRecoveryRequired =
+        accountEncryptionPresentationIsCurrent
+        && accountEncryptionPresentation.recoveryRequired;
+    const publishAccountEncryptionPresentation = React.useCallback(
+        (
+            scope: string | null,
+            mode: 'e2ee' | 'plain' | null,
+            recoveryRequired = false,
+        ) => {
+            setAccountEncryptionPresentation({
+                scope,
+                mode,
+                recoveryRequired,
+            });
+        },
+        [],
+    );
     const firstKeyRecoveryAttemptedTokenRef =
         React.useRef<string | null>(null);
 
@@ -133,11 +174,41 @@ export default React.memo(() => {
     React.useEffect(() => {
         if (!encryptionAccountOptOutEnabled) return;
         const credentials = auth.credentials;
-        if (!credentials?.token) return;
+        const presentationScope = accountEncryptionScope;
+        if (!credentials?.token || !presentationScope) return;
         const credentialsToken = credentials.token;
 
         let cancelled = false;
+        const handleAccountEncryptionModeError = async (
+            error: unknown,
+        ): Promise<void> => {
+            if (cancelled) return;
+            if (
+                error instanceof HappyError
+                && error.code === 'account-encryption-recovery-required'
+            ) {
+                publishAccountEncryptionPresentation(
+                    presentationScope,
+                    null,
+                    true,
+                );
+                return;
+            }
+            await Modal.alertAsync(
+                t('common.error'),
+                error instanceof HappyError
+                    ? error.message
+                    : t(
+                        'settingsAccount.encryptionUpdateFailed',
+                    ),
+            );
+        };
         setAccountEncryptionModeLoading(true);
+        publishAccountEncryptionPresentation(
+            presentationScope,
+            null,
+            false,
+        );
         fetchAccountEncryptionMode(credentials)
             .then(async (res) => {
                 if (cancelled) return;
@@ -157,7 +228,10 @@ export default React.memo(() => {
                         }
                         if (cancelled) return;
                     }
-                    setAccountEncryptionMode(res.mode);
+                    publishAccountEncryptionPresentation(
+                        presentationScope,
+                        res.mode,
+                    );
                     const recoveryAttemptKey =
                         isLegacyAuthCredentials(credentials)
                             ? [
@@ -181,21 +255,15 @@ export default React.memo(() => {
                                 auth.loginWithCredentials,
                         });
                     if (cancelled || !replayed) return;
-                    setAccountEncryptionMode(
+                    publishAccountEncryptionPresentation(
+                        presentationScope,
                         replayed.mode,
                     );
                 } catch (error) {
-                    if (cancelled) return;
-                    await Modal.alertAsync(
-                        t('common.error'),
-                        error instanceof HappyError
-                            ? error.message
-                            : t(
-                                'settingsAccount.encryptionUpdateFailed',
-                            ),
-                    );
+                    await handleAccountEncryptionModeError(error);
                 }
             })
+            .catch(handleAccountEncryptionModeError)
             .finally(() => {
                 if (cancelled) return;
                 setAccountEncryptionModeLoading(false);
@@ -206,7 +274,9 @@ export default React.memo(() => {
         };
     }, [
         auth.credentials,
+        accountEncryptionScope,
         encryptionAccountOptOutEnabled,
+        publishAccountEncryptionPresentation,
     ]);
 
     const [savingUsername, saveUsername] = useHappyAction(async () => {
@@ -445,6 +515,14 @@ export default React.memo(() => {
                 {/* Analytics Section */}
                 {encryptionAccountOptOutEnabled && (
                     <ItemGroup title={t('terminal.encryption')}>
+                        {accountEncryptionRecoveryRequired ? (
+                            <Item
+                                testID="settings-account-encryption-recovery"
+                                title={t('navigation.restoreWithSecretKey')}
+                                subtitle={t('settingsAccount.restoreRequiredBody')}
+                                onPress={() => router.push('/restore/manual')}
+                            />
+                        ) : null}
                         <Item
                             title={t('terminal.endToEndEncrypted')}
                             rightElement={
@@ -461,6 +539,8 @@ export default React.memo(() => {
                                         if (!auth.credentials) return;
                                         if (accountEncryptionMode == null) return;
                                         const credentials = auth.credentials;
+                                        const presentationScope =
+                                            accountEncryptionScope;
                                         const credentialsToken =
                                             credentials.token;
                                         const nextMode = enabled ? 'e2ee' : 'plain';
@@ -482,7 +562,8 @@ export default React.memo(() => {
                                                             auth.loginWithCredentials,
                                                     });
                                                 if (replayed) {
-                                                    setAccountEncryptionMode(
+                                                    publishAccountEncryptionPresentation(
+                                                        presentationScope,
                                                         replayed.mode,
                                                     );
                                                     return;
@@ -519,12 +600,14 @@ export default React.memo(() => {
                                                             'Plain Account credentials could not be persisted',
                                                         );
                                                     }
-                                                    setAccountEncryptionMode(
+                                                    publishAccountEncryptionPresentation(
+                                                        presentationScope,
                                                         currentness.mode,
                                                     );
                                                     return;
                                                 }
-                                                setAccountEncryptionMode(
+                                                publishAccountEncryptionPresentation(
+                                                    presentationScope,
                                                     currentness.mode,
                                                 );
                                                 throw new Error(
@@ -824,7 +907,10 @@ export default React.memo(() => {
                                                     );
                                                 }
                                             }
-                                            setAccountEncryptionMode(result.mode);
+                                            publishAccountEncryptionPresentation(
+                                                presentationScope,
+                                                result.mode,
+                                            );
 
                                         } catch (e) {
                                             if (e instanceof HappyError) {

@@ -250,6 +250,66 @@ describe("accountRoutes (encryption mode integration)", () => {
         );
     });
 
+    it("GET /v1/account/encryption advertises Secret Key recovery only for a valid E2EE signing anchor with both content-key fields absent", async () => {
+        const binding = createSignedAccountContentBinding();
+        const partialBinding = createSignedAccountContentBinding();
+        const [repairable, partiallyBound] = await Promise.all([
+            db.account.create({
+                data: {
+                    publicKey: binding.publicKey,
+                    encryptionMode: "e2ee",
+                    contentPublicKey: null,
+                    contentPublicKeySig: null,
+                },
+                select: { id: true },
+            }),
+            db.account.create({
+                data: {
+                    publicKey: partialBinding.publicKey,
+                    encryptionMode: "e2ee",
+                    contentPublicKey: partialBinding.contentPublicKey,
+                    contentPublicKeySig: null,
+                },
+                select: { id: true },
+            }),
+        ]);
+
+        await withAuthenticatedTestApp(
+            (app) => accountRoutes(app as any),
+            async (app) => {
+                const recoveryResponse = await app.inject({
+                    method: "GET",
+                    url: "/v1/account/encryption",
+                    headers: { "x-test-user-id": repairable.id },
+                });
+                expect(recoveryResponse.statusCode).toBe(400);
+                expect(recoveryResponse.json()).toEqual({
+                    error: "account-encryption-recovery-required",
+                });
+
+                const currentnessResponse = await app.inject({
+                    method: "GET",
+                    url: "/v1/account/encryption/currentness",
+                    headers: { "x-test-user-id": repairable.id },
+                });
+                expect(currentnessResponse.statusCode).toBe(400);
+                expect(currentnessResponse.json()).toEqual({
+                    error: "migration-required",
+                });
+
+                const partialResponse = await app.inject({
+                    method: "GET",
+                    url: "/v1/account/encryption",
+                    headers: { "x-test-user-id": partiallyBound.id },
+                });
+                expect(partialResponse.statusCode).toBe(400);
+                expect(partialResponse.json()).toEqual({
+                    error: "migration-required",
+                });
+            },
+        );
+    });
+
     it("GET Account encryption endpoints reject inconsistent E2EE binding before disclosure", async () => {
         const account = await db.account.create({
             data: {

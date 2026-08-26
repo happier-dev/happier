@@ -27,6 +27,7 @@ import {
     isFeaturesRequest,
 } from './account.testHelpers';
 import {
+    getAccountSettingsRouteRouterMockRef,
     installAccountSettingsRouteModuleMocks,
 } from './accountSettingsRouteTestHelpers';
 
@@ -35,6 +36,8 @@ import {
 
 
 installAccountSettingsRouteModuleMocks();
+
+const routerMockRef = getAccountSettingsRouteRouterMockRef();
 
 const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -54,6 +57,17 @@ vi.mock('expo-camera', () => ({
 const useAuthMock = vi.hoisted(() => vi.fn());
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => useAuthMock(),
+}));
+
+const activeServerSnapshotState = vi.hoisted(() => ({
+    current: {
+        serverId: 'server-a',
+        serverUrl: 'https://server-a.example.test',
+        generation: 1,
+    },
+}));
+vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
+    useActiveServerSnapshot: () => activeServerSnapshotState.current,
 }));
 
 const fetchAccountEncryptionCurrentnessMock =
@@ -201,6 +215,12 @@ describe('Settings → Account (encryption mode toggle)', () => {
             tags: [],
             labels: [],
         });
+        activeServerSnapshotState.current = {
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            generation: 1,
+        };
+        routerMockRef.current?.spies.push.mockReset();
     });
 
     it('does not fetch account encryption mode when the feature gate is disabled', async () => {
@@ -245,6 +265,317 @@ describe('Settings → Account (encryption mode toggle)', () => {
             await act(async () => {});
 
             expect(findEncryptionModeSwitches(screen)).toHaveLength(0);
+        } finally {
+            await screen?.unmount();
+        }
+    });
+
+    it('opens manual Secret Key recovery only when Account encryption explicitly requires it', async () => {
+        useFeatureEnabledMock.mockReturnValue(true);
+        useAuthMock.mockReturnValue({
+            isAuthenticated: true,
+            credentials: { token: 't' },
+            logout: vi.fn(),
+            login: vi.fn(),
+        });
+        storage.getState().applyProfile({
+            ...profileDefaults,
+            id: 'account-1',
+            linkedProviders: [],
+            username: null,
+        });
+
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = getRequestUrl(input);
+            const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (isFeaturesRequest(url)) {
+                return {
+                    ok: true,
+                    json: async () => createAccountFeaturesResponse({
+                        encryptionAccountOptOutEnabled: true,
+                    }),
+                };
+            }
+            if (url.endsWith('/v1/account/encryption') && method === 'GET') {
+                return {
+                    ok: false,
+                    status: 400,
+                    json: async () => ({ error: 'account-encryption-recovery-required' }),
+                };
+            }
+            if (url.endsWith('/v1/account/encryption/migrate') && method === 'POST') {
+                throw new Error('migration request must not be sent');
+            }
+            throw new Error(`Unexpected fetch: ${url} (${method})`);
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+
+        let screen: Awaited<ReturnType<typeof renderSettingsView>> | undefined;
+        try {
+            screen = await renderSettingsView(<AccountScreen />);
+            await vi.waitFor(() => {
+                expect(
+                    screen!.findByTestId('settings-account-encryption-recovery'),
+                ).toBeTruthy();
+            });
+
+            await act(async () => {
+                screen?.findByTestId('settings-account-encryption-recovery')?.props.onPress();
+            });
+
+            expect(routerMockRef.current.spies.push).toHaveBeenCalledWith(
+                '/restore/manual',
+            );
+            expect(fetchMock.mock.calls.some(([input, init]) =>
+                getRequestUrl(input).endsWith('/v1/account/encryption/migrate')
+                && (init?.method ?? 'GET').toUpperCase() === 'POST',
+            )).toBe(false);
+        } finally {
+            await screen?.unmount();
+        }
+    });
+
+    it('keeps a generic migration-required mode response fail-closed without a Secret Key recovery CTA', async () => {
+        useFeatureEnabledMock.mockReturnValue(true);
+        useAuthMock.mockReturnValue({
+            isAuthenticated: true,
+            credentials: { token: 't' },
+            logout: vi.fn(),
+            login: vi.fn(),
+        });
+        storage.getState().applyProfile({
+            ...profileDefaults,
+            id: 'account-1',
+            linkedProviders: [],
+            username: null,
+        });
+
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = getRequestUrl(input);
+            const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (isFeaturesRequest(url)) {
+                return {
+                    ok: true,
+                    json: async () => createAccountFeaturesResponse({
+                        encryptionAccountOptOutEnabled: true,
+                    }),
+                };
+            }
+            if (url.endsWith('/v1/account/encryption') && method === 'GET') {
+                return {
+                    ok: false,
+                    status: 400,
+                    json: async () => ({ error: 'migration-required' }),
+                };
+            }
+            throw new Error(`Unexpected fetch: ${url} (${method})`);
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { Modal } = await import('@/modal');
+        const alertSpy = vi.spyOn(Modal, 'alertAsync').mockResolvedValue();
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+
+        let screen: Awaited<ReturnType<typeof renderSettingsView>> | undefined;
+        try {
+            screen = await renderSettingsView(<AccountScreen />);
+            await vi.waitFor(() => {
+                expect(alertSpy).toHaveBeenCalledWith(
+                    'common.error',
+                    'Failed to load encryption setting',
+                );
+            });
+            expect(
+                screen.findByTestId('settings-account-encryption-recovery'),
+            ).toBeNull();
+        } finally {
+            await screen?.unmount();
+        }
+    });
+
+    it('withdraws a recovery CTA before same-scope refetches and across credential and server scope changes', async () => {
+        useFeatureEnabledMock.mockReturnValue(true);
+        const authState: { credentials: { token: string } } = {
+            credentials: { token: 'account-a-token' },
+        };
+        useAuthMock.mockImplementation(() => ({
+            isAuthenticated: true,
+            credentials: authState.credentials,
+            logout: vi.fn(),
+            login: vi.fn(),
+        }));
+        storage.getState().applyProfile({
+            ...profileDefaults,
+            id: 'account-a',
+            linkedProviders: [],
+            username: null,
+        });
+
+        let resolveSameScopeMode!: (response: Response) => void;
+        const sameScopeMode = new Promise<Response>((resolve) => {
+            resolveSameScopeMode = resolve;
+        });
+        let resolveCredentialBMode!: (response: Response) => void;
+        const credentialBMode = new Promise<Response>((resolve) => {
+            resolveCredentialBMode = resolve;
+        });
+        let resolveServerBMode!: (response: Response) => void;
+        const serverBMode = new Promise<Response>((resolve) => {
+            resolveServerBMode = resolve;
+        });
+        let accountAModeRequests = 0;
+        let accountBModeRequests = 0;
+        const { default: AccountScreen } = await import('@/app/(app)/settings/account');
+        const TestableAccountScreen = AccountScreen as React.ComponentType<{
+            testScopeRevision: number;
+        }>;
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = getRequestUrl(input);
+            const method = (init?.method ?? 'GET').toUpperCase();
+            if (url.endsWith('/health') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (url.endsWith('/v1/auth/ping') && method === 'GET') {
+                return createReachabilityProbeResponse();
+            }
+            if (isFeaturesRequest(url)) {
+                return {
+                    ok: true,
+                    json: async () => createAccountFeaturesResponse({
+                        encryptionAccountOptOutEnabled: true,
+                    }),
+                };
+            }
+            if (url.endsWith('/v1/account/encryption') && method === 'GET') {
+                const authorization = new Headers(init?.headers).get('Authorization');
+                if (authorization === 'Bearer account-a-token') {
+                    accountAModeRequests += 1;
+                    return await (
+                        accountAModeRequests === 1
+                            ? new Response(JSON.stringify({
+                                error: 'account-encryption-recovery-required',
+                            }), { status: 400 })
+                            : sameScopeMode
+                    );
+                }
+                if (authorization === 'Bearer account-b-token') {
+                    accountBModeRequests += 1;
+                    return await (
+                        accountBModeRequests === 1
+                            ? credentialBMode
+                            : serverBMode
+                    );
+                }
+            }
+            throw new Error(`Unexpected fetch: ${url} (${method})`);
+        });
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+        const { Modal } = await import('@/modal');
+        const alertSpy = vi.spyOn(Modal, 'alertAsync').mockResolvedValue();
+
+        let screen: Awaited<ReturnType<typeof renderSettingsView>> | undefined;
+        try {
+            screen = await renderSettingsView(
+                <TestableAccountScreen testScopeRevision={0} />,
+            );
+            await vi.waitFor(() => {
+                expect(
+                    screen!.findByTestId('settings-account-encryption-recovery'),
+                ).toBeTruthy();
+            });
+
+            authState.credentials = { token: 'account-a-token' };
+            await screen.update(
+                <TestableAccountScreen testScopeRevision={1} />,
+            );
+
+            await vi.waitFor(() => {
+                expect(accountAModeRequests).toBe(2);
+            });
+            expect(
+                screen.findByTestId('settings-account-encryption-recovery'),
+            ).toBeNull();
+
+            await act(async () => {
+                resolveSameScopeMode(new Response(JSON.stringify({
+                    error: 'migration-required',
+                }), { status: 400 }));
+                await Promise.resolve();
+            });
+            await vi.waitFor(() => {
+                expect(alertSpy).toHaveBeenCalledWith(
+                    'common.error',
+                    'Failed to load encryption setting',
+                );
+            });
+            expect(
+                screen.findByTestId('settings-account-encryption-recovery'),
+            ).toBeNull();
+
+            authState.credentials = { token: 'account-b-token' };
+            await screen.update(
+                <TestableAccountScreen testScopeRevision={2} />,
+            );
+
+            expect(
+                screen.findByTestId('settings-account-encryption-recovery'),
+            ).toBeNull();
+
+            await act(async () => {
+                resolveCredentialBMode(new Response(JSON.stringify({
+                    error: 'account-encryption-recovery-required',
+                }), { status: 400 }));
+                await Promise.resolve();
+            });
+            await vi.waitFor(() => {
+                expect(
+                    screen!.findByTestId('settings-account-encryption-recovery'),
+                ).toBeTruthy();
+            });
+
+            activeServerSnapshotState.current = {
+                serverId: 'server-b',
+                serverUrl: 'https://server-b.example.test',
+                generation: 2,
+            };
+            await screen.update(
+                <TestableAccountScreen testScopeRevision={3} />,
+            );
+
+            expect(
+                screen.findByTestId('settings-account-encryption-recovery'),
+            ).toBeNull();
+
+            await act(async () => {
+                resolveServerBMode(new Response(JSON.stringify({
+                    error: 'migration-required',
+                }), { status: 400 }));
+                await Promise.resolve();
+            });
+            await vi.waitFor(() => {
+                expect(alertSpy).toHaveBeenCalledWith(
+                    'common.error',
+                    'Failed to load encryption setting',
+                );
+            });
+            expect(
+                screen.findByTestId('settings-account-encryption-recovery'),
+            ).toBeNull();
         } finally {
             await screen?.unmount();
         }

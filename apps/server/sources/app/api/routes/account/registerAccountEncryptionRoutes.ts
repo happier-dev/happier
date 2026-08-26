@@ -10,6 +10,7 @@ import { type Fastify } from "../../types";
 import { updateAccountEncryptionMode } from "./updateAccountEncryptionMode";
 import {
     deriveAccountEncryptionCurrentnessFromRow,
+    isAccountContentKeyBindingRecoveryRequired,
 } from "@/app/encryption/accountContentKeyAdmission";
 import {
     deriveAccountEncryptionMigrationKeyFingerprints,
@@ -28,7 +29,10 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
                 response: {
                     200: AccountEncryptionModeResponseSchema,
                     400: z.object({
-                        error: z.literal("migration-required"),
+                        error: z.enum([
+                            "migration-required",
+                            "account-encryption-recovery-required",
+                        ]),
                     }),
                     500: z.object({ error: z.literal("internal") }),
                 },
@@ -54,7 +58,12 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
                     deriveAccountEncryptionCurrentnessFromRow(user);
                 if (currentness.status === "inconsistent") {
                     return reply.code(400).send({
-                        error: "migration-required",
+                        error: isAccountContentKeyBindingRecoveryRequired(
+                            user,
+                            currentness,
+                        )
+                            ? "account-encryption-recovery-required"
+                            : "migration-required",
                     });
                 }
                 return reply.send({

@@ -2,7 +2,10 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { backoff } from '@/utils/timing/time';
 import { serverFetch } from '@/sync/http/client';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import {
+    getActiveServerSnapshot,
+    type ActiveServerSnapshot,
+} from '@/sync/domains/server/serverRuntime';
 import { HappyError } from '@/utils/errors/errors';
 import {
     AccountEncryptionModeResponseSchema,
@@ -38,8 +41,14 @@ function normalizeUpdatedAt(raw: unknown): number {
     return typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
 }
 
-function buildAccountEncryptionModeCacheKey(credentials: AuthCredentials): string {
-    const snapshot = getActiveServerSnapshot();
+/** The canonical server-and-credential identity for this Account mode read. */
+export function getAccountEncryptionModeScopeKey(
+    credentials: AuthCredentials,
+    snapshot: Pick<
+        ActiveServerSnapshot,
+        'serverId' | 'serverUrl' | 'generation'
+    > = getActiveServerSnapshot(),
+): string {
     return [
         snapshot.serverId,
         snapshot.serverUrl,
@@ -159,8 +168,19 @@ export async function fetchAccountEncryptionMode(
         }
 
         if (!response.ok) {
+            const errorBody: unknown = await response.json().catch(() => null);
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-                throw new HappyError('Failed to load encryption setting', false, { status: response.status, kind: 'server' });
+                throw new HappyError('Failed to load encryption setting', false, {
+                    status: response.status,
+                    kind: 'server',
+                    code: response.status === 400
+                        && typeof errorBody === 'object'
+                        && errorBody !== null
+                        && 'error' in errorBody
+                        && errorBody.error === 'account-encryption-recovery-required'
+                        ? 'account-encryption-recovery-required'
+                        : undefined,
+                });
             }
             throw new Error(`Failed to load account encryption mode: ${response.status}`);
         }
@@ -180,7 +200,7 @@ export async function fetchAccountEncryptionMode(
         return await run();
     }
 
-    const cacheKey = buildAccountEncryptionModeCacheKey(credentials);
+    const cacheKey = getAccountEncryptionModeScopeKey(credentials);
     const now = Date.now();
     pruneAccountEncryptionModeCache(now);
 

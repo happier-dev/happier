@@ -132,6 +132,40 @@ describe('apiAccountEncryptionMode', () => {
     expect(res).toEqual({ mode: 'e2ee', updatedAt: 0 });
   });
 
+  it('preserves the explicit Account recovery response as a typed recovery error', async () => {
+    mockServerConfig();
+    const serverFetch = vi.fn(async () => new Response(JSON.stringify({
+      error: 'account-encryption-recovery-required',
+    }), { status: 400 }));
+    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
+
+    const { fetchAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
+
+    await expect(fetchAccountEncryptionMode(credentials)).rejects.toMatchObject({
+      status: 400,
+      kind: 'server',
+      code: 'account-encryption-recovery-required',
+    });
+  });
+
+  it('keeps a generic migration-required response fail-closed instead of offering Secret Key recovery', async () => {
+    mockServerConfig();
+    const serverFetch = vi.fn(async () => new Response(JSON.stringify({
+      error: 'migration-required',
+    }), { status: 400 }));
+    vi.doMock('@/sync/http/client', () => ({ serverFetch }));
+
+    const { fetchAccountEncryptionMode } = await import('./apiAccountEncryptionMode');
+
+    await expect(fetchAccountEncryptionMode(credentials)).rejects.toMatchObject({
+      status: 400,
+      kind: 'server',
+    });
+    await expect(fetchAccountEncryptionMode(credentials)).rejects.not.toMatchObject({
+      code: 'account-encryption-recovery-required',
+    });
+  });
+
   it('coalesces concurrent account-mode GETs for the same server and credentials', async () => {
     mockServerConfig();
     let resolveFetch!: (response: Response) => void;

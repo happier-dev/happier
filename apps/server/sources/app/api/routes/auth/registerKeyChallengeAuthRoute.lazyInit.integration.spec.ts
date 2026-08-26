@@ -13,6 +13,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { registerKeyChallengeAuthRoute } from "./registerKeyChallengeAuthRoute";
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
+import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
@@ -364,6 +365,102 @@ describe("registerKeyChallengeAuthRoute (lazy auth init) (integration)", () => {
             contentPublicKey: new Uint8Array(contentKey.publicKey),
             contentPublicKeySig: new Uint8Array(contentSignature),
         });
+
+        await app.close();
+        harness.resetEnv();
+    });
+
+    it("repairs only the ordinary verified key challenge for an E2EE account missing both content-key fields", async () => {
+        const app = createTestApp();
+        registerKeyChallengeAuthRoute(app);
+        await app.ready();
+
+        const signing = tweetnacl.sign.keyPair();
+        const contentKey = tweetnacl.box.keyPair();
+        const contentPublicKeySig = createContentKeyBinding(
+            signing.secretKey,
+            contentKey.publicKey,
+        );
+        const account = await db.account.create({
+            data: {
+                publicKey: privacyKit.encodeHex(ownedBytes(signing.publicKey)),
+                encryptionMode: "e2ee",
+                contentPublicKey: null,
+                contentPublicKeySig: null,
+            },
+            select: { id: true },
+        });
+
+        const accountBoundResponse = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload: createExpectedAccountLoginPayload({
+                signing,
+                contentPublicKey: contentKey.publicKey,
+                contentPublicKeySig,
+                expectedAccountId: account.id,
+            }),
+        });
+        expect(accountBoundResponse.statusCode).toBe(401);
+        expect(accountBoundResponse.json()).toEqual({
+            error: "Invalid token",
+        });
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: {
+                contentPublicKey: true,
+                contentPublicKeySig: true,
+            },
+        })).resolves.toEqual({
+            contentPublicKey: null,
+            contentPublicKeySig: null,
+        });
+
+        const challenge = new Uint8Array(crypto.randomBytes(32));
+        const response = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload: {
+                publicKey: privacyKit.encodeBase64(ownedBytes(signing.publicKey)),
+                challenge: privacyKit.encodeBase64(challenge),
+                signature: privacyKit.encodeBase64(ownedBytes(
+                    tweetnacl.sign.detached(challenge, ownedBytes(signing.secretKey)),
+                )),
+                contentPublicKey: privacyKit.encodeBase64(
+                    ownedBytes(contentKey.publicKey),
+                ),
+                contentPublicKeySig: privacyKit.encodeBase64(
+                    ownedBytes(contentPublicKeySig),
+                ),
+            },
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({
+            success: true,
+            token: expect.any(String),
+        });
+        const repaired = await db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: {
+                publicKey: true,
+                encryptionMode: true,
+                contentPublicKey: true,
+                contentPublicKeySig: true,
+            },
+        });
+        expect(repaired.contentPublicKey).toEqual(
+            new Uint8Array(contentKey.publicKey),
+        );
+        expect(repaired.contentPublicKeySig).toEqual(
+            new Uint8Array(contentPublicKeySig),
+        );
+        const currentness = deriveAccountEncryptionCurrentnessFromRow(repaired);
+        expect(currentness.status).toBe("ready");
+        if (currentness.status !== "ready") {
+            throw new Error("Expected repaired Account encryption currentness");
+        }
+        expect(currentness.currentness.encryptionMode).toBe("e2ee");
 
         await app.close();
         harness.resetEnv();
