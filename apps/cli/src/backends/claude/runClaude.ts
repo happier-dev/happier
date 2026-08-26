@@ -108,6 +108,7 @@ import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLo
 import type { SessionRuntimeActivityContributionHandle } from '@/session/runtimeActivity/types';
 import type { RuntimeActivityApplicability } from '@/session/runtimeActivity/types';
 import { createClaudeProviderRuntimeActivityBindingOwner } from './providerActivity/createClaudeProviderRuntimeActivityAdapter';
+import { createPendingFirstInputCommitter } from '@/daemon/spawn/pendingFirstInput';
 
 type ClaudePermissionLifecycleHookEventName = 'PermissionRequest' | 'PermissionRequestCompleted';
 
@@ -329,6 +330,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         return;
     }
 
+    const pendingFirstInputCommitter = createPendingFirstInputCommitter();
+
     logger.infoFile('[CLAUDE_STARTUP] stage=backend_api_context_started');
     const { api, machineId } = await initializeBackendApiContext({
         credentials,
@@ -506,6 +509,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     logger.infoFile('[CLAUDE_STARTUP] stage=session_transport_attach_started');
     await runtimeActivity.lifecycle.attachSession(session);
     logger.infoFile('[CLAUDE_STARTUP] stage=session_transport_attach_completed');
+    await pendingFirstInputCommitter.commit(session);
     logger.infoFile('[CLAUDE_STARTUP] stage=effective_prompt_started');
     const defaultSystemPromptText = await resolveEffectiveCodingPromptText({
         credentials,

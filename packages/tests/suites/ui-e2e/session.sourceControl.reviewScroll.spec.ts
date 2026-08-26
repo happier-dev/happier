@@ -343,38 +343,43 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     }
     await expect(midRow).toHaveCount(1, { timeout: 60_000 });
     await midRow.scrollIntoViewIfNeeded();
-    const scrollTopBeforeCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
+    // Let Playwright finish its actionability scroll before capturing the anchor. Locator.click()
+    // may otherwise scroll a virtualized row again after this baseline has already been read.
+    await midRow.click({ trial: true });
     const beforeBox = await midRow.boundingBox();
-    await midRow.click();
+    expect(beforeBox, 'midRow boundingBox was null after the trial click actionability scroll').not.toBeNull();
+    if (!beforeBox) {
+      throw new Error('midRow boundingBox was null after the trial click actionability scroll');
+    }
+    const scrollTopBeforeCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
+    await page.mouse.click(beforeBox.x + beforeBox.width / 2, beforeBox.y + beforeBox.height / 2);
     await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(midPath)}`)).toHaveCount(0, { timeout: 60_000 });
     const scrollTopAfterCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
     // ChangedFilesReview preserves scroll position on web, but FlashList can apply post-layout
     // corrections asynchronously (RAF + virtualization). Poll briefly for the row's viewport
     // position to settle to avoid flakiness across machines.
     let afterBox = await midRow.boundingBox();
-    if (beforeBox && afterBox) {
-      const startedAt = Date.now();
-      const maxMs = 1200;
-      while (afterBox && Date.now() - startedAt < maxMs) {
-        const delta = Math.abs(afterBox.y - beforeBox.y);
-        if (delta <= 60) break;
-        await page.waitForTimeout(50);
-        afterBox = await midRow.boundingBox();
-      }
-      expect(
-        afterBox,
-        `midRow boundingBox became null (scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse})`
-      ).not.toBeNull();
-      if (!afterBox) {
-        throw new Error(
-          `midRow boundingBox became null (scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse})`
-        );
-      }
-      expect(
-        Math.abs(afterBox.y - beforeBox.y),
-        `scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse}`
-      ).toBeLessThanOrEqual(60);
+    const startedAt = Date.now();
+    const maxMs = 1200;
+    while (afterBox && Date.now() - startedAt < maxMs) {
+      const delta = Math.abs(afterBox.y - beforeBox.y);
+      if (delta <= 60) break;
+      await page.waitForTimeout(50);
+      afterBox = await midRow.boundingBox();
     }
+    expect(
+      afterBox,
+      `midRow boundingBox became null (scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse})`
+    ).not.toBeNull();
+    if (!afterBox) {
+      throw new Error(
+        `midRow boundingBox became null (scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse})`
+      );
+    }
+    expect(
+      Math.abs(afterBox.y - beforeBox.y),
+      `scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse}`
+    ).toBeLessThanOrEqual(60);
 
     // Scroll away and back; the diff should remain collapsed.
     await reviewList.hover();

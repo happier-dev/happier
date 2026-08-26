@@ -32,8 +32,7 @@ import {
   sendTerminalFallbackMessageIfNeeded,
 } from '@/agent/runtime/startupSideEffects'
 import {
-  clearPendingFirstInputFromEnv,
-  readPendingFirstInputFromEnv,
+  createPendingFirstInputCommitter,
 } from '@/daemon/spawn/pendingFirstInput'
 
 export interface InitializeBackendRunSessionOptions {
@@ -219,21 +218,7 @@ export async function initializeBackendRunSession(
       deps.createSessionRuntimeActivityFn ?? createSessionRuntimeActivity,
     )
   const startupSideEffectsOrder = opts.startupSideEffectsOrder ?? 'report-first'
-  const pendingFirstInput = readPendingFirstInputFromEnv()
-  let pendingFirstInputCommitted = pendingFirstInput === null
-  const commitPendingFirstInput = async (session: ApiSessionClient): Promise<void> => {
-    if (pendingFirstInputCommitted || pendingFirstInput === null) return
-    const result = await session.enqueueSessionUserMessage({
-      text: pendingFirstInput.text,
-      localId: pendingFirstInput.localId,
-      meta: { ...pendingFirstInput.meta, source: 'ui', sentFrom: 'cli' },
-    })
-    if (result?.recoveryBlocked) {
-      throw new Error(`Pending first input was blocked: ${result.recoveryBlocked.status}`)
-    }
-    pendingFirstInputCommitted = true
-    clearPendingFirstInputFromEnv()
-  }
+  const pendingFirstInputCommitter = createPendingFirstInputCommitter()
 
   try {
 
@@ -334,7 +319,7 @@ export async function initializeBackendRunSession(
     }
 
     primeAgentStateForUiFn(session, opts.uiLogPrefix)
-    await commitPendingFirstInput(session)
+    await pendingFirstInputCommitter.commit(session)
     await runStartupSideEffects(session, existingSessionId, daemonReportMetadata, 'background')
 
     return {
@@ -396,7 +381,7 @@ export async function initializeBackendRunSession(
       if (!nextId || nextId.startsWith('offline-')) return
 
       primeAgentStateForUiFn(newSession, opts.uiLogPrefix)
-      void commitPendingFirstInput(newSession)
+      void pendingFirstInputCommitter.commit(newSession)
         .then(() => runStartupSideEffectsOnce(newSession, nextId))
         .catch(() => {})
     },
@@ -406,7 +391,7 @@ export async function initializeBackendRunSession(
 
   primeAgentStateForUiFn(session, opts.uiLogPrefix)
   if (reportedSessionId) {
-    await commitPendingFirstInput(session)
+    await pendingFirstInputCommitter.commit(session)
     await runStartupSideEffectsOnce(session, reportedSessionId)
   }
 

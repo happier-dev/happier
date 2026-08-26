@@ -170,6 +170,7 @@ test.describe('ui e2e: pets session state mapping', () => {
         uiBaseUrl,
         machineId,
         prompt: 'pets session state e2e',
+        readiness: 'first-turn-reload-safe',
       }),
       expectPetState(page, /^(running|waiting|review)$/),
     ]);

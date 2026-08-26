@@ -7,7 +7,10 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSessionForkStrategy';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
@@ -56,15 +59,6 @@ function parseSessionIdFromUrl(url: string): string {
     throw new Error(`failed to parse session id from url: ${url}`);
   }
   return sessionId;
-}
-
-async function createSessionFromComposer(params: {
-  page: Page;
-  uiBaseUrl: string;
-  machineId: string;
-  prompt: string;
-}): Promise<string> {
-  return createSessionFromNewSessionComposer(params);
 }
 
 test.describe('ui e2e: session fork from header action menu', () => {
@@ -145,10 +139,16 @@ test.describe('ui e2e: session fork from header action menu', () => {
 
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
     const parentPrompt = `fork-header-parent-1 ${run.runId}`;
-    const parentSessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: parentPrompt });
+    const parentSession = await createSessionFromNewSessionComposer({
+      page,
+      uiBaseUrl,
+      machineId,
+      prompt: parentPrompt,
+      readiness: 'first-turn-reload-safe',
+    });
+    const { sessionId: parentSessionId } = parentSession;
 
-    await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session: parentSession });
     await expect(page.getByText(/FAKE_TRANSCRIPT_ACTIVITY_FEED_DONE_1/)).toHaveCount(1, { timeout: 180_000 });
     await expect(page.getByTestId('transcript-tool-calls-group')).toHaveCount(1, { timeout: 120_000 });
 
@@ -177,8 +177,7 @@ test.describe('ui e2e: session fork from header action menu', () => {
       }
     }
 
-    await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session: parentSession });
 
     await page.getByLabel('Open session actions').click();
     await expect(page.getByRole('button', { name: /Fork session/i })).toHaveCount(1, { timeout: 60_000 });

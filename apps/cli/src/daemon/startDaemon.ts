@@ -1523,9 +1523,10 @@ function readAccountSettingsChangedHintVersion(update: unknown): number | null {
 async function refreshDaemonAccountSettingsForHint(params: Readonly<{
   credentials: Credentials;
   settingsVersion: number | null;
+  forceRefresh?: boolean;
 }>): Promise<boolean> {
   const requiresConservativeRefresh = params.settingsVersion === null;
-  if (!requiresConservativeRefresh) {
+  if (!requiresConservativeRefresh && params.forceRefresh !== true) {
     const active = getActiveAccountSettingsSnapshot();
     if (
       active
@@ -1539,7 +1540,7 @@ async function refreshDaemonAccountSettingsForHint(params: Readonly<{
     credentials: params.credentials,
     minSettingsVersion: params.settingsVersion,
     mode: 'blocking',
-    ...(requiresConservativeRefresh ? { forceRefresh: true } : {}),
+    ...(requiresConservativeRefresh || params.forceRefresh === true ? { forceRefresh: true } : {}),
   });
   return true;
 }
@@ -2952,6 +2953,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 await refreshDaemonAccountSettingsForHint({
                   credentials,
                   settingsVersion: normalizedOptions.accountSettingsVersionHint,
+                  forceRefresh: true,
                 });
               } catch (error) {
                 logger.warn('[DAEMON RUN] Account settings freshness refresh failed before spawn; continuing with last available settings', serializeAxiosErrorForLog(error));

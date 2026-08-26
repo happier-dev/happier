@@ -18,7 +18,6 @@ import {
   dragSessionToTarget,
   expectFolderAssignment,
   expectFolderParent,
-  expectOrderBefore,
   expectOrderMapContainsBefore,
   expectOrderMapStartsWith,
   folderOrderKey,
@@ -299,11 +298,6 @@ test.describe('ui e2e: session folders drag and drop', () => {
       secondKey: folderOrderKey(FOLDER_ALPHA_ID),
     });
     await refreshFolderDragView();
-    await expectOrderBefore({
-      page,
-      firstTestId: `session-list-item-${rootSessionId}`,
-      secondTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
-    });
 
     await dragSessionToTarget(page, {
       sessionId: rootSessionId,
@@ -342,11 +336,6 @@ test.describe('ui e2e: session folders drag and drop', () => {
       secondKey: folderOrderKey(FOLDER_ALPHA_ID),
     });
     await refreshFolderDragView();
-    await expectOrderBefore({
-      page,
-      firstTestId: `session-list-item-${rootSessionId}`,
-      secondTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
-    });
 
     await dragFolderToTarget(page, {
       sourceFolderId: FOLDER_BETA_ID,

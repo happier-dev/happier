@@ -255,15 +255,19 @@ test.describe('ui e2e: automations authoring', () => {
             },
         });
 
-        const sessionId = await createSessionFromNewSessionComposer({
+        const session = await createSessionFromNewSessionComposer({
             page,
             uiBaseUrl,
             machineId,
             prompt: `session for automation ${run.runId}`,
         });
+        const { sessionId } = session;
 
         const existingSessionAutomationName = `Existing automation ${run.runId}`;
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionId}/automations/new?happier_hmr=0`, 180_000);
+        const automationAuthoringUrl = new URL(session.sessionHref);
+        automationAuthoringUrl.pathname = `${automationAuthoringUrl.pathname}/automations/new`;
+        automationAuthoringUrl.searchParams.set('happier_hmr', '0');
+        await gotoDomContentLoadedWithRetries(page, automationAuthoringUrl.toString(), 180_000);
         await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 60_000 });
         await expect(page.getByTestId('automation-sentence-name-input')).toHaveCount(0, { timeout: 60_000 });
         await getVisibleSessionComposer(page).fill(`existing-session automation prompt ${run.runId}`);

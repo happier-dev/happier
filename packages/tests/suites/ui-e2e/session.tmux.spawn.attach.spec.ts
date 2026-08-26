@@ -14,7 +14,10 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { ensureCliDistSnapshotEntrypoint } from '../../src/testkit/process/cliDist';
 import { repoRootDir } from '../../src/testkit/paths';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+    createSessionFromNewSessionComposer,
+    reloadCreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 
@@ -275,9 +278,15 @@ test.describe('ui e2e: tmux spawn → attach', () => {
 
         const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
 
-        const sessionId = await createSessionFromNewSessionComposer({ page, uiBaseUrl, machineId, prompt: `hello ${run.runId}` });
-        await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-        await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+        const session = await createSessionFromNewSessionComposer({
+            page,
+            uiBaseUrl,
+            machineId,
+            prompt: `hello ${run.runId}`,
+            readiness: 'first-turn-reload-safe',
+        });
+        const { sessionId } = session;
+        await reloadCreatedSessionFromNewSessionComposer({ page, session });
         await expect.poll(async () => page.locator('[data-testid^="transcript-message-"]').count(), { timeout: 180_000 }).toBeGreaterThan(1);
 
         const info = await waitForAttachmentInfo(cliHomeDir, sessionId);

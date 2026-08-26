@@ -11,7 +11,10 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithPathFallback, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
@@ -716,15 +719,16 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
     });
     if (!sourceMachineId) throw new Error('missing source machine id');
 
-    const sessionId = await createSessionFromNewSessionComposer({
+    const session = await createSessionFromNewSessionComposer({
       page,
       uiBaseUrl,
       machineId: sourceMachineId,
       prompt: `handoff-header-parent-recovery ${run.runId}`,
+      readiness: 'first-turn-reload-safe',
     });
+    const { sessionId } = session;
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session });
     await expect(page.getByText('FAKE_CLAUDE_OK_1')).toHaveCount(1, { timeout: 180_000 });
 
     await connectTerminalForHome({
@@ -760,8 +764,7 @@ test.describe('ui e2e: session handoff failure recovery from header action menu'
     const targetMachineId = machineIds.find((id) => id !== sourceMachineId) ?? null;
     if (!targetMachineId) throw new Error(`failed to resolve target machine id from ${JSON.stringify(machineIds)}`);
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session });
 
     const sessionActionsTrigger = page.getByLabel('Open session actions');
     await expect(sessionActionsTrigger).toHaveCount(1, { timeout: 60_000 });

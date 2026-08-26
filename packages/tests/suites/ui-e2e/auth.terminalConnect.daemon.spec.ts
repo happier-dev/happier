@@ -11,7 +11,11 @@ import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } f
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+  type CreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -28,6 +32,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
   let accountSecretKeyFormatted: string | null = null;
   let fakeClaudeLogPath: string | null = null;
   let createdSessionId: string | null = null;
+  let createdSession: CreatedSessionFromNewSessionComposer | null = null;
   let fakeClaudePath: string | null = null;
 
   async function readAccountSecretKeyFromSettings(page: Page, baseUrl: string): Promise<string> {
@@ -341,12 +346,14 @@ test.describe('ui e2e: auth + terminal connect', () => {
 
       const prompt = `UI_E2E_MESSAGE_${run.runId}`;
       const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-      createdSessionId = await createSessionFromNewSessionComposer({
+      createdSession = await createSessionFromNewSessionComposer({
         page,
         uiBaseUrl,
         machineId,
         prompt,
+        readiness: 'first-turn-reload-safe',
       });
+      createdSessionId = createdSession.sessionId;
 
       await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
       await expect(page).toHaveURL(new RegExp(`/session/${createdSessionId}(?:[/?#]|$)`), { timeout: 60_000 });
@@ -391,6 +398,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!accountSecretKeyFormatted) throw new Error('missing account secret key from prior test');
     if (!createdSessionId) throw new Error('missing session id from prior test');
+    if (!createdSession) throw new Error('missing created session from prior test');
     if (!daemon) throw new Error('missing daemon from prior test');
     if (!fakeClaudePath) throw new Error('missing fake Claude path from prior test');
 
@@ -416,7 +424,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
     let thrown: unknown = null;
     try {
       await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
-      await page.goto(`${uiBaseUrl}/session/${createdSessionId}`, { waitUntil: 'domcontentloaded' });
+      await reloadCreatedSessionFromNewSessionComposer({ page, session: createdSession });
 
       const transcriptMessages = transcriptMessageLocator(page);
       const messageCountBefore = await transcriptMessages.count();
@@ -457,7 +465,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
         }, { timeout: 180_000 })
         .toBe(true);
 
-      await page.goto(`${uiBaseUrl}/session/${createdSessionId}`, { waitUntil: 'domcontentloaded' });
+      await reloadCreatedSessionFromNewSessionComposer({ page, session: createdSession });
       await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 120_000 });
 
       const followup = `UI_E2E_MESSAGE_RECONNECT_${run.runId}`;

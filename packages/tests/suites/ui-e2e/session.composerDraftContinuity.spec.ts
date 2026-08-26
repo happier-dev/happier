@@ -1,13 +1,15 @@
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { createTestAuthMtls } from '../../src/testkit/auth';
+import type { StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fetchJson } from '../../src/testkit/http';
-import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
@@ -53,8 +55,6 @@ type DraftReadResponse = Readonly<{
 }>;
 
 const DRAFT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SEEDED_MACHINE_ID = 'session-composer-draft-continuity-machine';
-
 function requireString(value: unknown, context: string): string {
     if (typeof value === 'string' && value.trim().length > 0) return value;
     throw new Error(`Missing ${context}`);
@@ -150,15 +150,13 @@ async function openNewSessionDraft(params: Readonly<{
     uiBaseUrl: string;
     draftId?: string;
 }>): Promise<Readonly<{ draftId: string; composer: ReturnType<Page['getByTestId']> }>> {
+    await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/?happier_hmr=0`, 180_000);
+    await waitForInitialAppUi({ page: params.page, timeoutMs: 180_000 });
     const target = params.draftId
         ? `${params.uiBaseUrl}/new?draftId=${encodeURIComponent(params.draftId)}&happier_hmr=0`
         : `${params.uiBaseUrl}/new?happier_hmr=0`;
     await gotoDomContentLoadedWithRetries(params.page, target, 180_000);
     const composer = params.page.getByTestId('new-session-composer-input');
-    if ((await composer.count()) === 0) {
-        // mTLS auto-provisioning can consume the first intended route.
-        await gotoDomContentLoadedWithRetries(params.page, target, 180_000);
-    }
     await expect(composer).toBeVisible({ timeout: 120_000 });
     await expect.poll(() => new URL(params.page.url()).searchParams.get('draftId'), { timeout: 60_000 })
         .toMatch(DRAFT_ID_PATTERN);
@@ -267,9 +265,11 @@ async function getTextareaMeasurements(locator: ReturnType<Page['locator']>): Pr
 test.describe('ui e2e: session composer draft continuity', () => {
     test.describe.configure({ mode: 'serial' });
     const suiteDir = run.testDir('session-composer-draft-continuity-suite');
+    const cliHomeDir = resolve(join(suiteDir, 'cli-home'));
 
     let server: StartedServer | null = null;
     let ui: StartedUiWeb | null = null;
+    let daemon: StartedDaemon | null = null;
     let uiBaseUrl: string | null = null;
     let proxyStop: (() => Promise<void>) | null = null;
     let token: string | null = null;
@@ -327,15 +327,6 @@ test.describe('ui e2e: session composer draft continuity', () => {
             fingerprint: IDENTITY_HEADERS.fingerprint,
         });
         token = auth.token;
-        const registeredMachine = await registerMachineIdentity({
-            baseUrl: server.baseUrl,
-            token,
-            machineId: SEEDED_MACHINE_ID,
-            metadata: 'session-composer-draft-continuity-machine',
-        });
-        if (registeredMachine.status !== 200) {
-            throw new Error(`Failed to register composer draft machine (status=${registeredMachine.status})`);
-        }
         sessionA = await createPlainSession({ baseUrl: server.baseUrl, token, title: 'Composer draft continuity A' });
         sessionB = await createPlainSession({ baseUrl: server.baseUrl, token, title: 'Composer draft continuity B' });
 
@@ -358,6 +349,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
 
     test.afterAll(async () => {
         test.setTimeout(120_000);
+        await daemon?.stop().catch(() => {});
         await ui?.stop().catch(() => {});
         await proxyStop?.().catch(() => {});
         await server?.stop().catch(() => {});
@@ -366,6 +358,18 @@ test.describe('ui e2e: session composer draft continuity', () => {
     test('restores long draft expansion and web scroll position after switching sessions', async ({ page }) => {
         test.setTimeout(420_000);
         if (!uiBaseUrl || !sessionA || !sessionB) throw new Error('missing composer continuity fixtures');
+
+        if (!server) throw new Error('missing composer continuity server');
+        daemon = await authenticateAndStartDaemon({
+            page,
+            testDir: suiteDir,
+            cliHomeDir,
+            serverUrl: server.baseUrl,
+            uiBaseUrl,
+            createAccount: false,
+            accountReadyTimeoutMs: 180_000,
+            daemonStartupTimeoutMs: 180_000,
+        });
 
         const longDraft = Array.from({ length: 36 }, (_, index) => `line ${index + 1} composer continuity ${run.runId}`).join('\n');
         const composerA = await openSession({ page, uiBaseUrl, session: sessionA });
@@ -417,7 +421,9 @@ test.describe('ui e2e: session composer draft continuity', () => {
         await expect(page.getByTestId('session-drafts-section')).toBeVisible({ timeout: 60_000 });
         await expect(rowA).toBeVisible();
 
-        await page.getByTestId('session-draft-new').click();
+        await rowA.click();
+        await expect(page).toHaveURL(new RegExp(`[?&]draftId=${draftA.draftId}(?:&|$)`), { timeout: 60_000 });
+        await page.getByTestId('new-session-draft-start-another').click();
         await expect(page.getByTestId('new-session-composer-input')).toBeVisible({ timeout: 60_000 });
         const draftBId = await expect.poll(
             () => new URL(page.url()).searchParams.get('draftId'),

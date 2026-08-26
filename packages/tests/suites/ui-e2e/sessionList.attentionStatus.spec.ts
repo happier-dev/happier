@@ -9,7 +9,8 @@ import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
-import { createSessionScopedSocketCollector } from '../../src/testkit/socketClient';
+import { createMachineBoundSessionScopedSocketCollector } from '../../src/testkit/sessionSocketBinding';
+import type { SocketCollector } from '../../src/testkit/socketClient';
 import { waitFor } from '../../src/testkit/timing';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
@@ -171,26 +172,23 @@ async function markWorkingSessionInProgress(params: Readonly<{
   });
 }
 
-async function connectWorkingSessionInProgress(params: Readonly<{
+async function connectAuthenticatedMachinePublisher(params: Readonly<{
   baseUrl: string;
   token: string;
   sessionId: string;
-}>): Promise<Readonly<{ close: () => void }>> {
-  const socket = createSessionScopedSocketCollector(params.baseUrl, params.token, params.sessionId);
+  thinking: boolean;
+}>): Promise<SocketCollector> {
+  const { socket } = await createMachineBoundSessionScopedSocketCollector(params);
   socket.connect();
   try {
     await waitFor(async () => socket.isConnected(), {
       timeoutMs: 20_000,
-      context: `connect working session socket for ${params.sessionId}`,
+      context: `connect authenticated machine publisher for ${params.sessionId}`,
     });
     socket.emit('session-alive', {
       sid: params.sessionId,
       time: Date.now(),
-      thinking: false,
-    });
-    await updateSessionRuntimeStatus({
-      ...params,
-      latestTurnStatus: 'in_progress',
+      thinking: params.thinking,
     });
     return socket;
   } catch (error) {
@@ -266,31 +264,6 @@ async function postSessionTurnMutation(params: Readonly<{
 
   if (res.status !== 200 || res.data?.success !== true) {
     throw new Error(`Failed to post session turn mutation (status=${res.status}, reason=${String(res.data?.reason)})`);
-  }
-}
-
-async function connectLegacyThinkingFallback(params: Readonly<{
-  baseUrl: string;
-  token: string;
-  sessionId: string;
-}>): Promise<ReturnType<typeof createSessionScopedSocketCollector>> {
-  const socket = createSessionScopedSocketCollector(params.baseUrl, params.token, params.sessionId);
-  socket.connect();
-
-  try {
-    await waitFor(async () => socket.isConnected(), {
-      timeoutMs: 20_000,
-      context: `connect legacy thinking fallback socket for ${params.sessionId}`,
-    });
-    socket.emit('session-alive', {
-      sid: params.sessionId,
-      time: Date.now(),
-      thinking: true,
-    });
-    return socket;
-  } catch (error) {
-    socket.close();
-    throw error;
   }
 }
 
@@ -596,13 +569,19 @@ test.describe('ui e2e: session list attention', () => {
         token,
         title: 'Static working attention e2e',
     });
-    const workingRuntime = await connectWorkingSessionInProgress({
+    const workingRuntime = await connectAuthenticatedMachinePublisher({
       baseUrl: server.baseUrl,
       token,
       sessionId: currentWorking.id,
+      thinking: false,
     });
 
     try {
+      await markWorkingSessionInProgress({
+        baseUrl: server.baseUrl,
+        token,
+        sessionId: currentWorking.id,
+      });
       await page.setViewportSize({ width: 1440, height: 900 });
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
       await waitForInitialAppUi({ page, timeoutMs: 180_000 });
@@ -670,10 +649,11 @@ test.describe('ui e2e: session list attention', () => {
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
 
     await expect(row(page, legacyThinking.id)).toHaveCount(1, { timeout: 120_000 });
-    const legacyRuntime = await connectLegacyThinkingFallback({
+    const legacyRuntime = await connectAuthenticatedMachinePublisher({
       baseUrl: server.baseUrl,
       token,
       sessionId: legacyThinking.id,
+      thinking: true,
     });
     try {
       await expect(workingHeader(page)).toHaveCount(1, { timeout: 60_000 });

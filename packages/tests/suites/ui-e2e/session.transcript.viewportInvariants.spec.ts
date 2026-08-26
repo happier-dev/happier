@@ -8,7 +8,11 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+  type CreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
@@ -432,6 +436,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
   let daemon: StartedDaemon | null = null;
   let accountSecretKeyFormatted: string | null = null;
   let sessionId: string | null = null;
+  let createdSession: CreatedSessionFromNewSessionComposer | null = null;
 
   function resolveServerLightSqliteDbPath(params: { suiteDir: string }): string {
     return resolve(join(params.suiteDir, 'server-light-data', 'happier-server-light.sqlite'));
@@ -497,13 +502,12 @@ test.describe('ui e2e: transcript viewport invariants', () => {
   }
 
   async function openSeededSessionColdAndSettle(page: Page): Promise<ViewportTelemetrySnapshot> {
-    if (!uiBaseUrl || !sessionId || !accountSecretKeyFormatted) throw new Error('missing seeded session fixtures');
+    if (!uiBaseUrl || !sessionId || !createdSession || !accountSecretKeyFormatted) throw new Error('missing seeded session fixtures');
     await installViewportTelemetryOverride(page);
     await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
     // Full-page navigation: a fresh JS context whose telemetry trace starts at app boot — this is
     // the cold-open trace (and also proves the init-script override survives full navigations).
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionId}`);
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session: createdSession });
     await waitForViewportTelemetryReadable(page);
     return await waitForViewportTelemetryQuiescence(page);
   }
@@ -628,12 +632,13 @@ test.describe('ui e2e: transcript viewport invariants', () => {
     accountSecretKeyFormatted = await readAccountSecretKeyFromSettings(page, uiBaseUrl);
 
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-    sessionId = await createSessionFromNewSessionComposer({
+    createdSession = await createSessionFromNewSessionComposer({
       page,
       uiBaseUrl,
       machineId,
       prompt: seedMessageText(0, run.runId),
     });
+    sessionId = createdSession.sessionId;
 
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 180_000 });

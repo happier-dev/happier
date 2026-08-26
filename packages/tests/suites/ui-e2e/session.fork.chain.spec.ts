@@ -8,7 +8,11 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+  type CreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSessionForkStrategy';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
@@ -69,15 +73,6 @@ async function fillAndClickSessionComposerSend(params: Readonly<{ page: Page; pr
   await expect(sendButton).toHaveCount(1, { timeout: timeoutMs });
   await expect(sendButton).toBeEnabled({ timeout: timeoutMs });
   await sendButton.click({ timeout: timeoutMs });
-}
-
-async function createSessionFromComposer(params: {
-  page: Page;
-  uiBaseUrl: string;
-  machineId: string;
-  prompt: string;
-}): Promise<string> {
-  return createSessionFromNewSessionComposer(params);
 }
 
 type TranscriptMessageMatch = Readonly<{
@@ -183,7 +178,11 @@ async function waitForCommittedTranscriptMessageMatchAfterTestId(params: {
   return match;
 }
 
-async function ensureReplayForkEnabled(params: { page: Page; uiBaseUrl: string; sessionId: string }): Promise<void> {
+async function ensureReplayForkEnabled(params: {
+  page: Page;
+  uiBaseUrl: string;
+  session: CreatedSessionFromNewSessionComposer;
+}): Promise<void> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const targetWrapper = params.page.locator('[data-testid^="transcript-message-"]').filter({ hasText: 'FAKE_CLAUDE_OK_1' }).first();
     await expect(targetWrapper).toHaveCount(1, { timeout: 60_000 });
@@ -209,8 +208,7 @@ async function ensureReplayForkEnabled(params: { page: Page; uiBaseUrl: string; 
       await replayItem.click();
     }
 
-    await params.page.goto(`${params.uiBaseUrl}/session/${params.sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(params.page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page: params.page, session: params.session });
   }
 }
 
@@ -318,10 +316,16 @@ test.describe('ui e2e: multi-level session fork chain', () => {
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
 
     const parentPrompt = `fork-chain-parent-1 ${run.runId}`;
-    const parentSessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: parentPrompt });
+    const parentSession = await createSessionFromNewSessionComposer({
+      page,
+      uiBaseUrl,
+      machineId,
+      prompt: parentPrompt,
+      readiness: 'first-turn-reload-safe',
+    });
+    const { sessionId: parentSessionId } = parentSession;
 
-    await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session: parentSession });
     const parentOk1Match = await waitForCommittedTranscriptMessageMatch({
       page,
       text: 'FAKE_CLAUDE_OK_1',
@@ -338,7 +342,7 @@ test.describe('ui e2e: multi-level session fork chain', () => {
     });
     await expect(page.getByTestId(parentOk2Match.testId)).toBeVisible({ timeout: 180_000 });
 
-    await ensureReplayForkEnabled({ page, uiBaseUrl, sessionId: parentSessionId });
+    await ensureReplayForkEnabled({ page, uiBaseUrl, session: parentSession });
 
     const sessionBId = await forkFromTranscriptMessage({
       page,

@@ -184,7 +184,7 @@ test.describe('ui e2e: session folders sidebar', () => {
     await openSessionRowMenu({ page, sessionId: firstSessionId });
     await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
-    await expect(page.getByRole('dialog')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByRole('option', { name: FOLDER_NAME })).toHaveCount(1, { timeout: 60_000 });
     await page.getByRole('option', { name: FOLDER_NAME }).click();
 
@@ -199,7 +199,7 @@ test.describe('ui e2e: session folders sidebar', () => {
     await openSessionRowMenu({ page, sessionId: firstSessionId });
     await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
-    await expect(page.getByRole('dialog')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByRole('option', { name: /Workspace root/i })).toHaveCount(1, { timeout: 60_000 });
     await page.getByRole('option', { name: /Workspace root/i }).click();
 

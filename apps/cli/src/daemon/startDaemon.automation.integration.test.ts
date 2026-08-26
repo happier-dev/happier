@@ -3926,7 +3926,7 @@ describe('startDaemon automation wiring (integration)', () => {
     }
   });
 
-  it('skips the pre-spawn account settings refresh when the active snapshot already satisfies the hint', async () => {
+  it('forces the pre-spawn account settings refresh when the active snapshot already satisfies the hint', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     harness.setAutoShutdownAfterAutomationStart(false);
 
@@ -3961,8 +3961,16 @@ describe('startDaemon automation wiring (integration)', () => {
         accountSettingsVersionHint: 14,
       });
 
-      expect(refreshAccountSettingsForMinimumVersion).not.toHaveBeenCalled();
-      expect(harness.bootstrapAccountSettingsContext).not.toHaveBeenCalled();
+      expect(refreshAccountSettingsForMinimumVersion).toHaveBeenCalledWith(expect.objectContaining({
+        credentials: automationCredentials,
+        minSettingsVersion: 14,
+        mode: 'blocking',
+        forceRefresh: true,
+      }));
+      expect(harness.bootstrapAccountSettingsContext).toHaveBeenCalledWith(expect.objectContaining({
+        minSettingsVersion: 14,
+        refresh: 'force',
+      }));
 
       harness.requestShutdown('happier-cli');
       await run;
