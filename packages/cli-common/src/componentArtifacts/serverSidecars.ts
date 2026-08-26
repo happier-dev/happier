@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { commandExists, execOrThrow, resolveYarnCommand, type RunCommand } from './commands.js';
+import { resolveServerBuildDbProviders } from './serverBuildDbProviders.js';
 import type { BinaryTarget } from './targets.js';
 
 export type StageEntry = {
@@ -21,14 +22,8 @@ type PackageJson = {
 };
 
 export function resolveRequestedServerDbProviders(buildDbProviders: string): ServerDbProvider[] {
-  const normalized = buildDbProviders.toLowerCase();
-  const requestedProviders: ServerDbProvider[] = normalized === 'all'
-    ? ['sqlite', 'mysql']
-    : normalized
-        .split(',')
-        .map((value) => value.trim())
-        .filter((value): value is ServerDbProvider => value === 'sqlite' || value === 'mysql');
-  return [...new Set(requestedProviders)];
+  return [...resolveServerBuildDbProviders(buildDbProviders)]
+    .filter((provider): provider is ServerDbProvider => provider === 'sqlite' || provider === 'mysql');
 }
 
 export function resolvePrismaSchemaEngineTarget(target: BinaryTarget): { binaryTarget: string; fileName: string } {
@@ -209,7 +204,7 @@ export async function resolveServerBinarySidecarEntries({
   commandProbe?: (cmd: string) => boolean;
 }): Promise<StageEntry[]> {
   const yarn = resolveYarnCommand({ commandProbe });
-  const effectiveBuildDbProviders = serverComponent === 'happier-server' ? 'mysql' : buildDbProviders;
+  const requestedBuildDbProviders = [...resolveServerBuildDbProviders(buildDbProviders)].join('|');
   runCommand(
     yarn.cmd,
     [...yarn.args, '--cwd', 'apps/server', '-s', 'generate:providers'],
@@ -217,36 +212,35 @@ export async function resolveServerBinarySidecarEntries({
       cwd: repoRoot,
       env: {
         ...env,
-        HAPPIER_BUILD_DB_PROVIDERS: effectiveBuildDbProviders,
-        HAPPY_BUILD_DB_PROVIDERS: effectiveBuildDbProviders,
+        HAPPIER_BUILD_DB_PROVIDERS: requestedBuildDbProviders,
+        HAPPY_BUILD_DB_PROVIDERS: requestedBuildDbProviders,
       },
     },
   );
 
-  if (serverComponent === 'happier-server') {
-    if (!target) {
-      throw new Error('[component-artifacts] a binary target is required for full-server migration artifacts');
-    }
-    const schemaEngine = resolvePrismaSchemaEngineTarget(target);
-    runCommand(
-      process.execPath,
-      [
-        'apps/server/scripts/runtime/prepareFullRuntimeMigrationEngine.mjs',
-        '--binary-target', schemaEngine.binaryTarget,
-        '--out-dir', join(
-          repoRoot,
-          'apps',
-          'server',
-          'generated',
-          'runtime-migration-engines',
-          `${target.os}-${target.arch}`,
-        ),
-      ],
-      { cwd: repoRoot, env },
-    );
+  if (!target) {
+    throw new Error('[component-artifacts] a binary target is required for server migration artifacts');
   }
+  const schemaEngine = resolvePrismaSchemaEngineTarget(target);
+  runCommand(
+    process.execPath,
+    [
+      'apps/server/scripts/runtime/prepareFullRuntimeMigrationEngine.mjs',
+      '--binary-target', schemaEngine.binaryTarget,
+      '--out-dir', join(
+        repoRoot,
+        'apps',
+        'server',
+        'generated',
+        'runtime-migration-engines',
+        `${target.os}-${target.arch}`,
+      ),
+    ],
+    { cwd: repoRoot, env },
+  );
 
-  const dedupedProviders = resolveRequestedServerDbProviders(effectiveBuildDbProviders);
+  const buildProviders = resolveServerBuildDbProviders(buildDbProviders);
+  const dedupedProviders = resolveRequestedServerDbProviders(buildDbProviders);
 
   const entries: StageEntry[] = [];
   for (const provider of dedupedProviders) {
@@ -273,8 +267,8 @@ export async function resolveServerBinarySidecarEntries({
     });
   }
 
-  if (serverComponent === 'happier-server') {
-    const requiredFullServerEntries: StageEntry[] = [
+  {
+    const requiredMigrationEntries: StageEntry[] = [
       {
         sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma'),
         targetPath: join('prisma', 'schema.prisma'),
@@ -283,26 +277,27 @@ export async function resolveServerBinarySidecarEntries({
         sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'migrations'),
         targetPath: join('prisma', 'migrations'),
       },
-      {
-        sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'),
-        targetPath: join('prisma', 'mysql', 'schema.prisma'),
-      },
-      {
-        sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'migrations'),
-        targetPath: join('prisma', 'mysql', 'migrations'),
-      },
     ];
-    for (const entry of requiredFullServerEntries) {
+    if (buildProviders.has('mysql')) {
+      requiredMigrationEntries.push(
+        {
+          sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'),
+          targetPath: join('prisma', 'mysql', 'schema.prisma'),
+        },
+        {
+          sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'migrations'),
+          targetPath: join('prisma', 'mysql', 'migrations'),
+        },
+      );
+    }
+    for (const entry of requiredMigrationEntries) {
       const info = await stat(entry.sourcePath).catch(() => null);
       if (!info) {
-        throw new Error(`[component-artifacts] missing full-server migration input: ${entry.sourcePath}`);
+        throw new Error(`[component-artifacts] missing server migration input: ${entry.sourcePath}`);
       }
       entries.push(entry);
     }
 
-    if (!target) {
-      throw new Error('[component-artifacts] a binary target is required for full-server migration artifacts');
-    }
     const targetKey = `${target.os}-${target.arch}`;
     const schemaEngineFileName = resolvePrismaSchemaEngineTarget(target).fileName;
     const schemaEnginePath = join(

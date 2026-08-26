@@ -126,29 +126,26 @@ export async function buildServerBinaryArtifactPayload({
     buildRunnerEntrypoint: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildServerBunBinary.mjs'),
   });
 
-  let migrationEntrypoint: string | undefined;
-  if (serverComponent === 'happier-server') {
-    const migrationSourceEntrypoint = join(repoRoot, 'apps', 'server', 'scripts', 'runtime', 'migrateFullRuntime.ts');
-    await ensureFileExists(migrationSourceEntrypoint);
-    migrationEntrypoint = resolveExecutableName({ baseName: 'happier-server-migrate', target });
-    await compileBinary({
-      entrypoint: migrationSourceEntrypoint,
-      bunTarget: target.bunTarget,
-      outfile: join(payloadDir, migrationEntrypoint),
-      cwd: repoRoot,
-      externals: [],
-      bunCommand,
-      runCommand,
-    });
-    await mkdir(join(payloadDir, 'runtime'), { recursive: true });
-    await compilePrismaBinary({
-      repoRoot,
-      target,
-      outfile: join(payloadDir, 'runtime', resolveExecutableName({ baseName: 'prisma-migrate', target })),
-      bunCommand,
-      runCommand,
-    });
-  }
+  const migrationSourceEntrypoint = join(repoRoot, 'apps', 'server', 'scripts', 'runtime', 'migrateFullRuntime.ts');
+  await ensureFileExists(migrationSourceEntrypoint);
+  const migrationEntrypoint = resolveExecutableName({ baseName: 'happier-server-migrate', target });
+  await compileBinary({
+    entrypoint: migrationSourceEntrypoint,
+    bunTarget: target.bunTarget,
+    outfile: join(payloadDir, migrationEntrypoint),
+    cwd: repoRoot,
+    externals: [],
+    bunCommand,
+    runCommand,
+  });
+  await mkdir(join(payloadDir, 'runtime'), { recursive: true });
+  await compilePrismaBinary({
+    repoRoot,
+    target,
+    outfile: join(payloadDir, 'runtime', resolveExecutableName({ baseName: 'prisma-migrate', target })),
+    bunCommand,
+    runCommand,
+  });
 
   for (const entry of sidecarEntries) {
     await mkdir(join(payloadDir, entry.targetPath, '..'), { recursive: true });
@@ -163,16 +160,14 @@ export async function buildServerBinaryArtifactPayload({
   await validateServerPrismaEnginesForTarget({
     payloadDir,
     target,
-    buildDbProviders: serverComponent === 'happier-server'
-      ? 'mysql'
-      : String(buildDbProviders ?? 'all').trim() || 'all',
+    buildDbProviders: String(buildDbProviders ?? 'all').trim() || 'all',
   });
   await finalizeRuntimeArtifactPayload(payloadDir);
 
   return {
     executableName,
     entrypoint: executableName,
-    ...(migrationEntrypoint ? { migrationEntrypoint } : {}),
+    migrationEntrypoint,
   };
 }
 

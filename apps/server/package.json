@@ -39,7 +39,7 @@
     "generate:mysql": "yarn -s schema:sync --quiet && prisma generate --schema prisma/mysql/schema.prisma",
     "generate:providers": "tsx --tsconfig ./tsconfig.json ./scripts/generateClients.ts",
     "db:push:light": "yarn -s schema:sync --quiet && prisma db push --schema prisma/sqlite/schema.prisma",
-    "postinstall:real": "yarn -s generate:providers && yarn -s build:shared",
+    "postinstall:real": "yarn -s build:shared && yarn -s generate:providers",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'server',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('scripts/schemaSync.ts'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
     "db": "docker run -d -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=handy -v $(pwd)/.pgdata:/var/lib/postgresql/data -p 5432:5432 postgres:17",
     "redis": "docker run -d -p 6379:6379 redis",

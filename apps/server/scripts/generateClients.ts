@@ -1,8 +1,12 @@
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
+import {
+    resolveServerBuildDbProvidersFromEnv,
+    type ServerBuildDbProvider,
+} from "@happier-dev/cli-common/componentArtifacts";
 import { runCommand } from "./runCommand";
 
-export type BuildDbProvider = "postgres" | "mysql" | "sqlite";
+export type BuildDbProvider = ServerBuildDbProvider;
 
 export function isMainModule(importMetaUrl: string, argv1: string | undefined): boolean {
     if (!argv1) return false;
@@ -13,60 +17,7 @@ export function isMainModule(importMetaUrl: string, argv1: string | undefined): 
     }
 }
 
-function normalizeToken(token: string): string {
-    return token.trim().toLowerCase();
-}
-
-function parseProvidersList(raw: string): string[] {
-    return raw
-        .split("|")
-        .map((v) => normalizeToken(v))
-        .filter(Boolean);
-}
-
-export function resolveBuildDbProvidersFromEnv(env: NodeJS.ProcessEnv): Set<BuildDbProvider> {
-    const raw = (env.HAPPIER_BUILD_DB_PROVIDERS ?? env.HAPPY_BUILD_DB_PROVIDERS ?? "").toString().trim();
-    if (!raw) {
-        return new Set<BuildDbProvider>(["postgres", "mysql", "sqlite"]);
-    }
-
-    const tokens = parseProvidersList(raw);
-    if (tokens.length === 0) {
-        return new Set<BuildDbProvider>(["postgres", "mysql", "sqlite"]);
-    }
-
-    const out = new Set<BuildDbProvider>();
-    for (const t of tokens) {
-        if (t === "all") {
-            return new Set<BuildDbProvider>(["postgres", "mysql", "sqlite"]);
-        }
-        if (t === "postgres" || t === "postgresql") {
-            out.add("postgres");
-            continue;
-        }
-        if (t === "pglite") {
-            // pglite runtime uses the Postgres Prisma client.
-            out.add("postgres");
-            continue;
-        }
-        if (t === "mysql") {
-            out.add("mysql");
-            continue;
-        }
-        if (t === "sqlite") {
-            out.add("sqlite");
-            continue;
-        }
-        throw new Error(
-            `Unsupported HAPPIER_BUILD_DB_PROVIDERS token: ${t}. Supported: postgres|pglite|mysql|sqlite|all`,
-        );
-    }
-
-    // Always generate the default Prisma client (postgres schema), because server runtime imports @prisma/client
-    // even when running against MySQL/SQLite generated clients.
-    out.add("postgres");
-    return out;
-}
+export const resolveBuildDbProvidersFromEnv = resolveServerBuildDbProvidersFromEnv;
 
 export function prismaGenerateDatabaseUrlForProvider(provider: BuildDbProvider): string {
     if (provider === "postgres") {
