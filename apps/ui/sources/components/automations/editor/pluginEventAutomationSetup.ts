@@ -25,7 +25,7 @@ import {
 import {
     areFreshPluginMachineExecutionOriginsCurrent,
     arePluginContributionIdentitiesEqual,
-} from '@/components/automations/pluginEventAutomationCurrentness';
+} from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 import {
     createPluginEventAutomationAuthoringDraft,

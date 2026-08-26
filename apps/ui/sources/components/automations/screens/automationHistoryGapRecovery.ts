@@ -24,7 +24,7 @@ import {
     areFreshPluginMachineExecutionOriginsCurrent,
     arePluginContributionIdentitiesEqual,
     arePluginMachineMaterializationRefsEqual,
-} from '@/components/automations/pluginEventAutomationCurrentness';
+} from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 type HistoryGapRecoveryOutcome =
     | Readonly<{ kind: 'settled' }>

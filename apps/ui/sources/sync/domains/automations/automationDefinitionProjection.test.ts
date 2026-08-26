@@ -194,6 +194,35 @@ describe('Automation definition projection', () => {
         expect(attachAutomationDefinitionDetail(summary, mismatchedDetail)).toBeNull();
     });
 
+    it('keeps Event contribution and watcher-installation identity exact when attaching private detail', () => {
+        const summary = createAutomationDefinitionSummary(eventSummary);
+        const detail = {
+            ...eventSummary,
+            executionRecipe,
+            triggerDefinitionEnvelope: '{"t":"plain","v":{}}',
+        };
+        expect(attachAutomationDefinitionDetail(summary, {
+            ...detail,
+            trigger: {
+                ...detail.trigger,
+                eventRef: { ...detail.trigger.eventRef, pluginId: 'happier.scm.gitlab' },
+            },
+        })).toBeNull();
+        expect(attachAutomationDefinitionDetail(summary, {
+            ...detail,
+            trigger: {
+                ...detail.trigger,
+                observation: {
+                    ...detail.trigger.observation,
+                    watcher: {
+                        ...detail.trigger.observation.watcher,
+                        machineInstallationId: 'installation-2',
+                    },
+                },
+            },
+        })).toBeNull();
+    });
+
     it('rejects equal-revision schedule detail with a different schedule shape', () => {
         const scheduleSummary = {
             ...eventSummary,

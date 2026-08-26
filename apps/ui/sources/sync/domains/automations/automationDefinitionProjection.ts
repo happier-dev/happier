@@ -9,6 +9,10 @@ import type {
     AutomationDefinitionDetailForTrigger,
     AutomationDefinitionListItemForTrigger,
 } from './automationTypes';
+import {
+    arePluginContributionIdentitiesEqual,
+    arePluginMachineMaterializationRefsEqual,
+} from './pluginEventAutomationCurrentness';
 
 type ScheduleSummary = AutomationDefinitionListItemForTrigger<'schedule'>;
 type ManualSummary = AutomationDefinitionListItemForTrigger<'manual'>;
@@ -117,8 +121,7 @@ function samePluginEventTrigger(
     right: PluginEventSummary['trigger'] | PluginEventDetail['trigger'],
 ): boolean {
     if (
-        left.eventRef.pluginId !== right.eventRef.pluginId
-        || left.eventRef.localId !== right.eventRef.localId
+        !arePluginContributionIdentitiesEqual(left.eventRef, right.eventRef)
         || left.sourceSelectorId !== right.sourceSelectorId
         || left.sourceContractVersion !== right.sourceContractVersion
         || left.observation.kind !== right.observation.kind
@@ -138,10 +141,8 @@ function samePluginEventTrigger(
     if (leftWatcher === null || rightWatcher === null) {
         return leftWatcher === rightWatcher;
     }
-    return leftWatcher.machineId === rightWatcher.machineId
-        && leftWatcher.machineInstallationId === rightWatcher.machineInstallationId
-        && leftWatcher.pluginId === rightWatcher.pluginId
-        && leftWatcher.materializationId === rightWatcher.materializationId;
+    return leftWatcher.machineInstallationId === rightWatcher.machineInstallationId
+        && arePluginMachineMaterializationRefsEqual(leftWatcher, rightWatcher);
 }
 
 /**
@@ -290,14 +291,9 @@ export function createAutomationDefinitionSummary(
 export function createAutomationDefinitionFromDetail(
     detail: AutomationDefinitionDetail,
 ): AutomationDefinition {
-    switch (detail.trigger.kind) {
-        case 'schedule':
-            return createScheduleDefinition(detail);
-        case 'manual':
-            return createManualDefinition(detail);
-        case 'pluginEvent':
-            return createPluginEventDefinition(detail);
-    }
+    if (isScheduleDetail(detail)) return createScheduleDefinition(detail);
+    if (isManualDetail(detail)) return createManualDefinition(detail);
+    return createPluginEventDefinition(detail);
 }
 
 /** A direct 409 must revoke the cached private content rather than reinterpret it as plaintext. */
@@ -366,18 +362,15 @@ export function attachAutomationDefinitionDetail(
         return null;
     }
 
-    switch (detail.trigger.kind) {
-        case 'schedule':
-            return isScheduleDefinition(summary) && sameScheduleTrigger(summary.trigger, detail.trigger)
-                ? attachScheduleDetail(summary, detail)
-                : null;
-        case 'manual':
-            return isManualDefinition(summary)
-                ? attachManualDetail(summary, detail)
-                : null;
-        case 'pluginEvent':
-            return isPluginEventDefinition(summary) && samePluginEventTrigger(summary.trigger, detail.trigger)
-                ? attachPluginEventDetail(summary, detail)
-                : null;
+    if (isScheduleDetail(detail)) {
+        return isScheduleDefinition(summary) && sameScheduleTrigger(summary.trigger, detail.trigger)
+            ? attachScheduleDetail(summary, detail)
+            : null;
     }
+    if (isManualDetail(detail)) {
+        return isManualDefinition(summary) ? attachManualDetail(summary, detail) : null;
+    }
+    return isPluginEventDefinition(summary) && samePluginEventTrigger(summary.trigger, detail.trigger)
+        ? attachPluginEventDetail(summary, detail)
+        : null;
 }

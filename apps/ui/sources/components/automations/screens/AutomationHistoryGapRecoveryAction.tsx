@@ -21,7 +21,7 @@ import {
     isPluginEventAutomationDefinition,
     type AutomationDefinition,
 } from '@/sync/domains/automations/automationTypes';
-import { arePluginMachineMaterializationRefsEqual } from '@/components/automations/pluginEventAutomationCurrentness';
+import { arePluginMachineMaterializationRefsEqual } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 import {
     readAutomationHistoryGapRecoveryEligibleEvent,

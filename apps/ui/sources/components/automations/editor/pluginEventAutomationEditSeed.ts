@@ -23,7 +23,7 @@ import type {
     AutomationDefinition,
     AutomationDefinitionDetailForTrigger,
 } from '@/sync/domains/automations/automationTypes';
-import { arePluginContributionIdentitiesEqual } from '@/components/automations/pluginEventAutomationCurrentness';
+import { arePluginContributionIdentitiesEqual } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 /**
  * The persisted observation transport, in the same discriminated shape the

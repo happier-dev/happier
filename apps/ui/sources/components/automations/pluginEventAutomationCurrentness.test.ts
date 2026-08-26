@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol';
 
 import {
     areFreshPluginMachineExecutionOriginsCurrent,
     arePluginContributionIdentitiesEqual,
-    arePluginMachineExecutionOriginsCurrent,
     arePluginMachineMaterializationRefsEqual,
-} from './pluginEventAutomationCurrentness';
+} from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 describe('plugin Event Automation currentness', () => {
     it('requires both contribution identity fields', () => {
@@ -54,7 +54,7 @@ describe('plugin Event Automation currentness', () => {
             },
         };
 
-        expect(arePluginMachineExecutionOriginsCurrent(origin, { ...origin })).toBe(true);
+        expect(arePluginMachineExecutionOriginsEqual(origin, { ...origin })).toBe(true);
         expect(areFreshPluginMachineExecutionOriginsCurrent(freshOrigin, { ...freshOrigin })).toBe(true);
         expect(areFreshPluginMachineExecutionOriginsCurrent(freshOrigin, {
             ...freshOrigin,

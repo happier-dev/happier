@@ -4,6 +4,7 @@ import {
     AutomationRunExecutionTargetV1Schema,
     AutomationPluginEventDefinitionCreateRequestSchema,
     AutomationPluginEventDefinitionPatchRequestSchema,
+    arePluginMachineExecutionOriginsEqual,
     ExecutionRunDetachedStartRequestV1Schema,
     PluginMachineExecutionOriginV1Schema,
     PluginWebhookEndpointIdV1Schema,
@@ -29,8 +30,7 @@ import {
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import {
     arePluginContributionIdentitiesEqual,
-    arePluginMachineExecutionOriginsCurrent,
-} from '@/components/automations/pluginEventAutomationCurrentness';
+} from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 
 import { PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1 } from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
@@ -337,7 +337,7 @@ export function buildPluginEventAutomationDefinitionCreateRequest(params: Readon
     if (
         !eligibleEvent
         || !watcherOrigin.success
-        || !arePluginMachineExecutionOriginsCurrent(params.draft.watcherOrigin, watcherOrigin.data)
+        || !arePluginMachineExecutionOriginsEqual(params.draft.watcherOrigin, watcherOrigin.data)
         || watcherOrigin.data.materializationRef.pluginId !== eligibleEvent.event.identity.pluginId
         || !executionRecipe.success
     ) {
