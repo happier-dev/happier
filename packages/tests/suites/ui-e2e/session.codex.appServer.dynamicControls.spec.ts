@@ -10,6 +10,7 @@ import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } f
 import {
     openNewSessionMachineSelection,
     openNewSessionPathSelection,
+    selectCurrentPathCheckoutIfPresent,
 } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
@@ -530,6 +531,7 @@ async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseU
     await expect(blockingGuidance).toHaveCount(0, { timeout: 60_000 });
 
     await selectNewSessionAgent({ page: params.page, agentId: 'codex' });
+    await selectCurrentPathCheckoutIfPresent(params.page);
 
     const pathChip = params.page.getByTestId('agent-input-path-chip');
     if ((await pathChip.count()) > 0) {

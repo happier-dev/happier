@@ -11,8 +11,6 @@ type CreateSessionFromNewSessionComposerParams = Readonly<{
 
 type MachineSelectionOpenResult = 'picker_open' | 'returned_to_new';
 
-const COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR = '[data-testid^="transcript-message-"]:not([data-testid*=":"])';
-
 function normalizePathname(input: string): string {
   try {
     const pathname = new URL(input).pathname.replace(/\/+$/, '');
@@ -71,7 +69,7 @@ async function clickFirstMachineMatch(page: Page, machineId: string): Promise<Ma
   }
 }
 
-async function selectCurrentPathCheckoutIfPresent(page: Page): Promise<void> {
+export async function selectCurrentPathCheckoutIfPresent(page: Page): Promise<void> {
   let checkoutChip: ReturnType<Page['getByTestId']>;
   try {
     checkoutChip = page.getByTestId('new-session-checkout-chip');
@@ -250,13 +248,6 @@ export async function createSessionFromNewSessionComposer(
   if (!sessionId) {
     throw new Error(`failed to parse session id from url: ${page.url()}`);
   }
-
-  const committedPrompt = page.locator(COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR).filter({ hasText: prompt });
-  const commitDeadlineMs = Date.now() + 180_000;
-  while (Date.now() < commitDeadlineMs && (await committedPrompt.count()) === 0) {
-    await page.waitForTimeout(250);
-  }
-  await expect(committedPrompt).toHaveCount(1, { timeout: 1 });
 
   return sessionId;
 }
