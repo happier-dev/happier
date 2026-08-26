@@ -121,7 +121,7 @@ const C1_PUBLIC_BOUNDARY_SOURCE_FILES = [
 
 describe('Channels core manifest', () => {
   it('consumes the canonical Composer control-state Resource contract through public SDK UI', () => {
-    const resources = PLUGIN_MANIFEST.contributes.resources ?? [];
+    const resources = PLUGIN_MANIFEST.contributes?.resources ?? [];
 
     for (const id of [
       'session-conversations-state-v1',

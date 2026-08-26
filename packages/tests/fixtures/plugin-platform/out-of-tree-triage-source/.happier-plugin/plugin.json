@@ -16,10 +16,6 @@
       }
     ]
   },
-  "hostAccess": {
-    "required": [],
-    "optional": []
-  },
   "contributes": {
     "actions": [
       {
@@ -1578,6 +1574,45 @@
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "x-happier-max-utf8-bytes": 128
+                          },
+                          "repository": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "const": "github"
+                                  },
+                                  {
+                                    "const": "gitlab"
+                                  },
+                                  {
+                                    "const": "bitbucket"
+                                  },
+                                  {
+                                    "const": "azure-devops"
+                                  }
+                                ]
+                              },
+                              "deployment": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              "repository": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 255
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "deployment",
+                              "repository"
+                            ],
+                            "additionalProperties": false
                           }
                         },
                         "required": [
@@ -2282,6 +2317,45 @@
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "x-happier-max-utf8-bytes": 128
+                          },
+                          "repository": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "const": "github"
+                                  },
+                                  {
+                                    "const": "gitlab"
+                                  },
+                                  {
+                                    "const": "bitbucket"
+                                  },
+                                  {
+                                    "const": "azure-devops"
+                                  }
+                                ]
+                              },
+                              "deployment": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              "repository": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 255
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "deployment",
+                              "repository"
+                            ],
+                            "additionalProperties": false
                           }
                         },
                         "required": [
@@ -3275,6 +3349,45 @@
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "x-happier-max-utf8-bytes": 128
+                },
+                "repository": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "const": "github"
+                        },
+                        {
+                          "const": "gitlab"
+                        },
+                        {
+                          "const": "bitbucket"
+                        },
+                        {
+                          "const": "azure-devops"
+                        }
+                      ]
+                    },
+                    "deployment": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "repository": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 255
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "deployment",
+                    "repository"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -3504,15 +3617,6 @@
         "id": "ledger/read-entry"
       }
     ],
-    "agents": [],
-    "promptAssets": [],
-    "backgroundServices": [],
-    "hooks": [],
-    "events": [],
-    "mcp": {
-      "servers": [],
-      "discoverySources": []
-    },
     "ui": {
       "renderers": [
         {
@@ -3525,35 +3629,6 @@
         }
       ]
     },
-    "notificationChannels": [],
-    "scmHostingProviders": [],
-    "scmBackends": [],
-    "connectedAccountDescriptors": [],
-    "requestInterceptors": [],
-    "settings": [],
-    "providers": [],
-    "voiceProviders": [],
-    "composerReferences": [],
-    "composerAttachments": [],
-    "composerControls": [],
-    "composerRegions": [],
-    "commands": [],
-    "tools": [],
-    "resources": [],
-    "transcriptActivities": [],
-    "sessionHeaderActions": [],
-    "browserTargets": [],
-    "browserActions": [],
-    "executionRunProfiles": [],
-    "notifications": [],
-    "managedDependencies": [],
-    "systemTools": [],
-    "voiceModelPacks": [],
-    "openableContentViewers": [],
-    "accountCollections": [],
-    "daemonDatabases": [],
-    "webhooks": [],
-    "pluginContributionPoints": [],
     "targetedPluginContributions": [
       {
         "protocol": {
