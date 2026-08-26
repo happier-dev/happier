@@ -233,6 +233,38 @@ test('iOS GhosttyKit build script refuses an unpinned explicit artifact', async 
   }
 });
 
+test('iOS GhosttyKit probe blocks an unpinned artifact override even after hard gates pass', async () => {
+  const artifactPath = await createGhosttyKitFixture({
+    header: [
+      'typedef enum { GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED = 1 } ghostty_surface_io_backend_e;',
+      'typedef void (*ghostty_surface_receive_buffer_cb)(void*, const unsigned char*, unsigned long);',
+      'typedef void (*ghostty_surface_receive_resize_cb)(void*, unsigned short, unsigned short, unsigned int, unsigned int);',
+      'void ghostty_surface_write_buffer(void*, const unsigned char*, unsigned long);',
+      'void ghostty_surface_process_exit(void*, unsigned int, unsigned long long);',
+    ].join('\n'),
+  });
+
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [join(packageRoot, 'scripts/probeIos.mjs')], {
+      env: {
+        ...process.env,
+        HAPPIER_TERMINAL_NATIVE_GHOSTTYKIT_ARTIFACT_PATH: artifactPath,
+        HAPPIER_TERMINAL_NATIVE_GHOSTTYKIT_SHA256: '',
+        HAPPIER_TERMINAL_NATIVE_IOS_PACKAGE_PROOF_ACCEPTED: '1',
+        HAPPIER_TERMINAL_NATIVE_IOS_CRASH_FALLBACK_PROVEN: '1',
+      },
+    });
+    const payload = JSON.parse(stdout);
+
+    assert.equal(payload.status, 'blocked');
+    assert.equal(payload.reason, 'missing-checksum-pinned-artifact');
+    assert.equal(payload.fallbackRenderer, 'xterm-webview');
+    assert.equal(payload.checksumEnv, 'HAPPIER_TERMINAL_NATIVE_GHOSTTYKIT_SHA256');
+  } finally {
+    await rm(dirname(artifactPath), { force: true, recursive: true });
+  }
+});
+
 test('iOS Ghostty clear routes through the bridge instead of no-oping', async () => {
   const surfaceViewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
   const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
@@ -391,10 +423,9 @@ test('iOS Ghostty runtime reports proof blockers even when GhosttyKit is not lin
 
 test('iOS Ghostty keyboard bridge typechecks against vendored GhosttyKit input symbols', { skip: process.platform !== 'darwin' }, async () => {
   await typecheckIosSwift([
-    join(packageRoot, 'ios/GhosttyRuntime.swift'),
-    join(packageRoot, 'ios/GhosttyInput.swift'),
-    join(packageRoot, 'ios/GhosttySelection.swift'),
-    join(packageRoot, 'ios/GhosttyLinks.swift'),
+      join(packageRoot, 'ios/GhosttyRuntime.swift'),
+      join(packageRoot, 'ios/GhosttyInput.swift'),
+      join(packageRoot, 'ios/GhosttyLinks.swift'),
     join(packageRoot, 'ios/GhosttyAccessibility.swift'),
     join(packageRoot, 'ios/GhosttySurfaceBridge.swift'),
     join(packageRoot, 'ios/GhosttySurfaceView.swift'),
@@ -514,6 +545,7 @@ test('iOS Ghostty uses UITextInput composition to preedit, commit, and cancel ma
 });
 
 test('iOS Ghostty accessibility summary reads visible viewport text when native accessibility is accepted', async () => {
+  const moduleSource = await readFile(join(packageRoot, 'ios/HappierTerminalNativeModule.swift'), 'utf-8');
   const surfaceViewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
   const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
   const accessibilitySource = await readFile(join(packageRoot, 'ios/GhosttyAccessibility.swift'), 'utf-8');
@@ -526,8 +558,28 @@ test('iOS Ghostty accessibility summary reads visible viewport text when native 
   assert.match(surfaceBridgeSource, /GHOSTTY_POINT_VIEWPORT/);
   assert.match(surfaceBridgeSource, /updateNativeAccessibilitySummary\(makeGhosttyAccessibilitySummary/);
   assert.match(accessibilitySource, /func makeGhosttyAccessibilitySummary\(_ value: String/);
-  assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: "Focus terminal"/);
-  assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: "Copy selection"/);
+  assert.match(accessibilitySource, /element\.accessibilityLabel = terminalLabel/);
+  assert.match(accessibilitySource, /summary\.isEmpty\s*\? fallbackValue/);
+  assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: focusActionLabel/);
+  assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: copySelectionActionLabel/);
+  assert.doesNotMatch(accessibilitySource, /"Terminal"|"Focus terminal"|"Copy selection"|"Native terminal renderer unavailable/);
+  for (const propName of [
+    'accessibilityTerminalLabel',
+    'accessibilityFallbackValue',
+    'accessibilityFocusActionLabel',
+    'accessibilityCopySelectionActionLabel',
+  ]) {
+    assert.match(moduleSource, new RegExp(`Prop\\("${propName}"`));
+    assert.match(surfaceViewSource, new RegExp(`var ${propName}: String`));
+  }
+});
+
+test('iOS Ghostty exposes only observed copy state and has no synthetic selection lifecycle scaffold', async () => {
+  const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
+
+  assert.equal(await pathExists(join(packageRoot, 'ios/GhosttySelection.swift')), false);
+  assert.match(surfaceBridgeSource, /emitEvent\("copy"/);
+  assert.doesNotMatch(surfaceBridgeSource, /emitEvent\("selection"/);
 });
 
 test('Android Termux bridge enforces hard gates before creating or driving sessions', async () => {
@@ -535,7 +587,7 @@ test('Android Termux bridge enforces hard gates before creating or driving sessi
   const remoteSessionSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxRemoteSession.kt'), 'utf-8');
 
   assert.match(bridgeSource, /private fun unavailableDiagnostic\(\): TermuxBridgeDiagnostic\?/);
-  assert.match(bridgeSource, /fun createSurface[\s\S]*unavailableDiagnostic\(\)\?\.let \{ return it \}/);
+  assert.match(bridgeSource, /fun createSurface[\s\S]*unavailableDiagnostic\(\)\?\.let \{ return surfaceAvailability\(it\) \}/);
   assert.match(bridgeSource, /fun writeBytes[\s\S]*unavailableDiagnostic\(\)\?\.let \{ return rejectUnavailable\(it\)\.toMap\(\) \}/);
   assert.match(bridgeSource, /fun sendInputBytes[\s\S]*unavailableDiagnostic\(\)\?\.let \{ return rejectUnavailable\(it\)\.toMap\(\) \}/);
   assert.match(bridgeSource, /fun sendTextInput[\s\S]*unavailableDiagnostic\(\)\?\.let \{ return rejectUnavailable\(it\)\.toMap\(\) \}/);
@@ -543,6 +595,126 @@ test('Android Termux bridge enforces hard gates before creating or driving sessi
   assert.match(bridgeSource, /fun focusSurface[\s\S]*unavailableDiagnostic\(\)\?\.let \{ return \}/);
   assert.match(bridgeSource, /fun drawSurface[\s\S]*unavailableDiagnostic\(\)\?\.let \{ return \}/);
   assert.match(remoteSessionSource, /val diagnostic = makeTermuxBridgeDiagnostic\(\)[\s\S]*if \(!diagnostic\.available\)/);
+});
+
+test('Android Termux accessibility uses host-localized labels and exposes focus and copy actions', async () => {
+  const moduleSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/HappierTerminalNativeModule.kt'), 'utf-8');
+  const viewSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxView.kt'), 'utf-8');
+  const remoteSessionSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxRemoteSession.kt'), 'utf-8');
+  const adapterSource = await readFile(join(packageRoot, 'android/termux/adapter-src/main/java/dev/happier/terminal/termux/TermuxBackedRemoteSession.kt'), 'utf-8');
+
+  for (const propName of [
+    'accessibilityTerminalLabel',
+    'accessibilityFallbackValue',
+    'accessibilityFocusActionLabel',
+    'accessibilityCopySelectionActionLabel',
+  ]) {
+    assert.match(moduleSource, new RegExp(`Prop\\("${propName}"`));
+  }
+  assert.match(viewSource, /override fun onInitializeAccessibilityNodeInfo/);
+  assert.match(viewSource, /AccessibilityNodeInfo\.AccessibilityAction\(/);
+  assert.match(viewSource, /override fun performAccessibilityAction/);
+  assert.match(viewSource, /TermuxBridge\.copySelection\(surfaceId\)/);
+  assert.match(viewSource, /takeUnless \{ it\.isNullOrBlank\(\) \}/);
+  assert.doesNotMatch(viewSource, /"Terminal"|"Focus terminal"|"Copy selection"|"Native terminal renderer unavailable/);
+  assert.doesNotMatch(remoteSessionSource, /Android native terminal unavailable/);
+  assert.doesNotMatch(adapterSource, /Android native terminal surface/);
+});
+
+test('Android Termux serializes every terminal session operation on the Android main owner', async () => {
+  const moduleSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/HappierTerminalNativeModule.kt'), 'utf-8');
+  const bridgeSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxBridge.kt'), 'utf-8');
+  const adapterSource = await readFile(join(packageRoot, 'android/termux/adapter-src/main/java/dev/happier/terminal/termux/TermuxBackedRemoteSession.kt'), 'utf-8');
+
+  assert.match(moduleSource, /import expo\.modules\.kotlin\.functions\.Queues/);
+  for (const functionName of [
+    'createSurface',
+    'writeBytes',
+    'sendInputBytes',
+    'resizeSurface',
+    'focusSurface',
+    'clearSurface',
+    'disposeSurface',
+    'copySelection',
+  ]) {
+    assert.match(asyncFunctionDefinition(moduleSource, functionName), /\.runOnQueue\(Queues\.MAIN\)/);
+  }
+
+  assert.match(
+    bridgeSource,
+    /internal fun requireTermuxMainThread\(\) \{\s*check\(Looper\.myLooper\(\) == Looper\.getMainLooper\(\)\)/,
+  );
+  for (const functionName of [
+    'createSurface',
+    'writeBytes',
+    'sendInputBytes',
+    'sendTextInput',
+    'sendKeyEvent',
+    'handleMotionEvent',
+    'resizeSurface',
+    'focusSurface',
+    'clearSurface',
+    'copySelection',
+    'accessibilitySummary',
+    'drawSurface',
+    'disposeSurface',
+    'disposeAll',
+  ]) {
+    assert.match(kotlinFunctionBody(bridgeSource, functionName), /^\s*requireTermuxMainThread\(\)/);
+  }
+
+  assert.match(
+    adapterSource,
+    /private val emulator: TerminalEmulator = run \{\s*requireTermuxMainThread\(\)[\s\S]*TerminalEmulator\(/,
+  );
+  for (const functionName of [
+    'writeBytes',
+    'sendInputBytes',
+    'sendTextInput',
+    'sendKeyEvent',
+    'handleMotionEvent',
+    'resize',
+    'focus',
+    'clear',
+    'copySelection',
+    'accessibilitySummary',
+    'draw',
+    'dispose',
+  ]) {
+    assert.match(kotlinFunctionBody(adapterSource, functionName), /^\s*requireTermuxMainThread\(\)/);
+  }
+});
+
+test('Android Termux reports adapter load failure per surface instead of an available no-op', async () => {
+  const moduleSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/HappierTerminalNativeModule.kt'), 'utf-8');
+  const bridgeSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxBridge.kt'), 'utf-8');
+  const remoteSessionSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxRemoteSession.kt'), 'utf-8');
+
+  const moduleCreateSurface = asyncFunctionDefinition(moduleSource, 'createSurface');
+  assert.match(moduleCreateSurface, /return@AsyncFunction TermuxBridge\.createSurface\(surfaceId\) \{/);
+  assert.doesNotMatch(moduleCreateSurface, /TermuxBridge\.availability\(\)/);
+
+  const bridgeCreateSurface = kotlinFunctionBody(bridgeSource, 'createSurface');
+  assert.match(bridgeCreateSurface, /return surfaceAvailability\(surface\.diagnostic\)/);
+  assert.match(bridgeCreateSurface, /emitSurfaceFailure\(surfaceId, eventSink, surface\.diagnostic\)/);
+  assert.doesNotMatch(bridgeCreateSurface, /return diagnostic\(\)/);
+
+  const factoryCreate = kotlinFunctionBody(remoteSessionSource, 'create');
+  assert.match(factoryCreate, /catch \(error: Throwable\) \{\s*if \(error is CancellationException \|\| error is VirtualMachineError \|\| error is ThreadDeath\) throw error/);
+  assert.match(remoteSessionSource, /override val diagnostic: TermuxBridgeDiagnostic = makeUnavailableTermuxBridgeDiagnostic\(overrideDetail\)/);
+
+  const unavailableSessionSource = remoteSessionSource.slice(
+    remoteSessionSource.indexOf('private class UnavailableTermuxRemoteSession'),
+  );
+  const unavailableInput = kotlinFunctionBody(unavailableSessionSource, 'sendInputBytes');
+  const unavailableText = kotlinFunctionBody(unavailableSessionSource, 'sendTextInput');
+  const unavailableResize = kotlinFunctionBody(unavailableSessionSource, 'resize');
+  assert.match(unavailableInput, /return rejected\(\s*"renderer-unavailable"/);
+  assert.doesNotMatch(unavailableInput, /callbacks\.emitInputBytes/);
+  assert.match(unavailableText, /return rejected\(\s*"renderer-unavailable"/);
+  assert.doesNotMatch(unavailableText, /callbacks\.emitInputBytes/);
+  assert.match(unavailableResize, /return rejected\(\s*"renderer-unavailable"/);
+  assert.doesNotMatch(unavailableResize, /callbacks\.emitResize/);
 });
 
 test('Android Termux adapter routes safe link taps through the native event contract', async () => {
@@ -564,6 +736,7 @@ test('iOS probe reports structured fail-closed fallback diagnostics', async () =
     env: {
       ...process.env,
       HAPPIER_TERMINAL_NATIVE_GHOSTTYKIT_ARTIFACT_PATH: join(await mkdtempPath(), 'missing-GhosttyKit.xcframework'),
+      HAPPIER_TERMINAL_NATIVE_GHOSTTYKIT_SHA256: '0'.repeat(64),
     },
   });
   const payload = JSON.parse(stdout);
@@ -587,12 +760,15 @@ test('iOS probe blocks a linked GhosttyKit artifact until package and crash proo
       'void ghostty_surface_process_exit(void*, unsigned int, unsigned long long);',
     ].join('\n'),
   });
+  const { computeSha256ForPath } = await import('./checksum.mjs');
+  const expectedSha256 = await computeSha256ForPath(artifactPath);
 
   try {
     const { stdout } = await execFileAsync(process.execPath, [join(packageRoot, 'scripts/probeIos.mjs')], {
       env: {
         ...process.env,
         HAPPIER_TERMINAL_NATIVE_GHOSTTYKIT_ARTIFACT_PATH: artifactPath,
+        HAPPIER_TERMINAL_NATIVE_GHOSTTYKIT_SHA256: expectedSha256,
       },
     });
     const payload = JSON.parse(stdout);
@@ -617,12 +793,15 @@ test('iOS probe reports fallback-required availability after hard gates pass wit
       'void ghostty_surface_process_exit(void*, unsigned int, unsigned long long);',
     ].join('\n'),
   });
+  const { computeSha256ForPath } = await import('./checksum.mjs');
+  const expectedSha256 = await computeSha256ForPath(artifactPath);
 
   try {
     const { stdout } = await execFileAsync(process.execPath, [join(packageRoot, 'scripts/probeIos.mjs')], {
       env: {
         ...process.env,
         HAPPIER_TERMINAL_NATIVE_GHOSTTYKIT_ARTIFACT_PATH: artifactPath,
+        HAPPIER_TERMINAL_NATIVE_GHOSTTYKIT_SHA256: expectedSha256,
         HAPPIER_TERMINAL_NATIVE_IOS_PACKAGE_PROOF_ACCEPTED: '1',
         HAPPIER_TERMINAL_NATIVE_IOS_CRASH_FALLBACK_PROVEN: '1',
       },
@@ -767,22 +946,59 @@ test('Android probe reports fallback-required availability after hard gates pass
   }
 });
 
-test('license notice reports Android Termux module scope without approving the full app', async () => {
-  const { stdout } = await execFileAsync(process.execPath, [join(packageRoot, 'scripts/licenseNotice.mjs')]);
-  const payload = JSON.parse(stdout);
+test('license notice independently gates installed iOS GhosttyKit license, notice, and provenance', async () => {
+  const fixtureRoot = await createNativeLicenseFixture();
 
-  assert.equal(payload.androidTermux.license.kind, 'Apache-2.0');
-  assert.equal(payload.androidTermux.license.fullTermuxAppLicense, 'GPL-3.0-only');
-  assert.equal(payload.androidTermux.license.bundleFullTermuxApp, false);
-  assert.deepEqual(payload.androidTermux.requiredModules, [
-    { name: 'terminal-view', path: 'terminal-view', license: 'Apache-2.0' },
-    { name: 'terminal-emulator', path: 'terminal-emulator', license: 'Apache-2.0' },
-  ]);
-  assert.deepEqual(payload.androidTermux.forbiddenModules.map((entry) => entry.name), ['app', 'termux-shared']);
-  assert.equal(payload.androidTermux.remoteSessionAdapter.required, true);
-  assert.equal(payload.androidTermux.sourceStrategy.kind, 'ignored-source-extract');
-  assert.equal(payload.androidTermux.notice.path, 'android/termux/NOTICE.md');
-  assert.equal(payload.androidTermux.notice.status, 'present');
+  try {
+    const { createLicenseNoticeReport } = await import('./licenseNotice.mjs');
+    const payload = await createLicenseNoticeReport({ packageRoot: fixtureRoot });
+
+    assert.equal(payload.status, 'ok');
+    assert.equal(payload.vendoredRendererArtifacts, true);
+    assert.equal(payload.iosGhostty.status, 'ok');
+    assert.equal(payload.iosGhostty.artifact.status, 'present');
+    assert.deepEqual(payload.iosGhostty.license, {
+      kind: 'MIT',
+      path: 'ios/Vendor/LICENSE-libghostty-spm.txt',
+      sourceUrl: 'https://raw.githubusercontent.com/Lakr233/libghostty-spm/c069f05e0a4ef50143e943e954ed75e52e947009/LICENSE',
+      status: 'present',
+    });
+    assert.equal(payload.iosGhostty.notice.status, 'present');
+    assert.deepEqual(payload.iosGhostty.notice.missingProvenance, []);
+
+    await rm(join(fixtureRoot, 'ios', 'Vendor', 'GhosttyKit.xcframework'), { force: true, recursive: true });
+    const missingArtifact = await createLicenseNoticeReport({ packageRoot: fixtureRoot });
+    assert.equal(missingArtifact.status, 'blocked');
+    assert.equal(missingArtifact.iosGhostty.status, 'blocked');
+    assert.equal(missingArtifact.iosGhostty.artifact.status, 'missing');
+    assert.equal(missingArtifact.vendoredRendererArtifacts, false);
+  } finally {
+    await rm(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test('license notice retains Android Termux module scope without approving the full app', async () => {
+  const fixtureRoot = await createNativeLicenseFixture();
+
+  try {
+    const { createLicenseNoticeReport } = await import('./licenseNotice.mjs');
+    const payload = await createLicenseNoticeReport({ packageRoot: fixtureRoot });
+
+    assert.equal(payload.androidTermux.license.kind, 'Apache-2.0');
+    assert.equal(payload.androidTermux.license.fullTermuxAppLicense, 'GPL-3.0-only');
+    assert.equal(payload.androidTermux.license.bundleFullTermuxApp, false);
+    assert.deepEqual(payload.androidTermux.requiredModules, [
+      { name: 'terminal-view', path: 'terminal-view', license: 'Apache-2.0' },
+      { name: 'terminal-emulator', path: 'terminal-emulator', license: 'Apache-2.0' },
+    ]);
+    assert.deepEqual(payload.androidTermux.forbiddenModules.map((entry) => entry.name), ['app', 'termux-shared']);
+    assert.equal(payload.androidTermux.remoteSessionAdapter.required, true);
+    assert.equal(payload.androidTermux.sourceStrategy.kind, 'ignored-source-extract');
+    assert.equal(payload.androidTermux.notice.path, 'android/termux/NOTICE.md');
+    assert.equal(payload.androidTermux.notice.status, 'present');
+  } finally {
+    await rm(fixtureRoot, { force: true, recursive: true });
+  }
 });
 
 test('iOS GhosttyKit XCFramework is ignored and not package-included before proof-gated acceptance', async () => {
@@ -973,7 +1189,7 @@ test('Android Termux programmatic focus reaches the mounted native view without 
   const bridgeSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxBridge.kt'), 'utf-8');
   const viewSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxView.kt'), 'utf-8');
 
-  assert.match(bridgeSource, /private val focusRequesters = ConcurrentHashMap<String, \(\) -> Unit>\(\)/);
+  assert.match(bridgeSource, /private val focusRequesters = mutableMapOf<String, \(\) -> Unit>\(\)/);
   assert.match(bridgeSource, /fun registerSurfaceFocusRequester\(surfaceId: String, focusRequester: \(\) -> Unit\)/);
   assert.match(bridgeSource, /focusRequesters\[surfaceId\]\?\.invoke\(\)/);
   assert.match(viewSource, /TermuxBridge\.registerSurfaceFocusRequester\(surfaceId, surfaceFocusRequester\)/);
@@ -1112,7 +1328,11 @@ test('native build-input policy pins both archives and binds notices to immutabl
     policy.iosGhostty.artifact.source,
     policy.iosGhostty.artifact.upstreamRelease,
     policy.iosGhostty.artifact.upstreamZipSha256,
+    policy.iosGhostty.artifact.expandedSha256,
     policy.iosGhostty.upstream.observedCommit,
+    policy.iosGhostty.license.kind,
+    policy.iosGhostty.license.bundledPath,
+    policy.iosGhostty.license.sourceUrl,
   ]) {
     assert.ok(ghosttyNotice.includes(token), `Expected Ghostty notice to record ${token}`);
   }
@@ -1295,6 +1515,61 @@ async function createTermuxSourceFixture({ modules }) {
     }
   }
   return root;
+}
+
+async function createNativeLicenseFixture() {
+  const root = await mkdtempPath();
+  const policyText = await readFile(join(packageRoot, 'native-renderers.json'), 'utf-8');
+  const packageJsonText = await readFile(join(packageRoot, 'package.json'), 'utf-8');
+  const vendorRoot = join(root, 'ios', 'Vendor');
+
+  await mkdir(join(vendorRoot, 'GhosttyKit.xcframework'), { recursive: true });
+  await mkdir(join(root, 'android', 'termux'), { recursive: true });
+  await writeFile(join(root, 'native-renderers.json'), policyText);
+  await writeFile(join(root, 'package.json'), packageJsonText);
+  await writeFile(join(vendorRoot, 'LICENSE-libghostty-spm.txt'), [
+    'MIT License',
+    '',
+    'Copyright (c) 2026 @Lakr233',
+  ].join('\n'));
+  await writeFile(join(vendorRoot, 'NOTICE.md'), [
+    'libghostty-spm',
+    'storage.1.2.4',
+    'https://github.com/Lakr233/libghostty-spm/releases/download/storage.1.2.4/GhosttyKit.xcframework.zip',
+    'f1484a5411559bf4a5b665b82a5bb91cb8a3ca2065467dc15202fb191d7a5c9d',
+    'f59c864108a9ef3002f6dcaaa00f87e5b56ce4966fb6c90d5ad744cc7aef37c7',
+    'c069f05e0a4ef50143e943e954ed75e52e947009',
+    'MIT',
+    'ios/Vendor/LICENSE-libghostty-spm.txt',
+    'https://raw.githubusercontent.com/Lakr233/libghostty-spm/c069f05e0a4ef50143e943e954ed75e52e947009/LICENSE',
+  ].join('\n'));
+  await writeFile(join(root, 'android', 'termux', 'NOTICE.md'), 'Terminal Emulator for Android notice.');
+  return root;
+}
+
+function asyncFunctionDefinition(source, name) {
+  const marker = `AsyncFunction("${name}")`;
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, `expected AsyncFunction ${name}`);
+  const next = source.indexOf('AsyncFunction(', start + marker.length);
+  return source.slice(start, next === -1 ? source.length : next);
+}
+
+function kotlinFunctionBody(source, name) {
+  const marker = `fun ${name}(`;
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, `expected Kotlin function ${name}`);
+  const bodyStart = source.indexOf('{', start);
+  assert.notEqual(bodyStart, -1, `expected body for Kotlin function ${name}`);
+
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1;
+    if (source[index] === '}') depth -= 1;
+    if (depth === 0) return source.slice(bodyStart + 1, index);
+  }
+
+  assert.fail(`expected closing brace for Kotlin function ${name}`);
 }
 
 async function pathExists(path) {

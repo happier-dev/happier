@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.view.KeyEvent
 import android.view.MotionEvent
 import java.lang.reflect.Constructor
+import java.util.concurrent.CancellationException
 
 fun interface TermuxEventSink {
   fun send(eventName: String, payload: Map<String, Any?>)
@@ -23,7 +24,7 @@ interface TermuxRemoteSession {
   fun focus()
   fun clear()
   fun copySelection()
-  fun accessibilitySummary(): String
+  fun accessibilitySummary(): String?
   fun draw(canvas: Canvas, width: Int, height: Int, fontSize: Float)
   fun dispose()
 }
@@ -123,6 +124,7 @@ object TermuxRemoteSessionFactory {
       val constructor = termuxBackedConstructor()
       constructor.newInstance(surfaceId, callbacks)
     } catch (error: Throwable) {
+      if (error is CancellationException || error is VirtualMachineError || error is ThreadDeath) throw error
       UnavailableTermuxRemoteSession(
         surfaceId,
         eventSink,
@@ -144,11 +146,9 @@ private class UnavailableTermuxRemoteSession(
   eventSink: TermuxEventSink?,
   private val overrideDetail: String? = null,
 ) : TermuxRemoteSession {
-  override val diagnostic: TermuxBridgeDiagnostic = makeTermuxBridgeDiagnostic()
+  override val diagnostic: TermuxBridgeDiagnostic = makeUnavailableTermuxBridgeDiagnostic(overrideDetail)
   private val callbacks = TermuxRemoteSessionCallbacks(surfaceId, eventSink)
   private var disposed = false
-  private var cols = 0
-  private var rows = 0
 
   override fun writeBytes(bytes: ByteArray, byteOffset: Long): TermuxWriteResult {
     if (disposed) {
@@ -169,16 +169,19 @@ private class UnavailableTermuxRemoteSession(
   override fun sendInputBytes(bytes: ByteArray): TermuxWriteResult {
     if (disposed) return rejected("surface-not-ready", "Android Termux surface has been disposed.")
     if (bytes.isEmpty()) return rejected("invalid-ack", "Native terminal input must contain at least one byte.")
-    callbacks.emitInputBytes(bytes)
-    return TermuxWriteResult(accepted = true)
+    return rejected(
+      "renderer-unavailable",
+      overrideDetail ?: "Android Termux renderer source is not linked; xterm WebView must remain selected.",
+    )
   }
 
   override fun sendTextInput(text: CharSequence): TermuxWriteResult {
     if (disposed) return rejected("surface-not-ready", "Android Termux surface has been disposed.")
-    val input = makeTermuxTextInputBytes(surfaceId, text)
-      ?: return rejected("invalid-ack", "Native terminal text input must not be empty.")
-    callbacks.emitInputBytes(input.bytes)
-    return TermuxWriteResult(accepted = true)
+    if (text.isEmpty()) return rejected("invalid-ack", "Native terminal text input must not be empty.")
+    return rejected(
+      "renderer-unavailable",
+      overrideDetail ?: "Android Termux renderer source is not linked; xterm WebView must remain selected.",
+    )
   }
 
   override fun sendKeyEvent(keyCode: Int, event: KeyEvent): Boolean {
@@ -202,9 +205,6 @@ private class UnavailableTermuxRemoteSession(
 
   override fun resize(cols: Int, rows: Int): TermuxWriteResult {
     if (cols <= 0 || rows <= 0) return rejected("surface-not-ready", "cols and rows must be positive.")
-    this.cols = cols
-    this.rows = rows
-    callbacks.emitResize(cols, rows)
     return rejected(
       "renderer-unavailable",
       overrideDetail ?: "Android Termux renderer is unavailable until package gates pass.",
@@ -222,16 +222,9 @@ private class UnavailableTermuxRemoteSession(
   }
 
   override fun copySelection() {
-    callbacks.emitSelection(null)
   }
 
-  override fun accessibilitySummary(): String {
-    return if (cols > 0 && rows > 0) {
-      "Android native terminal unavailable. Last requested size ${cols}x${rows}."
-    } else {
-      "Android native terminal unavailable. xterm WebView fallback is required."
-    }
-  }
+  override fun accessibilitySummary(): String? = null
 
   override fun draw(canvas: Canvas, width: Int, height: Int, fontSize: Float) {
     canvas.drawColor(Color.BLACK)

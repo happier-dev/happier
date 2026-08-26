@@ -2,7 +2,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { base64ToBytes, bytesToBase64, concatBytes, splitBytes } from './ansi';
+import {
+  TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES,
+  TerminalStreamBytesFrameSchema,
+  decodeTerminalStreamBytesFrame,
+  encodeTerminalStreamBytes,
+} from '@happier-dev/protocol';
+
+import { concatBytes, splitBytes } from './ansi';
 import {
   buildTerminalBenchmarkReport,
   compareTerminalBenchmarkReports,
@@ -101,13 +108,35 @@ export function parseTerminalBenchArgs(args: readonly string[]): TerminalBenchOp
   };
 }
 
-function runBase64Roundtrip(bytes: Uint8Array, frameBytes: number): Readonly<{
+function assertCanonicalTerminalFrameBytes(frameBytes: number): number {
+  if (!Number.isInteger(frameBytes) || frameBytes < 1 || frameBytes > TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES) {
+    throw new Error(
+      'terminal stream frame bytes must be an integer from 1 to ' + TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES,
+    );
+  }
+  return frameBytes;
+}
+
+function runCanonicalBase64Framing(bytes: Uint8Array, frameBytes: number): Readonly<{
   decodedBytes: number;
   durationMs: number;
   droppedFrames: number;
 }> {
   const startedAt = performance.now();
-  const decodedFrames = splitBytes(bytes, frameBytes).map((frame) => base64ToBytes(bytesToBase64(frame)));
+  let byteOffset = 0;
+  const decodedFrames = splitBytes(bytes, frameBytes).map((frame, seq) => {
+    const currentByteOffset = byteOffset;
+    byteOffset += frame.byteLength;
+    return decodeTerminalStreamBytesFrame(TerminalStreamBytesFrameSchema.parse({
+      t: 'bytes',
+      terminalId: 'terminal-bench',
+      seq,
+      byteOffset: currentByteOffset,
+      byteLength: frame.byteLength,
+      encoding: 'base64',
+      data: encodeTerminalStreamBytes(frame),
+    }));
+  });
   const decoded = concatBytes(decodedFrames);
   const durationMs = Math.max(0, Math.round(performance.now() - startedAt));
   const droppedFrames = Buffer.compare(Buffer.from(decoded), Buffer.from(bytes)) === 0 ? 0 : 1;
@@ -126,7 +155,7 @@ export function buildTerminalBenchRun(params: Readonly<{
 }>): TerminalBenchmarkReport {
   const workloadIds = params.workloads ?? listTerminalWorkloads().map((workload) => workload.id);
   const repeat = params.repeat ?? 1;
-  const frameBytes = params.frameBytes ?? 64_000;
+  const frameBytes = assertCanonicalTerminalFrameBytes(params.frameBytes ?? 64_000);
   const now = params.now ?? Date.now;
   const startedAtMs = now();
   const samples = [];
@@ -134,9 +163,9 @@ export function buildTerminalBenchRun(params: Readonly<{
   for (let repeatIndex = 0; repeatIndex < repeat; repeatIndex += 1) {
     for (const workloadId of workloadIds) {
       const workload = getTerminalWorkload(workloadId);
-      const roundtrip = runBase64Roundtrip(workload.bytes, frameBytes);
+      const roundtrip = runCanonicalBase64Framing(workload.bytes, frameBytes);
       samples.push(summarizeTerminalSample({
-        renderer: 'synthetic-byte-roundtrip',
+        renderer: 'canonical-base64-codec',
         workloadId,
         decodedBytes: roundtrip.decodedBytes,
         durationMs: roundtrip.durationMs,
@@ -148,7 +177,7 @@ export function buildTerminalBenchRun(params: Readonly<{
 
   const endedAtMs = now();
   return buildTerminalBenchmarkReport({
-    suite: 'terminal-local-byte-base64',
+    suite: 'terminal-canonical-base64-framing',
     startedAt: new Date(startedAtMs).toISOString(),
     endedAt: new Date(endedAtMs).toISOString(),
     samples,

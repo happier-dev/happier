@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
 import { runBenchmarkSeries } from './bench/benchmark_series.mjs';
+import { listBenchmarkWorkloads, resolveBenchmarkWorkloadInvocation } from './bench/workload_catalog.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getHappyStacksHomeDir } from './utils/paths/paths.mjs';
 
@@ -42,11 +43,13 @@ function usage(json) {
   printResult({
     json,
     data: {
-      commands: ['run'],
-      usage: 'hstack tools bench run [--output-dir=PATH] [--label=NAME] [--warmup=0] [--repeat=5] [--sample-interval-ms=500] [--json] -- COMMAND [ARG...]',
+      commands: ['catalog', 'run'],
+      usage: 'hstack tools bench catalog | hstack tools bench run [--concurrency=1] [--workload=ID | -- COMMAND [ARG...]]',
     },
     text: [
       '[bench] usage:',
+      '  hstack tools bench catalog [--json]',
+      '  hstack tools bench run --workload=ID [--concurrency=1] [--output-dir=PATH] [--label=NAME] [--warmup=N] [--repeat=N] [--json]',
       '  hstack tools bench run [--output-dir=PATH] [--label=NAME] [--warmup=0] [--repeat=5] [--sample-interval-ms=500] [--json] -- COMMAND [ARG...]',
       '',
       'Artifacts: manifest.json, events.jsonl, summary.json, summary.csv',
@@ -63,28 +66,51 @@ async function main() {
     usage(json);
     return;
   }
+  if (commandName === 'catalog') {
+    const workloads = listBenchmarkWorkloads();
+    printResult({
+      json,
+      data: { workloads },
+      text: workloads.map((workload) => `${workload.id}\t${workload.sourceRequirement}\t${workload.description}`).join('\n'),
+    });
+    return;
+  }
   if (commandName !== 'run') throw new Error(`[bench] unknown command: ${commandName}`);
   const separator = argv.indexOf('--');
-  if (separator < 0 || separator === argv.length - 1) {
-    throw new Error('[bench] run requires -- COMMAND [ARG...]');
+  const workloadId = flagValue(argv, '--workload').trim();
+  if (workloadId && separator >= 0) {
+    throw new Error('[bench] run accepts either --workload=ID or -- COMMAND [ARG...], not both');
   }
-  const [command, ...args] = argv.slice(separator + 1);
-  const outputRaw = flagValue(argv.slice(0, separator), '--output-dir');
+  if (!workloadId && (separator < 0 || separator === argv.length - 1)) {
+    throw new Error('[bench] run requires --workload=ID or -- COMMAND [ARG...]');
+  }
+  const workloadInvocation = workloadId
+    ? resolveBenchmarkWorkloadInvocation(workloadId, { rootDir: process.cwd() })
+    : null;
+  const workload = workloadInvocation?.workload ?? null;
+  const [command, ...args] = workloadInvocation
+    ? [workloadInvocation.command, ...workloadInvocation.args]
+    : argv.slice(separator + 1);
+  const optionArgs = separator >= 0 ? argv.slice(0, separator) : argv;
+  const outputRaw = flagValue(optionArgs, '--output-dir');
   const outputDir = resolve(outputRaw || defaultOutputDir(process.env));
-  const label = flagValue(argv.slice(0, separator), '--label').trim() || 'benchmark';
-  const sampleIntervalMs = positiveNumberFlag(argv.slice(0, separator), '--sample-interval-ms', 500);
-  const warmupCount = integerFlag(argv.slice(0, separator), '--warmup', 0, { minimum: 0 });
-  const repeatCount = integerFlag(argv.slice(0, separator), '--repeat', 5, { minimum: 1 });
+  const label = flagValue(optionArgs, '--label').trim() || workload?.id || 'benchmark';
+  const sampleIntervalMs = positiveNumberFlag(optionArgs, '--sample-interval-ms', 500);
+  const warmupCount = integerFlag(optionArgs, '--warmup', workload?.warmupCount ?? 0, { minimum: 0 });
+  const repeatCount = integerFlag(optionArgs, '--repeat', workload?.repeatCount ?? 5, { minimum: 1 });
+  const concurrency = integerFlag(optionArgs, '--concurrency', 1, { minimum: 1 });
+  if (concurrency > 64) throw new Error('--concurrency must be an integer <= 64');
   const result = await runBenchmarkSeries({
     command,
     args,
-    cwd: process.cwd(),
+    cwd: workloadInvocation?.cwd ?? process.cwd(),
     env: process.env,
     label,
     outputDir,
     sampleIntervalMs,
     warmupCount,
     repeatCount,
+    concurrency,
     silent: json,
   });
   printResult({

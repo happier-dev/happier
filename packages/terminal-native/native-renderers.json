@@ -24,6 +24,12 @@
       "observedCommit": "c069f05e0a4ef50143e943e954ed75e52e947009",
       "pinRequired": true
     },
+    "license": {
+      "kind": "MIT",
+      "bundledPath": "ios/Vendor/LICENSE-libghostty-spm.txt",
+      "noticePath": "ios/Vendor/NOTICE.md",
+      "sourceUrl": "https://raw.githubusercontent.com/Lakr233/libghostty-spm/c069f05e0a4ef50143e943e954ed75e52e947009/LICENSE"
+    },
     "fallbackUpstream": {
       "name": "ghostty",
       "url": "https://github.com/ghostty-org/ghostty",

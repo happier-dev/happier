@@ -1,29 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  classifyTerminalAccessibilityGate,
-} from '../../../../src/testkit/terminal/accessibility';
-import { shouldSelectNativeTerminalRenderer } from '../../../../src/testkit/terminal/native';
+  assertTerminalNativeDeviceRecipeCoverage,
+  getTerminalNativeDeviceRecipe,
+} from '../../../../src/testkit/terminal/native';
 
-describe('stress: iOS Ghostty terminal renderer gates', () => {
-  it('keeps iOS Ghostty unselected until package and accessibility proof pass', () => {
-    const accessibility = classifyTerminalAccessibilityGate({
-      renderer: 'ios-ghosttykit',
-      platform: 'ios',
-      nodes: [{ role: 'other' }],
-      actions: [],
-    });
+describe('stress: iOS Ghostty device recipe contract', () => {
+  it('requires iOS native rendering, interaction, fallback, and loaded-app evidence', () => {
+    const recipe = getTerminalNativeDeviceRecipe('ios-ghosttykit');
 
-    expect(shouldSelectNativeTerminalRenderer({
-      renderer: 'ios-ghosttykit',
-      embeddedPtyEnabled: true,
-      byteStreamEnabled: true,
-      nativeRendererEnabled: true,
-      platformRendererEnabled: true,
-      packageAvailable: false,
-      runtimeAvailable: false,
-      fallbackAvailable: true,
-      accessibility,
-    })).toBe(false);
+    expect(recipe.platform).toBe('ios');
+    expect(recipe.requiredWorkloads).toEqual(expect.arrayContaining([
+      'ansi-burst',
+      'heavy-tui-redraw',
+      'wide-combining',
+      'link-heavy-output',
+    ]));
+    expect(recipe.requiredActions).toEqual(expect.arrayContaining([
+      'async-byte-write-ack-reject-retry',
+      'hardware-keyboard-chords',
+      'selection-copy',
+      'renderer-crash-fallback',
+      'background-resume',
+    ]));
+    expect(() => assertTerminalNativeDeviceRecipeCoverage(recipe)).not.toThrow();
   });
 });

@@ -1,57 +1,32 @@
-export type TerminalAccessibilityRenderer =
-  | 'xterm-web'
-  | 'xterm-webview'
-  | 'ios-ghosttykit'
-  | 'android-termux';
+export const TERMINAL_NATIVE_ACCESSIBILITY_DEVICE_EVIDENCE_IDS = [
+  'platform-accessibility-tree',
+  'screen-reader-navigation',
+  'copy-selection-link-affordances',
+] as const;
 
-export type TerminalAccessibilityPlatform = 'web' | 'ios' | 'android';
+export type TerminalNativeAccessibilityDeviceEvidenceId =
+  typeof TERMINAL_NATIVE_ACCESSIBILITY_DEVICE_EVIDENCE_IDS[number];
 
-export type TerminalAccessibilityNode = Readonly<{
-  role: string;
-  label?: string;
+export type TerminalNativeAccessibilityDeviceEvidenceRequirement = Readonly<{
+  id: TerminalNativeAccessibilityDeviceEvidenceId;
+  description: string;
 }>;
 
-export type TerminalAccessibilityObservation = Readonly<{
-  renderer: TerminalAccessibilityRenderer;
-  platform: TerminalAccessibilityPlatform;
-  nodes: readonly TerminalAccessibilityNode[];
-  actions: readonly string[];
-}>;
+const REQUIREMENTS: readonly TerminalNativeAccessibilityDeviceEvidenceRequirement[] = Object.freeze([
+  {
+    id: 'platform-accessibility-tree',
+    description: 'Inspect the loaded native surface in the platform accessibility tree for useful terminal content or actions.',
+  },
+  {
+    id: 'screen-reader-navigation',
+    description: 'Use the platform screen reader to reach current output or the host-provided terminal summary.',
+  },
+  {
+    id: 'copy-selection-link-affordances',
+    description: 'Verify copy, selection, and open-link affordances remain reachable through the native accessibility model.',
+  },
+]);
 
-export type TerminalAccessibilityGate =
-  | Readonly<{
-      state: 'accepted';
-      renderer: TerminalAccessibilityRenderer;
-      platform: TerminalAccessibilityPlatform;
-    }>
-  | Readonly<{
-      state: 'fallback-required';
-      reason: 'opaque-tree' | 'no-terminal-content';
-      renderer: TerminalAccessibilityRenderer;
-      platform: TerminalAccessibilityPlatform;
-    }>;
-
-const USEFUL_ACTIONS = new Set(['copy', 'select', 'open-link', 'accessibility-summary']);
-
-export function classifyTerminalAccessibilityGate(
-  observation: TerminalAccessibilityObservation,
-): TerminalAccessibilityGate {
-  const hasUsefulText = observation.nodes.some((node) => (node.label ?? '').trim().length > 0);
-  const hasUsefulAction = observation.actions.some((action) => USEFUL_ACTIONS.has(action));
-  if (hasUsefulText || hasUsefulAction) {
-    return {
-      state: 'accepted',
-      renderer: observation.renderer,
-      platform: observation.platform,
-    };
-  }
-
-  const isOpaqueTree = observation.nodes.length <= 1
-    && observation.nodes.every((node) => node.role === 'other' || node.role === 'view');
-  return {
-    state: 'fallback-required',
-    reason: isOpaqueTree ? 'opaque-tree' : 'no-terminal-content',
-    renderer: observation.renderer,
-    platform: observation.platform,
-  };
+export function listTerminalNativeAccessibilityDeviceEvidenceRequirements(): readonly TerminalNativeAccessibilityDeviceEvidenceRequirement[] {
+  return REQUIREMENTS;
 }

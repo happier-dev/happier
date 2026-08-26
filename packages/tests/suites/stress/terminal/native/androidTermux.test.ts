@@ -1,29 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  classifyTerminalAccessibilityGate,
-} from '../../../../src/testkit/terminal/accessibility';
-import { shouldSelectNativeTerminalRenderer } from '../../../../src/testkit/terminal/native';
+  assertTerminalNativeDeviceRecipeCoverage,
+  getTerminalNativeDeviceRecipe,
+} from '../../../../src/testkit/terminal/native';
 
-describe('stress: Android Termux terminal renderer gates', () => {
-  it('keeps Android Termux unselected until legal/package/runtime proof pass', () => {
-    const accessibility = classifyTerminalAccessibilityGate({
-      renderer: 'android-termux',
-      platform: 'android',
-      nodes: [{ role: 'text', label: 'terminal output summary' }],
-      actions: ['copy'],
-    });
+describe('stress: Android Termux device recipe contract', () => {
+  it('requires Android native rendering, interaction, fallback, and loaded-app evidence', () => {
+    const recipe = getTerminalNativeDeviceRecipe('android-termux');
 
-    expect(shouldSelectNativeTerminalRenderer({
-      renderer: 'android-termux',
-      embeddedPtyEnabled: true,
-      byteStreamEnabled: true,
-      nativeRendererEnabled: true,
-      platformRendererEnabled: true,
-      packageAvailable: false,
-      runtimeAvailable: false,
-      fallbackAvailable: true,
-      accessibility,
-    })).toBe(false);
+    expect(recipe.platform).toBe('android');
+    expect(recipe.requiredWorkloads).toEqual(expect.arrayContaining([
+      'ansi-burst',
+      'heavy-tui-redraw',
+      'bracketed-paste-echo',
+      'long-scrollback',
+    ]));
+    expect(recipe.requiredActions).toEqual(expect.arrayContaining([
+      'async-byte-write-ack-reject-retry',
+      'ime-composition',
+      'selection-copy',
+      'renderer-crash-fallback',
+      'background-resume',
+    ]));
+    expect(() => assertTerminalNativeDeviceRecipeCoverage(recipe)).not.toThrow();
   });
 });

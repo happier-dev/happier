@@ -216,6 +216,23 @@ async function main() {
       artifactPolicy: rendererPolicy.iosGhostty.artifact,
     });
   const gates = readIosGhosttyGates();
+  if (artifactPath !== defaultArtifactPath && !expectedSha256) {
+    writeJsonLine({
+      status: 'blocked',
+      platform: 'ios',
+      renderer: rendererPolicy.iosGhostty.renderer,
+      reason: 'missing-checksum-pinned-artifact',
+      detail: 'Explicit GhosttyKit probe overrides require an exact SHA-256 checksum.',
+      fallbackRenderer: 'xterm-webview',
+      fallbackRequired: true,
+      artifactPath: rendererPolicy.iosGhostty.artifact.path,
+      linkedArtifactPath: artifactPath,
+      checksumEnv: 'HAPPIER_TERMINAL_NATIVE_GHOSTTYKIT_SHA256',
+      gates,
+      requiredGates: rendererPolicy.iosGhostty.gates,
+    });
+    return;
+  }
   const result = await validateGhosttyKitArtifact({
     artifactPath,
     expectedSha256,

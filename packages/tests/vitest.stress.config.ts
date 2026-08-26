@@ -1,8 +1,9 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, mergeConfig } from 'vitest/config';
 
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';
+import { createUiProductionHooksVitestConfig } from './vitest.uiProductionHooks';
 
-export default defineConfig({
+export default mergeConfig(createUiProductionHooksVitestConfig(), defineConfig({
   test: {
     environment: 'node',
     include: ['suites/stress/**/*.test.ts'],
@@ -15,4 +16,4 @@ export default defineConfig({
       HAPPIER_FEATURE_POLICY_ENV: '',
     },
   },
-});
+}));

@@ -55,6 +55,22 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
     }
   }
 
+  var accessibilityTerminalLabel: String = "" {
+    didSet { refreshAccessibility() }
+  }
+
+  var accessibilityFallbackValue: String = "" {
+    didSet { refreshAccessibility() }
+  }
+
+  var accessibilityFocusActionLabel: String = "" {
+    didSet { refreshAccessibility() }
+  }
+
+  var accessibilityCopySelectionActionLabel: String = "" {
+    didSet { refreshAccessibility() }
+  }
+
   override init(frame: CGRect) {
     super.init(frame: frame)
     backgroundColor = .black
@@ -369,7 +385,11 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
   private func refreshAccessibility() {
     accessibilityModel.update(
       summary: accessibilitySummary,
-      accepted: accessibilityAccepted
+      accepted: accessibilityAccepted,
+      terminalLabel: accessibilityTerminalLabel,
+      fallbackValue: accessibilityFallbackValue,
+      focusActionLabel: accessibilityFocusActionLabel,
+      copySelectionActionLabel: accessibilityCopySelectionActionLabel
     )
     accessibilityModel.apply(to: self)
   }

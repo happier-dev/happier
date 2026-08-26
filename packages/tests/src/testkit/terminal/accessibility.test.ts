@@ -1,32 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { classifyTerminalAccessibilityGate } from './accessibility';
+import {
+  TERMINAL_NATIVE_ACCESSIBILITY_DEVICE_EVIDENCE_IDS,
+  listTerminalNativeAccessibilityDeviceEvidenceRequirements,
+} from './accessibility';
 
-describe('terminal accessibility gates', () => {
-  it('requires fallback when a native terminal surface is an opaque node', () => {
-    expect(
-      classifyTerminalAccessibilityGate({
-        renderer: 'ios-ghosttykit',
-        platform: 'ios',
-        nodes: [{ role: 'other', label: '' }],
-        actions: [],
-      }),
-    ).toEqual({
-      state: 'fallback-required',
-      reason: 'opaque-tree',
-      renderer: 'ios-ghosttykit',
-      platform: 'ios',
-    });
-  });
+describe('terminal native accessibility device requirements', () => {
+  it('defines platform-tree, screen-reader, and terminal-affordance evidence without reporting a result', () => {
+    const requirements = listTerminalNativeAccessibilityDeviceEvidenceRequirements();
 
-  it('accepts a renderer when useful terminal text or actions are exposed', () => {
-    expect(
-      classifyTerminalAccessibilityGate({
-        renderer: 'xterm-webview',
-        platform: 'android',
-        nodes: [{ role: 'text', label: 'build complete' }],
-        actions: ['copy', 'open-link'],
-      }).state,
-    ).toBe('accepted');
+    expect(requirements.map((requirement) => requirement.id)).toEqual(
+      TERMINAL_NATIVE_ACCESSIBILITY_DEVICE_EVIDENCE_IDS,
+    );
+    expect(requirements.every((requirement) => requirement.description.length > 0)).toBe(true);
+    expect(requirements).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'passed' }),
+    ]));
   });
 });

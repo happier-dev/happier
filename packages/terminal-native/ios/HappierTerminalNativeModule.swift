@@ -107,6 +107,22 @@ public final class HappierTerminalNativeModule: Module {
       Prop("accessibilityAccepted", false) { (view: GhosttySurfaceView, accessibilityAccepted: Bool) in
         view.accessibilityAccepted = accessibilityAccepted
       }
+
+      Prop("accessibilityTerminalLabel") { (view: GhosttySurfaceView, value: String) in
+        view.accessibilityTerminalLabel = value
+      }
+
+      Prop("accessibilityFallbackValue") { (view: GhosttySurfaceView, value: String) in
+        view.accessibilityFallbackValue = value
+      }
+
+      Prop("accessibilityFocusActionLabel") { (view: GhosttySurfaceView, value: String) in
+        view.accessibilityFocusActionLabel = value
+      }
+
+      Prop("accessibilityCopySelectionActionLabel") { (view: GhosttySurfaceView, value: String) in
+        view.accessibilityCopySelectionActionLabel = value
+      }
     }
   }
 }

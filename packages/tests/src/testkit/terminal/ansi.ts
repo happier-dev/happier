@@ -26,14 +26,6 @@ export function bytesSha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-export function bytesToBase64(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString('base64');
-}
-
-export function base64ToBytes(value: string): Uint8Array {
-  return new Uint8Array(Buffer.from(value, 'base64'));
-}
-
 export function splitBytes(bytes: Uint8Array, maxFrameBytes: number): readonly Uint8Array[] {
   if (!Number.isInteger(maxFrameBytes) || maxFrameBytes < 1) {
     throw new Error(`maxFrameBytes must be a positive integer: ${maxFrameBytes}`);

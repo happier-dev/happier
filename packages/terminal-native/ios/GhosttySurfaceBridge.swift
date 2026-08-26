@@ -356,11 +356,6 @@ final class GhosttySurfaceBridge {
       "surfaceId": surfaceId(),
       "text": text,
     ])
-    emitEvent("selection", [
-      "surfaceId": surfaceId(),
-      "state": "copied",
-      "text": text,
-    ])
     return [
       "copied": true,
       "text": text,

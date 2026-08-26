@@ -6,7 +6,7 @@ export type TerminalRendererUnderTest =
   | 'xterm-webview'
   | 'ios-ghosttykit'
   | 'android-termux'
-  | 'synthetic-byte-roundtrip';
+  | 'canonical-base64-codec';
 
 export type TerminalLossCounters = Readonly<{
   gaps: number;

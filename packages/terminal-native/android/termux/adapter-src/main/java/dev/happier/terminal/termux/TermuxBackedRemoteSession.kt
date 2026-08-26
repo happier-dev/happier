@@ -18,8 +18,10 @@ import dev.happier.terminal.TermuxRemoteSessionCallbacks
 import dev.happier.terminal.TermuxWriteResult
 import dev.happier.terminal.makeTermuxBridgeDiagnostic
 import dev.happier.terminal.makeTermuxTextInputBytes
+import dev.happier.terminal.requireTermuxMainThread
 import java.net.URI
 import java.util.Locale
+import java.util.concurrent.CancellationException
 
 class TermuxBackedRemoteSession(
   private val surfaceId: String,
@@ -134,21 +136,25 @@ class TermuxBackedRemoteSession(
     }
   }
 
-  private val emulator: TerminalEmulator = TerminalEmulator(
-    output,
-    cols,
-    rows,
-    cellWidthPx,
-    cellHeightPx,
-    null as Int?,
-    client,
-  )
+  private val emulator: TerminalEmulator = run {
+    requireTermuxMainThread()
+    TerminalEmulator(
+      output,
+      cols,
+      rows,
+      cellWidthPx,
+      cellHeightPx,
+      null as Int?,
+      client,
+    )
+  }
 
   init {
     emitSurfaceReady()
   }
 
   override fun writeBytes(bytes: ByteArray, byteOffset: Long): TermuxWriteResult {
+    requireTermuxMainThread()
     if (disposed) return rejected("surface-not-ready", "Android Termux surface has been disposed.")
     if (bytes.isEmpty()) return rejected("invalid-ack", "Native terminal writes must contain at least one byte.")
     if (byteOffset < 0) return rejected("invalid-ack", "byteOffset must be non-negative.")
@@ -165,6 +171,7 @@ class TermuxBackedRemoteSession(
   }
 
   override fun sendInputBytes(bytes: ByteArray): TermuxWriteResult {
+    requireTermuxMainThread()
     if (disposed) return rejected("surface-not-ready", "Android Termux surface has been disposed.")
     if (bytes.isEmpty()) return rejected("invalid-ack", "Native terminal input must contain at least one byte.")
     callbacks.emitInputBytes(bytes)
@@ -172,6 +179,7 @@ class TermuxBackedRemoteSession(
   }
 
   override fun sendTextInput(text: CharSequence): TermuxWriteResult {
+    requireTermuxMainThread()
     if (disposed) return rejected("surface-not-ready", "Android Termux surface has been disposed.")
     val input = makeTermuxTextInputBytes(surfaceId, text)
       ?: return rejected("invalid-ack", "Native terminal text input must not be empty.")
@@ -180,6 +188,7 @@ class TermuxBackedRemoteSession(
   }
 
   override fun sendKeyEvent(keyCode: Int, event: KeyEvent): Boolean {
+    requireTermuxMainThread()
     if (disposed || event.action != KeyEvent.ACTION_DOWN) return false
 
     if (keyCode == KeyEvent.KEYCODE_LANGUAGE_SWITCH || keyCode == KeyEvent.KEYCODE_BACK) {
@@ -244,6 +253,7 @@ class TermuxBackedRemoteSession(
   }
 
   override fun handleMotionEvent(event: MotionEvent): Boolean {
+    requireTermuxMainThread()
     if (disposed) return false
     if (event.isFromSource(InputDevice.SOURCE_MOUSE) && event.action == MotionEvent.ACTION_SCROLL) {
       val rowsDown = if (event.getAxisValue(MotionEvent.AXIS_VSCROLL) > 0f) -3 else 3
@@ -324,6 +334,7 @@ class TermuxBackedRemoteSession(
   }
 
   override fun resize(cols: Int, rows: Int): TermuxWriteResult {
+    requireTermuxMainThread()
     if (disposed) return rejected("surface-not-ready", "Android Termux surface has been disposed.")
     if (cols <= 0 || rows <= 0) return rejected("surface-not-ready", "cols and rows must be positive.")
 
@@ -338,22 +349,26 @@ class TermuxBackedRemoteSession(
   }
 
   override fun attachEventSink(eventSink: dev.happier.terminal.TermuxEventSink) {
+    requireTermuxMainThread()
     callbacks.attachEventSink(eventSink)
     emitSurfaceReady()
   }
 
   override fun focus() {
+    requireTermuxMainThread()
     emulator.setCursorBlinkState(true)
     emitSurfaceReady()
   }
 
   override fun clear() {
+    requireTermuxMainThread()
     emulator.reset()
     topRow = 0
     emitSurfaceReady()
   }
 
   override fun copySelection() {
+    requireTermuxMainThread()
     val selected = selectedText()
     if (selected.isEmpty()) return
     callbacks.emitCopy(selected)
@@ -361,35 +376,43 @@ class TermuxBackedRemoteSession(
     clearSelection()
   }
 
-  override fun accessibilitySummary(): String {
+  override fun accessibilitySummary(): String? {
+    requireTermuxMainThread()
     return try {
-      emulator.getScreen().getSelectedText(0, 0, emulator.mColumns, emulator.mRows).toString()
+      emulator.getScreen().getSelectedText(0, 0, emulator.mColumns, emulator.mRows).toString().trim()
     } catch (_: Throwable) {
-      "Android native terminal surface $surfaceId is active."
+      null
     }
   }
 
   override fun draw(canvas: Canvas, width: Int, height: Int, fontSize: Float) {
+    requireTermuxMainThread()
     if (disposed) return
-    val activeRenderer = rendererFor(fontSize)
-    val nextCols = maxOf(4, (width / activeRenderer.fontWidthCompat()).toInt())
-    val nextRows = maxOf(4, height / activeRenderer.fontLineSpacingCompat())
-    if (nextCols != cols || nextRows != rows) {
-      resizeEmulator(nextCols, nextRows, activeRenderer.fontWidthCompat().toInt(), activeRenderer.fontLineSpacingCompat())
-      callbacks.emitResize(nextCols, nextRows)
+    try {
+      val activeRenderer = rendererFor(fontSize)
+      val nextCols = maxOf(4, (width / activeRenderer.fontWidthCompat()).toInt())
+      val nextRows = maxOf(4, height / activeRenderer.fontLineSpacingCompat())
+      if (nextCols != cols || nextRows != rows) {
+        resizeEmulator(nextCols, nextRows, activeRenderer.fontWidthCompat().toInt(), activeRenderer.fontLineSpacingCompat())
+        callbacks.emitResize(nextCols, nextRows)
+      }
+      activeRenderer.render(
+        emulator,
+        canvas,
+        topRow,
+        selectionStartRow,
+        selectionEndRow,
+        selectionStartColumn,
+        selectionEndColumn,
+      )
+    } catch (error: Throwable) {
+      if (error is CancellationException || error is VirtualMachineError || error is ThreadDeath) throw error
+      callbacks.emitRendererCrash(error.message ?: error.javaClass.simpleName)
     }
-    activeRenderer.render(
-      emulator,
-      canvas,
-      topRow,
-      selectionStartRow,
-      selectionEndRow,
-      selectionStartColumn,
-      selectionEndColumn,
-    )
   }
 
   override fun dispose() {
+    requireTermuxMainThread()
     disposed = true
   }
 

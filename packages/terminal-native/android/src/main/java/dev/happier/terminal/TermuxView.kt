@@ -4,9 +4,11 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.text.InputType
+import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -20,6 +22,10 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
   private var lineHeightPx = 18.0
   private var accessibilitySummary = ""
   private var accessibilityAccepted = false
+  private var accessibilityTerminalLabel = ""
+  private var accessibilityFallbackValue = ""
+  private var accessibilityFocusActionLabel = ""
+  private var accessibilityCopySelectionActionLabel = ""
   private var accessibilityRefreshPosted = false
   private val surfaceInvalidator: () -> Unit = {
     postInvalidateOnAnimation()
@@ -79,6 +85,26 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
   fun setAccessibilityAccepted(accessibilityAccepted: Boolean) {
     this.accessibilityAccepted = accessibilityAccepted
     refreshAccessibility()
+  }
+
+  fun setAccessibilityTerminalLabel(label: String) {
+    accessibilityTerminalLabel = label.trim()
+    refreshAccessibility()
+  }
+
+  fun setAccessibilityFallbackValue(value: String) {
+    accessibilityFallbackValue = value.trim()
+    refreshAccessibility()
+  }
+
+  fun setAccessibilityFocusActionLabel(label: String) {
+    accessibilityFocusActionLabel = label.trim()
+    notifyAccessibilityActionsChanged()
+  }
+
+  fun setAccessibilityCopySelectionActionLabel(label: String) {
+    accessibilityCopySelectionActionLabel = label.trim()
+    notifyAccessibilityActionsChanged()
   }
 
   override fun onAttachedToWindow() {
@@ -196,6 +222,29 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
     return super.performClick()
   }
 
+  override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+    super.onInitializeAccessibilityNodeInfo(info)
+    if (surfaceId.isBlank()) return
+    if (accessibilityFocusActionLabel.isNotBlank()) {
+      info.addAction(AccessibilityNodeInfo.AccessibilityAction(ACTION_FOCUS_TERMINAL, accessibilityFocusActionLabel))
+    }
+    if (accessibilityCopySelectionActionLabel.isNotBlank()) {
+      info.addAction(AccessibilityNodeInfo.AccessibilityAction(ACTION_COPY_SELECTION, accessibilityCopySelectionActionLabel))
+    }
+  }
+
+  override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+    if (surfaceId.isNotBlank() && action == ACTION_FOCUS_TERMINAL) {
+      requestTerminalFocus(showKeyboard = true)
+      return true
+    }
+    if (surfaceId.isNotBlank() && action == ACTION_COPY_SELECTION) {
+      TermuxBridge.copySelection(surfaceId)
+      return true
+    }
+    return super.performAccessibilityAction(action, arguments)
+  }
+
   override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
     super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
     if (gainFocus) {
@@ -204,14 +253,23 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
   }
 
   private fun refreshAccessibility() {
-    val diagnostic = makeTermuxAccessibilityDiagnostic()
-    contentDescription = if (accessibilitySummary.isNotBlank()) {
+    val value = if (accessibilitySummary.isNotBlank()) {
       accessibilitySummary
     } else if (surfaceId.isNotBlank()) {
       TermuxBridge.accessibilitySummary(surfaceId)
-        ?: "Native terminal renderer unavailable. ${diagnostic.fallbackRenderer} fallback is required for accessible terminal content."
+        ?.takeUnless { it.isNullOrBlank() }
+        ?: accessibilityFallbackValue
     } else {
-      "Native terminal renderer unavailable. ${diagnostic.fallbackRenderer} fallback is required for accessible terminal content."
+      accessibilityFallbackValue
+    }
+    contentDescription = listOf(accessibilityTerminalLabel, value)
+      .filter { it.isNotBlank() }
+      .joinToString(". ")
+  }
+
+  private fun notifyAccessibilityActionsChanged() {
+    if (isAttachedToWindow) {
+      sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
     }
   }
 
@@ -239,5 +297,10 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
   private fun showSoftKeyboard() {
     val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
     inputMethodManager?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+  }
+
+  private companion object {
+    const val ACTION_FOCUS_TERMINAL = 0x01020001
+    const val ACTION_COPY_SELECTION = 0x01020002
   }
 }

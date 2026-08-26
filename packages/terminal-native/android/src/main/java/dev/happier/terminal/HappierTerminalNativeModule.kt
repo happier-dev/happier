@@ -2,6 +2,7 @@ package dev.happier.terminal
 
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.functions.Queues
 
 class HappierTerminalNativeModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -30,39 +31,38 @@ class HappierTerminalNativeModule : Module() {
     }
 
     AsyncFunction("createSurface") { surfaceId: String ->
-      TermuxBridge.createSurface(surfaceId) { eventName, payload ->
+      return@AsyncFunction TermuxBridge.createSurface(surfaceId) { eventName, payload ->
         sendEvent(eventName, payload)
       }
-      return@AsyncFunction TermuxBridge.availability()
-    }
+    }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("writeBytes") { surfaceId: String, base64Bytes: String, byteOffset: Double ->
       return@AsyncFunction TermuxBridge.writeBytes(surfaceId, base64Bytes, byteOffset.toLong())
-    }
+    }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("sendInputBytes") { surfaceId: String, base64Bytes: String ->
       return@AsyncFunction TermuxBridge.sendInputBytes(surfaceId, base64Bytes)
-    }
+    }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("resizeSurface") { surfaceId: String, cols: Int, rows: Int ->
       return@AsyncFunction TermuxBridge.resizeSurface(surfaceId, cols, rows)
-    }
+    }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("focusSurface") { surfaceId: String ->
       return@AsyncFunction TermuxBridge.focusSurface(surfaceId)
-    }
+    }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("clearSurface") { surfaceId: String ->
       return@AsyncFunction TermuxBridge.clearSurface(surfaceId)
-    }
+    }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("disposeSurface") { surfaceId: String ->
       return@AsyncFunction TermuxBridge.disposeSurface(surfaceId)
-    }
+    }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("copySelection") { surfaceId: String ->
       return@AsyncFunction TermuxBridge.copySelection(surfaceId)
-    }
+    }.runOnQueue(Queues.MAIN)
 
     View(TermuxView::class) {
       Name("HappierTerminalNativeView")
@@ -86,10 +86,26 @@ class HappierTerminalNativeModule : Module() {
       Prop("accessibilityAccepted") { view: TermuxView, accessibilityAccepted: Boolean ->
         view.setAccessibilityAccepted(accessibilityAccepted)
       }
+
+      Prop("accessibilityTerminalLabel") { view: TermuxView, label: String ->
+        view.setAccessibilityTerminalLabel(label)
+      }
+
+      Prop("accessibilityFallbackValue") { view: TermuxView, value: String ->
+        view.setAccessibilityFallbackValue(value)
+      }
+
+      Prop("accessibilityFocusActionLabel") { view: TermuxView, label: String ->
+        view.setAccessibilityFocusActionLabel(label)
+      }
+
+      Prop("accessibilityCopySelectionActionLabel") { view: TermuxView, label: String ->
+        view.setAccessibilityCopySelectionActionLabel(label)
+      }
     }
 
     OnDestroy {
-      TermuxBridge.disposeAll()
+      TermuxBridge.disposeAllOnMain()
     }
   }
 }

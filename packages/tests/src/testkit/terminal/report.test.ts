@@ -106,7 +106,7 @@ describe('terminal benchmark reports', () => {
       endedAt: '2026-06-13T10:00:01.000Z',
       samples: [
         summarizeTerminalSample({
-          renderer: 'synthetic-byte-roundtrip',
+          renderer: 'canonical-base64-codec',
           workloadId: 'ansi-burst',
           decodedBytes: 1024 * 1024,
           durationMs: 100,
@@ -120,7 +120,7 @@ describe('terminal benchmark reports', () => {
       endedAt: '2026-06-13T10:00:01.000Z',
       samples: [
         summarizeTerminalSample({
-          renderer: 'synthetic-byte-roundtrip',
+          renderer: 'canonical-base64-codec',
           workloadId: 'ansi-burst',
           decodedBytes: 1024 * 1024,
           durationMs: 400,

@@ -161,6 +161,11 @@ esac
 [ "$#" -gt 0 ] || { printf '%s\n' '[preferred-execution] command is required' >&2; exit 1; }
 requested_command=$1
 requested_command_name=${requested_command##*/}
+command_class=unknown
+primary_only_direct_commands=${primary_only_direct_commands-git}
+case " $primary_only_direct_commands " in
+  *" $requested_command_name "*) run_local -- "$@" ;;
+esac
 requires_remote_dependencies=0
 case " ${dependency_direct_commands-} " in
   *" $requested_command_name "*) requires_remote_dependencies=1 ;;
@@ -170,10 +175,54 @@ if [ "$requested_command_name" = corepack ]; then
     *" ${2-} "*) requires_remote_dependencies=1 ;;
   esac
 fi
+resolve_package_manager_script_family() {
+  command_name=${1##*/}
+  if [ "$command_name" = corepack ]; then
+    shift
+    [ "$#" -gt 0 ] || return 0
+    command_name=${1##*/}
+  fi
+  case "$command_name" in yarn|npm|pnpm) ;; *) return 0 ;; esac
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      run|-s|--silent) shift ;;
+      --cwd|-C) shift; [ "$#" -gt 0 ] && shift ;;
+      -*) shift ;;
+      *) printf '%s' "${1%%:*}"; return 0 ;;
+    esac
+  done
+}
+source_search_direct_commands=${source_search_direct_commands-find grep rg}
+case " $source_search_direct_commands " in
+  *" $requested_command_name "*) command_class=source-search ;;
+esac
+requires_remote_workspace_preparation=0
+validation_direct_commands=${validation_direct_commands-tsc vitest}
+case " $validation_direct_commands " in
+  *" $requested_command_name "*) requires_remote_workspace_preparation=1; command_class=validation ;;
+esac
+script_family=$(resolve_package_manager_script_family "$@")
+validation_script_families=${validation_script_families-build check lint test typecheck vitest}
+case " $validation_script_families " in
+  *" $script_family "*)
+    if [ -n "$script_family" ]; then
+      requires_remote_workspace_preparation=1
+      command_class=validation
+    fi
+    ;;
+esac
+[ "$script_family" = install ] && command_class=dependency-mutation
 preflight_command=$requested_command
 [ "$requires_remote_dependencies" -eq 1 ] && preflight_command=corepack
 relative_cwd=${invoked_cwd#"$repo_root"}
 relative_cwd=${relative_cwd#/}
+if [ -n "$relative_cwd" ]; then
+  [ "$command_class" = validation ] && command_class=targeted-validation
+else
+  requires_remote_workspace_preparation=0
+  [ "$command_class" = validation ] && command_class=full-validation
+fi
 
 stack_dir=$(dirname -- "$config_path")
 cache_dir="$stack_dir/dev-target-command-load-native"
@@ -210,7 +259,12 @@ EOF
   case "${successful_cycles-}" in ''|*[!0-9]*) return 1 ;; esac
   [ "$successful_cycles" -gt 0 ] || return 1
   case "$session_status" in
-    Watching|Scanning|Waiting-for-rescan|Reconciling|Staging-alpha|Staging-beta|Transitioning|Saving) return 0 ;;
+    Watching|Scanning|Waiting-for-rescan|Reconciling|Staging-alpha|Staging-beta|Transitioning|Saving)
+      sync_cache="$cache_dir/$target_name.sync.cache"
+      printf '%s %s %s\n' "$(date +%s)" "$session_status" "$successful_cycles" > "$sync_cache.$$.tmp" && \
+        mv -f -- "$sync_cache.$$.tmp" "$sync_cache"
+      return 0
+      ;;
     *) return 1 ;;
   esac
 }
@@ -225,7 +279,7 @@ remote_load_probe() {
   if [ -n "$remote_path" ]; then
     path_setup="PATH=$(quote_remote "$remote_path"):\$PATH; export PATH; "
   fi
-  probe='cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf 1); case $(uname -s) in Darwin) load=$(sysctl -n vm.loadavg | awk '\''{print $2}'\''); free=$(memory_pressure -Q 2>/dev/null | awk '\''/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}'\'') ;; *) load=$(awk '\''{print $1}'\'' /proc/loadavg 2>/dev/null || uptime | awk -F'\''load average: '\'' '\''{print $2}'\'' | cut -d, -f1); free=$(awk '\''/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {if(t>0) print a/t}'\'' /proc/meminfo 2>/dev/null) ;; esac; [ -n "$free" ] || free=1; disk=$(df -Pk . 2>/dev/null | awk '\''NR==2 {gsub(/%/,"",$5); print $4, $5}'\''); set -- $disk; disk_free=${1-}; disk_used=${2-}; printf "%s %s %s %s %s\\n" "$cpu" "$load" "$free" "$disk_free" "$disk_used"'
+  probe='cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf 1); kernel=$(uname -s); case "$kernel" in Darwin) platform=darwin; load=$(sysctl -n vm.loadavg | awk '\''{print $2}'\''); free=$(memory_pressure -Q 2>/dev/null | awk '\''/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}'\''); run_queue=0; mem_available_kib=0; mem_total_kib=0; swap_used_kib=0; swap_total_kib=0; psi_cpu=0; psi_memory=0; psi_io=0; swap_in_pages=0; swap_out_pages=0 ;; *) platform=linux; load=$(awk '\''{print $1}'\'' /proc/loadavg 2>/dev/null || uptime | awk -F'\''load average: '\'' '\''{print $2}'\'' | cut -d, -f1); run_queue=$(awk '\''{split($4,r,"/"); print r[1]}'\'' /proc/loadavg 2>/dev/null); memory=$(awk '\''/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} /SwapTotal:/ {st=$2} /SwapFree:/ {sf=$2} END {if(t>0) print a/t, a, t, st-sf, st}'\'' /proc/meminfo 2>/dev/null); set -- $memory; free=${1-}; mem_available_kib=${2-}; mem_total_kib=${3-}; swap_used_kib=${4-}; swap_total_kib=${5-}; psi_cpu=$(awk '\''/^some / {for(i=1;i<=NF;i++) if($i ~ /^avg10=/) {sub(/^avg10=/,"",$i); print $i; exit}}'\'' /proc/pressure/cpu 2>/dev/null); psi_memory=$(awk '\''/^some / {for(i=1;i<=NF;i++) if($i ~ /^avg10=/) {sub(/^avg10=/,"",$i); print $i; exit}}'\'' /proc/pressure/memory 2>/dev/null); psi_io=$(awk '\''/^some / {for(i=1;i<=NF;i++) if($i ~ /^avg10=/) {sub(/^avg10=/,"",$i); print $i; exit}}'\'' /proc/pressure/io 2>/dev/null); swap_pages=$(awk '\''/pswpin / {i=$2} /pswpout / {o=$2} END {print i+0, o+0}'\'' /proc/vmstat 2>/dev/null); set -- $swap_pages; swap_in_pages=${1-}; swap_out_pages=${2-} ;; esac; [ -n "$free" ] || free=1; disk=$(df -Pk . 2>/dev/null | awk '\''NR==2 {gsub(/%/,"",$5); print $4, $5}'\''); set -- $disk; disk_free=${1-}; disk_used=${2-}; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\\n" "$cpu" "$load" "$free" "$disk_free" "$disk_used" "${run_queue:-0}" "${mem_available_kib:-0}" "${mem_total_kib:-0}" "${swap_used_kib:-0}" "${swap_total_kib:-0}" "${psi_cpu:-0}" "${psi_memory:-0}" "${psi_io:-0}" "${swap_in_pages:-0}" "${swap_out_pages:-0}" "$platform"'
   remote_command="${path_setup}cd -- $(quote_remote "$remote_repo") && bash -lc $(quote_remote "$probe")"
   if [ -n "$ssh_config" ]; then
     ssh -T -F "$ssh_config" -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$remote_command"
@@ -396,6 +450,9 @@ probe_target() {
     # commands. Older three-field cached/test probes remain valid until refreshed.
     score=$(printf '%s\n' "$sample" | awk '{if ($1 > 0 && $2 >= 0 && ($4 == "" || $4 >= 1048576)) printf "%.6f", ($2 / $1) + (($3 < 0.1) ? 1 : 0)}')
     capacity=$(printf '%s\n' "$sample" | awk '{if ($1 ~ /^[0-9]+$/ && $1 > 0) print $1}')
+    telemetry=$(printf '%s\n' "$sample" | awk '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s\n",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform}')
+    printf '%s\n' "$telemetry" > "$cache_dir/$name.telemetry.$$.tmp" && \
+      mv -f -- "$cache_dir/$name.telemetry.$$.tmp" "$cache_dir/$name.telemetry"
   fi
   temporary="$cache_path.$$.tmp"
   if [ -n "$score" ] && [ -n "$capacity" ]; then
@@ -468,6 +525,7 @@ fi
 count_active_dispatches() {
   target_name=$1
   active_count=0
+  active_class_count=0
   for reservation in "$cache_dir/$target_name.active."*; do
     [ -f "$reservation" ] || continue
     reservation_pid=$(sed -n '1p' "$reservation" 2>/dev/null || true)
@@ -476,13 +534,15 @@ count_active_dispatches() {
       *)
         if kill -0 "$reservation_pid" 2>/dev/null; then
           active_count=$((active_count + 1))
+          reservation_class=$(sed -n '2p' "$reservation" 2>/dev/null || true)
+          [ "$reservation_class" = "$command_class" ] && active_class_count=$((active_class_count + 1))
         else
           rm -f -- "$reservation" 2>/dev/null || true
         fi
         ;;
     esac
   done
-  printf '%s\n' "$active_count"
+  printf '%s %s\n' "$active_count" "$active_class_count"
 }
 
 candidates="$probe_tmp/candidates"
@@ -491,15 +551,19 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
   [ -f "$result_path" ] || continue
   IFS=' ' read -r candidate_number candidate_name candidate_available candidate_score candidate_capacity candidate_cache < "$result_path" || continue
   if [ "$candidate_available" = 1 ]; then
-    candidate_active=$(count_active_dispatches "$candidate_name")
+    active_counts=$(count_active_dispatches "$candidate_name")
+    candidate_active=${active_counts%% *}
+    candidate_class_active=${active_counts#* }
     candidate_effective=$(awk -v score="$candidate_score" -v active="$candidate_active" -v capacity="$candidate_capacity" 'BEGIN {printf "%.6f", score + (active / capacity)}')
   else
     candidate_active=0
+    candidate_class_active=0
     candidate_effective=$candidate_score
   fi
-  printf '%s %s %s %s %s %s %s %s\n' \
+  printf '%s %s %s %s %s %s %s %s %s\n' \
     "$candidate_number" "$candidate_name" "$candidate_available" "$candidate_effective" \
-    "$candidate_cache" "$candidate_score" "$candidate_active" "$candidate_capacity" >> "$candidates"
+    "$candidate_cache" "$candidate_score" "$candidate_active" "$candidate_capacity" \
+    "$candidate_class_active" >> "$candidates"
 done
 
 selected=$(awk '
@@ -528,15 +592,16 @@ if [ -z "$selected" ]; then
   printf '%s\n' '[preferred-execution] no healthy execution target is available; running locally' >&2
   run_local "$@"
 fi
-IFS=' ' read -r selected_number selected_name _selected_available selected_score selected_cache selected_base_score selected_active selected_capacity <<EOF
+IFS=' ' read -r selected_number selected_name _selected_available selected_score selected_cache selected_base_score selected_active selected_capacity selected_class_active <<EOF
 $selected
 EOF
 if [ "$selected_number" = 0 ]; then
   rmdir "$dispatch_lock" 2>/dev/null || true
   run_local "$@"
 fi
+execution_id="native-$$-${selected_number}-$(date +%s)"
 reservation_path="$cache_dir/$selected_name.active.$$"
-if ! printf '%s\n' "$$" > "$reservation_path.$$.tmp" || ! mv -f -- "$reservation_path.$$.tmp" "$reservation_path"; then
+if ! printf '%s\n%s\n%s\n' "$$" "$command_class" "$execution_id" > "$reservation_path.$$.tmp" || ! mv -f -- "$reservation_path.$$.tmp" "$reservation_path"; then
   rm -f -- "$reservation_path.$$.tmp" 2>/dev/null || true
   rmdir "$dispatch_lock" 2>/dev/null || true
   if [ "${fallback_mode-local}" = error ]; then
@@ -547,6 +612,52 @@ if ! printf '%s\n' "$$" > "$reservation_path.$$.tmp" || ! mv -f -- "$reservation
   run_local "$@"
 fi
 release_reservation() { rm -f -- "$reservation_path" 2>/dev/null || true; }
+sync_status=unknown
+sync_successful_cycles=0
+if [ -r "$cache_dir/$selected_name.sync.cache" ]; then
+  read -r _sync_sampled sync_status sync_successful_cycles < "$cache_dir/$selected_name.sync.cache" || true
+fi
+case "$sync_successful_cycles" in ''|*[!0-9]*) sync_successful_cycles=0 ;; esac
+telemetry_platform=unknown
+telemetry_cpu=0
+telemetry_load=0
+telemetry_free_ratio=0
+telemetry_disk_free_kib=0
+telemetry_disk_used_percent=0
+telemetry_run_queue=0
+telemetry_mem_available_kib=0
+telemetry_mem_total_kib=0
+telemetry_swap_used_kib=0
+telemetry_swap_total_kib=0
+telemetry_psi_cpu=0
+telemetry_psi_memory=0
+telemetry_psi_io=0
+telemetry_swap_in_pages=0
+telemetry_swap_out_pages=0
+if [ -r "$cache_dir/$selected_name.telemetry" ]; then
+  read -r telemetry_cpu telemetry_load telemetry_free_ratio telemetry_disk_free_kib \
+    telemetry_disk_used_percent telemetry_run_queue telemetry_mem_available_kib \
+    telemetry_mem_total_kib telemetry_swap_used_kib telemetry_swap_total_kib \
+    telemetry_psi_cpu telemetry_psi_memory telemetry_psi_io telemetry_swap_in_pages \
+    telemetry_swap_out_pages telemetry_platform < "$cache_dir/$selected_name.telemetry" || true
+fi
+execution_provenance_schema_version=${execution_provenance_schema_version-1}
+execution_provenance_filename=${execution_provenance_filename-provenance.jsonl}
+provenance_path="$cache_dir/$execution_provenance_filename"
+provenance_size=$(wc -c < "$provenance_path" 2>/dev/null || printf 0)
+case "$provenance_size" in ''|*[!0-9]*) provenance_size=0 ;; esac
+if [ "$provenance_size" -ge 1048576 ]; then
+  mv -f -- "$provenance_path" "$provenance_path.previous" 2>/dev/null || true
+fi
+admitted_at_seconds=$(date +%s)
+admitted_at=$((admitted_at_seconds * 1000))
+printf '{"schemaVersion":%s,"phase":"admitted","executionId":"%s","timestamp":%s,"target":"%s","commandClass":"%s","syncStatus":"%s","syncSuccessfulCycles":%s,"normalizedLoad":%s,"activeReservations":%s,"activeClassReservations":%s,"effectiveScore":%s,"capacity":%s,"platform":"%s","runQueue":%s,"memAvailableKiB":%s,"memTotalKiB":%s,"swapUsedKiB":%s,"swapTotalKiB":%s,"cpuPsiAvg10":%s,"memoryPsiAvg10":%s,"ioPsiAvg10":%s,"swapInPages":%s,"swapOutPages":%s,"diskFreeKiB":%s}\n' \
+  "$execution_provenance_schema_version" "$execution_id" "$admitted_at" "$selected_name" "$command_class" "$sync_status" \
+  "$sync_successful_cycles" "$selected_base_score" "$selected_active" "$selected_class_active" "$selected_score" \
+  "$selected_capacity" "$telemetry_platform" "$telemetry_run_queue" "$telemetry_mem_available_kib" \
+  "$telemetry_mem_total_kib" "$telemetry_swap_used_kib" "$telemetry_swap_total_kib" \
+  "$telemetry_psi_cpu" "$telemetry_psi_memory" "$telemetry_psi_io" "$telemetry_swap_in_pages" \
+  "$telemetry_swap_out_pages" "$telemetry_disk_free_kib" >> "$provenance_path"
 rmdir "$dispatch_lock" 2>/dev/null || true
 printf '[preferred-execution] selected %s (load=%s, active=%s, effective=%s, %s)\n' \
   "$selected_name" "$selected_base_score" "$selected_active" "$selected_score" "$selected_cache" >&2
@@ -559,12 +670,14 @@ remote_path=$(value_for_target remote_path "$selected_number")
 remote_cwd=$remote_repo
 [ -n "$relative_cwd" ] && remote_cwd="$remote_repo/$relative_cwd"
 
-execution_id="native-$$-${selected_number}-$(date +%s)"
 pid_file="$remote_home/remote-exec/$execution_id.pid"
 remote_script="set -euo pipefail; execution_id=$(quote_remote "$execution_id"); pid_file=$(quote_remote "$pid_file"); mkdir -p -- \"\$(dirname -- \"\$pid_file\")\"; printf '%s\\n' \"\$\$\" > \"\$pid_file\"; trap 'rm -f -- \"\$pid_file\"' EXIT; export HAPPIER_DEV_TARGET_EXECUTION=1;"
 if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
 if [ "$requires_remote_dependencies" -eq 1 ]; then
   remote_script="$remote_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs;"
+fi
+if [ "$requires_remote_workspace_preparation" -eq 1 ]; then
+  remote_script="$remote_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs $(quote_remote "--component-relative-dir=$relative_cwd");"
 fi
 remote_script="$remote_script cd -- $(quote_remote "$remote_cwd");"
 for argument in "$@"; do remote_script="$remote_script $(quote_remote "$argument")"; done
@@ -662,4 +775,9 @@ status=$?
 trap - INT TERM
 close_selected_control
 release_reservation
+completed_at_seconds=$(date +%s)
+completed_at=$((completed_at_seconds * 1000))
+duration_ms=$((completed_at - admitted_at))
+printf '{"schemaVersion":%s,"phase":"completed","executionId":"%s","timestamp":%s,"target":"%s","commandClass":"%s","exitCode":%s,"signal":null,"durationMs":%s}\n' \
+  "$execution_provenance_schema_version" "$execution_id" "$completed_at" "$selected_name" "$command_class" "$status" "$duration_ms" >> "$provenance_path"
 exit "$status"

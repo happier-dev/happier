@@ -1,30 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { classifyTerminalAccessibilityGate } from '../../../../src/testkit/terminal/accessibility';
+import {
+  TERMINAL_NATIVE_ACCESSIBILITY_DEVICE_EVIDENCE_IDS,
+} from '../../../../src/testkit/terminal/accessibility';
+import { listTerminalNativeDeviceRecipes } from '../../../../src/testkit/terminal/native';
 
-describe('stress: native terminal accessibility model', () => {
-  it('requires useful terminal content or explicit actions before accepting native accessibility', () => {
-    expect(classifyTerminalAccessibilityGate({
-      renderer: 'ios-ghosttykit',
-      platform: 'ios',
-      nodes: [{ role: 'other' }],
-      actions: [],
-    })).toEqual({
-      state: 'fallback-required',
-      reason: 'opaque-tree',
-      renderer: 'ios-ghosttykit',
-      platform: 'ios',
-    });
-
-    expect(classifyTerminalAccessibilityGate({
-      renderer: 'android-termux',
-      platform: 'android',
-      nodes: [],
-      actions: ['accessibility-summary'],
-    })).toEqual({
-      state: 'accepted',
-      renderer: 'android-termux',
-      platform: 'android',
-    });
+describe('stress: native terminal accessibility device recipe contract', () => {
+  it('requires accessibility-tree, screen-reader, and terminal-affordance observations from the loaded app', () => {
+    for (const recipe of listTerminalNativeDeviceRecipes()) {
+      expect(recipe.requiredAccessibilityEvidence).toEqual(
+        TERMINAL_NATIVE_ACCESSIBILITY_DEVICE_EVIDENCE_IDS,
+      );
+      expect(recipe.evidenceSource).toBe('loaded-native-app');
+      expect(recipe.hostContractIsDeviceEvidence).toBe(false);
+    }
   });
 });

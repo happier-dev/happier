@@ -1,10 +1,11 @@
 package dev.happier.terminal
 
 import android.graphics.Canvas
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
 import android.view.KeyEvent
 import android.view.MotionEvent
-import java.util.concurrent.ConcurrentHashMap
 
 data class TermuxBridgeBlocker(
   val reason: String,
@@ -39,11 +40,17 @@ data class TermuxWriteResult(
   }
 }
 
+internal fun requireTermuxMainThread() {
+  check(Looper.myLooper() == Looper.getMainLooper()) {
+    "TermuxBridge terminal state must only be accessed on the Android main thread."
+  }
+}
+
 object TermuxBridge {
   private const val MODULE_VERSION = "0.0.0"
-  private val surfaces = ConcurrentHashMap<String, TermuxRemoteSession>()
-  private val invalidators = ConcurrentHashMap<String, () -> Unit>()
-  private val focusRequesters = ConcurrentHashMap<String, () -> Unit>()
+  private val surfaces = mutableMapOf<String, TermuxRemoteSession>()
+  private val invalidators = mutableMapOf<String, () -> Unit>()
+  private val focusRequesters = mutableMapOf<String, () -> Unit>()
 
   private val requiredModules = listOf(
     mapOf("name" to "terminal-view", "path" to "terminal-view", "license" to "Apache-2.0"),
@@ -101,29 +108,29 @@ object TermuxBridge {
     )
   }
 
-  fun createSurface(surfaceId: String, eventSink: TermuxEventSink? = null): TermuxBridgeDiagnostic {
-    unavailableDiagnostic()?.let { return it }
-    if (surfaceId.isNotBlank()) {
-      val existing = surfaces[surfaceId]
-      if (existing != null) {
-        if (eventSink != null) {
-          existing.attachEventSink(eventSink)
-        }
-      } else {
-        val created = TermuxRemoteSessionFactory.create(surfaceId, eventSink)
-        val raced = surfaces.putIfAbsent(surfaceId, created)
-        if (raced != null) {
-          created.dispose()
-          if (eventSink != null) {
-            raced.attachEventSink(eventSink)
-          }
-        }
-      }
+  fun createSurface(surfaceId: String, eventSink: TermuxEventSink? = null): Map<String, Any> {
+    requireTermuxMainThread()
+    unavailableDiagnostic()?.let { return surfaceAvailability(it) }
+    if (surfaceId.isBlank()) {
+      return unavailableSurfaceAvailability("surface-not-ready", "surfaceId is required.")
     }
-    return diagnostic()
+
+    val surface = surfaces[surfaceId]?.also { existing ->
+      if (eventSink != null) {
+        existing.attachEventSink(eventSink)
+      }
+    } ?: TermuxRemoteSessionFactory.create(surfaceId, eventSink).also { created ->
+      surfaces[surfaceId] = created
+    }
+
+    if (!surface.diagnostic.available) {
+      emitSurfaceFailure(surfaceId, eventSink, surface.diagnostic)
+    }
+    return surfaceAvailability(surface.diagnostic)
   }
 
   fun writeBytes(surfaceId: String, base64Bytes: String, byteOffset: Long): Map<String, Any?> {
+    requireTermuxMainThread()
     unavailableDiagnostic()?.let { return rejectUnavailable(it).toMap() }
     if (surfaceId.isBlank()) {
       return TermuxWriteResult(
@@ -155,6 +162,7 @@ object TermuxBridge {
   }
 
   fun sendInputBytes(surfaceId: String, base64Bytes: String): Map<String, Any?> {
+    requireTermuxMainThread()
     unavailableDiagnostic()?.let { return rejectUnavailable(it).toMap() }
     if (surfaceId.isBlank()) {
       return TermuxWriteResult(
@@ -177,6 +185,7 @@ object TermuxBridge {
   }
 
   fun sendTextInput(surfaceId: String, text: CharSequence): Map<String, Any?> {
+    requireTermuxMainThread()
     unavailableDiagnostic()?.let { return rejectUnavailable(it).toMap() }
     if (surfaceId.isBlank()) {
       return TermuxWriteResult(
@@ -190,6 +199,7 @@ object TermuxBridge {
   }
 
   fun sendKeyEvent(surfaceId: String, keyCode: Int, event: KeyEvent): Boolean {
+    requireTermuxMainThread()
     unavailableDiagnostic()?.let { return false }
     if (surfaceId.isBlank()) return false
     val surface = surfaces.getOrPut(surfaceId) { TermuxRemoteSessionFactory.create(surfaceId, null) }
@@ -197,6 +207,7 @@ object TermuxBridge {
   }
 
   fun handleMotionEvent(surfaceId: String, event: MotionEvent): Boolean {
+    requireTermuxMainThread()
     unavailableDiagnostic()?.let { return false }
     if (surfaceId.isBlank()) return false
     val surface = surfaces.getOrPut(surfaceId) { TermuxRemoteSessionFactory.create(surfaceId, null) }
@@ -206,6 +217,7 @@ object TermuxBridge {
   }
 
   fun resizeSurface(surfaceId: String, cols: Int, rows: Int): Map<String, Any?> {
+    requireTermuxMainThread()
     unavailableDiagnostic()?.let { return rejectUnavailable(it).toMap() }
     if (surfaceId.isBlank() || cols <= 0 || rows <= 0) {
       return mapOf("accepted" to false, "reason" to "surface-not-ready")
@@ -217,6 +229,7 @@ object TermuxBridge {
   }
 
   fun focusSurface(surfaceId: String) {
+    requireTermuxMainThread()
     unavailableDiagnostic()?.let { return }
     if (surfaceId.isNotBlank()) {
       surfaces.getOrPut(surfaceId) { TermuxRemoteSessionFactory.create(surfaceId, null) }.focus()
@@ -225,55 +238,102 @@ object TermuxBridge {
   }
 
   fun clearSurface(surfaceId: String) {
+    requireTermuxMainThread()
     surfaces[surfaceId]?.clear()
     invalidators[surfaceId]?.invoke()
   }
 
   fun copySelection(surfaceId: String) {
+    requireTermuxMainThread()
     surfaces[surfaceId]?.copySelection()
   }
 
   fun accessibilitySummary(surfaceId: String): String? {
+    requireTermuxMainThread()
     return surfaces[surfaceId]?.accessibilitySummary()
   }
 
   fun drawSurface(surfaceId: String, canvas: Canvas, width: Int, height: Int, fontSize: Float) {
+    requireTermuxMainThread()
     unavailableDiagnostic()?.let { return }
     surfaces[surfaceId]?.draw(canvas, width, height, fontSize)
   }
 
   fun registerSurfaceInvalidator(surfaceId: String, invalidator: () -> Unit) {
+    requireTermuxMainThread()
     if (surfaceId.isNotBlank()) {
       invalidators[surfaceId] = invalidator
     }
   }
 
   fun unregisterSurfaceInvalidator(surfaceId: String, invalidator: () -> Unit) {
+    requireTermuxMainThread()
     invalidators.remove(surfaceId, invalidator)
   }
 
   fun registerSurfaceFocusRequester(surfaceId: String, focusRequester: () -> Unit) {
+    requireTermuxMainThread()
     if (surfaceId.isNotBlank()) {
       focusRequesters[surfaceId] = focusRequester
     }
   }
 
   fun unregisterSurfaceFocusRequester(surfaceId: String, focusRequester: () -> Unit) {
+    requireTermuxMainThread()
     focusRequesters.remove(surfaceId, focusRequester)
   }
 
   fun disposeSurface(surfaceId: String) {
+    requireTermuxMainThread()
     surfaces.remove(surfaceId)?.dispose()
   }
 
   fun disposeAll() {
+    requireTermuxMainThread()
     surfaces.values.forEach { it.dispose() }
     surfaces.clear()
     invalidators.clear()
     focusRequesters.clear()
   }
 
+  fun disposeAllOnMain() {
+    if (Looper.myLooper() == Looper.getMainLooper()) {
+      disposeAll()
+    } else {
+      Handler(Looper.getMainLooper()).post { disposeAll() }
+    }
+  }
+
   fun moduleVersion(): String = MODULE_VERSION
+
+  private fun surfaceAvailability(diagnostic: TermuxBridgeDiagnostic): Map<String, Any> {
+    if (diagnostic.available) return availability()
+    return unavailableSurfaceAvailability(diagnostic.reason, diagnostic.detail)
+  }
+
+  private fun unavailableSurfaceAvailability(reason: String, detail: String): Map<String, Any> {
+    return mapOf(
+      "available" to false,
+      "reason" to reason,
+      "detail" to detail,
+    )
+  }
+
+  private fun emitSurfaceFailure(
+    surfaceId: String,
+    eventSink: TermuxEventSink?,
+    diagnostic: TermuxBridgeDiagnostic,
+  ) {
+    if (diagnostic.available) return
+    eventSink?.send(
+      "rendererCrash",
+      mapOf(
+        "surfaceId" to surfaceId,
+        "reason" to diagnostic.detail,
+        "fatal" to true,
+      ),
+    )
+  }
 
   private fun collectBlockers(): List<TermuxBridgeBlocker> {
     val blockers = mutableListOf<TermuxBridgeBlocker>()
@@ -342,4 +402,18 @@ object TermuxBridge {
 
 fun makeTermuxBridgeDiagnostic(): TermuxBridgeDiagnostic {
   return TermuxBridge.diagnostic()
+}
+
+fun makeUnavailableTermuxBridgeDiagnostic(overrideDetail: String?): TermuxBridgeDiagnostic {
+  val diagnostic = makeTermuxBridgeDiagnostic()
+  if (!diagnostic.available) return diagnostic
+
+  val detail = overrideDetail ?: "Android Termux renderer failed to initialize."
+  return diagnostic.copy(
+    available = false,
+    reason = "renderer-unavailable",
+    detail = detail,
+    fallbackRequired = true,
+    blockers = diagnostic.blockers + TermuxBridgeBlocker("renderer-unavailable", detail),
+  )
 }

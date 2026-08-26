@@ -11,28 +11,49 @@ func makeGhosttyAccessibilitySummary(_ value: String, maxCharacters: Int = 4096)
 final class GhosttyAccessibilityModel {
   private(set) var summary: String = ""
   private(set) var isAccepted = false
+  private(set) var terminalLabel = ""
+  private(set) var fallbackValue = ""
+  private(set) var focusActionLabel = ""
+  private(set) var copySelectionActionLabel = ""
 
-  func update(summary: String, accepted: Bool) {
+  func update(
+    summary: String,
+    accepted: Bool,
+    terminalLabel: String,
+    fallbackValue: String,
+    focusActionLabel: String,
+    copySelectionActionLabel: String
+  ) {
     self.summary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
     self.isAccepted = accepted
+    self.terminalLabel = terminalLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+    self.fallbackValue = fallbackValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    self.focusActionLabel = focusActionLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+    self.copySelectionActionLabel = copySelectionActionLabel.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   func accessibilityElements(for surfaceView: GhosttySurfaceView) -> [UIAccessibilityElement] {
+    guard !terminalLabel.isEmpty,
+          !fallbackValue.isEmpty,
+          !focusActionLabel.isEmpty,
+          !copySelectionActionLabel.isEmpty else {
+      return []
+    }
     let element = UIAccessibilityElement(accessibilityContainer: surfaceView)
     element.accessibilityFrameInContainerSpace = surfaceView.bounds
     element.accessibilityTraits = [.staticText, .updatesFrequently]
-    element.accessibilityLabel = "Terminal"
+    element.accessibilityLabel = terminalLabel
     element.accessibilityValue = summary.isEmpty
-      ? "Native terminal renderer unavailable. xterm WebView fallback is required for accessible terminal content."
+      ? fallbackValue
       : summary
     element.accessibilityCustomActions = [
       UIAccessibilityCustomAction(
-        name: "Focus terminal",
+        name: focusActionLabel,
         target: surfaceView,
         selector: #selector(GhosttySurfaceView.accessibilityFocusTerminalAction)
       ),
       UIAccessibilityCustomAction(
-        name: "Copy selection",
+        name: copySelectionActionLabel,
         target: surfaceView,
         selector: #selector(GhosttySurfaceView.accessibilityCopySelectionAction)
       ),

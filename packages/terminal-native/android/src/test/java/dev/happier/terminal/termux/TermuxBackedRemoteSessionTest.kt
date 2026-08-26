@@ -1,5 +1,7 @@
 package dev.happier.terminal.termux
 
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.view.MotionEvent
 import dev.happier.terminal.TermuxEventSink
 import dev.happier.terminal.TermuxRemoteSessionCallbacks
@@ -14,6 +16,35 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [35])
 class TermuxBackedRemoteSessionTest {
+  @Test
+  fun blankTerminalExposesNoSyntheticAccessibilityText() {
+    val session = TermuxBackedRemoteSession(
+      surfaceId = "secret-surface-id",
+      callbacks = TermuxRemoteSessionCallbacks("secret-surface-id", null),
+    )
+
+    assertEquals("", session.accessibilitySummary())
+  }
+
+  @Test
+  fun drawFailureEmitsFatalRendererCrashInsteadOfEscapingTheNativeView() {
+    val events = mutableListOf<Pair<String, Map<String, Any?>>>()
+    val session = TermuxBackedRemoteSession(
+      surfaceId = "surface",
+      callbacks = TermuxRemoteSessionCallbacks(
+        "surface",
+        TermuxEventSink { eventName, payload -> events += eventName to payload },
+      ),
+    )
+
+    assertTrue(session.writeBytes("terminal output".toByteArray(), 0).accepted)
+    session.draw(ThrowingCanvas(), 320, 240, 14f)
+
+    val crashes = events.filter { (eventName) -> eventName == "rendererCrash" }
+    assertEquals(1, crashes.size)
+    assertEquals(true, crashes.single().second["fatal"])
+  }
+
   @Test
   fun osc52ClipboardWriteDoesNotReachJsButExplicitTouchRangeCopyDoes() {
     val events = mutableListOf<Pair<String, Map<String, Any?>>>()
@@ -54,5 +85,21 @@ class TermuxBackedRemoteSessionTest {
       listOf("started", "changed", "ended", "copied", "cleared"),
       events.filter { (eventName) -> eventName == "selection" }.map { (_, payload) -> payload["state"] },
     )
+  }
+}
+
+private class ThrowingCanvas : Canvas() {
+  override fun drawTextRun(
+    text: CharArray,
+    index: Int,
+    count: Int,
+    contextIndex: Int,
+    contextCount: Int,
+    x: Float,
+    y: Float,
+    isRtl: Boolean,
+    paint: Paint,
+  ) {
+    throw IllegalStateException("expected renderer draw failure")
   }
 }

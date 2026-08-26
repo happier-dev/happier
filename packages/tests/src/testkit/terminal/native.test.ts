@@ -1,52 +1,31 @@
 import { describe, expect, it } from 'vitest';
 
-import { classifyTerminalAccessibilityGate } from './accessibility';
-import { shouldSelectNativeTerminalRenderer } from './native';
+import {
+  assertTerminalNativeDeviceRecipeCoverage,
+  listTerminalNativeDeviceRecipes,
+} from './native';
 
-function acceptedAccessibility() {
-  return classifyTerminalAccessibilityGate({
-    renderer: 'ios-ghosttykit',
-    platform: 'ios',
-    nodes: [{ role: 'text', label: 'terminal output summary' }],
-    actions: ['copy'],
-  });
-}
+describe('terminal native device recipes', () => {
+  it('covers every required TERM-7b workload, interaction, and accessibility observation', () => {
+    const recipes = listTerminalNativeDeviceRecipes();
 
-describe('terminal native renderer selection', () => {
-  it('requires every TERM native rollout gate before selecting a native renderer', () => {
-    const ready = {
-      renderer: 'ios-ghosttykit',
-      embeddedPtyEnabled: true,
-      byteStreamEnabled: true,
-      nativeRendererEnabled: true,
-      platformRendererEnabled: true,
-      packageAvailable: true,
-      runtimeAvailable: true,
-      fallbackAvailable: true,
-      accessibility: acceptedAccessibility(),
-    } as const;
-
-    expect(shouldSelectNativeTerminalRenderer(ready)).toBe(true);
-    expect(shouldSelectNativeTerminalRenderer({ ...ready, embeddedPtyEnabled: false })).toBe(false);
-    expect(shouldSelectNativeTerminalRenderer({ ...ready, byteStreamEnabled: false })).toBe(false);
-    expect(shouldSelectNativeTerminalRenderer({ ...ready, nativeRendererEnabled: false })).toBe(false);
-    expect(shouldSelectNativeTerminalRenderer({ ...ready, platformRendererEnabled: false })).toBe(false);
-    expect(shouldSelectNativeTerminalRenderer({ ...ready, packageAvailable: false })).toBe(false);
-    expect(shouldSelectNativeTerminalRenderer({ ...ready, runtimeAvailable: false })).toBe(false);
-    expect(shouldSelectNativeTerminalRenderer({ ...ready, fallbackAvailable: false })).toBe(false);
+    expect(recipes.map((recipe) => recipe.renderer)).toEqual([
+      'ios-ghosttykit',
+      'android-termux',
+    ]);
+    expect(() => {
+      for (const recipe of recipes) {
+        assertTerminalNativeDeviceRecipeCoverage(recipe);
+      }
+    }).not.toThrow();
   });
 
-  it('rejects accessibility evidence collected for a different renderer', () => {
-    expect(shouldSelectNativeTerminalRenderer({
-      renderer: 'android-termux',
-      embeddedPtyEnabled: true,
-      byteStreamEnabled: true,
-      nativeRendererEnabled: true,
-      platformRendererEnabled: true,
-      packageAvailable: true,
-      runtimeAvailable: true,
-      fallbackAvailable: true,
-      accessibility: acceptedAccessibility(),
-    })).toBe(false);
+  it('labels every recipe as a host contract rather than device evidence', () => {
+    expect(listTerminalNativeDeviceRecipes()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        evidenceSource: 'loaded-native-app',
+        hostContractIsDeviceEvidence: false,
+      }),
+    ]));
   });
 });

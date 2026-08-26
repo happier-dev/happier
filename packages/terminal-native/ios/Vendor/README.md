@@ -1,6 +1,6 @@
 # iOS Native Terminal Vendor Artifacts
 
-This directory is intentionally empty until the iOS Ghostty renderer passes the package proof gate.
+This directory keeps the pinned license and provenance notice in source control. The ignored GhosttyKit binary is materialized locally only after its package-proof inputs pass verification.
 
 The accepted artifact shape is:
 
