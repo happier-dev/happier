@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
-import { applyRuntimeServerLightSqliteEnv } from './apply_runtime_server_light_sqlite_env.mjs';
+import { applyRuntimeServerSqliteEnv } from './apply_runtime_server_sqlite_env.mjs';
 
-test('applyRuntimeServerLightSqliteEnv uses the bounded server-light pool by default', () => {
+test('applyRuntimeServerSqliteEnv uses the bounded local pool by default', () => {
   const env = {
     HAPPIER_SERVER_LIGHT_DATA_DIR: '/tmp/happier-data',
   };
 
-  applyRuntimeServerLightSqliteEnv({ env, serverDir: '/tmp/happier-server' });
+  applyRuntimeServerSqliteEnv({ env, serverDir: '/tmp/happier-server' });
 
   assert.equal(
     env.DATABASE_URL,
@@ -17,14 +17,14 @@ test('applyRuntimeServerLightSqliteEnv uses the bounded server-light pool by def
   );
 });
 
-test('applyRuntimeServerLightSqliteEnv applies sqlite URL params from env when generating DATABASE_URL', () => {
+test('applyRuntimeServerSqliteEnv applies sqlite URL params from env when generating DATABASE_URL', () => {
   const env = {
     HAPPIER_SERVER_LIGHT_DATA_DIR: '/tmp/happier-data',
     HAPPIER_SQLITE_BUSY_TIMEOUT_MS: '500',
     HAPPIER_SQLITE_CONNECTION_LIMIT: '1',
   };
 
-  applyRuntimeServerLightSqliteEnv({ env, serverDir: '/tmp/happier-server' });
+  applyRuntimeServerSqliteEnv({ env, serverDir: '/tmp/happier-server' });
 
   assert.equal(
     env.DATABASE_URL,
@@ -32,7 +32,7 @@ test('applyRuntimeServerLightSqliteEnv applies sqlite URL params from env when g
   );
 });
 
-test('applyRuntimeServerLightSqliteEnv preserves explicit DATABASE_URL passthrough', () => {
+test('applyRuntimeServerSqliteEnv preserves explicit DATABASE_URL passthrough', () => {
   const env = {
     HAPPIER_SERVER_LIGHT_DATA_DIR: '/tmp/happier-data',
     HAPPIER_SQLITE_BUSY_TIMEOUT_MS: '500',
@@ -40,7 +40,7 @@ test('applyRuntimeServerLightSqliteEnv preserves explicit DATABASE_URL passthrou
     DATABASE_URL: `file:${join('/custom', 'operator.sqlite')}?socket_timeout=9`,
   };
 
-  applyRuntimeServerLightSqliteEnv({ env, serverDir: '/tmp/happier-server' });
+  applyRuntimeServerSqliteEnv({ env, serverDir: '/tmp/happier-server' });
 
   assert.equal(env.DATABASE_URL, `file:${join('/custom', 'operator.sqlite')}?socket_timeout=9`);
 });

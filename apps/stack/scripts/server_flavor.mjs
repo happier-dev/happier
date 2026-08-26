@@ -41,7 +41,7 @@ async function writeFlavor({ rootDir, flavor }) {
     updates: [
       { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: flavor },
       { key: 'HAPPIER_DB_PROVIDER', value: dbProvider },
-      ...(dbProvider === 'mysql' ? [{ key: 'DATABASE_URL', value: transition.databaseUrl }] : []),
+      ...(transition.databaseUrl ? [{ key: 'DATABASE_URL', value: transition.databaseUrl }] : []),
     ],
     removeKeys: transition.removeDatabaseUrl ? ['DATABASE_URL'] : [],
   });

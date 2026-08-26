@@ -1,24 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveDbProviderForLightFromEnv } from './auth.mjs';
+import { resolveDbProviderFromEnv } from './auth.mjs';
 import { probeExistingAccountCountForServerComponent } from './utils/stack/startup.mjs';
 
-test('auth light provider projection rejects cross-flavor input through the canonical owner', () => {
-  assert.equal(resolveDbProviderForLightFromEnv({}), 'sqlite');
-  assert.equal(resolveDbProviderForLightFromEnv({ HAPPY_DB_PROVIDER: ' PGLITE ' }), 'pglite');
-  assert.throws(
-    () => resolveDbProviderForLightFromEnv({ HAPPIER_DB_PROVIDER: 'mysql' }),
-    /unsupported DB provider/i,
-  );
+test('auth provider projection delegates preset defaults and accepts cross-preset providers', () => {
+  assert.equal(resolveDbProviderFromEnv({ serverComponentName: 'happier-server-light', env: {} }), 'sqlite');
+  assert.equal(resolveDbProviderFromEnv({ serverComponentName: 'happier-server-light', env: { HAPPY_DB_PROVIDER: ' PGLITE ' } }), 'pglite');
+  assert.equal(resolveDbProviderFromEnv({ serverComponentName: 'happier-server-light', env: { HAPPIER_DB_PROVIDER: 'mysql' } }), 'mysql');
 });
 
-test('startup account projection surfaces canonical provider rejection before probing', async () => {
+test('startup account projection admits cross-preset providers before probing', async () => {
   const result = await probeExistingAccountCountForServerComponent({
     serverComponentName: 'happier-server-light',
     serverDir: '/unused',
     env: { HAPPIER_DB_PROVIDER: 'postgres' },
   });
   assert.equal(result.ok, false);
-  assert.match(result.error, /unsupported DB provider/i);
+  assert.doesNotMatch(result.error, /unsupported DB provider/i);
 });

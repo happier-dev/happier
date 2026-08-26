@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
-import { buildLightMigrationBaseEnv, resolveDbProviderForLightFromEnv } from './auth.mjs';
+import { buildEmbeddedMigrationBaseEnv, resolveDbProviderFromEnv } from './auth.mjs';
 import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 
 test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not defined', async (t) => {
@@ -936,7 +936,7 @@ console.log('ok');
     HAPPIER_SERVER_LIGHT_FILES_DIR: join(sourceDataDir, 'files'),
     HAPPIER_SERVER_LIGHT_DB_DIR: join(sourceDataDir, 'pglite'),
   };
-  const leakedLightEnv = buildLightMigrationBaseEnv(
+  const leakedLightEnv = buildEmbeddedMigrationBaseEnv(
     {
       ...process.env,
       HAPPIER_DB_PROVIDER: 'pglite',
@@ -955,7 +955,7 @@ console.log('ok');
     'expected leaked HAPPY_DB_PROVIDER to be stripped before light migration resolution'
   );
   assert.equal(
-    resolveDbProviderForLightFromEnv(leakedLightEnv),
+    resolveDbProviderFromEnv({ serverComponentName: 'happier-server-light', env: leakedLightEnv }),
     'sqlite',
     'expected leaked provider flags to stop influencing the source light migration path'
   );

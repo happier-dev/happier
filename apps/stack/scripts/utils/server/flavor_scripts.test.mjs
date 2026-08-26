@@ -5,11 +5,28 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  resolvePrismaClientImportForServerComponent,
+  applyServerComponentFlavorEnv,
   resolveServerDevScript,
-  resolveServerLightPrismaClientImport,
   resolveServerStartScript,
 } from './flavor_scripts.mjs';
+import { resolvePrismaClientImportForDbProvider } from './prisma_client_import.mjs';
+
+test('applyServerComponentFlavorEnv overrides ambient flavor with the admitted component', () => {
+  const fullEnv = { HAPPIER_SERVER_FLAVOR: 'light', HAPPY_SERVER_FLAVOR: 'light' };
+  assert.equal(applyServerComponentFlavorEnv({ serverComponentName: 'happier-server', targetEnv: fullEnv }), 'full');
+  assert.deepEqual(fullEnv, { HAPPIER_SERVER_FLAVOR: 'full', HAPPY_SERVER_FLAVOR: 'full' });
+
+  const lightEnv = { HAPPIER_SERVER_FLAVOR: 'full', HAPPY_SERVER_FLAVOR: 'full' };
+  assert.equal(applyServerComponentFlavorEnv({ serverComponentName: 'happier-server-light', targetEnv: lightEnv }), 'light');
+  assert.deepEqual(lightEnv, { HAPPIER_SERVER_FLAVOR: 'light', HAPPY_SERVER_FLAVOR: 'light' });
+});
+
+test('applyServerComponentFlavorEnv rejects an unknown admitted component', () => {
+  assert.throws(
+    () => applyServerComponentFlavorEnv({ serverComponentName: 'other-server', targetEnv: {} }),
+    /Unsupported server component/,
+  );
+});
 
 async function writeJson(path, obj) {
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
@@ -59,40 +76,19 @@ test('resolveServer*Script returns start for happier-server', async () => {
   });
 });
 
-test('resolveServerLightPrismaClientImport returns @prisma/client for pglite light flavor', async () => {
+test('resolvePrismaClientImportForDbProvider returns the default client for postgres-compatible providers', async () => {
   await withServerDir(async (dir) => {
-    await writeServerScriptsPackageJson(dir, { 'migrate:light:deploy': 'node z' });
-    assert.equal(resolveServerLightPrismaClientImport({ serverDir: dir }), '@prisma/client');
+    assert.equal(resolvePrismaClientImportForDbProvider({ serverDir: dir, provider: 'postgres' }), '@prisma/client');
+    assert.equal(resolvePrismaClientImportForDbProvider({ serverDir: dir, provider: 'pglite' }), '@prisma/client');
   });
 });
 
-test('resolveServerLightPrismaClientImport returns file URL for sqlite light flavor (legacy)', async () => {
+test('resolvePrismaClientImportForDbProvider returns generated provider clients when present', async () => {
   await withServerDir(async (dir) => {
-    await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
-    await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
-    const spec = resolveServerLightPrismaClientImport({ serverDir: dir });
-    assert.equal(typeof spec, 'string');
-    assert.ok(spec.startsWith('file:'), `expected file: URL import spec, got: ${spec}`);
-    assert.ok(spec.endsWith('/generated/sqlite-client/index.js'), `unexpected import spec: ${spec}`);
-  });
-});
-
-test('resolvePrismaClientImportForServerComponent returns @prisma/client for pglite server-light', async () => {
-  await withServerDir(async (dir) => {
-    await writeServerScriptsPackageJson(dir, { 'migrate:light:deploy': 'node z' });
-    assert.equal(resolvePrismaClientImportForServerComponent({ serverComponentName: 'happier-server-light', serverDir: dir }), '@prisma/client');
-  });
-});
-
-test('resolvePrismaClientImportForServerComponent accepts serverComponent alias (back-compat)', async () => {
-  await withServerDir(async (dir) => {
-    await writeServerScriptsPackageJson(dir, { 'migrate:light:deploy': 'node z' });
-    assert.equal(resolvePrismaClientImportForServerComponent({ serverComponent: 'happier-server-light', serverDir: dir }), '@prisma/client');
-  });
-});
-
-test('resolvePrismaClientImportForServerComponent returns @prisma/client for happier-server', async () => {
-  await withServerDir(async (dir) => {
-    assert.equal(resolvePrismaClientImportForServerComponent({ serverComponentName: 'happier-server', serverDir: dir }), '@prisma/client');
+    await mkdir(join(dir, 'generated', 'sqlite-client'), { recursive: true });
+    await writeFile(join(dir, 'generated', 'sqlite-client', 'index.js'), 'export class PrismaClient {}\n', 'utf-8');
+    const spec = resolvePrismaClientImportForDbProvider({ serverDir: dir, provider: 'sqlite' });
+    assert.ok(spec.startsWith('file:'));
+    assert.ok(spec.endsWith('/generated/sqlite-client/index.js'));
   });
 });

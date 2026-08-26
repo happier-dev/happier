@@ -8,7 +8,8 @@ import { ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { readEnvObjectFromFile } from './utils/env/read.mjs';
 import { getComponentDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { ensureDepsInstalled, pmExecBin } from './utils/proc/pm.mjs';
-import { ensureHappyServerManagedInfra, applyHappyServerMigrations } from './utils/server/infra/happy_server_infra.mjs';
+import { ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
+import { applyServerMigrations } from './utils/server/server_migrations.mjs';
 import { runCapture } from './utils/proc/proc.mjs';
 import { pickNextFreeTcpPort } from './utils/net/ports.mjs';
 import { getEnvValue } from './utils/env/values.mjs';
@@ -138,7 +139,7 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
     },
     dbProvider: toProvider.provider,
   });
-  await applyHappyServerMigrations({
+  await applyServerMigrations({
     serverDir: fullDir,
     env: { ...process.env, ...infra.env },
     dbProvider: toProvider.provider,

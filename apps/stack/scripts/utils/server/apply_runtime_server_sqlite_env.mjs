@@ -12,7 +12,7 @@ function firstNonEmpty(...values) {
   return '';
 }
 
-export function applyRuntimeServerLightSqliteEnv({ env, serverDir }) {
+export function applyRuntimeServerSqliteEnv({ env, serverDir }) {
   const dataDir = firstNonEmpty(env.HAPPIER_SERVER_LIGHT_DATA_DIR, env.HAPPY_SERVER_LIGHT_DATA_DIR);
   if (!dataDir) return;
 
