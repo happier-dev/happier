@@ -16,6 +16,7 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 import {
     cancelAutomationRun,
+    cancelQueuedAutomationRunsTx,
     failAutomationRun,
     startAutomationRun,
     succeedAutomationRun,
@@ -1729,10 +1730,47 @@ describe("automationRunService (integration)", () => {
         },
     );
 
+    it("increments the revision once more when queued bulk cancellation blocks an awaiting Conversation handoff", async () => {
+        const seeded = await seedConversationRunForResultValidation();
+        await db.automationRun.update({
+            where: { id: seeded.run.id },
+            data: {
+                state: "queued",
+                startedAt: null,
+                claimedByMachineId: null,
+                leaseExpiresAt: null,
+            },
+        });
+        const before = await db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: { revision: true },
+        });
+
+        const terminalized = await inTx(async (tx) => await cancelQueuedAutomationRunsTx({
+            tx,
+            accountId: seeded.account.id,
+            automationId: seeded.automation.id,
+            originKind: "conversation",
+        }));
+
+        expect(terminalized).toEqual([
+            expect.objectContaining({
+                id: seeded.run.id,
+                state: "cancelled",
+                replyHandoffState: "blocked",
+                revision: before.revision + 2,
+            }),
+        ]);
+    });
+
     it.each(["failed", "cancelled"] as const)(
         "moves an awaiting Conversation handoff to blocked when the Run is terminally %s",
         async (terminalState) => {
             const seeded = await seedConversationRunForResultValidation();
+            const before = await db.automationRun.findUniqueOrThrow({
+                where: { id: seeded.run.id },
+                select: { revision: true },
+            });
 
             const settled = terminalState === "failed"
                 ? await failAutomationRun({
@@ -1753,6 +1791,7 @@ describe("automationRunService (integration)", () => {
                 replyHandoffState: "blocked",
                 replyHandoffDueAt: null,
                 replyHandoffReceiptEnvelope: null,
+                revision: before.revision + 2,
             }));
             await expect(findNextAutomationReplyHandoffDueAt({ now: new Date() })).resolves.toBeNull();
             await expect(claimNextAutomationReplyHandoff({ now: new Date() })).resolves.toBeNull();
@@ -1796,6 +1835,7 @@ describe("automationRunService (integration)", () => {
             replyHandoffState: "blocked",
             replyHandoffDueAt: null,
             replyHandoffReceiptEnvelope: null,
+            revision: current.revision + 2,
         }));
         await expect(findNextAutomationReplyHandoffDueAt({ now: new Date() })).resolves.toBeNull();
         await expect(claimNextAutomationReplyHandoff({ now: new Date() })).resolves.toBeNull();
