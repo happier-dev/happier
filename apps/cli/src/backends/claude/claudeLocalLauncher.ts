@@ -203,8 +203,8 @@ export async function claudeLocalLauncher(
             if (observation?.historicalReplay) {
                 await transcriptProjector.observeCommitted(message);
             } else {
-                await transcriptProjector.observe(message);
                 lifecycleTracker.observeTranscript(message);
+                await transcriptProjector.observe(message);
             }
         },
         // Native Claude `/goal` source (plan H7): goal_status attachments + the
