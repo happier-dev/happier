@@ -411,6 +411,12 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             directory: preparedOptions.directory,
             daemonCliVersion,
         });
+        if (
+            normalized.type === 'success'
+            && typeof normalized.pendingFirstInputAccepted === 'boolean'
+        ) {
+            pendingFirstInputTransferred = normalized.pendingFirstInputAccepted;
+        }
         const shouldResolve =
             (normalized.type === 'success' && !normalized.sessionId && normalized.sessionIdStatus === 'pending')
             || (normalized.type === 'error' && normalized.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT);

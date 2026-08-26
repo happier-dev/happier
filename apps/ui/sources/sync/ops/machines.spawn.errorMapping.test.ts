@@ -1348,6 +1348,49 @@ describe('machineSpawnNewSession error mapping', () => {
     expect(machineRpcWithServerScopeMock.mock.calls[0]?.[0]?.payload).not.toHaveProperty('pendingFirstInput');
   });
 
+  it('uses the daemon acknowledgement instead of inferring first-input custody from its version', async () => {
+    storage.getState().applyMachines([
+      {
+        id: 'machine-modern-first-input',
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        metadata: {
+          host: 'modern-first-input-machine', platform: 'darwin', happyCliVersion: '0.2.10-dev.80',
+          happyHomeDir: '/Users/alice/.happier', homeDir: '/Users/alice',
+        },
+        metadataVersion: 0,
+        daemonState: {
+          startedWithCliVersion: '0.2.10-dev.80',
+        },
+        daemonStateVersion: 1,
+      },
+    ]);
+    machineRpcWithServerScopeMock.mockResolvedValueOnce({
+      type: 'success',
+      sessionId: 'session-with-daemon-rejection',
+      pendingFirstInputAccepted: false,
+    });
+
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-modern-first-input',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+      pendingFirstInput: { text: 'do not lose me', localId: 'first-turn-2' },
+    });
+
+    expect(result).toMatchObject({
+      type: 'success',
+      sessionId: 'session-with-daemon-rejection',
+      pendingFirstInputTransferred: false,
+    });
+    expect(machineRpcWithServerScopeMock.mock.calls[0]?.[0]?.payload).toHaveProperty('pendingFirstInput');
+  });
+
   it('keeps the modern spawn payload for compatible 0.1.0 dev daemon versions', async () => {
     storage.getState().applyMachines([
       {

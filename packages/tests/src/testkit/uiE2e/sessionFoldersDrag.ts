@@ -90,14 +90,20 @@ export function folderOrderKey(folderId: string): string {
 }
 
 export async function ensureSessionFolderTreeView(page: Page): Promise<void> {
-  const settings = await readUiE2eScopedAccountSettings({ page });
   const renderedTreeStructure = page.locator(
     '[data-testid^="session-folder-header-"], [data-testid^="session-list-project-header:"]',
   ).first();
-  if (settings.sessionFolderViewModeV1 === 'tree') {
-    await expect(renderedTreeStructure).toHaveCount(1, { timeout: 120_000 });
-    return;
-  }
+  if (await renderedTreeStructure.count() > 0) return;
+
+  // A direct E2E storage mutation can leave persistence ahead of the already
+  // hydrated React store. Establish a known off state across both, reload it,
+  // then exercise the real menu action to enable tree view deterministically.
+  await mutateUiE2eScopedAccountSettings({
+    page,
+    settingsPatch: { sessionFolderViewModeV1: 'off' },
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('session-list-ordering-menu-trigger').first()).toHaveCount(1, { timeout: 120_000 });
 
   await page.getByTestId('session-list-ordering-menu-trigger').first().click();
   const toggle = page.getByTestId('session-folder-view-toggle');
@@ -134,9 +140,9 @@ async function ensureSessionFolderViewMode(params: Readonly<{
   if (!firstFolderId) return;
 
   const firstFolderHeader = params.page.getByTestId(`session-folder-header-${firstFolderId}`);
-  // The scoped setting was persisted before navigation. Header absence here means the
-  // organization snapshot has not rendered yet; toggling would turn the requested
-  // tree mode back off and make a slow runner fail deterministically.
+  if (await firstFolderHeader.count() === 0) {
+    await ensureSessionFolderTreeView(params.page);
+  }
   await expect(firstFolderHeader).toHaveCount(1, { timeout: 120_000 });
 }
 

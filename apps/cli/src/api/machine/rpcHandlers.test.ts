@@ -831,7 +831,7 @@ describe('registerMachineRpcHandlers', () => {
     const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
     expect(handler).toBeDefined();
 
-    await handler!({
+    const response = await handler!({
       directory: '/tmp',
       spawnNonce: 'spawn-nonce-1',
       pendingFirstInput: {
@@ -849,6 +849,12 @@ describe('registerMachineRpcHandlers', () => {
       },
       connectedServicesUpdatedAt: 555,
       transcriptStorage: 'direct',
+    });
+
+    expect(response).toEqual({
+      type: 'success',
+      sessionId: 's1',
+      pendingFirstInputAccepted: true,
     });
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({

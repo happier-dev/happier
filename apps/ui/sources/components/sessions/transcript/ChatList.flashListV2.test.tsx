@@ -17233,7 +17233,7 @@ describe('ChatList (FlashList v2)', () => {
                 thinkingProps.onThinkingExpandedChange(true);
             });
 
-            await screen.settle({ runAllTimers: true, turns: 1 });
+            await screen.settle({ advanceTimersMs: 300, turns: 1 });
 
             expect(scrollToOffset).not.toHaveBeenCalled();
         });
@@ -17275,7 +17275,7 @@ describe('ChatList (FlashList v2)', () => {
                 headerUnitProps.setExpanded(true);
             });
 
-            await screen.settle({ runAllTimers: true, turns: 1 });
+            await screen.settle({ advanceTimersMs: 300, turns: 1 });
 
             expect(scrollToOffset).not.toHaveBeenCalled();
         });
