@@ -155,6 +155,7 @@ function createProviderLeaf() {
     encodeContextUpdate: () => [],
     encodeTextTurn: () => [],
     microphoneMode: 'provider_managed' as const,
+    setInputMuted: () => {},
   };
 }
 

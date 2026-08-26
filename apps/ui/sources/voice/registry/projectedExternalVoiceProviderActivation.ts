@@ -4,6 +4,7 @@ import {
   type PluginContributionClientPlatform,
   type VoiceProviderContribution,
 } from '@happier-dev/protocol';
+import type { PluginSettingsActionInput } from '@happier-dev/plugin-sdk/settings';
 
 import {
   type PluginUiClientExecutableDerivedScopeFactory,
@@ -172,7 +173,9 @@ function reconcileProjectedExternalSpeechProviders(input: Readonly<{
       ...(declaration.settings.actions?.length
         ? {
             settingsActions: Object.freeze({
-              execute: async (action) => await bundledSpeechDaemonClient.executeSettingsAction({
+              execute: async (action: PluginSettingsActionInput & Readonly<{
+                signal: AbortSignal;
+              }>) => await bundledSpeechDaemonClient.executeSettingsAction({
                 entry: descriptor,
                 actionId: action.actionId,
                 signal: action.signal,

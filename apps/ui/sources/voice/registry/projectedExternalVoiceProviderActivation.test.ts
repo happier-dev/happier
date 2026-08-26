@@ -222,7 +222,9 @@ function createProviderLeaf(): ExternalVoiceProviderRuntimeRegistration {
     },
     encodeToolResults: () => [], encodeToolContinuation: (responseId) => ({ type: 'continue', responseId }),
     encodeContextUpdate: (text) => [{ type: 'context', text }],
-    encodeTextTurn: (text) => [{ type: 'text', text }], microphoneMode: 'provider_managed',
+    encodeTextTurn: (text) => [{ type: 'text', text }],
+    microphoneMode: 'provider_managed',
+    setInputMuted: () => {},
   };
 }
 

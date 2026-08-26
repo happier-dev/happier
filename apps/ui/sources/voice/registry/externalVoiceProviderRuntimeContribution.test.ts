@@ -587,6 +587,7 @@ describe('external Voice provider host composition', () => {
         encodeContextUpdate: () => [],
         encodeTextTurn: () => [],
         microphoneMode: 'provider_managed',
+        setInputMuted: () => {},
       },
     });
     const rawRequest = Object.freeze({
@@ -932,6 +933,7 @@ describe('external Voice provider host composition', () => {
         },
         encodeToolResults: () => [], encodeToolContinuation: () => null,
         encodeContextUpdate: () => [], encodeTextTurn: () => [], microphoneMode: 'provider_managed',
+        setInputMuted: () => {},
       },
     } satisfies Parameters<typeof createExternalVoiceProviderRuntimeContribution>[0];
     const runtime = createExternalVoiceProviderRuntimeContribution(runtimeInput);
@@ -1141,6 +1143,7 @@ describe('external Voice provider host composition', () => {
         },
         encodeToolResults: () => [], encodeToolContinuation: () => null,
         encodeContextUpdate: () => [], encodeTextTurn: () => [], microphoneMode: 'provider_managed',
+        setInputMuted: () => {},
       });
       await scope.commit();
       const registration = getExternalVoiceProviderRegistration(phaseProviderId);
@@ -1319,6 +1322,7 @@ describe('external Voice provider host composition', () => {
         encodeContextUpdate: () => [],
         encodeTextTurn: () => [],
         microphoneMode: 'provider_managed',
+        setInputMuted: () => {},
       },
     });
 
@@ -1512,6 +1516,7 @@ describe('external Voice provider host composition', () => {
         createConnection,
         encodeToolResults: () => [], encodeToolContinuation: () => null,
         encodeContextUpdate: () => [], encodeTextTurn: () => [], microphoneMode: 'provider_managed',
+        setInputMuted: () => {},
       },
     });
 
@@ -1581,6 +1586,7 @@ describe('external Voice provider host composition', () => {
         createConnection,
         encodeToolResults: () => [], encodeToolContinuation: () => null,
         encodeContextUpdate: () => [], encodeTextTurn: () => [], microphoneMode: 'provider_managed',
+        setInputMuted: () => {},
       },
     });
 
@@ -1663,6 +1669,7 @@ describe('external Voice provider host composition', () => {
         createConnection,
         encodeToolResults: () => [], encodeToolContinuation: () => null,
         encodeContextUpdate: () => [], encodeTextTurn: () => [], microphoneMode: 'provider_managed',
+        setInputMuted: () => {},
       },
     });
 
@@ -1705,6 +1712,7 @@ describe('external Voice provider host composition', () => {
         createConnection,
         encodeToolResults: () => [], encodeToolContinuation: () => null,
         encodeContextUpdate: () => [], encodeTextTurn: () => [], microphoneMode: 'provider_managed',
+        setInputMuted: () => {},
       },
     });
 
@@ -2248,6 +2256,7 @@ describe('external Voice provider host composition', () => {
         encodeContextUpdate: (text) => [{ kind: 'context', text }],
         encodeTextTurn: (text) => [{ kind: 'text', text }],
         microphoneMode: 'provider_managed',
+        setInputMuted: () => {},
       },
     });
 
@@ -2313,6 +2322,7 @@ describe('Agent-session realtime host-authored context and tool scoping', () => 
       encodeContextUpdate: () => [],
       encodeTextTurn: () => [],
       microphoneMode: 'provider_managed' as const,
+      setInputMuted: () => {},
     };
   }
 

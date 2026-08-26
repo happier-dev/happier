@@ -762,6 +762,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
       encodeToolResults: vi.fn(() => []),
       encodeToolContinuation: vi.fn(() => ({ type: 'unused' })),
       microphoneMode: 'provider_managed',
+      setInputMuted: vi.fn(),
       encodeContextUpdate: vi.fn(() => []),
       encodeTextTurn: vi.fn(() => []),
       resolveSurfaceCapabilities: vi.fn(() => null),

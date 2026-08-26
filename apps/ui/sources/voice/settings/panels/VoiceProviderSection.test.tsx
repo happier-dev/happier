@@ -2510,6 +2510,7 @@ describe('VoiceProviderSection', () => {
                 encodeContextUpdate: (text) => [{ type: 'context', text }],
                 encodeTextTurn: (text) => [{ type: 'text', text }],
                 microphoneMode: 'provider_managed',
+                setInputMuted: () => {},
             });
             scope.commit();
         });
@@ -2586,6 +2587,7 @@ describe('VoiceProviderSection', () => {
             encodeContextUpdate: () => [],
             encodeTextTurn: () => [],
             microphoneMode: 'provider_managed',
+            setInputMuted: () => {},
         });
         await scope.commit();
         const providerId = 'acme.synthetic-configurable/conversation';
@@ -2734,6 +2736,7 @@ describe('VoiceProviderSection', () => {
             encodeContextUpdate: () => [],
             encodeTextTurn: () => [],
             microphoneMode: 'provider_managed',
+            setInputMuted: () => {},
         });
         await scope.commit();
 
@@ -2895,6 +2898,7 @@ describe('VoiceProviderSection', () => {
             encodeContextUpdate: () => [],
             encodeTextTurn: () => [],
             microphoneMode: 'provider_managed',
+            setInputMuted: () => {},
         });
         await scope.commit();
         const providerId = 'acme.external-credential/conversation';
@@ -3003,6 +3007,7 @@ describe('VoiceProviderSection', () => {
             encodeContextUpdate: () => [],
             encodeTextTurn: () => [],
             microphoneMode: 'provider_managed',
+            setInputMuted: () => {},
         });
         await scope.commit();
         const providerId = 'acme.voice/conversation';

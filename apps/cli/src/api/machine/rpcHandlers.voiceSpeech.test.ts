@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   PluginInstallReviewPrincipalDigestSchema,
+  accountSettingsParse,
   type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import type { VoiceCredentialAccess } from '@happier-dev/plugin-sdk/voice';
@@ -11,6 +12,7 @@ import type { HttpService } from '@happier-dev/plugin-sdk/http';
 
 import { readCanonicalPluginManifest } from '../../plugins/manifest/normalize';
 import { createPluginManifestV2Fixture } from '../../plugins/testkit/manifestV2Fixture';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import {
   createEncryptedTransferChunkEnvelope,
@@ -495,13 +497,13 @@ describe('unified Voice speech machine RPC', () => {
     const principal = PluginInstallReviewPrincipalDigestSchema.parse('c'.repeat(64));
     const manifest = speechManifest({ requirement: { kind: 'optional' } });
     const runtimeIsCurrent = vi.fn(() => true);
-    const snapshotFor = (accountId: string) => Object.freeze({
+    const snapshotFor = (accountId: string): ActiveAccountSettingsSnapshot => Object.freeze({
       source: 'network' as const,
       scopeKey: 'account-scope',
       settingsVersion: 1,
       loadedAtMs: 1,
       settingsSecretsReadKeys: [],
-      settings: {
+      settings: accountSettingsParse({
         voiceSettingsV1: {
           providers: {
             'happier.voice.google/gemini-stt': {
@@ -529,7 +531,7 @@ describe('unified Voice speech machine RPC', () => {
             },
           }],
         },
-      } as never,
+      }),
     });
     let currentSnapshot = snapshotFor('google-a');
     const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
@@ -546,24 +548,23 @@ describe('unified Voice speech machine RPC', () => {
       });
     });
     let secondMaterializationError: unknown = null;
+    const listCatalog: NonNullable<SpeechProviderRuntime['catalog']>['list'] = async (_request, context) => {
+      if (!context.credentials.raw) throw new Error('raw credential access must be available');
+      await expect(context.credentials.raw.materialize(rawRequest)).resolves.toEqual({
+        kind: 'httpHeaders',
+        headers: { authorization: 'Bearer google-a' },
+      });
+      currentSnapshot = snapshotFor('google-b');
+      try {
+        await context.credentials.raw.materialize(rawRequest);
+      } catch (error) {
+        secondMaterializationError = error;
+      }
+      return [];
+    };
     const runtime: SpeechProviderRuntime = Object.freeze({
       kind: 'speech',
-      catalog: Object.freeze({
-        list: async (_request, context) => {
-          if (!context.credentials.raw) throw new Error('raw credential access must be available');
-          await expect(context.credentials.raw.materialize(rawRequest)).resolves.toEqual({
-            kind: 'httpHeaders',
-            headers: { authorization: 'Bearer google-a' },
-          });
-          currentSnapshot = snapshotFor('google-b');
-          try {
-            await context.credentials.raw.materialize(rawRequest);
-          } catch (error) {
-            secondMaterializationError = error;
-          }
-          return [];
-        },
-      }),
+      catalog: Object.freeze({ list: listCatalog }),
       async transcribe(request) { return { requestId: request.requestId, text: '' }; },
     });
     const registryLease = {
@@ -589,15 +590,19 @@ describe('unified Voice speech machine RPC', () => {
           retirementSignal: new AbortController().signal,
         }),
         resolveConnectedAccountPurposeBindingOwner: () => ({
-          getBinding: async () => ({
-            purpose: 'voice.speech',
-            service: { pluginId: 'happier.google', localId: 'oauth' },
-            account: {
+          getBinding: async () => {
+            const selectedTarget = currentSnapshot.settings.connectedAccountPurposeBindingsV1.bindings[0]!.target;
+            if (selectedTarget.kind !== 'account') throw new Error('speech fixture requires an account target');
+            return {
+              purpose: 'voice.speech',
               service: { pluginId: 'happier.google', localId: 'oauth' },
-              accountId: currentSnapshot.settings.connectedAccountPurposeBindingsV1.bindings[0]!.target.account.accountId,
-            },
-            target: { kind: 'account' as const, displayName: 'Selected Google account' },
-          }),
+              account: {
+                service: { pluginId: 'happier.google', localId: 'oauth' },
+                accountId: selectedTarget.account.accountId,
+              },
+              target: { kind: 'account' as const, displayName: 'Selected Google account' },
+            };
+          },
           materialize,
         }),
       },
@@ -1354,7 +1359,7 @@ describe('unified Voice speech machine RPC', () => {
     });
     let current = true;
     let retireAfterExecution = false;
-    const execute = vi.fn(async (input, context) => {
+    const execute: NonNullable<VoiceSpeechRuntimeLease['runtime']['settingsActions']>['execute'] = vi.fn(async (input, context) => {
       expect(input).toEqual({ actionId: 'refresh-voice', settings: { voiceName: 'en-US-A' } });
       expect(context.credentials).toBe(settingsActionCredentials);
       expect(context.credentials.phase).toBe('settings');
@@ -1386,6 +1391,11 @@ describe('unified Voice speech machine RPC', () => {
     const runtime: SpeechProviderRuntime & Readonly<{
       settingsActions: Readonly<{ execute: typeof execute }>;
     }> = { kind: 'speech', settingsActions: { execute } };
+    const resolveCredentials: ReturnType<VoiceSpeechRuntimeLease['readSettings']>['resolveCredentials'] = (
+      _settings,
+      _signal,
+      phase = 'speech',
+    ) => phase === 'settings' ? settingsActionCredentials : credentials;
     const registration = registerMachineVoiceSpeechRpcHandlers({
       rpcHandlerManager: registrar as never,
       resolveSpeechRuntime: vi.fn(async (): Promise<VoiceSpeechRuntimeLease> => ({
@@ -1393,9 +1403,7 @@ describe('unified Voice speech machine RPC', () => {
         contribution: definition,
         readSettings: () => Object.freeze({
           settings: Object.freeze({ voiceName: 'en-US-A' }),
-          resolveCredentials: (_settings, _signal, phase = 'speech') => (
-            phase === 'settings' ? settingsActionCredentials : credentials
-          ),
+          resolveCredentials,
           isCurrent: () => current,
         }),
         createHttp: () => http,

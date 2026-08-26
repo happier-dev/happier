@@ -75,6 +75,7 @@ function createPublicEntry(input: Readonly<{
         encodeContextUpdate: () => [],
         encodeTextTurn: () => [],
         microphoneMode: 'provider_managed' as const,
+        setInputMuted: () => {},
         ...(input.dispose ? { dispose: input.dispose } : {}),
       }));
     },

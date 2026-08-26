@@ -174,6 +174,7 @@ async function activateRawCredentialOnlyProvider(
     encodeContextUpdate: () => [],
     encodeTextTurn: () => [],
     microphoneMode: 'provider_managed',
+    setInputMuted: () => {},
   });
   await scope.commit();
 
