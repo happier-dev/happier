@@ -592,6 +592,15 @@ async function setupUseCreateNewSessionHarness() {
         })),
         setActiveServer: setActiveServerSpy,
     }));
+    const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
+    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    const activeAccountScope = createServerAccountScope('server-a', 'account-a');
+    if (!activeAccountScope) throw new Error('Expected the active Account fixture to be valid');
+    // Event authoring captures the same canonical Account lifetime that owns
+    // stored-content availability. The test server and credential fixtures
+    // above are both for server-a/account-a, so register that real scope
+    // instead of bypassing the owner with a submit mock.
+    registerStorageStateReader(() => ({ profileScope: activeAccountScope } as never));
     vi.doMock('@/sync/domains/server/selection/serverSelectionResolver', () => ({
         resolveNewSessionServerTarget: vi.fn((params: { requestedServerId?: string | null; allowedServerIds: string[] }) => ({
             targetServerId:
@@ -2434,6 +2443,7 @@ describe('useCreateNewSession permission seeding', () => {
         // this target's dispatch hands it to the canonical Session sender.
         expect(captured.value).toBeNull();
         expect(automationCaptured.value).toBeNull();
+        expect(accountEncryptionMode.fetchAccountEncryptionMode).toHaveBeenCalledTimes(1);
         expect(modalAlertSpy).not.toHaveBeenCalled();
         expect(pluginEventAutomationCaptured.value).toEqual(expect.objectContaining({
             executionRecipe: expect.objectContaining({
