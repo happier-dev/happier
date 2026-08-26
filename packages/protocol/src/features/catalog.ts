@@ -699,19 +699,19 @@ const FEATURE_CATALOG_DEFINITION = {
     representation: 'server',
   },
   'terminal.renderer.native': {
-    description: 'Optional native terminal renderer experiments gated behind the byte-stream terminal foundation.',
+    description: 'Optional native terminal renderers gated behind the byte-stream terminal foundation.',
     defaultFailMode: 'fail_closed',
     dependencies: ['terminal.transport.byteStream'],
     representation: 'client',
   },
   'terminal.renderer.iosGhostty': {
-    description: 'Optional iOS Ghostty-based native terminal renderer experiment.',
+    description: 'Optional iOS Ghostty-based native terminal renderer.',
     defaultFailMode: 'fail_closed',
     dependencies: ['terminal.renderer.native'],
     representation: 'client',
   },
   'terminal.renderer.androidTermux': {
-    description: 'Optional Android Termux terminal-view native renderer experiment.',
+    description: 'Optional Android Termux-based native terminal renderer.',
     defaultFailMode: 'fail_closed',
     dependencies: ['terminal.renderer.native'],
     representation: 'client',

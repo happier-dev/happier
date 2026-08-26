@@ -996,6 +996,25 @@ test('Android Termux view teardown cannot unregister native callbacks a newer vi
   assert.doesNotMatch(viewSource, /TermuxBridge\.disposeSurface/);
 });
 
+test('Android module disposal preserves callbacks owned by a still-mounted Termux view', async () => {
+  const bridgeSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxBridge.kt'), 'utf-8');
+  const disposeSurfaceBody = bridgeSource.match(/fun disposeSurface\(surfaceId: String\) \{([\s\S]*?)\n  }/)?.[1] ?? '';
+
+  assert.match(disposeSurfaceBody, /surfaces\.remove\(surfaceId\)\?\.dispose\(\)/);
+  assert.doesNotMatch(disposeSurfaceBody, /invalidators\.remove/);
+  assert.doesNotMatch(disposeSurfaceBody, /focusRequesters\.remove/);
+});
+
+test('iOS module disposal preserves the mounted Ghostty view registration across effect replay', async () => {
+  const viewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
+  const disposeSurfaceBody = viewSource.match(/func disposeSurface\(\) \{([\s\S]*?)\n  }/)?.[1] ?? '';
+
+  assert.match(disposeSurfaceBody, /bridge\?\.dispose\(\)/);
+  assert.doesNotMatch(disposeSurfaceBody, /GhosttySurfaceRegistry\.shared\.unregister/);
+  assert.doesNotMatch(disposeSurfaceBody, /eventEmitter = nil/);
+  assert.match(viewSource, /deinit \{[\s\S]*GhosttySurfaceRegistry\.shared\.unregister\(view: self\)/);
+});
+
 test('Android Termux reattaches native callbacks after a retained view returns to the window', async () => {
   const viewSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxView.kt'), 'utf-8');
 

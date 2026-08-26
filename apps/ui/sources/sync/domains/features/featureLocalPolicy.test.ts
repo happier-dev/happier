@@ -84,12 +84,12 @@ describe('featureLocalPolicy', () => {
         })).toBe(false);
     });
 
-    it('disables terminal.embeddedPty by default when experiments are on', () => {
+    it('enables terminal.embeddedPty by default without the experiments switch', () => {
         expect(resolveLocalFeaturePolicyEnabled('terminal.embeddedPty', {
             ...settingsDefaults,
-            experiments: true,
+            experiments: false,
             featureToggles: {},
-        })).toBe(false);
+        })).toBe(true);
     });
 
     it('enables terminal.embeddedPty when explicitly enabled', () => {

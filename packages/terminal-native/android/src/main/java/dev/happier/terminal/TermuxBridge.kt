@@ -263,8 +263,6 @@ object TermuxBridge {
   }
 
   fun disposeSurface(surfaceId: String) {
-    invalidators.remove(surfaceId)
-    focusRequesters.remove(surfaceId)
     surfaces.remove(surfaceId)?.dispose()
   }
 

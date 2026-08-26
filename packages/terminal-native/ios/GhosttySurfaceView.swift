@@ -157,8 +157,6 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
     cancelMarkedText()
     bridge?.dispose()
     bridge = nil
-    GhosttySurfaceRegistry.shared.unregister(view: self)
-    eventEmitter = nil
   }
 
   func updateNativeAccessibilitySummary(_ summary: String) {

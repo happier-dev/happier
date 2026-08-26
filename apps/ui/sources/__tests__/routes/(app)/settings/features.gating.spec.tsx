@@ -210,12 +210,12 @@ describe('FeaturesSettingsScreen gating', () => {
         expect(quotasItem!.props.rightElement.props.value).toBe(true);
     });
 
-    it('shows embedded terminal dock location setting when terminal.embeddedPty is enabled', async () => {
+    it('shows stable terminal layout and renderer settings without enabling experiments', async () => {
         vi.resetModules();
 
         useSettingMutableMock.mockImplementation((key: string) => {
-            if (key === 'experiments') return createNoopMutable(true);
-            if (key === 'featureToggles') return createNoopMutable({ 'terminal.embeddedPty': true });
+            if (key === 'experiments') return createNoopMutable(false);
+            if (key === 'featureToggles') return createNoopMutable({});
             if (key === 'useProfiles') return createNoopMutable(false);
             if (key === 'agentInputEnterToSend') return createNoopMutable(false);
             if (key === 'agentInputHistoryScope') return createNoopMutable('perSession');
@@ -232,13 +232,14 @@ describe('FeaturesSettingsScreen gating', () => {
             if (key === 'commandPaletteEnabled') return createNoopMutable(false);
             if (key === 'devModeEnabled') return createNoopMutable(false);
             if (key === 'embeddedTerminalDockLocation') return createNoopMutable('sidebar');
+            if (key === 'terminalRendererPreference') return createNoopMutable('native');
             return createNoopMutable(false);
         });
 
         const { default: FeaturesSettingsScreen } = await import('@/app/(app)/settings/features');
 
         const screen = await renderSettingsView(React.createElement(FeaturesSettingsScreen));
-        const menu = screen.findAll((node) => node.props?.itemTrigger?.title === 'terminalEmbedded.settings.locationTitle')[0] ?? null;
-        expect(menu).toBeTruthy();
+        expect(screen.findAll((node) => node.props?.itemTrigger?.title === 'terminalEmbedded.settings.locationTitle')[0]).toBeTruthy();
+        expect(screen.findAll((node) => node.props?.itemTrigger?.title === 'terminalEmbedded.settings.rendererTitle')[0]).toBeTruthy();
     });
 });

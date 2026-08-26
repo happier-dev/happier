@@ -254,13 +254,12 @@ export default React.memo(function FeaturesSettingsScreen() {
     }, [toggleSettings, toggleableFeatureIdSet]);
 
     const embeddedTerminalDockSettingVisible = React.useMemo(() => {
-        if (!experiments) return false;
         const embeddedTerminalDockToggle =
             toggleDefinitions.find((definition) => definition.featureId === 'terminal.embeddedPty') ?? null;
         if (embeddedTerminalDockToggle && isFeatureHardDisabledByServer(embeddedTerminalDockToggle)) return false;
         if (isLocallyBlockedByDependencies('terminal.embeddedPty')) return false;
         return resolveUiFeatureToggleEnabled(toggleSettings, 'terminal.embeddedPty');
-    }, [experiments, isFeatureHardDisabledByServer, isLocallyBlockedByDependencies, toggleDefinitions, toggleSettings]);
+    }, [isFeatureHardDisabledByServer, isLocallyBlockedByDependencies, toggleDefinitions, toggleSettings]);
 
     const embeddedTerminalDockLocationLabel = React.useMemo(() => {
         switch (embeddedTerminalDockLocation) {
@@ -397,21 +396,101 @@ export default React.memo(function FeaturesSettingsScreen() {
                         const enabled = blockedByDependencies ? false : resolveUiFeatureToggleEnabled(toggleSettings, d.featureId);
 
                         return (
-                            <Item
-                                key={d.featureId}
-                                title={t(d.titleKey)}
-                                subtitle={t(d.subtitleKey)}
-                                icon={<Icon name={d.icon.ioniconName as IconName} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
-                                rightElement={
-                                    <Switch
-                                        testID={`settings-feature-toggle-${d.featureId}`}
-                                        value={enabled}
-                                        disabled={blockedByDependencies}
-                                        onValueChange={(next) => applyLocalToggleChange(d.featureId, next)}
-                                    />
-                                }
-                                showChevron={false}
-                            />
+                            <React.Fragment key={d.featureId}>
+                                <Item
+                                    title={t(d.titleKey)}
+                                    subtitle={t(d.subtitleKey)}
+                                    icon={<Icon name={d.icon.ioniconName as IconName} size={29} color={resolveLegacyIconColor(d.icon.color)} />}
+                                    rightElement={
+                                        <Switch
+                                            testID={`settings-feature-toggle-${d.featureId}`}
+                                            value={enabled}
+                                            disabled={blockedByDependencies}
+                                            onValueChange={(next) => applyLocalToggleChange(d.featureId, next)}
+                                        />
+                                    }
+                                    showChevron={false}
+                                />
+
+                                {d.featureId === 'terminal.embeddedPty' && embeddedTerminalDockSettingVisible ? (
+                                    <>
+                                        <DropdownMenu
+                                            open={embeddedTerminalDockMenuOpen}
+                                            onOpenChange={setEmbeddedTerminalDockMenuOpen}
+                                            variant="selectable"
+                                            search={false}
+                                            selectedId={embeddedTerminalDockLocation}
+                                            showCategoryTitles={false}
+                                            matchTriggerWidth={true}
+                                            connectToTrigger={true}
+                                            rowKind="item"
+                                            itemTrigger={{
+                                                title: t('terminalEmbedded.settings.locationTitle'),
+                                                subtitle: embeddedTerminalDockLocationLabel,
+                                                icon: <Icon name="terminal" size={29} color={theme.colors.accent.blue} />,
+                                                itemProps: { testID: 'settings-embedded-terminal-dock-location' },
+                                            }}
+                                            items={[
+                                                { id: 'sidebar', title: t('terminalEmbedded.location.sidebar'), icon: <Icon name="stack" size={16} color={theme.colors.text.secondary} /> },
+                                                { id: 'details', title: t('terminalEmbedded.location.details'), icon: <Icon name="info" size={16} color={theme.colors.text.secondary} /> },
+                                                { id: 'bottom', title: t('terminalEmbedded.location.bottom'), icon: <Icon name="list" size={16} color={theme.colors.text.secondary} /> },
+                                            ]}
+                                            onSelect={(id) => {
+                                                if (id === 'sidebar' || id === 'details' || id === 'bottom') {
+                                                    setEmbeddedTerminalDockLocation(id);
+                                                }
+                                                setEmbeddedTerminalDockMenuOpen(false);
+                                            }}
+                                        />
+
+                                        {Platform.OS !== 'web' ? (
+                                            <DropdownMenu
+                                                open={terminalRendererMenuOpen}
+                                                onOpenChange={setTerminalRendererMenuOpen}
+                                                variant="selectable"
+                                                search={false}
+                                                selectedId={terminalRendererPreference}
+                                                showCategoryTitles={false}
+                                                matchTriggerWidth={true}
+                                                connectToTrigger={true}
+                                                rowKind="item"
+                                                itemTrigger={{
+                                                    title: t('terminalEmbedded.settings.rendererTitle'),
+                                                    subtitle: terminalRendererPreferenceLabel,
+                                                    icon: <Icon name="cpu" size={29} color={theme.colors.accent.indigo} />,
+                                                    itemProps: { testID: 'settings-terminal-renderer-preference' },
+                                                }}
+                                                items={[
+                                                    {
+                                                        id: 'auto',
+                                                        title: t('terminalEmbedded.settings.rendererAuto'),
+                                                        subtitle: t('terminalEmbedded.settings.rendererAutoDescription'),
+                                                        icon: <Icon name="sparkle" size={16} color={theme.colors.text.secondary} />,
+                                                    },
+                                                    {
+                                                        id: 'xterm-webview',
+                                                        title: t('terminalEmbedded.settings.rendererXtermWebView'),
+                                                        subtitle: t('terminalEmbedded.settings.rendererXtermWebViewDescription'),
+                                                        icon: <Icon name="wheelchair" size={16} color={theme.colors.text.secondary} />,
+                                                    },
+                                                    {
+                                                        id: 'native',
+                                                        title: t('terminalEmbedded.settings.rendererNative'),
+                                                        subtitle: t('terminalEmbedded.settings.rendererNativeDescription'),
+                                                        icon: <Icon name="cpu" size={16} color={theme.colors.text.secondary} />,
+                                                    },
+                                                ]}
+                                                onSelect={(id) => {
+                                                    if (id === 'auto' || id === 'xterm-webview' || id === 'native') {
+                                                        setTerminalRendererPreference(id);
+                                                    }
+                                                    setTerminalRendererMenuOpen(false);
+                                                }}
+                                            />
+                                        ) : null}
+                                    </>
+                                ) : null}
+                            </React.Fragment>
                         );
                     })}
                 </ItemGroup>
@@ -422,83 +501,6 @@ export default React.memo(function FeaturesSettingsScreen() {
                     title={t('settingsFeatures.experimentalOptions')}
                     footer={t('settingsFeatures.experimentalOptionsDescription')}
                 >
-                    {embeddedTerminalDockSettingVisible ? (
-                        <DropdownMenu
-                            open={embeddedTerminalDockMenuOpen}
-                            onOpenChange={setEmbeddedTerminalDockMenuOpen}
-                            variant="selectable"
-                            search={false}
-                            selectedId={embeddedTerminalDockLocation}
-                            showCategoryTitles={false}
-                            matchTriggerWidth={true}
-                            connectToTrigger={true}
-                            rowKind="item"
-                            itemTrigger={{
-                                title: t('terminalEmbedded.settings.locationTitle'),
-                                subtitle: embeddedTerminalDockLocationLabel,
-                                icon: <Icon name="terminal" size={29} color={theme.colors.accent.blue} />,
-                                itemProps: { testID: 'settings-embedded-terminal-dock-location' },
-                            }}
-                            items={[
-                                { id: 'sidebar', title: t('terminalEmbedded.location.sidebar'), icon: <Icon name="stack" size={16} color={theme.colors.text.secondary} /> },
-                                { id: 'details', title: t('terminalEmbedded.location.details'), icon: <Icon name="info" size={16} color={theme.colors.text.secondary} /> },
-                                { id: 'bottom', title: t('terminalEmbedded.location.bottom'), icon: <Icon name="list" size={16} color={theme.colors.text.secondary} /> },
-                            ]}
-                            onSelect={(id) => {
-                                if (id === 'sidebar' || id === 'details' || id === 'bottom') {
-                                    setEmbeddedTerminalDockLocation(id);
-                                }
-                                setEmbeddedTerminalDockMenuOpen(false);
-                            }}
-                        />
-                    ) : null}
-
-                    {embeddedTerminalDockSettingVisible && Platform.OS !== 'web' ? (
-                        <DropdownMenu
-                            open={terminalRendererMenuOpen}
-                            onOpenChange={setTerminalRendererMenuOpen}
-                            variant="selectable"
-                            search={false}
-                            selectedId={terminalRendererPreference}
-                            showCategoryTitles={false}
-                            matchTriggerWidth={true}
-                            connectToTrigger={true}
-                            rowKind="item"
-                            itemTrigger={{
-                                title: t('terminalEmbedded.settings.rendererTitle'),
-                                subtitle: terminalRendererPreferenceLabel,
-                                icon: <Icon name="cpu" size={29} color={theme.colors.accent.indigo} />,
-                                itemProps: { testID: 'settings-terminal-renderer-preference' },
-                            }}
-                            items={[
-                                {
-                                    id: 'auto',
-                                    title: t('terminalEmbedded.settings.rendererAuto'),
-                                    subtitle: t('terminalEmbedded.settings.rendererAutoDescription'),
-                                    icon: <Icon name="sparkle" size={16} color={theme.colors.text.secondary} />,
-                                },
-                                {
-                                    id: 'xterm-webview',
-                                    title: t('terminalEmbedded.settings.rendererXtermWebView'),
-                                    subtitle: t('terminalEmbedded.settings.rendererXtermWebViewDescription'),
-                                    icon: <Icon name="wheelchair" size={16} color={theme.colors.text.secondary} />,
-                                },
-                                {
-                                    id: 'native',
-                                    title: t('terminalEmbedded.settings.rendererNative'),
-                                    subtitle: t('terminalEmbedded.settings.rendererNativeDescription'),
-                                    icon: <Icon name="cpu" size={16} color={theme.colors.text.secondary} />,
-                                },
-                            ]}
-                            onSelect={(id) => {
-                                if (id === 'auto' || id === 'xterm-webview' || id === 'native') {
-                                    setTerminalRendererPreference(id);
-                                }
-                                setTerminalRendererMenuOpen(false);
-                            }}
-                        />
-                    ) : null}
-
                     {experimentalToggleDefinitions.map((d) => {
                         const blockedByDependencies = isLocallyBlockedByDependencies(d.featureId);
                         const enabled = blockedByDependencies ? false : resolveUiFeatureToggleEnabled(toggleSettings, d.featureId);

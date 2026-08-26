@@ -480,8 +480,8 @@ export const UI_FEATURE_REGISTRY = {
     'terminal.embeddedPty': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             titleKey: 'settingsFeatures.expEmbeddedTerminal',
             subtitleKey: 'settingsFeatures.expEmbeddedTerminalSubtitle',
             icon: { ioniconName: 'terminal-outline', color: '#AF52DE' },
