@@ -1,33 +1,39 @@
 # Plugin UI public declaration report
 
-> Generated from package source. Do not hand-edit.
+> Generated from prepared package declarations. Do not hand-edit.
 > Records the normalized declaration behind every published export, plus the
 > declarations those signatures reach, so no signature this package ships can
 > change without a reviewable diff. Implementation bodies, initializers, private
 > class members and comments are omitted; inferred value and return types are
 > materialized.
-> Every published export is recorded in full, including one a `bundledDependencies`
-> package declares, because this tarball vendors it and nothing else will publish it.
-> Reachability then stops at that boundary: a declaration reached only through a
-> signature, and declared by another package — vendored or resolved separately — is
-> recorded as a named edge, because that package owns its own internals and
-> `package.json` already pins the version that supplies them.
+> Every published export and reachable declaration physically beneath a
+> `bundledDependencies` package is recorded in full, including nested bundled
+> dependencies, because this tarball vendors it and nothing else will publish it.
+> A declaration reached only through a signature and resolved outside that bundled
+> payload is recorded as a named edge, because the consumer resolves and versions
+> that package independently.
 > Whether a difference is breaking or additive stays a publishing decision.
 
 ## Published exports
 
 ### `.` — `Action` (value)
 
-Declared by `src/components/Action.tsx` as `Action`.
+Declared by `dist/components/Action.d.ts` as `Action`.
 
 ```ts
-const Action: { readonly Execute: <TAction extends PluginUiActionReference>({ action, input, onSettled, ...chrome }: ActionExecuteProps<TAction>) => ReactElement; readonly Copy: ({ value, ...chrome }: ActionCopyProps) => ReactElement; readonly OpenExternal: ({ url, ...chrome }: ActionOpenExternalProps) => ReactElement; readonly OpenSurface: ({ view, input, ...chrome }: ActionOpenSurfaceProps) => ReactElement; readonly Refresh: ({ onRefresh, ...chrome }: ActionRefreshProps) => ReactElement; };
+const Action: Readonly<{
+    Execute: typeof ActionExecute;
+    Copy: typeof ActionCopy;
+    OpenExternal: typeof ActionOpenExternal;
+    OpenSurface: typeof ActionOpenSurface;
+    Refresh: typeof ActionRefresh;
+}>;
 ```
 
 
 ### `.` — `ActionCopyProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionCopyProps`.
+Declared by `dist/components/Action.d.ts` as `ActionCopyProps`.
 
 ```ts
 type ActionCopyProps = ActionChromeProps & Readonly<{
@@ -38,7 +44,7 @@ type ActionCopyProps = ActionChromeProps & Readonly<{
 
 ### `.` — `ActionExecuteProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionExecuteProps`.
+Declared by `dist/components/Action.d.ts` as `ActionExecuteProps`.
 
 ```ts
 type ActionExecuteProps<TAction extends PluginUiActionReference = PluginUiActionReference> = ActionChromeProps & Readonly<{
@@ -51,7 +57,7 @@ type ActionExecuteProps<TAction extends PluginUiActionReference = PluginUiAction
 
 ### `.` — `ActionOpenExternalProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionOpenExternalProps`.
+Declared by `dist/components/Action.d.ts` as `ActionOpenExternalProps`.
 
 ```ts
 type ActionOpenExternalProps = ActionChromeProps & Readonly<{
@@ -62,7 +68,7 @@ type ActionOpenExternalProps = ActionChromeProps & Readonly<{
 
 ### `.` — `ActionOpenSurfaceProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionOpenSurfaceProps`.
+Declared by `dist/components/Action.d.ts` as `ActionOpenSurfaceProps`.
 
 ```ts
 type ActionOpenSurfaceProps = ActionChromeProps & Readonly<{
@@ -74,16 +80,18 @@ type ActionOpenSurfaceProps = ActionChromeProps & Readonly<{
 
 ### `.` — `ActionPanel` (value)
 
-Declared by `src/components/Action.tsx` as `ActionPanel`.
+Declared by `dist/components/Action.d.ts` as `ActionPanel`.
 
 ```ts
-const ActionPanel: (({ title, titleKey, testID, children }: ActionGroupProps) => ReactElement) & { Section: ({ title, titleKey, testID, children }: ActionGroupProps) => ReactElement; };
+const ActionPanel: typeof ActionPanelRoot & {
+    Section: typeof ActionPanelSection;
+};
 ```
 
 
 ### `.` — `ActionPanelProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionPanelProps`.
+Declared by `dist/components/Action.d.ts` as `ActionPanelProps`.
 
 ```ts
 type ActionPanelProps = ActionGroupProps;
@@ -92,7 +100,7 @@ type ActionPanelProps = ActionGroupProps;
 
 ### `.` — `ActionPanelSectionProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionPanelSectionProps`.
+Declared by `dist/components/Action.d.ts` as `ActionPanelSectionProps`.
 
 ```ts
 type ActionPanelSectionProps = ActionGroupProps;
@@ -101,7 +109,7 @@ type ActionPanelSectionProps = ActionGroupProps;
 
 ### `.` — `ActionRefreshProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionRefreshProps`.
+Declared by `dist/components/Action.d.ts` as `ActionRefreshProps`.
 
 ```ts
 type ActionRefreshProps = ActionChromeProps & Readonly<{
@@ -112,16 +120,16 @@ type ActionRefreshProps = ActionChromeProps & Readonly<{
 
 ### `.` — `Badge` (value)
 
-Declared by `src/components/Foundation.tsx` as `Badge`.
+Declared by `dist/components/Foundation.d.ts` as `Badge`.
 
 ```ts
-function Badge({ tone = 'neutral', testID, children, ...text }: BadgeProps): ReactElement;
+function Badge({ tone, testID, children, ...text }: BadgeProps): ReactElement;
 ```
 
 
 ### `.` — `BadgeProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `BadgeProps`.
+Declared by `dist/components/Foundation.d.ts` as `BadgeProps`.
 
 ```ts
 type BadgeProps = AuthorText & Readonly<{
@@ -134,16 +142,16 @@ type BadgeProps = AuthorText & Readonly<{
 
 ### `.` — `Banner` (value)
 
-Declared by `src/components/Foundation.tsx` as `Banner`.
+Declared by `dist/components/Foundation.d.ts` as `Banner`.
 
 ```ts
-function Banner({ tone = 'info', title, titleKey, description, descriptionKey, ...props }: BannerProps): ReactElement;
+function Banner({ tone, title, titleKey, description, descriptionKey, ...props }: BannerProps): ReactElement;
 ```
 
 
 ### `.` — `BannerProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `BannerProps`.
+Declared by `dist/components/Foundation.d.ts` as `BannerProps`.
 
 ```ts
 type BannerProps = Readonly<{
@@ -160,16 +168,16 @@ type BannerProps = Readonly<{
 
 ### `.` — `BrandMark` (value)
 
-Declared by `src/components/Image.tsx` as `BrandMark`.
+Declared by `dist/components/Image.d.ts` as `BrandMark`.
 
 ```ts
-function BrandMark({ pluginId, size, showName = false, externallyLabelled = false, testID }: BrandMarkProps): ReactElement;
+function BrandMark({ pluginId, size, showName, externallyLabelled, testID }: BrandMarkProps): ReactElement;
 ```
 
 
 ### `.` — `BrandMarkProps` (type)
 
-Declared by `src/components/Image.tsx` as `BrandMarkProps`.
+Declared by `dist/components/Image.d.ts` as `BrandMarkProps`.
 
 ```ts
 type BrandMarkProps = Readonly<{
@@ -184,16 +192,16 @@ type BrandMarkProps = Readonly<{
 
 ### `.` — `Button` (value)
 
-Declared by `src/components/Button.tsx` as `Button`.
+Declared by `dist/components/Button.d.ts` as `Button`.
 
 ```ts
-function Button({ title, titleKey, accessibilityLabelKey, variant = 'primary', disabled, busy, icon, accessibilityLabel, focusTarget, testID, onPress, children, }: ButtonProps): ReactElement;
+function Button({ title, titleKey, accessibilityLabelKey, variant, disabled, busy, icon, accessibilityLabel, focusTarget, testID, onPress, children, }: ButtonProps): ReactElement;
 ```
 
 
 ### `.` — `ButtonProps` (type)
 
-Declared by `src/components/Button.tsx` as `ButtonProps`.
+Declared by `dist/components/Button.d.ts` as `ButtonProps`.
 
 ```ts
 type ButtonProps = ButtonWithVisibleTitleProps | ButtonWithExplicitAccessibleNameProps;
@@ -202,7 +210,7 @@ type ButtonProps = ButtonWithVisibleTitleProps | ButtonWithExplicitAccessibleNam
 
 ### `.` — `ButtonVariant` (type)
 
-Declared by `src/components/Button.tsx` as `ButtonVariant`.
+Declared by `dist/components/Button.d.ts` as `ButtonVariant`.
 
 ```ts
 type ButtonVariant = 'primary' | 'secondary' | 'plain';
@@ -211,16 +219,16 @@ type ButtonVariant = 'primary' | 'secondary' | 'plain';
 
 ### `.` — `Card` (value)
 
-Declared by `src/components/Surface.tsx` as `Card`.
+Declared by `dist/components/Surface.d.ts` as `Card`.
 
 ```ts
-function Card({ padding = 'medium', ...props }: CardProps): ReactElement;
+function Card({ padding, ...props }: CardProps): ReactElement;
 ```
 
 
 ### `.` — `CardProps` (type)
 
-Declared by `src/components/Surface.tsx` as `CardProps`.
+Declared by `dist/components/Surface.d.ts` as `CardProps`.
 
 ```ts
 type CardProps = SurfaceProps;
@@ -229,16 +237,16 @@ type CardProps = SurfaceProps;
 
 ### `.` — `CodeBlock` (value)
 
-Declared by `src/components/Content.tsx` as `CodeBlock`.
+Declared by `dist/components/Content.d.ts` as `CodeBlock`.
 
 ```ts
-function CodeBlock({ code, language, selectable = true, copyLabel, copiedLabel, testID, }: CodeBlockProps): ReactElement;
+function CodeBlock({ code, language, selectable, copyLabel, copiedLabel, testID, }: CodeBlockProps): ReactElement;
 ```
 
 
 ### `.` — `CodeBlockProps` (type)
 
-Declared by `src/components/Content.tsx` as `CodeBlockProps`.
+Declared by `dist/components/Content.d.ts` as `CodeBlockProps`.
 
 ```ts
 type CodeBlockProps = Readonly<{
@@ -254,7 +262,7 @@ type CodeBlockProps = Readonly<{
 
 ### `.` — `ComposerContentHandleV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerContentHandleV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerContentHandleV1`.
 
 ```ts
 type ComposerContentHandleV1 = Awaited<ReturnType<PluginUiHostApi['pickComposerMedia']>>;
@@ -263,7 +271,7 @@ type ComposerContentHandleV1 = Awaited<ReturnType<PluginUiHostApi['pickComposerM
 
 ### `.` — `ComposerContentInspectRequestV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerContentInspectRequestV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerContentInspectRequestV1`.
 
 ```ts
 type ComposerContentInspectRequestV1 = Parameters<PluginUiHostApi['inspectComposerContent']>[1];
@@ -272,7 +280,7 @@ type ComposerContentInspectRequestV1 = Parameters<PluginUiHostApi['inspectCompos
 
 ### `.` — `ComposerContentInspectResultV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerContentInspectResultV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerContentInspectResultV1`.
 
 ```ts
 type ComposerContentInspectResultV1 = Awaited<ReturnType<PluginUiHostApi['inspectComposerContent']>>;
@@ -281,7 +289,7 @@ type ComposerContentInspectResultV1 = Awaited<ReturnType<PluginUiHostApi['inspec
 
 ### `.` — `ComposerContentPickMediaRequestV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerContentPickMediaRequestV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerContentPickMediaRequestV1`.
 
 ```ts
 type ComposerContentPickMediaRequestV1 = Parameters<PluginUiHostApi['pickComposerMedia']>[1];
@@ -290,7 +298,7 @@ type ComposerContentPickMediaRequestV1 = Parameters<PluginUiHostApi['pickCompose
 
 ### `.` — `ComposerContentService` (type)
 
-Declared by `src/composer/service.ts` as `ComposerContentService`.
+Declared by `dist/composer/service.d.ts` as `ComposerContentService`.
 
 ```ts
 interface ComposerContentService {
@@ -303,7 +311,7 @@ interface ComposerContentService {
 
 ### `.` — `ComposerDecorationResultV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerDecorationResultV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerDecorationResultV1`.
 
 ```ts
 type ComposerDecorationResultV1 = Awaited<ReturnType<PluginUiHostApi['setComposerDecorations']>>;
@@ -312,7 +320,7 @@ type ComposerDecorationResultV1 = Awaited<ReturnType<PluginUiHostApi['setCompose
 
 ### `.` — `ComposerDecorationSetV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerDecorationSetV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerDecorationSetV1`.
 
 ```ts
 type ComposerDecorationSetV1 = SdkComposerDecorationSetV1;
@@ -321,7 +329,7 @@ type ComposerDecorationSetV1 = SdkComposerDecorationSetV1;
 
 ### `.` — `ComposerFocusResultV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerFocusResultV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerFocusResultV1`.
 
 ```ts
 type ComposerFocusResultV1 = Awaited<ReturnType<PluginUiHostApi['focusComposer']>>;
@@ -330,7 +338,7 @@ type ComposerFocusResultV1 = Awaited<ReturnType<PluginUiHostApi['focusComposer']
 
 ### `.` — `ComposerHandle` (type)
 
-Declared by `src/composer/service.ts` as `ComposerHandle`.
+Declared by `dist/composer/service.d.ts` as `ComposerHandle`.
 
 ```ts
 interface ComposerHandle {
@@ -348,7 +356,7 @@ interface ComposerHandle {
 
 ### `.` — `ComposerInputLockRequestV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerInputLockRequestV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerInputLockRequestV1`.
 
 ```ts
 type ComposerInputLockRequestV1 = Parameters<PluginUiHostApi['acquireComposerInputLock']>[1];
@@ -357,7 +365,7 @@ type ComposerInputLockRequestV1 = Parameters<PluginUiHostApi['acquireComposerInp
 
 ### `.` — `ComposerObserverV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerObserverV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerObserverV1`.
 
 ```ts
 type ComposerObserverV1 = Parameters<PluginUiHostApi['watchComposer']>[1];
@@ -366,7 +374,7 @@ type ComposerObserverV1 = Parameters<PluginUiHostApi['watchComposer']>[1];
 
 ### `.` — `ComposerReadResultV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerReadResultV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerReadResultV1`.
 
 ```ts
 type ComposerReadResultV1 = Awaited<ReturnType<PluginUiHostApi['readComposer']>>;
@@ -375,7 +383,7 @@ type ComposerReadResultV1 = Awaited<ReturnType<PluginUiHostApi['readComposer']>>
 
 ### `.` — `ComposerRefV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerRefV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerRefV1`.
 
 ```ts
 type ComposerRefV1 = Parameters<PluginUiHostApi['readComposer']>[0];
@@ -384,7 +392,7 @@ type ComposerRefV1 = Parameters<PluginUiHostApi['readComposer']>[0];
 
 ### `.` — `ComposerRequestOptions` (type)
 
-Declared by `src/composer/types.ts` as `ComposerRequestOptions`.
+Declared by `dist/composer/types.d.ts` as `ComposerRequestOptions`.
 
 ```ts
 type ComposerRequestOptions = Parameters<PluginUiHostApi['readComposer']>[1];
@@ -393,7 +401,7 @@ type ComposerRequestOptions = Parameters<PluginUiHostApi['readComposer']>[1];
 
 ### `.` — `ComposerSnapshotV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerSnapshotV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerSnapshotV1`.
 
 ```ts
 type ComposerSnapshotV1 = Extract<ComposerReadResultV1, Readonly<{
@@ -404,7 +412,7 @@ type ComposerSnapshotV1 = Extract<ComposerReadResultV1, Readonly<{
 
 ### `.` — `ComposerTransactionResultV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerTransactionResultV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerTransactionResultV1`.
 
 ```ts
 type ComposerTransactionResultV1 = Awaited<ReturnType<PluginUiHostApi['applyComposer']>>;
@@ -413,7 +421,7 @@ type ComposerTransactionResultV1 = Awaited<ReturnType<PluginUiHostApi['applyComp
 
 ### `.` — `ComposerTransactionV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerTransactionV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerTransactionV1`.
 
 ```ts
 type ComposerTransactionV1 = Parameters<PluginUiHostApi['applyComposer']>[1];
@@ -422,7 +430,7 @@ type ComposerTransactionV1 = Parameters<PluginUiHostApi['applyComposer']>[1];
 
 ### `.` — `ComposerViewStateV1` (type)
 
-Declared by `src/composer/hooks.ts` as `ComposerViewStateV1`.
+Declared by `dist/composer/hooks.d.ts` as `ComposerViewStateV1`.
 
 ```ts
 type ComposerViewStateV1 = Readonly<{
@@ -436,7 +444,7 @@ type ComposerViewStateV1 = Readonly<{
 
 ### `.` — `ComposersService` (type)
 
-Declared by `src/composer/service.ts` as `ComposersService`.
+Declared by `dist/composer/service.d.ts` as `ComposersService`.
 
 ```ts
 interface ComposersService {
@@ -449,7 +457,7 @@ interface ComposersService {
 
 ### `.` — `ContextMenu` (value)
 
-Declared by `src/components/Overlay.tsx` as `ContextMenu`.
+Declared by `dist/components/Overlay.d.ts` as `ContextMenu`.
 
 ```ts
 function ContextMenu(props: MenuProps): ReactElement;
@@ -458,7 +466,7 @@ function ContextMenu(props: MenuProps): ReactElement;
 
 ### `.` — `Divider` (value)
 
-Declared by `src/components/Foundation.tsx` as `Divider`.
+Declared by `dist/components/Foundation.d.ts` as `Divider`.
 
 ```ts
 function Divider(props: DividerProps): ReactElement;
@@ -467,7 +475,7 @@ function Divider(props: DividerProps): ReactElement;
 
 ### `.` — `DividerProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `DividerProps`.
+Declared by `dist/components/Foundation.d.ts` as `DividerProps`.
 
 ```ts
 type DividerProps = Readonly<{
@@ -480,7 +488,7 @@ type DividerProps = Readonly<{
 
 ### `.` — `Dropdown` (value)
 
-Declared by `src/components/Overlay.tsx` as `Dropdown`.
+Declared by `dist/components/Overlay.d.ts` as `Dropdown`.
 
 ```ts
 function Dropdown(props: MenuProps): ReactElement;
@@ -489,7 +497,7 @@ function Dropdown(props: MenuProps): ReactElement;
 
 ### `.` — `EmptyState` (value)
 
-Declared by `src/components/State.tsx` as `EmptyState`.
+Declared by `dist/components/State.d.ts` as `EmptyState`.
 
 ```ts
 function EmptyState(props: EmptyStateProps): ReactElement;
@@ -498,7 +506,7 @@ function EmptyState(props: EmptyStateProps): ReactElement;
 
 ### `.` — `EmptyStateProps` (type)
 
-Declared by `src/components/State.tsx` as `EmptyStateProps`.
+Declared by `dist/components/State.d.ts` as `EmptyStateProps`.
 
 ```ts
 type EmptyStateProps = StateCopyProps;
@@ -507,7 +515,7 @@ type EmptyStateProps = StateCopyProps;
 
 ### `.` — `ErrorState` (value)
 
-Declared by `src/components/State.tsx` as `ErrorState`.
+Declared by `dist/components/State.d.ts` as `ErrorState`.
 
 ```ts
 function ErrorState(props: ErrorStateProps): ReactElement;
@@ -516,7 +524,7 @@ function ErrorState(props: ErrorStateProps): ReactElement;
 
 ### `.` — `ErrorStateProps` (type)
 
-Declared by `src/components/State.tsx` as `ErrorStateProps`.
+Declared by `dist/components/State.d.ts` as `ErrorStateProps`.
 
 ```ts
 type ErrorStateProps = StateCopyProps;
@@ -525,7 +533,7 @@ type ErrorStateProps = StateCopyProps;
 
 ### `.` — `Field` (value)
 
-Declared by `src/components/Form.tsx` as `Field`.
+Declared by `dist/components/Form.d.ts` as `Field`.
 
 ```ts
 function Field(props: FieldProps): ReactElement;
@@ -534,7 +542,7 @@ function Field(props: FieldProps): ReactElement;
 
 ### `.` — `FieldProps` (type)
 
-Declared by `src/components/Form.tsx` as `FieldProps`.
+Declared by `dist/components/Form.d.ts` as `FieldProps`.
 
 ```ts
 type FieldProps = Readonly<{
@@ -551,16 +559,23 @@ type FieldProps = Readonly<{
 
 ### `.` — `Form` (value)
 
-Declared by `src/components/Form.tsx` as `Form`.
+Declared by `dist/components/Form.d.ts` as `Form`.
 
 ```ts
-const Form: ((props: FormProps) => ReactElement) & { Field: (props: FieldProps) => ReactElement; TextField: (props: TextFieldProps) => ReactElement; Toggle: (props: ToggleProps) => ReactElement; Select: (props: SelectProps) => ReactElement; ValidationMessage: ({ message, testID }: ValidationMessageProps) => ReactElement; Actions: ({ children }: FormActionsProps) => ReactElement; };
+const Form: typeof FormRoot & {
+    Field: typeof Field;
+    TextField: typeof TextField;
+    Toggle: typeof Toggle;
+    Select: typeof Select;
+    ValidationMessage: typeof ValidationMessage;
+    Actions: typeof FormActions;
+};
 ```
 
 
 ### `.` — `FormActionsProps` (type)
 
-Declared by `src/components/Form.tsx` as `FormActionsProps`.
+Declared by `dist/components/Form.d.ts` as `FormActionsProps`.
 
 ```ts
 type FormActionsProps = Readonly<{
@@ -571,7 +586,7 @@ type FormActionsProps = Readonly<{
 
 ### `.` — `FormProps` (type)
 
-Declared by `src/components/Form.tsx` as `FormProps`.
+Declared by `dist/components/Form.d.ts` as `FormProps`.
 
 ```ts
 type FormProps = Readonly<{
@@ -591,16 +606,16 @@ type FormProps = Readonly<{
 
 ### `.` — `Heading` (value)
 
-Declared by `src/components/Foundation.tsx` as `Heading`.
+Declared by `dist/components/Foundation.d.ts` as `Heading`.
 
 ```ts
-function Heading({ level = 2, focusTarget, testID, children, ...text }: HeadingProps): ReactElement;
+function Heading({ level, focusTarget, testID, children, ...text }: HeadingProps): ReactElement;
 ```
 
 
 ### `.` — `HeadingProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `HeadingProps`.
+Declared by `dist/components/Foundation.d.ts` as `HeadingProps`.
 
 ```ts
 type HeadingProps = AuthorText & Readonly<{
@@ -614,16 +629,16 @@ type HeadingProps = AuthorText & Readonly<{
 
 ### `.` — `Icon` (value)
 
-Declared by `src/components/Icon.tsx` as `Icon`.
+Declared by `dist/components/Icon.d.ts` as `Icon`.
 
 ```ts
-function Icon({ name, size = 'medium', tone = 'default', accessibilityLabel, testID }: IconProps): ReactElement;
+function Icon({ name, size, tone, accessibilityLabel, testID }: IconProps): ReactElement;
 ```
 
 
 ### `.` — `IconButton` (value)
 
-Declared by `src/components/Button.tsx` as `IconButton`.
+Declared by `dist/components/Button.d.ts` as `IconButton`.
 
 ```ts
 function IconButton({ accessibilityLabel, accessibilityLabelKey, icon, disabled, busy, selected, focusTarget, testID, onPress, }: IconButtonProps): ReactElement;
@@ -632,7 +647,7 @@ function IconButton({ accessibilityLabel, accessibilityLabelKey, icon, disabled,
 
 ### `.` — `IconButtonProps` (type)
 
-Declared by `src/components/Button.tsx` as `IconButtonProps`.
+Declared by `dist/components/Button.d.ts` as `IconButtonProps`.
 
 ```ts
 type IconButtonProps = Readonly<{
@@ -651,7 +666,7 @@ type IconButtonProps = Readonly<{
 
 ### `.` — `IconName` (type)
 
-Declared by `src/components/Icon.tsx` as `IconName`.
+Declared by `dist/components/Icon.d.ts` as `IconName`.
 
 ```ts
 type IconName = HappierIconName;
@@ -660,7 +675,7 @@ type IconName = HappierIconName;
 
 ### `.` — `IconProps` (type)
 
-Declared by `src/components/Icon.tsx` as `IconProps`.
+Declared by `dist/components/Icon.d.ts` as `IconProps`.
 
 ```ts
 type IconProps = Readonly<{
@@ -675,16 +690,16 @@ type IconProps = Readonly<{
 
 ### `.` — `Image` (value)
 
-Declared by `src/components/Image.tsx` as `Image`.
+Declared by `dist/components/Image.d.ts` as `Image`.
 
 ```ts
-function Image({ resource, size = 'medium', accessibilityLabel, fallback = '•', testID }: ImageProps): ReactElement;
+function Image({ resource, size, accessibilityLabel, fallback, testID }: ImageProps): ReactElement;
 ```
 
 
 ### `.` — `ImageProps` (type)
 
-Declared by `src/components/Image.tsx` as `ImageProps`.
+Declared by `dist/components/Image.d.ts` as `ImageProps`.
 
 ```ts
 type ImageProps = Readonly<{
@@ -699,7 +714,7 @@ type ImageProps = Readonly<{
 
 ### `.` — `Item` (value)
 
-Declared by `src/components/List.tsx` as `Item`.
+Declared by `dist/components/List.d.ts` as `Item`.
 
 ```ts
 function Item(props: ListItemProps): ReactElement;
@@ -708,7 +723,7 @@ function Item(props: ListItemProps): ReactElement;
 
 ### `.` — `ItemGroup` (value)
 
-Declared by `src/components/List.tsx` as `ItemGroup`.
+Declared by `dist/components/List.d.ts` as `ItemGroup`.
 
 ```ts
 function ItemGroup(props: ItemGroupProps): ReactElement;
@@ -717,7 +732,7 @@ function ItemGroup(props: ItemGroupProps): ReactElement;
 
 ### `.` — `ItemGroupProps` (type)
 
-Declared by `src/components/List.tsx` as `ItemGroupProps`.
+Declared by `dist/components/List.d.ts` as `ItemGroupProps`.
 
 ```ts
 type ItemGroupProps = Readonly<{
@@ -733,7 +748,7 @@ type ItemGroupProps = Readonly<{
 
 ### `.` — `ItemProps` (type)
 
-Declared by `src/components/List.tsx` as `ItemProps`.
+Declared by `dist/components/List.d.ts` as `ItemProps`.
 
 ```ts
 type ItemProps = Readonly<{
@@ -741,10 +756,14 @@ type ItemProps = Readonly<{
     title?: string;
     subtitle?: string;
     detail?: string;
+    titleNumberOfLines?: number;
+    subtitleNumberOfLines?: number;
+    detailNumberOfLines?: number;
     icon?: ReactNode;
     accessory?: ReactNode;
+    accessoryWraps?: boolean;
     tone?: HappierTone;
-    onPress?: () => unknown;
+    onPress?: (event?: HappierGestureResponderEvent) => unknown;
     disabled?: boolean;
     busy?: boolean;
     selected?: boolean;
@@ -755,6 +774,9 @@ type ItemProps = Readonly<{
     density?: 'comfortable' | 'cozy' | 'compact' | 'tight';
     showDivider?: boolean;
     accessibilityLabel?: string;
+    accessibilityLabelKey?: string;
+    accessibilityHint?: string;
+    accessibilityHintKey?: string;
     testID?: string;
     style?: HappierStyleProp;
 }> & ItemSecondaryActionsProps;
@@ -763,7 +785,7 @@ type ItemProps = Readonly<{
 
 ### `.` — `Label` (value)
 
-Declared by `src/components/Foundation.tsx` as `Label`.
+Declared by `dist/components/Foundation.d.ts` as `Label`.
 
 ```ts
 function Label({ testID, children, ...text }: LabelProps): ReactElement;
@@ -772,7 +794,7 @@ function Label({ testID, children, ...text }: LabelProps): ReactElement;
 
 ### `.` — `LabelProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `LabelProps`.
+Declared by `dist/components/Foundation.d.ts` as `LabelProps`.
 
 ```ts
 type LabelProps = AuthorText & Readonly<{
@@ -782,9 +804,18 @@ type LabelProps = AuthorText & Readonly<{
 ```
 
 
+### `.` — `LayoutChangeEvent` (type)
+
+Declared by `dist/components/Layout.d.ts` as `LayoutChangeEvent`.
+
+```ts
+type LayoutChangeEvent = HappierLayoutChangeEvent;
+```
+
+
 ### `.` — `LayoutGap` (type)
 
-Declared by `src/components/Layout.tsx` as `LayoutGap`.
+Declared by `dist/components/Layout.d.ts` as `LayoutGap`.
 
 ```ts
 type LayoutGap = HappierLayoutGap;
@@ -793,7 +824,7 @@ type LayoutGap = HappierLayoutGap;
 
 ### `.` — `Link` (value)
 
-Declared by `src/components/Foundation.tsx` as `Link`.
+Declared by `dist/components/Foundation.d.ts` as `Link`.
 
 ```ts
 function Link({ title, titleKey, url, disabled, testID }: LinkProps): ReactElement;
@@ -802,7 +833,7 @@ function Link({ title, titleKey, url, disabled, testID }: LinkProps): ReactEleme
 
 ### `.` — `LinkProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `LinkProps`.
+Declared by `dist/components/Foundation.d.ts` as `LinkProps`.
 
 ```ts
 type LinkProps = Readonly<{
@@ -817,16 +848,38 @@ type LinkProps = Readonly<{
 
 ### `.` — `List` (value)
 
-Declared by `src/components/List.tsx` as `List`.
+Declared by `dist/components/List.d.ts` as `List`.
 
 ```ts
-const List: (<Item>(props: ListProps<Item>) => ReactElement) & { Section: (props: ListSectionProps) => ReactElement; Item: (props: ListItemProps) => ReactElement; };
+const List: typeof ListRoot & {
+    Section: typeof ListSection;
+    Item: typeof ListItem;
+    SelectionActionBar: typeof ListSelectionActionBar;
+};
+```
+
+
+### `.` — `ListBulkAction` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListBulkAction`.
+
+```ts
+type ListBulkAction = Readonly<{
+    id: string;
+    label?: string;
+    labelKey?: string;
+    labelFallback?: string;
+    icon?: ReactNode;
+    tone?: HappierTone;
+    disabled?: boolean;
+    testID?: string;
+}>;
 ```
 
 
 ### `.` — `ListHeaderContext` (type)
 
-Declared by `src/components/List.tsx` as `ListHeaderContext`.
+Declared by `dist/components/List.d.ts` as `ListHeaderContext`.
 
 ```ts
 type ListHeaderContext<Item> = Readonly<{
@@ -837,16 +890,104 @@ type ListHeaderContext<Item> = Readonly<{
 
 ### `.` — `ListItemProps` (type)
 
-Declared by `src/components/List.tsx` as `ListItemProps`.
+Declared by `dist/components/List.d.ts` as `ListItemProps`.
 
 ```ts
 type ListItemProps = ItemProps;
 ```
 
 
+### `.` — `ListMultiSelectionActions` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionActions`.
+
+```ts
+type ListMultiSelectionActions = HappierListMultiSelectionActions;
+```
+
+
+### `.` — `ListMultiSelectionCapabilityProps` (type)
+
+Declared by `dist/components/List.d.ts` as `ListMultiSelectionCapabilityProps`.
+
+```ts
+type ListMultiSelectionCapabilityProps<Item = unknown> = Readonly<{
+    store: ListMultiSelectionStore;
+    isItemSelectable?: (item: Item, index: number) => boolean;
+    retainedSelectionKeys?: readonly ListMultiSelectionKey[];
+}>;
+```
+
+
+### `.` — `ListMultiSelectionKey` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionKey`.
+
+```ts
+type ListMultiSelectionKey = HappierListMultiSelectionKey;
+```
+
+
+### `.` — `ListMultiSelectionProvider` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionProvider`.
+
+```ts
+function ListMultiSelectionProvider(props: ListMultiSelectionProviderProps): ReactElement;
+```
+
+
+### `.` — `ListMultiSelectionProviderProps` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionProviderProps`.
+
+```ts
+type ListMultiSelectionProviderProps = Readonly<{
+    store: ListMultiSelectionStore | null;
+    children?: ReactNode;
+}>;
+```
+
+
+### `.` — `ListMultiSelectionRow` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionRow`.
+
+```ts
+type ListMultiSelectionRow = Readonly<{
+    isSelectionMode: boolean;
+    isSelected: boolean;
+    isFocused: boolean;
+    replace: () => void;
+    toggle: () => void;
+    selectRange: () => void;
+    addRange: () => void;
+    setFocused: () => void;
+}>;
+```
+
+
+### `.` — `ListMultiSelectionSnapshot` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionSnapshot`.
+
+```ts
+type ListMultiSelectionSnapshot = HappierListMultiSelectionSnapshot;
+```
+
+
+### `.` — `ListMultiSelectionStore` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionStore`.
+
+```ts
+type ListMultiSelectionStore = HappierListMultiSelectionStore;
+```
+
+
 ### `.` — `ListProps` (type)
 
-Declared by `src/components/List.tsx` as `ListProps`.
+Declared by `dist/components/List.d.ts` as `ListProps`.
 
 ```ts
 type ListProps<Item> = ListBaseProps & (VirtualizedListProps<Item> | StaticListProps);
@@ -855,7 +996,7 @@ type ListProps<Item> = ListBaseProps & (VirtualizedListProps<Item> | StaticListP
 
 ### `.` — `ListSearchProps` (type)
 
-Declared by `src/components/List.tsx` as `ListSearchProps`.
+Declared by `dist/components/List.d.ts` as `ListSearchProps`.
 
 ```ts
 type ListSearchProps<Item> = ListSearchBaseProps<Item> & (Readonly<{
@@ -872,7 +1013,7 @@ type ListSearchProps<Item> = ListSearchBaseProps<Item> & (Readonly<{
 
 ### `.` — `ListSectionData` (type)
 
-Declared by `src/components/List.tsx` as `ListSectionData`.
+Declared by `dist/components/List.d.ts` as `ListSectionData`.
 
 ```ts
 type ListSectionData<Item> = Readonly<{
@@ -885,7 +1026,7 @@ type ListSectionData<Item> = Readonly<{
 
 ### `.` — `ListSectionProps` (type)
 
-Declared by `src/components/List.tsx` as `ListSectionProps`.
+Declared by `dist/components/List.d.ts` as `ListSectionProps`.
 
 ```ts
 type ListSectionProps = Readonly<{
@@ -897,9 +1038,34 @@ type ListSectionProps = Readonly<{
 ```
 
 
+### `.` — `ListSelectionActionBar` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListSelectionActionBar`.
+
+```ts
+function ListSelectionActionBar(props: ListSelectionActionBarProps): ReactElement | null;
+```
+
+
+### `.` — `ListSelectionActionBarProps` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListSelectionActionBarProps`.
+
+```ts
+type ListSelectionActionBarProps = Readonly<{
+    actions: readonly ListBulkAction[];
+    onAction: (actionId: string, keys: readonly ListMultiSelectionKey[]) => void;
+    onDismiss?: () => void;
+    accessibilityLabel?: string;
+    testID?: string;
+    style?: HappierStyleProp;
+}>;
+```
+
+
 ### `.` — `ListSelectionProps` (type)
 
-Declared by `src/components/List.tsx` as `ListSelectionProps`.
+Declared by `dist/components/List.d.ts` as `ListSelectionProps`.
 
 ```ts
 type ListSelectionProps<Item = unknown> = ListSelectionBaseProps<Item> & (Readonly<{
@@ -916,7 +1082,7 @@ type ListSelectionProps<Item = unknown> = ListSelectionBaseProps<Item> & (Readon
 
 ### `.` — `LoadingState` (value)
 
-Declared by `src/components/State.tsx` as `LoadingState`.
+Declared by `dist/components/State.d.ts` as `LoadingState`.
 
 ```ts
 function LoadingState(props: LoadingStateProps): ReactElement;
@@ -925,7 +1091,7 @@ function LoadingState(props: LoadingStateProps): ReactElement;
 
 ### `.` — `LoadingStateProps` (type)
 
-Declared by `src/components/State.tsx` as `LoadingStateProps`.
+Declared by `dist/components/State.d.ts` as `LoadingStateProps`.
 
 ```ts
 type LoadingStateProps = StateCopyProps;
@@ -934,16 +1100,16 @@ type LoadingStateProps = StateCopyProps;
 
 ### `.` — `Markdown` (value)
 
-Declared by `src/components/Content.tsx` as `Markdown`.
+Declared by `dist/components/Content.d.ts` as `Markdown`.
 
 ```ts
-function Markdown({ value, selectable = true, testID }: MarkdownProps): ReactElement;
+function Markdown({ value, selectable, testID }: MarkdownProps): ReactElement;
 ```
 
 
 ### `.` — `MarkdownProps` (type)
 
-Declared by `src/components/Content.tsx` as `MarkdownProps`.
+Declared by `dist/components/Content.d.ts` as `MarkdownProps`.
 
 ```ts
 type MarkdownProps = Readonly<{
@@ -956,7 +1122,7 @@ type MarkdownProps = Readonly<{
 
 ### `.` — `Menu` (value)
 
-Declared by `src/components/Overlay.tsx` as `Menu`.
+Declared by `dist/components/Overlay.d.ts` as `Menu`.
 
 ```ts
 function Menu(props: MenuProps): ReactElement;
@@ -965,7 +1131,7 @@ function Menu(props: MenuProps): ReactElement;
 
 ### `.` — `MenuGroup` (type)
 
-Declared by `src/components/Overlay.tsx` as `MenuGroup`.
+Declared by `dist/components/Overlay.d.ts` as `MenuGroup`.
 
 ```ts
 type MenuGroup = Readonly<{
@@ -978,7 +1144,7 @@ type MenuGroup = Readonly<{
 
 ### `.` — `MenuItem` (type)
 
-Declared by `src/components/Overlay.tsx` as `MenuItem`.
+Declared by `dist/components/Overlay.d.ts` as `MenuItem`.
 
 ```ts
 type MenuItem = MenuItemBase & (Readonly<{
@@ -999,7 +1165,7 @@ type MenuItem = MenuItemBase & (Readonly<{
 
 ### `.` — `MenuProps` (type)
 
-Declared by `src/components/Overlay.tsx` as `MenuProps`.
+Declared by `dist/components/Overlay.d.ts` as `MenuProps`.
 
 ```ts
 type MenuProps = Omit<PopoverProps, 'children'> & MenuContentProps & Readonly<{
@@ -1011,7 +1177,7 @@ type MenuProps = Omit<PopoverProps, 'children'> & MenuContentProps & Readonly<{
 
 ### `.` — `MenuRadioGroup` (type)
 
-Declared by `src/components/Overlay.tsx` as `MenuRadioGroup`.
+Declared by `dist/components/Overlay.d.ts` as `MenuRadioGroup`.
 
 ```ts
 type MenuRadioGroup = Readonly<{
@@ -1024,7 +1190,7 @@ type MenuRadioGroup = Readonly<{
 
 ### `.` — `Metadata` (value)
 
-Declared by `src/components/Foundation.tsx` as `Metadata`.
+Declared by `dist/components/Foundation.d.ts` as `Metadata`.
 
 ```ts
 function Metadata(props: MetadataProps): ReactElement;
@@ -1033,7 +1199,7 @@ function Metadata(props: MetadataProps): ReactElement;
 
 ### `.` — `MetadataEntry` (type)
 
-Declared by `src/components/Foundation.tsx` as `MetadataEntry`.
+Declared by `dist/components/Foundation.d.ts` as `MetadataEntry`.
 
 ```ts
 type MetadataEntry = Readonly<{
@@ -1050,7 +1216,7 @@ type MetadataEntry = Readonly<{
 
 ### `.` — `MetadataProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `MetadataProps`.
+Declared by `dist/components/Foundation.d.ts` as `MetadataProps`.
 
 ```ts
 type MetadataProps = Readonly<{
@@ -1064,7 +1230,7 @@ type MetadataProps = Readonly<{
 
 ### `.` — `PluginAccessibilityFacts` (type)
 
-Declared by `src/components/PluginUiProvider.tsx` as `PluginAccessibilityFacts`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `PluginAccessibilityFacts`.
 
 ```ts
 type PluginAccessibilityFacts = HappierUiAccessibility;
@@ -1073,7 +1239,7 @@ type PluginAccessibilityFacts = HappierUiAccessibility;
 
 ### `.` — `PluginActionExecution` (type)
 
-Declared by `src/hostApi/executeAction.ts` as `PluginActionExecution`.
+Declared by `dist/hostApi/executeAction.d.ts` as `PluginActionExecution`.
 
 ```ts
 type PluginActionExecution<Result = unknown> = Readonly<{
@@ -1098,7 +1264,7 @@ type PluginActionExecution<Result = unknown> = Readonly<{
 
 ### `.` — `PluginActionExecutionController` (type)
 
-Declared by `src/hostApi/executeAction.ts` as `PluginActionExecutionController`.
+Declared by `dist/hostApi/executeAction.d.ts` as `PluginActionExecutionController`.
 
 ```ts
 type PluginActionExecutionController<Result, Input = JsonValue> = Readonly<{
@@ -1147,7 +1313,7 @@ Re-exported from another package as `PluginUiActionResultFor`; that package owns
 
 ### `.` — `PluginTranslate` (type)
 
-Declared by `src/components/PluginUiProvider.tsx` as `PluginTranslate`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `PluginTranslate`.
 
 ```ts
 type PluginTranslate = (key: string, fallback?: string, values?: PluginTranslationValues) => string;
@@ -1156,7 +1322,7 @@ type PluginTranslate = (key: string, fallback?: string, values?: PluginTranslati
 
 ### `.` — `PluginTranslationValues` (type)
 
-Declared by `src/components/PluginUiProvider.tsx` as `PluginTranslationValues`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `PluginTranslationValues`.
 
 ```ts
 type PluginTranslationValues = Readonly<Record<string, string | number>>;
@@ -1165,7 +1331,7 @@ type PluginTranslationValues = Readonly<Record<string, string | number>>;
 
 ### `.` — `PluginUiFocusTarget` (type)
 
-Declared by `src/components/Focus.tsx` as `PluginUiFocusTarget`.
+Declared by `dist/components/Focus.d.ts` as `PluginUiFocusTarget`.
 
 ```ts
 type PluginUiFocusTarget = Readonly<{
@@ -1185,7 +1351,7 @@ Re-exported from another package as `PluginUiHostApi`; that package owns the dec
 
 ### `.` — `PluginUiResourceError` (type)
 
-Declared by `src/hostApi/resourceStore.ts` as `PluginUiResourceError`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `PluginUiResourceError`.
 
 ```ts
 type PluginUiResourceError = Readonly<{
@@ -1198,7 +1364,7 @@ type PluginUiResourceError = Readonly<{
 
 ### `.` — `PluginUiResourceReference` (type)
 
-Declared by `src/hostApi/resourceStore.ts` as `PluginUiResourceReference`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `PluginUiResourceReference`.
 
 ```ts
 type PluginUiResourceReference = Parameters<PluginUiHostApi['readResource']>[0];
@@ -1207,7 +1373,7 @@ type PluginUiResourceReference = Parameters<PluginUiHostApi['readResource']>[0];
 
 ### `.` — `PluginUiResourceResult` (type)
 
-Declared by `src/hostApi/index.ts` as `PluginUiResourceResult`.
+Declared by `dist/hostApi/index.d.ts` as `PluginUiResourceResult`.
 
 ```ts
 type PluginUiResourceResult = Readonly<{
@@ -1219,7 +1385,7 @@ type PluginUiResourceResult = Readonly<{
 
 ### `.` — `PluginUiResourceSnapshot` (type)
 
-Declared by `src/hostApi/resourceStore.ts` as `PluginUiResourceSnapshot`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `PluginUiResourceSnapshot`.
 
 ```ts
 type PluginUiResourceSnapshot = Readonly<{
@@ -1235,7 +1401,7 @@ type PluginUiResourceSnapshot = Readonly<{
 
 ### `.` — `PluginUiResourceState` (type)
 
-Declared by `src/components/State.tsx` as `PluginUiResourceState`.
+Declared by `dist/components/State.d.ts` as `PluginUiResourceState`.
 
 ```ts
 type PluginUiResourceState<Value = unknown> = Readonly<{
@@ -1259,7 +1425,7 @@ type PluginUiResourceState<Value = unknown> = Readonly<{
 
 ### `.` — `Popover` (value)
 
-Declared by `src/components/Overlay.tsx` as `Popover`.
+Declared by `dist/components/Overlay.d.ts` as `Popover`.
 
 ```ts
 function Popover(props: PopoverProps): ReactElement;
@@ -1268,7 +1434,7 @@ function Popover(props: PopoverProps): ReactElement;
 
 ### `.` — `PopoverProps` (type)
 
-Declared by `src/components/Overlay.tsx` as `PopoverProps`.
+Declared by `dist/components/Overlay.d.ts` as `PopoverProps`.
 
 ```ts
 type PopoverProps = Readonly<{
@@ -1283,13 +1449,15 @@ type PopoverProps = Readonly<{
     placement?: 'auto' | 'top' | 'bottom' | 'left' | 'right';
     disabled?: boolean;
     testID?: string;
+    triggerTabIndex?: -1 | 0;
+    focusReturnRef?: RefObject<unknown>;
 }>;
 ```
 
 
 ### `.` — `Progress` (value)
 
-Declared by `src/components/Foundation.tsx` as `Progress`.
+Declared by `dist/components/Foundation.d.ts` as `Progress`.
 
 ```ts
 function Progress({ label, labelKey, ...props }: ProgressProps): ReactElement;
@@ -1298,7 +1466,7 @@ function Progress({ label, labelKey, ...props }: ProgressProps): ReactElement;
 
 ### `.` — `ProgressProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `ProgressProps`.
+Declared by `dist/components/Foundation.d.ts` as `ProgressProps`.
 
 ```ts
 type ProgressProps = Readonly<{
@@ -1312,16 +1480,16 @@ type ProgressProps = Readonly<{
 
 ### `.` — `Row` (value)
 
-Declared by `src/components/Layout.tsx` as `Row`.
+Declared by `dist/components/Layout.d.ts` as `Row`.
 
 ```ts
-function Row({ gap = 'medium', focusTarget, ...props }: RowProps): ReactElement;
+function Row({ gap, focusTarget, ...props }: RowProps): ReactElement;
 ```
 
 
 ### `.` — `RowProps` (type)
 
-Declared by `src/components/Layout.tsx` as `RowProps`.
+Declared by `dist/components/Layout.d.ts` as `RowProps`.
 
 ```ts
 type RowProps = StackProps;
@@ -1330,22 +1498,23 @@ type RowProps = StackProps;
 
 ### `.` — `Screen` (value)
 
-Declared by `src/components/Layout.tsx` as `Screen`.
+Declared by `dist/components/Layout.d.ts` as `Screen`.
 
 ```ts
-function Screen({ children, safeArea = false, focusTarget, ...props }: ScreenProps): ReactElement;
+function Screen({ children, safeArea, focusTarget, ...props }: ScreenProps): ReactElement;
 ```
 
 
 ### `.` — `ScreenProps` (type)
 
-Declared by `src/components/Layout.tsx` as `ScreenProps`.
+Declared by `dist/components/Layout.d.ts` as `ScreenProps`.
 
 ```ts
 type ScreenProps = Readonly<{
     children?: ReactNode;
     safeArea?: boolean;
     focusTarget?: PluginUiFocusTarget;
+    onLayout?: (event: LayoutChangeEvent) => void;
     testID?: string;
     style?: HappierStyleProp;
 }>;
@@ -1354,16 +1523,16 @@ type ScreenProps = Readonly<{
 
 ### `.` — `ScrollArea` (value)
 
-Declared by `src/components/Layout.tsx` as `ScrollArea`.
+Declared by `dist/components/Layout.d.ts` as `ScrollArea`.
 
 ```ts
-function ScrollArea({ children, safeArea = false, ...props }: ScrollAreaProps): ReactElement;
+function ScrollArea({ children, safeArea, ...props }: ScrollAreaProps): ReactElement;
 ```
 
 
 ### `.` — `ScrollAreaProps` (type)
 
-Declared by `src/components/Layout.tsx` as `ScrollAreaProps`.
+Declared by `dist/components/Layout.d.ts` as `ScrollAreaProps`.
 
 ```ts
 type ScrollAreaProps = Readonly<{
@@ -1372,6 +1541,7 @@ type ScrollAreaProps = Readonly<{
     keyboardShouldPersistTaps?: HappierKeyboardShouldPersistTaps;
     onScroll?: (event: HappierScrollEvent) => void;
     scrollEventThrottle?: number;
+    onLayout?: (event: LayoutChangeEvent) => void;
     accessibilityLabel?: string;
     safeArea?: boolean;
     testID?: string;
@@ -1383,7 +1553,7 @@ type ScrollAreaProps = Readonly<{
 
 ### `.` — `Select` (value)
 
-Declared by `src/components/Form.tsx` as `Select`.
+Declared by `dist/components/Form.d.ts` as `Select`.
 
 ```ts
 function Select(props: SelectProps): ReactElement;
@@ -1392,7 +1562,7 @@ function Select(props: SelectProps): ReactElement;
 
 ### `.` — `SelectOption` (type)
 
-Declared by `src/components/Form.tsx` as `SelectOption`.
+Declared by `dist/components/Form.d.ts` as `SelectOption`.
 
 ```ts
 type SelectOption = FormOption;
@@ -1401,7 +1571,7 @@ type SelectOption = FormOption;
 
 ### `.` — `SelectProps` (type)
 
-Declared by `src/components/Form.tsx` as `SelectProps`.
+Declared by `dist/components/Form.d.ts` as `SelectProps`.
 
 ```ts
 type SelectProps = Readonly<{
@@ -1411,6 +1581,7 @@ type SelectProps = Readonly<{
     multiple?: boolean;
     maxSelections?: number;
     minimumSelections?: number;
+    required?: boolean;
     onChange: (value: FormOptionValue | readonly FormOptionValue[]) => void;
     disabled?: boolean;
     testID?: string;
@@ -1420,7 +1591,7 @@ type SelectProps = Readonly<{
 
 ### `.` — `Spinner` (value)
 
-Declared by `src/components/Spinner.tsx` as `Spinner`.
+Declared by `dist/components/Spinner.d.ts` as `Spinner`.
 
 ```ts
 function Spinner({ size, tone, accessibilityLabel, testID }: SpinnerProps): ReactElement;
@@ -1429,7 +1600,7 @@ function Spinner({ size, tone, accessibilityLabel, testID }: SpinnerProps): Reac
 
 ### `.` — `SpinnerProps` (type)
 
-Declared by `src/components/Spinner.tsx` as `SpinnerProps`.
+Declared by `dist/components/Spinner.d.ts` as `SpinnerProps`.
 
 ```ts
 type SpinnerProps = Readonly<{
@@ -1443,7 +1614,7 @@ type SpinnerProps = Readonly<{
 
 ### `.` — `SpinnerSize` (type)
 
-Declared by `src/components/Spinner.tsx` as `SpinnerSize`.
+Declared by `dist/components/Spinner.d.ts` as `SpinnerSize`.
 
 ```ts
 type SpinnerSize = 'small' | 'large' | number;
@@ -1452,16 +1623,16 @@ type SpinnerSize = 'small' | 'large' | number;
 
 ### `.` — `Stack` (value)
 
-Declared by `src/components/Layout.tsx` as `Stack`.
+Declared by `dist/components/Layout.d.ts` as `Stack`.
 
 ```ts
-function Stack({ gap = 'medium', focusTarget, ...props }: StackProps): ReactElement;
+function Stack({ gap, focusTarget, ...props }: StackProps): ReactElement;
 ```
 
 
 ### `.` — `StackProps` (type)
 
-Declared by `src/components/Layout.tsx` as `StackProps`.
+Declared by `dist/components/Layout.d.ts` as `StackProps`.
 
 ```ts
 type StackProps = Readonly<{
@@ -1471,6 +1642,7 @@ type StackProps = Readonly<{
     align?: HappierAlignment;
     justify?: HappierJustification;
     focusTarget?: PluginUiFocusTarget;
+    onLayout?: (event: LayoutChangeEvent) => void;
     testID?: string;
     style?: HappierStyleProp;
 }>;
@@ -1479,7 +1651,7 @@ type StackProps = Readonly<{
 
 ### `.` — `State` (value)
 
-Declared by `src/components/State.tsx` as `State`.
+Declared by `dist/components/State.d.ts` as `State`.
 
 ```ts
 function State<Value>({ resource, loading, empty, error, children, }: StateProps<Value>): ReactElement | null;
@@ -1488,7 +1660,7 @@ function State<Value>({ resource, loading, empty, error, children, }: StateProps
 
 ### `.` — `StateProps` (type)
 
-Declared by `src/components/State.tsx` as `StateProps`.
+Declared by `dist/components/State.d.ts` as `StateProps`.
 
 ```ts
 type StateProps<Value> = Readonly<{
@@ -1505,7 +1677,7 @@ type StateProps<Value> = Readonly<{
 
 ### `.` — `Status` (value)
 
-Declared by `src/components/Status.tsx` as `Status`.
+Declared by `dist/components/Status.d.ts` as `Status`.
 
 ```ts
 function Status({ tone, label, labelKey, pulsing, focusTarget, testID }: StatusProps): ReactElement;
@@ -1514,7 +1686,7 @@ function Status({ tone, label, labelKey, pulsing, focusTarget, testID }: StatusP
 
 ### `.` — `StatusProps` (type)
 
-Declared by `src/components/Status.tsx` as `StatusProps`.
+Declared by `dist/components/Status.d.ts` as `StatusProps`.
 
 ```ts
 type StatusProps = Readonly<{
@@ -1530,7 +1702,7 @@ type StatusProps = Readonly<{
 
 ### `.` — `Surface` (value)
 
-Declared by `src/components/Surface.tsx` as `Surface`.
+Declared by `dist/components/Surface.d.ts` as `Surface`.
 
 ```ts
 function Surface(props: SurfaceProps): ReactElement;
@@ -1539,7 +1711,7 @@ function Surface(props: SurfaceProps): ReactElement;
 
 ### `.` — `SurfacePadding` (type)
 
-Declared by `src/components/Surface.tsx` as `SurfacePadding`.
+Declared by `dist/components/Surface.d.ts` as `SurfacePadding`.
 
 ```ts
 type SurfacePadding = 'none' | 'small' | 'medium' | 'large';
@@ -1548,7 +1720,7 @@ type SurfacePadding = 'none' | 'small' | 'medium' | 'large';
 
 ### `.` — `SurfaceProps` (type)
 
-Declared by `src/components/Surface.tsx` as `SurfaceProps`.
+Declared by `dist/components/Surface.d.ts` as `SurfaceProps`.
 
 ```ts
 type SurfaceProps = Readonly<{
@@ -1565,7 +1737,7 @@ type SurfaceProps = Readonly<{
 
 ### `.` — `SurfaceTone` (type)
 
-Declared by `src/components/Surface.tsx` as `SurfaceTone`.
+Declared by `dist/components/Surface.d.ts` as `SurfaceTone`.
 
 ```ts
 type SurfaceTone = 'surface' | 'muted';
@@ -1574,7 +1746,7 @@ type SurfaceTone = 'surface' | 'muted';
 
 ### `.` — `TabPanelActivity` (type)
 
-Declared by `src/components/Tabs.tsx` as `TabPanelActivity`.
+Declared by `dist/components/Tabs.d.ts` as `TabPanelActivity`.
 
 ```ts
 type TabPanelActivity = HappierTabPanelActivity;
@@ -1583,16 +1755,18 @@ type TabPanelActivity = HappierTabPanelActivity;
 
 ### `.` — `Tabs` (value)
 
-Declared by `src/components/Tabs.tsx` as `Tabs`.
+Declared by `dist/components/Tabs.d.ts` as `Tabs`.
 
 ```ts
-const Tabs: ((props: TabsProps) => ReactElement) & { Item: (_props: TabsItemProps) => null; };
+const Tabs: typeof TabsRoot & {
+    Item: typeof TabsItem;
+};
 ```
 
 
 ### `.` — `TabsItemProps` (type)
 
-Declared by `src/components/Tabs.tsx` as `TabsItemProps`.
+Declared by `dist/components/Tabs.d.ts` as `TabsItemProps`.
 
 ```ts
 type TabsItemProps = Readonly<{
@@ -1609,7 +1783,7 @@ type TabsItemProps = Readonly<{
 
 ### `.` — `TabsProps` (type)
 
-Declared by `src/components/Tabs.tsx` as `TabsProps`.
+Declared by `dist/components/Tabs.d.ts` as `TabsProps`.
 
 ```ts
 type TabsProps = Readonly<{
@@ -1624,7 +1798,7 @@ type TabsProps = Readonly<{
 
 ### `.` — `TargetedSurface` (value)
 
-Declared by `src/components/TargetedSurface.tsx` as `TargetedSurface`.
+Declared by `dist/components/TargetedSurface.d.ts` as `TargetedSurface`.
 
 ```ts
 function TargetedSurface<TInput extends JsonValue = JsonValue, TPointId extends string = string, TSurface extends PluginUiTargetedContributionSurfaceV1 = ContributionSurfaceHandle<TInput, TPointId>>({ surface, input, instanceKey, fallback }: TargetedSurfaceProps<TInput, TPointId, TSurface>): ReactElement | null;
@@ -1633,7 +1807,7 @@ function TargetedSurface<TInput extends JsonValue = JsonValue, TPointId extends 
 
 ### `.` — `TargetedSurfaceProps` (type)
 
-Declared by `src/components/TargetedSurface.tsx` as `TargetedSurfaceProps`.
+Declared by `dist/components/TargetedSurface.d.ts` as `TargetedSurfaceProps`.
 
 ```ts
 type TargetedSurfaceProps<TInput extends JsonValue = JsonValue, TPointId extends string = string, TSurface extends PluginUiTargetedContributionSurfaceV1 = ContributionSurfaceHandle<TInput, TPointId>> = Readonly<{
@@ -1647,7 +1821,7 @@ type TargetedSurfaceProps<TInput extends JsonValue = JsonValue, TPointId extends
 
 ### `.` — `Text` (value)
 
-Declared by `src/components/Text.tsx` as `Text`.
+Declared by `dist/components/Text.d.ts` as `Text`.
 
 ```ts
 function Text({ value, valueKey, fallback, values, tone, variant, numberOfLines, selectable, accessibilityLabel, testID, children, }: TextProps): ReactElement;
@@ -1656,7 +1830,7 @@ function Text({ value, valueKey, fallback, values, tone, variant, numberOfLines,
 
 ### `.` — `TextField` (value)
 
-Declared by `src/components/Form.tsx` as `TextField`.
+Declared by `dist/components/Form.d.ts` as `TextField`.
 
 ```ts
 function TextField(props: TextFieldProps): ReactElement;
@@ -1665,7 +1839,7 @@ function TextField(props: TextFieldProps): ReactElement;
 
 ### `.` — `TextFieldProps` (type)
 
-Declared by `src/components/Form.tsx` as `TextFieldProps`.
+Declared by `dist/components/Form.d.ts` as `TextFieldProps`.
 
 ```ts
 type TextFieldProps = Readonly<{
@@ -1680,6 +1854,13 @@ type TextFieldProps = Readonly<{
     secure?: boolean;
     multiline?: boolean;
     keyboardType?: 'default' | 'url' | 'numeric';
+    autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+    autoCorrect?: boolean;
+    selection?: TextSelection;
+    onSelectionChange?: (selection: TextSelection) => void;
+    onSubmitEditing?: () => void;
+    onCompositionChange?: (isComposing: boolean) => void;
+    onEscape?: () => boolean;
     focusTarget?: PluginUiFocusTarget;
     testID?: string;
 }>;
@@ -1688,7 +1869,7 @@ type TextFieldProps = Readonly<{
 
 ### `.` — `TextProps` (type)
 
-Declared by `src/components/Text.tsx` as `TextProps`.
+Declared by `dist/components/Text.d.ts` as `TextProps`.
 
 ```ts
 type TextProps = Readonly<{
@@ -1707,9 +1888,18 @@ type TextProps = Readonly<{
 ```
 
 
+### `.` — `TextSelection` (type)
+
+Declared by `dist/components/Form.d.ts` as `TextSelection`.
+
+```ts
+type TextSelection = HappierTextSelection;
+```
+
+
 ### `.` — `TextTone` (type)
 
-Declared by `src/components/Text.tsx` as `TextTone`.
+Declared by `dist/components/Text.d.ts` as `TextTone`.
 
 ```ts
 type TextTone = HappierTone;
@@ -1718,7 +1908,7 @@ type TextTone = HappierTone;
 
 ### `.` — `TextVariant` (type)
 
-Declared by `src/components/Text.tsx` as `TextVariant`.
+Declared by `dist/components/Text.d.ts` as `TextVariant`.
 
 ```ts
 type TextVariant = HappierTextVariant;
@@ -1727,7 +1917,7 @@ type TextVariant = HappierTextVariant;
 
 ### `.` — `Toggle` (value)
 
-Declared by `src/components/Form.tsx` as `Toggle`.
+Declared by `dist/components/Form.d.ts` as `Toggle`.
 
 ```ts
 function Toggle(props: ToggleProps): ReactElement;
@@ -1736,7 +1926,7 @@ function Toggle(props: ToggleProps): ReactElement;
 
 ### `.` — `ToggleProps` (type)
 
-Declared by `src/components/Form.tsx` as `ToggleProps`.
+Declared by `dist/components/Form.d.ts` as `ToggleProps`.
 
 ```ts
 type ToggleProps = Readonly<{
@@ -1751,16 +1941,37 @@ type ToggleProps = Readonly<{
 
 ### `.` — `UiSurfaceComponent` (type)
 
-Declared by `src/surfaceEntry.tsx` as `UiSurfaceComponent`.
+Declared by `dist/surfaceEntry.d.ts` as `UiSurfaceComponent`.
 
 ```ts
 type UiSurfaceComponent = ComponentType<RenderContext>;
 ```
 
 
+### `.` — `UseListMultiSelectionControllerInput` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `UseListMultiSelectionControllerInput`.
+
+```ts
+type UseListMultiSelectionControllerInput = Readonly<{
+    scopeKey: string;
+    rows: 'collection';
+    visibleOrderedKeys?: never;
+    eligibleKeys?: never;
+    enabled?: boolean;
+}> | Readonly<{
+    scopeKey: string;
+    rows?: never;
+    visibleOrderedKeys: readonly ListMultiSelectionKey[];
+    eligibleKeys?: readonly ListMultiSelectionKey[] | ReadonlySet<ListMultiSelectionKey> | null;
+    enabled?: boolean;
+}>;
+```
+
+
 ### `.` — `ValidationMessage` (value)
 
-Declared by `src/components/Form.tsx` as `ValidationMessage`.
+Declared by `dist/components/Form.d.ts` as `ValidationMessage`.
 
 ```ts
 function ValidationMessage({ message, testID }: ValidationMessageProps): ReactElement;
@@ -1769,7 +1980,7 @@ function ValidationMessage({ message, testID }: ValidationMessageProps): ReactEl
 
 ### `.` — `ValidationMessageProps` (type)
 
-Declared by `src/components/Form.tsx` as `ValidationMessageProps`.
+Declared by `dist/components/Form.d.ts` as `ValidationMessageProps`.
 
 ```ts
 type ValidationMessageProps = Readonly<{
@@ -1779,9 +1990,18 @@ type ValidationMessageProps = Readonly<{
 ```
 
 
+### `.` — `createListMultiSelectionStore` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `createListMultiSelectionStore`.
+
+```ts
+const createListMultiSelectionStore: (input: CreateHappierListMultiSelectionStateInput) => ListMultiSelectionStore;
+```
+
+
 ### `.` — `defineUiSurface` (value)
 
-Declared by `src/surfaceEntry.tsx` as `defineUiSurface`.
+Declared by `dist/surfaceEntry.d.ts` as `defineUiSurface`.
 
 ```ts
 function defineUiSurface(Surface: UiSurfaceComponent): RenderSurface;
@@ -1790,7 +2010,7 @@ function defineUiSurface(Surface: UiSurfaceComponent): RenderSurface;
 
 ### `.` — `useComposer` (value)
 
-Declared by `src/composer/hooks.ts` as `useComposer`.
+Declared by `dist/composer/hooks.d.ts` as `useComposer`.
 
 ```ts
 function useComposer(): ComposersService;
@@ -1799,7 +2019,7 @@ function useComposer(): ComposersService;
 
 ### `.` — `useComposerView` (value)
 
-Declared by `src/composer/hooks.ts` as `useComposerView`.
+Declared by `dist/composer/hooks.d.ts` as `useComposerView`.
 
 ```ts
 function useComposerView(handle: ComposerHandle | null): ComposerViewStateV1;
@@ -1808,26 +2028,70 @@ function useComposerView(handle: ComposerHandle | null): ComposerViewStateV1;
 
 ### `.` — `useExecutePluginAction` (value)
 
-Declared by `src/hostApi/executeAction.ts` as `useExecutePluginAction`.
+Declared by `dist/hostApi/executeAction.d.ts` as `useExecutePluginAction`.
 
 ```ts
 function useExecutePluginAction<TAction extends PluginUiActionReference>(action: TAction, input?: NoInfer<PluginUiActionInputFor<NoInfer<TAction>>>): PluginActionExecutionController<PluginUiActionResultFor<NoInfer<TAction>>, PluginUiActionInputFor<NoInfer<TAction>>>;
-function useExecutePluginAction(action: PluginUiActionReference, input?: JsonValue): PluginActionExecutionController<JsonValue, JsonValue>;
+```
+
+
+### `.` — `useListMultiSelectionController` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `useListMultiSelectionController`.
+
+```ts
+function useListMultiSelectionController(input: UseListMultiSelectionControllerInput): ListMultiSelectionStore;
+```
+
+
+### `.` — `useListMultiSelectionRow` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `useListMultiSelectionRow`.
+
+```ts
+function useListMultiSelectionRow(key: ListMultiSelectionKey): ListMultiSelectionRow;
+```
+
+
+### `.` — `useListMultiSelectionSnapshot` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `useListMultiSelectionSnapshot`.
+
+```ts
+function useListMultiSelectionSnapshot(): ListMultiSelectionSnapshot;
+```
+
+
+### `.` — `useListMultiSelectionStoreSnapshot` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `useListMultiSelectionStoreSnapshot`.
+
+```ts
+function useListMultiSelectionStoreSnapshot(store: ListMultiSelectionStore | null): ListMultiSelectionSnapshot;
 ```
 
 
 ### `.` — `useLivePluginResource` (value)
 
-Declared by `src/hostApi/index.ts` as `useLivePluginResource`.
+Declared by `dist/hostApi/index.d.ts` as `useLivePluginResource`.
 
 ```ts
 function useLivePluginResource(resource: PluginUiResourceReference): PluginUiResourceResult;
 ```
 
 
+### `.` — `useOptionalListMultiSelectionStore` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `useOptionalListMultiSelectionStore`.
+
+```ts
+function useOptionalListMultiSelectionStore(): ListMultiSelectionStore | null;
+```
+
+
 ### `.` — `usePluginAccessibility` (value)
 
-Declared by `src/components/PluginUiProvider.tsx` as `usePluginAccessibility`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `usePluginAccessibility`.
 
 ```ts
 function usePluginAccessibility(): PluginAccessibilityFacts;
@@ -1836,7 +2100,7 @@ function usePluginAccessibility(): PluginAccessibilityFacts;
 
 ### `.` — `usePluginBrandDisplayName` (value)
 
-Declared by `src/components/Image.tsx` as `usePluginBrandDisplayName`.
+Declared by `dist/components/Image.d.ts` as `usePluginBrandDisplayName`.
 
 ```ts
 function usePluginBrandDisplayName(pluginId?: string): string | undefined;
@@ -1845,7 +2109,7 @@ function usePluginBrandDisplayName(pluginId?: string): string | undefined;
 
 ### `.` — `usePluginBrandDisplayNameResolver` (value)
 
-Declared by `src/components/Image.tsx` as `usePluginBrandDisplayNameResolver`.
+Declared by `dist/components/Image.d.ts` as `usePluginBrandDisplayNameResolver`.
 
 ```ts
 function usePluginBrandDisplayNameResolver(): (pluginId?: string) => string | undefined;
@@ -1854,7 +2118,7 @@ function usePluginBrandDisplayNameResolver(): (pluginId?: string) => string | un
 
 ### `.` — `usePluginHostApi` (value)
 
-Declared by `src/hostApi/context.ts` as `usePluginHostApi`.
+Declared by `dist/hostApi/context.d.ts` as `usePluginHostApi`.
 
 ```ts
 function usePluginHostApi(): PluginUiHostApi;
@@ -1863,16 +2127,27 @@ function usePluginHostApi(): PluginUiHostApi;
 
 ### `.` — `usePluginResource` (value)
 
-Declared by `src/hostApi/index.ts` as `usePluginResource`.
+Declared by `dist/hostApi/index.d.ts` as `usePluginResource`.
 
 ```ts
 function usePluginResource(resource: PluginUiResourceReference): PluginUiResourceResult;
 ```
 
 
+### `.` — `usePluginSurfaceActivity` (value)
+
+Declared by `dist/hostApi/context.d.ts` as `usePluginSurfaceActivity`.
+
+```ts
+function usePluginSurfaceActivity(): Readonly<{
+    active: boolean;
+}>;
+```
+
+
 ### `.` — `usePluginTheme` (value)
 
-Declared by `src/components/PluginUiProvider.tsx` as `usePluginTheme`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `usePluginTheme`.
 
 ```ts
 function usePluginTheme(): PluginUiThemeV1;
@@ -1881,7 +2156,7 @@ function usePluginTheme(): PluginUiThemeV1;
 
 ### `.` — `usePluginTranslation` (value)
 
-Declared by `src/components/PluginUiProvider.tsx` as `usePluginTranslation`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `usePluginTranslation`.
 
 ```ts
 function usePluginTranslation(): PluginTranslate;
@@ -1890,7 +2165,7 @@ function usePluginTranslation(): PluginTranslate;
 
 ### `.` — `usePluginUiFocusTarget` (value)
 
-Declared by `src/components/Focus.tsx` as `usePluginUiFocusTarget`.
+Declared by `dist/components/Focus.d.ts` as `usePluginUiFocusTarget`.
 
 ```ts
 function usePluginUiFocusTarget(): PluginUiFocusTarget;
@@ -1899,7 +2174,7 @@ function usePluginUiFocusTarget(): PluginUiFocusTarget;
 
 ### `.` — `useSurfaceContext` (value)
 
-Declared by `src/components/PluginUiProvider.tsx` as `useSurfaceContext`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `useSurfaceContext`.
 
 ```ts
 function useSurfaceContext(): SurfaceContext;
@@ -1908,25 +2183,96 @@ function useSurfaceContext(): SurfaceContext;
 
 ### `.` — `useTabPanelActivity` (value)
 
-Declared by `src/components/Tabs.tsx` as `useTabPanelActivity`.
+Declared by `dist/components/Tabs.d.ts` as `useTabPanelActivity`.
 
 ```ts
 function useTabPanelActivity(): TabPanelActivity;
 ```
 
 
-### `./advanced` — `PluginHostApiProvider` (value)
+### `./advanced` — `HAPPIER_MAX_RENDERABLE_IMAGE_BYTES` (value)
 
-Declared by `src/hostApi/context.ts` as `PluginHostApiProvider`.
+Declared by `dist/presentation/content/renderableImage.d.ts` as `HAPPIER_MAX_RENDERABLE_IMAGE_BYTES`.
 
 ```ts
-function PluginHostApiProvider(props: PluginHostApiProviderProps);
+const HAPPIER_MAX_RENDERABLE_IMAGE_BYTES: number;
+```
+
+
+### `./advanced` — `HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS` (value)
+
+Declared by `dist/presentation/content/renderableImage.d.ts` as `HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS`.
+
+```ts
+const HAPPIER_MAX_RENDERABLE_IMAGE_PIXELS: 4194304;
+```
+
+
+### `./advanced` — `HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE` (value)
+
+Declared by `dist/presentation/content/renderableImage.d.ts` as `HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE`.
+
+```ts
+const HAPPIER_RENDERABLE_IMAGE_CONTENT_TYPE: "image/png";
+```
+
+
+### `./advanced` — `HappierRenderableImageAdmission` (type)
+
+Declared by `dist/presentation/content/renderableImage.d.ts` as `HappierRenderableImageAdmission`.
+
+```ts
+type HappierRenderableImageAdmission = Readonly<{
+    admitted: true;
+    source: HappierRenderableImageSource;
+}> | Readonly<{
+    admitted: false;
+    refusal: HappierRenderableImageRefusal;
+}>;
+```
+
+
+### `./advanced` — `HappierRenderableImageRefusal` (type)
+
+Declared by `dist/presentation/content/renderableImage.d.ts` as `HappierRenderableImageRefusal`.
+
+```ts
+type HappierRenderableImageRefusal = Readonly<{
+    code: 'plugin_renderable_image_empty' | 'plugin_renderable_image_not_png' | 'plugin_renderable_image_too_many_bytes' | 'plugin_renderable_image_too_many_pixels';
+    severity: 'warning';
+    message: string;
+    details: Readonly<{
+        byteLength: number;
+        limit?: number;
+        pixels?: number;
+    }>;
+}>;
+```
+
+
+### `./advanced` — `HappierRenderableImageSource` (type)
+
+Declared by `dist/presentation/content/renderableImage.d.ts` as `HappierRenderableImageSource`.
+
+```ts
+type HappierRenderableImageSource = Readonly<{
+    uri: string;
+}>;
+```
+
+
+### `./advanced` — `PluginHostApiProvider` (value)
+
+Declared by `dist/hostApi/context.d.ts` as `PluginHostApiProvider`.
+
+```ts
+function PluginHostApiProvider(props: PluginHostApiProviderProps): import("react").FunctionComponentElement<PluginHostApiProviderInternalProps>;
 ```
 
 
 ### `./advanced` — `PluginHostApiProviderProps` (type)
 
-Declared by `src/hostApi/context.ts` as `PluginHostApiProviderProps`.
+Declared by `dist/hostApi/context.d.ts` as `PluginHostApiProviderProps`.
 
 ```ts
 type PluginHostApiProviderProps = Readonly<{
@@ -1938,16 +2284,16 @@ type PluginHostApiProviderProps = Readonly<{
 
 ### `./advanced` — `PluginUiProvider` (value)
 
-Declared by `src/components/PluginUiProvider.tsx` as `PluginUiProvider`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `PluginUiProvider`.
 
 ```ts
-function PluginUiProvider(props: PluginUiProviderProps);
+function PluginUiProvider(props: PluginUiProviderProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./advanced` — `PluginUiProviderProps` (type)
 
-Declared by `src/components/PluginUiProvider.tsx` as `PluginUiProviderProps`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `PluginUiProviderProps`.
 
 ```ts
 type PluginUiProviderProps = Readonly<{
@@ -1960,7 +2306,7 @@ type PluginUiProviderProps = Readonly<{
 
 ### `./advanced` — `PluginUiResourceAccountLifetime` (type)
 
-Declared by `src/hostApi/resourceStore.ts` as `PluginUiResourceAccountLifetime`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `PluginUiResourceAccountLifetime`.
 
 ```ts
 type PluginUiResourceAccountLifetime = Readonly<{
@@ -1972,7 +2318,7 @@ type PluginUiResourceAccountLifetime = Readonly<{
 
 ### `./advanced` — `PluginUiResourceClient` (type)
 
-Declared by `src/hostApi/resourceStore.ts` as `PluginUiResourceClient`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `PluginUiResourceClient`.
 
 ```ts
 type PluginUiResourceClient = Readonly<{
@@ -1980,13 +2326,14 @@ type PluginUiResourceClient = Readonly<{
     watchResource?: (...args: Parameters<PluginUiHostApi['watchResource']>) => Promise<Disposable & Readonly<{
         admittedDigest?: string;
     }>>;
+    diagnostic?: PluginUiHostApi['diagnostic'];
 }>;
 ```
 
 
 ### `./advanced` — `PluginUiResourceEntry` (type)
 
-Declared by `src/hostApi/resourceStore.ts` as `PluginUiResourceEntry`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `PluginUiResourceEntry`.
 
 ```ts
 type PluginUiResourceEntry = Readonly<{
@@ -1999,7 +2346,7 @@ type PluginUiResourceEntry = Readonly<{
 
 ### `./advanced` — `PluginUiResourceStore` (type)
 
-Declared by `src/hostApi/resourceStore.ts` as `PluginUiResourceStore`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `PluginUiResourceStore`.
 
 ```ts
 type PluginUiResourceStore = Readonly<{
@@ -2011,7 +2358,7 @@ type PluginUiResourceStore = Readonly<{
 
 ### `./advanced` — `createPluginUiHostApiResourceClient` (value)
 
-Declared by `src/hostApi/resourceStore.ts` as `createPluginUiHostApiResourceClient`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `createPluginUiHostApiResourceClient`.
 
 ```ts
 function createPluginUiHostApiResourceClient(hostApi: PluginUiHostApi): PluginUiResourceClient;
@@ -2020,7 +2367,7 @@ function createPluginUiHostApiResourceClient(hostApi: PluginUiHostApi): PluginUi
 
 ### `./advanced` — `createPluginUiResourceStore` (value)
 
-Declared by `src/hostApi/resourceStore.ts` as `createPluginUiResourceStore`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `createPluginUiResourceStore`.
 
 ```ts
 function createPluginUiResourceStore(input: Readonly<{
@@ -2031,18 +2378,33 @@ function createPluginUiResourceStore(input: Readonly<{
 ```
 
 
-### `./components` — `Action` (value)
+### `./advanced` — `materializeHappierRenderableImage` (value)
 
-Declared by `src/components/Action.tsx` as `Action`.
+Declared by `dist/presentation/content/renderableImage.d.ts` as `materializeHappierRenderableImage`.
 
 ```ts
-const Action: { readonly Execute: <TAction extends PluginUiActionReference>({ action, input, onSettled, ...chrome }: ActionExecuteProps<TAction>) => ReactElement; readonly Copy: ({ value, ...chrome }: ActionCopyProps) => ReactElement; readonly OpenExternal: ({ url, ...chrome }: ActionOpenExternalProps) => ReactElement; readonly OpenSurface: ({ view, input, ...chrome }: ActionOpenSurfaceProps) => ReactElement; readonly Refresh: ({ onRefresh, ...chrome }: ActionRefreshProps) => ReactElement; };
+function materializeHappierRenderableImage(bytes: Uint8Array): HappierRenderableImageAdmission;
+```
+
+
+### `./components` — `Action` (value)
+
+Declared by `dist/components/Action.d.ts` as `Action`.
+
+```ts
+const Action: Readonly<{
+    Execute: typeof ActionExecute;
+    Copy: typeof ActionCopy;
+    OpenExternal: typeof ActionOpenExternal;
+    OpenSurface: typeof ActionOpenSurface;
+    Refresh: typeof ActionRefresh;
+}>;
 ```
 
 
 ### `./components` — `ActionCopyProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionCopyProps`.
+Declared by `dist/components/Action.d.ts` as `ActionCopyProps`.
 
 ```ts
 type ActionCopyProps = ActionChromeProps & Readonly<{
@@ -2053,7 +2415,7 @@ type ActionCopyProps = ActionChromeProps & Readonly<{
 
 ### `./components` — `ActionExecuteProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionExecuteProps`.
+Declared by `dist/components/Action.d.ts` as `ActionExecuteProps`.
 
 ```ts
 type ActionExecuteProps<TAction extends PluginUiActionReference = PluginUiActionReference> = ActionChromeProps & Readonly<{
@@ -2066,7 +2428,7 @@ type ActionExecuteProps<TAction extends PluginUiActionReference = PluginUiAction
 
 ### `./components` — `ActionOpenExternalProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionOpenExternalProps`.
+Declared by `dist/components/Action.d.ts` as `ActionOpenExternalProps`.
 
 ```ts
 type ActionOpenExternalProps = ActionChromeProps & Readonly<{
@@ -2077,7 +2439,7 @@ type ActionOpenExternalProps = ActionChromeProps & Readonly<{
 
 ### `./components` — `ActionOpenSurfaceProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionOpenSurfaceProps`.
+Declared by `dist/components/Action.d.ts` as `ActionOpenSurfaceProps`.
 
 ```ts
 type ActionOpenSurfaceProps = ActionChromeProps & Readonly<{
@@ -2089,16 +2451,18 @@ type ActionOpenSurfaceProps = ActionChromeProps & Readonly<{
 
 ### `./components` — `ActionPanel` (value)
 
-Declared by `src/components/Action.tsx` as `ActionPanel`.
+Declared by `dist/components/Action.d.ts` as `ActionPanel`.
 
 ```ts
-const ActionPanel: (({ title, titleKey, testID, children }: ActionGroupProps) => ReactElement) & { Section: ({ title, titleKey, testID, children }: ActionGroupProps) => ReactElement; };
+const ActionPanel: typeof ActionPanelRoot & {
+    Section: typeof ActionPanelSection;
+};
 ```
 
 
 ### `./components` — `ActionPanelProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionPanelProps`.
+Declared by `dist/components/Action.d.ts` as `ActionPanelProps`.
 
 ```ts
 type ActionPanelProps = ActionGroupProps;
@@ -2107,7 +2471,7 @@ type ActionPanelProps = ActionGroupProps;
 
 ### `./components` — `ActionPanelSectionProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionPanelSectionProps`.
+Declared by `dist/components/Action.d.ts` as `ActionPanelSectionProps`.
 
 ```ts
 type ActionPanelSectionProps = ActionGroupProps;
@@ -2116,7 +2480,7 @@ type ActionPanelSectionProps = ActionGroupProps;
 
 ### `./components` — `ActionRefreshProps` (type)
 
-Declared by `src/components/Action.tsx` as `ActionRefreshProps`.
+Declared by `dist/components/Action.d.ts` as `ActionRefreshProps`.
 
 ```ts
 type ActionRefreshProps = ActionChromeProps & Readonly<{
@@ -2127,16 +2491,16 @@ type ActionRefreshProps = ActionChromeProps & Readonly<{
 
 ### `./components` — `Badge` (value)
 
-Declared by `src/components/Foundation.tsx` as `Badge`.
+Declared by `dist/components/Foundation.d.ts` as `Badge`.
 
 ```ts
-function Badge({ tone = 'neutral', testID, children, ...text }: BadgeProps): ReactElement;
+function Badge({ tone, testID, children, ...text }: BadgeProps): ReactElement;
 ```
 
 
 ### `./components` — `BadgeProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `BadgeProps`.
+Declared by `dist/components/Foundation.d.ts` as `BadgeProps`.
 
 ```ts
 type BadgeProps = AuthorText & Readonly<{
@@ -2149,16 +2513,16 @@ type BadgeProps = AuthorText & Readonly<{
 
 ### `./components` — `Banner` (value)
 
-Declared by `src/components/Foundation.tsx` as `Banner`.
+Declared by `dist/components/Foundation.d.ts` as `Banner`.
 
 ```ts
-function Banner({ tone = 'info', title, titleKey, description, descriptionKey, ...props }: BannerProps): ReactElement;
+function Banner({ tone, title, titleKey, description, descriptionKey, ...props }: BannerProps): ReactElement;
 ```
 
 
 ### `./components` — `BannerProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `BannerProps`.
+Declared by `dist/components/Foundation.d.ts` as `BannerProps`.
 
 ```ts
 type BannerProps = Readonly<{
@@ -2175,16 +2539,16 @@ type BannerProps = Readonly<{
 
 ### `./components` — `BrandMark` (value)
 
-Declared by `src/components/Image.tsx` as `BrandMark`.
+Declared by `dist/components/Image.d.ts` as `BrandMark`.
 
 ```ts
-function BrandMark({ pluginId, size, showName = false, externallyLabelled = false, testID }: BrandMarkProps): ReactElement;
+function BrandMark({ pluginId, size, showName, externallyLabelled, testID }: BrandMarkProps): ReactElement;
 ```
 
 
 ### `./components` — `BrandMarkProps` (type)
 
-Declared by `src/components/Image.tsx` as `BrandMarkProps`.
+Declared by `dist/components/Image.d.ts` as `BrandMarkProps`.
 
 ```ts
 type BrandMarkProps = Readonly<{
@@ -2199,16 +2563,16 @@ type BrandMarkProps = Readonly<{
 
 ### `./components` — `Button` (value)
 
-Declared by `src/components/Button.tsx` as `Button`.
+Declared by `dist/components/Button.d.ts` as `Button`.
 
 ```ts
-function Button({ title, titleKey, accessibilityLabelKey, variant = 'primary', disabled, busy, icon, accessibilityLabel, focusTarget, testID, onPress, children, }: ButtonProps): ReactElement;
+function Button({ title, titleKey, accessibilityLabelKey, variant, disabled, busy, icon, accessibilityLabel, focusTarget, testID, onPress, children, }: ButtonProps): ReactElement;
 ```
 
 
 ### `./components` — `ButtonProps` (type)
 
-Declared by `src/components/Button.tsx` as `ButtonProps`.
+Declared by `dist/components/Button.d.ts` as `ButtonProps`.
 
 ```ts
 type ButtonProps = ButtonWithVisibleTitleProps | ButtonWithExplicitAccessibleNameProps;
@@ -2217,7 +2581,7 @@ type ButtonProps = ButtonWithVisibleTitleProps | ButtonWithExplicitAccessibleNam
 
 ### `./components` — `ButtonVariant` (type)
 
-Declared by `src/components/Button.tsx` as `ButtonVariant`.
+Declared by `dist/components/Button.d.ts` as `ButtonVariant`.
 
 ```ts
 type ButtonVariant = 'primary' | 'secondary' | 'plain';
@@ -2226,16 +2590,16 @@ type ButtonVariant = 'primary' | 'secondary' | 'plain';
 
 ### `./components` — `Card` (value)
 
-Declared by `src/components/Surface.tsx` as `Card`.
+Declared by `dist/components/Surface.d.ts` as `Card`.
 
 ```ts
-function Card({ padding = 'medium', ...props }: CardProps): ReactElement;
+function Card({ padding, ...props }: CardProps): ReactElement;
 ```
 
 
 ### `./components` — `CardProps` (type)
 
-Declared by `src/components/Surface.tsx` as `CardProps`.
+Declared by `dist/components/Surface.d.ts` as `CardProps`.
 
 ```ts
 type CardProps = SurfaceProps;
@@ -2244,16 +2608,16 @@ type CardProps = SurfaceProps;
 
 ### `./components` — `CodeBlock` (value)
 
-Declared by `src/components/Content.tsx` as `CodeBlock`.
+Declared by `dist/components/Content.d.ts` as `CodeBlock`.
 
 ```ts
-function CodeBlock({ code, language, selectable = true, copyLabel, copiedLabel, testID, }: CodeBlockProps): ReactElement;
+function CodeBlock({ code, language, selectable, copyLabel, copiedLabel, testID, }: CodeBlockProps): ReactElement;
 ```
 
 
 ### `./components` — `CodeBlockProps` (type)
 
-Declared by `src/components/Content.tsx` as `CodeBlockProps`.
+Declared by `dist/components/Content.d.ts` as `CodeBlockProps`.
 
 ```ts
 type CodeBlockProps = Readonly<{
@@ -2269,7 +2633,7 @@ type CodeBlockProps = Readonly<{
 
 ### `./components` — `ContextMenu` (value)
 
-Declared by `src/components/Overlay.tsx` as `ContextMenu`.
+Declared by `dist/components/Overlay.d.ts` as `ContextMenu`.
 
 ```ts
 function ContextMenu(props: MenuProps): ReactElement;
@@ -2278,7 +2642,7 @@ function ContextMenu(props: MenuProps): ReactElement;
 
 ### `./components` — `Divider` (value)
 
-Declared by `src/components/Foundation.tsx` as `Divider`.
+Declared by `dist/components/Foundation.d.ts` as `Divider`.
 
 ```ts
 function Divider(props: DividerProps): ReactElement;
@@ -2287,7 +2651,7 @@ function Divider(props: DividerProps): ReactElement;
 
 ### `./components` — `DividerProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `DividerProps`.
+Declared by `dist/components/Foundation.d.ts` as `DividerProps`.
 
 ```ts
 type DividerProps = Readonly<{
@@ -2300,7 +2664,7 @@ type DividerProps = Readonly<{
 
 ### `./components` — `Dropdown` (value)
 
-Declared by `src/components/Overlay.tsx` as `Dropdown`.
+Declared by `dist/components/Overlay.d.ts` as `Dropdown`.
 
 ```ts
 function Dropdown(props: MenuProps): ReactElement;
@@ -2309,7 +2673,7 @@ function Dropdown(props: MenuProps): ReactElement;
 
 ### `./components` — `EmptyState` (value)
 
-Declared by `src/components/State.tsx` as `EmptyState`.
+Declared by `dist/components/State.d.ts` as `EmptyState`.
 
 ```ts
 function EmptyState(props: EmptyStateProps): ReactElement;
@@ -2318,7 +2682,7 @@ function EmptyState(props: EmptyStateProps): ReactElement;
 
 ### `./components` — `EmptyStateProps` (type)
 
-Declared by `src/components/State.tsx` as `EmptyStateProps`.
+Declared by `dist/components/State.d.ts` as `EmptyStateProps`.
 
 ```ts
 type EmptyStateProps = StateCopyProps;
@@ -2327,7 +2691,7 @@ type EmptyStateProps = StateCopyProps;
 
 ### `./components` — `ErrorState` (value)
 
-Declared by `src/components/State.tsx` as `ErrorState`.
+Declared by `dist/components/State.d.ts` as `ErrorState`.
 
 ```ts
 function ErrorState(props: ErrorStateProps): ReactElement;
@@ -2336,7 +2700,7 @@ function ErrorState(props: ErrorStateProps): ReactElement;
 
 ### `./components` — `ErrorStateProps` (type)
 
-Declared by `src/components/State.tsx` as `ErrorStateProps`.
+Declared by `dist/components/State.d.ts` as `ErrorStateProps`.
 
 ```ts
 type ErrorStateProps = StateCopyProps;
@@ -2345,7 +2709,7 @@ type ErrorStateProps = StateCopyProps;
 
 ### `./components` — `Field` (value)
 
-Declared by `src/components/Form.tsx` as `Field`.
+Declared by `dist/components/Form.d.ts` as `Field`.
 
 ```ts
 function Field(props: FieldProps): ReactElement;
@@ -2354,7 +2718,7 @@ function Field(props: FieldProps): ReactElement;
 
 ### `./components` — `FieldProps` (type)
 
-Declared by `src/components/Form.tsx` as `FieldProps`.
+Declared by `dist/components/Form.d.ts` as `FieldProps`.
 
 ```ts
 type FieldProps = Readonly<{
@@ -2371,16 +2735,23 @@ type FieldProps = Readonly<{
 
 ### `./components` — `Form` (value)
 
-Declared by `src/components/Form.tsx` as `Form`.
+Declared by `dist/components/Form.d.ts` as `Form`.
 
 ```ts
-const Form: ((props: FormProps) => ReactElement) & { Field: (props: FieldProps) => ReactElement; TextField: (props: TextFieldProps) => ReactElement; Toggle: (props: ToggleProps) => ReactElement; Select: (props: SelectProps) => ReactElement; ValidationMessage: ({ message, testID }: ValidationMessageProps) => ReactElement; Actions: ({ children }: FormActionsProps) => ReactElement; };
+const Form: typeof FormRoot & {
+    Field: typeof Field;
+    TextField: typeof TextField;
+    Toggle: typeof Toggle;
+    Select: typeof Select;
+    ValidationMessage: typeof ValidationMessage;
+    Actions: typeof FormActions;
+};
 ```
 
 
 ### `./components` — `FormActionsProps` (type)
 
-Declared by `src/components/Form.tsx` as `FormActionsProps`.
+Declared by `dist/components/Form.d.ts` as `FormActionsProps`.
 
 ```ts
 type FormActionsProps = Readonly<{
@@ -2391,7 +2762,7 @@ type FormActionsProps = Readonly<{
 
 ### `./components` — `FormProps` (type)
 
-Declared by `src/components/Form.tsx` as `FormProps`.
+Declared by `dist/components/Form.d.ts` as `FormProps`.
 
 ```ts
 type FormProps = Readonly<{
@@ -2411,16 +2782,16 @@ type FormProps = Readonly<{
 
 ### `./components` — `Heading` (value)
 
-Declared by `src/components/Foundation.tsx` as `Heading`.
+Declared by `dist/components/Foundation.d.ts` as `Heading`.
 
 ```ts
-function Heading({ level = 2, focusTarget, testID, children, ...text }: HeadingProps): ReactElement;
+function Heading({ level, focusTarget, testID, children, ...text }: HeadingProps): ReactElement;
 ```
 
 
 ### `./components` — `HeadingProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `HeadingProps`.
+Declared by `dist/components/Foundation.d.ts` as `HeadingProps`.
 
 ```ts
 type HeadingProps = AuthorText & Readonly<{
@@ -2434,16 +2805,16 @@ type HeadingProps = AuthorText & Readonly<{
 
 ### `./components` — `Icon` (value)
 
-Declared by `src/components/Icon.tsx` as `Icon`.
+Declared by `dist/components/Icon.d.ts` as `Icon`.
 
 ```ts
-function Icon({ name, size = 'medium', tone = 'default', accessibilityLabel, testID }: IconProps): ReactElement;
+function Icon({ name, size, tone, accessibilityLabel, testID }: IconProps): ReactElement;
 ```
 
 
 ### `./components` — `IconButton` (value)
 
-Declared by `src/components/Button.tsx` as `IconButton`.
+Declared by `dist/components/Button.d.ts` as `IconButton`.
 
 ```ts
 function IconButton({ accessibilityLabel, accessibilityLabelKey, icon, disabled, busy, selected, focusTarget, testID, onPress, }: IconButtonProps): ReactElement;
@@ -2452,7 +2823,7 @@ function IconButton({ accessibilityLabel, accessibilityLabelKey, icon, disabled,
 
 ### `./components` — `IconButtonProps` (type)
 
-Declared by `src/components/Button.tsx` as `IconButtonProps`.
+Declared by `dist/components/Button.d.ts` as `IconButtonProps`.
 
 ```ts
 type IconButtonProps = Readonly<{
@@ -2471,7 +2842,7 @@ type IconButtonProps = Readonly<{
 
 ### `./components` — `IconName` (type)
 
-Declared by `src/components/Icon.tsx` as `IconName`.
+Declared by `dist/components/Icon.d.ts` as `IconName`.
 
 ```ts
 type IconName = HappierIconName;
@@ -2480,7 +2851,7 @@ type IconName = HappierIconName;
 
 ### `./components` — `IconProps` (type)
 
-Declared by `src/components/Icon.tsx` as `IconProps`.
+Declared by `dist/components/Icon.d.ts` as `IconProps`.
 
 ```ts
 type IconProps = Readonly<{
@@ -2495,16 +2866,16 @@ type IconProps = Readonly<{
 
 ### `./components` — `Image` (value)
 
-Declared by `src/components/Image.tsx` as `Image`.
+Declared by `dist/components/Image.d.ts` as `Image`.
 
 ```ts
-function Image({ resource, size = 'medium', accessibilityLabel, fallback = '•', testID }: ImageProps): ReactElement;
+function Image({ resource, size, accessibilityLabel, fallback, testID }: ImageProps): ReactElement;
 ```
 
 
 ### `./components` — `ImageProps` (type)
 
-Declared by `src/components/Image.tsx` as `ImageProps`.
+Declared by `dist/components/Image.d.ts` as `ImageProps`.
 
 ```ts
 type ImageProps = Readonly<{
@@ -2519,7 +2890,7 @@ type ImageProps = Readonly<{
 
 ### `./components` — `Item` (value)
 
-Declared by `src/components/List.tsx` as `Item`.
+Declared by `dist/components/List.d.ts` as `Item`.
 
 ```ts
 function Item(props: ListItemProps): ReactElement;
@@ -2528,7 +2899,7 @@ function Item(props: ListItemProps): ReactElement;
 
 ### `./components` — `ItemGroup` (value)
 
-Declared by `src/components/List.tsx` as `ItemGroup`.
+Declared by `dist/components/List.d.ts` as `ItemGroup`.
 
 ```ts
 function ItemGroup(props: ItemGroupProps): ReactElement;
@@ -2537,7 +2908,7 @@ function ItemGroup(props: ItemGroupProps): ReactElement;
 
 ### `./components` — `ItemGroupProps` (type)
 
-Declared by `src/components/List.tsx` as `ItemGroupProps`.
+Declared by `dist/components/List.d.ts` as `ItemGroupProps`.
 
 ```ts
 type ItemGroupProps = Readonly<{
@@ -2553,7 +2924,7 @@ type ItemGroupProps = Readonly<{
 
 ### `./components` — `ItemProps` (type)
 
-Declared by `src/components/List.tsx` as `ItemProps`.
+Declared by `dist/components/List.d.ts` as `ItemProps`.
 
 ```ts
 type ItemProps = Readonly<{
@@ -2561,10 +2932,14 @@ type ItemProps = Readonly<{
     title?: string;
     subtitle?: string;
     detail?: string;
+    titleNumberOfLines?: number;
+    subtitleNumberOfLines?: number;
+    detailNumberOfLines?: number;
     icon?: ReactNode;
     accessory?: ReactNode;
+    accessoryWraps?: boolean;
     tone?: HappierTone;
-    onPress?: () => unknown;
+    onPress?: (event?: HappierGestureResponderEvent) => unknown;
     disabled?: boolean;
     busy?: boolean;
     selected?: boolean;
@@ -2575,6 +2950,9 @@ type ItemProps = Readonly<{
     density?: 'comfortable' | 'cozy' | 'compact' | 'tight';
     showDivider?: boolean;
     accessibilityLabel?: string;
+    accessibilityLabelKey?: string;
+    accessibilityHint?: string;
+    accessibilityHintKey?: string;
     testID?: string;
     style?: HappierStyleProp;
 }> & ItemSecondaryActionsProps;
@@ -2583,7 +2961,7 @@ type ItemProps = Readonly<{
 
 ### `./components` — `Label` (value)
 
-Declared by `src/components/Foundation.tsx` as `Label`.
+Declared by `dist/components/Foundation.d.ts` as `Label`.
 
 ```ts
 function Label({ testID, children, ...text }: LabelProps): ReactElement;
@@ -2592,7 +2970,7 @@ function Label({ testID, children, ...text }: LabelProps): ReactElement;
 
 ### `./components` — `LabelProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `LabelProps`.
+Declared by `dist/components/Foundation.d.ts` as `LabelProps`.
 
 ```ts
 type LabelProps = AuthorText & Readonly<{
@@ -2602,9 +2980,18 @@ type LabelProps = AuthorText & Readonly<{
 ```
 
 
+### `./components` — `LayoutChangeEvent` (type)
+
+Declared by `dist/components/Layout.d.ts` as `LayoutChangeEvent`.
+
+```ts
+type LayoutChangeEvent = HappierLayoutChangeEvent;
+```
+
+
 ### `./components` — `LayoutGap` (type)
 
-Declared by `src/components/Layout.tsx` as `LayoutGap`.
+Declared by `dist/components/Layout.d.ts` as `LayoutGap`.
 
 ```ts
 type LayoutGap = HappierLayoutGap;
@@ -2613,7 +3000,7 @@ type LayoutGap = HappierLayoutGap;
 
 ### `./components` — `Link` (value)
 
-Declared by `src/components/Foundation.tsx` as `Link`.
+Declared by `dist/components/Foundation.d.ts` as `Link`.
 
 ```ts
 function Link({ title, titleKey, url, disabled, testID }: LinkProps): ReactElement;
@@ -2622,7 +3009,7 @@ function Link({ title, titleKey, url, disabled, testID }: LinkProps): ReactEleme
 
 ### `./components` — `LinkProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `LinkProps`.
+Declared by `dist/components/Foundation.d.ts` as `LinkProps`.
 
 ```ts
 type LinkProps = Readonly<{
@@ -2637,16 +3024,38 @@ type LinkProps = Readonly<{
 
 ### `./components` — `List` (value)
 
-Declared by `src/components/List.tsx` as `List`.
+Declared by `dist/components/List.d.ts` as `List`.
 
 ```ts
-const List: (<Item>(props: ListProps<Item>) => ReactElement) & { Section: (props: ListSectionProps) => ReactElement; Item: (props: ListItemProps) => ReactElement; };
+const List: typeof ListRoot & {
+    Section: typeof ListSection;
+    Item: typeof ListItem;
+    SelectionActionBar: typeof ListSelectionActionBar;
+};
+```
+
+
+### `./components` — `ListBulkAction` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListBulkAction`.
+
+```ts
+type ListBulkAction = Readonly<{
+    id: string;
+    label?: string;
+    labelKey?: string;
+    labelFallback?: string;
+    icon?: ReactNode;
+    tone?: HappierTone;
+    disabled?: boolean;
+    testID?: string;
+}>;
 ```
 
 
 ### `./components` — `ListHeaderContext` (type)
 
-Declared by `src/components/List.tsx` as `ListHeaderContext`.
+Declared by `dist/components/List.d.ts` as `ListHeaderContext`.
 
 ```ts
 type ListHeaderContext<Item> = Readonly<{
@@ -2657,16 +3066,104 @@ type ListHeaderContext<Item> = Readonly<{
 
 ### `./components` — `ListItemProps` (type)
 
-Declared by `src/components/List.tsx` as `ListItemProps`.
+Declared by `dist/components/List.d.ts` as `ListItemProps`.
 
 ```ts
 type ListItemProps = ItemProps;
 ```
 
 
+### `./components` — `ListMultiSelectionActions` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionActions`.
+
+```ts
+type ListMultiSelectionActions = HappierListMultiSelectionActions;
+```
+
+
+### `./components` — `ListMultiSelectionCapabilityProps` (type)
+
+Declared by `dist/components/List.d.ts` as `ListMultiSelectionCapabilityProps`.
+
+```ts
+type ListMultiSelectionCapabilityProps<Item = unknown> = Readonly<{
+    store: ListMultiSelectionStore;
+    isItemSelectable?: (item: Item, index: number) => boolean;
+    retainedSelectionKeys?: readonly ListMultiSelectionKey[];
+}>;
+```
+
+
+### `./components` — `ListMultiSelectionKey` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionKey`.
+
+```ts
+type ListMultiSelectionKey = HappierListMultiSelectionKey;
+```
+
+
+### `./components` — `ListMultiSelectionProvider` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionProvider`.
+
+```ts
+function ListMultiSelectionProvider(props: ListMultiSelectionProviderProps): ReactElement;
+```
+
+
+### `./components` — `ListMultiSelectionProviderProps` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionProviderProps`.
+
+```ts
+type ListMultiSelectionProviderProps = Readonly<{
+    store: ListMultiSelectionStore | null;
+    children?: ReactNode;
+}>;
+```
+
+
+### `./components` — `ListMultiSelectionRow` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionRow`.
+
+```ts
+type ListMultiSelectionRow = Readonly<{
+    isSelectionMode: boolean;
+    isSelected: boolean;
+    isFocused: boolean;
+    replace: () => void;
+    toggle: () => void;
+    selectRange: () => void;
+    addRange: () => void;
+    setFocused: () => void;
+}>;
+```
+
+
+### `./components` — `ListMultiSelectionSnapshot` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionSnapshot`.
+
+```ts
+type ListMultiSelectionSnapshot = HappierListMultiSelectionSnapshot;
+```
+
+
+### `./components` — `ListMultiSelectionStore` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListMultiSelectionStore`.
+
+```ts
+type ListMultiSelectionStore = HappierListMultiSelectionStore;
+```
+
+
 ### `./components` — `ListProps` (type)
 
-Declared by `src/components/List.tsx` as `ListProps`.
+Declared by `dist/components/List.d.ts` as `ListProps`.
 
 ```ts
 type ListProps<Item> = ListBaseProps & (VirtualizedListProps<Item> | StaticListProps);
@@ -2675,7 +3172,7 @@ type ListProps<Item> = ListBaseProps & (VirtualizedListProps<Item> | StaticListP
 
 ### `./components` — `ListSearchProps` (type)
 
-Declared by `src/components/List.tsx` as `ListSearchProps`.
+Declared by `dist/components/List.d.ts` as `ListSearchProps`.
 
 ```ts
 type ListSearchProps<Item> = ListSearchBaseProps<Item> & (Readonly<{
@@ -2692,7 +3189,7 @@ type ListSearchProps<Item> = ListSearchBaseProps<Item> & (Readonly<{
 
 ### `./components` — `ListSectionData` (type)
 
-Declared by `src/components/List.tsx` as `ListSectionData`.
+Declared by `dist/components/List.d.ts` as `ListSectionData`.
 
 ```ts
 type ListSectionData<Item> = Readonly<{
@@ -2705,7 +3202,7 @@ type ListSectionData<Item> = Readonly<{
 
 ### `./components` — `ListSectionProps` (type)
 
-Declared by `src/components/List.tsx` as `ListSectionProps`.
+Declared by `dist/components/List.d.ts` as `ListSectionProps`.
 
 ```ts
 type ListSectionProps = Readonly<{
@@ -2717,9 +3214,34 @@ type ListSectionProps = Readonly<{
 ```
 
 
+### `./components` — `ListSelectionActionBar` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListSelectionActionBar`.
+
+```ts
+function ListSelectionActionBar(props: ListSelectionActionBarProps): ReactElement | null;
+```
+
+
+### `./components` — `ListSelectionActionBarProps` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `ListSelectionActionBarProps`.
+
+```ts
+type ListSelectionActionBarProps = Readonly<{
+    actions: readonly ListBulkAction[];
+    onAction: (actionId: string, keys: readonly ListMultiSelectionKey[]) => void;
+    onDismiss?: () => void;
+    accessibilityLabel?: string;
+    testID?: string;
+    style?: HappierStyleProp;
+}>;
+```
+
+
 ### `./components` — `ListSelectionProps` (type)
 
-Declared by `src/components/List.tsx` as `ListSelectionProps`.
+Declared by `dist/components/List.d.ts` as `ListSelectionProps`.
 
 ```ts
 type ListSelectionProps<Item = unknown> = ListSelectionBaseProps<Item> & (Readonly<{
@@ -2736,7 +3258,7 @@ type ListSelectionProps<Item = unknown> = ListSelectionBaseProps<Item> & (Readon
 
 ### `./components` — `LoadingState` (value)
 
-Declared by `src/components/State.tsx` as `LoadingState`.
+Declared by `dist/components/State.d.ts` as `LoadingState`.
 
 ```ts
 function LoadingState(props: LoadingStateProps): ReactElement;
@@ -2745,7 +3267,7 @@ function LoadingState(props: LoadingStateProps): ReactElement;
 
 ### `./components` — `LoadingStateProps` (type)
 
-Declared by `src/components/State.tsx` as `LoadingStateProps`.
+Declared by `dist/components/State.d.ts` as `LoadingStateProps`.
 
 ```ts
 type LoadingStateProps = StateCopyProps;
@@ -2754,16 +3276,16 @@ type LoadingStateProps = StateCopyProps;
 
 ### `./components` — `Markdown` (value)
 
-Declared by `src/components/Content.tsx` as `Markdown`.
+Declared by `dist/components/Content.d.ts` as `Markdown`.
 
 ```ts
-function Markdown({ value, selectable = true, testID }: MarkdownProps): ReactElement;
+function Markdown({ value, selectable, testID }: MarkdownProps): ReactElement;
 ```
 
 
 ### `./components` — `MarkdownProps` (type)
 
-Declared by `src/components/Content.tsx` as `MarkdownProps`.
+Declared by `dist/components/Content.d.ts` as `MarkdownProps`.
 
 ```ts
 type MarkdownProps = Readonly<{
@@ -2776,7 +3298,7 @@ type MarkdownProps = Readonly<{
 
 ### `./components` — `Menu` (value)
 
-Declared by `src/components/Overlay.tsx` as `Menu`.
+Declared by `dist/components/Overlay.d.ts` as `Menu`.
 
 ```ts
 function Menu(props: MenuProps): ReactElement;
@@ -2785,7 +3307,7 @@ function Menu(props: MenuProps): ReactElement;
 
 ### `./components` — `MenuGroup` (type)
 
-Declared by `src/components/Overlay.tsx` as `MenuGroup`.
+Declared by `dist/components/Overlay.d.ts` as `MenuGroup`.
 
 ```ts
 type MenuGroup = Readonly<{
@@ -2798,7 +3320,7 @@ type MenuGroup = Readonly<{
 
 ### `./components` — `MenuItem` (type)
 
-Declared by `src/components/Overlay.tsx` as `MenuItem`.
+Declared by `dist/components/Overlay.d.ts` as `MenuItem`.
 
 ```ts
 type MenuItem = MenuItemBase & (Readonly<{
@@ -2819,7 +3341,7 @@ type MenuItem = MenuItemBase & (Readonly<{
 
 ### `./components` — `MenuProps` (type)
 
-Declared by `src/components/Overlay.tsx` as `MenuProps`.
+Declared by `dist/components/Overlay.d.ts` as `MenuProps`.
 
 ```ts
 type MenuProps = Omit<PopoverProps, 'children'> & MenuContentProps & Readonly<{
@@ -2831,7 +3353,7 @@ type MenuProps = Omit<PopoverProps, 'children'> & MenuContentProps & Readonly<{
 
 ### `./components` — `MenuRadioGroup` (type)
 
-Declared by `src/components/Overlay.tsx` as `MenuRadioGroup`.
+Declared by `dist/components/Overlay.d.ts` as `MenuRadioGroup`.
 
 ```ts
 type MenuRadioGroup = Readonly<{
@@ -2844,7 +3366,7 @@ type MenuRadioGroup = Readonly<{
 
 ### `./components` — `Metadata` (value)
 
-Declared by `src/components/Foundation.tsx` as `Metadata`.
+Declared by `dist/components/Foundation.d.ts` as `Metadata`.
 
 ```ts
 function Metadata(props: MetadataProps): ReactElement;
@@ -2853,7 +3375,7 @@ function Metadata(props: MetadataProps): ReactElement;
 
 ### `./components` — `MetadataEntry` (type)
 
-Declared by `src/components/Foundation.tsx` as `MetadataEntry`.
+Declared by `dist/components/Foundation.d.ts` as `MetadataEntry`.
 
 ```ts
 type MetadataEntry = Readonly<{
@@ -2870,7 +3392,7 @@ type MetadataEntry = Readonly<{
 
 ### `./components` — `MetadataProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `MetadataProps`.
+Declared by `dist/components/Foundation.d.ts` as `MetadataProps`.
 
 ```ts
 type MetadataProps = Readonly<{
@@ -2884,7 +3406,7 @@ type MetadataProps = Readonly<{
 
 ### `./components` — `PluginAccessibilityFacts` (type)
 
-Declared by `src/components/PluginUiProvider.tsx` as `PluginAccessibilityFacts`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `PluginAccessibilityFacts`.
 
 ```ts
 type PluginAccessibilityFacts = HappierUiAccessibility;
@@ -2893,7 +3415,7 @@ type PluginAccessibilityFacts = HappierUiAccessibility;
 
 ### `./components` — `PluginTranslate` (type)
 
-Declared by `src/components/PluginUiProvider.tsx` as `PluginTranslate`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `PluginTranslate`.
 
 ```ts
 type PluginTranslate = (key: string, fallback?: string, values?: PluginTranslationValues) => string;
@@ -2902,7 +3424,7 @@ type PluginTranslate = (key: string, fallback?: string, values?: PluginTranslati
 
 ### `./components` — `PluginTranslationValues` (type)
 
-Declared by `src/components/PluginUiProvider.tsx` as `PluginTranslationValues`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `PluginTranslationValues`.
 
 ```ts
 type PluginTranslationValues = Readonly<Record<string, string | number>>;
@@ -2911,7 +3433,7 @@ type PluginTranslationValues = Readonly<Record<string, string | number>>;
 
 ### `./components` — `PluginUiFocusTarget` (type)
 
-Declared by `src/components/Focus.tsx` as `PluginUiFocusTarget`.
+Declared by `dist/components/Focus.d.ts` as `PluginUiFocusTarget`.
 
 ```ts
 type PluginUiFocusTarget = Readonly<{
@@ -2922,7 +3444,7 @@ type PluginUiFocusTarget = Readonly<{
 
 ### `./components` — `PluginUiResourceState` (type)
 
-Declared by `src/components/State.tsx` as `PluginUiResourceState`.
+Declared by `dist/components/State.d.ts` as `PluginUiResourceState`.
 
 ```ts
 type PluginUiResourceState<Value = unknown> = Readonly<{
@@ -2946,7 +3468,7 @@ type PluginUiResourceState<Value = unknown> = Readonly<{
 
 ### `./components` — `Popover` (value)
 
-Declared by `src/components/Overlay.tsx` as `Popover`.
+Declared by `dist/components/Overlay.d.ts` as `Popover`.
 
 ```ts
 function Popover(props: PopoverProps): ReactElement;
@@ -2955,7 +3477,7 @@ function Popover(props: PopoverProps): ReactElement;
 
 ### `./components` — `PopoverProps` (type)
 
-Declared by `src/components/Overlay.tsx` as `PopoverProps`.
+Declared by `dist/components/Overlay.d.ts` as `PopoverProps`.
 
 ```ts
 type PopoverProps = Readonly<{
@@ -2970,13 +3492,15 @@ type PopoverProps = Readonly<{
     placement?: 'auto' | 'top' | 'bottom' | 'left' | 'right';
     disabled?: boolean;
     testID?: string;
+    triggerTabIndex?: -1 | 0;
+    focusReturnRef?: RefObject<unknown>;
 }>;
 ```
 
 
 ### `./components` — `Progress` (value)
 
-Declared by `src/components/Foundation.tsx` as `Progress`.
+Declared by `dist/components/Foundation.d.ts` as `Progress`.
 
 ```ts
 function Progress({ label, labelKey, ...props }: ProgressProps): ReactElement;
@@ -2985,7 +3509,7 @@ function Progress({ label, labelKey, ...props }: ProgressProps): ReactElement;
 
 ### `./components` — `ProgressProps` (type)
 
-Declared by `src/components/Foundation.tsx` as `ProgressProps`.
+Declared by `dist/components/Foundation.d.ts` as `ProgressProps`.
 
 ```ts
 type ProgressProps = Readonly<{
@@ -2999,16 +3523,16 @@ type ProgressProps = Readonly<{
 
 ### `./components` — `Row` (value)
 
-Declared by `src/components/Layout.tsx` as `Row`.
+Declared by `dist/components/Layout.d.ts` as `Row`.
 
 ```ts
-function Row({ gap = 'medium', focusTarget, ...props }: RowProps): ReactElement;
+function Row({ gap, focusTarget, ...props }: RowProps): ReactElement;
 ```
 
 
 ### `./components` — `RowProps` (type)
 
-Declared by `src/components/Layout.tsx` as `RowProps`.
+Declared by `dist/components/Layout.d.ts` as `RowProps`.
 
 ```ts
 type RowProps = StackProps;
@@ -3017,22 +3541,23 @@ type RowProps = StackProps;
 
 ### `./components` — `Screen` (value)
 
-Declared by `src/components/Layout.tsx` as `Screen`.
+Declared by `dist/components/Layout.d.ts` as `Screen`.
 
 ```ts
-function Screen({ children, safeArea = false, focusTarget, ...props }: ScreenProps): ReactElement;
+function Screen({ children, safeArea, focusTarget, ...props }: ScreenProps): ReactElement;
 ```
 
 
 ### `./components` — `ScreenProps` (type)
 
-Declared by `src/components/Layout.tsx` as `ScreenProps`.
+Declared by `dist/components/Layout.d.ts` as `ScreenProps`.
 
 ```ts
 type ScreenProps = Readonly<{
     children?: ReactNode;
     safeArea?: boolean;
     focusTarget?: PluginUiFocusTarget;
+    onLayout?: (event: LayoutChangeEvent) => void;
     testID?: string;
     style?: HappierStyleProp;
 }>;
@@ -3041,16 +3566,16 @@ type ScreenProps = Readonly<{
 
 ### `./components` — `ScrollArea` (value)
 
-Declared by `src/components/Layout.tsx` as `ScrollArea`.
+Declared by `dist/components/Layout.d.ts` as `ScrollArea`.
 
 ```ts
-function ScrollArea({ children, safeArea = false, ...props }: ScrollAreaProps): ReactElement;
+function ScrollArea({ children, safeArea, ...props }: ScrollAreaProps): ReactElement;
 ```
 
 
 ### `./components` — `ScrollAreaProps` (type)
 
-Declared by `src/components/Layout.tsx` as `ScrollAreaProps`.
+Declared by `dist/components/Layout.d.ts` as `ScrollAreaProps`.
 
 ```ts
 type ScrollAreaProps = Readonly<{
@@ -3059,6 +3584,7 @@ type ScrollAreaProps = Readonly<{
     keyboardShouldPersistTaps?: HappierKeyboardShouldPersistTaps;
     onScroll?: (event: HappierScrollEvent) => void;
     scrollEventThrottle?: number;
+    onLayout?: (event: LayoutChangeEvent) => void;
     accessibilityLabel?: string;
     safeArea?: boolean;
     testID?: string;
@@ -3070,7 +3596,7 @@ type ScrollAreaProps = Readonly<{
 
 ### `./components` — `Select` (value)
 
-Declared by `src/components/Form.tsx` as `Select`.
+Declared by `dist/components/Form.d.ts` as `Select`.
 
 ```ts
 function Select(props: SelectProps): ReactElement;
@@ -3079,7 +3605,7 @@ function Select(props: SelectProps): ReactElement;
 
 ### `./components` — `SelectOption` (type)
 
-Declared by `src/components/Form.tsx` as `SelectOption`.
+Declared by `dist/components/Form.d.ts` as `SelectOption`.
 
 ```ts
 type SelectOption = FormOption;
@@ -3088,7 +3614,7 @@ type SelectOption = FormOption;
 
 ### `./components` — `SelectProps` (type)
 
-Declared by `src/components/Form.tsx` as `SelectProps`.
+Declared by `dist/components/Form.d.ts` as `SelectProps`.
 
 ```ts
 type SelectProps = Readonly<{
@@ -3098,6 +3624,7 @@ type SelectProps = Readonly<{
     multiple?: boolean;
     maxSelections?: number;
     minimumSelections?: number;
+    required?: boolean;
     onChange: (value: FormOptionValue | readonly FormOptionValue[]) => void;
     disabled?: boolean;
     testID?: string;
@@ -3107,7 +3634,7 @@ type SelectProps = Readonly<{
 
 ### `./components` — `Spinner` (value)
 
-Declared by `src/components/Spinner.tsx` as `Spinner`.
+Declared by `dist/components/Spinner.d.ts` as `Spinner`.
 
 ```ts
 function Spinner({ size, tone, accessibilityLabel, testID }: SpinnerProps): ReactElement;
@@ -3116,7 +3643,7 @@ function Spinner({ size, tone, accessibilityLabel, testID }: SpinnerProps): Reac
 
 ### `./components` — `SpinnerProps` (type)
 
-Declared by `src/components/Spinner.tsx` as `SpinnerProps`.
+Declared by `dist/components/Spinner.d.ts` as `SpinnerProps`.
 
 ```ts
 type SpinnerProps = Readonly<{
@@ -3130,7 +3657,7 @@ type SpinnerProps = Readonly<{
 
 ### `./components` — `SpinnerSize` (type)
 
-Declared by `src/components/Spinner.tsx` as `SpinnerSize`.
+Declared by `dist/components/Spinner.d.ts` as `SpinnerSize`.
 
 ```ts
 type SpinnerSize = 'small' | 'large' | number;
@@ -3139,16 +3666,16 @@ type SpinnerSize = 'small' | 'large' | number;
 
 ### `./components` — `Stack` (value)
 
-Declared by `src/components/Layout.tsx` as `Stack`.
+Declared by `dist/components/Layout.d.ts` as `Stack`.
 
 ```ts
-function Stack({ gap = 'medium', focusTarget, ...props }: StackProps): ReactElement;
+function Stack({ gap, focusTarget, ...props }: StackProps): ReactElement;
 ```
 
 
 ### `./components` — `StackProps` (type)
 
-Declared by `src/components/Layout.tsx` as `StackProps`.
+Declared by `dist/components/Layout.d.ts` as `StackProps`.
 
 ```ts
 type StackProps = Readonly<{
@@ -3158,6 +3685,7 @@ type StackProps = Readonly<{
     align?: HappierAlignment;
     justify?: HappierJustification;
     focusTarget?: PluginUiFocusTarget;
+    onLayout?: (event: LayoutChangeEvent) => void;
     testID?: string;
     style?: HappierStyleProp;
 }>;
@@ -3166,7 +3694,7 @@ type StackProps = Readonly<{
 
 ### `./components` — `State` (value)
 
-Declared by `src/components/State.tsx` as `State`.
+Declared by `dist/components/State.d.ts` as `State`.
 
 ```ts
 function State<Value>({ resource, loading, empty, error, children, }: StateProps<Value>): ReactElement | null;
@@ -3175,7 +3703,7 @@ function State<Value>({ resource, loading, empty, error, children, }: StateProps
 
 ### `./components` — `StateProps` (type)
 
-Declared by `src/components/State.tsx` as `StateProps`.
+Declared by `dist/components/State.d.ts` as `StateProps`.
 
 ```ts
 type StateProps<Value> = Readonly<{
@@ -3192,7 +3720,7 @@ type StateProps<Value> = Readonly<{
 
 ### `./components` — `Status` (value)
 
-Declared by `src/components/Status.tsx` as `Status`.
+Declared by `dist/components/Status.d.ts` as `Status`.
 
 ```ts
 function Status({ tone, label, labelKey, pulsing, focusTarget, testID }: StatusProps): ReactElement;
@@ -3201,7 +3729,7 @@ function Status({ tone, label, labelKey, pulsing, focusTarget, testID }: StatusP
 
 ### `./components` — `StatusProps` (type)
 
-Declared by `src/components/Status.tsx` as `StatusProps`.
+Declared by `dist/components/Status.d.ts` as `StatusProps`.
 
 ```ts
 type StatusProps = Readonly<{
@@ -3217,7 +3745,7 @@ type StatusProps = Readonly<{
 
 ### `./components` — `Surface` (value)
 
-Declared by `src/components/Surface.tsx` as `Surface`.
+Declared by `dist/components/Surface.d.ts` as `Surface`.
 
 ```ts
 function Surface(props: SurfaceProps): ReactElement;
@@ -3226,7 +3754,7 @@ function Surface(props: SurfaceProps): ReactElement;
 
 ### `./components` — `SurfacePadding` (type)
 
-Declared by `src/components/Surface.tsx` as `SurfacePadding`.
+Declared by `dist/components/Surface.d.ts` as `SurfacePadding`.
 
 ```ts
 type SurfacePadding = 'none' | 'small' | 'medium' | 'large';
@@ -3235,7 +3763,7 @@ type SurfacePadding = 'none' | 'small' | 'medium' | 'large';
 
 ### `./components` — `SurfaceProps` (type)
 
-Declared by `src/components/Surface.tsx` as `SurfaceProps`.
+Declared by `dist/components/Surface.d.ts` as `SurfaceProps`.
 
 ```ts
 type SurfaceProps = Readonly<{
@@ -3252,7 +3780,7 @@ type SurfaceProps = Readonly<{
 
 ### `./components` — `SurfaceTone` (type)
 
-Declared by `src/components/Surface.tsx` as `SurfaceTone`.
+Declared by `dist/components/Surface.d.ts` as `SurfaceTone`.
 
 ```ts
 type SurfaceTone = 'surface' | 'muted';
@@ -3261,7 +3789,7 @@ type SurfaceTone = 'surface' | 'muted';
 
 ### `./components` — `TabPanelActivity` (type)
 
-Declared by `src/components/Tabs.tsx` as `TabPanelActivity`.
+Declared by `dist/components/Tabs.d.ts` as `TabPanelActivity`.
 
 ```ts
 type TabPanelActivity = HappierTabPanelActivity;
@@ -3270,16 +3798,18 @@ type TabPanelActivity = HappierTabPanelActivity;
 
 ### `./components` — `Tabs` (value)
 
-Declared by `src/components/Tabs.tsx` as `Tabs`.
+Declared by `dist/components/Tabs.d.ts` as `Tabs`.
 
 ```ts
-const Tabs: ((props: TabsProps) => ReactElement) & { Item: (_props: TabsItemProps) => null; };
+const Tabs: typeof TabsRoot & {
+    Item: typeof TabsItem;
+};
 ```
 
 
 ### `./components` — `TabsItemProps` (type)
 
-Declared by `src/components/Tabs.tsx` as `TabsItemProps`.
+Declared by `dist/components/Tabs.d.ts` as `TabsItemProps`.
 
 ```ts
 type TabsItemProps = Readonly<{
@@ -3296,7 +3826,7 @@ type TabsItemProps = Readonly<{
 
 ### `./components` — `TabsProps` (type)
 
-Declared by `src/components/Tabs.tsx` as `TabsProps`.
+Declared by `dist/components/Tabs.d.ts` as `TabsProps`.
 
 ```ts
 type TabsProps = Readonly<{
@@ -3311,7 +3841,7 @@ type TabsProps = Readonly<{
 
 ### `./components` — `TargetedSurface` (value)
 
-Declared by `src/components/TargetedSurface.tsx` as `TargetedSurface`.
+Declared by `dist/components/TargetedSurface.d.ts` as `TargetedSurface`.
 
 ```ts
 function TargetedSurface<TInput extends JsonValue = JsonValue, TPointId extends string = string, TSurface extends PluginUiTargetedContributionSurfaceV1 = ContributionSurfaceHandle<TInput, TPointId>>({ surface, input, instanceKey, fallback }: TargetedSurfaceProps<TInput, TPointId, TSurface>): ReactElement | null;
@@ -3320,7 +3850,7 @@ function TargetedSurface<TInput extends JsonValue = JsonValue, TPointId extends 
 
 ### `./components` — `TargetedSurfaceProps` (type)
 
-Declared by `src/components/TargetedSurface.tsx` as `TargetedSurfaceProps`.
+Declared by `dist/components/TargetedSurface.d.ts` as `TargetedSurfaceProps`.
 
 ```ts
 type TargetedSurfaceProps<TInput extends JsonValue = JsonValue, TPointId extends string = string, TSurface extends PluginUiTargetedContributionSurfaceV1 = ContributionSurfaceHandle<TInput, TPointId>> = Readonly<{
@@ -3334,7 +3864,7 @@ type TargetedSurfaceProps<TInput extends JsonValue = JsonValue, TPointId extends
 
 ### `./components` — `Text` (value)
 
-Declared by `src/components/Text.tsx` as `Text`.
+Declared by `dist/components/Text.d.ts` as `Text`.
 
 ```ts
 function Text({ value, valueKey, fallback, values, tone, variant, numberOfLines, selectable, accessibilityLabel, testID, children, }: TextProps): ReactElement;
@@ -3343,7 +3873,7 @@ function Text({ value, valueKey, fallback, values, tone, variant, numberOfLines,
 
 ### `./components` — `TextField` (value)
 
-Declared by `src/components/Form.tsx` as `TextField`.
+Declared by `dist/components/Form.d.ts` as `TextField`.
 
 ```ts
 function TextField(props: TextFieldProps): ReactElement;
@@ -3352,7 +3882,7 @@ function TextField(props: TextFieldProps): ReactElement;
 
 ### `./components` — `TextFieldProps` (type)
 
-Declared by `src/components/Form.tsx` as `TextFieldProps`.
+Declared by `dist/components/Form.d.ts` as `TextFieldProps`.
 
 ```ts
 type TextFieldProps = Readonly<{
@@ -3367,6 +3897,13 @@ type TextFieldProps = Readonly<{
     secure?: boolean;
     multiline?: boolean;
     keyboardType?: 'default' | 'url' | 'numeric';
+    autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+    autoCorrect?: boolean;
+    selection?: TextSelection;
+    onSelectionChange?: (selection: TextSelection) => void;
+    onSubmitEditing?: () => void;
+    onCompositionChange?: (isComposing: boolean) => void;
+    onEscape?: () => boolean;
     focusTarget?: PluginUiFocusTarget;
     testID?: string;
 }>;
@@ -3375,7 +3912,7 @@ type TextFieldProps = Readonly<{
 
 ### `./components` — `TextProps` (type)
 
-Declared by `src/components/Text.tsx` as `TextProps`.
+Declared by `dist/components/Text.d.ts` as `TextProps`.
 
 ```ts
 type TextProps = Readonly<{
@@ -3394,9 +3931,18 @@ type TextProps = Readonly<{
 ```
 
 
+### `./components` — `TextSelection` (type)
+
+Declared by `dist/components/Form.d.ts` as `TextSelection`.
+
+```ts
+type TextSelection = HappierTextSelection;
+```
+
+
 ### `./components` — `TextTone` (type)
 
-Declared by `src/components/Text.tsx` as `TextTone`.
+Declared by `dist/components/Text.d.ts` as `TextTone`.
 
 ```ts
 type TextTone = HappierTone;
@@ -3405,7 +3951,7 @@ type TextTone = HappierTone;
 
 ### `./components` — `TextVariant` (type)
 
-Declared by `src/components/Text.tsx` as `TextVariant`.
+Declared by `dist/components/Text.d.ts` as `TextVariant`.
 
 ```ts
 type TextVariant = HappierTextVariant;
@@ -3414,7 +3960,7 @@ type TextVariant = HappierTextVariant;
 
 ### `./components` — `Toggle` (value)
 
-Declared by `src/components/Form.tsx` as `Toggle`.
+Declared by `dist/components/Form.d.ts` as `Toggle`.
 
 ```ts
 function Toggle(props: ToggleProps): ReactElement;
@@ -3423,7 +3969,7 @@ function Toggle(props: ToggleProps): ReactElement;
 
 ### `./components` — `ToggleProps` (type)
 
-Declared by `src/components/Form.tsx` as `ToggleProps`.
+Declared by `dist/components/Form.d.ts` as `ToggleProps`.
 
 ```ts
 type ToggleProps = Readonly<{
@@ -3436,9 +3982,30 @@ type ToggleProps = Readonly<{
 ```
 
 
+### `./components` — `UseListMultiSelectionControllerInput` (type)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `UseListMultiSelectionControllerInput`.
+
+```ts
+type UseListMultiSelectionControllerInput = Readonly<{
+    scopeKey: string;
+    rows: 'collection';
+    visibleOrderedKeys?: never;
+    eligibleKeys?: never;
+    enabled?: boolean;
+}> | Readonly<{
+    scopeKey: string;
+    rows?: never;
+    visibleOrderedKeys: readonly ListMultiSelectionKey[];
+    eligibleKeys?: readonly ListMultiSelectionKey[] | ReadonlySet<ListMultiSelectionKey> | null;
+    enabled?: boolean;
+}>;
+```
+
+
 ### `./components` — `ValidationMessage` (value)
 
-Declared by `src/components/Form.tsx` as `ValidationMessage`.
+Declared by `dist/components/Form.d.ts` as `ValidationMessage`.
 
 ```ts
 function ValidationMessage({ message, testID }: ValidationMessageProps): ReactElement;
@@ -3447,7 +4014,7 @@ function ValidationMessage({ message, testID }: ValidationMessageProps): ReactEl
 
 ### `./components` — `ValidationMessageProps` (type)
 
-Declared by `src/components/Form.tsx` as `ValidationMessageProps`.
+Declared by `dist/components/Form.d.ts` as `ValidationMessageProps`.
 
 ```ts
 type ValidationMessageProps = Readonly<{
@@ -3457,9 +4024,63 @@ type ValidationMessageProps = Readonly<{
 ```
 
 
+### `./components` — `createListMultiSelectionStore` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `createListMultiSelectionStore`.
+
+```ts
+const createListMultiSelectionStore: (input: CreateHappierListMultiSelectionStateInput) => ListMultiSelectionStore;
+```
+
+
+### `./components` — `useListMultiSelectionController` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `useListMultiSelectionController`.
+
+```ts
+function useListMultiSelectionController(input: UseListMultiSelectionControllerInput): ListMultiSelectionStore;
+```
+
+
+### `./components` — `useListMultiSelectionRow` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `useListMultiSelectionRow`.
+
+```ts
+function useListMultiSelectionRow(key: ListMultiSelectionKey): ListMultiSelectionRow;
+```
+
+
+### `./components` — `useListMultiSelectionSnapshot` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `useListMultiSelectionSnapshot`.
+
+```ts
+function useListMultiSelectionSnapshot(): ListMultiSelectionSnapshot;
+```
+
+
+### `./components` — `useListMultiSelectionStoreSnapshot` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `useListMultiSelectionStoreSnapshot`.
+
+```ts
+function useListMultiSelectionStoreSnapshot(store: ListMultiSelectionStore | null): ListMultiSelectionSnapshot;
+```
+
+
+### `./components` — `useOptionalListMultiSelectionStore` (value)
+
+Declared by `dist/components/ListMultiSelection.d.ts` as `useOptionalListMultiSelectionStore`.
+
+```ts
+function useOptionalListMultiSelectionStore(): ListMultiSelectionStore | null;
+```
+
+
 ### `./components` — `usePluginAccessibility` (value)
 
-Declared by `src/components/PluginUiProvider.tsx` as `usePluginAccessibility`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `usePluginAccessibility`.
 
 ```ts
 function usePluginAccessibility(): PluginAccessibilityFacts;
@@ -3468,7 +4089,7 @@ function usePluginAccessibility(): PluginAccessibilityFacts;
 
 ### `./components` — `usePluginBrandDisplayName` (value)
 
-Declared by `src/components/Image.tsx` as `usePluginBrandDisplayName`.
+Declared by `dist/components/Image.d.ts` as `usePluginBrandDisplayName`.
 
 ```ts
 function usePluginBrandDisplayName(pluginId?: string): string | undefined;
@@ -3477,7 +4098,7 @@ function usePluginBrandDisplayName(pluginId?: string): string | undefined;
 
 ### `./components` — `usePluginBrandDisplayNameResolver` (value)
 
-Declared by `src/components/Image.tsx` as `usePluginBrandDisplayNameResolver`.
+Declared by `dist/components/Image.d.ts` as `usePluginBrandDisplayNameResolver`.
 
 ```ts
 function usePluginBrandDisplayNameResolver(): (pluginId?: string) => string | undefined;
@@ -3486,7 +4107,7 @@ function usePluginBrandDisplayNameResolver(): (pluginId?: string) => string | un
 
 ### `./components` — `usePluginTheme` (value)
 
-Declared by `src/components/PluginUiProvider.tsx` as `usePluginTheme`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `usePluginTheme`.
 
 ```ts
 function usePluginTheme(): PluginUiThemeV1;
@@ -3495,7 +4116,7 @@ function usePluginTheme(): PluginUiThemeV1;
 
 ### `./components` — `usePluginTranslation` (value)
 
-Declared by `src/components/PluginUiProvider.tsx` as `usePluginTranslation`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `usePluginTranslation`.
 
 ```ts
 function usePluginTranslation(): PluginTranslate;
@@ -3504,7 +4125,7 @@ function usePluginTranslation(): PluginTranslate;
 
 ### `./components` — `usePluginUiFocusTarget` (value)
 
-Declared by `src/components/Focus.tsx` as `usePluginUiFocusTarget`.
+Declared by `dist/components/Focus.d.ts` as `usePluginUiFocusTarget`.
 
 ```ts
 function usePluginUiFocusTarget(): PluginUiFocusTarget;
@@ -3513,7 +4134,7 @@ function usePluginUiFocusTarget(): PluginUiFocusTarget;
 
 ### `./components` — `useSurfaceContext` (value)
 
-Declared by `src/components/PluginUiProvider.tsx` as `useSurfaceContext`.
+Declared by `dist/components/PluginUiProvider.d.ts` as `useSurfaceContext`.
 
 ```ts
 function useSurfaceContext(): SurfaceContext;
@@ -3522,7 +4143,7 @@ function useSurfaceContext(): SurfaceContext;
 
 ### `./components` — `useTabPanelActivity` (value)
 
-Declared by `src/components/Tabs.tsx` as `useTabPanelActivity`.
+Declared by `dist/components/Tabs.d.ts` as `useTabPanelActivity`.
 
 ```ts
 function useTabPanelActivity(): TabPanelActivity;
@@ -3531,16 +4152,34 @@ function useTabPanelActivity(): TabPanelActivity;
 
 ### `./data` — `PluginUiAccountCollectionForDefinition` (type)
 
-Declared by `src/data/types.ts` as `PluginUiAccountCollectionForDefinition`.
+Declared by `dist/data/types.d.ts` as `PluginUiAccountCollectionForDefinition`.
 
 ```ts
-type PluginUiAccountCollectionForDefinition<TDefinition extends PluginAccountCollectionDefinition> = Pick<PluginAccountCollectionForDefinition<TDefinition>, 'get' | 'put' | 'delete' | 'query' | 'batch' | 'limits' | 'measureBatch'>;
+type PluginUiAccountCollectionForDefinition<TDefinition extends PluginAccountCollectionDefinition> = Pick<PluginAccountCollectionForDefinition<TDefinition>, 'identityTag' | 'get' | 'put' | 'delete' | 'query' | 'batch' | 'limits' | 'measureBatch'>;
+```
+
+
+### `./data` — `PluginUiAccountKv` (type)
+
+Declared by `dist/data/types.d.ts` as `PluginUiAccountKv`.
+
+```ts
+type PluginUiAccountKv = AccountKvService;
+```
+
+
+### `./data` — `PluginUiAccountSettings` (type)
+
+Declared by `dist/data/types.d.ts` as `PluginUiAccountSettings`.
+
+```ts
+type PluginUiAccountSettings = Pick<ScopedSettingsService, 'snapshot' | 'get' | 'set' | 'reset'>;
 ```
 
 
 ### `./data` — `PluginUiCollectionQueryFailure` (type)
 
-Declared by `src/data/index.ts` as `PluginUiCollectionQueryFailure`.
+Declared by `dist/data/index.d.ts` as `PluginUiCollectionQueryFailure`.
 
 ```ts
 type PluginUiCollectionQueryFailure = PluginCollectionUiQueryErrorV1 | Error;
@@ -3549,7 +4188,7 @@ type PluginUiCollectionQueryFailure = PluginCollectionUiQueryErrorV1 | Error;
 
 ### `./data` — `PluginUiCollectionQueryInput` (type)
 
-Declared by `src/data/types.ts` as `PluginUiCollectionQueryInput`.
+Declared by `dist/data/types.d.ts` as `PluginUiCollectionQueryInput`.
 
 ```ts
 type PluginUiCollectionQueryInput = Readonly<{
@@ -3563,7 +4202,7 @@ type PluginUiCollectionQueryInput = Readonly<{
 
 ### `./data` — `PluginUiCollectionQueryPager` (type)
 
-Declared by `src/data/types.ts` as `PluginUiCollectionQueryPager`.
+Declared by `dist/data/types.d.ts` as `PluginUiCollectionQueryPager`.
 
 ```ts
 type PluginUiCollectionQueryPager = Readonly<{
@@ -3578,7 +4217,7 @@ type PluginUiCollectionQueryPager = Readonly<{
 
 ### `./data` — `PluginUiCollectionQueryResult` (type)
 
-Declared by `src/data/index.ts` as `PluginUiCollectionQueryResult`.
+Declared by `dist/data/index.d.ts` as `PluginUiCollectionQueryResult`.
 
 ```ts
 type PluginUiCollectionQueryResult = Readonly<{
@@ -3594,7 +4233,7 @@ type PluginUiCollectionQueryResult = Readonly<{
 
 ### `./data` — `PluginUiCollectionQuerySnapshot` (type)
 
-Declared by `src/data/types.ts` as `PluginUiCollectionQuerySnapshot`.
+Declared by `dist/data/types.d.ts` as `PluginUiCollectionQuerySnapshot`.
 
 ```ts
 type PluginUiCollectionQuerySnapshot = Readonly<{
@@ -3608,37 +4247,66 @@ type PluginUiCollectionQuerySnapshot = Readonly<{
 
 ### `./data` — `PluginUiDataClient` (type)
 
-Declared by `src/data/types.ts` as `PluginUiDataClient`.
+Declared by `dist/data/types.d.ts` as `PluginUiDataClient`.
 
 ```ts
 type PluginUiDataClient = Readonly<{
     collection<TDefinition extends PluginAccountCollectionDefinition>(definition: TDefinition): PluginUiAccountCollectionForDefinition<TDefinition>;
     openCollectionQuery(input: PluginUiCollectionQueryInput): Promise<PluginUiCollectionQueryPager>;
+    readonly accountKv: PluginUiAccountKv;
+    readonly accountSettings: PluginUiAccountSettings;
 }>;
+```
+
+
+### `./data` — `usePluginAccountKv` (value)
+
+Declared by `dist/data/index.d.ts` as `usePluginAccountKv`.
+
+```ts
+function usePluginAccountKv(): PluginUiAccountKv;
+```
+
+
+### `./data` — `usePluginAccountSettings` (value)
+
+Declared by `dist/data/index.d.ts` as `usePluginAccountSettings`.
+
+```ts
+function usePluginAccountSettings(): PluginUiAccountSettings | null;
 ```
 
 
 ### `./data` — `usePluginCollectionQuery` (value)
 
-Declared by `src/data/index.ts` as `usePluginCollectionQuery`.
+Declared by `dist/data/index.d.ts` as `usePluginCollectionQuery`.
 
 ```ts
-function usePluginCollectionQuery(collectionId: PluginCollectionUiQueryRequestV1['collectionId'], uiQueryId: PluginCollectionUiQueryRequestV1['uiQueryId'], parameters: PluginCollectionUiQueryRequestV1['parameters'] = {}): PluginUiCollectionQueryResult;
+function usePluginCollectionQuery(collectionId: PluginCollectionUiQueryRequestV1['collectionId'], uiQueryId: PluginCollectionUiQueryRequestV1['uiQueryId'], parameters?: PluginCollectionUiQueryRequestV1['parameters']): PluginUiCollectionQueryResult;
 ```
 
 
 ### `./data` — `usePluginUiDataClient` (value)
 
-Declared by `src/data/context.ts` as `usePluginUiDataClient`.
+Declared by `dist/data/context.d.ts` as `usePluginUiDataClient`.
 
 ```ts
 function usePluginUiDataClient(): PluginUiDataClient;
 ```
 
 
+### `./data` — `usePluginUiDataClientOrNull` (value)
+
+Declared by `dist/data/context.d.ts` as `usePluginUiDataClientOrNull`.
+
+```ts
+function usePluginUiDataClientOrNull(): PluginUiDataClient | null;
+```
+
+
 ### `./environment` — `HAPPIER_ANDROID_MINIMUM_INTERACTIVE_TARGET_SIZE` (value)
 
-Declared by `src/environment/interactiveTarget.ts` as `HAPPIER_ANDROID_MINIMUM_INTERACTIVE_TARGET_SIZE`.
+Declared by `dist/environment/interactiveTarget.d.ts` as `HAPPIER_ANDROID_MINIMUM_INTERACTIVE_TARGET_SIZE`.
 
 ```ts
 const HAPPIER_ANDROID_MINIMUM_INTERACTIVE_TARGET_SIZE: 48;
@@ -3647,7 +4315,7 @@ const HAPPIER_ANDROID_MINIMUM_INTERACTIVE_TARGET_SIZE: 48;
 
 ### `./environment` — `HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE` (value)
 
-Declared by `src/environment/interactiveTarget.ts` as `HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE`.
+Declared by `dist/environment/interactiveTarget.d.ts` as `HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE`.
 
 ```ts
 const HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE: 44;
@@ -3656,7 +4324,7 @@ const HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE: 44;
 
 ### `./environment` — `HappierUiAccessibility` (type)
 
-Declared by `src/environment/types.ts` as `HappierUiAccessibility`.
+Declared by `dist/environment/types.d.ts` as `HappierUiAccessibility`.
 
 ```ts
 type HappierUiAccessibility = Readonly<{
@@ -3670,7 +4338,7 @@ type HappierUiAccessibility = Readonly<{
 
 ### `./environment` — `HappierUiEdgeInsets` (type)
 
-Declared by `src/environment/types.ts` as `HappierUiEdgeInsets`.
+Declared by `dist/environment/types.d.ts` as `HappierUiEdgeInsets`.
 
 ```ts
 type HappierUiEdgeInsets = Readonly<{
@@ -3684,7 +4352,7 @@ type HappierUiEdgeInsets = Readonly<{
 
 ### `./environment` — `HappierUiEnvironment` (type)
 
-Declared by `src/environment/types.ts` as `HappierUiEnvironment`.
+Declared by `dist/environment/types.d.ts` as `HappierUiEnvironment`.
 
 ```ts
 type HappierUiEnvironment = Readonly<{
@@ -3699,16 +4367,16 @@ type HappierUiEnvironment = Readonly<{
 
 ### `./environment` — `HappierUiEnvironmentProvider` (value)
 
-Declared by `src/environment/context.tsx` as `HappierUiEnvironmentProvider`.
+Declared by `dist/environment/context.d.ts` as `HappierUiEnvironmentProvider`.
 
 ```ts
-function HappierUiEnvironmentProvider({ environment, children, }: HappierUiEnvironmentProviderProps);
+function HappierUiEnvironmentProvider({ environment, children, }: HappierUiEnvironmentProviderProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./environment` — `HappierUiEnvironmentProviderProps` (type)
 
-Declared by `src/environment/context.tsx` as `HappierUiEnvironmentProviderProps`.
+Declared by `dist/environment/context.d.ts` as `HappierUiEnvironmentProviderProps`.
 
 ```ts
 type HappierUiEnvironmentProviderProps = Readonly<{
@@ -3720,7 +4388,7 @@ type HappierUiEnvironmentProviderProps = Readonly<{
 
 ### `./environment` — `HappierUiInsets` (type)
 
-Declared by `src/environment/types.ts` as `HappierUiInsets`.
+Declared by `dist/environment/types.d.ts` as `HappierUiInsets`.
 
 ```ts
 type HappierUiInsets = Readonly<{
@@ -3731,7 +4399,7 @@ type HappierUiInsets = Readonly<{
 
 ### `./environment` — `HappierUiLocalization` (type)
 
-Declared by `src/environment/types.ts` as `HappierUiLocalization`.
+Declared by `dist/environment/types.d.ts` as `HappierUiLocalization`.
 
 ```ts
 type HappierUiLocalization = Readonly<{
@@ -3744,7 +4412,7 @@ type HappierUiLocalization = Readonly<{
 
 ### `./environment` — `HappierUiPlatformFacts` (type)
 
-Declared by `src/environment/types.ts` as `HappierUiPlatformFacts`.
+Declared by `dist/environment/types.d.ts` as `HappierUiPlatformFacts`.
 
 ```ts
 type HappierUiPlatformFacts = Readonly<{
@@ -3756,16 +4424,16 @@ type HappierUiPlatformFacts = Readonly<{
 
 ### `./environment` — `HappierUiPlatformProvider` (value)
 
-Declared by `src/environment/context.tsx` as `HappierUiPlatformProvider`.
+Declared by `dist/environment/context.d.ts` as `HappierUiPlatformProvider`.
 
 ```ts
-function HappierUiPlatformProvider({ platform, children, }: HappierUiPlatformProviderProps);
+function HappierUiPlatformProvider({ platform, children, }: HappierUiPlatformProviderProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./environment` — `HappierUiPlatformProviderProps` (type)
 
-Declared by `src/environment/context.tsx` as `HappierUiPlatformProviderProps`.
+Declared by `dist/environment/context.d.ts` as `HappierUiPlatformProviderProps`.
 
 ```ts
 type HappierUiPlatformProviderProps = Readonly<{
@@ -3777,7 +4445,7 @@ type HappierUiPlatformProviderProps = Readonly<{
 
 ### `./environment` — `HappierUiTextDirection` (type)
 
-Declared by `src/environment/types.ts` as `HappierUiTextDirection`.
+Declared by `dist/environment/types.d.ts` as `HappierUiTextDirection`.
 
 ```ts
 type HappierUiTextDirection = 'ltr' | 'rtl';
@@ -3786,16 +4454,25 @@ type HappierUiTextDirection = 'ltr' | 'rtl';
 
 ### `./environment` — `HappierUiTheme` (type)
 
-Declared by `src/environment/types.ts` as `HappierUiTheme`.
+Declared by `dist/environment/types.d.ts` as `HappierUiTheme`.
 
 ```ts
 type HappierUiTheme = PluginUiThemeV1;
 ```
 
 
+### `./environment` — `projectHappierUiEnvironment` (value)
+
+Declared by `dist/environment/projectEnvironment.d.ts` as `projectHappierUiEnvironment`.
+
+```ts
+function projectHappierUiEnvironment(context: Pick<SurfaceContext, 'theme' | 'locale' | 'direction' | 'translations' | 'textScale' | 'reducedMotion' | 'screenReaderEnabled' | 'contrast' | 'platform' | 'colorScheme' | 'safeAreaInsets'>): HappierUiEnvironment;
+```
+
+
 ### `./environment` — `resolveHappierMinimumInteractiveTargetSize` (value)
 
-Declared by `src/environment/interactiveTarget.ts` as `resolveHappierMinimumInteractiveTargetSize`.
+Declared by `dist/environment/interactiveTarget.d.ts` as `resolveHappierMinimumInteractiveTargetSize`.
 
 ```ts
 function resolveHappierMinimumInteractiveTargetSize(platform: string): 44 | 48;
@@ -3804,7 +4481,7 @@ function resolveHappierMinimumInteractiveTargetSize(platform: string): 44 | 48;
 
 ### `./environment` — `resolveHappierUiPresentationTheme` (value)
 
-Declared by `src/environment/context.tsx` as `resolveHappierUiPresentationTheme`.
+Declared by `dist/environment/context.d.ts` as `resolveHappierUiPresentationTheme`.
 
 ```ts
 function resolveHappierUiPresentationTheme(theme: PluginUiThemeV1, contrast: HappierUiAccessibility['contrast']): PluginUiThemeV1;
@@ -3813,7 +4490,7 @@ function resolveHappierUiPresentationTheme(theme: PluginUiThemeV1, contrast: Hap
 
 ### `./environment` — `useHappierNativeMinimumInteractiveTargetSize` (value)
 
-Declared by `src/environment/interactiveTarget.ts` as `useHappierNativeMinimumInteractiveTargetSize`.
+Declared by `dist/environment/interactiveTarget.d.ts` as `useHappierNativeMinimumInteractiveTargetSize`.
 
 ```ts
 function useHappierNativeMinimumInteractiveTargetSize(): 44 | 48 | undefined;
@@ -3822,7 +4499,7 @@ function useHappierNativeMinimumInteractiveTargetSize(): 44 | 48 | undefined;
 
 ### `./environment` — `useHappierUiAccessibility` (value)
 
-Declared by `src/environment/context.tsx` as `useHappierUiAccessibility`.
+Declared by `dist/environment/context.d.ts` as `useHappierUiAccessibility`.
 
 ```ts
 function useHappierUiAccessibility(): HappierUiAccessibility;
@@ -3831,7 +4508,7 @@ function useHappierUiAccessibility(): HappierUiAccessibility;
 
 ### `./environment` — `useHappierUiInsets` (value)
 
-Declared by `src/environment/context.tsx` as `useHappierUiInsets`.
+Declared by `dist/environment/context.d.ts` as `useHappierUiInsets`.
 
 ```ts
 function useHappierUiInsets(): HappierUiInsets;
@@ -3840,7 +4517,7 @@ function useHappierUiInsets(): HappierUiInsets;
 
 ### `./environment` — `useHappierUiLocalization` (value)
 
-Declared by `src/environment/context.tsx` as `useHappierUiLocalization`.
+Declared by `dist/environment/context.d.ts` as `useHappierUiLocalization`.
 
 ```ts
 function useHappierUiLocalization(): HappierUiLocalization;
@@ -3849,7 +4526,7 @@ function useHappierUiLocalization(): HappierUiLocalization;
 
 ### `./environment` — `useHappierUiPlatform` (value)
 
-Declared by `src/environment/context.tsx` as `useHappierUiPlatform`.
+Declared by `dist/environment/context.d.ts` as `useHappierUiPlatform`.
 
 ```ts
 function useHappierUiPlatform(): HappierUiPlatformFacts;
@@ -3858,7 +4535,7 @@ function useHappierUiPlatform(): HappierUiPlatformFacts;
 
 ### `./environment` — `useHappierUiTheme` (value)
 
-Declared by `src/environment/context.tsx` as `useHappierUiTheme`.
+Declared by `dist/environment/context.d.ts` as `useHappierUiTheme`.
 
 ```ts
 function useHappierUiTheme(): PluginUiThemeV1;
@@ -3867,7 +4544,7 @@ function useHappierUiTheme(): PluginUiThemeV1;
 
 ### `./environment` — `useOptionalHappierUiAccessibility` (value)
 
-Declared by `src/environment/context.tsx` as `useOptionalHappierUiAccessibility`.
+Declared by `dist/environment/context.d.ts` as `useOptionalHappierUiAccessibility`.
 
 ```ts
 function useOptionalHappierUiAccessibility(): HappierUiAccessibility | null;
@@ -3876,7 +4553,7 @@ function useOptionalHappierUiAccessibility(): HappierUiAccessibility | null;
 
 ### `./environment` — `useOptionalHappierUiLocalization` (value)
 
-Declared by `src/environment/context.tsx` as `useOptionalHappierUiLocalization`.
+Declared by `dist/environment/context.d.ts` as `useOptionalHappierUiLocalization`.
 
 ```ts
 function useOptionalHappierUiLocalization(): HappierUiLocalization | null;
@@ -3885,7 +4562,7 @@ function useOptionalHappierUiLocalization(): HappierUiLocalization | null;
 
 ### `./environment` — `useOptionalHappierUiPlatform` (value)
 
-Declared by `src/environment/context.tsx` as `useOptionalHappierUiPlatform`.
+Declared by `dist/environment/context.d.ts` as `useOptionalHappierUiPlatform`.
 
 ```ts
 function useOptionalHappierUiPlatform(): HappierUiPlatformFacts | null;
@@ -3894,7 +4571,7 @@ function useOptionalHappierUiPlatform(): HappierUiPlatformFacts | null;
 
 ### `./environment` — `useOptionalHappierUiTheme` (value)
 
-Declared by `src/environment/context.tsx` as `useOptionalHappierUiTheme`.
+Declared by `dist/environment/context.d.ts` as `useOptionalHappierUiTheme`.
 
 ```ts
 function useOptionalHappierUiTheme(): PluginUiThemeV1 | null;
@@ -3903,7 +4580,7 @@ function useOptionalHappierUiTheme(): PluginUiThemeV1 | null;
 
 ### `./hostApi` — `ComposerContentHandleV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerContentHandleV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerContentHandleV1`.
 
 ```ts
 type ComposerContentHandleV1 = Awaited<ReturnType<PluginUiHostApi['pickComposerMedia']>>;
@@ -3912,7 +4589,7 @@ type ComposerContentHandleV1 = Awaited<ReturnType<PluginUiHostApi['pickComposerM
 
 ### `./hostApi` — `ComposerContentInspectRequestV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerContentInspectRequestV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerContentInspectRequestV1`.
 
 ```ts
 type ComposerContentInspectRequestV1 = Parameters<PluginUiHostApi['inspectComposerContent']>[1];
@@ -3921,7 +4598,7 @@ type ComposerContentInspectRequestV1 = Parameters<PluginUiHostApi['inspectCompos
 
 ### `./hostApi` — `ComposerContentInspectResultV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerContentInspectResultV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerContentInspectResultV1`.
 
 ```ts
 type ComposerContentInspectResultV1 = Awaited<ReturnType<PluginUiHostApi['inspectComposerContent']>>;
@@ -3930,7 +4607,7 @@ type ComposerContentInspectResultV1 = Awaited<ReturnType<PluginUiHostApi['inspec
 
 ### `./hostApi` — `ComposerContentPickMediaRequestV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerContentPickMediaRequestV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerContentPickMediaRequestV1`.
 
 ```ts
 type ComposerContentPickMediaRequestV1 = Parameters<PluginUiHostApi['pickComposerMedia']>[1];
@@ -3939,7 +4616,7 @@ type ComposerContentPickMediaRequestV1 = Parameters<PluginUiHostApi['pickCompose
 
 ### `./hostApi` — `ComposerContentService` (type)
 
-Declared by `src/composer/service.ts` as `ComposerContentService`.
+Declared by `dist/composer/service.d.ts` as `ComposerContentService`.
 
 ```ts
 interface ComposerContentService {
@@ -3952,7 +4629,7 @@ interface ComposerContentService {
 
 ### `./hostApi` — `ComposerDecorationResultV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerDecorationResultV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerDecorationResultV1`.
 
 ```ts
 type ComposerDecorationResultV1 = Awaited<ReturnType<PluginUiHostApi['setComposerDecorations']>>;
@@ -3961,7 +4638,7 @@ type ComposerDecorationResultV1 = Awaited<ReturnType<PluginUiHostApi['setCompose
 
 ### `./hostApi` — `ComposerDecorationSetV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerDecorationSetV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerDecorationSetV1`.
 
 ```ts
 type ComposerDecorationSetV1 = SdkComposerDecorationSetV1;
@@ -3970,7 +4647,7 @@ type ComposerDecorationSetV1 = SdkComposerDecorationSetV1;
 
 ### `./hostApi` — `ComposerFocusResultV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerFocusResultV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerFocusResultV1`.
 
 ```ts
 type ComposerFocusResultV1 = Awaited<ReturnType<PluginUiHostApi['focusComposer']>>;
@@ -3979,7 +4656,7 @@ type ComposerFocusResultV1 = Awaited<ReturnType<PluginUiHostApi['focusComposer']
 
 ### `./hostApi` — `ComposerHandle` (type)
 
-Declared by `src/composer/service.ts` as `ComposerHandle`.
+Declared by `dist/composer/service.d.ts` as `ComposerHandle`.
 
 ```ts
 interface ComposerHandle {
@@ -3997,7 +4674,7 @@ interface ComposerHandle {
 
 ### `./hostApi` — `ComposerInputLockRequestV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerInputLockRequestV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerInputLockRequestV1`.
 
 ```ts
 type ComposerInputLockRequestV1 = Parameters<PluginUiHostApi['acquireComposerInputLock']>[1];
@@ -4006,7 +4683,7 @@ type ComposerInputLockRequestV1 = Parameters<PluginUiHostApi['acquireComposerInp
 
 ### `./hostApi` — `ComposerObserverV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerObserverV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerObserverV1`.
 
 ```ts
 type ComposerObserverV1 = Parameters<PluginUiHostApi['watchComposer']>[1];
@@ -4015,7 +4692,7 @@ type ComposerObserverV1 = Parameters<PluginUiHostApi['watchComposer']>[1];
 
 ### `./hostApi` — `ComposerReadResultV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerReadResultV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerReadResultV1`.
 
 ```ts
 type ComposerReadResultV1 = Awaited<ReturnType<PluginUiHostApi['readComposer']>>;
@@ -4024,7 +4701,7 @@ type ComposerReadResultV1 = Awaited<ReturnType<PluginUiHostApi['readComposer']>>
 
 ### `./hostApi` — `ComposerRefV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerRefV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerRefV1`.
 
 ```ts
 type ComposerRefV1 = Parameters<PluginUiHostApi['readComposer']>[0];
@@ -4033,7 +4710,7 @@ type ComposerRefV1 = Parameters<PluginUiHostApi['readComposer']>[0];
 
 ### `./hostApi` — `ComposerRequestOptions` (type)
 
-Declared by `src/composer/types.ts` as `ComposerRequestOptions`.
+Declared by `dist/composer/types.d.ts` as `ComposerRequestOptions`.
 
 ```ts
 type ComposerRequestOptions = Parameters<PluginUiHostApi['readComposer']>[1];
@@ -4042,7 +4719,7 @@ type ComposerRequestOptions = Parameters<PluginUiHostApi['readComposer']>[1];
 
 ### `./hostApi` — `ComposerSnapshotV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerSnapshotV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerSnapshotV1`.
 
 ```ts
 type ComposerSnapshotV1 = Extract<ComposerReadResultV1, Readonly<{
@@ -4053,7 +4730,7 @@ type ComposerSnapshotV1 = Extract<ComposerReadResultV1, Readonly<{
 
 ### `./hostApi` — `ComposerTransactionResultV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerTransactionResultV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerTransactionResultV1`.
 
 ```ts
 type ComposerTransactionResultV1 = Awaited<ReturnType<PluginUiHostApi['applyComposer']>>;
@@ -4062,7 +4739,7 @@ type ComposerTransactionResultV1 = Awaited<ReturnType<PluginUiHostApi['applyComp
 
 ### `./hostApi` — `ComposerTransactionV1` (type)
 
-Declared by `src/composer/types.ts` as `ComposerTransactionV1`.
+Declared by `dist/composer/types.d.ts` as `ComposerTransactionV1`.
 
 ```ts
 type ComposerTransactionV1 = Parameters<PluginUiHostApi['applyComposer']>[1];
@@ -4071,7 +4748,7 @@ type ComposerTransactionV1 = Parameters<PluginUiHostApi['applyComposer']>[1];
 
 ### `./hostApi` — `ComposerViewStateV1` (type)
 
-Declared by `src/composer/hooks.ts` as `ComposerViewStateV1`.
+Declared by `dist/composer/hooks.d.ts` as `ComposerViewStateV1`.
 
 ```ts
 type ComposerViewStateV1 = Readonly<{
@@ -4085,7 +4762,7 @@ type ComposerViewStateV1 = Readonly<{
 
 ### `./hostApi` — `ComposersService` (type)
 
-Declared by `src/composer/service.ts` as `ComposersService`.
+Declared by `dist/composer/service.d.ts` as `ComposersService`.
 
 ```ts
 interface ComposersService {
@@ -4098,7 +4775,7 @@ interface ComposersService {
 
 ### `./hostApi` — `PluginActionExecution` (type)
 
-Declared by `src/hostApi/executeAction.ts` as `PluginActionExecution`.
+Declared by `dist/hostApi/executeAction.d.ts` as `PluginActionExecution`.
 
 ```ts
 type PluginActionExecution<Result = unknown> = Readonly<{
@@ -4123,7 +4800,7 @@ type PluginActionExecution<Result = unknown> = Readonly<{
 
 ### `./hostApi` — `PluginActionExecutionController` (type)
 
-Declared by `src/hostApi/executeAction.ts` as `PluginActionExecutionController`.
+Declared by `dist/hostApi/executeAction.d.ts` as `PluginActionExecutionController`.
 
 ```ts
 type PluginActionExecutionController<Result, Input = JsonValue> = Readonly<{
@@ -4181,7 +4858,7 @@ Re-exported from another package as `PluginUiHostApi`; that package owns the dec
 
 ### `./hostApi` — `PluginUiResourceError` (type)
 
-Declared by `src/hostApi/resourceStore.ts` as `PluginUiResourceError`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `PluginUiResourceError`.
 
 ```ts
 type PluginUiResourceError = Readonly<{
@@ -4194,7 +4871,7 @@ type PluginUiResourceError = Readonly<{
 
 ### `./hostApi` — `PluginUiResourceReference` (type)
 
-Declared by `src/hostApi/resourceStore.ts` as `PluginUiResourceReference`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `PluginUiResourceReference`.
 
 ```ts
 type PluginUiResourceReference = Parameters<PluginUiHostApi['readResource']>[0];
@@ -4203,7 +4880,7 @@ type PluginUiResourceReference = Parameters<PluginUiHostApi['readResource']>[0];
 
 ### `./hostApi` — `PluginUiResourceResult` (type)
 
-Declared by `src/hostApi/index.ts` as `PluginUiResourceResult`.
+Declared by `dist/hostApi/index.d.ts` as `PluginUiResourceResult`.
 
 ```ts
 type PluginUiResourceResult = Readonly<{
@@ -4215,7 +4892,7 @@ type PluginUiResourceResult = Readonly<{
 
 ### `./hostApi` — `PluginUiResourceSnapshot` (type)
 
-Declared by `src/hostApi/resourceStore.ts` as `PluginUiResourceSnapshot`.
+Declared by `dist/hostApi/resourceStore.d.ts` as `PluginUiResourceSnapshot`.
 
 ```ts
 type PluginUiResourceSnapshot = Readonly<{
@@ -4231,7 +4908,7 @@ type PluginUiResourceSnapshot = Readonly<{
 
 ### `./hostApi` — `useComposer` (value)
 
-Declared by `src/composer/hooks.ts` as `useComposer`.
+Declared by `dist/composer/hooks.d.ts` as `useComposer`.
 
 ```ts
 function useComposer(): ComposersService;
@@ -4240,7 +4917,7 @@ function useComposer(): ComposersService;
 
 ### `./hostApi` — `useComposerView` (value)
 
-Declared by `src/composer/hooks.ts` as `useComposerView`.
+Declared by `dist/composer/hooks.d.ts` as `useComposerView`.
 
 ```ts
 function useComposerView(handle: ComposerHandle | null): ComposerViewStateV1;
@@ -4249,17 +4926,16 @@ function useComposerView(handle: ComposerHandle | null): ComposerViewStateV1;
 
 ### `./hostApi` — `useExecutePluginAction` (value)
 
-Declared by `src/hostApi/executeAction.ts` as `useExecutePluginAction`.
+Declared by `dist/hostApi/executeAction.d.ts` as `useExecutePluginAction`.
 
 ```ts
 function useExecutePluginAction<TAction extends PluginUiActionReference>(action: TAction, input?: NoInfer<PluginUiActionInputFor<NoInfer<TAction>>>): PluginActionExecutionController<PluginUiActionResultFor<NoInfer<TAction>>, PluginUiActionInputFor<NoInfer<TAction>>>;
-function useExecutePluginAction(action: PluginUiActionReference, input?: JsonValue): PluginActionExecutionController<JsonValue, JsonValue>;
 ```
 
 
 ### `./hostApi` — `useLivePluginResource` (value)
 
-Declared by `src/hostApi/index.ts` as `useLivePluginResource`.
+Declared by `dist/hostApi/index.d.ts` as `useLivePluginResource`.
 
 ```ts
 function useLivePluginResource(resource: PluginUiResourceReference): PluginUiResourceResult;
@@ -4268,7 +4944,7 @@ function useLivePluginResource(resource: PluginUiResourceReference): PluginUiRes
 
 ### `./hostApi` — `usePluginHostApi` (value)
 
-Declared by `src/hostApi/context.ts` as `usePluginHostApi`.
+Declared by `dist/hostApi/context.d.ts` as `usePluginHostApi`.
 
 ```ts
 function usePluginHostApi(): PluginUiHostApi;
@@ -4277,34 +4953,85 @@ function usePluginHostApi(): PluginUiHostApi;
 
 ### `./hostApi` — `usePluginResource` (value)
 
-Declared by `src/hostApi/index.ts` as `usePluginResource`.
+Declared by `dist/hostApi/index.d.ts` as `usePluginResource`.
 
 ```ts
 function usePluginResource(resource: PluginUiResourceReference): PluginUiResourceResult;
 ```
 
 
+### `./hostApi` — `usePluginSurfaceActivity` (value)
+
+Declared by `dist/hostApi/context.d.ts` as `usePluginSurfaceActivity`.
+
+```ts
+function usePluginSurfaceActivity(): Readonly<{
+    active: boolean;
+}>;
+```
+
+
+### `./presentation` — `CreateHappierListMultiSelectionStateInput` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `CreateHappierListMultiSelectionStateInput`.
+
+```ts
+type CreateHappierListMultiSelectionStateInput = Readonly<{
+    scopeKey: string;
+    visibleOrderedKeys: readonly HappierListMultiSelectionKey[];
+    eligibleKeys?: readonly HappierListMultiSelectionKey[] | ReadonlySet<HappierListMultiSelectionKey> | null;
+}>;
+```
+
+
 ### `./presentation` — `HAPPIER_ICON_NAMES` (value)
 
-Declared by `src/presentation/content/Icon.ts` as `HAPPIER_ICON_NAMES`.
+Declared by `dist/presentation/content/Icon.d.ts` as `HAPPIER_ICON_NAMES`.
 
 ```ts
 const HAPPIER_ICON_NAMES: readonly PluginUiIconTokenV1[];
 ```
 
 
-### `./presentation` — `HAPPIER_TONE_COLOR_TOKEN` (value)
+### `./presentation` — `HAPPIER_LIST_MULTI_SELECTION_INERT_ROW_SNAPSHOT` (value)
 
-Declared by `src/presentation/semantics.ts` as `HAPPIER_TONE_COLOR_TOKEN`.
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HAPPIER_LIST_MULTI_SELECTION_INERT_ROW_SNAPSHOT`.
 
 ```ts
-const HAPPIER_TONE_COLOR_TOKEN: { readonly neutral: "text"; readonly secondary: "secondaryText"; readonly muted: "mutedText"; readonly info: "info"; readonly success: "success"; readonly warning: "warning"; readonly danger: "danger"; readonly accent: "accent"; };
+const HAPPIER_LIST_MULTI_SELECTION_INERT_ROW_SNAPSHOT: "0:0:0";
+```
+
+
+### `./presentation` — `HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT`.
+
+```ts
+const HAPPIER_LIST_MULTI_SELECTION_INERT_SNAPSHOT: HappierListMultiSelectionSnapshot;
+```
+
+
+### `./presentation` — `HAPPIER_TONE_COLOR_TOKEN` (value)
+
+Declared by `dist/presentation/semantics.d.ts` as `HAPPIER_TONE_COLOR_TOKEN`.
+
+```ts
+const HAPPIER_TONE_COLOR_TOKEN: {
+    readonly neutral: 'text';
+    readonly secondary: 'secondaryText';
+    readonly muted: 'mutedText';
+    readonly info: 'info';
+    readonly success: 'success';
+    readonly warning: 'warning';
+    readonly danger: 'danger';
+    readonly accent: 'accent';
+};
 ```
 
 
 ### `./presentation` — `HappierActionFieldPresentation` (type)
 
-Declared by `src/presentation/form/actionInputFields.ts` as `HappierActionFieldPresentation`.
+Declared by `dist/presentation/form/actionInputFields.d.ts` as `HappierActionFieldPresentation`.
 
 ```ts
 type HappierActionFieldPresentation<OptionValue = unknown> = Readonly<{
@@ -4327,16 +5054,16 @@ type HappierActionFieldPresentation<OptionValue = unknown> = Readonly<{
 
 ### `./presentation` — `HappierActionPanel` (value)
 
-Declared by `src/presentation/interaction/ActionPanel.tsx` as `HappierActionPanel`.
+Declared by `dist/presentation/interaction/ActionPanel.d.ts` as `HappierActionPanel`.
 
 ```ts
-function HappierActionPanel({ title, children, testID, style }: HappierActionPanelProps);
+function HappierActionPanel({ title, children, testID, style }: HappierActionPanelProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierActionPanelProps` (type)
 
-Declared by `src/presentation/interaction/ActionPanel.tsx` as `HappierActionPanelProps`.
+Declared by `dist/presentation/interaction/ActionPanel.d.ts` as `HappierActionPanelProps`.
 
 ```ts
 type HappierActionPanelProps = Readonly<{
@@ -4350,16 +5077,16 @@ type HappierActionPanelProps = Readonly<{
 
 ### `./presentation` — `HappierActionPanelSection` (value)
 
-Declared by `src/presentation/interaction/ActionPanel.tsx` as `HappierActionPanelSection`.
+Declared by `dist/presentation/interaction/ActionPanel.d.ts` as `HappierActionPanelSection`.
 
 ```ts
-function HappierActionPanelSection({ title, children, testID, style }: HappierActionPanelSectionProps);
+function HappierActionPanelSection({ title, children, testID, style }: HappierActionPanelSectionProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierActionPanelSectionProps` (type)
 
-Declared by `src/presentation/interaction/ActionPanel.tsx` as `HappierActionPanelSectionProps`.
+Declared by `dist/presentation/interaction/ActionPanel.d.ts` as `HappierActionPanelSectionProps`.
 
 ```ts
 type HappierActionPanelSectionProps = Readonly<{
@@ -4373,7 +5100,7 @@ type HappierActionPanelSectionProps = Readonly<{
 
 ### `./presentation` — `HappierBadge` (value)
 
-Declared by `src/presentation/content/Foundation.tsx` as `HappierBadge`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `HappierBadge`.
 
 ```ts
 function HappierBadge(props: Readonly<{
@@ -4385,13 +5112,13 @@ function HappierBadge(props: Readonly<{
     horizontalPadding: number;
     verticalPadding: number;
     testID?: string;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierBanner` (value)
 
-Declared by `src/presentation/content/Foundation.tsx` as `HappierBanner`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `HappierBanner`.
 
 ```ts
 function HappierBanner(props: Readonly<{
@@ -4408,13 +5135,13 @@ function HappierBanner(props: Readonly<{
         urgent: boolean;
     }>) => ReactNode;
     unstyled?: boolean;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierBrandMark` (value)
 
-Declared by `src/presentation/content/Image.tsx` as `HappierBrandMark`.
+Declared by `dist/presentation/content/Image.d.ts` as `HappierBrandMark`.
 
 ```ts
 function HappierBrandMark(props: HappierBrandMarkProps): ReactElement;
@@ -4423,7 +5150,7 @@ function HappierBrandMark(props: HappierBrandMarkProps): ReactElement;
 
 ### `./presentation` — `HappierBrandMarkProps` (type)
 
-Declared by `src/presentation/content/Image.tsx` as `HappierBrandMarkProps`.
+Declared by `dist/presentation/content/Image.d.ts` as `HappierBrandMarkProps`.
 
 ```ts
 type HappierBrandMarkProps = Readonly<{
@@ -4435,13 +5162,14 @@ type HappierBrandMarkProps = Readonly<{
     colorScheme: HappierUiPlatformFacts['colorScheme'];
     testID?: string;
     externallyLabelled?: boolean;
+    onDecodeError?: () => void;
 }>;
 ```
 
 
 ### `./presentation` — `HappierCodeBlockBehaviorInput` (type)
 
-Declared by `src/presentation/content/CodeBlock.ts` as `HappierCodeBlockBehaviorInput`.
+Declared by `dist/presentation/content/CodeBlock.d.ts` as `HappierCodeBlockBehaviorInput`.
 
 ```ts
 type HappierCodeBlockBehaviorInput = Readonly<{
@@ -4458,7 +5186,7 @@ type HappierCodeBlockBehaviorInput = Readonly<{
 
 ### `./presentation` — `HappierDivider` (value)
 
-Declared by `src/presentation/content/Foundation.tsx` as `HappierDivider`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `HappierDivider`.
 
 ```ts
 function HappierDivider(props: Readonly<{
@@ -4466,22 +5194,22 @@ function HappierDivider(props: Readonly<{
     accessibilityLabel?: string;
     testID?: string;
     style?: HappierStyleProp;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierField` (value)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierField`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierField`.
 
 ```ts
-function HappierField(props: HappierFieldProps);
+function HappierField(props: HappierFieldProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierFieldProps` (type)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierFieldProps`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierFieldProps`.
 
 ```ts
 type HappierFieldProps = Readonly<{
@@ -4500,25 +5228,25 @@ type HappierFieldProps = Readonly<{
 
 ### `./presentation` — `HappierForm` (value)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierForm`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierForm`.
 
 ```ts
-function HappierForm({ children, accessibilityLabel, busy, testID, style }: HappierFormProps);
+function HappierForm({ children, accessibilityLabel, busy, testID, style }: HappierFormProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierFormActions` (value)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierFormActions`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierFormActions`.
 
 ```ts
-function HappierFormActions({ children, testID, style }: HappierFormActionsProps);
+function HappierFormActions({ children, testID, style }: HappierFormActionsProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierFormActionsProps` (type)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierFormActionsProps`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierFormActionsProps`.
 
 ```ts
 type HappierFormActionsProps = Readonly<{
@@ -4531,7 +5259,7 @@ type HappierFormActionsProps = Readonly<{
 
 ### `./presentation` — `HappierFormPendingInput` (type)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierFormPendingInput`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierFormPendingInput`.
 
 ```ts
 type HappierFormPendingInput = Readonly<{
@@ -4543,7 +5271,7 @@ type HappierFormPendingInput = Readonly<{
 
 ### `./presentation` — `HappierFormProps` (type)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierFormProps`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierFormProps`.
 
 ```ts
 type HappierFormProps = Readonly<{
@@ -4558,7 +5286,7 @@ type HappierFormProps = Readonly<{
 
 ### `./presentation` — `HappierHeading` (value)
 
-Declared by `src/presentation/content/Foundation.tsx` as `HappierHeading`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `HappierHeading`.
 
 ```ts
 function HappierHeading(props: Readonly<{
@@ -4567,13 +5295,13 @@ function HappierHeading(props: Readonly<{
     level: 1 | 2 | 3 | 4 | 5 | 6;
     theme?: HappierUiTheme;
     testID?: string;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierIconName` (type)
 
-Declared by `src/presentation/content/Icon.ts` as `HappierIconName`.
+Declared by `dist/presentation/content/Icon.d.ts` as `HappierIconName`.
 
 ```ts
 type HappierIconName = PluginUiIconTokenV1;
@@ -4582,7 +5310,7 @@ type HappierIconName = PluginUiIconTokenV1;
 
 ### `./presentation` — `HappierIconSize` (type)
 
-Declared by `src/presentation/content/Icon.ts` as `HappierIconSize`.
+Declared by `dist/presentation/content/Icon.d.ts` as `HappierIconSize`.
 
 ```ts
 type HappierIconSize = 'small' | 'medium' | 'large';
@@ -4591,7 +5319,7 @@ type HappierIconSize = 'small' | 'medium' | 'large';
 
 ### `./presentation` — `HappierImageSize` (type)
 
-Declared by `src/presentation/content/Image.tsx` as `HappierImageSize`.
+Declared by `dist/presentation/content/Image.d.ts` as `HappierImageSize`.
 
 ```ts
 type HappierImageSize = 'small' | 'medium' | 'large';
@@ -4600,16 +5328,16 @@ type HappierImageSize = 'small' | 'medium' | 'large';
 
 ### `./presentation` — `HappierInfoState` (value)
 
-Declared by `src/presentation/state/InfoState.tsx` as `HappierInfoState`.
+Declared by `dist/presentation/state/InfoState.d.ts` as `HappierInfoState`.
 
 ```ts
-function HappierInfoState({ children, action, testID, actionTestID, accessibilityRole, accessibilityLiveRegion, busy, }: HappierInfoStateProps);
+function HappierInfoState({ children, action, testID, actionTestID, accessibilityRole, accessibilityLiveRegion, busy, }: HappierInfoStateProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierInfoStateProps` (type)
 
-Declared by `src/presentation/state/InfoState.tsx` as `HappierInfoStateProps`.
+Declared by `dist/presentation/state/InfoState.d.ts` as `HappierInfoStateProps`.
 
 ```ts
 type HappierInfoStateProps = Readonly<{
@@ -4626,16 +5354,16 @@ type HappierInfoStateProps = Readonly<{
 
 ### `./presentation` — `HappierInfoTile` (value)
 
-Declared by `src/presentation/state/InfoState.tsx` as `HappierInfoTile`.
+Declared by `dist/presentation/state/InfoState.d.ts` as `HappierInfoTile`.
 
 ```ts
-function HappierInfoTile({ icon, title, description, tone, paddingHorizontal, }: HappierInfoTileProps);
+function HappierInfoTile({ icon, title, description, tone, paddingHorizontal, }: HappierInfoTileProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierInfoTileProps` (type)
 
-Declared by `src/presentation/state/InfoState.tsx` as `HappierInfoTileProps`.
+Declared by `dist/presentation/state/InfoState.d.ts` as `HappierInfoTileProps`.
 
 ```ts
 type HappierInfoTileProps = Readonly<{
@@ -4650,7 +5378,7 @@ type HappierInfoTileProps = Readonly<{
 
 ### `./presentation` — `HappierItemBehavior` (type)
 
-Declared by `src/presentation/collection/semantics.ts` as `HappierItemBehavior`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `HappierItemBehavior`.
 
 ```ts
 type HappierItemBehavior = Readonly<{
@@ -4669,7 +5397,7 @@ type HappierItemBehavior = Readonly<{
 
 ### `./presentation` — `HappierItemBehaviorInput` (type)
 
-Declared by `src/presentation/collection/semantics.ts` as `HappierItemBehaviorInput`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `HappierItemBehaviorInput`.
 
 ```ts
 type HappierItemBehaviorInput = HappierItemSemanticInput & Readonly<{
@@ -4689,7 +5417,7 @@ type HappierItemBehaviorInput = HappierItemSemanticInput & Readonly<{
 
 ### `./presentation` — `HappierItemDensity` (type)
 
-Declared by `src/presentation/collection/semantics.ts` as `HappierItemDensity`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `HappierItemDensity`.
 
 ```ts
 type HappierItemDensity = 'comfortable' | 'cozy' | 'compact' | 'tight';
@@ -4698,25 +5426,25 @@ type HappierItemDensity = 'comfortable' | 'cozy' | 'compact' | 'tight';
 
 ### `./presentation` — `HappierItemGroup` (value)
 
-Declared by `src/presentation/collection/ItemGroup.tsx` as `HappierItemGroup`.
+Declared by `dist/presentation/collection/ItemGroup.d.ts` as `HappierItemGroup`.
 
 ```ts
-function HappierItemGroup(props: HappierItemGroupProps);
+function HappierItemGroup(props: HappierItemGroupProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierItemGroupBehavior` (value)
 
-Declared by `src/presentation/collection/ItemGroup.tsx` as `HappierItemGroupBehavior`.
+Declared by `dist/presentation/collection/ItemGroup.d.ts` as `HappierItemGroupBehavior`.
 
 ```ts
-function HappierItemGroupBehavior(props: HappierItemGroupBehaviorProps);
+function HappierItemGroupBehavior(props: HappierItemGroupBehaviorProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierItemGroupBehaviorProps` (type)
 
-Declared by `src/presentation/collection/ItemGroup.tsx` as `HappierItemGroupBehaviorProps`.
+Declared by `dist/presentation/collection/ItemGroup.d.ts` as `HappierItemGroupBehaviorProps`.
 
 ```ts
 type HappierItemGroupBehaviorProps = Readonly<{
@@ -4731,7 +5459,7 @@ type HappierItemGroupBehaviorProps = Readonly<{
 
 ### `./presentation` — `HappierItemGroupItemBehaviorInput` (type)
 
-Declared by `src/presentation/collection/ItemGroup.tsx` as `HappierItemGroupItemBehaviorInput`.
+Declared by `dist/presentation/collection/ItemGroup.d.ts` as `HappierItemGroupItemBehaviorInput`.
 
 ```ts
 type HappierItemGroupItemBehaviorInput = Readonly<{
@@ -4745,7 +5473,7 @@ type HappierItemGroupItemBehaviorInput = Readonly<{
 
 ### `./presentation` — `HappierItemGroupProps` (type)
 
-Declared by `src/presentation/collection/ItemGroup.tsx` as `HappierItemGroupProps`.
+Declared by `dist/presentation/collection/ItemGroup.d.ts` as `HappierItemGroupProps`.
 
 ```ts
 type HappierItemGroupProps = Readonly<{
@@ -4760,7 +5488,7 @@ type HappierItemGroupProps = Readonly<{
 
 ### `./presentation` — `HappierItemGroupRadioFocusable` (type)
 
-Declared by `src/presentation/collection/ItemGroup.tsx` as `HappierItemGroupRadioFocusable`.
+Declared by `dist/presentation/collection/ItemGroup.d.ts` as `HappierItemGroupRadioFocusable`.
 
 ```ts
 type HappierItemGroupRadioFocusable = HappierFocusable;
@@ -4769,16 +5497,19 @@ type HappierItemGroupRadioFocusable = HappierFocusable;
 
 ### `./presentation` — `HappierItemGroupSelectionContext` (value)
 
-Declared by `src/presentation/collection/ItemGroup.tsx` as `HappierItemGroupSelectionContext`.
+Declared by `dist/presentation/collection/ItemGroup.d.ts` as `HappierItemGroupSelectionContext`.
 
 ```ts
-const HappierItemGroupSelectionContext: React.Context<Readonly<{ selectableItemCount: number; radioGroup?: HappierItemGroupRadioContext | null; }> | null>;
+const HappierItemGroupSelectionContext: React.Context<Readonly<{
+    selectableItemCount: number;
+    radioGroup?: HappierItemGroupRadioContext | null;
+}> | null>;
 ```
 
 
 ### `./presentation` — `HappierItemOverflow` (value)
 
-Declared by `src/presentation/collection/ItemOverflow.tsx` as `HappierItemOverflow`.
+Declared by `dist/presentation/collection/ItemOverflow.d.ts` as `HappierItemOverflow`.
 
 ```ts
 function HappierItemOverflow(props: HappierItemOverflowProps): ReactElement | null;
@@ -4787,7 +5518,7 @@ function HappierItemOverflow(props: HappierItemOverflowProps): ReactElement | nu
 
 ### `./presentation` — `HappierItemOverflowAction` (type)
 
-Declared by `src/presentation/collection/ItemOverflow.tsx` as `HappierItemOverflowAction`.
+Declared by `dist/presentation/collection/ItemOverflow.d.ts` as `HappierItemOverflowAction`.
 
 ```ts
 type HappierItemOverflowAction = Readonly<{
@@ -4801,7 +5532,7 @@ type HappierItemOverflowAction = Readonly<{
 
 ### `./presentation` — `HappierItemOverflowProps` (type)
 
-Declared by `src/presentation/collection/ItemOverflow.tsx` as `HappierItemOverflowProps`.
+Declared by `dist/presentation/collection/ItemOverflow.d.ts` as `HappierItemOverflowProps`.
 
 ```ts
 type HappierItemOverflowProps = Readonly<{
@@ -4809,6 +5540,9 @@ type HappierItemOverflowProps = Readonly<{
     secondaryActionsEnabled?: boolean;
     accessibilityLabel: string;
     onSelect(id: string): void;
+    open?: boolean;
+    onOpenChange?(open: boolean): void;
+    focusReturnRef?: RefObject<unknown>;
     renderMenu(input: HappierItemOverflowRenderInput): ReactElement;
     testID?: string;
 }>;
@@ -4817,7 +5551,7 @@ type HappierItemOverflowProps = Readonly<{
 
 ### `./presentation` — `HappierItemOverflowRenderInput` (type)
 
-Declared by `src/presentation/collection/ItemOverflow.tsx` as `HappierItemOverflowRenderInput`.
+Declared by `dist/presentation/collection/ItemOverflow.d.ts` as `HappierItemOverflowRenderInput`.
 
 ```ts
 type HappierItemOverflowRenderInput = Readonly<{
@@ -4827,6 +5561,8 @@ type HappierItemOverflowRenderInput = Readonly<{
     triggerAccessibilityLabel: string;
     testID?: string;
     disabled: boolean;
+    triggerTabIndex?: -1 | 0;
+    focusReturnRef?: RefObject<unknown>;
     actions: readonly HappierItemOverflowAction[];
     onSelect(id: string): void;
 }>;
@@ -4835,7 +5571,7 @@ type HappierItemOverflowRenderInput = Readonly<{
 
 ### `./presentation` — `HappierItemSemanticInput` (type)
 
-Declared by `src/presentation/collection/semantics.ts` as `HappierItemSemanticInput`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `HappierItemSemanticInput`.
 
 ```ts
 type HappierItemSemanticInput = Readonly<{
@@ -4853,7 +5589,7 @@ type HappierItemSemanticInput = Readonly<{
 
 ### `./presentation` — `HappierItemSemanticState` (type)
 
-Declared by `src/presentation/collection/semantics.ts` as `HappierItemSemanticState`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `HappierItemSemanticState`.
 
 ```ts
 type HappierItemSemanticState = Readonly<{
@@ -4868,20 +5604,38 @@ type HappierItemSemanticState = Readonly<{
 
 ### `./presentation` — `HappierLabel` (value)
 
-Declared by `src/presentation/content/Foundation.tsx` as `HappierLabel`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `HappierLabel`.
 
 ```ts
 function HappierLabel(props: Readonly<{
     children?: ReactNode;
     theme?: HappierUiTheme;
     testID?: string;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
+```
+
+
+### `./presentation` — `HappierLayoutChangeEvent` (type)
+
+Declared by `dist/presentation/portableTypes.d.ts` as `HappierLayoutChangeEvent`.
+
+```ts
+type HappierLayoutChangeEvent = Readonly<{
+    nativeEvent: Readonly<{
+        layout: Readonly<{
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+        }>;
+    }>;
+}>;
 ```
 
 
 ### `./presentation` — `HappierLayoutGap` (type)
 
-Declared by `src/presentation/layout/Layout.tsx` as `HappierLayoutGap`.
+Declared by `dist/presentation/layout/Layout.d.ts` as `HappierLayoutGap`.
 
 ```ts
 type HappierLayoutGap = 'none' | 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge';
@@ -4890,7 +5644,7 @@ type HappierLayoutGap = 'none' | 'xsmall' | 'small' | 'medium' | 'large' | 'xlar
 
 ### `./presentation` — `HappierLink` (value)
 
-Declared by `src/presentation/content/Foundation.tsx` as `HappierLink`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `HappierLink`.
 
 ```ts
 function HappierLink(props: Readonly<{
@@ -4900,31 +5654,31 @@ function HappierLink(props: Readonly<{
     onPress: () => unknown;
     theme: HappierUiTheme;
     testID?: string;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierList` (value)
 
-Declared by `src/presentation/collection/List.tsx` as `HappierList`.
+Declared by `dist/presentation/collection/List.d.ts` as `HappierList`.
 
 ```ts
-function HappierList({ children, accessibilityLabel, testID, style, }: HappierListProps);
+function HappierList({ children, accessibilityLabel, testID, style, }: HappierListProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierListItem` (value)
 
-Declared by `src/presentation/collection/List.tsx` as `HappierListItem`.
+Declared by `dist/presentation/collection/List.d.ts` as `HappierListItem`.
 
 ```ts
-function HappierListItem({ children, title, subtitle, detail, icon, accessory, accessoryOutsidePressable, tone = 'neutral', onPress, disabled, busy, selected, accessibilityRole, accessibilityExpanded, accessibilityPositionInSet, accessibilitySetSize, theme, minimumTouchTarget, density, showDivider, hasSecondaryActions, accessibilityLabel, testID, style, itemGroupRadioIndex, rovingCollectionItem, suppressListItemRole, }: HappierListItemProps);
+function HappierListItem({ children, title, subtitle, detail, titleNumberOfLines, subtitleNumberOfLines, detailNumberOfLines, icon, accessory, accessoryWraps, accessoryOutsidePressable, tone, onPress, onContextMenu, disabled, busy, selected, accessibilityRole, accessibilityExpanded, accessibilityPositionInSet, accessibilitySetSize, theme, minimumTouchTarget, density, showDivider, hasSecondaryActions, accessibilityLabel, accessibilityHint, testID, style, itemGroupRadioIndex, rovingCollectionItem, suppressListItemRole, }: HappierListItemProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierListItemProps` (type)
 
-Declared by `src/presentation/collection/List.tsx` as `HappierListItemProps`.
+Declared by `dist/presentation/collection/List.d.ts` as `HappierListItemProps`.
 
 ```ts
 type HappierListItemProps = Readonly<{
@@ -4932,11 +5686,16 @@ type HappierListItemProps = Readonly<{
     title?: string;
     subtitle?: string;
     detail?: string;
+    titleNumberOfLines?: number;
+    subtitleNumberOfLines?: number;
+    detailNumberOfLines?: number;
     icon?: ReactNode;
     accessory?: ReactNode;
+    accessoryWraps?: boolean;
     accessoryOutsidePressable?: boolean;
     tone?: HappierTone;
-    onPress?: () => unknown;
+    onPress?: (event?: HappierGestureResponderEvent) => unknown;
+    onContextMenu?: (event: unknown) => void;
     disabled?: boolean;
     busy?: boolean;
     selected?: boolean;
@@ -4950,6 +5709,7 @@ type HappierListItemProps = Readonly<{
     showDivider?: boolean;
     hasSecondaryActions?: boolean;
     accessibilityLabel?: string;
+    accessibilityHint?: string;
     testID?: string;
     style?: HappierStyleProp;
     itemGroupRadioIndex?: number;
@@ -4959,9 +5719,227 @@ type HappierListItemProps = Readonly<{
 ```
 
 
+### `./presentation` — `HappierListMultiSelectionAction` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionAction`.
+
+```ts
+type HappierListMultiSelectionAction = Readonly<{
+    type: 'enter';
+    key?: HappierListMultiSelectionKey | null;
+}> | Readonly<{
+    type: 'exit';
+}> | Readonly<{
+    type: 'clear';
+}> | Readonly<{
+    type: 'replace';
+    key: HappierListMultiSelectionKey;
+}> | Readonly<{
+    type: 'toggle';
+    key: HappierListMultiSelectionKey;
+}> | Readonly<{
+    type: 'selectRange';
+    targetKey: HappierListMultiSelectionKey;
+    add?: boolean;
+}> | Readonly<{
+    type: 'selectAllVisible';
+}> | Readonly<{
+    type: 'setSelectedKeys';
+    keys: readonly HappierListMultiSelectionKey[];
+}> | Readonly<{
+    type: 'setFocusedKey';
+    key: HappierListMultiSelectionKey | null;
+}> | Readonly<{
+    type: 'setVisibleOrder';
+    visibleOrderedKeys: readonly HappierListMultiSelectionKey[];
+    eligibleKeys?: readonly HappierListMultiSelectionKey[] | ReadonlySet<HappierListMultiSelectionKey> | null;
+}> | Readonly<{
+    type: 'resetScope';
+    scopeKey: string;
+    visibleOrderedKeys: readonly HappierListMultiSelectionKey[];
+    eligibleKeys?: readonly HappierListMultiSelectionKey[] | ReadonlySet<HappierListMultiSelectionKey> | null;
+}>;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionActions` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionActions`.
+
+```ts
+type HappierListMultiSelectionActions = Readonly<{
+    enter: (preselectKey?: HappierListMultiSelectionKey | null) => void;
+    exit: () => void;
+    clear: () => void;
+    replaceWith: (key: HappierListMultiSelectionKey) => void;
+    toggle: (key: HappierListMultiSelectionKey) => void;
+    selectRange: (targetKey: HappierListMultiSelectionKey) => void;
+    addRange: (targetKey: HappierListMultiSelectionKey) => void;
+    selectAllVisible: () => void;
+    setSelectedKeys: (keys: readonly HappierListMultiSelectionKey[]) => void;
+    setFocusedKey: (key: HappierListMultiSelectionKey | null) => void;
+    isSelected: (key: HappierListMultiSelectionKey) => boolean;
+}>;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionKey` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionKey`.
+
+```ts
+type HappierListMultiSelectionKey = string;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionKeyboardInput` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionKeyboardInput`.
+
+```ts
+type HappierListMultiSelectionKeyboardInput = Readonly<{
+    key: string;
+    shiftKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+    platform: HappierPointerPlatform;
+    entries: readonly HappierRovingEntry[];
+    currentIndex: number;
+    rtl: boolean;
+}>;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionKeyboardIntent` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionKeyboardIntent`.
+
+```ts
+type HappierListMultiSelectionKeyboardIntent = Readonly<{
+    kind: 'toggleFocused';
+}> | Readonly<{
+    kind: 'selectAllVisible';
+}> | Readonly<{
+    kind: 'exit';
+}> | Readonly<{
+    kind: 'extendRange';
+    toIndex: number;
+}>;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionPointerAction` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionPointerAction`.
+
+```ts
+type HappierListMultiSelectionPointerAction = 'open' | 'toggle' | 'selectRange' | 'addRange';
+```
+
+
+### `./presentation` — `HappierListMultiSelectionPointerInput` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionPointerInput`.
+
+```ts
+type HappierListMultiSelectionPointerInput = Readonly<{
+    isSelectionMode: boolean;
+    platform: HappierPointerPlatform;
+    shiftKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+}>;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionRangeInput` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionRangeInput`.
+
+```ts
+type HappierListMultiSelectionRangeInput = Readonly<{
+    visibleOrderedKeys: readonly HappierListMultiSelectionKey[];
+    anchorKey: HappierListMultiSelectionKey | null;
+    targetKey: HappierListMultiSelectionKey;
+    eligibleKeys?: ReadonlySet<HappierListMultiSelectionKey> | null;
+}>;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionRowFlags` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionRowFlags`.
+
+```ts
+type HappierListMultiSelectionRowFlags = Readonly<{
+    isSelectionMode: boolean;
+    isSelected: boolean;
+    isFocused: boolean;
+}>;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionRowsInput` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionRowsInput`.
+
+```ts
+type HappierListMultiSelectionRowsInput = Readonly<{
+    visibleOrderedKeys: readonly HappierListMultiSelectionKey[];
+    eligibleKeys?: readonly HappierListMultiSelectionKey[] | ReadonlySet<HappierListMultiSelectionKey> | null;
+}>;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionSnapshot` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionSnapshot`.
+
+```ts
+type HappierListMultiSelectionSnapshot = HappierListMultiSelectionState & Readonly<{
+    count: number;
+}>;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionState` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionState`.
+
+```ts
+type HappierListMultiSelectionState = Readonly<{
+    isSelectionMode: boolean;
+    selectedKeys: ReadonlySet<HappierListMultiSelectionKey>;
+    anchorKey: HappierListMultiSelectionKey | null;
+    focusedKey: HappierListMultiSelectionKey | null;
+    visibleOrderedKeys: readonly HappierListMultiSelectionKey[];
+    eligibleKeys: ReadonlySet<HappierListMultiSelectionKey>;
+    scopeKey: string;
+    version: number;
+}>;
+```
+
+
+### `./presentation` — `HappierListMultiSelectionStore` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierListMultiSelectionStore`.
+
+```ts
+type HappierListMultiSelectionStore = HappierListMultiSelectionActions & Readonly<{
+    getSnapshot: () => HappierListMultiSelectionSnapshot;
+    getRowSnapshot: (key: HappierListMultiSelectionKey) => string;
+    subscribe: (listener: () => void) => () => void;
+    setVisibleRows: (params: HappierListMultiSelectionRowsInput) => void;
+    updateScope: (params: HappierListMultiSelectionRowsInput & Readonly<{
+        scopeKey: string;
+    }>) => void;
+}>;
+```
+
+
 ### `./presentation` — `HappierListProps` (type)
 
-Declared by `src/presentation/collection/List.tsx` as `HappierListProps`.
+Declared by `dist/presentation/collection/List.d.ts` as `HappierListProps`.
 
 ```ts
 type HappierListProps = Readonly<{
@@ -4975,16 +5953,16 @@ type HappierListProps = Readonly<{
 
 ### `./presentation` — `HappierListSection` (value)
 
-Declared by `src/presentation/collection/List.tsx` as `HappierListSection`.
+Declared by `dist/presentation/collection/List.d.ts` as `HappierListSection`.
 
 ```ts
-function HappierListSection({ children, title, virtualizedCollectionRole, testID, style, }: HappierListSectionProps);
+function HappierListSection({ children, title, virtualizedCollectionRole, testID, style, }: HappierListSectionProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierListSectionProps` (type)
 
-Declared by `src/presentation/collection/List.tsx` as `HappierListSectionProps`.
+Declared by `dist/presentation/collection/List.d.ts` as `HappierListSectionProps`.
 
 ```ts
 type HappierListSectionProps = Readonly<{
@@ -4999,7 +5977,7 @@ type HappierListSectionProps = Readonly<{
 
 ### `./presentation` — `HappierMarkdown` (value)
 
-Declared by `src/presentation/content/Markdown.tsx` as `HappierMarkdown`.
+Declared by `dist/presentation/content/Markdown.d.ts` as `HappierMarkdown`.
 
 ```ts
 function HappierMarkdown(input: HappierMarkdownProps): ReactElement;
@@ -5008,7 +5986,7 @@ function HappierMarkdown(input: HappierMarkdownProps): ReactElement;
 
 ### `./presentation` — `HappierMarkdownProps` (type)
 
-Declared by `src/presentation/content/Markdown.tsx` as `HappierMarkdownProps`.
+Declared by `dist/presentation/content/Markdown.d.ts` as `HappierMarkdownProps`.
 
 ```ts
 type HappierMarkdownProps = HappierMarkdownRenderInput & Readonly<{
@@ -5019,7 +5997,7 @@ type HappierMarkdownProps = HappierMarkdownRenderInput & Readonly<{
 
 ### `./presentation` — `HappierMarkdownRenderInput` (type)
 
-Declared by `src/presentation/content/Markdown.tsx` as `HappierMarkdownRenderInput`.
+Declared by `dist/presentation/content/Markdown.d.ts` as `HappierMarkdownRenderInput`.
 
 ```ts
 type HappierMarkdownRenderInput = Readonly<{
@@ -5032,7 +6010,7 @@ type HappierMarkdownRenderInput = Readonly<{
 
 ### `./presentation` — `HappierMenuContent` (type)
 
-Declared by `src/presentation/interaction/Menu.ts` as `HappierMenuContent`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `HappierMenuContent`.
 
 ```ts
 type HappierMenuContent<Item extends HappierMenuItemDescriptor = HappierMenuItemDescriptor> = Readonly<{
@@ -5045,7 +6023,7 @@ type HappierMenuContent<Item extends HappierMenuItemDescriptor = HappierMenuItem
 
 ### `./presentation` — `HappierMenuEntry` (type)
 
-Declared by `src/presentation/interaction/Menu.ts` as `HappierMenuEntry`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `HappierMenuEntry`.
 
 ```ts
 type HappierMenuEntry<Item extends HappierMenuItemDescriptor = HappierMenuItemDescriptor> = Readonly<{
@@ -5057,7 +6035,7 @@ type HappierMenuEntry<Item extends HappierMenuItemDescriptor = HappierMenuItemDe
 
 ### `./presentation` — `HappierMenuGroupDescriptor` (type)
 
-Declared by `src/presentation/interaction/Menu.ts` as `HappierMenuGroupDescriptor`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `HappierMenuGroupDescriptor`.
 
 ```ts
 type HappierMenuGroupDescriptor<Item extends HappierMenuItemDescriptor = HappierMenuItemDescriptor> = Readonly<{
@@ -5070,7 +6048,7 @@ type HappierMenuGroupDescriptor<Item extends HappierMenuItemDescriptor = Happier
 
 ### `./presentation` — `HappierMenuInteractionInput` (type)
 
-Declared by `src/presentation/interaction/Menu.ts` as `HappierMenuInteractionInput`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `HappierMenuInteractionInput`.
 
 ```ts
 type HappierMenuInteractionInput<Item extends HappierMenuInteractionItem> = Readonly<{
@@ -5089,7 +6067,7 @@ type HappierMenuInteractionInput<Item extends HappierMenuInteractionItem> = Read
 
 ### `./presentation` — `HappierMenuItemDescriptor` (type)
 
-Declared by `src/presentation/interaction/Menu.ts` as `HappierMenuItemDescriptor`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `HappierMenuItemDescriptor`.
 
 ```ts
 type HappierMenuItemDescriptor = Readonly<{
@@ -5105,7 +6083,7 @@ type HappierMenuItemDescriptor = Readonly<{
 
 ### `./presentation` — `HappierMenuKeyAction` (type)
 
-Declared by `src/presentation/interaction/Menu.ts` as `HappierMenuKeyAction`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `HappierMenuKeyAction`.
 
 ```ts
 type HappierMenuKeyAction = Readonly<{
@@ -5129,7 +6107,7 @@ type HappierMenuKeyAction = Readonly<{
 
 ### `./presentation` — `HappierMenuRadioGroupDescriptor` (type)
 
-Declared by `src/presentation/interaction/Menu.ts` as `HappierMenuRadioGroupDescriptor`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `HappierMenuRadioGroupDescriptor`.
 
 ```ts
 type HappierMenuRadioGroupDescriptor = Readonly<{
@@ -5142,7 +6120,7 @@ type HappierMenuRadioGroupDescriptor = Readonly<{
 
 ### `./presentation` — `HappierMetadata` (value)
 
-Declared by `src/presentation/content/Foundation.tsx` as `HappierMetadata`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `HappierMetadata`.
 
 ```ts
 function HappierMetadata(props: Readonly<{
@@ -5150,13 +6128,13 @@ function HappierMetadata(props: Readonly<{
     entries: readonly HappierMetadataEntry[];
     theme: HappierUiTheme;
     testID?: string;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierMetadataEntry` (type)
 
-Declared by `src/presentation/content/Foundation.tsx` as `HappierMetadataEntry`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `HappierMetadataEntry`.
 
 ```ts
 type HappierMetadataEntry = Readonly<{
@@ -5169,9 +6147,31 @@ type HappierMetadataEntry = Readonly<{
 ```
 
 
+### `./presentation` — `HappierPointerModifiers` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierPointerModifiers`.
+
+```ts
+type HappierPointerModifiers = Readonly<{
+    shiftKey: boolean;
+    ctrlKey: boolean;
+    metaKey: boolean;
+}>;
+```
+
+
+### `./presentation` — `HappierPointerPlatform` (type)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `HappierPointerPlatform`.
+
+```ts
+type HappierPointerPlatform = 'macos' | 'ios' | 'windows' | 'linux' | 'android' | 'web';
+```
+
+
 ### `./presentation` — `HappierPopoverPlacement` (type)
 
-Declared by `src/presentation/interaction/Menu.ts` as `HappierPopoverPlacement`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `HappierPopoverPlacement`.
 
 ```ts
 type HappierPopoverPlacement = HappierResolvedPopoverPlacement | 'auto' | 'auto-vertical' | 'auto-horizontal';
@@ -5180,16 +6180,16 @@ type HappierPopoverPlacement = HappierResolvedPopoverPlacement | 'auto' | 'auto-
 
 ### `./presentation` — `HappierPressable` (value)
 
-Declared by `src/presentation/interaction/Pressable.tsx` as `HappierPressable`.
+Declared by `dist/presentation/interaction/Pressable.d.ts` as `HappierPressable`.
 
 ```ts
-function HappierPressable({ onPress, onPressIn, onLongPress, onContextMenu, onKeyDown, onFocusChange, disabled, busy, invalid, errorMessageId, highlighted, selected, expanded, accessibilityPositionInSet, accessibilitySetSize, hasPopup, checked, accessibilityRole = 'button', webRole, accessibilityLabel, accessibilityHint, hitSlop, testID, controlRef, tabIndex, nativeID, controls, style, overlay, children, }: HappierPressableProps);
+function HappierPressable({ onPress, onPressIn, onLongPress, onContextMenu, onKeyDown, onFocusChange, disabled, busy, invalid, errorMessageId, describedById, highlighted, selected, expanded, accessibilityPositionInSet, accessibilitySetSize, hasPopup, checked, accessibilityRole, webRole, accessibilityLabel, accessibilityHint, hitSlop, testID, controlRef, tabIndex, nativeID, controls, style, overlay, children, }: HappierPressableProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierPressableProps` (type)
 
-Declared by `src/presentation/interaction/Pressable.tsx` as `HappierPressableProps`.
+Declared by `dist/presentation/interaction/Pressable.d.ts` as `HappierPressableProps`.
 
 ```ts
 type HappierPressableProps = Readonly<{
@@ -5203,6 +6203,7 @@ type HappierPressableProps = Readonly<{
     busy?: boolean;
     invalid?: boolean;
     errorMessageId?: string;
+    describedById?: string;
     highlighted?: boolean;
     selected?: boolean;
     expanded?: boolean;
@@ -5229,7 +6230,7 @@ type HappierPressableProps = Readonly<{
 
 ### `./presentation` — `HappierPressableRole` (type)
 
-Declared by `src/presentation/interaction/Pressable.tsx` as `HappierPressableRole`.
+Declared by `dist/presentation/interaction/Pressable.d.ts` as `HappierPressableRole`.
 
 ```ts
 type HappierPressableRole = 'button' | 'checkbox' | 'link' | 'radio' | 'tab' | 'switch' | 'menuitem' | 'menuitemcheckbox' | 'menuitemradio' | 'option';
@@ -5238,7 +6239,7 @@ type HappierPressableRole = 'button' | 'checkbox' | 'link' | 'radio' | 'tab' | '
 
 ### `./presentation` — `HappierPressableState` (type)
 
-Declared by `src/presentation/interaction/Pressable.tsx` as `HappierPressableState`.
+Declared by `dist/presentation/interaction/Pressable.d.ts` as `HappierPressableState`.
 
 ```ts
 type HappierPressableState = Readonly<{
@@ -5254,7 +6255,7 @@ type HappierPressableState = Readonly<{
 
 ### `./presentation` — `HappierPressableStyleState` (type)
 
-Declared by `src/presentation/interaction/Pressable.tsx` as `HappierPressableStyleState`.
+Declared by `dist/presentation/interaction/Pressable.d.ts` as `HappierPressableStyleState`.
 
 ```ts
 type HappierPressableStyleState = HappierPressableState & Readonly<{
@@ -5265,7 +6266,7 @@ type HappierPressableStyleState = HappierPressableState & Readonly<{
 
 ### `./presentation` — `HappierProgress` (value)
 
-Declared by `src/presentation/content/Foundation.tsx` as `HappierProgress`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `HappierProgress`.
 
 ```ts
 function HappierProgress(props: Readonly<{
@@ -5276,13 +6277,13 @@ function HappierProgress(props: Readonly<{
     style?: HappierStyleProp;
     pointerEvents?: 'auto' | 'box-none' | 'box-only' | 'none';
     renderFill?: (percentage: number) => ReactNode;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierResolvedMenuGroup` (type)
 
-Declared by `src/presentation/interaction/Menu.ts` as `HappierResolvedMenuGroup`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `HappierResolvedMenuGroup`.
 
 ```ts
 type HappierResolvedMenuGroup<Item extends HappierMenuItemDescriptor = HappierMenuItemDescriptor> = Readonly<{
@@ -5295,7 +6296,7 @@ type HappierResolvedMenuGroup<Item extends HappierMenuItemDescriptor = HappierMe
 
 ### `./presentation` — `HappierResolvedPopoverPlacement` (type)
 
-Declared by `src/presentation/interaction/Menu.ts` as `HappierResolvedPopoverPlacement`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `HappierResolvedPopoverPlacement`.
 
 ```ts
 type HappierResolvedPopoverPlacement = 'top' | 'bottom' | 'left' | 'right';
@@ -5304,7 +6305,7 @@ type HappierResolvedPopoverPlacement = 'top' | 'bottom' | 'left' | 'right';
 
 ### `./presentation` — `HappierRovingEntry` (type)
 
-Declared by `src/presentation/collection/semantics.ts` as `HappierRovingEntry`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `HappierRovingEntry`.
 
 ```ts
 type HappierRovingEntry = Readonly<{
@@ -5315,21 +6316,22 @@ type HappierRovingEntry = Readonly<{
 
 ### `./presentation` — `HappierScreen` (value)
 
-Declared by `src/presentation/layout/Layout.tsx` as `HappierScreen`.
+Declared by `dist/presentation/layout/Layout.d.ts` as `HappierScreen`.
 
 ```ts
-function HappierScreen({ children, controlRef, testID, style, safeAreaInsets }: HappierScreenProps);
+function HappierScreen({ children, controlRef, onLayout, testID, style, safeAreaInsets }: HappierScreenProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierScreenProps` (type)
 
-Declared by `src/presentation/layout/Layout.tsx` as `HappierScreenProps`.
+Declared by `dist/presentation/layout/Layout.d.ts` as `HappierScreenProps`.
 
 ```ts
 type HappierScreenProps = Readonly<{
     children?: ReactNode;
     controlRef?: (instance: unknown | null) => void;
+    onLayout?: (event: HappierLayoutChangeEvent) => void;
     testID?: string;
     style?: HappierStyleProp;
     safeAreaInsets?: Readonly<{
@@ -5344,16 +6346,16 @@ type HappierScreenProps = Readonly<{
 
 ### `./presentation` — `HappierScrollArea` (value)
 
-Declared by `src/presentation/layout/Layout.tsx` as `HappierScrollArea`.
+Declared by `dist/presentation/layout/Layout.d.ts` as `HappierScrollArea`.
 
 ```ts
-function HappierScrollArea({ children, accessibilityLabel, testID, style, contentContainerStyle, safeAreaInsets, keyboardShouldPersistTaps = 'handled', ...scrollProps }: HappierScrollAreaProps);
+function HappierScrollArea({ children, accessibilityLabel, testID, style, contentContainerStyle, safeAreaInsets, keyboardShouldPersistTaps, ...scrollProps }: HappierScrollAreaProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierScrollAreaProps` (type)
 
-Declared by `src/presentation/layout/Layout.tsx` as `HappierScrollAreaProps`.
+Declared by `dist/presentation/layout/Layout.d.ts` as `HappierScrollAreaProps`.
 
 ```ts
 type HappierScrollAreaProps = Readonly<{
@@ -5362,6 +6364,7 @@ type HappierScrollAreaProps = Readonly<{
     keyboardShouldPersistTaps?: HappierKeyboardShouldPersistTaps;
     onScroll?: (event: HappierScrollEvent) => void;
     scrollEventThrottle?: number;
+    onLayout?: (event: HappierLayoutChangeEvent) => void;
     accessibilityLabel?: string;
     testID?: string;
     style?: HappierStyleProp;
@@ -5378,7 +6381,7 @@ type HappierScrollAreaProps = Readonly<{
 
 ### `./presentation` — `HappierSelect` (value)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierSelect`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierSelect`.
 
 ```ts
 function HappierSelect<Value = string>(props: Readonly<{
@@ -5388,6 +6391,7 @@ function HappierSelect<Value = string>(props: Readonly<{
     multiple?: boolean;
     maxSelections?: number;
     minimumSelections?: number;
+    required?: boolean;
     onChange: (value: Value | readonly Value[]) => void;
     isEqual?: (left: Value, right: Value) => boolean;
     keyForOption?: (option: HappierSelectOption<Value>, index: number) => string;
@@ -5395,13 +6399,13 @@ function HappierSelect<Value = string>(props: Readonly<{
     disabled?: boolean;
     theme: HappierUiTheme;
     testID?: string;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierSelectOption` (type)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierSelectOption`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierSelectOption`.
 
 ```ts
 type HappierSelectOption<Value = string> = Readonly<{
@@ -5417,7 +6421,7 @@ type HappierSelectOption<Value = string> = Readonly<{
 
 ### `./presentation` — `HappierSelectableRole` (type)
 
-Declared by `src/presentation/collection/semantics.ts` as `HappierSelectableRole`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `HappierSelectableRole`.
 
 ```ts
 type HappierSelectableRole = 'radio' | 'option' | 'button' | undefined;
@@ -5426,16 +6430,16 @@ type HappierSelectableRole = 'radio' | 'option' | 'button' | undefined;
 
 ### `./presentation` — `HappierSpinner` (value)
 
-Declared by `src/presentation/feedback/Spinner.tsx` as `HappierSpinner`.
+Declared by `dist/presentation/feedback/Spinner.d.ts` as `HappierSpinner`.
 
 ```ts
-function HappierSpinner(props: HappierSpinnerProps);
+function HappierSpinner(props: HappierSpinnerProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierSpinnerProps` (type)
 
-Declared by `src/presentation/feedback/Spinner.tsx` as `HappierSpinnerProps`.
+Declared by `dist/presentation/feedback/Spinner.d.ts` as `HappierSpinnerProps`.
 
 ```ts
 type HappierSpinnerProps = HappierActivityIndicatorHostProps & Readonly<{
@@ -5448,16 +6452,16 @@ type HappierSpinnerProps = HappierActivityIndicatorHostProps & Readonly<{
 
 ### `./presentation` — `HappierStack` (value)
 
-Declared by `src/presentation/layout/Layout.tsx` as `HappierStack`.
+Declared by `dist/presentation/layout/Layout.d.ts` as `HappierStack`.
 
 ```ts
-function HappierStack({ children, direction = 'vertical', gap = 0, wrap = false, align, justify, controlRef, testID, style, }: HappierStackProps);
+function HappierStack({ children, direction, gap, wrap, align, justify, controlRef, onLayout, testID, style, }: HappierStackProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierStackProps` (type)
 
-Declared by `src/presentation/layout/Layout.tsx` as `HappierStackProps`.
+Declared by `dist/presentation/layout/Layout.d.ts` as `HappierStackProps`.
 
 ```ts
 type HappierStackProps = Readonly<{
@@ -5468,6 +6472,7 @@ type HappierStackProps = Readonly<{
     wrap?: boolean;
     align?: HappierAlignment;
     justify?: HappierJustification;
+    onLayout?: (event: HappierLayoutChangeEvent) => void;
     testID?: string;
     style?: HappierStyleProp;
 }>;
@@ -5476,25 +6481,25 @@ type HappierStackProps = Readonly<{
 
 ### `./presentation` — `HappierStatus` (value)
 
-Declared by `src/presentation/status/Status.tsx` as `HappierStatus`.
+Declared by `dist/presentation/status/Status.d.ts` as `HappierStatus`.
 
 ```ts
-function HappierStatus(props: HappierStatusProps);
+function HappierStatus(props: HappierStatusProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierStatusDot` (value)
 
-Declared by `src/presentation/status/StatusDot.tsx` as `HappierStatusDot`.
+Declared by `dist/presentation/status/StatusDot.d.ts` as `HappierStatusDot`.
 
 ```ts
-function HappierStatusDot(props: HappierStatusDotProps);
+function HappierStatusDot(props: HappierStatusDotProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierStatusDotProps` (type)
 
-Declared by `src/presentation/status/StatusDot.tsx` as `HappierStatusDotProps`.
+Declared by `dist/presentation/status/StatusDot.d.ts` as `HappierStatusDotProps`.
 
 ```ts
 type HappierStatusDotProps = Readonly<{
@@ -5512,7 +6517,7 @@ type HappierStatusDotProps = Readonly<{
 
 ### `./presentation` — `HappierStatusProps` (type)
 
-Declared by `src/presentation/status/Status.tsx` as `HappierStatusProps`.
+Declared by `dist/presentation/status/Status.d.ts` as `HappierStatusProps`.
 
 ```ts
 type HappierStatusProps = Readonly<{
@@ -5525,22 +6530,23 @@ type HappierStatusProps = Readonly<{
     controlRef?: (instance: unknown | null) => void;
     testID?: string;
     accessibilityLiveRegion?: HappierAccessibilityLiveRegion;
+    accessibilityLabel?: string;
 }>;
 ```
 
 
 ### `./presentation` — `HappierSurface` (value)
 
-Declared by `src/presentation/layout/Surface.tsx` as `HappierSurface`.
+Declared by `dist/presentation/layout/Surface.d.ts` as `HappierSurface`.
 
 ```ts
-function HappierSurface({ children, testID, onPress, disabled, accessibilityLabel, style, pressableStyle, pressedStyle, }: HappierSurfaceProps);
+function HappierSurface({ children, testID, onPress, disabled, accessibilityLabel, style, pressableStyle, pressedStyle, }: HappierSurfaceProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierSurfaceProps` (type)
 
-Declared by `src/presentation/layout/Surface.tsx` as `HappierSurfaceProps`.
+Declared by `dist/presentation/layout/Surface.d.ts` as `HappierSurfaceProps`.
 
 ```ts
 type HappierSurfaceProps = Readonly<{
@@ -5558,7 +6564,7 @@ type HappierSurfaceProps = Readonly<{
 
 ### `./presentation` — `HappierTabDescriptor` (type)
 
-Declared by `src/presentation/navigation/Tabs.tsx` as `HappierTabDescriptor`.
+Declared by `dist/presentation/navigation/Tabs.d.ts` as `HappierTabDescriptor`.
 
 ```ts
 type HappierTabDescriptor = Readonly<{
@@ -5575,7 +6581,7 @@ type HappierTabDescriptor = Readonly<{
 
 ### `./presentation` — `HappierTabPanelActivity` (type)
 
-Declared by `src/presentation/navigation/Tabs.tsx` as `HappierTabPanelActivity`.
+Declared by `dist/presentation/navigation/Tabs.d.ts` as `HappierTabPanelActivity`.
 
 ```ts
 type HappierTabPanelActivity = Readonly<{
@@ -5587,7 +6593,7 @@ type HappierTabPanelActivity = Readonly<{
 
 ### `./presentation` — `HappierTabRetention` (type)
 
-Declared by `src/presentation/navigation/Tabs.tsx` as `HappierTabRetention`.
+Declared by `dist/presentation/navigation/Tabs.d.ts` as `HappierTabRetention`.
 
 ```ts
 type HappierTabRetention = 'retain' | 'discard';
@@ -5596,7 +6602,7 @@ type HappierTabRetention = 'retain' | 'discard';
 
 ### `./presentation` — `HappierTabs` (value)
 
-Declared by `src/presentation/navigation/Tabs.tsx` as `HappierTabs`.
+Declared by `dist/presentation/navigation/Tabs.d.ts` as `HappierTabs`.
 
 ```ts
 function HappierTabs(props: Readonly<{
@@ -5606,31 +6612,58 @@ function HappierTabs(props: Readonly<{
     children?: ReactNode;
     theme: HappierUiTheme;
     testID?: string;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierText` (value)
 
-Declared by `src/presentation/text/Text.tsx` as `HappierText`.
+Declared by `dist/presentation/text/Text.d.ts` as `HappierText`.
 
 ```ts
-const HappierText: import("/Users/leeroy/Documents/Development/happier/dev/packages/plugin-ui/node_modules/@types/react/index").NamedExoticComponent<Readonly<{ children?: ReactNode; style?: HappierStyleProp; accessible?: boolean; accessibilityLabel?: string; accessibilityHint?: string; accessibilityLiveRegion?: import("/Users/leeroy/Documents/Development/happier/dev/packages/plugin-ui/src/presentation/portableTypes").HappierAccessibilityLiveRegion; accessibilityRole?: "alert" | "header" | "link" | "none" | "text"; allowFontScaling?: boolean; ellipsizeMode?: "clip" | "head" | "middle" | "tail"; maxFontSizeMultiplier?: number | null; nativeID?: string; numberOfLines?: number; onLayout?: (event: import("/Users/leeroy/Documents/Development/happier/dev/packages/plugin-ui/src/presentation/portableTypes").HappierLayoutChangeEvent) => void; onLongPress?: (event?: import("/Users/leeroy/Documents/Development/happier/dev/packages/plugin-ui/src/presentation/portableTypes").HappierGestureResponderEvent) => void; onPress?: (event?: import("/Users/leeroy/Documents/Development/happier/dev/packages/plugin-ui/src/presentation/portableTypes").HappierGestureResponderEvent) => void; selectable?: boolean; suppressHighlighting?: boolean; testID?: string; }> & Readonly<{ variant?: HappierTextVariant; tone?: HappierTone; selectable?: boolean; textScale?: number; scaleStyleEntry?: TextStyleEntryTransform; baseStyle?: HappierStyleProp; tabIndex?: 0 | -1; }> & import("/Users/leeroy/Documents/Development/happier/dev/packages/plugin-ui/node_modules/@types/react/index").RefAttributes<unknown>>;
+const HappierText: import("react").NamedExoticComponent<Readonly<{
+    children?: ReactNode;
+    style?: HappierStyleProp;
+    accessible?: boolean;
+    accessibilityLabel?: string;
+    accessibilityHint?: string;
+    accessibilityLiveRegion?: import("../portableTypes.js").HappierAccessibilityLiveRegion;
+    accessibilityRole?: 'alert' | 'header' | 'link' | 'none' | 'text';
+    allowFontScaling?: boolean;
+    ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
+    maxFontSizeMultiplier?: number | null;
+    nativeID?: string;
+    numberOfLines?: number;
+    onLayout?: (event: import("../portableTypes.js").HappierLayoutChangeEvent) => void;
+    onLongPress?: (event?: import("../portableTypes.js").HappierGestureResponderEvent) => void;
+    onPress?: (event?: import("../portableTypes.js").HappierGestureResponderEvent) => void;
+    selectable?: boolean;
+    suppressHighlighting?: boolean;
+    testID?: string;
+}> & Readonly<{
+    variant?: HappierTextVariant;
+    tone?: HappierTone;
+    selectable?: boolean;
+    textScale?: number;
+    scaleStyleEntry?: TextStyleEntryTransform;
+    baseStyle?: HappierStyleProp;
+    tabIndex?: 0 | -1;
+}> & import("react").RefAttributes<unknown>>;
 ```
 
 
 ### `./presentation` — `HappierTextField` (value)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierTextField`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierTextField`.
 
 ```ts
-function HappierTextField(props: HappierTextFieldProps);
+function HappierTextField(props: HappierTextFieldProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierTextFieldProps` (type)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierTextFieldProps`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierTextFieldProps`.
 
 ```ts
 type HappierTextFieldProps = Readonly<{
@@ -5643,6 +6676,13 @@ type HappierTextFieldProps = Readonly<{
     secure?: boolean;
     multiline?: boolean;
     keyboardType?: 'default' | 'url' | 'numeric';
+    autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+    autoCorrect?: boolean;
+    selection?: HappierTextSelection;
+    onSelectionChange?: (selection: HappierTextSelection) => void;
+    onSubmitEditing?: () => void;
+    onCompositionChange?: (isComposing: boolean) => void;
+    onEscape?: () => boolean;
     minimumTouchTarget?: number;
     controlRef?: (instance: unknown | null) => void;
     theme: HappierUiTheme;
@@ -5653,7 +6693,7 @@ type HappierTextFieldProps = Readonly<{
 
 ### `./presentation` — `HappierTextPresentation` (type)
 
-Declared by `src/presentation/text/Text.tsx` as `HappierTextPresentation`.
+Declared by `dist/presentation/text/Text.d.ts` as `HappierTextPresentation`.
 
 ```ts
 type HappierTextPresentation = Readonly<{
@@ -5666,7 +6706,7 @@ type HappierTextPresentation = Readonly<{
 
 ### `./presentation` — `HappierTextPresentationInput` (type)
 
-Declared by `src/presentation/text/Text.tsx` as `HappierTextPresentationInput`.
+Declared by `dist/presentation/text/Text.d.ts` as `HappierTextPresentationInput`.
 
 ```ts
 type HappierTextPresentationInput = Readonly<{
@@ -5678,7 +6718,7 @@ type HappierTextPresentationInput = Readonly<{
 
 ### `./presentation` — `HappierTextProps` (type)
 
-Declared by `src/presentation/text/Text.tsx` as `HappierTextProps`.
+Declared by `dist/presentation/text/Text.d.ts` as `HappierTextProps`.
 
 ```ts
 type HappierTextProps = HappierTextHostProps & Readonly<{
@@ -5695,16 +6735,16 @@ type HappierTextProps = HappierTextHostProps & Readonly<{
 
 ### `./presentation` — `HappierTextSelectabilityScope` (value)
 
-Declared by `src/presentation/text/Text.tsx` as `HappierTextSelectabilityScope`.
+Declared by `dist/presentation/text/Text.d.ts` as `HappierTextSelectabilityScope`.
 
 ```ts
-function HappierTextSelectabilityScope({ selectable, children, }: HappierTextSelectabilityScopeProps);
+function HappierTextSelectabilityScope({ selectable, children, }: HappierTextSelectabilityScopeProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierTextSelectabilityScopeProps` (type)
 
-Declared by `src/presentation/text/Text.tsx` as `HappierTextSelectabilityScopeProps`.
+Declared by `dist/presentation/text/Text.d.ts` as `HappierTextSelectabilityScopeProps`.
 
 ```ts
 type HappierTextSelectabilityScopeProps = Readonly<{
@@ -5714,9 +6754,21 @@ type HappierTextSelectabilityScopeProps = Readonly<{
 ```
 
 
+### `./presentation` — `HappierTextSelection` (type)
+
+Declared by `dist/presentation/portableTypes.d.ts` as `HappierTextSelection`.
+
+```ts
+type HappierTextSelection = Readonly<{
+    start: number;
+    end: number;
+}>;
+```
+
+
 ### `./presentation` — `HappierTextVariant` (type)
 
-Declared by `src/presentation/semantics.ts` as `HappierTextVariant`.
+Declared by `dist/presentation/semantics.d.ts` as `HappierTextVariant`.
 
 ```ts
 type HappierTextVariant = 'body' | 'label' | 'title' | 'caption' | 'code';
@@ -5725,7 +6777,7 @@ type HappierTextVariant = 'body' | 'label' | 'title' | 'caption' | 'code';
 
 ### `./presentation` — `HappierToggle` (value)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierToggle`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierToggle`.
 
 ```ts
 function HappierToggle(props: Readonly<{
@@ -5736,13 +6788,13 @@ function HappierToggle(props: Readonly<{
     minimumTouchTarget?: number;
     theme: HappierUiTheme;
     testID?: string;
-}>);
+}>): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierTone` (type)
 
-Declared by `src/presentation/semantics.ts` as `HappierTone`.
+Declared by `dist/presentation/semantics.d.ts` as `HappierTone`.
 
 ```ts
 type HappierTone = 'neutral' | 'secondary' | 'muted' | 'info' | 'success' | 'warning' | 'danger' | 'accent';
@@ -5751,16 +6803,16 @@ type HappierTone = 'neutral' | 'secondary' | 'muted' | 'info' | 'success' | 'war
 
 ### `./presentation` — `HappierValidationMessage` (value)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierValidationMessage`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierValidationMessage`.
 
 ```ts
-function HappierValidationMessage({ message, theme, testID, nativeID, accessibilityLiveRegion, }: HappierValidationMessageProps);
+function HappierValidationMessage({ message, theme, testID, nativeID, accessibilityLiveRegion, }: HappierValidationMessageProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
 ### `./presentation` — `HappierValidationMessageProps` (type)
 
-Declared by `src/presentation/form/Fields.tsx` as `HappierValidationMessageProps`.
+Declared by `dist/presentation/form/Fields.d.ts` as `HappierValidationMessageProps`.
 
 ```ts
 type HappierValidationMessageProps = Readonly<{
@@ -5775,7 +6827,7 @@ type HappierValidationMessageProps = Readonly<{
 
 ### `./presentation` — `HappierWebSpinnerPresentation` (type)
 
-Declared by `src/presentation/feedback/Spinner.tsx` as `HappierWebSpinnerPresentation`.
+Declared by `dist/presentation/feedback/Spinner.d.ts` as `HappierWebSpinnerPresentation`.
 
 ```ts
 type HappierWebSpinnerPresentation = Readonly<{
@@ -5787,7 +6839,7 @@ type HappierWebSpinnerPresentation = Readonly<{
 
 ### `./presentation` — `HappierWebSpinnerPresentationInput` (type)
 
-Declared by `src/presentation/feedback/Spinner.tsx` as `HappierWebSpinnerPresentationInput`.
+Declared by `dist/presentation/feedback/Spinner.d.ts` as `HappierWebSpinnerPresentationInput`.
 
 ```ts
 type HappierWebSpinnerPresentationInput = Readonly<{
@@ -5803,7 +6855,7 @@ type HappierWebSpinnerPresentationInput = Readonly<{
 
 ### `./presentation` — `HappierWebSpinnerStyle` (type)
 
-Declared by `src/presentation/feedback/Spinner.tsx` as `HappierWebSpinnerStyle`.
+Declared by `dist/presentation/feedback/Spinner.d.ts` as `HappierWebSpinnerStyle`.
 
 ```ts
 type HappierWebSpinnerStyle = Readonly<{
@@ -5826,7 +6878,7 @@ type HappierWebSpinnerStyle = Readonly<{
 
 ### `./presentation` — `ScaleTextStyleOptions` (type)
 
-Declared by `src/presentation/text/textStyleScale.ts` as `ScaleTextStyleOptions`.
+Declared by `dist/presentation/text/textStyleScale.d.ts` as `ScaleTextStyleOptions`.
 
 ```ts
 type ScaleTextStyleOptions = Readonly<{
@@ -5837,7 +6889,7 @@ type ScaleTextStyleOptions = Readonly<{
 
 ### `./presentation` — `ScaledTextStyleMetrics` (type)
 
-Declared by `src/presentation/text/textStyleScale.ts` as `ScaledTextStyleMetrics`.
+Declared by `dist/presentation/text/textStyleScale.d.ts` as `ScaledTextStyleMetrics`.
 
 ```ts
 type ScaledTextStyleMetrics<T> = IsExactly<T, HappierStyleProp> extends true ? HappierStyleProp : T extends readonly unknown[] ? ScaledTextStyleArray<T> : T extends object ? {
@@ -5848,7 +6900,7 @@ type ScaledTextStyleMetrics<T> = IsExactly<T, HappierStyleProp> extends true ? H
 
 ### `./presentation` — `TextStyleEntryTransform` (type)
 
-Declared by `src/presentation/text/textStyleScale.ts` as `TextStyleEntryTransform`.
+Declared by `dist/presentation/text/textStyleScale.d.ts` as `TextStyleEntryTransform`.
 
 ```ts
 type TextStyleEntryTransform = <T extends object>(entry: T, textScale: number) => T;
@@ -5857,16 +6909,34 @@ type TextStyleEntryTransform = <T extends object>(entry: T, textScale: number) =
 
 ### `./presentation` — `cloneStyleEntryPreservingOwnProps` (value)
 
-Declared by `src/presentation/text/textStyleScale.ts` as `cloneStyleEntryPreservingOwnProps`.
+Declared by `dist/presentation/text/textStyleScale.d.ts` as `cloneStyleEntryPreservingOwnProps`.
 
 ```ts
 function cloneStyleEntryPreservingOwnProps<T extends object>(entry: T): T;
 ```
 
 
+### `./presentation` — `createHappierListMultiSelectionStore` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `createHappierListMultiSelectionStore`.
+
+```ts
+function createHappierListMultiSelectionStore(input: CreateHappierListMultiSelectionStateInput): HappierListMultiSelectionStore;
+```
+
+
+### `./presentation` — `createInitialHappierListMultiSelectionState` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `createInitialHappierListMultiSelectionState`.
+
+```ts
+function createInitialHappierListMultiSelectionState(input: CreateHappierListMultiSelectionStateInput): HappierListMultiSelectionState;
+```
+
+
 ### `./presentation` — `iconMatchedSpinnerSize` (value)
 
-Declared by `src/presentation/feedback/Spinner.tsx` as `iconMatchedSpinnerSize`.
+Declared by `dist/presentation/feedback/Spinner.d.ts` as `iconMatchedSpinnerSize`.
 
 ```ts
 function iconMatchedSpinnerSize(iconSize: number): number;
@@ -5875,7 +6945,7 @@ function iconMatchedSpinnerSize(iconSize: number): number;
 
 ### `./presentation` — `isHappierBannerUrgent` (value)
 
-Declared by `src/presentation/content/Foundation.tsx` as `isHappierBannerUrgent`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `isHappierBannerUrgent`.
 
 ```ts
 function isHappierBannerUrgent(tone: HappierTone): boolean;
@@ -5884,7 +6954,7 @@ function isHappierBannerUrgent(tone: HappierTone): boolean;
 
 ### `./presentation` — `isHappierIconName` (value)
 
-Declared by `src/presentation/content/Icon.ts` as `isHappierIconName`.
+Declared by `dist/presentation/content/Icon.d.ts` as `isHappierIconName`.
 
 ```ts
 function isHappierIconName(value: unknown): value is HappierIconName;
@@ -5893,7 +6963,7 @@ function isHappierIconName(value: unknown): value is HappierIconName;
 
 ### `./presentation` — `isHappierTabSelected` (value)
 
-Declared by `src/presentation/navigation/Tabs.tsx` as `isHappierTabSelected`.
+Declared by `dist/presentation/navigation/Tabs.d.ts` as `isHappierTabSelected`.
 
 ```ts
 function isHappierTabSelected(value: string, candidate: string): boolean;
@@ -5902,7 +6972,7 @@ function isHappierTabSelected(value: string, candidate: string): boolean;
 
 ### `./presentation` — `matchesHappierMenuQuery` (value)
 
-Declared by `src/presentation/interaction/Menu.ts` as `matchesHappierMenuQuery`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `matchesHappierMenuQuery`.
 
 ```ts
 function matchesHappierMenuQuery(input: Readonly<{
@@ -5915,16 +6985,25 @@ function matchesHappierMenuQuery(input: Readonly<{
 
 ### `./presentation` — `normalizeHappierCodeLanguage` (value)
 
-Declared by `src/presentation/content/CodeBlock.ts` as `normalizeHappierCodeLanguage`.
+Declared by `dist/presentation/content/CodeBlock.d.ts` as `normalizeHappierCodeLanguage`.
 
 ```ts
 function normalizeHappierCodeLanguage(language: string | null | undefined): string | undefined;
 ```
 
 
+### `./presentation` — `parseHappierListMultiSelectionRowSnapshot` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `parseHappierListMultiSelectionRowSnapshot`.
+
+```ts
+function parseHappierListMultiSelectionRowSnapshot(rowSnapshot: string): HappierListMultiSelectionRowFlags;
+```
+
+
 ### `./presentation` — `patchHappierActionInputPath` (value)
 
-Declared by `src/presentation/form/actionInputFields.ts` as `patchHappierActionInputPath`.
+Declared by `dist/presentation/form/actionInputFields.d.ts` as `patchHappierActionInputPath`.
 
 ```ts
 function patchHappierActionInputPath(input: InputRecord, path: string, value: unknown): Record<string, unknown>;
@@ -5933,16 +7012,34 @@ function patchHappierActionInputPath(input: InputRecord, path: string, value: un
 
 ### `./presentation` — `readHappierActionInputPath` (value)
 
-Declared by `src/presentation/form/actionInputFields.ts` as `readHappierActionInputPath`.
+Declared by `dist/presentation/form/actionInputFields.d.ts` as `readHappierActionInputPath`.
 
 ```ts
 function readHappierActionInputPath(input: InputRecord, path: string): unknown;
 ```
 
 
+### `./presentation` — `readHappierPointerModifiers` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `readHappierPointerModifiers`.
+
+```ts
+function readHappierPointerModifiers(event: unknown): HappierPointerModifiers;
+```
+
+
+### `./presentation` — `reduceHappierListMultiSelection` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `reduceHappierListMultiSelection`.
+
+```ts
+function reduceHappierListMultiSelection(state: HappierListMultiSelectionState, action: HappierListMultiSelectionAction): HappierListMultiSelectionState;
+```
+
+
 ### `./presentation` — `resolveHappierActionFieldPresentation` (value)
 
-Declared by `src/presentation/form/actionInputFields.ts` as `resolveHappierActionFieldPresentation`.
+Declared by `dist/presentation/form/actionInputFields.d.ts` as `resolveHappierActionFieldPresentation`.
 
 ```ts
 function resolveHappierActionFieldPresentation<OptionValue = unknown>(field: HappierActionInputField, value: unknown, selection?: OptionValue | readonly OptionValue[]): HappierActionFieldPresentation<OptionValue>;
@@ -5951,7 +7048,7 @@ function resolveHappierActionFieldPresentation<OptionValue = unknown>(field: Hap
 
 ### `./presentation` — `resolveHappierBrandFallback` (value)
 
-Declared by `src/presentation/content/Image.tsx` as `resolveHappierBrandFallback`.
+Declared by `dist/presentation/content/Image.d.ts` as `resolveHappierBrandFallback`.
 
 ```ts
 function resolveHappierBrandFallback(displayName: string): string;
@@ -5960,16 +7057,20 @@ function resolveHappierBrandFallback(displayName: string): string;
 
 ### `./presentation` — `resolveHappierCodeBlockLayout` (value)
 
-Declared by `src/presentation/content/CodeBlock.ts` as `resolveHappierCodeBlockLayout`.
+Declared by `dist/presentation/content/CodeBlock.d.ts` as `resolveHappierCodeBlockLayout`.
 
 ```ts
-function resolveHappierCodeBlockLayout(input: Pick<HappierCodeBlockBehaviorInput, 'language' | 'showHeaderRow' | 'showCopyButton' | 'hasHeaderLeft' | 'hasHeaderRight'>): { readonly language: string | undefined; readonly shouldRenderHeaderRow: boolean; readonly shouldOverlayCopyButton: boolean; };
+function resolveHappierCodeBlockLayout(input: Pick<HappierCodeBlockBehaviorInput, 'language' | 'showHeaderRow' | 'showCopyButton' | 'hasHeaderLeft' | 'hasHeaderRight'>): {
+    readonly language: string | undefined;
+    readonly shouldRenderHeaderRow: boolean;
+    readonly shouldOverlayCopyButton: boolean;
+};
 ```
 
 
 ### `./presentation` — `resolveHappierFormPending` (value)
 
-Declared by `src/presentation/form/Fields.tsx` as `resolveHappierFormPending`.
+Declared by `dist/presentation/form/Fields.d.ts` as `resolveHappierFormPending`.
 
 ```ts
 function resolveHappierFormPending({ busy, implicitPending, }: HappierFormPendingInput): boolean;
@@ -5978,16 +7079,16 @@ function resolveHappierFormPending({ busy, implicitPending, }: HappierFormPendin
 
 ### `./presentation` — `resolveHappierIconSize` (value)
 
-Declared by `src/presentation/content/Icon.ts` as `resolveHappierIconSize`.
+Declared by `dist/presentation/content/Icon.d.ts` as `resolveHappierIconSize`.
 
 ```ts
-function resolveHappierIconSize(size: HappierIconSize = 'medium'): number;
+function resolveHappierIconSize(size?: HappierIconSize): number;
 ```
 
 
 ### `./presentation` — `resolveHappierImagePixels` (value)
 
-Declared by `src/presentation/content/Image.tsx` as `resolveHappierImagePixels`.
+Declared by `dist/presentation/content/Image.d.ts` as `resolveHappierImagePixels`.
 
 ```ts
 function resolveHappierImagePixels(size: HappierImageSize | undefined): number;
@@ -5996,7 +7097,7 @@ function resolveHappierImagePixels(size: HappierImageSize | undefined): number;
 
 ### `./presentation` — `resolveHappierItemBehavior` (value)
 
-Declared by `src/presentation/collection/semantics.ts` as `resolveHappierItemBehavior`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `resolveHappierItemBehavior`.
 
 ```ts
 function resolveHappierItemBehavior(input: HappierItemBehaviorInput): HappierItemBehavior;
@@ -6005,7 +7106,7 @@ function resolveHappierItemBehavior(input: HappierItemBehaviorInput): HappierIte
 
 ### `./presentation` — `resolveHappierItemGroupConstraints` (value)
 
-Declared by `src/presentation/collection/semantics.ts` as `resolveHappierItemGroupConstraints`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `resolveHappierItemGroupConstraints`.
 
 ```ts
 function resolveHappierItemGroupConstraints(input: Readonly<{
@@ -6019,7 +7120,7 @@ function resolveHappierItemGroupConstraints(input: Readonly<{
 
 ### `./presentation` — `resolveHappierItemSemantics` (value)
 
-Declared by `src/presentation/collection/semantics.ts` as `resolveHappierItemSemantics`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `resolveHappierItemSemantics`.
 
 ```ts
 function resolveHappierItemSemantics(input: HappierItemSemanticInput): Readonly<{
@@ -6029,9 +7130,36 @@ function resolveHappierItemSemantics(input: HappierItemSemanticInput): Readonly<
 ```
 
 
+### `./presentation` — `resolveHappierListMultiSelectionKeyboardIntent` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `resolveHappierListMultiSelectionKeyboardIntent`.
+
+```ts
+function resolveHappierListMultiSelectionKeyboardIntent(input: HappierListMultiSelectionKeyboardInput): HappierListMultiSelectionKeyboardIntent | null;
+```
+
+
+### `./presentation` — `resolveHappierListMultiSelectionPointerAction` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `resolveHappierListMultiSelectionPointerAction`.
+
+```ts
+function resolveHappierListMultiSelectionPointerAction(input: HappierListMultiSelectionPointerInput): HappierListMultiSelectionPointerAction;
+```
+
+
+### `./presentation` — `resolveHappierListMultiSelectionRange` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `resolveHappierListMultiSelectionRange`.
+
+```ts
+function resolveHappierListMultiSelectionRange(input: HappierListMultiSelectionRangeInput): HappierListMultiSelectionKey[];
+```
+
+
 ### `./presentation` — `resolveHappierMenuContent` (value)
 
-Declared by `src/presentation/interaction/Menu.ts` as `resolveHappierMenuContent`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `resolveHappierMenuContent`.
 
 ```ts
 function resolveHappierMenuContent<Item extends HappierMenuItemDescriptor>(input: Readonly<{
@@ -6043,7 +7171,7 @@ function resolveHappierMenuContent<Item extends HappierMenuItemDescriptor>(input
 
 ### `./presentation` — `resolveHappierMenuKeyAction` (value)
 
-Declared by `src/presentation/interaction/Menu.ts` as `resolveHappierMenuKeyAction`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `resolveHappierMenuKeyAction`.
 
 ```ts
 function resolveHappierMenuKeyAction(key: string): HappierMenuKeyAction;
@@ -6052,7 +7180,7 @@ function resolveHappierMenuKeyAction(key: string): HappierMenuKeyAction;
 
 ### `./presentation` — `resolveHappierMenuRadioGroups` (value)
 
-Declared by `src/presentation/interaction/Menu.ts` as `resolveHappierMenuRadioGroups`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `resolveHappierMenuRadioGroups`.
 
 ```ts
 function resolveHappierMenuRadioGroups(input: Readonly<{
@@ -6064,7 +7192,7 @@ function resolveHappierMenuRadioGroups(input: Readonly<{
 
 ### `./presentation` — `resolveHappierMenuSelection` (value)
 
-Declared by `src/presentation/interaction/Menu.ts` as `resolveHappierMenuSelection`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `resolveHappierMenuSelection`.
 
 ```ts
 function resolveHappierMenuSelection(input: Readonly<{
@@ -6078,7 +7206,7 @@ function resolveHappierMenuSelection(input: Readonly<{
 
 ### `./presentation` — `resolveHappierMenuTypeahead` (value)
 
-Declared by `src/presentation/interaction/Menu.ts` as `resolveHappierMenuTypeahead`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `resolveHappierMenuTypeahead`.
 
 ```ts
 function resolveHappierMenuTypeahead(input: Readonly<{
@@ -6089,9 +7217,18 @@ function resolveHappierMenuTypeahead(input: Readonly<{
 ```
 
 
+### `./presentation` — `resolveHappierPointerPlatform` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `resolveHappierPointerPlatform`.
+
+```ts
+function resolveHappierPointerPlatform(platformOs: string): HappierPointerPlatform;
+```
+
+
 ### `./presentation` — `resolveHappierPopoverPlacement` (value)
 
-Declared by `src/presentation/interaction/Menu.ts` as `resolveHappierPopoverPlacement`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `resolveHappierPopoverPlacement`.
 
 ```ts
 function resolveHappierPopoverPlacement(input: Readonly<{
@@ -6104,19 +7241,19 @@ function resolveHappierPopoverPlacement(input: Readonly<{
 
 ### `./presentation` — `resolveHappierProgressPercentage` (value)
 
-Declared by `src/presentation/content/Foundation.tsx` as `resolveHappierProgressPercentage`.
+Declared by `dist/presentation/content/Foundation.d.ts` as `resolveHappierProgressPercentage`.
 
 ```ts
-function resolveHappierProgressPercentage(value: number | undefined, options: Readonly<{
+function resolveHappierProgressPercentage(value: number | undefined, options?: Readonly<{
     indeterminate?: number;
     minimumVisible?: number;
-}> = {}): number;
+}>): number;
 ```
 
 
 ### `./presentation` — `resolveHappierRovingSelection` (value)
 
-Declared by `src/presentation/collection/semantics.ts` as `resolveHappierRovingSelection`.
+Declared by `dist/presentation/collection/semantics.d.ts` as `resolveHappierRovingSelection`.
 
 ```ts
 function resolveHappierRovingSelection(input: Readonly<{
@@ -6131,7 +7268,7 @@ function resolveHappierRovingSelection(input: Readonly<{
 
 ### `./presentation` — `resolveHappierTabKeySelection` (value)
 
-Declared by `src/presentation/navigation/Tabs.tsx` as `resolveHappierTabKeySelection`.
+Declared by `dist/presentation/navigation/Tabs.d.ts` as `resolveHappierTabKeySelection`.
 
 ```ts
 function resolveHappierTabKeySelection<T extends object>(input: Readonly<{
@@ -6145,7 +7282,7 @@ function resolveHappierTabKeySelection<T extends object>(input: Readonly<{
 
 ### `./presentation` — `resolveHappierWebSpinnerPresentation` (value)
 
-Declared by `src/presentation/feedback/Spinner.tsx` as `resolveHappierWebSpinnerPresentation`.
+Declared by `dist/presentation/feedback/Spinner.d.ts` as `resolveHappierWebSpinnerPresentation`.
 
 ```ts
 function resolveHappierWebSpinnerPresentation(input: HappierWebSpinnerPresentationInput): HappierWebSpinnerPresentation | null;
@@ -6154,25 +7291,40 @@ function resolveHappierWebSpinnerPresentation(input: HappierWebSpinnerPresentati
 
 ### `./presentation` — `scaleTextStyleMetrics` (value)
 
-Declared by `src/presentation/text/textStyleScale.ts` as `scaleTextStyleMetrics`.
+Declared by `dist/presentation/text/textStyleScale.d.ts` as `scaleTextStyleMetrics`.
 
 ```ts
-function scaleTextStyleMetrics<T>(style: T, textScale: number, options: ScaleTextStyleOptions = {}): ScaledTextStyleMetrics<T>;
+function scaleTextStyleMetrics<T>(style: T, textScale: number, options?: ScaleTextStyleOptions): ScaledTextStyleMetrics<T>;
+```
+
+
+### `./presentation` — `toHappierListMultiSelectionSnapshot` (value)
+
+Declared by `dist/presentation/collection/multiSelection.d.ts` as `toHappierListMultiSelectionSnapshot`.
+
+```ts
+function toHappierListMultiSelectionSnapshot(state: HappierListMultiSelectionState): HappierListMultiSelectionSnapshot;
 ```
 
 
 ### `./presentation` — `useHappierCodeBlockBehavior` (value)
 
-Declared by `src/presentation/content/CodeBlock.ts` as `useHappierCodeBlockBehavior`.
+Declared by `dist/presentation/content/CodeBlock.d.ts` as `useHappierCodeBlockBehavior`.
 
 ```ts
-function useHappierCodeBlockBehavior(input: HappierCodeBlockBehaviorInput): { readonly copied: boolean; readonly copy: () => Promise<boolean>; readonly language: string | undefined; readonly shouldRenderHeaderRow: boolean; readonly shouldOverlayCopyButton: boolean; };
+function useHappierCodeBlockBehavior(input: HappierCodeBlockBehaviorInput): {
+    readonly language: string | undefined;
+    readonly shouldRenderHeaderRow: boolean;
+    readonly shouldOverlayCopyButton: boolean;
+    readonly copied: boolean;
+    readonly copy: () => Promise<boolean>;
+};
 ```
 
 
 ### `./presentation` — `useHappierFormSubmission` (value)
 
-Declared by `src/presentation/form/Fields.tsx` as `useHappierFormSubmission`.
+Declared by `dist/presentation/form/Fields.d.ts` as `useHappierFormSubmission`.
 
 ```ts
 function useHappierFormSubmission(busy?: boolean): Readonly<{
@@ -6184,25 +7336,35 @@ function useHappierFormSubmission(busy?: boolean): Readonly<{
 
 ### `./presentation` — `useHappierItemGroupItemBehavior` (value)
 
-Declared by `src/presentation/collection/ItemGroup.tsx` as `useHappierItemGroupItemBehavior`.
+Declared by `dist/presentation/collection/ItemGroup.d.ts` as `useHappierItemGroupItemBehavior`.
 
 ```ts
-function useHappierItemGroupItemBehavior(input: HappierItemGroupItemBehaviorInput): { readonly grouped: boolean; readonly onKeyDown: (key: string) => boolean; readonly selectableItemCount: number | undefined; readonly tabStopIndex: number | null | undefined; readonly targetRef: (target: HappierItemGroupRadioFocusable | null) => void; };
+function useHappierItemGroupItemBehavior(input: HappierItemGroupItemBehaviorInput): {
+    readonly grouped: boolean;
+    readonly onKeyDown: (key: string) => boolean;
+    readonly selectableItemCount: number | undefined;
+    readonly tabStopIndex: number | null | undefined;
+    readonly targetRef: (target: HappierItemGroupRadioFocusable | null) => void;
+};
 ```
 
 
 ### `./presentation` — `useHappierMenuInteraction` (value)
 
-Declared by `src/presentation/interaction/Menu.ts` as `useHappierMenuInteraction`.
+Declared by `dist/presentation/interaction/Menu.d.ts` as `useHappierMenuInteraction`.
 
 ```ts
-function useHappierMenuInteraction<Item extends HappierMenuInteractionItem>(input: HappierMenuInteractionInput<Item>): { readonly selectedIndex: number; readonly setSelectedIndex: (index: number) => void; readonly handleKeyPress: (key: string, onActivate: (item: Item) => void, activeIndex?: number) => boolean; };
+function useHappierMenuInteraction<Item extends HappierMenuInteractionItem>(input: HappierMenuInteractionInput<Item>): {
+    readonly selectedIndex: number;
+    readonly setSelectedIndex: (index: number) => void;
+    readonly handleKeyPress: (key: string, onActivate: (item: Item) => void, activeIndex?: number) => boolean;
+};
 ```
 
 
 ### `./presentation` — `useHappierTabPanelActivity` (value)
 
-Declared by `src/presentation/navigation/Tabs.tsx` as `useHappierTabPanelActivity`.
+Declared by `dist/presentation/navigation/Tabs.d.ts` as `useHappierTabPanelActivity`.
 
 ```ts
 function useHappierTabPanelActivity(): HappierTabPanelActivity;
@@ -6211,7 +7373,7 @@ function useHappierTabPanelActivity(): HappierTabPanelActivity;
 
 ### `./presentation` — `useHappierTextPresentation` (value)
 
-Declared by `src/presentation/text/Text.tsx` as `useHappierTextPresentation`.
+Declared by `dist/presentation/text/Text.d.ts` as `useHappierTextPresentation`.
 
 ```ts
 function useHappierTextPresentation({ selectable, textScale, }: HappierTextPresentationInput): HappierTextPresentation;
@@ -6220,7 +7382,7 @@ function useHappierTextPresentation({ selectable, textScale, }: HappierTextPrese
 
 ### `./presentation` — `writeHappierActionInputPath` (value)
 
-Declared by `src/presentation/form/actionInputFields.ts` as `writeHappierActionInputPath`.
+Declared by `dist/presentation/form/actionInputFields.d.ts` as `writeHappierActionInputPath`.
 
 ```ts
 function writeHappierActionInputPath(input: InputRecord, path: string, value: unknown): Record<string, unknown>;
@@ -6229,7 +7391,7 @@ function writeHappierActionInputPath(input: InputRecord, path: string, value: un
 
 ### `./testing` — `PluginUiRnwSemanticSurfaceAdapterOptions` (type)
 
-Declared by `src/testing/rnwSemanticAdapter.tsx` as `PluginUiRnwSemanticSurfaceAdapterOptions`.
+Declared by `dist/testing/rnwSemanticAdapter.d.ts` as `PluginUiRnwSemanticSurfaceAdapterOptions`.
 
 ```ts
 type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
@@ -6243,16 +7405,16 @@ type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
 
 ### `./testing` — `createPluginUiRnwSemanticSurfaceAdapter` (value)
 
-Declared by `src/testing/rnwSemanticAdapter.tsx` as `createPluginUiRnwSemanticSurfaceAdapter`.
+Declared by `dist/testing/rnwSemanticAdapter.d.ts` as `createPluginUiRnwSemanticSurfaceAdapter`.
 
 ```ts
-function createPluginUiRnwSemanticSurfaceAdapter(options: PluginUiRnwSemanticSurfaceAdapterOptions = {}): PluginUiSemanticSurfaceAdapter<RenderSurface>;
+function createPluginUiRnwSemanticSurfaceAdapter(options?: PluginUiRnwSemanticSurfaceAdapterOptions): PluginUiSemanticSurfaceAdapter<RenderSurface>;
 ```
 
 
 ## Reachable package-owned declarations
 
-### `src/components/Action.tsx` — `ActionChromeProps`
+### `dist/components/Action.d.ts` — `ActionChromeProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6270,7 +7432,25 @@ type ActionChromeProps = Readonly<{
 ```
 
 
-### `src/components/Action.tsx` — `ActionGroupProps`
+### `dist/components/Action.d.ts` — `ActionCopy`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function ActionCopy({ value, ...chrome }: ActionCopyProps): ReactElement;
+```
+
+
+### `dist/components/Action.d.ts` — `ActionExecute`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function ActionExecute<TAction extends PluginUiActionReference>({ action, input, onSettled, ...chrome }: ActionExecuteProps<TAction>): ReactElement;
+```
+
+
+### `dist/components/Action.d.ts` — `ActionGroupProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6284,7 +7464,52 @@ type ActionGroupProps = Readonly<{
 ```
 
 
-### `src/components/Button.tsx` — `ButtonCommonProps`
+### `dist/components/Action.d.ts` — `ActionOpenExternal`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function ActionOpenExternal({ url, ...chrome }: ActionOpenExternalProps): ReactElement;
+```
+
+
+### `dist/components/Action.d.ts` — `ActionOpenSurface`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function ActionOpenSurface({ view, input, ...chrome }: ActionOpenSurfaceProps): ReactElement;
+```
+
+
+### `dist/components/Action.d.ts` — `ActionPanelRoot`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function ActionPanelRoot({ title, titleKey, testID, children }: ActionGroupProps): ReactElement;
+```
+
+
+### `dist/components/Action.d.ts` — `ActionPanelSection`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function ActionPanelSection({ title, titleKey, testID, children }: ActionGroupProps): ReactElement;
+```
+
+
+### `dist/components/Action.d.ts` — `ActionRefresh`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function ActionRefresh({ onRefresh, ...chrome }: ActionRefreshProps): ReactElement;
+```
+
+
+### `dist/components/Button.d.ts` — `ButtonCommonProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6305,7 +7530,7 @@ type ButtonCommonProps = Readonly<{
 ```
 
 
-### `src/components/Button.tsx` — `ButtonWithExplicitAccessibleNameProps`
+### `dist/components/Button.d.ts` — `ButtonWithExplicitAccessibleNameProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6316,7 +7541,7 @@ type ButtonWithExplicitAccessibleNameProps = ButtonCommonProps & Readonly<{
 ```
 
 
-### `src/components/Button.tsx` — `ButtonWithVisibleTitleProps`
+### `dist/components/Button.d.ts` — `ButtonWithVisibleTitleProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6328,19 +7553,16 @@ type ButtonWithVisibleTitleProps = ButtonCommonProps & Readonly<{
 ```
 
 
-### `src/components/Focus.tsx` — `FocusBinding`
+### `dist/components/Form.d.ts` — `FormActions`
 
 Reached from a published signature; not itself a published export.
 
 ```ts
-type FocusBinding = Readonly<{
-    host: PluginUiPresentationHost;
-    target: unknown;
-}>;
+function FormActions({ children }: FormActionsProps): ReactElement;
 ```
 
 
-### `src/components/Form.tsx` — `FormFieldHints`
+### `dist/components/Form.d.ts` — `FormFieldHints`
 
 Reached from a published signature; not itself a published export.
 
@@ -6363,7 +7585,7 @@ type FormFieldHints = Readonly<{
 ```
 
 
-### `src/components/Form.tsx` — `FormHintOption`
+### `dist/components/Form.d.ts` — `FormHintOption`
 
 Reached from a published signature; not itself a published export.
 
@@ -6377,7 +7599,7 @@ type FormHintOption = Readonly<{
 ```
 
 
-### `src/components/Form.tsx` — `FormHints`
+### `dist/components/Form.d.ts` — `FormHints`
 
 Reached from a published signature; not itself a published export.
 
@@ -6391,7 +7613,7 @@ type FormHints = Readonly<{
 ```
 
 
-### `src/components/Form.tsx` — `FormOption`
+### `dist/components/Form.d.ts` — `FormOption`
 
 Reached from a published signature; not itself a published export.
 
@@ -6407,7 +7629,7 @@ type FormOption = Readonly<{
 ```
 
 
-### `src/components/Form.tsx` — `FormOptionValue`
+### `dist/components/Form.d.ts` — `FormOptionValue`
 
 Reached from a published signature; not itself a published export.
 
@@ -6422,7 +7644,7 @@ type FormOptionValue = string | Readonly<{
 ```
 
 
-### `src/components/Form.tsx` — `FormPredicate`
+### `dist/components/Form.d.ts` — `FormPredicate`
 
 Reached from a published signature; not itself a published export.
 
@@ -6451,7 +7673,7 @@ type FormPredicate = Readonly<{
 ```
 
 
-### `src/components/Form.tsx` — `FormPrimitive`
+### `dist/components/Form.d.ts` — `FormPrimitive`
 
 Reached from a published signature; not itself a published export.
 
@@ -6460,7 +7682,16 @@ type FormPrimitive = string | number | boolean | null;
 ```
 
 
-### `src/components/Foundation.tsx` — `AuthorText`
+### `dist/components/Form.d.ts` — `FormRoot`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function FormRoot(props: FormProps): ReactElement;
+```
+
+
+### `dist/components/Foundation.d.ts` — `AuthorText`
 
 Reached from a published signature; not itself a published export.
 
@@ -6473,7 +7704,7 @@ type AuthorText = Readonly<{
 ```
 
 
-### `src/components/List.tsx` — `FlatVirtualizedListProps`
+### `dist/components/List.d.ts` — `FlatVirtualizedListProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6485,7 +7716,7 @@ type FlatVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & Readonl
 ```
 
 
-### `src/components/List.tsx` — `ItemSecondaryAction`
+### `dist/components/List.d.ts` — `ItemSecondaryAction`
 
 Reached from a published signature; not itself a published export.
 
@@ -6499,7 +7730,7 @@ type ItemSecondaryAction = Readonly<{
 ```
 
 
-### `src/components/List.tsx` — `ItemSecondaryActionsProps`
+### `dist/components/List.d.ts` — `ItemSecondaryActionsProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6516,7 +7747,7 @@ type ItemSecondaryActionsProps = Readonly<{
 ```
 
 
-### `src/components/List.tsx` — `ListBaseProps`
+### `dist/components/List.d.ts` — `ListBaseProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6531,7 +7762,25 @@ type ListBaseProps = Readonly<{
 ```
 
 
-### `src/components/List.tsx` — `ListSearchBaseProps`
+### `dist/components/List.d.ts` — `ListItem`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function ListItem(props: ListItemProps): ReactElement;
+```
+
+
+### `dist/components/List.d.ts` — `ListRoot`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function ListRoot<Item>(props: ListProps<Item>): ReactElement;
+```
+
+
+### `dist/components/List.d.ts` — `ListSearchBaseProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6541,11 +7790,21 @@ type ListSearchBaseProps<Item> = Readonly<{
     placeholder?: string;
     testID?: string;
     filter: (item: Item, query: string) => boolean;
+    onComposingValueChange?: (value: string | null) => void;
 }>;
 ```
 
 
-### `src/components/List.tsx` — `ListSelectionBaseProps`
+### `dist/components/List.d.ts` — `ListSection`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function ListSection(props: ListSectionProps): ReactElement;
+```
+
+
+### `dist/components/List.d.ts` — `ListSelectionBaseProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6553,11 +7812,15 @@ Reached from a published signature; not itself a published export.
 type ListSelectionBaseProps<Item> = Readonly<{
     isItemDisabled?: (item: Item, index: number) => boolean;
     onFocusedKeyChange?: (key: string) => void;
+    focusRequest?: Readonly<{
+        key: string;
+    }>;
+    multiple?: ListMultiSelectionCapabilityProps<Item>;
 }>;
 ```
 
 
-### `src/components/List.tsx` — `SectionedVirtualizedListProps`
+### `dist/components/List.d.ts` — `SectionedVirtualizedListProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6569,7 +7832,7 @@ type SectionedVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & Re
 ```
 
 
-### `src/components/List.tsx` — `StaticListProps`
+### `dist/components/List.d.ts` — `StaticListProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6590,7 +7853,7 @@ type StaticListProps = Readonly<{
 ```
 
 
-### `src/components/List.tsx` — `VirtualizedListProps`
+### `dist/components/List.d.ts` — `VirtualizedListProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6599,7 +7862,7 @@ type VirtualizedListProps<Item> = FlatVirtualizedListProps<Item> | SectionedVirt
 ```
 
 
-### `src/components/List.tsx` — `VirtualizedListSharedProps`
+### `dist/components/List.d.ts` — `VirtualizedListSharedProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6618,7 +7881,7 @@ type VirtualizedListSharedProps<Item> = Readonly<{
 ```
 
 
-### `src/components/Overlay.tsx` — `MenuContentProps`
+### `dist/components/Overlay.d.ts` — `MenuContentProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6633,7 +7896,7 @@ type MenuContentProps = Readonly<{
 ```
 
 
-### `src/components/Overlay.tsx` — `MenuItemBase`
+### `dist/components/Overlay.d.ts` — `MenuItemBase`
 
 Reached from a published signature; not itself a published export.
 
@@ -6646,7 +7909,7 @@ type MenuItemBase = Readonly<{
 ```
 
 
-### `src/components/State.tsx` — `StateCopyProps`
+### `dist/components/State.d.ts` — `StateCopyProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6662,7 +7925,25 @@ type StateCopyProps = Readonly<{
 ```
 
 
-### `src/components/TargetedSurface.tsx` — `TargetedSurfaceInput`
+### `dist/components/Tabs.d.ts` — `TabsItem`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function TabsItem(_props: TabsItemProps): null;
+```
+
+
+### `dist/components/Tabs.d.ts` — `TabsRoot`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+function TabsRoot(props: TabsProps): ReactElement;
+```
+
+
+### `dist/components/TargetedSurface.d.ts` — `TargetedSurfaceInput`
 
 Reached from a published signature; not itself a published export.
 
@@ -6671,35 +7952,7 @@ type TargetedSurfaceInput<TSurface extends PluginUiTargetedContributionSurfaceV1
 ```
 
 
-### `src/composer/hooks.ts` — `ComposerViewStateInternal`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type ComposerViewStateInternal = Readonly<{
-    handle: ComposerHandle | null;
-    result: ComposerReadResultV1 | null;
-    error: PluginError | null;
-    pending: ComposerViewStateV1['pending'];
-}>;
-```
-
-
-### `src/data/index.ts` — `QueryOpenState`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type QueryOpenState = Readonly<{
-    client: ReturnType<typeof usePluginUiDataClient> | null;
-    key: string;
-    pager: PluginUiCollectionQueryPager | null;
-    error: Error | null;
-}>;
-```
-
-
-### `src/hostApi/context.ts` — `PluginHostApiProviderInternalProps`
+### `dist/hostApi/context.d.ts` — `PluginHostApiProviderInternalProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6709,49 +7962,14 @@ type PluginHostApiProviderInternalProps = PluginHostApiProviderProps & Readonly<
     resourceStoreGeneration?: unknown;
     mountedPluginId?: string;
     composerRef?: ComposerRefV1 | null;
+    surfaceActivity?: Readonly<{
+        active: boolean;
+    }>;
 }>;
 ```
 
 
-### `src/hostApi/executeAction.ts` — `PluginUiActionExecutionWithOptionalInput`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type PluginUiActionExecutionWithOptionalInput = (action: PluginUiActionReference, input?: JsonValue, options?: PluginUiActionExecutionOptions) => Promise<JsonValue>;
-```
-
-
-### `src/hostApi/resourceStore.ts` — `MutableEntry`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type MutableEntry = {
-    readonly key: string;
-    readonly resource: PluginUiResourceReference;
-    readonly listeners: Set<() => void>;
-    snapshot: PluginUiResourceSnapshot;
-    subscriberCount: number;
-    liveSubscriberCount: number;
-    disposed: boolean;
-    reading: boolean;
-    readQueued: boolean;
-    readQueuedRetainsFreshSnapshot: boolean;
-    readQueuedExpectedDigest: string | null;
-    readController: AbortController | null;
-    watchController: AbortController | null;
-    watch: Disposable | null;
-    watchEstablishing: boolean;
-    watchUnsupported: boolean;
-    watchFailureTerminal: boolean;
-    watchRetryTimer: ReturnType<typeof setTimeout> | null;
-    watchRetryAttempts: number;
-};
-```
-
-
-### `src/presentation/collection/ItemGroup.tsx` — `HappierItemGroupRadioContext`
+### `dist/presentation/collection/ItemGroup.d.ts` — `HappierItemGroupRadioContext`
 
 Reached from a published signature; not itself a published export.
 
@@ -6764,33 +7982,20 @@ type HappierItemGroupRadioContext = Readonly<{
 ```
 
 
-### `src/presentation/collection/semantics.ts` — `HappierRovingCollectionItem`
+### `dist/presentation/collection/semantics.d.ts` — `HappierRovingCollectionItem`
 
 Reached from a published signature; not itself a published export.
 
 ```ts
 type HappierRovingCollectionItem = Readonly<{
     isTabStop: boolean;
-    onKeyDown: (key: string) => boolean;
+    onKeyDown: (key: string, event: unknown) => boolean;
     register: (target: HappierFocusable | null) => void;
 }>;
 ```
 
 
-### `src/presentation/form/Fields.tsx` — `HappierFieldIssueSemantics`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type HappierFieldIssueSemantics = Readonly<{
-    invalid: boolean;
-    issueId?: string;
-    issueHint?: string;
-}>;
-```
-
-
-### `src/presentation/form/actionInputFields.ts` — `HappierActionInputField`
+### `dist/presentation/form/actionInputFields.d.ts` — `HappierActionInputField`
 
 Reached from a published signature; not itself a published export.
 
@@ -6802,7 +8007,7 @@ type HappierActionInputField = Readonly<{
 ```
 
 
-### `src/presentation/form/actionInputFields.ts` — `InputRecord`
+### `dist/presentation/form/actionInputFields.d.ts` — `InputRecord`
 
 Reached from a published signature; not itself a published export.
 
@@ -6811,7 +8016,7 @@ type InputRecord = Readonly<Record<string, unknown>>;
 ```
 
 
-### `src/presentation/interaction/Menu.ts` — `HappierMenuInteractionItem`
+### `dist/presentation/interaction/Menu.d.ts` — `HappierMenuInteractionItem`
 
 Reached from a published signature; not itself a published export.
 
@@ -6823,20 +8028,7 @@ type HappierMenuInteractionItem = Readonly<{
 ```
 
 
-### `src/presentation/interaction/Pressable.tsx` — `WebPressState`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type WebPressState = Readonly<{
-    pressed: boolean;
-    hovered?: boolean;
-    focused?: boolean;
-}>;
-```
-
-
-### `src/presentation/portableTypes.ts` — `HappierAccessibilityLiveRegion`
+### `dist/presentation/portableTypes.d.ts` — `HappierAccessibilityLiveRegion`
 
 Reached from a published signature; not itself a published export.
 
@@ -6845,7 +8037,7 @@ type HappierAccessibilityLiveRegion = 'none' | 'polite' | 'assertive';
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierActivityIndicatorHostProps`
+### `dist/presentation/portableTypes.d.ts` — `HappierActivityIndicatorHostProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6866,7 +8058,7 @@ type HappierActivityIndicatorHostProps = Readonly<{
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierAlignment`
+### `dist/presentation/portableTypes.d.ts` — `HappierAlignment`
 
 Reached from a published signature; not itself a published export.
 
@@ -6875,7 +8067,7 @@ type HappierAlignment = 'baseline' | 'center' | 'flex-end' | 'flex-start' | 'str
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierDimension`
+### `dist/presentation/portableTypes.d.ts` — `HappierDimension`
 
 Reached from a published signature; not itself a published export.
 
@@ -6884,7 +8076,7 @@ type HappierDimension = number | `${number}%` | 'auto';
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierFocusable`
+### `dist/presentation/portableTypes.d.ts` — `HappierFocusable`
 
 Reached from a published signature; not itself a published export.
 
@@ -6895,7 +8087,7 @@ type HappierFocusable = Readonly<{
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierFontWeight`
+### `dist/presentation/portableTypes.d.ts` — `HappierFontWeight`
 
 Reached from a published signature; not itself a published export.
 
@@ -6904,7 +8096,7 @@ type HappierFontWeight = 'normal' | 'bold' | '100' | '200' | '300' | '400' | '50
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierGestureResponderEvent`
+### `dist/presentation/portableTypes.d.ts` — `HappierGestureResponderEvent`
 
 Reached from a published signature; not itself a published export.
 
@@ -6917,7 +8109,7 @@ type HappierGestureResponderEvent = Readonly<{
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierJustification`
+### `dist/presentation/portableTypes.d.ts` — `HappierJustification`
 
 Reached from a published signature; not itself a published export.
 
@@ -6926,7 +8118,7 @@ type HappierJustification = 'center' | 'flex-end' | 'flex-start' | 'space-around
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierKeyboardShouldPersistTaps`
+### `dist/presentation/portableTypes.d.ts` — `HappierKeyboardShouldPersistTaps`
 
 Reached from a published signature; not itself a published export.
 
@@ -6935,25 +8127,7 @@ type HappierKeyboardShouldPersistTaps = boolean | 'always' | 'never' | 'handled'
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierLayoutChangeEvent`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type HappierLayoutChangeEvent = Readonly<{
-    nativeEvent: Readonly<{
-        layout: Readonly<{
-            x: number;
-            y: number;
-            width: number;
-            height: number;
-        }>;
-    }>;
-}>;
-```
-
-
-### `src/presentation/portableTypes.ts` — `HappierPortableStyle`
+### `dist/presentation/portableTypes.d.ts` — `HappierPortableStyle`
 
 Reached from a published signature; not itself a published export.
 
@@ -7057,7 +8231,7 @@ type HappierPortableStyle = Readonly<{
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierScrollEvent`
+### `dist/presentation/portableTypes.d.ts` — `HappierScrollEvent`
 
 Reached from a published signature; not itself a published export.
 
@@ -7068,7 +8242,7 @@ type HappierScrollEvent = Readonly<{
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierStyleProp`
+### `dist/presentation/portableTypes.d.ts` — `HappierStyleProp`
 
 Reached from a published signature; not itself a published export.
 
@@ -7077,7 +8251,7 @@ type HappierStyleProp = HappierPortableStyle | false | null | undefined | Happie
 ```
 
 
-### `src/presentation/portableTypes.ts` — `HappierTextHostProps`
+### `dist/presentation/portableTypes.d.ts` — `HappierTextHostProps`
 
 Reached from a published signature; not itself a published export.
 
@@ -7105,7 +8279,7 @@ type HappierTextHostProps = Readonly<{
 ```
 
 
-### `src/presentation/text/textStyleScale.ts` — `IsExactly`
+### `dist/presentation/text/textStyleScale.d.ts` — `IsExactly`
 
 Reached from a published signature; not itself a published export.
 
@@ -7122,7 +8296,7 @@ type IsExactly<Left, Right> = [
 ```
 
 
-### `src/presentation/text/textStyleScale.ts` — `ScaleTextMetricValue`
+### `dist/presentation/text/textStyleScale.d.ts` — `ScaleTextMetricValue`
 
 Reached from a published signature; not itself a published export.
 
@@ -7131,7 +8305,7 @@ type ScaleTextMetricValue<Value> = Value extends number ? number : Value;
 ```
 
 
-### `src/presentation/text/textStyleScale.ts` — `ScaledTextMetricKey`
+### `dist/presentation/text/textStyleScale.d.ts` — `ScaledTextMetricKey`
 
 Reached from a published signature; not itself a published export.
 
@@ -7140,7 +8314,7 @@ type ScaledTextMetricKey = 'fontSize' | 'lineHeight' | 'letterSpacing';
 ```
 
 
-### `src/presentation/text/textStyleScale.ts` — `ScaledTextStyleArray`
+### `dist/presentation/text/textStyleScale.d.ts` — `ScaledTextStyleArray`
 
 Reached from a published signature; not itself a published export.
 
@@ -7151,110 +8325,9 @@ type ScaledTextStyleArray<T extends readonly unknown[]> = number extends T['leng
 ```
 
 
-### `src/presentationHost/context.ts` — `PluginUiPopoverContentControls`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type PluginUiPopoverContentControls = Readonly<{
-    requestClose(reason: 'selection' | 'escape'): void;
-    maxHeight: number;
-}>;
-```
-
-
-### `src/presentationHost/context.ts` — `PluginUiPopoverPresentation`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type PluginUiPopoverPresentation = 'popover' | 'menu' | 'dropdown' | 'context';
-```
-
-
-### `src/presentationHost/context.ts` — `PluginUiPresentationHost`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type PluginUiPresentationHost = Readonly<{
-    brand?: Readonly<{
-        displayName: string;
-        resource?: Readonly<{
-            pluginId: string;
-            localId: string;
-        }>;
-    }>;
-    resolveBrandDisplayName?(pluginId: string): string | undefined;
-    renderBrandMark?(input: PluginUiTargetBrandMarkInput): ReactElement | undefined;
-    renderTargetedSurface?(input: PluginUiTargetedSurfacePresentation): ReactNode;
-    targetedSurfaceUnavailableReason?: 'unsupported_nested_targeted_surface';
-    focusTarget?(target: unknown): boolean;
-    renderMarkdown(input: Readonly<{
-        value: string;
-        selectable: boolean;
-        testID?: string;
-    }>): ReactNode;
-    renderCodeBlock(input: Readonly<{
-        code: string;
-        language?: string;
-        selectable: boolean;
-        testID?: string;
-    }>): ReactNode;
-    renderPopover(input: Readonly<{
-        open: boolean;
-        anchorRef: RefObject<unknown>;
-        followScrollRef?: RefObject<unknown>;
-        focusReturnRef?: RefObject<unknown>;
-        initialFocusRef?: RefObject<unknown>;
-        placement?: 'auto' | 'top' | 'bottom' | 'left' | 'right';
-        presentation?: PluginUiPopoverPresentation;
-        autoFocusOnOpen?: boolean;
-        onRequestClose(): void;
-        content(controls: PluginUiPopoverContentControls): ReactNode;
-    }>): ReactNode;
-    renderIcon(input: Readonly<{
-        name: string;
-        size: number;
-        color?: string;
-        accessibilityLabel?: string;
-        testID?: string;
-    }>): ReactNode;
-}>;
-```
-
-
-### `src/presentationHost/context.ts` — `PluginUiTargetBrandMarkInput`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type PluginUiTargetBrandMarkInput = Readonly<{
-    pluginId: string;
-    size?: 'small' | 'medium' | 'large';
-    showName?: boolean;
-    externallyLabelled?: boolean;
-    testID?: string;
-}>;
-```
-
-
-### `src/presentationHost/context.ts` — `PluginUiTargetedSurfacePresentation`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type PluginUiTargetedSurfacePresentation = Readonly<{
-    surface: PluginUiTargetedContributionSurfaceV1;
-    input: JsonValue;
-    instanceKey?: string;
-    fallback?: ReactNode;
-}>;
-```
-
-
 ## Referenced declarations owned by other packages
 
+- `@happier-dev/plugin-sdk#AccountKvService`
 - `@happier-dev/plugin-sdk#ComposerDecorationSetV1`
 - `@happier-dev/plugin-sdk#ContributionSurfaceHandle`
 - `@happier-dev/plugin-sdk#Disposable`
@@ -7269,32 +8342,25 @@ type PluginUiTargetedSurfacePresentation = Readonly<{
 - `@happier-dev/plugin-sdk#PluginUiHostApi`
 - `@happier-dev/plugin-sdk#PluginUiIconTokenV1`
 - `@happier-dev/plugin-sdk#PluginUiPlatform`
-- `@happier-dev/plugin-sdk#PluginUiSemanticAdapterNode`
 - `@happier-dev/plugin-sdk#PluginUiSemanticSurfaceAdapter`
-- `@happier-dev/plugin-sdk#PluginUiSemanticSurfaceMount`
 - `@happier-dev/plugin-sdk#PluginUiTargetedContributionSurfaceV1`
 - `@happier-dev/plugin-sdk#PluginUiThemeV1`
 - `@happier-dev/plugin-sdk#ProtocolJsonValue`
 - `@happier-dev/plugin-sdk#RenderContext`
 - `@happier-dev/plugin-sdk#RenderSurface`
 - `@happier-dev/plugin-sdk#ResourceContent`
-- `@happier-dev/plugin-sdk#ResourceSubscriptionEvent`
+- `@happier-dev/plugin-sdk#ScopedSettingsService`
 - `@happier-dev/plugin-sdk#SurfaceContext`
 - `@happier-dev/protocol#PluginCollectionUiQueryErrorV1`
 - `@happier-dev/protocol#PluginCollectionUiQueryRequestV1`
 - `@happier-dev/protocol#PluginCollectionUiQueryResultV1`
-- `@types/node#AbortController`
 - `@types/node#AbortSignal`
-- `@types/node#setTimeout`
 - `@types/react#ComponentType`
-- `@types/react#HTMLElement`
+- `@types/react#FunctionComponentElement`
+- `@types/react#JSX`
+- `@types/react#NamedExoticComponent`
 - `@types/react#React`
 - `@types/react#ReactElement`
 - `@types/react#ReactNode`
+- `@types/react#RefAttributes`
 - `@types/react#RefObject`
-- `react-native#ScrollView`
-- `react-native#StyleProp`
-- `react-native#TextStyle`
-- `react-native#View`
-- `react-native#ViewStyle`
-- `react-native#setTimeout`

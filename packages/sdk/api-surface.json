@@ -178,6 +178,13 @@
     },
     {
       "specifier": ".",
+      "exportName": "HappierSessionSendAndWaitInput",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "HappierSessionSendAndWaitInput"
+    },
+    {
+      "specifier": ".",
       "exportName": "HappierSessionSpawnError",
       "kind": "value",
       "declarationModule": "dist/index.d.ts",

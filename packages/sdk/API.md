@@ -33,6 +33,7 @@ Declaration: `dist/index.d.ts`
 - type `HappierMachineSessions` from `dist/index.d.ts`
 - type `HappierSession` from `dist/index.d.ts`
 - value `HappierSessionInitialInputError` from `dist/index.d.ts`
+- type `HappierSessionSendAndWaitInput` from `dist/index.d.ts`
 - value `HappierSessionSpawnError` from `dist/index.d.ts`
 - type `HappierSessionSpawnInput` from `dist/index.d.ts`
 - type `HappierSessionSpawnOptions` from `dist/index.d.ts`
