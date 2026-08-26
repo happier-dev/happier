@@ -6,6 +6,7 @@ import {
 import { buildManagedLimaEditArgs, resolveManagedLimaProfile } from './profiles.mjs';
 import {
   ensureManagedLimaGuestLoginManager,
+  inspectManagedLimaGuestLoginManager,
   inspectManagedLimaGuestIdentity,
   provisionManagedLimaGuest,
 } from './provisioner.mjs';
@@ -154,8 +155,12 @@ export async function doctorManagedLimaInstance({
   }
   const profile = resolveManagedLimaProfile(profileName, { architecture });
   const drift = evaluateManagedLimaInstance(current.instance, profile);
+  const guestLoginManager = current.status.toLowerCase() === 'running'
+    ? await inspectManagedLimaGuestLoginManager({ executor, instance })
+    : null;
   const ok = Object.values(drift).every((entries) => entries.length === 0)
-    && current.status.toLowerCase() !== 'broken';
+    && current.status.toLowerCase() !== 'broken'
+    && (guestLoginManager?.ok ?? true);
   return {
     ok,
     exists: true,
@@ -163,5 +168,6 @@ export async function doctorManagedLimaInstance({
     limaVersion: String(lima.out || lima.err || '').trim(),
     status: current.status,
     drift,
+    ...(guestLoginManager ? { guestLoginManager } : {}),
   };
 }

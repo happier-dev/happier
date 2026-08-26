@@ -56,23 +56,32 @@ const LOGIN_MANAGER_REPAIR_COMMAND = [
   'sudo systemctl start systemd-logind.service',
 ].join('; ');
 
+export async function inspectManagedLimaGuestLoginManager({ executor, instance: rawInstance }) {
+  if (!executor || typeof executor.capture !== 'function') throw new Error('[managed-lima] executor is required');
+  const instance = validateManagedLimaInstanceName(rawInstance);
+  const result = await executor.capture('limactl', [
+    'shell', instance, '--', 'sh', '-lc', LOGIN_MANAGER_HEALTH_COMMAND,
+  ]);
+  return result.exitCode === 0
+    ? { ok: true, error: null }
+    : { ok: false, error: String(result.err ?? '').trim() || 'loginctl timed out' };
+}
+
 export async function ensureManagedLimaGuestLoginManager({ executor, instance: rawInstance }) {
   if (!executor || typeof executor.capture !== 'function' || typeof executor.run !== 'function') {
     throw new Error('[managed-lima] executor is required');
   }
   const instance = validateManagedLimaInstanceName(rawInstance);
-  const inspect = async () => await executor.capture('limactl', [
-    'shell', instance, '--', 'sh', '-lc', LOGIN_MANAGER_HEALTH_COMMAND,
-  ]);
-  if ((await inspect()).exitCode === 0) return { repaired: false };
+  const inspect = async () => await inspectManagedLimaGuestLoginManager({ executor, instance });
+  if ((await inspect()).ok) return { repaired: false };
 
   await executor.run('limactl', [
     'shell', instance, '--', 'sh', '-lc', LOGIN_MANAGER_REPAIR_COMMAND,
   ]);
   const repaired = await inspect();
-  if (repaired.exitCode !== 0) {
+  if (!repaired.ok) {
     const error = new Error(
-      `[managed-lima] guest login manager remained unresponsive after targeted repair: ${String(repaired.err ?? '').trim() || 'loginctl timed out'}`,
+      `[managed-lima] guest login manager remained unresponsive after targeted repair: ${repaired.error}`,
     );
     error.code = 'MANAGED_LIMA_GUEST_LOGIN_MANAGER_UNHEALTHY';
     throw error;

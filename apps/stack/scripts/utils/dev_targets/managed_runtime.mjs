@@ -1,6 +1,7 @@
 import { createManagedLimaHostExecutor } from '../managed_lima/host_executor.mjs';
 import { getManagedLimaStatus, startManagedLimaInstance } from '../managed_lima/lifecycle.mjs';
 import { doctorManagedLimaInstance } from '../managed_lima/manager.mjs';
+import { ensureManagedLimaGuestLoginManager } from '../managed_lima/provisioner.mjs';
 import { reconcileManagedLimaDevTargetSshPublication } from './managed_worker.mjs';
 
 export function createManagedDevTargetRuntimeExecutor(target, env = process.env) {
@@ -26,6 +27,7 @@ export async function startManagedDevTargetRuntime(
     createExecutor = createManagedDevTargetRuntimeExecutor,
     startRuntime = startManagedLimaInstance,
     getRuntimeStatus = getManagedLimaStatus,
+    ensureGuestLoginManager = ensureManagedLimaGuestLoginManager,
     reconcileSshPublication = reconcileManagedLimaDevTargetSshPublication,
   } = {},
 ) {
@@ -39,12 +41,16 @@ export async function startManagedDevTargetRuntime(
   if (!current.exists || String(current.status).toLowerCase() !== 'running') {
     throw new Error(`[dev-targets] managed Lima guest is not running: ${String(current.status)}`);
   }
+  const guestLoginManager = await ensureGuestLoginManager({
+    executor,
+    instance: target.managedRuntime.instance,
+  });
   const sshPublication = await reconcileSshPublication({
     target,
     sshLocalPort: current.instance?.sshLocalPort ?? current.instance?.SSHLocalPort,
     env,
   });
-  return { ...lifecycle, sshPublication };
+  return { ...lifecycle, guestLoginManager, sshPublication };
 }
 
 export async function doctorManagedDevTargetRuntime({ target, env = process.env }) {

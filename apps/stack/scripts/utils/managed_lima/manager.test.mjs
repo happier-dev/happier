@@ -123,6 +123,47 @@ test('managed Lima doctor reports retained drift without mutating or stopping th
   assert.equal(executor.calls.some((call) => call.kind === 'run'), false);
 });
 
+test('managed Lima doctor reports an unresponsive guest login manager without repairing it', async () => {
+  const executor = executorWithLimaProbe({ installed: true });
+  const originalCapture = executor.capture.bind(executor);
+  executor.capture = async (command, args) => {
+    if (command === 'limactl' && args[0] === 'list') {
+      return {
+        exitCode: 0,
+        out: `${JSON.stringify({
+          name: 'happier-agent-primary', status: 'Running', vmType: 'vz', arch: 'aarch64',
+          cpus: 8, memory: 16 * 1024 ** 3, disk: 160 * 1024 ** 3,
+          config: {
+            mounts: [],
+            vmOpts: { vz: { diskImageFormat: 'raw', rosetta: { enabled: false, binfmt: false } } },
+            ssh: { forwardAgent: false },
+            containerd: { user: false, system: false },
+            portForwards: [
+              { guestPortRange: [13000, 13999], hostPortRange: [13000, 13999] },
+              { guestPortRange: [18000, 19099], hostPortRange: [18000, 19099] },
+            ],
+          },
+        })}\n`,
+        err: '',
+      };
+    }
+    if (command === 'limactl' && args[0] === 'shell') {
+      return { exitCode: 124, out: '', err: 'loginctl timed out' };
+    }
+    return originalCapture(command, args);
+  };
+
+  const result = await doctorManagedLimaInstance({
+    executor,
+    instance: 'happier-agent-primary',
+    profileName: 'small',
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.guestLoginManager, { ok: false, error: 'loginctl timed out' });
+  assert.equal(executor.calls.some((call) => call.kind === 'run'), false);
+});
+
 test('explicit setup reconciles mutable resource/config drift while preserving retained disk identity', async () => {
   const executor = executorWithLimaProbe({ installed: true });
   const originalCapture = executor.capture.bind(executor);

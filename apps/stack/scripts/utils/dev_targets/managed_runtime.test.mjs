@@ -25,6 +25,10 @@ test('managed runtime startup refreshes guest SSH publication from the running L
       calls.push(['status', input]);
       return { exists: true, status: 'Running', instance: { sshLocalPort: 60955 } };
     },
+    ensureGuestLoginManager: async (input) => {
+      calls.push(['login-manager', input]);
+      return { repaired: false };
+    },
     reconcileSshPublication: async (input) => {
       calls.push(['publication', input]);
       return { changed: true, port: 60955, hostKeyAliasAdded: false };
@@ -33,7 +37,9 @@ test('managed runtime startup refreshes guest SSH publication from the running L
 
   assert.equal(calls[0][0], 'start');
   assert.equal(calls[1][0], 'status');
-  assert.equal(calls[2][0], 'publication');
-  assert.equal(calls[2][1].sshLocalPort, 60955);
+  assert.equal(calls[2][0], 'login-manager');
+  assert.equal(calls[3][0], 'publication');
+  assert.equal(calls[3][1].sshLocalPort, 60955);
+  assert.deepEqual(result.guestLoginManager, { repaired: false });
   assert.deepEqual(result.sshPublication, { changed: true, port: 60955, hostKeyAliasAdded: false });
 });
