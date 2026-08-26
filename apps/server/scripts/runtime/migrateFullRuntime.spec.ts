@@ -81,6 +81,35 @@ describe('runFullRuntimeMigration', () => {
         );
     });
 
+    it('migrates pglite through the packaged Postgres schema and a provider-owned temporary socket', async () => {
+        const { executablePath, artifactRoot } = await createArtifactFixture();
+        const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
+        let closed = false;
+        const exitCode = await runFullRuntimeMigration({
+            executablePath,
+            env: { HAPPIER_DB_PROVIDER: 'pglite', HAPPIER_SERVER_LIGHT_DB_DIR: '/data/pglite' },
+            pgliteBoundary: {
+                async open() {
+                    return {
+                        databaseUrl: 'postgresql://postgres@127.0.0.1:54321/postgres?sslmode=disable',
+                        close: async () => { closed = true; },
+                    };
+                },
+            },
+            processBoundary: {
+                spawn(_command, args, options) {
+                    calls.push({ args, env: options.env });
+                    return { status: 0, signal: null };
+                },
+            },
+        });
+
+        expect(exitCode).toBe(0);
+        expect(calls[0]?.args).toEqual(['migrate', 'deploy', '--schema', join(artifactRoot, 'prisma', 'schema.prisma')]);
+        expect(calls[0]?.env.DATABASE_URL).toContain('127.0.0.1:54321');
+        expect(closed).toBe(true);
+    });
+
     it.each([
         [{ DATABASE_URL: 'postgres://artifact-test/database' }, 'provider'],
         [{ HAPPIER_DB_PROVIDER: 'sqlite', DATABASE_URL: 'sqlite://artifact-test/database' }, 'provider'],

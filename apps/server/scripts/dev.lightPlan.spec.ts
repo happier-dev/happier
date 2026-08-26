@@ -19,6 +19,13 @@ describe('buildLightDevPlan', () => {
         expect(pglitePlan.migrateDeployArgs).toEqual(['-s', 'migrate:light:deploy']);
     });
 
+    it("routes external providers independently of the light preset", () => {
+        expect(buildLightDevPlan({ HAPPIER_DB_PROVIDER: "postgres" }).migrateDeployArgs)
+            .toEqual(["prisma", "migrate", "deploy"]);
+        expect(buildLightDevPlan({ HAPPIER_DB_PROVIDER: "mysql" }).migrateDeployArgs)
+            .toEqual(["-s", "migrate:mysql:deploy"]);
+    });
+
     it("runs migrations for explicit always and legacy auto modes", () => {
         const alwaysPlan = buildLightDevPlan({ HAPPIER_STACK_MIGRATE_MODE: "always" });
         expect(alwaysPlan.shouldRunMigrateDeploy).toBe(true);

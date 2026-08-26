@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import 'dotenv/config';
 
 import { initializeServerSentry } from '@/app/monitoring/sentry';
+import { resolveServerFlavorFromEnv } from '@/config/backends';
 import {
     applyLightDefaultEnv,
     applyPackagedLightRuntimeSqliteDefaults,
@@ -11,8 +12,11 @@ import { applySqliteMigrationsFromEnvironment } from '@/flavors/light/sqliteMigr
 import { registerProcessHandlers } from '@/utils/process/processHandlers';
 
 export async function runLightServerMain(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
-    process.env.HAPPY_SERVER_FLAVOR = 'light';
-    process.env.HAPPIER_SERVER_FLAVOR = 'light';
+    const flavor = argv.includes('--migrate-only')
+        ? 'light'
+        : resolveServerFlavorFromEnv(process.env, 'light');
+    process.env.HAPPY_SERVER_FLAVOR = flavor;
+    process.env.HAPPIER_SERVER_FLAVOR = flavor;
 
     if (argv.includes('--migrate-only')) {
         applyLightDefaultEnv(process.env);
@@ -29,5 +33,5 @@ export async function runLightServerMain(argv: readonly string[] = process.argv.
     registerProcessHandlers();
 
     const { startServer } = await import('@/startServer');
-    await startServer('light');
+    await startServer(flavor);
 }

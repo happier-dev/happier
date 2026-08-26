@@ -6,6 +6,7 @@ import {
     isRedisStreamsEnabled,
     resolveDefaultFilesBackend,
     resolveDefaultSocketAdapter,
+    resolveServerFlavorFromEnv,
 } from "./backends";
 
 describe("config/backends", () => {
@@ -17,6 +18,13 @@ describe("config/backends", () => {
     it("defaults socket adapter to memory", () => {
         expect(resolveDefaultSocketAdapter("light")).toBe("memory");
         expect(resolveDefaultSocketAdapter("full")).toBe("memory");
+    });
+
+    it("resolves an explicit server flavor and otherwise preserves the entrypoint default", () => {
+        expect(resolveServerFlavorFromEnv({ HAPPIER_SERVER_FLAVOR: " full " }, "light")).toBe("full");
+        expect(resolveServerFlavorFromEnv({ HAPPY_SERVER_FLAVOR: "LIGHT" }, "full")).toBe("light");
+        expect(resolveServerFlavorFromEnv({ HAPPIER_SERVER_FLAVOR: "invalid" }, "light")).toBe("light");
+        expect(resolveServerFlavorFromEnv({}, "full")).toBe("full");
     });
 
     it("parses files backend from env", () => {
@@ -42,4 +50,3 @@ describe("config/backends", () => {
         expect(isRedisStreamsEnabled({ REDIS_URL: "redis://localhost:6379" }, "memory")).toBe(false);
     });
 });
-

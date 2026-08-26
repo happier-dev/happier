@@ -1,10 +1,9 @@
 import { getDbProviderFromEnv } from "../sources/storage/prisma";
 
-type LightDbProvider = "sqlite" | "pglite";
 type LightMigrateMode = "always" | "skip";
 
 export type LightDevPlan = Readonly<{
-    provider: LightDbProvider;
+    provider: "postgres" | "mysql" | "sqlite" | "pglite";
     migrateMode: LightMigrateMode;
     migrateDeployArgs: string[] | null;
     shouldRunMigrateDeploy: boolean;
@@ -19,10 +18,6 @@ function resolveMigrateMode(env: NodeJS.ProcessEnv): LightMigrateMode {
 
 export function buildLightDevPlan(env: NodeJS.ProcessEnv): LightDevPlan {
     const provider = getDbProviderFromEnv(env, "sqlite");
-    if (provider !== "pglite" && provider !== "sqlite") {
-        throw new Error(`Unsupported HAPPY_DB_PROVIDER/HAPPIER_DB_PROVIDER for light dev plan: ${provider}`);
-    }
-
     const migrateMode = resolveMigrateMode(env);
     const shouldRunMigrateDeploy = migrateMode === "always";
 
@@ -30,7 +25,13 @@ export function buildLightDevPlan(env: NodeJS.ProcessEnv): LightDevPlan {
         provider,
         migrateMode,
         migrateDeployArgs: shouldRunMigrateDeploy
-            ? ["-s", provider === "sqlite" ? "migrate:sqlite:deploy" : "migrate:light:deploy"]
+            ? provider === "postgres"
+                ? ["prisma", "migrate", "deploy"]
+                : ["-s", provider === "mysql"
+                    ? "migrate:mysql:deploy"
+                    : provider === "sqlite"
+                        ? "migrate:sqlite:deploy"
+                        : "migrate:light:deploy"]
             : null,
         shouldRunMigrateDeploy,
         startLightArgs: ["-s", "start:light"],

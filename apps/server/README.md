@@ -49,8 +49,10 @@ That said, Happier Server is open source and self-hostable if you prefer running
 
 Happier Server supports two flavors that share the same API + internal logic. Flavors are **presets** (defaults); you can override individual backends via env vars.
 
-- **full** (default, recommended for production): Postgres (default) or MySQL 8.0.16+ + Redis (required for multi-replica Socket.IO) + S3/Minio-compatible public file storage (default) or local files (`HAPPIER_FILES_BACKEND=local`).
-- **light** (recommended for self-hosting/testing): SQLite (default) or embedded Postgres via PGlite + local public file storage served by the server under `GET /files/*`.
+- **full** (default, recommended for production): defaults to Postgres, Redis-capable realtime, and S3/Minio-compatible public file storage.
+- **light** (recommended for self-hosting/testing): defaults to SQLite, in-memory realtime, and local public file storage served under `GET /files/*`.
+
+The database provider is independent of these presets. `HAPPIER_DB_PROVIDER=postgres|mysql|pglite|sqlite` is supported under either preset; PostgreSQL and MySQL require `DATABASE_URL`, while PGlite and SQLite use the local data-directory settings by default.
 
 ## Required environment (full flavor)
 
@@ -177,11 +179,11 @@ METRICS_PORT=9090
 # HANDY_MASTER_SECRET=change-me-to-a-long-random-string
 ```
 
-### TLS note (light flavor only)
+### PGlite TLS note
 
 The light flavor runs an embedded Postgres-compatible server (`pglite-socket`) bound to `127.0.0.1` and **does not support TLS**. Happy Server automatically connects to it with `sslmode=disable`.
 
-This does **not** affect the full flavor. If your production Postgres requires TLS, keep using a normal `postgresql://...` `DATABASE_URL` (the server will not force-disable TLS for real Postgres URLs).
+This is specific to the PGlite provider under either preset. If your external Postgres requires TLS, keep using a normal `postgresql://...` `DATABASE_URL` (the server will not force-disable TLS for real Postgres URLs).
 
 Light DB version pairing note:
 
