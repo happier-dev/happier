@@ -80,12 +80,20 @@ export function resolveRepoStackIdentity({
   fileOps = defaultFileOps,
 } = {}) {
   const storagePathApi = pathApiFor(stacksStorageRoot, repoRoot);
-  const base = sanitizeStackNameToken(pathApiFor(repoRoot).basename(String(repoRoot)));
+  const currentBase = sanitizeStackNameToken(pathApiFor(repoRoot).basename(String(repoRoot)));
+  let base = currentBase;
   const oldHash = createHash('sha256').update(String(repoRoot)).digest('hex').slice(0, 10);
-  const oldName = `repo-${base}-${oldHash}`;
+  const oldName = `repo-${currentBase}-${oldHash}`;
   const gitDir = resolveGitDir(repoRoot, fileOps);
   let id = oldHash;
   if (gitDir) {
+    const basePath = pathApiFor(gitDir).join(gitDir, 'happier-stack-stackless-base');
+    const existingBase = readTextFile(basePath, fileOps).toLowerCase();
+    if (existingBase && sanitizeStackNameToken(existingBase) === existingBase) {
+      base = existingBase;
+    } else if (createIfMissing) {
+      writeTextFileBestEffort(basePath, currentBase, fileOps);
+    }
     const idPath = pathApiFor(gitDir).join(gitDir, 'happier-stack-stackless-id');
     const existing = readTextFile(idPath, fileOps).toLowerCase();
     if (/^[a-f0-9]{8,}$/.test(existing)) {

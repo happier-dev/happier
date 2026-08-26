@@ -45,6 +45,21 @@ test('repo Stack identity reuses the Git-owned stable id across paths', async ()
   }
 });
 
+test('repo Stack identity reuses the Git-owned stable basename after the checkout moves', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-repo-identity-base-'));
+  const repoRoot = join(root, '0.3');
+  const stacksStorageRoot = join(root, 'stacks');
+  await mkdir(join(repoRoot, '.git'), { recursive: true });
+  await writeFile(join(repoRoot, '.git', 'happier-stack-stackless-id'), 'abcdef0123456789\n');
+  await writeFile(join(repoRoot, '.git', 'happier-stack-stackless-base'), 'dev\n');
+  try {
+    const identity = resolveRepoStackIdentity({ repoRoot, stacksStorageRoot });
+    assert.equal(identity.stackName, 'repo-dev-abcdef0123');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('read-only identity resolution preserves the legacy path hash without creating Git state', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-repo-identity-readonly-'));
   const repoRoot = join(root, 'checkout');
@@ -92,7 +107,10 @@ test('Windows linked worktrees share the common Git-owned stack identity', () =>
 
   assert.equal(first.stackName, second.stackName);
   assert.match(first.stackName, /^repo-happier-dev-[a-f0-9]{10}$/);
-  assert.equal(fileOps.writes.length, 1);
-  assert.equal(fileOps.writes[0]?.path, `${commonGitDir}\\happier-stack-stackless-id`);
+  assert.equal(fileOps.writes.length, 2);
+  assert.deepEqual(fileOps.writes.map((write) => write.path).sort(), [
+    `${commonGitDir}\\happier-stack-stackless-base`,
+    `${commonGitDir}\\happier-stack-stackless-id`,
+  ]);
   assert.equal(first.stackBaseDir, `${storageRoot}\\${first.stackName}`);
 });

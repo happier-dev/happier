@@ -29,16 +29,7 @@ function relativeInside(parent, candidate) {
 
 export function mapHostCwdToGuest(profile, hostCwd) {
   if (profile.version === 2) {
-    const cwd = resolve(String(hostCwd ?? ''));
-    for (const workspace of profile.workspaces) {
-      for (const hostRoot of [workspace.hostSourceDir, workspace.hostMirrorDir]) {
-        const suffix = relativeInside(hostRoot, cwd);
-        if (suffix != null) {
-          return posix.join(workspace.guestDir, ...suffix.split('/').filter(Boolean));
-        }
-      }
-    }
-    throw new Error(`[execution-host] host cwd does not belong to a configured execution-host workspace: ${cwd}`);
+    return resolveHostWorkspaceMapping(profile, hostCwd).guestCwd;
   }
   const mirror = resolve(profile.mirrorWorkspaceDir);
   const cwd = resolve(String(hostCwd ?? ''));
@@ -46,6 +37,25 @@ export function mapHostCwdToGuest(profile, hostCwd) {
   return suffix != null
     ? posix.join(profile.guestWorkspaceDir, ...suffix.split('/').filter(Boolean))
     : profile.guestWorkspaceDir;
+}
+
+export function resolveHostWorkspaceMapping(profile, hostCwd) {
+  if (profile?.version !== 2 || !Array.isArray(profile.workspaces)) {
+    throw new Error('[execution-host] named execution-host profile is required');
+  }
+  const cwd = resolve(String(hostCwd ?? ''));
+  for (const workspace of profile.workspaces) {
+    for (const hostRoot of [workspace.hostSourceDir, workspace.hostMirrorDir]) {
+      const suffix = relativeInside(hostRoot, cwd);
+      if (suffix != null) {
+        return {
+          workspace,
+          guestCwd: posix.join(workspace.guestDir, ...suffix.split('/').filter(Boolean)),
+        };
+      }
+    }
+  }
+  throw new Error(`[execution-host] host cwd does not belong to a configured execution-host workspace: ${cwd}`);
 }
 
 async function prepareManagedHost(profile) {

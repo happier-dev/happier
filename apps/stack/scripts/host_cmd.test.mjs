@@ -44,8 +44,8 @@ test('host exec uses only an explicitly configured candidate and preserves comma
       ssh: { forwardAgent: false },
       containerd: { user: false, system: false },
       portForwards: [
-        { guestPortRange: [13000, 13999], hostPortRange: [13000, 13999] },
-        { guestPortRange: [18000, 19099], hostPortRange: [18000, 19099] },
+        { guestPortRange: [52005, 54004], hostPortRange: [52005, 54004] },
+        { guestPortRange: [18081, 20080], hostPortRange: [18081, 20080] },
       ],
     },
   };
@@ -170,8 +170,8 @@ test('active execution profile delegates an ordinary hstack command before local
       ssh: { forwardAgent: false },
       containerd: { user: false, system: false },
       portForwards: [
-        { guestPortRange: [13000, 13999], hostPortRange: [13000, 13999] },
-        { guestPortRange: [18000, 19099], hostPortRange: [18000, 19099] },
+        { guestPortRange: [52005, 54004], hostPortRange: [52005, 54004] },
+        { guestPortRange: [18081, 20080], hostPortRange: [18081, 20080] },
       ],
     },
   };
