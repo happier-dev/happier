@@ -10,6 +10,7 @@ import {
   inspectExecutionHostCandidateMirror,
   pauseExecutionHostCandidateMirror,
   prepareExecutionHostCandidateRepository,
+  recoverExecutionHostCandidateRepository,
   readExecutionHostCandidateState,
   refreshExecutionHostCandidateRepository,
   renderCandidateGitBootstrapScript,
@@ -226,6 +227,70 @@ test('candidate preparation carries the Git-owned repo Stack identity into the g
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].stackIdentity, stackIdentity);
   assert.equal(calls[0].guestRepositoryDir, '/home/dev/.happier-stack/workspace/dev');
+});
+
+test('candidate preparation persists recoverable state when dependency bootstrap fails after Git and sync succeed', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'happier-candidate-dependency-failure-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  await assert.rejects(prepareExecutionHostCandidateRepository({
+    profile,
+    sourceDir: '/Users/dev/happier/dev',
+    env: { HAPPIER_STACK_HOME_DIR: home },
+  }, {
+    captureGitBasis: async () => ({
+      repositoryRoot: '/Users/dev/happier/dev',
+      head: 'a'.repeat(40),
+      headRef: 'refs/heads/dev',
+      refs: [{ name: 'refs/heads/dev', object: 'a'.repeat(40) }],
+      worktreeHeads: [],
+    }),
+    exportGitBundle: async () => {},
+    bootstrapGuestRepository: async () => ({ created: true }),
+    getInstanceStatus: async () => ({ instance: {} }),
+    publishSshConfig: async ({ destination }) => ({ ssh: 'candidate', sshConfigFile: destination }),
+    ensureSyncProject: async () => ({ env: {}, ownership: 'owned' }),
+    resumeSync: async () => {},
+    flushSync: async () => {},
+    bootstrapDependencies: async () => ({ code: 1 }),
+  }), /candidate dependency bootstrap failed/);
+
+  const state = await readExecutionHostCandidateState(profile, { HAPPIER_STACK_HOME_DIR: home });
+  assert.equal(state.dependencies.ready, false);
+  assert.equal(state.bootstrap.created, true);
+  assert.equal(state.sync.mode, 'continuous-one-way-replica');
+});
+
+test('candidate recovery refreshes an existing guest checkout when a previous preparation died before state publication', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'happier-candidate-recovery-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const calls = [];
+  const result = await recoverExecutionHostCandidateRepository({
+    profile,
+    sourceDir: '/Users/dev/happier/dev',
+    env: { HAPPIER_STACK_HOME_DIR: home },
+  }, {
+    captureGitBasis: async () => ({
+      repositoryRoot: '/Users/dev/happier/dev',
+      head: 'b'.repeat(40),
+      headRef: 'refs/heads/dev',
+      refs: [{ name: 'refs/heads/dev', object: 'b'.repeat(40) }],
+      worktreeHeads: [],
+    }),
+    exportGitBundle: async () => calls.push('bundle'),
+    refreshGuestRepository: async () => {
+      calls.push('refresh');
+      return { refreshed: true };
+    },
+    getInstanceStatus: async () => ({ instance: {} }),
+    publishSshConfig: async ({ destination }) => ({ ssh: 'candidate', sshConfigFile: destination }),
+    ensureSyncProject: async () => ({ env: {}, ownership: 'owned' }),
+    resumeSync: async () => {},
+    flushSync: async () => {},
+    bootstrapDependencies: async () => ({ code: 0 }),
+  });
+  assert.deepEqual(calls, ['bundle', 'refresh']);
+  assert.equal(result.bootstrap.refreshed, true);
+  assert.equal(result.dependencies.ready, true);
 });
 
 test('candidate state reader projects legacy unbounded capture arrays to counts and digests', async (t) => {

@@ -596,13 +596,7 @@ async function updateCandidateRepository({
     // This is an explicit capture barrier. Steady-state synchronization remains continuous;
     // ordinary candidate commands never pause or flush Mutagen.
     await flushSync({ target, env: syncProject.env });
-    const dependencyResult = requireSuccess(await bootstrapDependencies({
-      target,
-      stackBaseDir: paths.syncBaseDir,
-      syncAlreadyVerified: true,
-      env,
-    }), 'candidate dependency bootstrap');
-    const state = {
+    const baseState = {
       version: 1,
       ...(paths.workspaceId ? { workspaceId: paths.workspaceId } : {}),
       activation: 'candidate',
@@ -611,15 +605,33 @@ async function updateCandidateRepository({
       guestRepositoryDir: paths.guestRepositoryDir,
       capture: projectCandidateCapture(normalizedBasis),
       bootstrap,
-      dependencies: {
-        ready: true,
-        preparedAt: new Date().toISOString(),
-        exitCode: dependencyResult.code ?? dependencyResult.exitCode,
-      },
       sync: {
         mode: 'continuous-one-way-replica',
         ownership: syncProject.ownership,
         perCommandFlush: false,
+      },
+    };
+    let dependencyResult;
+    try {
+      dependencyResult = requireSuccess(await bootstrapDependencies({
+        target,
+        stackBaseDir: paths.syncBaseDir,
+        syncAlreadyVerified: true,
+        env,
+      }), 'candidate dependency bootstrap');
+    } catch (error) {
+      await atomicWriteJson(paths.stateFile, {
+        ...baseState,
+        dependencies: { ready: false, preparedAt: null, exitCode: Number(error?.exitCode ?? 1) },
+      });
+      throw error;
+    }
+    const state = {
+      ...baseState,
+      dependencies: {
+        ready: true,
+        preparedAt: new Date().toISOString(),
+        exitCode: dependencyResult.code ?? dependencyResult.exitCode,
       },
     };
     await atomicWriteJson(paths.stateFile, state);
@@ -655,6 +667,47 @@ export async function prepareExecutionHostCandidateRepository(
     executor,
     transferPrefix: 'capture-',
     applyGitState: bootstrapGuestRepository,
+    applyGuestStackIdentity,
+    captureGitBasis,
+    exportGitBundle,
+    getInstanceStatus,
+    publishSshConfig,
+    ensureSyncProject,
+    resumeSync,
+    flushSync,
+    bootstrapDependencies,
+  });
+}
+
+export async function recoverExecutionHostCandidateRepository(
+  { profile, workspaceId = '', sourceDir, env = process.env, executor },
+  {
+    captureGitBasis = defaultCaptureGitBasis,
+    exportGitBundle = defaultExportGitBundle,
+    refreshGuestRepository = defaultRefreshGuestRepository,
+    applyGuestStackIdentity = defaultApplyGuestStackIdentity,
+    getInstanceStatus = getManagedLimaStatus,
+    publishSshConfig = publishManagedLimaLocalSshConfig,
+    ensureSyncProject = ensureDevTargetSyncProject,
+    resumeSync = resumeDevTargetSync,
+    flushSync = flushDevTargetSync,
+    bootstrapDependencies = runDevTargetDependencyBootstrap,
+  } = {},
+) {
+  if (profile?.activation !== 'candidate') {
+    throw new Error('[execution-host] candidate repository recovery requires activation=candidate');
+  }
+  if (await readExecutionHostCandidateState(profile, env, workspaceId)) {
+    throw new Error('[execution-host] candidate state already exists; use ordinary mirror refresh');
+  }
+  return await updateCandidateRepository({
+    profile,
+    workspaceId,
+    sourceDir,
+    env,
+    executor,
+    transferPrefix: 'recover-',
+    applyGitState: refreshGuestRepository,
     applyGuestStackIdentity,
     captureGitBasis,
     exportGitBundle,
