@@ -98,7 +98,58 @@ test('hstack registry exposes the host controller without requiring workspace ad
     },
   });
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /hstack host setup\|mirror\|status\|doctor\|start\|stop\|shell\|exec/);
+  assert.match(result.stdout, /hstack host setup\|mirror \[status\|sync\|stop\]\|status\|doctor\|start\|stop\|shell\|exec/);
+});
+
+test('host mirror status inspects continuous candidate sync without touching the VM', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-host-mirror-status-' });
+  const home = fixture.path('home');
+  const bin = fixture.path('bin');
+  await mkdir(fixture.path('home', 'execution-host-candidate'), { recursive: true });
+  await mkdir(bin, { recursive: true });
+  await writeFile(fixture.path('home', 'execution-host.json'), `${JSON.stringify({
+    version: 1,
+    mode: 'managed-lima',
+    activation: 'candidate',
+    instance: 'candidate',
+    limaHome: fixture.path('lima'),
+    profile: 'small',
+    guestWorkspaceDir: '/home/happier/workspace',
+    mirrorWorkspaceDir: fixture.path('mirror'),
+  })}\n`);
+  await writeFile(
+    fixture.path('home', 'execution-host-candidate', 'state.v1.json'),
+    `${JSON.stringify({
+      version: 1,
+      activation: 'candidate',
+      authoritative: false,
+      sourceDir: '/Users/dev/happier/dev',
+      guestRepositoryDir: '/home/happier/workspace/dev',
+      capture: { head: 'a'.repeat(40), refCount: 1, refsDigest: '0'.repeat(64), worktreeHeadCount: 1 },
+    })}\n`,
+  );
+  await writeFile(fixture.path('bin', 'mutagen'), [
+    '#!/bin/sh',
+    'if [ "$1 $2" = "sync list" ]; then',
+    '  echo \'[{"name":"happier-execution--host--candidate","status":"watching","successfulCycles":1}]\'',
+    '  exit 0',
+    'fi',
+    'exit 9',
+    '',
+  ].join('\n'));
+  await chmod(fixture.path('bin', 'mutagen'), 0o755);
+
+  const result = await runNodeCapture([script, 'mirror', 'status', '--json'], {
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      HAPPIER_STACK_HOME_DIR: home,
+      HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
+    },
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).status.state, 'ready');
 });
 
 test('active execution profile delegates an ordinary hstack command before local workspace admission', async (t) => {
@@ -129,7 +180,10 @@ test('active execution profile delegates an ordinary hstack command before local
     `printf '%s\\n' "$*" >> ${JSON.stringify(log)}`,
     'if [ "$1" = "--version" ]; then echo "limactl version 2.1.0"; exit 0; fi',
     `if [ "$1" = "list" ]; then echo '${JSON.stringify(instance)}'; exit 0; fi`,
-    'if [ "$1" = "shell" ]; then exit 23; fi',
+    'if [ "$1" = "shell" ]; then',
+    '  case "$*" in *"timeout 5 loginctl"*) exit 0 ;; esac',
+    '  exit 23',
+    'fi',
     'exit 0',
     '',
   ].join('\n'), 'utf8');

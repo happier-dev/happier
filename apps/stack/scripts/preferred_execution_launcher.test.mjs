@@ -107,6 +107,60 @@ test('explicit local execution is selected per invocation without consulting tar
   assert.equal(result.stdout, 'local:ok\n');
 });
 
+test('native launcher keeps Git commands on the authoritative checkout without probing a replica', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-git-authority-'));
+  const binDir = join(root, 'bin');
+  const stackDir = join(root, 'stack');
+  const configPath = join(stackDir, 'dev-targets.json');
+  const projectionPath = join(stackDir, 'dev-target-exec-v1.sh');
+  const remoteMarker = join(root, 'remote-called');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(stackDir, { recursive: true });
+  await writeFile(configPath, '{}\n', 'utf8');
+  await writeFile(projectionPath, [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='error'",
+    "load_ttl_seconds='15'",
+    "unavailable_ttl_seconds='120'",
+    "dependency_direct_commands='node npm npx pnpm tsc vitest yarn'",
+    "dependency_corepack_subcommands='npm pnpm yarn'",
+    "validation_direct_commands='tsc vitest'",
+    "validation_script_families='build check lint test typecheck vitest'",
+    "primary_only_direct_commands='git'",
+    "target_count='1'",
+    "target_1_name='linux'",
+    "target_1_ssh='linux-host'",
+    "target_1_ssh_config=''",
+    "target_1_repo_dir='/remote/repo'",
+    "target_1_cli_home='/remote/home'",
+    "target_1_remote_path='/usr/bin:/bin'",
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'git'), '#!/bin/sh\nprintf "local-git:%s\\n" "$*"\n');
+  await executable(join(binDir, 'mutagen'), `#!/bin/sh\nprintf remote > "${remoteMarker}"\nprintf 'happier-linux|Scanning|7||false|0\\n'\n`);
+  await executable(join(binDir, 'ssh'), `#!/bin/sh\nprintf remote > "${remoteMarker}"\ncase "$*" in *getconf*) printf '8 1 0.5 9999999 10\\n' ;; esac\n`);
+
+  const result = spawnSync('/bin/sh', [launcher, '--', 'git', 'status'], {
+    cwd: repoRoot,
+    env: {
+      ...executionNeutralEnv,
+      HOME: root,
+      HAPPIER_EXEC_CONFIG_PATH: configPath,
+      HAPPIER_STACK_STORAGE_DIR: join(root, 'stacks'),
+      PATH: `${binDir}:/usr/bin:/bin`,
+      TMPDIR: root,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'local-git:status\n');
+  await assert.rejects(readFile(remoteMarker), { code: 'ENOENT' });
+});
+
 test('native launcher uses Node once to publish a stale validated projection, then executes natively', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-target-'));
   const binDir = join(root, 'bin');
@@ -719,9 +773,10 @@ test('native launcher bootstraps Yarn commands before dispatching them and leave
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
     'case "$*" in',
-    '  *getconf*) printf "8 1 0.5\\n" ;;',
+    '  *getconf*) printf "8 1 0.5 22000000 20 2 12000000 24000000 1000 8000000 0.1 0.2 0.3 4 5 linux\\n" ;;',
     '  *command\\ -v*) exit 0 ;;',
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
+    '  *remote_dependency_bootstrap.mjs*remote_validation_preparation.mjs*typecheck:local*) printf "typed-after-preparation:%s\\n" "$*" ;;',
     '  *remote_dependency_bootstrap.mjs*typecheck:local*) printf "typed-after-bootstrap:%s\\n" "$*" ;;',
     '  *typecheck:local*) printf "typed-without-bootstrap\\n"; exit 42 ;;',
     '  *remote_dependency_bootstrap.mjs*) printf "unexpected-bootstrap\\n"; exit 43 ;;',
@@ -750,6 +805,16 @@ test('native launcher bootstraps Yarn commands before dispatching them and leave
   assert.doesNotMatch(typed.stdout, /corepack .*yarn .*node .*remote_dependency_bootstrap\.mjs/);
   assert.match(typed.stdout, /HAPPIER_STACK_PM_CACHE_BASE_DIR.*remote\/home\/cache/);
 
+  const componentTyped = spawnSync('/bin/sh', [launcher, '--script=typecheck:local'], {
+    cwd: join(repoRoot, 'apps', 'cli'),
+    env,
+    encoding: 'utf8',
+  });
+  assert.equal(componentTyped.status, 0, componentTyped.stderr);
+  assert.match(componentTyped.stdout, /typed-after-preparation/);
+  assert.match(componentTyped.stdout, /remote_validation_preparation\.mjs/);
+  assert.match(componentTyped.stdout, /--component-relative-dir=apps\/cli/);
+
   const raw = spawnSync('/bin/sh', [launcher, '--', 'rg', '-n', 'needle'], {
     cwd: repoRoot,
     env,
@@ -758,6 +823,39 @@ test('native launcher bootstraps Yarn commands before dispatching them and leave
   assert.equal(raw.status, 0, raw.stderr);
   assert.match(raw.stdout, /raw-search/);
   assert.doesNotMatch(raw.stdout, /remote_dependency_bootstrap\.mjs/);
+
+  const provenanceLines = (await readFile(
+    join(stackDir, 'dev-target-command-load-native', 'provenance.jsonl'),
+    'utf8',
+  )).trim().split('\n').map((line) => JSON.parse(line));
+  const admittedClasses = provenanceLines
+    .filter((entry) => entry.phase === 'admitted')
+    .map((entry) => entry.commandClass);
+  assert.deepEqual(admittedClasses, ['full-validation', 'targeted-validation', 'source-search']);
+  assert.equal(provenanceLines.filter((entry) => entry.phase === 'completed').length, 3);
+  assert.equal(provenanceLines.every((entry) => entry.schemaVersion === 1), true);
+  assert.equal(provenanceLines.every((entry) => !('commandArgs' in entry)), true);
+  assert.equal(provenanceLines.every((entry) => (
+    entry.phase !== 'admitted' || entry.activeClassReservations === 0
+  )), true);
+  assert.deepEqual(
+    {
+      runQueue: provenanceLines[0].runQueue,
+      memAvailableKiB: provenanceLines[0].memAvailableKiB,
+      swapUsedKiB: provenanceLines[0].swapUsedKiB,
+      memoryPsiAvg10: provenanceLines[0].memoryPsiAvg10,
+      swapInPages: provenanceLines[0].swapInPages,
+      platform: provenanceLines[0].platform,
+    },
+    {
+      runQueue: 2,
+      memAvailableKiB: 12_000_000,
+      swapUsedKiB: 1_000,
+      memoryPsiAvg10: 0.2,
+      swapInPages: 4,
+      platform: 'linux',
+    },
+  );
 });
 
 test('native launcher keeps an unprepared dependency target out of automatic routing when install scratch is insufficient', async () => {

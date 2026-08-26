@@ -6,12 +6,15 @@ import test from 'node:test';
 import { execFileSync } from 'node:child_process';
 
 import {
+  inspectExecutionHostCandidateMirror,
+  pauseExecutionHostCandidateMirror,
   prepareExecutionHostCandidateRepository,
   readExecutionHostCandidateState,
   refreshExecutionHostCandidateRepository,
   renderCandidateGitBootstrapScript,
   renderCandidateGitRefreshScript,
   resolveExecutionHostCandidatePaths,
+  syncExecutionHostCandidateMirror,
 } from './candidate_repository.mjs';
 
 const profile = {
@@ -213,6 +216,87 @@ test('candidate refresh replaces only captured Git state then reuses sync and de
   assert.equal(result.capture.worktreeHeadCount, 1);
   assert.equal(result.bootstrap.refreshed, true);
   assert.equal(result.dependencies.ready, true);
+});
+
+test('candidate mirror sync resumes continuous transport without recapturing Git or dependencies', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'happier-candidate-mirror-sync-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const paths = resolveExecutionHostCandidatePaths(profile, { HAPPIER_STACK_HOME_DIR: home });
+  await mkdir(join(home, 'execution-host-candidate'), { recursive: true });
+  await writeFile(paths.stateFile, JSON.stringify({
+    version: 1,
+    activation: 'candidate',
+    authoritative: false,
+    sourceDir: '/Users/dev/happier/dev',
+    guestRepositoryDir: paths.guestRepositoryDir,
+    capture: { head: 'a'.repeat(40), refCount: 1, refsDigest: '0'.repeat(64), worktreeHeadCount: 1 },
+  }));
+  const calls = [];
+
+  const result = await syncExecutionHostCandidateMirror({
+    profile,
+    env: { HAPPIER_STACK_HOME_DIR: home },
+    executor: {},
+  }, {
+    startRuntime: async () => calls.push('start-runtime'),
+    getInstanceStatus: async () => ({ instance: { sshConfigFile: '/private/lima-ssh.conf' } }),
+    publishSshConfig: async () => {
+      calls.push('publish-ssh');
+      return { ssh: 'happier-candidate', sshConfigFile: paths.sshConfigFile };
+    },
+    ensureSyncProject: async () => {
+      calls.push('ensure-sync-project');
+      return { env: { MUTAGEN_DATA_DIRECTORY: '/private/mutagen' }, ownership: 'owned' };
+    },
+    resumeSync: async () => calls.push('resume'),
+    flushSync: async () => calls.push('flush-once'),
+    inspectSync: async () => ({ state: 'ready', sessionName: 'happier-execution--host--candidate' }),
+  });
+
+  assert.deepEqual(calls, [
+    'start-runtime', 'publish-ssh', 'ensure-sync-project', 'resume', 'flush-once',
+  ]);
+  assert.equal(result.status.state, 'ready');
+  assert.equal(result.capture.head, 'a'.repeat(40));
+});
+
+test('candidate mirror status is read-only and stop pauses only the owned transport', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'happier-candidate-mirror-lifecycle-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const paths = resolveExecutionHostCandidatePaths(profile, { HAPPIER_STACK_HOME_DIR: home });
+  await mkdir(join(home, 'execution-host-candidate'), { recursive: true });
+  await writeFile(paths.stateFile, JSON.stringify({
+    version: 1,
+    activation: 'candidate',
+    authoritative: false,
+    sourceDir: '/Users/dev/happier/dev',
+    guestRepositoryDir: paths.guestRepositoryDir,
+    capture: { head: 'a'.repeat(40), refCount: 1, refsDigest: '0'.repeat(64), worktreeHeadCount: 1 },
+  }));
+  const calls = [];
+
+  const status = await inspectExecutionHostCandidateMirror({
+    profile,
+    env: { HAPPIER_STACK_HOME_DIR: home },
+  }, {
+    inspectSync: async () => {
+      calls.push('inspect');
+      return { state: 'ready', sessionName: 'happier-execution--host--candidate' };
+    },
+  });
+  const stopped = await pauseExecutionHostCandidateMirror({
+    profile,
+    env: { HAPPIER_STACK_HOME_DIR: home },
+  }, {
+    pauseProject: async () => {
+      calls.push('pause');
+      return true;
+    },
+  });
+
+  assert.equal(status.status.state, 'ready');
+  assert.equal(stopped.paused, true);
+  assert.deepEqual(calls, ['inspect', 'pause']);
 });
 
 test('candidate Git bootstrap reproduces exact refs and detached worktree commits without clone-added refs', async (t) => {

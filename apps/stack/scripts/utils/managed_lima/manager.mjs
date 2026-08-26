@@ -4,6 +4,8 @@ import {
   reconcileManagedLimaInstance,
 } from './lifecycle.mjs';
 import { buildManagedLimaEditArgs, resolveManagedLimaProfile } from './profiles.mjs';
+import { configureManagedLimaGuestPressure } from './guest_pressure.mjs';
+import { resolveManagedLimaPressureProfile } from './pressure_profiles.mjs';
 import {
   ensureManagedLimaGuestLoginManager,
   inspectManagedLimaGuestLoginManager,
@@ -100,7 +102,10 @@ export async function setupManagedLimaRuntime({
   guestProvisionProfile = 'happier',
   nodeMajor = '24',
   yarnVersion = '1.22.22',
+  pressureProfileName = 'none',
+  guestPressureScriptSource,
   provisionGuest = provisionManagedLimaGuest,
+  configureGuestPressure = configureManagedLimaGuestPressure,
   ensureGuestLoginManager = ensureManagedLimaGuestLoginManager,
   inspectGuest = inspectManagedLimaGuestIdentity,
 }) {
@@ -119,9 +124,15 @@ export async function setupManagedLimaRuntime({
     nodeMajor,
     yarnVersion,
   });
+  const pressure = await configureGuestPressure({
+    executor,
+    instance,
+    profile: resolveManagedLimaPressureProfile(pressureProfileName),
+    scriptSource: guestPressureScriptSource,
+  });
   const guestLoginManager = await ensureGuestLoginManager({ executor, instance });
   const guest = await inspectGuest({ executor, instance });
-  return { ...lifecycle, provision, guestLoginManager, guest };
+  return { ...lifecycle, provision, pressure, guestLoginManager, guest };
 }
 
 export async function doctorManagedLimaInstance({

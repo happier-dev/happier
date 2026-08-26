@@ -29,7 +29,7 @@ function usage(json) {
     data: { commands: ['setup', 'status', 'doctor', 'start', 'stop', 'shell', 'ssh-config'] },
     text: [
       '[managed-lima] usage:',
-      '  hstack tools managed-lima setup --instance=NAME [--profile=balanced] [--guest-profile=happier] [--lima-home=PATH] [--no-install] [--json]',
+      '  hstack tools managed-lima setup --instance=NAME [--profile=balanced] [--pressure-profile=none|swap64|swap64-zswap|swap128|swap128-zswap] [--guest-profile=happier] [--lima-home=PATH] [--no-install] [--json]',
       '  hstack tools managed-lima status|doctor|start|stop --instance=NAME [--profile=balanced] [--lima-home=PATH] [--json]',
       '  hstack tools managed-lima shell --instance=NAME [--lima-home=PATH] -- COMMAND [ARG...]',
       '  hstack tools managed-lima ssh-config --instance=NAME --output=/absolute/guest.conf [--alias=happier-agent-primary]',
@@ -86,12 +86,18 @@ async function main() {
       new URL('./provision/linux-ubuntu-provision.sh', import.meta.url),
       'utf8',
     );
+    const guestPressureScriptSource = await readFile(
+      new URL('./provision/linux-guest-pressure.sh', import.meta.url),
+      'utf8',
+    );
     result = await setupManagedLimaRuntime({
       executor,
       instance,
       profileName,
       allowInstall: !argv.includes('--no-install'),
       guestProvisionScriptSource,
+      guestPressureScriptSource,
+      pressureProfileName: flagValue(argv, '--pressure-profile').trim() || 'none',
       guestProvisionProfile: flagValue(argv, '--guest-profile').trim() || 'happier',
       nodeMajor: flagValue(argv, '--node-major').trim() || '24',
       yarnVersion: flagValue(argv, '--yarn-version').trim() || '1.22.22',

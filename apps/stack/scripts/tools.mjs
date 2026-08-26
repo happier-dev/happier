@@ -52,7 +52,7 @@ async function main() {
         '  hstack tools import [--json]',
         '  hstack tools review [ui|cli|server|all] [--json]',
         '  hstack tools edison [--stack=<name>] -- <edison args...>',
-        '  hstack tools bench run [--output-dir=PATH] [--label=NAME] [--warmup=0] [--repeat=5] [--json] -- COMMAND [ARG...]',
+        '  hstack tools bench catalog | run [--concurrency=1] [--workload=ID | -- COMMAND [ARG...]]',
         '  hstack tools managed-lima setup|status|doctor|start|stop|shell|ssh-config --instance=NAME [--profile=balanced] [--json]',
       ].join('\n'),
     });

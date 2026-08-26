@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   INDEPENDENT_DEV_TARGET_SYNC_OWNER,
   ensureDevTargetSyncProject,
+  pauseOwnedDevTargetSyncProject,
   releaseIndependentDevTargetSyncProject,
   runDevTargetControlProcess,
 } from './sync_project.mjs';
@@ -81,6 +82,86 @@ test('independent sync start owns and resumes the canonical Mutagen project', as
   assert.match(
     await readFile(result.projectFile, 'utf8'),
     new RegExp(`^# hstack-owner: ${JSON.stringify(INDEPENDENT_DEV_TARGET_SYNC_OWNER)}`),
+  );
+});
+
+test('equivalent project keeps reconnecting sessions when project resume reports an offline endpoint', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-reconnect-'));
+  const projectFile = join(root, 'mutagen', 'mutagen.yml');
+  await mkdir(join(root, 'mutagen'), { recursive: true });
+  await writeFile(projectFile, renderMutagenProject({
+    sourceDir: '/source/happier',
+    targets: [target],
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+  }));
+  const calls = [];
+
+  const result = await ensureDevTargetSyncProject({
+    stackBaseDir: root,
+    sourceDir: '/source/happier',
+    targets: [target],
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+    allowIndependentBorrow: false,
+    env: {},
+  }, {
+    runProcess: async ({ command, args }) => {
+      calls.push({ command, args });
+      if (args[0] === 'project' && args[1] === 'resume') return { code: 1 };
+      if (args[0] === 'sync' && args[1] === 'list') {
+        return {
+          code: 0,
+          out: JSON.stringify([{ name: 'happier-mac', status: 'connecting-beta', successfulCycles: 0 }]),
+        };
+      }
+      return { code: 0 };
+    },
+  });
+
+  assert.equal(result.projectCreated, false);
+  assert.equal(calls.some((call) => call.args[1] === 'terminate'), false);
+  assert.equal(calls.some((call) => call.args[1] === 'start'), false);
+});
+
+test('equivalent project restarts its isolated Mutagen daemon once when custom SSH resume fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-ssh-daemon-'));
+  const projectFile = join(root, 'mutagen', 'mutagen.yml');
+  await mkdir(join(root, 'mutagen'), { recursive: true });
+  await writeFile(projectFile, renderMutagenProject({
+    sourceDir: '/source/happier',
+    targets: [{ ...target, sshConfigFile: '/private/lima/ssh.config' }],
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+  }));
+  const calls = [];
+  let resumeAttempts = 0;
+
+  const result = await ensureDevTargetSyncProject({
+    stackBaseDir: root,
+    sourceDir: '/source/happier',
+    targets: [{ ...target, sshConfigFile: '/private/lima/ssh.config' }],
+    ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
+    allowIndependentBorrow: false,
+    env: {},
+  }, {
+    runProcess: async ({ command, args }) => {
+      calls.push({ command, args });
+      if (args[0] === 'project' && args[1] === 'resume') {
+        resumeAttempts += 1;
+        return { code: resumeAttempts === 1 ? 1 : 0 };
+      }
+      return { code: 0 };
+    },
+  });
+
+  assert.equal(result.projectCreated, false);
+  assert.deepEqual(
+    calls.map((call) => [call.command, ...call.args.slice(0, 2)]),
+    [
+      ['mutagen', 'version'],
+      ['mutagen', 'project', 'resume'],
+      ['mutagen', 'daemon', 'stop'],
+      ['mutagen', 'project', 'resume'],
+      ['mutagen', 'project', 'list'],
+    ],
   );
 });
 
@@ -239,4 +320,31 @@ test('independent sync stop pauses and releases the generated project to Stack o
   assert.equal(released, true);
   assert.deepEqual(calls.map((call) => call.args[1] ?? call.args[0]), ['pause']);
   assert.doesNotMatch(await readFile(projectFile, 'utf8'), /^# hstack-owner:/);
+});
+
+test('owned project pause preserves its owner marker for later resume', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-project-owned-pause-'));
+  const projectFile = join(root, 'mutagen', 'mutagen.yml');
+  await mkdir(join(root, 'mutagen'), { recursive: true });
+  await writeFile(projectFile, renderMutagenProject({
+    sourceDir: '/source/happier',
+    targets: [target],
+    ownerId: 'execution-host-candidate',
+  }));
+  const calls = [];
+
+  const paused = await pauseOwnedDevTargetSyncProject({
+    stackBaseDir: root,
+    ownerId: 'execution-host-candidate',
+    env: {},
+  }, {
+    runProcess: async ({ command, args }) => {
+      calls.push({ command, args });
+      return { code: 0 };
+    },
+  });
+
+  assert.equal(paused, true);
+  assert.deepEqual(calls.map((call) => call.args[1] ?? call.args[0]), ['pause']);
+  assert.match(await readFile(projectFile, 'utf8'), /^# hstack-owner: "execution-host-candidate"/);
 });

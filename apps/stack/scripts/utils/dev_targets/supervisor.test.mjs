@@ -1162,6 +1162,10 @@ test('remote worker exit restarts its configured target lifecycle without restar
         env: {},
       },
       {
+        startManagedRuntime: async ({ target }) => {
+          calls.push({ kind: 'runtime-start', target: target.name });
+          return { changed: true, status: 'Running' };
+        },
         runDependencyBootstrap: async () => {
           bootstrapCalls += 1;
           return { code: 0 };
@@ -1219,7 +1223,7 @@ test('remote worker exit restarts its configured target lifecycle without restar
       'a worker-only restart must reuse the already-provisioned checkout',
     );
     assert.equal(
-      calls.filter((call) => call.kind === 'run' && call.command === 'limactl').length,
+      calls.filter((call) => call.kind === 'runtime-start').length,
       1,
       'a worker-only restart must not restart an already-provisioned Lima target',
     );

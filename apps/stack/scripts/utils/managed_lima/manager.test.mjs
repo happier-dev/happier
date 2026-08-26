@@ -241,12 +241,14 @@ test('managed Lima runtime setup provisions the retained guest after lifecycle r
   const provisions = [];
   const loginManagerChecks = [];
   const inspections = [];
+  const pressureConfigurations = [];
 
   const result = await setupManagedLimaRuntime({
     executor,
     instance: 'happier-agent-primary',
     profileName: 'small',
     guestProvisionScriptSource: '#!/usr/bin/env bash\nexit 0\n',
+    pressureProfileName: 'swap64',
     provisionGuest: async (input) => {
       provisions.push(input);
       return { changed: true, version: 'abc123' };
@@ -254,6 +256,10 @@ test('managed Lima runtime setup provisions the retained guest after lifecycle r
     ensureGuestLoginManager: async (input) => {
       loginManagerChecks.push(input);
       return { repaired: false };
+    },
+    configureGuestPressure: async (input) => {
+      pressureConfigurations.push(input);
+      return { changed: true, profile: 'swap64' };
     },
     inspectGuest: async (input) => {
       inspections.push(input);
@@ -264,10 +270,14 @@ test('managed Lima runtime setup provisions the retained guest after lifecycle r
   assert.equal(result.created, true);
   assert.deepEqual(result.provision, { changed: true, version: 'abc123' });
   assert.deepEqual(result.guestLoginManager, { repaired: false });
+  assert.deepEqual(result.pressure, { changed: true, profile: 'swap64' });
   assert.deepEqual(result.guest, { homeDir: '/home/guest.actual', user: 'guest' });
   assert.equal(provisions.length, 1);
   assert.equal(loginManagerChecks.length, 1);
   assert.equal(inspections.length, 1);
+  assert.equal(pressureConfigurations.length, 1);
   assert.equal(provisions[0].instance, 'happier-agent-primary');
   assert.equal(provisions[0].scriptSource, '#!/usr/bin/env bash\nexit 0\n');
+  assert.equal(pressureConfigurations[0].profile.name, 'swap64');
+  assert.equal(pressureConfigurations[0].profile.swapGiB, 64);
 });

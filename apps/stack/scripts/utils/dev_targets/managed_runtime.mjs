@@ -21,6 +21,23 @@ export function createManagedDevTargetRuntimeExecutor(target, env = process.env)
   );
 }
 
+function normalizeRuntimeTarget(target) {
+  if (target?.managedRuntime) return { target, reconcileSshPublication: true };
+  if (!target?.limaInstance || !target?.limaHome) return null;
+  return {
+    target: {
+      ...target,
+      managedRuntime: {
+        kind: 'lima',
+        instance: target.limaInstance,
+        limaHome: target.limaHome,
+        host: { kind: 'local' },
+      },
+    },
+    reconcileSshPublication: false,
+  };
+}
+
 export async function startManagedDevTargetRuntime(
   { target, env = process.env },
   {
@@ -51,6 +68,20 @@ export async function startManagedDevTargetRuntime(
     env,
   });
   return { ...lifecycle, guestLoginManager, sshPublication };
+}
+
+export async function startDevTargetRuntime(
+  { target, env = process.env },
+  dependencies = {},
+) {
+  const normalized = normalizeRuntimeTarget(target);
+  if (!normalized) return { changed: false, status: 'Unmanaged' };
+  return await startManagedDevTargetRuntime(
+    { target: normalized.target, env },
+    normalized.reconcileSshPublication
+      ? dependencies
+      : { ...dependencies, reconcileSshPublication: async () => null },
+  );
 }
 
 export async function doctorManagedDevTargetRuntime({ target, env = process.env }) {

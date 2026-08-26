@@ -178,13 +178,43 @@ export async function ensureDevTargetSyncProject(
   const canResumeProject = isEquivalentMutagenProject(existingProject, desiredProject);
   let resumed = false;
   if (canResumeProject) {
-    const result = await runProcess({
+    let result = await runProcess({
       label: 'mutagen',
       command: 'mutagen',
       args: buildMutagenProjectArgs('resume', mutagenRuntime.projectFile),
       env: mutagenRuntime.env,
     });
     resumed = result?.code === 0;
+    if (!resumed && openSsh.sshArgs.length > 0) {
+      requireSuccessful(await runProcess({
+        label: 'mutagen',
+        command: 'mutagen',
+        args: ['daemon', 'stop'],
+        env: mutagenRuntime.env,
+      }), 'Mutagen daemon restart');
+      result = await runProcess({
+        label: 'mutagen',
+        command: 'mutagen',
+        args: buildMutagenProjectArgs('resume', mutagenRuntime.projectFile),
+        env: mutagenRuntime.env,
+      });
+      resumed = result?.code === 0;
+    }
+    if (!resumed) {
+      const sessionResults = await Promise.all(targets.map((target) => runProcess({
+        label: `sync:${target.name}`,
+        command: 'mutagen',
+        args: [
+          'sync',
+          'list',
+          resolveMutagenSessionName(target.name),
+          '--template',
+          MUTAGEN_SYNC_LIST_JSON_TEMPLATE,
+        ],
+        env: mutagenRuntime.env,
+      })));
+      resumed = sessionResults.every((sessionResult) => sessionResult?.code === 0);
+    }
   }
   let projectCreated = false;
   if (!resumed) {
@@ -242,5 +272,21 @@ export async function releaseIndependentDevTargetSyncProject(
     env: runtime.env,
   }), 'independent Mutagen project pause');
   await writeFile(runtime.projectFile, withoutMutagenProjectOwner(contents), 'utf8');
+  return true;
+}
+
+export async function pauseOwnedDevTargetSyncProject(
+  { stackBaseDir, ownerId, env = process.env },
+  { runProcess = runDevTargetControlProcess } = {},
+) {
+  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
+  const contents = await readFile(runtime.projectFile, 'utf8').catch(() => null);
+  if (!isMutagenProjectOwnedBy(contents, ownerId)) return false;
+  requireSuccessful(await runProcess({
+    label: 'mutagen',
+    command: 'mutagen',
+    args: buildMutagenProjectArgs('pause', runtime.projectFile),
+    env: runtime.env,
+  }), 'owned Mutagen project pause');
   return true;
 }

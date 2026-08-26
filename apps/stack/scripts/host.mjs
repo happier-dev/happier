@@ -11,9 +11,12 @@ import {
 } from './utils/execution_host/config.mjs';
 import { executeCandidateHostCommand, inspectExecutionHost } from './utils/execution_host/controller.mjs';
 import {
+  inspectExecutionHostCandidateMirror,
+  pauseExecutionHostCandidateMirror,
   prepareExecutionHostCandidateRepository,
   readExecutionHostCandidateState,
   refreshExecutionHostCandidateRepository,
+  syncExecutionHostCandidateMirror,
 } from './utils/execution_host/candidate_repository.mjs';
 import { createManagedLimaHostExecutor } from './utils/managed_lima/host_executor.mjs';
 import { startManagedLimaInstance, stopManagedLimaInstance } from './utils/managed_lima/lifecycle.mjs';
@@ -34,8 +37,9 @@ function usage(json) {
     data: { commands: ['setup', 'mirror', 'status', 'doctor', 'start', 'stop', 'shell', 'exec'] },
     text: [
       '[host] usage:',
-      '  hstack host setup [--instance=happier-agent-primary] [--profile=balanced] [--json]',
+      '  hstack host setup [--instance=happier-agent-primary] [--profile=balanced] [--pressure-profile=none|swap64|swap64-zswap|swap128|swap128-zswap] [--json]',
       '  hstack host mirror [--source-dir=/absolute/path/to/repo] [--json]',
+      '  hstack host mirror status|sync|stop [--json]',
       '  hstack host status|doctor|start|stop [--json]',
       '  hstack host shell [--guest-cwd=/absolute/path] [-- COMMAND...]',
       '  hstack host exec [--guest-cwd=/absolute/path] -- COMMAND [ARG...]',
@@ -81,18 +85,26 @@ async function main() {
       new URL('./provision/linux-ubuntu-provision.sh', import.meta.url),
       'utf8',
     );
+    const guestPressureScriptSource = await readFile(
+      new URL('./provision/linux-guest-pressure.sh', import.meta.url),
+      'utf8',
+    );
+    const pressureProfile = flagValue(argv, '--pressure-profile').trim() || 'none';
     const runtime = await setupManagedLimaRuntime({
       executor: executorFor(runtimeConfig),
       instance: runtimeConfig.instance,
       profileName: runtimeConfig.profile,
       allowInstall: !argv.includes('--no-install'),
       guestProvisionScriptSource,
+      guestPressureScriptSource,
+      pressureProfileName: pressureProfile,
     });
     const profile = {
       version: 1,
       mode: 'managed-lima',
       activation: 'candidate',
       ...runtimeConfig,
+      pressureProfile,
       guestWorkspaceDir: flagValue(argv, '--guest-workspace-dir').trim()
         || join(runtime.guest.homeDir, '.happier-stack', 'workspace'),
       mirrorWorkspaceDir: flagValue(argv, '--mirror-workspace-dir').trim()
@@ -120,6 +132,37 @@ async function main() {
   if (!profile) throw new Error('[host] execution host is not configured; run `hstack host setup` explicitly');
   const executor = executorFor(profile);
   if (command === 'mirror') {
+    const mirrorArgument = argv[argv.indexOf(command) + 1] ?? '';
+    const mirrorAction = mirrorArgument.startsWith('-') ? '' : mirrorArgument;
+    if (mirrorAction === 'status') {
+      const result = await inspectExecutionHostCandidateMirror({ profile, env: process.env });
+      return printResult({
+        json,
+        data: result,
+        text: `[host] candidate synchronization: ${result.status.state}`,
+      });
+    }
+    if (mirrorAction === 'sync') {
+      const result = await syncExecutionHostCandidateMirror({
+        profile,
+        env: process.env,
+        executor,
+      });
+      return printResult({
+        json,
+        data: result,
+        text: `[host] candidate synchronization: ${result.status.state}`,
+      });
+    }
+    if (mirrorAction === 'stop') {
+      const result = await pauseExecutionHostCandidateMirror({ profile, env: process.env });
+      return printResult({
+        json,
+        data: result,
+        text: `[host] candidate synchronization: ${result.paused ? 'paused' : 'not owned'}`,
+      });
+    }
+    if (mirrorAction) throw new Error(`[host] unknown mirror command: ${mirrorAction}`);
     const existing = await readExecutionHostCandidateState(profile, process.env);
     const prepareOrRefresh = existing
       ? refreshExecutionHostCandidateRepository

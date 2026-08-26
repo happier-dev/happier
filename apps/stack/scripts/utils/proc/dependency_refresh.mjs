@@ -8,8 +8,9 @@ import { coerceHappyMonorepoRootFromPath, getHappyStacksHomeDir } from '../paths
 import { withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
 import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
 
-const REFRESH_STATE_VERSION = 4;
+const REFRESH_STATE_VERSION = 5;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
+const DEPENDENCY_INSTALL_MODE = 'development-full-v1';
 
 function installDirLockKey(installDir) {
   return createHash('sha256').update(resolve(installDir), 'utf-8').digest('hex');
@@ -79,35 +80,92 @@ async function collectDependencyInputPaths({ installDir, componentDir }) {
   ].map((path) => resolve(path)))).sort();
 }
 
-async function readInputSnapshot(inputPaths) {
+function isPathInside(rootPath, candidatePath) {
+  const relativePath = relative(resolve(rootPath), resolve(candidatePath));
+  return relativePath === '' || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`));
+}
+
+function portableRelativePath(rootPath, candidatePath) {
+  const relativePath = relative(resolve(rootPath), resolve(candidatePath));
+  return relativePath ? relativePath.split(sep).join('/') : '.';
+}
+
+function dependencyInputIdentityPath({ installDir, componentDir, inputPath }) {
+  if (isPathInside(installDir, inputPath)) {
+    return `install:${portableRelativePath(installDir, inputPath)}`;
+  }
+  if (isPathInside(componentDir, inputPath)) {
+    return `component:${portableRelativePath(componentDir, inputPath)}`;
+  }
+  throw new Error(`Dependency freshness input is outside its installation and component roots: ${inputPath}`);
+}
+
+async function readInputSnapshot({ inputPaths, installDir, componentDir }) {
   const snapshot = [];
   const visit = async (inputPath) => {
     try {
       const stats = await lstat(inputPath);
-      const resolvedPath = resolve(inputPath);
+      const identityPath = dependencyInputIdentityPath({ installDir, componentDir, inputPath });
       if (stats.isFile()) {
         snapshot.push({
-          path: resolvedPath,
+          path: identityPath,
           kind: 'file',
           digest: createHash('sha256').update(await readFile(inputPath)).digest('hex'),
         });
       } else if (stats.isDirectory()) {
-        snapshot.push({ path: resolvedPath, kind: 'directory' });
+        snapshot.push({ path: identityPath, kind: 'directory' });
       } else if (stats.isSymbolicLink()) {
-        snapshot.push({ path: resolvedPath, kind: 'symlink', target: await readlink(inputPath) });
+        snapshot.push({
+          path: identityPath,
+          kind: 'symlink',
+          targetDigest: createHash('sha256').update(await readlink(inputPath), 'utf8').digest('hex'),
+        });
       } else {
-        snapshot.push({ path: resolvedPath, kind: 'other', size: Number(stats.size) });
+        snapshot.push({ path: identityPath, kind: 'other', size: Number(stats.size) });
       }
       if (stats.isDirectory()) {
         const entries = await readdir(inputPath);
         for (const entry of entries.sort()) await visit(join(inputPath, entry));
       }
     } catch {
-      snapshot.push({ path: resolve(inputPath), kind: 'missing' });
+      snapshot.push({
+        path: dependencyInputIdentityPath({ installDir, componentDir, inputPath }),
+        kind: 'missing',
+      });
     }
   };
   for (const inputPath of inputPaths) await visit(inputPath);
   return snapshot.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+async function resolveDependencyIdentity({ installDir, runtimeIdentity }) {
+  if (runtimeIdentity) return runtimeIdentity;
+  let packageManager = 'unknown';
+  try {
+    const packageJson = JSON.parse(await readFile(join(installDir, 'package.json'), 'utf8'));
+    const declaredPackageManager = String(packageJson?.packageManager ?? '').trim();
+    if (declaredPackageManager) packageManager = declaredPackageManager;
+  } catch {
+    // A missing or malformed manifest is already represented in the input
+    // snapshot. Keep the toolchain identity explicit and deterministic too.
+  }
+  return {
+    packageManager,
+    nodeVersion: process.versions.node,
+    nodeAbi: process.versions.modules ?? 'unknown',
+    platform: process.platform,
+    architecture: process.arch,
+    installMode: DEPENDENCY_INSTALL_MODE,
+  };
+}
+
+function dependencyIdentitiesMatch(before, after) {
+  return before?.packageManager === after?.packageManager
+    && before?.nodeVersion === after?.nodeVersion
+    && before?.nodeAbi === after?.nodeAbi
+    && before?.platform === after?.platform
+    && before?.architecture === after?.architecture
+    && before?.installMode === after?.installMode;
 }
 
 function snapshotsMatch(before, after) {
@@ -117,7 +175,7 @@ function snapshotsMatch(before, after) {
     return entry.path === candidate?.path
       && entry.kind === candidate.kind
       && entry.digest === candidate.digest
-      && entry.target === candidate.target
+      && entry.targetDigest === candidate.targetDigest
       && entry.size === candidate.size;
   });
 }
@@ -148,11 +206,11 @@ async function repairSelfReferentialNodeModulesLink(installDir) {
   return true;
 }
 
-export async function inspectDependencyRefresh({ installDir, componentDir = installDir }) {
-  const resolvedInstallDir = resolve(installDir);
+export async function inspectDependencyRefresh({ installDir, componentDir = installDir, runtimeIdentity }) {
   const nodeModules = join(installDir, 'node_modules');
   const inputPaths = await collectDependencyInputPaths({ installDir, componentDir });
-  const inputSnapshot = await readInputSnapshot(inputPaths);
+  const inputSnapshot = await readInputSnapshot({ inputPaths, installDir, componentDir });
+  const dependencyIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity });
   // This is the admission record for the installed tree, so keep it with that
   // tree. Warm readers can prove freshness without touching mutation-lock paths,
   // and replacing node_modules naturally invalidates the old publication.
@@ -164,7 +222,7 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
     : null;
   if (
     markerState?.version === REFRESH_STATE_VERSION
-    && markerState.installDir === resolvedInstallDir
+    && dependencyIdentitiesMatch(markerState.identity, dependencyIdentity)
     && Array.isArray(markerState.inputs)
   ) {
     return {
@@ -174,6 +232,7 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
         || !snapshotsMatch(markerState.inputs, inputSnapshot),
       inputPaths,
       inputSnapshot,
+      dependencyIdentity,
       markerPath,
       selfReferentialNodeModulesLinkPath,
     };
@@ -182,6 +241,7 @@ export async function inspectDependencyRefresh({ installDir, componentDir = inst
     required: true,
     inputPaths,
     inputSnapshot,
+    dependencyIdentity,
     markerPath,
     selfReferentialNodeModulesLinkPath,
   };
@@ -191,25 +251,26 @@ export async function withDependencyRefresh({
   installDir,
   componentDir = installDir,
   onDependenciesReady = null,
+  runtimeIdentity,
 }, refresh) {
   if (typeof refresh !== 'function') throw new TypeError('withDependencyRefresh requires a refresh callback');
   if (onDependenciesReady != null && typeof onDependenciesReady !== 'function') {
     throw new TypeError('withDependencyRefresh requires onDependenciesReady to be a function when provided');
   }
   const shouldRunDependencyReadyAction = onDependenciesReady !== null;
-  const beforeLock = await inspectDependencyRefresh({ installDir, componentDir });
+  const beforeLock = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity });
   if (!beforeLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
 
   return await withJsonOwnerFileLock(async () => {
-    const afterDependencyLock = await inspectDependencyRefresh({ installDir, componentDir });
+    const afterDependencyLock = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity });
     if (!afterDependencyLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
     const mutate = async () => {
-      let beforeMutation = await inspectDependencyRefresh({ installDir, componentDir });
+      let beforeMutation = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity });
       let result = { refreshed: false, reason: 'up-to-date' };
       if (beforeMutation.selfReferentialNodeModulesLinkPath !== null) {
         const repaired = await repairSelfReferentialNodeModulesLink(installDir);
         if (repaired) {
-          beforeMutation = await inspectDependencyRefresh({ installDir, componentDir });
+          beforeMutation = await inspectDependencyRefresh({ installDir, componentDir, runtimeIdentity });
           result = {
             refreshed: false,
             reason: 'repaired-self-referential-node-modules-link',
@@ -219,11 +280,17 @@ export async function withDependencyRefresh({
       if (beforeMutation.required) {
         await refresh({});
         const refreshedInputPaths = await collectDependencyInputPaths({ installDir, componentDir });
-        const refreshedInputSnapshot = await readInputSnapshot(refreshedInputPaths);
-        const superseded = !snapshotsMatch(beforeMutation.inputSnapshot, refreshedInputSnapshot);
+        const refreshedInputSnapshot = await readInputSnapshot({
+          inputPaths: refreshedInputPaths,
+          installDir,
+          componentDir,
+        });
+        const refreshedDependencyIdentity = await resolveDependencyIdentity({ installDir, runtimeIdentity });
+        const superseded = !snapshotsMatch(beforeMutation.inputSnapshot, refreshedInputSnapshot)
+          || !dependencyIdentitiesMatch(beforeMutation.dependencyIdentity, refreshedDependencyIdentity);
         await writeJsonAtomic(beforeMutation.markerPath, {
           version: REFRESH_STATE_VERSION,
-          installDir: resolve(installDir),
+          identity: superseded ? beforeMutation.dependencyIdentity : refreshedDependencyIdentity,
           // If inputs advanced during the refresh, publish the admitted generation
           // as superseded. The next owner schedules exactly one successor instead
           // of treating the install as an unknown/unpublished attempt forever.

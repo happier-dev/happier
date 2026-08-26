@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
@@ -18,11 +18,22 @@ function candidate(overrides = {}) {
     instance: 'happier-agent-primary',
     limaHome: '/Users/example/.happier-stack/lima',
     profile: 'balanced',
+    pressureProfile: 'none',
     guestWorkspaceDir: '/home/example/.happier-stack/workspace',
     mirrorWorkspaceDir: '/Users/example/.happier-stack/workspace-mirror',
     ...overrides,
   };
 }
+
+test('legacy execution host profiles default to the no-swap pressure baseline', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'execution-host-legacy-pressure-' });
+  const env = { HAPPIER_STACK_HOME_DIR: fixture.path('stack-home') };
+  await mkdir(env.HAPPIER_STACK_HOME_DIR, { recursive: true });
+  const profile = candidate();
+  delete profile.pressureProfile;
+  await writeFile(resolveExecutionHostProfilePath(env), `${JSON.stringify(profile)}\n`, 'utf8');
+  assert.equal(readExecutionHostProfile(env).pressureProfile, 'none');
+});
 
 test('execution host profile is machine-global Stack state and defaults to absent', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'execution-host-config-' });

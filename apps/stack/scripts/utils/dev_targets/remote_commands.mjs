@@ -11,8 +11,67 @@ export const REMOTE_DEPENDENCY_ADMISSION = Object.freeze({
   corepackSubcommands: Object.freeze(['npm', 'pnpm', 'yarn']),
 });
 
+export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
+  primaryOnlyDirectCommands: Object.freeze(['git']),
+  sourceSearchDirectCommands: Object.freeze(['find', 'grep', 'rg']),
+  validationDirectCommands: Object.freeze(['tsc', 'vitest']),
+  validationScriptFamilies: Object.freeze(['build', 'check', 'lint', 'test', 'typecheck', 'vitest']),
+});
+
 function commandBasename(value) {
   return String(value ?? '').trim().replaceAll('\\', '/').split('/').at(-1);
+}
+
+export function classifyRemoteCommand(commandArgs, { cwd = '.' } = {}) {
+  if (!Array.isArray(commandArgs) || commandArgs.length === 0) {
+    return { placement: 'worker-eligible', commandClass: 'unclassified' };
+  }
+  if (REMOTE_COMMAND_CLASSIFICATION.primaryOnlyDirectCommands.includes(commandBasename(commandArgs[0]))) {
+    return { placement: 'primary-only', commandClass: 'vcs-authority' };
+  }
+  if (REMOTE_COMMAND_CLASSIFICATION.sourceSearchDirectCommands.includes(commandBasename(commandArgs[0]))) {
+    return { placement: 'worker-eligible', commandClass: 'source-search' };
+  }
+  if (
+    REMOTE_COMMAND_CLASSIFICATION.validationDirectCommands.includes(commandBasename(commandArgs[0]))
+    || REMOTE_COMMAND_CLASSIFICATION.validationScriptFamilies.includes(resolvePackageManagerScriptFamily(commandArgs))
+  ) {
+    return {
+      placement: 'worker-eligible',
+      commandClass: isRepositoryRootCwd(cwd) ? 'full-validation' : 'targeted-validation',
+    };
+  }
+  return { placement: 'worker-eligible', commandClass: 'unclassified' };
+}
+
+function resolvePackageManagerScriptFamily(commandArgs) {
+  const args = Array.isArray(commandArgs) ? commandArgs.map((value) => String(value ?? '').trim()) : [];
+  let commandIndex = 0;
+  if (commandBasename(args[0]) === 'corepack') commandIndex = 1;
+  const command = commandBasename(args[commandIndex]);
+  if (!REMOTE_DEPENDENCY_ADMISSION.corepackSubcommands.includes(command)) return '';
+
+  const scriptArgs = args.slice(commandIndex + 1);
+  for (let index = 0; index < scriptArgs.length; index += 1) {
+    const argument = scriptArgs[index];
+    if (argument === 'run') continue;
+    if (argument === '--cwd' || argument === '-C') {
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith('-')) continue;
+    return argument.split(':', 1)[0];
+  }
+  return '';
+}
+
+function isRepositoryRootCwd(cwd) {
+  const normalized = String(cwd ?? '.').trim().replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/+$/, '');
+  return normalized === '' || normalized === '.';
+}
+
+export function requiresRemoteWorkspacePreparation(commandArgs, { cwd = '.' } = {}) {
+  return classifyRemoteCommand(commandArgs, { cwd }).commandClass === 'targeted-validation';
 }
 
 export function requiresRemoteDependencyBootstrap(commandArgs) {

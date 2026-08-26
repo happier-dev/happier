@@ -3,7 +3,11 @@ import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { parseDevTargetsConfig, resolveDevTargetExecutionPolicy } from './config.mjs';
-import { REMOTE_DEPENDENCY_ADMISSION } from './remote_commands.mjs';
+import { REMOTE_COMMAND_CLASSIFICATION, REMOTE_DEPENDENCY_ADMISSION } from './remote_commands.mjs';
+import {
+  EXECUTION_PROVENANCE_FILENAME,
+  EXECUTION_PROVENANCE_SCHEMA_VERSION,
+} from './execution_provenance.mjs';
 
 function shellQuote(value) {
   return `'${String(value ?? '').replaceAll("'", `'"'"'`)}'`;
@@ -34,6 +38,12 @@ export function renderNativeExecutionProjection(config, { repoRoot = '' } = {}) 
     assignment('unavailable_ttl_seconds', Math.max(1, Math.ceil((policy.unavailableProbeTtlMs ?? 120000) / 1000))),
     assignment('dependency_direct_commands', REMOTE_DEPENDENCY_ADMISSION.directCommands.join(' ')),
     assignment('dependency_corepack_subcommands', REMOTE_DEPENDENCY_ADMISSION.corepackSubcommands.join(' ')),
+    assignment('primary_only_direct_commands', REMOTE_COMMAND_CLASSIFICATION.primaryOnlyDirectCommands.join(' ')),
+    assignment('source_search_direct_commands', REMOTE_COMMAND_CLASSIFICATION.sourceSearchDirectCommands.join(' ')),
+    assignment('validation_direct_commands', REMOTE_COMMAND_CLASSIFICATION.validationDirectCommands.join(' ')),
+    assignment('validation_script_families', REMOTE_COMMAND_CLASSIFICATION.validationScriptFamilies.join(' ')),
+    assignment('execution_provenance_schema_version', EXECUTION_PROVENANCE_SCHEMA_VERSION),
+    assignment('execution_provenance_filename', EXECUTION_PROVENANCE_FILENAME),
     assignment('target_count', targets.length),
   ];
   targets.forEach((target, index) => {

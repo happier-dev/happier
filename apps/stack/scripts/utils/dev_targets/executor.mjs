@@ -5,7 +5,9 @@ import {
   buildRemoteCancelCommand,
   buildRemoteExecCommand,
   buildSshWorkerArgs,
+  classifyRemoteCommand,
   requiresRemoteDependencyBootstrap,
+  requiresRemoteWorkspacePreparation,
 } from './remote_commands.mjs';
 import {
   MUTAGEN_SYNC_LIST_JSON_TEMPLATE,
@@ -13,6 +15,7 @@ import {
   resolveDevTargetMutagenRuntime,
 } from './mutagen_runtime.mjs';
 import { resolveMutagenSessionName } from './mutagen_project.mjs';
+import { appendExecutionProvenance } from './execution_provenance.mjs';
 
 async function defaultRunCaptureResult({ command, args, env, streamLabel = '', timeoutMs }) {
   return await runCaptureResult(command, args, {
@@ -126,8 +129,38 @@ export async function runDevTargetDependencyBootstrap(
       HAPPIER_STACK_PM_CACHE_BASE_DIR: `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`,
     },
     dependencyAdmission: 'skip',
+    provenance: 'skip',
     syncAlreadyVerified,
     ...(flush ? { flush: true } : {}),
+    env,
+  });
+}
+
+export async function runDevTargetWorkspacePreparation(
+  {
+    target,
+    stackBaseDir,
+    cwd,
+    syncAlreadyVerified = false,
+    env = process.env,
+  },
+  { runCommand = runDevTargetCommand } = {},
+) {
+  return await runCommand({
+    target,
+    stackBaseDir,
+    commandArgs: [
+      'node',
+      './apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs',
+      `--component-relative-dir=${cwd}`,
+    ],
+    environment: {
+      HAPPIER_STACK_PM_CACHE_BASE_DIR: `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`,
+    },
+    dependencyAdmission: 'skip',
+    workspacePreparation: 'skip',
+    provenance: 'skip',
+    syncAlreadyVerified,
     env,
   });
 }
@@ -142,6 +175,8 @@ export async function runDevTargetCommand(
     flush = false,
     tty = false,
     dependencyAdmission = 'auto',
+    workspacePreparation = 'auto',
+    provenance = 'auto',
     syncAlreadyVerified = false,
     env = process.env,
   },
@@ -152,14 +187,22 @@ export async function runDevTargetCommand(
     signalSource = process,
     createExecutionId = randomUUID,
     runDependencyBootstrap = runDevTargetDependencyBootstrap,
+    runWorkspacePreparation = runDevTargetWorkspacePreparation,
+    recordExecutionProvenance = appendExecutionProvenance,
+    now = Date.now,
   } = {},
 ) {
+  const classification = classifyRemoteCommand(commandArgs, { cwd });
+  if (classification.placement === 'primary-only') {
+    throw new Error('[dev-targets] Git/index/worktree commands must execute on the authoritative primary checkout');
+  }
+  let syncStatus = { state: 'unknown', successfulCycles: 0 };
   if (!syncAlreadyVerified) {
-    const status = await inspectDevTargetSync(
+    syncStatus = await inspectDevTargetSync(
       { target, stackBaseDir, env },
       { runCaptureResult: runCaptureResultImpl },
     );
-    assertReadySyncStatus(status);
+    assertReadySyncStatus(syncStatus);
   }
   if (flush) {
     await flushDevTarget(
@@ -178,6 +221,20 @@ export async function runDevTargetCommand(
     if (bootstrap?.code !== 0) return bootstrap;
   }
 
+  if (
+    workspacePreparation !== 'skip'
+    && requiresRemoteWorkspacePreparation(commandArgs, { cwd })
+  ) {
+    const preparation = await runWorkspacePreparation({
+      target,
+      stackBaseDir,
+      cwd,
+      syncAlreadyVerified: true,
+      env,
+    });
+    if (preparation?.code !== 0) return preparation;
+  }
+
   const executionId = createExecutionId();
   const remoteCommand = buildRemoteExecCommand(target, {
     executionId,
@@ -194,6 +251,7 @@ export async function runDevTargetCommand(
     '-o',
     'ConnectTimeout=10',
   ];
+  const admittedAt = now();
   const child = spawnProcess({
     label: `remote:${target.name}`,
     command: 'ssh',
@@ -201,6 +259,14 @@ export async function runDevTargetCommand(
     env,
     tty,
   });
+  const recordProvenance = async (record) => {
+    if (provenance === 'skip') return;
+    try {
+      await recordExecutionProvenance(stackBaseDir, record);
+    } catch {
+      // Diagnostics must never change command execution behavior.
+    }
+  };
   let stopPromise = null;
   const listeners = new Map(
     ['SIGINT', 'SIGTERM'].map((signal) => [signal, () => {
@@ -243,9 +309,29 @@ export async function runDevTargetCommand(
   );
   for (const [signal, listener] of listeners) signalSource.on(signal, listener);
   try {
+    await recordProvenance({
+      phase: 'admitted',
+      executionId,
+      timestamp: admittedAt,
+      target: target.name,
+      commandClass: classification.commandClass,
+      syncStatus: syncStatus.state,
+      syncSuccessfulCycles: syncStatus.session?.successfulCycles ?? 0,
+    });
     const result = await child.completion;
     const stopError = stopPromise ? await stopPromise : null;
     if (stopError) throw stopError;
+    const completedAt = now();
+    await recordProvenance({
+      phase: 'completed',
+      executionId,
+      timestamp: completedAt,
+      target: target.name,
+      commandClass: classification.commandClass,
+      exitCode: result.code,
+      signal: result.signal,
+      durationMs: completedAt - admittedAt,
+    });
     return result;
   } finally {
     for (const [signal, listener] of listeners) {

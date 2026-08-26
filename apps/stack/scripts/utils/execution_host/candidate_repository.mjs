@@ -2,16 +2,17 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
-import { getManagedLimaStatus } from '../managed_lima/lifecycle.mjs';
+import { getManagedLimaStatus, startManagedLimaInstance } from '../managed_lima/lifecycle.mjs';
 import { publishManagedLimaLocalSshConfig } from '../managed_lima/ssh_publication.mjs';
 import { getHappyStacksHomeDir } from '../paths/paths.mjs';
 import { runCaptureResult } from '../proc/proc.mjs';
 import {
   ensureDevTargetSyncProject,
   flushDevTargetSync,
+  pauseOwnedDevTargetSyncProject,
   resumeDevTargetSync,
 } from '../dev_targets/sync_project.mjs';
-import { runDevTargetDependencyBootstrap } from '../dev_targets/executor.mjs';
+import { inspectDevTargetSync, runDevTargetDependencyBootstrap } from '../dev_targets/executor.mjs';
 
 const CANDIDATE_SYNC_OWNER = 'execution-host-candidate';
 
@@ -330,6 +331,90 @@ export async function readExecutionHostCandidateState(profile, env = process.env
   } catch (error) {
     throw new Error(`[execution-host] failed to read candidate state ${stateFile}: ${String(error?.message ?? error)}`);
   }
+}
+
+function requireCandidateState(state) {
+  if (!state) {
+    throw new Error('[execution-host] candidate repository is not prepared; run `hstack host mirror` first');
+  }
+  return state;
+}
+
+function candidateSyncTarget(profile, paths, ssh = {}) {
+  return {
+    name: CANDIDATE_SYNC_OWNER,
+    platform: 'posix',
+    ssh: ssh.ssh ?? 'happier-execution-host-candidate',
+    sshConfigFile: ssh.sshConfigFile ?? paths.sshConfigFile,
+    repoDir: paths.guestRepositoryDir,
+    cliHomeDir: join(profile.guestWorkspaceDir, '.happier'),
+  };
+}
+
+export async function inspectExecutionHostCandidateMirror(
+  { profile, env = process.env },
+  { inspectSync = inspectDevTargetSync } = {},
+) {
+  const state = requireCandidateState(await readExecutionHostCandidateState(profile, env));
+  const paths = resolveExecutionHostCandidatePaths(profile, env);
+  const target = candidateSyncTarget(profile, paths);
+  return {
+    ...state,
+    status: await inspectSync({ target, stackBaseDir: paths.syncBaseDir, env }),
+  };
+}
+
+export async function syncExecutionHostCandidateMirror(
+  { profile, env = process.env, executor },
+  {
+    startRuntime = startManagedLimaInstance,
+    getInstanceStatus = getManagedLimaStatus,
+    publishSshConfig = publishManagedLimaLocalSshConfig,
+    ensureSyncProject = ensureDevTargetSyncProject,
+    resumeSync = resumeDevTargetSync,
+    flushSync = flushDevTargetSync,
+    inspectSync = inspectDevTargetSync,
+  } = {},
+) {
+  const state = requireCandidateState(await readExecutionHostCandidateState(profile, env));
+  const paths = resolveExecutionHostCandidatePaths(profile, env);
+  await startRuntime({ executor, instance: profile.instance });
+  const runtime = await getInstanceStatus({ executor, instance: profile.instance });
+  const ssh = await publishSshConfig({
+    instance: runtime.instance,
+    destination: paths.sshConfigFile,
+    alias: 'happier-execution-host-candidate',
+  });
+  const target = candidateSyncTarget(profile, paths, ssh);
+  const syncProject = await ensureSyncProject({
+    stackBaseDir: paths.syncBaseDir,
+    sourceDir: state.sourceDir,
+    targets: [target],
+    ownerId: CANDIDATE_SYNC_OWNER,
+    allowIndependentBorrow: false,
+    env,
+  });
+  await resumeSync({ target, env: syncProject.env });
+  await flushSync({ target, env: syncProject.env });
+  return {
+    ...state,
+    status: await inspectSync({ target, stackBaseDir: paths.syncBaseDir, env: syncProject.env }),
+  };
+}
+
+export async function pauseExecutionHostCandidateMirror(
+  { profile, env = process.env },
+  { pauseProject = pauseOwnedDevTargetSyncProject } = {},
+) {
+  requireCandidateState(await readExecutionHostCandidateState(profile, env));
+  const paths = resolveExecutionHostCandidatePaths(profile, env);
+  return {
+    paused: await pauseProject({
+      stackBaseDir: paths.syncBaseDir,
+      ownerId: CANDIDATE_SYNC_OWNER,
+      env,
+    }),
+  };
 }
 
 async function updateCandidateRepository({

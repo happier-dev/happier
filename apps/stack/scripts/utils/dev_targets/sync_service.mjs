@@ -23,6 +23,7 @@ import {
   releaseIndependentDevTargetSyncProject,
   runDevTargetControlProcess,
 } from './sync_project.mjs';
+import { startDevTargetRuntime } from './managed_runtime.mjs';
 
 function defaultSpawnMonitor({ command, args, env, lineFilter }) {
   return spawnProc('mutagen', command, args, env, { lineFilter });
@@ -173,12 +174,16 @@ export async function startDevTargetSyncService(
     resumeSync = defaultResumeSync,
     spawnMonitor = defaultSpawnMonitor,
     repairSync = repairRecoverableDevTargetSyncConflicts,
+    startTargetRuntime = startDevTargetRuntime,
     writePreparationState = defaultWritePreparationState,
   } = {},
 ) {
   if (!Array.isArray(targets) || targets.length === 0) {
     throw new Error('[dev-targets] no targets are configured for synchronization');
   }
+  await Promise.all(targets.map(async (target) => {
+    await startTargetRuntime({ target, env });
+  }));
   const project = await ensureProject({
     stackBaseDir,
     sourceDir,
@@ -199,26 +204,9 @@ export async function startDevTargetSyncService(
       targets: Object.fromEntries(targets.map((target) => [target.name, { state: 'pending' }])),
     },
   });
-  try {
-    await Promise.all(targets.map(async (target) => {
-      await resumeSync({ target, env: project.env });
-    }));
-  } catch (error) {
-    const updatedAt = new Date().toISOString();
-    await writePreparationState({
-      stackBaseDir,
-      env,
-      state: {
-        version: 1,
-        state: 'failed',
-        startedAt,
-        updatedAt,
-        error: errorMessage(error),
-        targets: Object.fromEntries(targets.map((target) => [target.name, { state: 'unknown' }])),
-      },
-    });
-    throw error;
-  }
+  await Promise.allSettled(targets.map(async (target) => {
+    await resumeSync({ target, env: project.env });
+  }));
   const statusResults = await Promise.allSettled(targets.map(async (target) => {
     const status = await inspectAndRepairSync({
       target,

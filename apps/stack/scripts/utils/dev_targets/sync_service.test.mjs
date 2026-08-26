@@ -52,6 +52,64 @@ test('detached sync start resumes the canonical project and reports every sessio
   assert.equal(result.monitor, null);
 });
 
+test('sync startup makes configured Lima transports ready before Mutagen project startup', async () => {
+  const calls = [];
+  const configuredTargets = [
+    { name: 'mac', platform: 'posix' },
+    {
+      name: 'linux',
+      platform: 'posix',
+      limaInstance: 'happier-dev-bench',
+      limaHome: '/tmp/lima',
+    },
+  ];
+
+  await startDevTargetSyncService({
+    stackBaseDir: '/stack',
+    sourceDir: '/repo',
+    targets: configuredTargets,
+    detached: true,
+    env: {},
+  }, {
+    startTargetRuntime: async ({ target }) => {
+      calls.push({ kind: 'runtime', target: target.name });
+    },
+    ensureProject: async () => {
+      calls.push({ kind: 'ensure' });
+      return { ownership: 'owned', env: {} };
+    },
+    resumeSync: async ({ target }) => { calls.push({ kind: 'resume', target: target.name }); },
+    inspectSync: async ({ target }) => ({ state: 'ready', sessionName: `happier-${target.name}` }),
+    writePreparationState: async () => {},
+  });
+
+  assert.deepEqual(calls.slice(0, 3), [
+    { kind: 'runtime', target: 'mac' },
+    { kind: 'runtime', target: 'linux' },
+    { kind: 'ensure' },
+  ]);
+});
+
+test('sync startup accepts an unpaused reconnecting session when Mutagen resume reports an offline endpoint', async () => {
+  const states = [];
+  const result = await startDevTargetSyncService({
+    stackBaseDir: '/stack',
+    sourceDir: '/repo',
+    targets: [{ name: 'mac', platform: 'posix' }],
+    detached: true,
+    env: {},
+  }, {
+    startTargetRuntime: async () => {},
+    ensureProject: async () => ({ ownership: 'owned', env: {} }),
+    resumeSync: async () => { throw new Error('endpoint offline'); },
+    inspectSync: async () => ({ state: 'synchronizing', sessionName: 'happier-mac' }),
+    writePreparationState: async ({ state }) => { states.push(state); },
+  });
+
+  assert.equal(states.at(-1).state, 'ready');
+  assert.equal(result.statuses[0].status.state, 'synchronizing');
+});
+
 test('detached sync start never owns dependency preparation on any sync target', async () => {
   const prepared = [];
   const configuredTargets = [

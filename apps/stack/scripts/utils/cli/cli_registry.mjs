@@ -134,7 +134,7 @@ export function gethstackRegistry() {
       name: 'host',
       kind: 'node',
       scriptRelPath: 'scripts/host.mjs',
-      rootUsage: 'hstack host setup|mirror|status|doctor|start|stop|shell|exec [--json]',
+      rootUsage: 'hstack host setup|mirror [status|sync|stop]|status|doctor|start|stop|shell|exec [--json]',
       description: 'Manage the optional primary Linux execution host',
     },
     {

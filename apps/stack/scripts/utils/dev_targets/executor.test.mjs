@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   inspectDevTargetSync,
   runDevTargetDependencyBootstrap,
+  runDevTargetWorkspacePreparation,
   runDevTargetCommand,
   syncDevTarget,
 } from './executor.mjs';
@@ -54,9 +55,68 @@ test('dependency bootstrap delegates to the cancellable remote command owner', a
       HAPPIER_STACK_PM_CACHE_BASE_DIR: '/home/dev/.happier/linux/cache',
     },
     dependencyAdmission: 'skip',
+    provenance: 'skip',
     syncAlreadyVerified: true,
     env: { TEST_ENV: 'project' },
   }]);
+});
+
+test('workspace preparation delegates the component path to the cancellable remote command owner', async () => {
+  const calls = [];
+  const result = await runDevTargetWorkspacePreparation({
+    target,
+    stackBaseDir: '/tmp/stack',
+    cwd: 'apps/cli',
+    syncAlreadyVerified: true,
+    env: { TEST_ENV: 'project' },
+  }, {
+    runCommand: async (options) => {
+      calls.push(options);
+      return { code: 0, signal: null };
+    },
+  });
+
+  assert.deepEqual(result, { code: 0, signal: null });
+  assert.deepEqual(calls, [{
+    target,
+    stackBaseDir: '/tmp/stack',
+    commandArgs: [
+      'node',
+      './apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs',
+      '--component-relative-dir=apps/cli',
+    ],
+    environment: {
+      HAPPIER_STACK_PM_CACHE_BASE_DIR: '/home/dev/.happier/linux/cache',
+    },
+    dependencyAdmission: 'skip',
+    workspacePreparation: 'skip',
+    provenance: 'skip',
+    syncAlreadyVerified: true,
+    env: { TEST_ENV: 'project' },
+  }]);
+});
+
+test('explicit remote execution rejects Git commands before sync or SSH', async () => {
+  let boundaryCalls = 0;
+  await assert.rejects(
+    runDevTargetCommand({
+      target,
+      stackBaseDir: '/tmp/stack',
+      commandArgs: ['git', 'status'],
+      env: {},
+    }, {
+      runCaptureResult: async () => {
+        boundaryCalls += 1;
+        return readyListResult();
+      },
+      spawnProcess: () => {
+        boundaryCalls += 1;
+        return { completion: Promise.resolve({ code: 0, signal: null }) };
+      },
+    }),
+    /Git.*authoritative|primary.*Git/i,
+  );
+  assert.equal(boundaryCalls, 0);
 });
 
 test('dependency-consuming commands bootstrap a synchronized target before dispatch while raw searches stay bootstrap-free', async () => {
@@ -65,6 +125,10 @@ test('dependency-consuming commands bootstrap a synchronized target before dispa
     runCaptureResult: async () => readyListResult(),
     runDependencyBootstrap: async (options) => {
       calls.push({ kind: 'bootstrap', options });
+      return { code: 0, signal: null };
+    },
+    runWorkspacePreparation: async (options) => {
+      calls.push({ kind: 'prepare', options });
       return { code: 0, signal: null };
     },
     spawnProcess: ({ args }) => {
@@ -87,7 +151,19 @@ test('dependency-consuming commands bootstrap a synchronized target before dispa
     syncAlreadyVerified: true,
     env: {},
   });
-  assert.equal(calls[1].kind, 'command');
+  assert.equal(calls[1].kind, 'command', 'root validation scripts own their own preparation');
+
+  calls.length = 0;
+  await runDevTargetCommand({
+    target,
+    stackBaseDir: '/tmp/stack',
+    cwd: 'apps/cli',
+    commandArgs: ['corepack', 'yarn', '-s', 'typecheck:local'],
+    env: {},
+  }, dependencies);
+
+  assert.deepEqual(calls.map((call) => call.kind), ['bootstrap', 'prepare', 'command']);
+  assert.equal(calls[1].options.cwd, 'apps/cli');
 
   calls.length = 0;
   await runDevTargetCommand({
@@ -127,6 +203,52 @@ test('remote exec checks sync health but launches without an implicit flush', as
   assert.ok(sshCall);
   assert.ok(sshCall.includes('BatchMode=yes'));
   assert.ok(sshCall.includes('ConnectTimeout=10'));
+});
+
+test('explicit remote execution records one schema-safe admitted/completed provenance pair', async () => {
+  const records = [];
+  const result = await runDevTargetCommand({
+    target,
+    stackBaseDir: '/tmp/stack',
+    cwd: 'apps/cli',
+    commandArgs: ['corepack', 'yarn', '-s', 'typecheck:local', '--token=secret'],
+    env: {},
+  }, {
+    runCaptureResult: async () => readyListResult(),
+    runDependencyBootstrap: async () => ({ code: 0, signal: null }),
+    runWorkspacePreparation: async () => ({ code: 0, signal: null }),
+    spawnProcess: () => ({ completion: Promise.resolve({ code: 2, signal: null }) }),
+    createExecutionId: () => 'exec-12345678',
+    now: (() => {
+      const values = [1_000, 4_500];
+      return () => values.shift();
+    })(),
+    recordExecutionProvenance: async (_stackBaseDir, record) => records.push(record),
+  });
+
+  assert.deepEqual(result, { code: 2, signal: null });
+  assert.deepEqual(records, [
+    {
+      phase: 'admitted',
+      executionId: 'exec-12345678',
+      timestamp: 1_000,
+      target: 'linux',
+      commandClass: 'targeted-validation',
+      syncStatus: 'ready',
+      syncSuccessfulCycles: 3,
+    },
+    {
+      phase: 'completed',
+      executionId: 'exec-12345678',
+      timestamp: 4_500,
+      target: 'linux',
+      commandClass: 'targeted-validation',
+      exitCode: 2,
+      signal: null,
+      durationMs: 3_500,
+    },
+  ]);
+  assert.equal(JSON.stringify(records).includes('secret'), false);
 });
 
 test('remote exec flushes only when explicitly requested and before SSH launch', async () => {

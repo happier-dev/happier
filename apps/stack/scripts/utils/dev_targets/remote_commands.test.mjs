@@ -18,6 +18,8 @@ import {
   buildSshForwardArgs,
   buildSshTunnelArgs,
   buildSshWorkerArgs,
+  classifyRemoteCommand,
+  requiresRemoteWorkspacePreparation,
 } from './remote_commands.mjs';
 
 const executionId = '018f0f52-5fe8-7a9f-8ef5-f81f20572791';
@@ -41,6 +43,43 @@ const windows = {
 };
 
 const execFileAsync = promisify(execFile);
+
+test('remote command classification keeps Git/index/worktree operations on the authority', () => {
+  for (const args of [
+    ['git', 'status'],
+    ['/usr/bin/git', 'diff'],
+    ['git', 'grep', 'needle'],
+    ['git', 'worktree', 'list'],
+  ]) {
+    assert.deepEqual(classifyRemoteCommand(args), {
+      placement: 'primary-only',
+      commandClass: 'vcs-authority',
+    });
+  }
+  assert.deepEqual(classifyRemoteCommand(['rg', '-n', 'needle']), {
+    placement: 'worker-eligible',
+    commandClass: 'source-search',
+  });
+});
+
+test('remote command classification admits generated workspace preparation only for validation commands', () => {
+  for (const args of [
+    ['tsc', '--noEmit'],
+    ['vitest', 'run'],
+    ['yarn', '-s', 'typecheck:local'],
+    ['corepack', 'yarn', '-s', 'test:unit:local'],
+  ]) {
+    assert.equal(requiresRemoteWorkspacePreparation(args, { cwd: 'apps/cli' }), true);
+  }
+
+  assert.equal(
+    requiresRemoteWorkspacePreparation(['corepack', 'yarn', '-s', 'typecheck:local'], { cwd: '.' }),
+    false,
+    'repository-root scripts retain ownership of their declared build pipeline',
+  );
+  assert.equal(requiresRemoteWorkspacePreparation(['rg', '-n', 'needle'], { cwd: 'apps/cli' }), false);
+  assert.equal(requiresRemoteWorkspacePreparation(['node', 'script.mjs'], { cwd: 'apps/cli' }), false);
+});
 
 test('Windows directory bootstrap retires only Mutagen agents whose SSH owner is gone', () => {
   const command = buildRemoteEnsureDirectoriesCommand(windows);

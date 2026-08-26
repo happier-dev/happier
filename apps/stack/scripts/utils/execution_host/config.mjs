@@ -4,6 +4,7 @@ import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { resolveManagedLimaProfile, validateManagedLimaInstanceName } from '../managed_lima/profiles.mjs';
+import { resolveManagedLimaPressureProfile } from '../managed_lima/pressure_profiles.mjs';
 import { getHappyStacksHomeDir } from '../paths/paths.mjs';
 
 const PROFILE_FILE = 'execution-host.json';
@@ -14,6 +15,7 @@ const FIELDS = new Set([
   'instance',
   'limaHome',
   'profile',
+  'pressureProfile',
   'guestWorkspaceDir',
   'mirrorWorkspaceDir',
 ]);
@@ -40,6 +42,7 @@ function normalizeExecutionHostProfile(raw) {
   }
   const instance = validateManagedLimaInstanceName(raw.instance);
   const profile = resolveManagedLimaProfile(raw.profile).name;
+  const pressureProfile = resolveManagedLimaPressureProfile(raw.pressureProfile ?? 'none').name;
   return {
     version: 1,
     mode: 'managed-lima',
@@ -47,6 +50,7 @@ function normalizeExecutionHostProfile(raw) {
     instance,
     limaHome: requireAbsolutePath(raw.limaHome, 'limaHome'),
     profile,
+    pressureProfile,
     guestWorkspaceDir: requireAbsolutePath(raw.guestWorkspaceDir, 'guestWorkspaceDir'),
     mirrorWorkspaceDir: requireAbsolutePath(raw.mirrorWorkspaceDir, 'mirrorWorkspaceDir'),
   };
