@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY,
   clearPendingFirstInputFromEnv,
   createPendingFirstInput,
+  createPendingFirstInputCommitter,
   readPendingFirstInputFromEnv,
   serializePendingFirstInputForEnv,
 } from './pendingFirstInput';
@@ -43,6 +44,44 @@ describe('pendingFirstInput', () => {
     expect(env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]).toBeDefined();
 
     clearPendingFirstInputFromEnv(env);
+    expect(env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]).toBeUndefined();
+  });
+
+  it('retains custody after a failed commit and clears the handoff only after a retry succeeds', async () => {
+    const env: NodeJS.ProcessEnv = {
+      [HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]: serializePendingFirstInputForEnv({
+        text: 'retry this first turn',
+        localId: 'spawn-first-turn:retry-safe',
+      }),
+    };
+    const enqueueSessionUserMessage = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary enqueue failure'))
+      .mockResolvedValueOnce(undefined);
+    const committer = createPendingFirstInputCommitter({ env });
+
+    await expect(committer.commit({ enqueueSessionUserMessage })).rejects.toThrow(
+      'temporary enqueue failure',
+    );
+    expect(env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]).toBeDefined();
+
+    await committer.commit({ enqueueSessionUserMessage });
+    await committer.commit({ enqueueSessionUserMessage });
+
+    expect(enqueueSessionUserMessage).toHaveBeenCalledTimes(2);
+    expect(enqueueSessionUserMessage).toHaveBeenLastCalledWith({
+      text: 'retry this first turn',
+      localId: 'spawn-first-turn:retry-safe',
+      meta: { source: 'ui', sentFrom: 'cli' },
+      inputAdmission: {
+        provenance: { v: 1, kind: 'host', producer: 'agentRuntimeFirstInput' },
+        request: {
+          v: 1,
+          producer: 'agentRuntimeFirstInput',
+          caller: { kind: 'host' },
+          permission: {},
+        },
+      },
+    });
     expect(env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY]).toBeUndefined();
   });
 });

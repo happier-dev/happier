@@ -261,6 +261,7 @@ describe('initializeBackendRunSession pending first input', () => {
     const session = {
       sessionId: 'canonical-session',
       enqueueSessionUserMessage: vi.fn(),
+      close: vi.fn(async () => {}),
     } as unknown as ApiSessionClient;
 
     await expect(initializeBackendRunSession(
@@ -309,6 +310,7 @@ describe('initializeBackendRunSession pending first input', () => {
       enqueueSessionUserMessage: vi.fn(async () => {
         throw new Error('pending unavailable');
       }),
+      close: vi.fn(async () => {}),
     } as unknown as ApiSessionClient;
 
     await expect(initializeBackendRunSession(

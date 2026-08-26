@@ -1,5 +1,8 @@
 import { buildSpawnedFirstTurnLocalId } from '@happier-dev/protocol';
 
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { buildAgentRuntimeFirstInputAdmissionV1 } from '@/session/services/sessionInputAdmissionIdentity';
+
 export const HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY = 'HAPPIER_DAEMON_PENDING_FIRST_INPUT';
 
 export type PendingFirstInput = Readonly<{
@@ -57,4 +60,44 @@ export function readPendingFirstInputFromEnv(
 
 export function clearPendingFirstInputFromEnv(env: NodeJS.ProcessEnv = process.env): void {
   delete env[HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY];
+}
+
+export type PendingFirstInputCommitter = Readonly<{
+  hasPendingInput: boolean;
+  commit(session: Pick<ApiSessionClient, 'enqueueSessionUserMessage'>): Promise<void>;
+}>;
+
+export function createPendingFirstInputCommitter(
+  params: Readonly<{ env?: NodeJS.ProcessEnv }> = {},
+): PendingFirstInputCommitter {
+  const env = params.env ?? process.env;
+  const pendingFirstInput = readPendingFirstInputFromEnv(env);
+  let committed = pendingFirstInput === null;
+  let inFlight: Promise<void> | null = null;
+
+  return Object.freeze({
+    get hasPendingInput() {
+      return !committed;
+    },
+    commit: (session) => {
+      if (committed || pendingFirstInput === null) return Promise.resolve();
+      if (inFlight) return inFlight;
+
+      const attempt = (async () => {
+        await session.enqueueSessionUserMessage({
+          text: pendingFirstInput.text,
+          localId: pendingFirstInput.localId,
+          meta: { source: 'ui', sentFrom: 'cli' },
+          inputAdmission: buildAgentRuntimeFirstInputAdmissionV1(),
+        });
+        committed = true;
+        clearPendingFirstInputFromEnv(env);
+      })();
+      const tracked = attempt.finally(() => {
+        if (inFlight === tracked) inFlight = null;
+      });
+      inFlight = tracked;
+      return tracked;
+    },
+  });
 }

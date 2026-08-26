@@ -26,10 +26,8 @@ import {
 } from '@/agent/runtime/startupSideEffects'
 import { readSessionStartupSpawnNonceFromEnv } from '@/session/runtime/control/sessionControlEnvironment'
 import {
-  clearPendingFirstInputFromEnv,
-  readPendingFirstInputFromEnv,
+  createPendingFirstInputCommitter,
 } from '@/daemon/spawn/pendingFirstInput'
-import { buildAgentRuntimeFirstInputAdmissionV1 } from '@/session/services/sessionInputAdmissionIdentity'
 
 export interface InitializeBackendRunSessionOptions {
   api: Pick<ApiClient, 'getOrCreateSession' | 'sessionSyncClient'>
@@ -179,26 +177,17 @@ export async function initializeBackendRunSession(
   const throwIfAborted = (): void => throwIfSignalAborted(opts.signal)
   throwIfAborted()
   const startupSideEffectsOrder = opts.startupSideEffectsOrder ?? 'report-first'
-  const pendingFirstInput = readPendingFirstInputFromEnv()
-  let pendingFirstInputCommitted = pendingFirstInput === null
+  const pendingFirstInputCommitter = createPendingFirstInputCommitter()
   let commitPendingFirstInputAfterRuntimeReady: (() => Promise<void>) | null = null
   const commitPendingFirstInput = async (session: ApiSessionClient): Promise<void> => {
     throwIfAborted()
-    if (pendingFirstInputCommitted || pendingFirstInput === null) return
-    await session.enqueueSessionUserMessage({
-      text: pendingFirstInput.text,
-      localId: pendingFirstInput.localId,
-      meta: { source: 'ui', sentFrom: 'cli' },
-      inputAdmission: buildAgentRuntimeFirstInputAdmissionV1(),
-    })
-    pendingFirstInputCommitted = true
-    clearPendingFirstInputFromEnv()
+    await pendingFirstInputCommitter.commit(session)
     throwIfAborted()
   }
   const deferOrCommitPendingFirstInput = async (session: ApiSessionClient): Promise<void> => {
     if (
       !opts.deferPendingFirstInputCommitUntilRuntimeReady
-      || pendingFirstInput === null
+      || !pendingFirstInputCommitter.hasPendingInput
     ) {
       await commitPendingFirstInput(session)
       return
