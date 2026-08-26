@@ -247,6 +247,42 @@ test('iOS Ghostty clear routes through the bridge instead of no-oping', async ()
   assert.match(surfaceBridgeSource, /ghostty_surface_draw\(surface\)/);
 });
 
+test('iOS Ghostty initializes after Expo assigns surfaceId to an already-laid-out view', async () => {
+  const surfaceViewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
+
+  assert.match(
+    surfaceViewSource,
+    /var surfaceId: String = ""[\s\S]*didSet[\s\S]*initializeSurfaceIfPossible\(\)[\s\S]*setNeedsLayout\(\)/,
+  );
+  assert.match(
+    surfaceViewSource,
+    /private func initializeSurfaceIfPossible\(\)[\s\S]*bounds\.width > 0[\s\S]*bounds\.height > 0[\s\S]*ensureBridge\(\)\.ensureSurface\(fontSize: fontSize\)/,
+  );
+  assert.match(
+    surfaceViewSource,
+    /override func layoutSubviews\(\)[\s\S]*initializeSurfaceIfPossible\(\)/,
+  );
+});
+
+test('iOS Ghostty re-announces readiness after JavaScript installs native event listeners', async () => {
+  const moduleSource = await readFile(join(packageRoot, 'ios/HappierTerminalNativeModule.swift'), 'utf-8');
+  const surfaceViewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
+  const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
+
+  assert.match(
+    moduleSource,
+    /AsyncFunction\("createSurface"\)[\s\S]*await MainActor\.run[\s\S]*GhosttySurfaceRegistry\.shared\.surface\(id: surfaceId\)[\s\S]*prepareSurface\(\)/,
+  );
+  assert.match(
+    surfaceViewSource,
+    /func prepareSurface\(\) -> Bool[\s\S]*initializeSurfaceIfPossible\(\)[\s\S]*announceSurfaceReady\(\)/,
+  );
+  assert.match(
+    surfaceBridgeSource,
+    /func announceSurfaceReady\(\) -> Bool[\s\S]*emitSurfaceReady\(\)/,
+  );
+});
+
 test('iOS Ghostty host actions route title bell and safe URL events through the bridge', async () => {
   const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
   const linksSource = await readFile(join(packageRoot, 'ios/GhosttyLinks.swift'), 'utf-8');

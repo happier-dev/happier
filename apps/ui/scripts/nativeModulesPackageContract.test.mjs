@@ -683,7 +683,9 @@ test('terminal-native records native renderer supply-chain gates', async () => {
     assert.ok(rendererPolicy.androidTermux.interactionModel.implementedInAdapter.includes('ime-commit-text'));
     assert.ok(rendererPolicy.androidTermux.interactionModel.implementedInAdapter.includes('hardware-key-escape-mapping'));
     assert.ok(rendererPolicy.androidTermux.interactionModel.implementedInAdapter.includes('mouse-tracking-and-scrollback'));
-    assert.ok(rendererPolicy.androidTermux.interactionModel.remainingGaps.includes('selection-handles'));
+    assert.ok(rendererPolicy.androidTermux.interactionModel.implementedInAdapter.includes('long-press-drag-range-selection'));
+    assert.ok(rendererPolicy.androidTermux.interactionModel.implementedInAdapter.includes('selected-range-rendering-and-copy'));
+    assert.equal(rendererPolicy.androidTermux.interactionModel.remainingGaps.includes('selection-handles'), false);
     assert.ok(rendererPolicy.androidTermux.interactionModel.remainingGaps.includes('custom-accessibility'));
     assert.ok(rendererPolicy.androidTermux.interactionModel.requiresDeviceQa.includes('ime-keyboard-and-mouse-smoke'));
     assert.ok(rendererPolicy.androidTermux.gates.includes('legal-product-approval'));
@@ -1176,6 +1178,34 @@ test('EAS build install scopes include active first-party native Expo modules', 
                 `Expected EAS profile ${profileId} HAPPIER_INSTALL_SCOPE to include ${scopeToken}`,
             );
         }
+    }
+});
+
+test('every EAS build profile includes terminal-native with the approved hard gates', async () => {
+    const easJsonPath = join(appRoot, 'eas.json');
+    const easJson = await readJson(easJsonPath);
+    const requiredEnabledGates = [
+        'HAPPIER_ENABLE_TERMINAL_NATIVE',
+        'HAPPIER_TERMINAL_NATIVE_IOS_PACKAGE_PROOF_ACCEPTED',
+        'HAPPIER_TERMINAL_NATIVE_IOS_CRASH_FALLBACK_PROVEN',
+        'HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED',
+        'HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED',
+        'HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN',
+        'HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED',
+        'HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN',
+    ];
+
+    for (const profileId of Object.keys(easJson?.build ?? {})) {
+        const env = resolveEasBuildProfileEnv({ easJsonPath, profileId });
+        assert.ok(
+            parseScopeTokens(env.HAPPIER_INSTALL_SCOPE).has('terminal-native'),
+            `Expected EAS profile ${profileId} to install terminal-native`,
+        );
+        for (const gate of requiredEnabledGates) {
+            assert.equal(env[gate], '1', `Expected EAS profile ${profileId} ${gate}=1`);
+        }
+        assert.equal(env.HAPPIER_TERMINAL_NATIVE_IOS_ACCESSIBILITY_NATIVE, '0');
+        assert.equal(env.HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE, '0');
     }
 });
 

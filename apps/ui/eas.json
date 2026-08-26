@@ -8,8 +8,18 @@
       "node": "22.14.0",
       "env": {
       "HAPPIER_EAS_ENSURE_UI_WORKSPACES_BUILT": "1",
-      "HAPPIER_INSTALL_SCOPE": "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native",
+      "HAPPIER_INSTALL_SCOPE": "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native,terminal-native",
       "HAPPIER_ENABLE_NATIVE_SSH": "0",
+      "HAPPIER_ENABLE_TERMINAL_NATIVE": "1",
+      "HAPPIER_TERMINAL_NATIVE_IOS_PACKAGE_PROOF_ACCEPTED": "1",
+      "HAPPIER_TERMINAL_NATIVE_IOS_CRASH_FALLBACK_PROVEN": "1",
+      "HAPPIER_TERMINAL_NATIVE_IOS_ACCESSIBILITY_NATIVE": "0",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED": "1",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED": "1",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN": "1",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED": "1",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN": "1",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE": "0",
       "EXPO_UNSTABLE_WEB_MODAL": "1",
       "EXPO_PUBLIC_HAPPY_SERVER_URL": "https://api.happier.dev",
         "HAPPIER_UI_VENDOR_WEB_ASSETS": "0"
@@ -52,7 +62,7 @@
       "extends": "internaldev-dev-client",
       "env": {
         "HAPPIER_ENABLE_NATIVE_SSH": "1",
-        "HAPPIER_INSTALL_SCOPE": "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native,ssh-native"
+        "HAPPIER_INSTALL_SCOPE": "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native,ssh-native,terminal-native"
       }
     },
     "internaldev-store": {

@@ -34,6 +34,8 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
         bridge = nil
       }
       GhosttySurfaceRegistry.shared.update(view: self, oldSurfaceId: oldValue, newSurfaceId: surfaceId)
+      initializeSurfaceIfPossible()
+      setNeedsLayout()
       refreshAccessibility()
     }
   }
@@ -87,6 +89,11 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
 
   func setEventEmitter(_ eventEmitter: EventEmitter?) {
     self.eventEmitter = eventEmitter
+  }
+
+  func prepareSurface() -> Bool {
+    initializeSurfaceIfPossible()
+    return bridge?.announceSurfaceReady() == true
   }
 
   func writeBytes(_ bytes: Data, byteOffset: Int64) -> [String: Any] {
@@ -258,11 +265,17 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    if diagnostic.isAvailable, !surfaceId.isEmpty {
-      _ = ensureBridge().ensureSurface(fontSize: fontSize)
-      bridge?.updateSize()
-    }
+    initializeSurfaceIfPossible()
     refreshAccessibility()
+  }
+
+  private func initializeSurfaceIfPossible() {
+    guard diagnostic.isAvailable,
+          !surfaceId.isEmpty,
+          bounds.width > 0,
+          bounds.height > 0 else { return }
+    guard ensureBridge().ensureSurface(fontSize: fontSize) else { return }
+    bridge?.updateSize()
   }
 
   private func ensureBridge() -> GhosttySurfaceBridge {

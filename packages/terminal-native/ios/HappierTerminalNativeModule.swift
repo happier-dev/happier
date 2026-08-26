@@ -11,6 +11,24 @@ public final class HappierTerminalNativeModule: Module {
       makeGhosttyRuntimeDiagnostic().availabilityPayload()
     }
 
+    AsyncFunction("createSurface") { (surfaceId: String) async -> [String: Any] in
+      await MainActor.run {
+        let diagnostic = makeGhosttyRuntimeDiagnostic()
+        guard diagnostic.isAvailable else {
+          return diagnostic.availabilityPayload()
+        }
+        guard let view = GhosttySurfaceRegistry.shared.surface(id: surfaceId),
+              view.prepareSurface() else {
+          return [
+            "available": false,
+            "reason": "surface-not-ready",
+            "detail": "Native terminal surface is not mounted or has no drawable size.",
+          ]
+        }
+        return diagnostic.availabilityPayload()
+      }
+    }
+
     AsyncFunction("writeBytes") { (surfaceId: String, base64Bytes: String, byteOffset: Int64) async -> [String: Any] in
       await MainActor.run {
         guard let view = GhosttySurfaceRegistry.shared.surface(id: surfaceId) else {

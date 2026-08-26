@@ -160,6 +160,98 @@ describe('TermuxTerminalSurface', () => {
         expect(onUnavailable).toHaveBeenCalledWith('renderer-unavailable');
     });
 
+    it('keeps the native view mounted while surface creation waits for a drawable layout', async () => {
+        const onReady = vi.fn();
+        const onUnavailable = vi.fn();
+        const NativeView = vi.fn((props: { testID?: string }) => <View testID={props.testID ?? 'native-terminal-view'} />);
+        nativeModuleMock.createSurface.mockResolvedValue({
+            available: false,
+            reason: 'surface-not-ready',
+            detail: 'Native terminal surface is not mounted or has no drawable size.',
+        });
+        getOptionalNativeModuleMock.mockReturnValue(nativeModuleMock);
+        getOptionalNativeViewManagerMock.mockReturnValue(NativeView);
+        let root: renderer.ReactTestRenderer | null = null;
+
+        await act(async () => {
+            root = renderer.create(
+                <TermuxTerminalSurface
+                    surfaceId="surface-1"
+                    fontSize={14}
+                    lineHeightPx={18}
+                    onInput={vi.fn()}
+                    onReady={onReady}
+                    onResize={vi.fn()}
+                    onUnavailable={onUnavailable}
+                    testID="native-terminal-view"
+                />,
+            );
+            await Promise.resolve();
+        });
+
+        expect(nativeModuleMock.createSurface).toHaveBeenCalledWith('surface-1');
+        expect(onUnavailable).not.toHaveBeenCalled();
+        expect(root?.root.findByProps({ testID: 'native-terminal-view' })).toBeTruthy();
+
+        await act(async () => {
+            listeners.get('surfaceReady')?.({ surfaceId: 'surface-1', cols: 100, rows: 32 });
+        });
+
+        expect(onReady).toHaveBeenCalledWith(100, 32);
+    });
+
+    it('retries transient native surface creation after the view receives a drawable layout', async () => {
+        const onReady = vi.fn();
+        const onUnavailable = vi.fn();
+        const NativeView = vi.fn((props: { testID?: string; onLayout?: () => void }) => (
+            <View testID={props.testID ?? 'native-terminal-view'} onLayout={props.onLayout} />
+        ));
+        nativeModuleMock.createSurface
+            .mockResolvedValueOnce({
+                available: false,
+                reason: 'surface-not-ready',
+                detail: 'Native terminal surface is not mounted or has no drawable size.',
+            })
+            .mockImplementationOnce(async () => {
+                listeners.get('surfaceReady')?.({ surfaceId: 'surface-1', cols: 100, rows: 32 });
+                return {
+                    available: true,
+                    platform: 'ios',
+                    renderer: 'ios-ghosttykit',
+                    moduleVersion: '0.0.0',
+                    accessibility: 'fallback-required',
+                };
+            });
+        getOptionalNativeModuleMock.mockReturnValue(nativeModuleMock);
+        getOptionalNativeViewManagerMock.mockReturnValue(NativeView);
+        let root: renderer.ReactTestRenderer | null = null;
+
+        await act(async () => {
+            root = renderer.create(
+                <TermuxTerminalSurface
+                    surfaceId="surface-1"
+                    fontSize={14}
+                    lineHeightPx={18}
+                    onInput={vi.fn()}
+                    onReady={onReady}
+                    onResize={vi.fn()}
+                    onUnavailable={onUnavailable}
+                    testID="native-terminal-view"
+                />,
+            );
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            root?.root.findByType(View).props.onLayout?.();
+            await Promise.resolve();
+        });
+
+        expect(nativeModuleMock.createSurface).toHaveBeenCalledTimes(2);
+        expect(onReady).toHaveBeenCalledWith(100, 32);
+        expect(onUnavailable).not.toHaveBeenCalled();
+    });
+
     it('routes native input, ready, resize, and writeAck events for the mounted surface', async () => {
         const onInput = vi.fn();
         const onReady = vi.fn();

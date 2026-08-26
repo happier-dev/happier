@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ComponentType } from 'react';
-import type { StyleProp, ViewStyle } from 'react-native';
+import type { LayoutChangeEvent, StyleProp, ViewStyle } from 'react-native';
 
 import {
     TERMINAL_NATIVE_EVENT_NAMES,
@@ -30,6 +30,7 @@ type NativeTerminalViewProps = Readonly<{
     accessibilityAccepted?: boolean;
     style?: StyleProp<ViewStyle>;
     testID?: string;
+    onLayout?: (event: LayoutChangeEvent) => void;
 }>;
 
 type NativeTerminalView = ComponentType<NativeTerminalViewProps>;
@@ -66,6 +67,22 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
         }
     }, [props.onUnavailable, unavailableReason]);
 
+    const requestNativeSurface = React.useCallback(() => {
+        if (!nativeModule?.createSurface || unavailableReason) return;
+
+        void Promise.resolve(nativeModule.createSurface(props.surfaceId))
+            .then((value) => {
+                if (value === undefined) return;
+                const availability = normalizeTerminalNativeAvailability(value);
+                if (!availability.available && availability.reason !== 'surface-not-ready') {
+                    propsRef.current.onUnavailable?.(availability.reason);
+                }
+            })
+            .catch(() => {
+                propsRef.current.onUnavailable?.('renderer-unavailable');
+            });
+    }, [nativeModule, props.surfaceId, unavailableReason]);
+
     React.useEffect(() => {
         if (!nativeModule?.addListener || unavailableReason) return undefined;
 
@@ -81,22 +98,12 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
             })
         )).filter(Boolean) as TerminalNativeEventSubscription[];
 
-        void Promise.resolve(nativeModule.createSurface?.(props.surfaceId))
-            .then((value) => {
-                if (value === undefined) return;
-                const availability = normalizeTerminalNativeAvailability(value);
-                if (!availability.available) {
-                    propsRef.current.onUnavailable?.(availability.reason);
-                }
-            })
-            .catch(() => {
-                propsRef.current.onUnavailable?.('renderer-unavailable');
-            });
+        requestNativeSurface();
 
         return () => {
             subscriptions.forEach((subscription) => subscription.remove());
         };
-    }, [nativeModule, props.surfaceId, unavailableReason]);
+    }, [nativeModule, requestNativeSurface, unavailableReason]);
 
     React.useEffect(() => (
         () => {
@@ -190,6 +197,7 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
             accessibilityAccepted={props.accessibilityAccepted}
             style={{ flex: 1, minHeight: 0, minWidth: 0 }}
             testID={props.testID}
+            onLayout={requestNativeSurface}
         />
     );
 });

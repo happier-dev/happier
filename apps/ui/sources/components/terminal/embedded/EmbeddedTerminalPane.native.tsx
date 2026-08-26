@@ -168,6 +168,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                         <GhosttyTerminalSurface
                             ref={props.terminalRef}
                             surfaceId={createNativeSurfaceId('ios-ghosttykit', nativeSurfaceKey)}
+                            testID={props.testIdPrefix ? `${props.testIdPrefix}-ghostty-native` : undefined}
                             fontSize={fontMetrics.fontSize}
                             lineHeightPx={fontMetrics.lineHeight}
                             accessibilityAccepted={nativeAccessibilityAccepted}
@@ -186,6 +187,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                         <TermuxTerminalSurface
                             ref={props.terminalRef}
                             surfaceId={createNativeSurfaceId('android-termux', nativeSurfaceKey)}
+                            testID={props.testIdPrefix ? `${props.testIdPrefix}-termux-native` : undefined}
                             fontSize={fontMetrics.fontSize}
                             lineHeightPx={fontMetrics.lineHeight}
                             accessibilityAccepted={nativeAccessibilityAccepted}

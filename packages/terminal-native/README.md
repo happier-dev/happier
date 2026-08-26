@@ -2,7 +2,7 @@
 
 Optional native terminal renderer package for Happier.
 
-This package is a proof-gated Expo Module shell. It is excluded from app builds by default through `HAPPIER_ENABLE_TERMINAL_NATIVE=0` and reports native renderers as unavailable until GhosttyKit or Termux packaging, licensing, crash fallback, size, and platform proof gates are accepted. Accessibility is reported separately as `native` or `fallback-required` so the app can keep xterm WebView as the default accessible renderer while allowing explicit native experiments.
+This package is a proof-gated Expo Module used by every canonical EAS build profile. Ad hoc local builds may still omit it by leaving `HAPPIER_ENABLE_TERMINAL_NATIVE` unset; when included, it reports native renderers as unavailable until GhosttyKit or Termux packaging, licensing, crash fallback, size, and platform proof gates are accepted. Accessibility is reported separately as `native` or `fallback-required` so `auto` can keep xterm WebView as the accessible renderer while users can explicitly select the native renderer after every non-accessibility hard gate passes.
 
 ## iOS Ghostty shape
 
@@ -24,7 +24,7 @@ The Android implementation target is an Expo native view backed by Termux `termi
 
 Only those terminal libraries are in scope. The full Termux app is GPL-3.0-only and must not be bundled by this package under the Stage A plan. Upstream documents `terminal-view` and `terminal-emulator` as Apache-2.0 exceptions; legal/product approval, NOTICE handling, pinned revision, AAR/Gradle proof, size budget, crash fallback, and accessibility acceptance are still required before release use.
 
-The process-backed Termux `TerminalView` widget is not embedded directly because it requires a `TerminalSession` that spawns a local Android subprocess. Happier uses Termux `TerminalEmulator`/`TerminalRenderer` to consume the remote daemon byte stream without local PTY spawning. The Happier adapter now owns IME committed text, hardware-key escape mapping, mouse tracking, wheel/alternate-screen scrolling, local scrollback rendering, and safe HTTP(S) link-tap routing through the shared host link policy; selection handles, native accessibility, crash fallback, and device smoke remain release gates before default native selection.
+The process-backed Termux `TerminalView` widget is not embedded directly because it requires a `TerminalSession` that spawns a local Android subprocess. Happier uses Termux `TerminalEmulator`/`TerminalRenderer` to consume the remote daemon byte stream without local PTY spawning. The Happier adapter owns IME committed text, hardware-key escape mapping, mouse tracking, wheel/alternate-screen scrolling, local scrollback rendering, safe HTTP(S) link-tap routing through the shared host link policy, long-press drag range selection, and selected-range rendering/copy. Native accessibility and the remaining device smoke are release gates for automatic selection, while explicit native selection retains xterm WebView as its crash/unavailable fallback.
 
 ## Fallback invariant
 

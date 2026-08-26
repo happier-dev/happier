@@ -349,10 +349,12 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
                 title="Terminal"
                 controller={makeController()}
                 terminalRef={{ current: null }}
+                testIdPrefix="terminal"
             />,
         );
 
         expect(surfaceState.ghosttyProps).not.toBeNull();
+        expect(surfaceState.ghosttyProps).toMatchObject({ testID: 'terminal-ghostty-native' });
         expect(surfaceState.xtermProps).toBeNull();
         expect(surfaceState.termuxProps).toBeNull();
     });
@@ -472,10 +474,12 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
                 title="Terminal"
                 controller={controller}
                 terminalRef={{ current: null }}
+                testIdPrefix="terminal"
             />,
         );
 
         expect(surfaceState.termuxProps).not.toBeNull();
+        expect(surfaceState.termuxProps).toMatchObject({ testID: 'terminal-termux-native' });
         expect(surfaceState.xtermProps).toBeNull();
 
         await act(async () => {

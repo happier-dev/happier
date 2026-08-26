@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { TerminalInputEventSchema } from '@happier-dev/protocol';
 
 import { resolveTerminalPasteAction, type TerminalPasteAction } from '@/components/terminal/interaction/paste';
 import { Modal } from '@/modal';
@@ -8,6 +9,13 @@ import { t } from '@/text';
 import { safeTimeoutClear, safeTimeoutSet } from './terminalRpcRecovery';
 
 export type TerminalSize = Readonly<{ cols: number; rows: number }>;
+
+function normalizeTerminalSize(cols: number, rows: number): TerminalSize | null {
+    const parsed = TerminalInputEventSchema.safeParse({ t: 'resize', cols, rows });
+    return parsed.success && parsed.data.t === 'resize'
+        ? { cols: parsed.data.cols, rows: parsed.data.rows }
+        : null;
+}
 
 export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
     machineId: string | null;
@@ -109,7 +117,8 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
     const pendingResizeRef = React.useRef<TerminalSize | null>(null);
 
     const onResize = React.useCallback((cols: number, rows: number) => {
-        const nextSize: TerminalSize = { cols, rows };
+        const nextSize = normalizeTerminalSize(cols, rows);
+        if (!nextSize) return;
         latestTerminalSizeRef.current = nextSize;
         setInitialTerminalSize((current) => current ?? nextSize);
         pendingResizeRef.current = nextSize;
@@ -137,7 +146,8 @@ export function useEmbeddedTerminalTransportHandlers(params: Readonly<{
     }, [params.machineId, params.terminalIdRef, params.terminalStreamCarrierRef]);
 
     const onReady = React.useCallback((cols: number, rows: number) => {
-        const nextSize: TerminalSize = { cols, rows };
+        const nextSize = normalizeTerminalSize(cols, rows);
+        if (!nextSize) return;
         latestTerminalSizeRef.current = nextSize;
         setInitialTerminalSize((current) => current ?? nextSize);
     }, []);

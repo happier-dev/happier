@@ -187,6 +187,45 @@ describe('useEmbeddedTerminalTransportHandlers', () => {
         await hook.unmount();
     });
 
+    it('ignores transient renderer sizes that the terminal protocol cannot represent', async () => {
+        const { useEmbeddedTerminalTransportHandlers } = await import('./useEmbeddedTerminalTransportHandlers');
+
+        const terminalIdRef: TerminalIdRef = { current: 'term-1' };
+        const terminalStreamCarrierRef = createTerminalStreamCarrierRef();
+        const hook = await renderHook(
+            (props: Readonly<{ machineId: string | null; terminalIdRef: TerminalIdRef; terminalStreamCarrierRef: TerminalStreamCarrierRef }>) =>
+                useEmbeddedTerminalTransportHandlers(props),
+            {
+                initialProps: {
+                    machineId: 'machine-1',
+                    terminalIdRef,
+                    terminalStreamCarrierRef,
+                },
+            },
+        );
+
+        await act(async () => {
+            hook.getCurrent().onResize(120, 1);
+            hook.getCurrent().onReady(1, 40);
+        });
+        await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
+
+        expect(hook.getCurrent().initialTerminalSize).toBeNull();
+        expect(hook.getCurrent().latestTerminalSizeRef.current).toBeNull();
+        expect(carrierSendInputSpy).not.toHaveBeenCalled();
+        expect(onInputErrorSpy).not.toHaveBeenCalled();
+
+        await act(async () => {
+            hook.getCurrent().onResize(100, 30);
+        });
+        await flushHookEffects({ cycles: 1, turns: 0, runOnlyPendingTimers: true });
+
+        expect(hook.getCurrent().initialTerminalSize).toEqual({ cols: 100, rows: 30 });
+        expect(carrierSendInputSpy).toHaveBeenCalledWith('term-1', { t: 'resize', cols: 100, rows: 30 });
+
+        await hook.unmount();
+    });
+
     it('reports debounced resize failures through the shared input error callback', async () => {
         carrierSendInputSpy.mockRejectedValueOnce(new Error('terminal_not_found'));
         const { useEmbeddedTerminalTransportHandlers } = await import('./useEmbeddedTerminalTransportHandlers');

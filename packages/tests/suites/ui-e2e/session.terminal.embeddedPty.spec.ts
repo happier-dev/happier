@@ -41,16 +41,11 @@ function collectBrowserDiagnostics(params: Readonly<{ page: Page }>): () => stri
         `## Response errors\n\n${responseErrors.length ? responseErrors.join('\n') : '(none)'}\n`;
 }
 
-async function enableEmbeddedTerminalInSettings(page: Page, baseUrl: string) {
+async function expectEmbeddedTerminalEnabledInSettings(page: Page, baseUrl: string) {
     await page.goto(`${baseUrl}/settings/features`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('settings-feature-experiments-toggle')).toHaveCount(1, { timeout: 60_000 });
-
-    const experimentsToggle = page.getByTestId('settings-feature-experiments-toggle');
-    await experimentsToggle.click();
-
     const terminalToggle = page.getByTestId('settings-feature-toggle-terminal.embeddedPty');
     await expect(terminalToggle).toHaveCount(1, { timeout: 60_000 });
-    await terminalToggle.click();
+    await expect(terminalToggle).toBeChecked();
 }
 
 async function expectTerminalTranscriptToContain(page: Page, testId: string, needle: string) {
@@ -198,7 +193,7 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
                 },
             });
 
-            await enableEmbeddedTerminalInSettings(page, uiBaseUrl);
+            await expectEmbeddedTerminalEnabledInSettings(page, uiBaseUrl);
 
             const sessionId = await spawnSessionFromDaemon({ daemon, directory: testDir });
             await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });

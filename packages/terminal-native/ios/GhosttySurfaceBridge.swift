@@ -186,6 +186,14 @@ final class GhosttySurfaceBridge {
 #endif
   }
 
+  func announceSurfaceReady() -> Bool {
+#if HAPPIER_TERMINAL_NATIVE_HAS_GHOSTTY
+    return emitSurfaceReady()
+#else
+    return false
+#endif
+  }
+
   func setFocused(_ focused: Bool) {
 #if HAPPIER_TERMINAL_NATIVE_HAS_GHOSTTY
     isFocused = focused
@@ -499,15 +507,17 @@ final class GhosttySurfaceBridge {
     }
   }
 
-  private func emitSurfaceReady() {
-    guard !isDisposed, let surface else { return }
+  @discardableResult
+  private func emitSurfaceReady() -> Bool {
+    guard !isDisposed, let surface else { return false }
     let size = ghostty_surface_size(surface)
-    guard size.columns > 0, size.rows > 0 else { return }
+    guard size.columns > 0, size.rows > 0 else { return false }
     emitEvent("surfaceReady", [
       "surfaceId": surfaceId(),
       "cols": Int(size.columns),
       "rows": Int(size.rows),
     ])
+    return true
   }
 
   private func emitInput(_ data: Data) {
