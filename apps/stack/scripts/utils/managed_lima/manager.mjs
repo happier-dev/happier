@@ -4,7 +4,11 @@ import {
   reconcileManagedLimaInstance,
 } from './lifecycle.mjs';
 import { buildManagedLimaEditArgs, resolveManagedLimaProfile } from './profiles.mjs';
-import { inspectManagedLimaGuestIdentity, provisionManagedLimaGuest } from './provisioner.mjs';
+import {
+  ensureManagedLimaGuestLoginManager,
+  inspectManagedLimaGuestIdentity,
+  provisionManagedLimaGuest,
+} from './provisioner.mjs';
 
 function managedLimaError(message, code) {
   const error = new Error(message);
@@ -96,6 +100,7 @@ export async function setupManagedLimaRuntime({
   nodeMajor = '24',
   yarnVersion = '1.22.22',
   provisionGuest = provisionManagedLimaGuest,
+  ensureGuestLoginManager = ensureManagedLimaGuestLoginManager,
   inspectGuest = inspectManagedLimaGuestIdentity,
 }) {
   const lifecycle = await setupManagedLimaInstance({
@@ -113,8 +118,9 @@ export async function setupManagedLimaRuntime({
     nodeMajor,
     yarnVersion,
   });
+  const guestLoginManager = await ensureGuestLoginManager({ executor, instance });
   const guest = await inspectGuest({ executor, instance });
-  return { ...lifecycle, provision, guest };
+  return { ...lifecycle, provision, guestLoginManager, guest };
 }
 
 export async function doctorManagedLimaInstance({

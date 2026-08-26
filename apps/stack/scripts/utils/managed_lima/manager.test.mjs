@@ -198,6 +198,7 @@ test('explicit setup refuses disk shrink instead of risking retained data', asyn
 test('managed Lima runtime setup provisions the retained guest after lifecycle reconciliation', async () => {
   const executor = executorWithLimaProbe({ installed: true });
   const provisions = [];
+  const loginManagerChecks = [];
   const inspections = [];
 
   const result = await setupManagedLimaRuntime({
@@ -209,6 +210,10 @@ test('managed Lima runtime setup provisions the retained guest after lifecycle r
       provisions.push(input);
       return { changed: true, version: 'abc123' };
     },
+    ensureGuestLoginManager: async (input) => {
+      loginManagerChecks.push(input);
+      return { repaired: false };
+    },
     inspectGuest: async (input) => {
       inspections.push(input);
       return { homeDir: '/home/guest.actual', user: 'guest' };
@@ -217,8 +222,10 @@ test('managed Lima runtime setup provisions the retained guest after lifecycle r
 
   assert.equal(result.created, true);
   assert.deepEqual(result.provision, { changed: true, version: 'abc123' });
+  assert.deepEqual(result.guestLoginManager, { repaired: false });
   assert.deepEqual(result.guest, { homeDir: '/home/guest.actual', user: 'guest' });
   assert.equal(provisions.length, 1);
+  assert.equal(loginManagerChecks.length, 1);
   assert.equal(inspections.length, 1);
   assert.equal(provisions[0].instance, 'happier-agent-primary');
   assert.equal(provisions[0].scriptSource, '#!/usr/bin/env bash\nexit 0\n');

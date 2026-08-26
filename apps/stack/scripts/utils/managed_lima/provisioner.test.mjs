@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { inspectManagedLimaGuestIdentity, provisionManagedLimaGuest } from './provisioner.mjs';
+import {
+  ensureManagedLimaGuestLoginManager,
+  inspectManagedLimaGuestIdentity,
+  provisionManagedLimaGuest,
+} from './provisioner.mjs';
 
 function fakeExecutor({ ready = false } = {}) {
   const calls = [];
@@ -85,4 +89,59 @@ test('managed Lima guest identity is observed from the guest instead of inferred
   assert.deepEqual(calls[0].args, [
     'shell', 'primary', '--', 'sh', '-lc', 'printf "%s\\0%s" "$HOME" "$USER"',
   ]);
+});
+
+test('managed Lima guest login-manager health leaves a responsive guest unchanged', async () => {
+  const executor = fakeExecutor();
+
+  const result = await ensureManagedLimaGuestLoginManager({ executor, instance: 'primary' });
+
+  assert.deepEqual(result, { repaired: false });
+  assert.equal(executor.calls.length, 1);
+  assert.equal(executor.calls[0].kind, 'capture');
+  assert.match(executor.calls[0].args.at(-1), /loginctl list-sessions/);
+});
+
+test('managed Lima guest login-manager health repairs only a reproduced unresponsive logind', async () => {
+  const calls = [];
+  let healthChecks = 0;
+  const executor = {
+    async capture(command, args) {
+      calls.push({ kind: 'capture', command, args });
+      if (args.at(-1).includes('loginctl list-sessions')) {
+        healthChecks += 1;
+        return { exitCode: healthChecks === 1 ? 124 : 0, out: '', err: '' };
+      }
+      return { exitCode: 0, out: '', err: '' };
+    },
+    async run(command, args) {
+      calls.push({ kind: 'run', command, args });
+      return { exitCode: 0, out: '', err: '' };
+    },
+  };
+
+  const result = await ensureManagedLimaGuestLoginManager({ executor, instance: 'primary' });
+
+  assert.deepEqual(result, { repaired: true });
+  const repair = calls.find((call) => call.kind === 'run');
+  assert.ok(repair);
+  assert.match(repair.args.at(-1), /systemctl kill --kill-whom=main --signal=KILL systemd-logind\.service/);
+  assert.match(repair.args.at(-1), /systemctl start systemd-logind\.service/);
+  assert.equal(healthChecks, 2);
+});
+
+test('managed Lima guest login-manager health fails when the targeted repair does not recover logind', async () => {
+  const executor = {
+    async capture() {
+      return { exitCode: 124, out: '', err: 'timed out' };
+    },
+    async run() {
+      return { exitCode: 0, out: '', err: '' };
+    },
+  };
+
+  await assert.rejects(
+    ensureManagedLimaGuestLoginManager({ executor, instance: 'primary' }),
+    (error) => error.code === 'MANAGED_LIMA_GUEST_LOGIN_MANAGER_UNHEALTHY',
+  );
 });
