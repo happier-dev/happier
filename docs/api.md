@@ -18,7 +18,9 @@ The v1 challenge shape below is a compatibility transition, not a permanent
 contract. Retain it only while a published stable or preview artifact, or the
 current `../remote-dev` predecessor, can still send v1 to a v2-capable server.
 New clients choose v1 only when the ready server capability says
-`auth.keyChallenge.v2` is unavailable. Retire v1 only after immutable
+`capabilities.auth.keyChallenge.v2` is absent or false. A network, timeout,
+malformed, or 5xx capability-probe failure does not trigger a v1 downgrade.
+Clients do not advertise their challenge version. Retire v1 only after immutable
 stable/preview artifact evidence and the current predecessor show that no
 supported authenticating client still needs it. This is a release-frontier
 decision based on immutable artifact evidence and current predecessor behavior.
@@ -97,9 +99,10 @@ POST /v1/actions/:actionId
 Authorization: Bearer <API Token>
 ```
 
-Both the daemon-local adapter and the server-origin relay are implemented in
-development source. This is not a deployed or released HTTP API, and
-composed/live proof for the server origin remains outstanding.
+Both the daemon-local adapter and the server-origin relay are implemented and
+have been exercised together on the development stack, including server
+routing to the selected daemon. This remains a development-source contract;
+the HTTP API has not been deployed or released.
 
 Request:
 
