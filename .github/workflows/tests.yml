@@ -199,7 +199,10 @@ on:
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Preserve the active collector so late lanes can report their failures. GitHub retains at most
+  # one pending run per group, so newer pushes replace stale pending work without discarding the
+  # evidence already being collected by the running workflow.
+  cancel-in-progress: false
 
 env:
   # Speed up CI: UI postinstall vendors large web-only assets (Monaco/Kokoro/Skia web).

@@ -26,7 +26,11 @@ test('reusable tests callers explicitly select jobs without inheriting caller ev
     'tests-${{ github.workflow }}-${{ github.ref }}',
     'the reusable tests workflow must not share its caller concurrency group and cancel the caller',
   );
-  assert.equal(parsed?.concurrency?.['cancel-in-progress'], true);
+  assert.equal(
+    parsed?.concurrency?.['cancel-in-progress'],
+    false,
+    'an active full collector must finish; GitHub may replace the single pending run, but a later push must not discard in-flight evidence',
+  );
 
   const defaultJobs = {
     'ui-e2e': 'run_ui_e2e',
