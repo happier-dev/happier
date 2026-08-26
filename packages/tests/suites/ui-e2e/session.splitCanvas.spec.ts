@@ -60,16 +60,11 @@ async function warmSessionComposerReady(page: Page, params: Readonly<{
     await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
 }
 
-async function enableEmbeddedTerminalInSettings(page: Page, baseUrl: string) {
+async function expectEmbeddedTerminalEnabledInSettings(page: Page, baseUrl: string) {
     await page.goto(`${baseUrl}/settings/features`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('settings-feature-experiments-toggle')).toHaveCount(1, { timeout: 60_000 });
-
-    const experimentsToggle = page.getByTestId('settings-feature-experiments-toggle');
-    await experimentsToggle.click();
-
     const terminalToggle = page.getByTestId('settings-feature-toggle-terminal.embeddedPty');
     await expect(terminalToggle).toHaveCount(1, { timeout: 60_000 });
-    await terminalToggle.click();
+    await expect(terminalToggle).toBeChecked();
 }
 
 async function dragSessionIntoLeafCenter(page: Page, params: Readonly<{
@@ -440,7 +435,7 @@ test.describe('ui e2e: session split canvas', () => {
             },
         });
 
-        await enableEmbeddedTerminalInSettings(page, uiBaseUrl);
+        await expectEmbeddedTerminalEnabledInSettings(page, uiBaseUrl);
 
         const sessionOneId = await spawnSessionFromDaemon({ daemon, directory: testDir });
         const sessionTwoId = await spawnSessionFromDaemon({ daemon, directory: testDir });

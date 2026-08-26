@@ -27,6 +27,16 @@ const {
 } = require('./fake-claude-code-cli.helpers.cjs');
 
 const argv = process.argv.slice(2);
+if (argv.includes('--help') || argv.includes('-h')) {
+  process.stdout.write([
+    'Usage: claude [options] [prompt]',
+    '  --output-format <format>',
+    '  --input-format <format>',
+    '  --permission-mode <mode>',
+    '',
+  ].join('\n'));
+  process.exit(0);
+}
 const invocationId =
   process.env.HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID ||
   process.env.HAPPY_E2E_FAKE_CLAUDE_INVOCATION_ID ||

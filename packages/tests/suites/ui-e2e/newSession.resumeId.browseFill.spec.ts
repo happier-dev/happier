@@ -159,8 +159,16 @@ test.describe('ui e2e: /new resume id browse fills from direct sessions', () => 
     // machine-scoped, so select the machine before choosing Codex.
     await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 60_000 });
     await openNewSessionMachineSelection({ page, uiBaseUrl });
-    await expect(page.locator('[data-testid^="new-session-machine:"]').first()).toHaveCount(1, { timeout: 120_000 });
-    await page.locator('[data-testid^="new-session-machine:"]').first().click();
+    const activeMachinePopover = page.getByTestId('agent-input-content-popover');
+    const machinePopoverOpened = await expect(activeMachinePopover)
+      .toHaveCount(1, { timeout: 5_000 })
+      .then(() => true, () => false);
+    const machineOptionSelector = '[data-testid^="new-session-machine:"]:visible';
+    const machineOption = machinePopoverOpened
+      ? activeMachinePopover.locator(machineOptionSelector)
+      : page.locator(machineOptionSelector);
+    await expect(machineOption.first()).toBeVisible({ timeout: 120_000 });
+    await machineOption.first().click();
     await page.waitForURL((url: URL) => url.pathname.endsWith('/new'), { timeout: 60_000 });
 
     // Select the Codex engine so the resume browse can find seeded Codex sessions.

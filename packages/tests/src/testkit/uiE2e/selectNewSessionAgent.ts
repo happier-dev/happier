@@ -26,6 +26,7 @@ function buildAgentOptionTestIds(agentId: string): string[] {
 async function clickFirstEnabledOption(params: Readonly<{
   page: Page;
   agentOptionTestIds: readonly string[];
+  agentLabel: string;
 }>): Promise<boolean> {
   const openDialogs = params.page.locator('[role="dialog"][data-state="open"]');
   const topDialog = openDialogs.last();
@@ -50,6 +51,16 @@ async function clickFirstEnabledOption(params: Readonly<{
 
   for (const optionTestId of params.agentOptionTestIds) {
     if (await clickByTestId(optionTestId)) return true;
+  }
+
+  const escapedLabel = params.agentLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const semanticOptions = await params.page
+    .getByRole('button', { name: new RegExp(`^${escapedLabel}(?:\\s|$)`, 'i') })
+    .all();
+  for (const semanticOption of semanticOptions) {
+    if (!(await semanticOption.isVisible()) || !(await semanticOption.isEnabled())) continue;
+    await semanticOption.click();
+    return true;
   }
 
   return false;
@@ -115,7 +126,11 @@ export async function selectNewSessionAgent(params: Readonly<{
 
     await openAgentSelectionSurface(params.page);
 
-    if (await clickFirstEnabledOption({ page: params.page, agentOptionTestIds })) {
+    if (await clickFirstEnabledOption({
+      page: params.page,
+      agentOptionTestIds,
+      agentLabel: expectedAgentLabel(params.agentId),
+    })) {
       await maybeApplyAndClosePicker(params.page);
       if (await isAgentSelected({ page: params.page, agentId: params.agentId })) return;
     }
