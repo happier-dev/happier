@@ -217,7 +217,9 @@ function buildTargetEntries(params: Readonly<{
 }
 
 function contributionTargetSource(action: ActionSettingsContributedAction): ActionSettingsTargetSource {
-    const surfaces: Partial<ActionSurfaces> = { api: true };
+    // API and trusted-plugin invocation are host-owned broad surfaces. A contribution's declared
+    // presentation surfaces add UI-specific targets but must not withdraw either control.
+    const surfaces: Partial<ActionSurfaces> = { api: true, plugin: true };
     const supportedSurfaces = new Set<keyof ActionSurfaces>(Object.keys(ActionSurfaceSchema.shape) as Array<keyof ActionSurfaces>);
     for (const surface of action.surfaces) {
         if (supportedSurfaces.has(surface as keyof ActionSurfaces)) {

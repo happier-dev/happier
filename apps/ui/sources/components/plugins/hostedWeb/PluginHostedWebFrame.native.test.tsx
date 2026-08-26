@@ -65,6 +65,7 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
 
         expect(genericFrameProps).toEqual([]);
         expect(artifactFrameProps.at(-1)).toMatchObject({
+            title: 'Preview',
             artifactHandleToken: 'hpat_frame_token',
             initialPathAndQuery: '/?happierBridgeNonce=nonce-1',
             allowedNavigationOrigins: ['https://callback.example.test'],
@@ -95,7 +96,7 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
         const onLoadError = vi.fn();
         const { PluginHostedWebFrame } = await import('./PluginHostedWebFrame.native');
 
-        const screen = await renderScreen(
+        const renderArtifactFrame = (nativeArtifactLoadState: 'loading' | 'ready') => (
             <PluginHostedWebFrame
                 title="Preview"
                 security={{
@@ -117,16 +118,25 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
                         artifactHandleToken: 'hpat_frame_token',
                         initialPathAndQuery: '/',
                     },
-                    nativeArtifactLoadState: 'loading',
+                    nativeArtifactLoadState,
                     onNativeArtifactLoadStart: onLoadStart,
                     onNativeArtifactLoadEnd: onLoadEnd,
                     onNativeArtifactLoadError: onLoadError,
                 } as const)}
-            />,
+            />
         );
+        const screen = await renderScreen(renderArtifactFrame('loading'));
 
         const artifact = artifactFrameProps.at(-1);
         expect(artifact).toBeDefined();
+        expect(artifact?.title).toBe('Preview');
+        const loadingFrame = screen.findAll((node) => node.props.accessibilityElementsHidden !== undefined).at(-1);
+        expect(loadingFrame?.props).toMatchObject({
+            accessibilityElementsHidden: true,
+            importantForAccessibility: 'no-hide-descendants',
+        });
+        expect(loadingFrame?.props.accessible).toBeUndefined();
+        expect(loadingFrame?.props.accessibilityLabel).toBeUndefined();
         expect(screen.findByTestId('plugin-hosted-web-frame-loading')?.props).toMatchObject({
             accessibilityLiveRegion: 'polite',
             role: 'status',
@@ -143,6 +153,17 @@ describe('PluginHostedWebFrame native Artifact adoption', () => {
         expect(onLoadStart).toHaveBeenCalledExactlyOnceWith({ nativeEvent: { url: `${frameOrigin}/` } });
         expect(onLoadEnd).toHaveBeenCalledExactlyOnceWith({ nativeEvent: { url: `${frameOrigin}/` } });
         expect(onLoadError).toHaveBeenCalledExactlyOnceWith(error);
+
+        await screen.update(renderArtifactFrame('ready'));
+        const readyFrame = screen.findAll((node) => node.props.accessibilityElementsHidden !== undefined).at(-1);
+        expect(readyFrame?.props).toMatchObject({
+            accessibilityElementsHidden: false,
+            importantForAccessibility: 'auto',
+        });
+        expect(readyFrame?.props.accessible).toBeUndefined();
+        expect(readyFrame?.props.accessibilityLabel).toBeUndefined();
+        expect(artifactFrameProps.at(-1)?.title).toBe('Preview');
+        expect(screen.findByTestId('plugin-hosted-web-frame-loading')).toBeNull();
     });
 
     it('forwards only an Artifact guest go-back command and its current history fact to the native Artifact frame', async () => {

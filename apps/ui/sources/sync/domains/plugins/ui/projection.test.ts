@@ -6,7 +6,9 @@ import {
 } from '@happier-dev/protocol';
 import {
     normalizePluginUiDestinationBindingV1,
+    normalizePluginUiInlineSurfaceBindingV1,
     PluginUiDestinationBindingV1Schema,
+    PluginUiInlineSurfaceBindingV1Schema,
 } from '@happier-dev/protocol/plugins/ui';
 
 import {
@@ -25,6 +27,14 @@ function binding(input: Parameters<typeof normalizePluginUiDestinationBindingV1>
     // The registry owns destination admission before projection. Retain the
     // parsed producer boundary instead of widening the projection fixture type.
     return PluginUiDestinationBindingV1Schema.parse(normalized);
+}
+
+function inlineBinding(input: Parameters<typeof normalizePluginUiInlineSurfaceBindingV1>[0]) {
+    const normalized = normalizePluginUiInlineSurfaceBindingV1(input);
+    if (!normalized) {
+        throw new Error('test fixture must use an admitted V2 inline surface binding');
+    }
+    return PluginUiInlineSurfaceBindingV1Schema.parse(normalized);
 }
 
 function parsePluginUiEntry(
@@ -816,15 +826,14 @@ describe('plugin UI projection normalization', () => {
         const projection = createProjection();
         const entries = projection.familiesById.pluginUi?.entriesById;
         if (!entries) throw new Error('pluginUi fixture family is required');
-        const sessionInfoBinding = binding({
+        const sessionInfoBinding = inlineBinding({
             pluginId: 'acme.preview',
-            destinationId: 'overview',
+            surfaceId: 'overview',
             rendererId: 'session-info-overview',
             fallbackRendererIds: [],
             availableRendererIds: ['session-info-overview'],
-            container: 'sessionInfoSection',
+            role: 'sessionInfoSection',
             target: { kind: 'session' },
-            instancePolicy: 'singleton',
         });
         entries['sessionInfoSection:acme.preview:overview'] = {
             id: 'sessionInfoSection:acme.preview:overview',
@@ -868,7 +877,11 @@ describe('plugin UI projection normalization', () => {
                 actions: [{ pluginId: 'acme.preview', localId: 'open-preview' }],
                 renderer: expect.objectContaining({ contributionId: 'session-info-overview' }),
                 placement: expect.objectContaining({
-                    binding: expect.objectContaining({ container: 'sessionInfoSection' }),
+                    binding: expect.objectContaining({
+                        kind: 'inline',
+                        role: 'sessionInfoSection',
+                        surface: { pluginId: 'acme.preview', localId: 'overview' },
+                    }),
                 }),
             }),
         });

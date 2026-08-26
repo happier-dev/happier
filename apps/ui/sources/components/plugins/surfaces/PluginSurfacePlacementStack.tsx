@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type {
-    PluginUiContainerV1,
+    PluginUiDestinationContainerV1,
     PluginUiDestinationRuntimeFormFactorV1,
     PluginUiTargetKindV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -25,7 +25,7 @@ import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/la
 import { useDeviceType } from '@/utils/platform/responsive';
 
 export function PluginSurfacePlacementStack(props: Readonly<{
-    container: PluginUiContainerV1;
+    container: PluginUiDestinationContainerV1;
     targetKind: PluginUiTargetKindV1;
     pluginUiProjection?: PluginUiProjectionModel | null;
     localServicePreviewState?: LocalServicePreviewState | null;

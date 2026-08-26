@@ -18,16 +18,16 @@ import {
 } from '@happier-dev/protocol';
 import {
     buildPluginHostedWebStaticAssetPreviewId,
-    isPluginUiDestinationBindingAdmittedAtRuntimeV1,
+    isPluginUiSurfaceBindingAdmittedAtRuntimeV1,
     PluginUiFallbackRefV1Schema,
     resolvePluginUiInlineSurfaceSlotV1,
     type PluginUiChannelV1,
-    type PluginUiDestinationBindingV1,
     type PluginUiDestinationRuntimeFormFactorV1,
     type PluginUiFallbackRefV1,
     type PluginUiHostApiRequestEnvelopeV1,
     type PluginUiInstanceKeyV1,
     type PluginUiInlineSurfaceRoleV1,
+    type PluginUiSurfaceBindingV1,
     type PluginUiJsonValueV1,
     type PluginUiLaunchInputV1,
     type PluginUiResourceSubscriptionEventV1,
@@ -106,7 +106,7 @@ import type {
     PluginUiHostedWebProjection,
     PluginUiProjectionModel,
     PluginUiSettingsPageProjection,
-    PluginUiSurfacePlacementProjection,
+    PluginUiPhysicalSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import {
@@ -159,6 +159,7 @@ import {
 import {
     createPluginSurfaceComposerMountContext,
     createPluginSurfaceDestinationMountContext,
+    createPluginSurfaceInlineMountContext,
     createPluginSurfaceTargetedMountContext,
     readPluginSurfaceMountBinding,
     type PluginSurfaceComposerMountBinding,
@@ -215,7 +216,7 @@ import {
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 import { getDeviceType } from '@/utils/platform/responsive';
 
-type PluginSurfaceHostDescriptor = PluginUiSurfacePlacementProjection | PluginUiSettingsPageProjection;
+type PluginSurfaceHostDescriptor = PluginUiPhysicalSurfacePlacementProjection | PluginUiSettingsPageProjection;
 
 /**
  * Host-only props for the bundled provider. The public provider declaration
@@ -1500,16 +1501,26 @@ function readDescriptorReactNativeCrashState(
 
 function isExactDescriptorReactNativeCrashState(input: Readonly<{
     state: DaemonPluginReactNativeCrashStateV1;
-    binding: PluginUiDestinationBindingV1;
+    binding: PluginUiSurfaceBindingV1;
     renderer: Readonly<Record<string, unknown>>;
     artifactDigest: string | null;
 }>): boolean {
     const rendererId = readRendererBindingId(input.renderer);
+    const tokenMount = input.state.token.mount;
+    const bindingIdentity = input.binding.kind === 'destination'
+        ? input.binding.destination
+        : input.binding.surface;
+    const exactMount = input.binding.kind === 'destination'
+        ? tokenMount.kind === 'destination'
+            && tokenMount.destination.pluginId === input.binding.destination.pluginId
+            && tokenMount.destination.localId === input.binding.destination.localId
+        : tokenMount.kind === 'inline'
+            && tokenMount.surface.pluginId === input.binding.surface.pluginId
+            && tokenMount.surface.localId === input.binding.surface.localId
+            && tokenMount.role === input.binding.role;
     return rendererId !== null
-        && input.state.token.mount.kind === 'destination'
-        && input.state.token.mount.destination.pluginId === input.binding.destination.pluginId
-        && input.state.token.mount.destination.localId === input.binding.destination.localId
-        && input.state.token.renderer.pluginId === input.binding.destination.pluginId
+        && exactMount
+        && input.state.token.renderer.pluginId === bindingIdentity.pluginId
         && input.state.token.renderer.localId === rendererId
         && input.artifactDigest !== null
         && input.state.token.artifactDigest === input.artifactDigest;
@@ -1612,7 +1623,7 @@ function resolveHostedWebStaticAssetBrowserTarget(params: Readonly<{
  * descriptor fields: Registry/CLI admission owns the binding and the bound host
  * consumes its exact target for every renderer.
  */
-function resolveSurfaceResourceScope(binding: PluginUiDestinationBindingV1 | null) {
+function resolveSurfaceResourceScope(binding: PluginUiSurfaceBindingV1 | null) {
     return resolveResourceScope(binding?.target ?? null);
 }
 
@@ -1882,8 +1893,13 @@ export function PluginSurfaceHost(props: Readonly<(
     const mountBinding = targetedBinding
         ?? composerBinding
         ?? readPluginSurfaceMountBinding({ descriptor: descriptor!, renderer });
-    const selectedDestinationBinding = mountBinding?.kind === 'destination'
+    const selectedSurfaceBinding = mountBinding?.kind === 'destination'
         ? mountBinding.destinationBinding
+        : mountBinding?.kind === 'inline'
+            ? mountBinding.inlineBinding
+            : null;
+    const selectedInlineBinding = selectedSurfaceBinding?.kind === 'inline'
+        ? selectedSurfaceBinding
         : null;
     // F7 — an app-scope projection is a UNION across every eligible online
     // machine, so the CONTRIBUTION carries the machine that produced it. Every
@@ -1981,7 +1997,11 @@ export function PluginSurfaceHost(props: Readonly<(
         return () => retirement?.dispose();
     }, [accountLifetime]);
     const installedPackagesById = mountedPluginUiProjection?.installedPackagesById;
-    const mountedTargetPluginId = hasEmbeddedMount ? null : selectedDestinationBinding?.destination.pluginId;
+    const mountedTargetPluginId = hasEmbeddedMount
+        ? null
+        : selectedSurfaceBinding?.kind === 'destination'
+            ? selectedSurfaceBinding.destination.pluginId
+            : selectedSurfaceBinding?.surface.pluginId;
     const mountedTarget = React.useMemo(() => readMountedTarget({
         pluginId: mountedTargetPluginId,
         installedPackagesById,
@@ -2080,8 +2100,8 @@ export function PluginSurfaceHost(props: Readonly<(
             ? Object.freeze({ declared: false as const, reason: 'surface_target_undeclared' as const })
             : composerBinding
                 ? resolveResourceScope({ kind: 'session' })
-            : resolveSurfaceResourceScope(selectedDestinationBinding),
-        [composerBinding, selectedDestinationBinding, targetedBinding],
+            : resolveSurfaceResourceScope(selectedSurfaceBinding),
+        [composerBinding, selectedSurfaceBinding, targetedBinding],
     );
     const surfaceTargetResolution = React.useMemo(() => resolvePluginSurfaceTarget({
         targetKind: surfaceScope.declared ? surfaceScope.targetKind : null,
@@ -2157,11 +2177,11 @@ export function PluginSurfaceHost(props: Readonly<(
     // The Registry-normalized binding is the sole platform admission fact. A
     // conservative producer subset must not be widened back to the slot's
     // current default by this mount.
-    const destinationPlatformSupported = selectedEmbeddedRenderer
+    const surfacePlatformSupported = selectedEmbeddedRenderer
         ? selectedEmbeddedRenderer.availability.state === 'available'
-        : selectedDestinationBinding
-        ? isPluginUiDestinationBindingAdmittedAtRuntimeV1({
-            binding: selectedDestinationBinding,
+        : selectedSurfaceBinding
+        ? isPluginUiSurfaceBindingAdmittedAtRuntimeV1({
+            binding: selectedSurfaceBinding,
             platform: surfacePlatform,
             formFactor: runtimeFormFactor,
         })
@@ -2173,7 +2193,7 @@ export function PluginSurfaceHost(props: Readonly<(
         ? targetedBinding.mount.resourceCapability
         : composerBinding
             ? composerBinding.catalogEntry.resourceCapability
-        : selectedDestinationBinding
+        : selectedSurfaceBinding
         && descriptor?.contributionKind === 'surfacePlacement'
         ? readSelectedPluginUiResourceCapability(descriptor)
         : undefined;
@@ -2284,9 +2304,9 @@ export function PluginSurfaceHost(props: Readonly<(
             pluginUiProjection: mountedPluginUiProjection,
             accountLifetime,
             parentLifetime: targetedMount?.parentLifetime ?? null,
-            interactionEnabled: localControllerInteractionEnabled && destinationPlatformSupported,
+            interactionEnabled: localControllerInteractionEnabled && surfacePlatformSupported,
             daemonInteractionEnabled: daemonOwnedInteractionEnabled
-                && destinationPlatformSupported
+                && surfacePlatformSupported
                 && targetedMount?.daemonProjectionReady === true,
         })
         : composerBinding
@@ -2312,18 +2332,20 @@ export function PluginSurfaceHost(props: Readonly<(
                 accountLifetime,
                 parentLifetime: composerMount?.parentLifetime ?? null,
                 mountInstanceKey: composerBinding.mount.instanceKey,
-                interactionEnabled: localControllerInteractionEnabled && destinationPlatformSupported,
+                interactionEnabled: localControllerInteractionEnabled && surfacePlatformSupported,
                 daemonInteractionEnabled: daemonOwnedInteractionEnabled
-                    && destinationPlatformSupported
+                    && surfacePlatformSupported
                     && composerMount?.daemonProjectionReady === true,
             })
         : Object.freeze({
             pluginId: mountedPluginId,
-            contributionId: selectedDestinationBinding?.destination.localId ?? mountedContributionId,
+            contributionId: selectedSurfaceBinding?.kind === 'destination'
+                ? selectedSurfaceBinding.destination.localId
+                : selectedSurfaceBinding?.surface.localId ?? mountedContributionId,
             surfaceId: mountedSurfaceId,
             sessionId: props.sessionId,
             targetAuthorityKey: surfaceTargetAuthorityKey,
-            placement: selectedDestinationBinding?.surfaceContextPlacement ?? 'unknown',
+            placement: selectedSurfaceBinding?.surfaceContextPlacement ?? 'unknown',
             platform: surfacePlatform,
             channel: surfaceChannel,
             resourceScope: surfaceScope.declared ? surfaceScope.resourceScope : [],
@@ -2337,9 +2359,9 @@ export function PluginSurfaceHost(props: Readonly<(
             targetedContributions,
             accountLifetime,
             mountInstanceKey: mountedInstanceKey,
-            interactionEnabled: localControllerInteractionEnabled && destinationPlatformSupported,
+            interactionEnabled: localControllerInteractionEnabled && surfacePlatformSupported,
             daemonInteractionEnabled: daemonOwnedInteractionEnabled
-                && destinationPlatformSupported
+                && surfacePlatformSupported
                 && mountedTargetProjection.phase === 'ready',
         });
     const controllerFacts = Object.freeze({
@@ -2381,7 +2403,9 @@ export function PluginSurfaceHost(props: Readonly<(
     const mountedComposerOwnerContributionId = targetedBinding
         ? targetedBinding.mount.contributor.contributionId
         : !composerBinding && mountedTarget && mountedTargetInputs
-            ? selectedDestinationBinding?.destination.localId ?? mountedContributionId
+            ? selectedSurfaceBinding?.kind === 'destination'
+                ? selectedSurfaceBinding.destination.localId
+                : selectedSurfaceBinding?.surface.localId ?? mountedContributionId
             : null;
     const mountedComposerOwnerGeneration = targetedBinding
         ? targetedBinding.mount.contributor.immutableGenerationId
@@ -2736,7 +2760,9 @@ export function PluginSurfaceHost(props: Readonly<(
     );
     const mountedBrandPluginId = hasEmbeddedMount
         ? mountedPluginId
-        : selectedDestinationBinding?.destination.pluginId;
+        : selectedSurfaceBinding?.kind === 'destination'
+            ? selectedSurfaceBinding.destination.pluginId
+            : selectedSurfaceBinding?.surface.pluginId;
     const mountedBrandTarget = mountedBrandPluginId && resolveBrandTarget
         ? resolveBrandTarget(mountedBrandPluginId)
         : undefined;
@@ -2867,10 +2893,10 @@ export function PluginSurfaceHost(props: Readonly<(
     if (!mountBinding) {
         return renderUnavailable('destination_binding_unavailable');
     }
-    if (!destinationPlatformSupported) {
+    if (!surfacePlatformSupported) {
         return renderUnavailable('destination_platform_unavailable');
     }
-    const boundDestination = selectedDestinationBinding;
+    const boundSurface = selectedSurfaceBinding;
     // §3.2 r0.9 — target exactness fails CLOSED. A declared session/project/
     // project/browser placement whose principal identity this mount cannot
     // supply is the host failing to BIND the target; it is not an app surface.
@@ -2894,25 +2920,32 @@ export function PluginSurfaceHost(props: Readonly<(
     const inlineSlot = props.inlineMount
         ? resolvePluginUiInlineSurfaceSlotV1(props.inlineMount.role, props.inlineMount.presentation)
         : null;
-    if (props.inlineMount && (
-        !inlineSlot
-        || mountBinding.kind !== 'destination'
-        || selectedDestinationBinding?.container !== inlineSlot.container
-        || selectedDestinationBinding.targetKind !== inlineSlot.targetKind
+    const inlineMountBinding = mountBinding.kind === 'inline' ? mountBinding : null;
+    if (inlineMountBinding && (
+        !props.inlineMount
+        || !inlineSlot
+        || !selectedInlineBinding
+        || selectedInlineBinding.role !== inlineSlot.role
+        || selectedInlineBinding.targetKind !== inlineSlot.targetKind
+        || selectedInlineBinding.surfaceContextPlacement !== inlineSlot.surfaceContextPlacement
     )) {
         return renderUnavailable('inline_surface_binding_unavailable');
     }
-    const surfaceMount = inlineSlot
-        ? Object.freeze({
-            kind: 'embedded' as const,
-            role: props.inlineMount!.role,
-            presentation: inlineSlot.presentation,
-        })
+    if (props.inlineMount && !inlineMountBinding) {
+        return renderUnavailable('inline_surface_binding_unavailable');
+    }
+    const surfaceMount = inlineMountBinding && inlineSlot
+        ? createPluginSurfaceInlineMountContext(inlineMountBinding, inlineSlot.presentation)
         : mountBinding.kind === 'targetedSurface'
         ? createPluginSurfaceTargetedMountContext(mountBinding)
         : mountBinding.kind === 'composer'
             ? createPluginSurfaceComposerMountContext(mountBinding)
-            : createPluginSurfaceDestinationMountContext(mountBinding);
+            : mountBinding.kind === 'destination'
+                ? createPluginSurfaceDestinationMountContext(mountBinding)
+                : null;
+    if (!surfaceMount) {
+        return renderUnavailable('inline_surface_binding_unavailable');
+    }
     // The generalized physical mount consumes B's exact facts. The embedded
     // arm deliberately has neither a destination nor A's launch identity.
     const mountLaunchInput = targetedBinding
@@ -3270,7 +3303,7 @@ export function PluginSurfaceHost(props: Readonly<(
                         })
                     : isExactDescriptorReactNativeCrashState({
                         state: projectedCrashState,
-                        binding: boundDestination!,
+                        binding: boundSurface!,
                         renderer,
                         artifactDigest: artifactGraph?.digest ?? null,
                     })
@@ -3551,7 +3584,7 @@ export function PluginSurfaceHost(props: Readonly<(
 }
 
 export function PluginSurfacePlacementHost(props: Readonly<{
-    placement: PluginUiSurfacePlacementProjection;
+    placement: PluginUiPhysicalSurfacePlacementProjection;
     resourceBrowserTarget?: unknown;
     machineId?: string | null;
     serverId?: string | null;

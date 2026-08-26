@@ -93,6 +93,7 @@ import type {
     PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
+import { selectPluginSurfacePlacementsByDestination } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import type { PluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy';
 
 /**
@@ -523,12 +524,9 @@ function findCurrentDestinationPlacement(input: Readonly<{
     projection: PluginUiProjectionModel | null | undefined;
     destination: PluginContributionIdentityV1;
 }>): PluginUiSurfacePlacementProjection | null {
-    const matches = Object.values(input.projection?.surfacePlacementsById ?? {}).filter((placement) => (
-        placement.pluginId === input.destination.pluginId
-        && placement.descriptorId === input.destination.localId
-        && placement.binding.destination.pluginId === input.destination.pluginId
-        && placement.binding.destination.localId === input.destination.localId
-    ));
+    const matches = input.projection
+        ? selectPluginSurfacePlacementsByDestination(input.projection, input.destination)
+        : [];
     return matches.length === 1 ? matches[0]! : null;
 }
 

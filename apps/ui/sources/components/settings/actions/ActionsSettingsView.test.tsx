@@ -304,6 +304,46 @@ describe('ActionsSettingsView', () => {
         expect(capture.setRawSettings).not.toHaveBeenCalled();
     });
 
+    it('percent-encodes a qualified contributed action id when opening its detail page', async () => {
+        daemonProjection.byMachineId = {
+            'machine-a': {
+                phase: 'ready',
+                inputs: {
+                    pluginProjectionById: {
+                        'happier.inspector': {
+                            pluginId: 'happier.inspector',
+                            actions: [{
+                                id: 'self-check',
+                                title: 'Run Inspector self-check',
+                                description: 'Checks the Inspector plugin.',
+                                icon: null,
+                                surfaces: ['ui'],
+                                placementBindings: ['toolbar'],
+                            }],
+                        },
+                    },
+                },
+            },
+        };
+        const { ActionsSettingsView } = await import('./ActionsSettingsView');
+
+        await renderScreen(<ActionsSettingsView />);
+        await act(async () => {
+            administrationTargetSelection.controller.select('machine-a');
+        });
+
+        const inspectorRow = capture.items.find((item) => (
+            item.testID === 'settings-actions:action:happier.inspector/actions/self-check'
+        ));
+        expect(inspectorRow).toBeTruthy();
+
+        (inspectorRow?.onPress as () => void)();
+
+        expect(capture.routerPush).toHaveBeenCalledWith(
+            '/settings/actions/happier.inspector%2Factions%2Fself-check',
+        );
+    });
+
     it('shows a compact target status and settings affordance beside each action switch', async () => {
         capture.reset();
         const { ActionsSettingsView } = await import('./ActionsSettingsView');

@@ -40,6 +40,7 @@ import {
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import {
+    selectPluginDestinationSurfacePlacements,
     selectRenderablePluginRightSidebarTabPlacements,
 } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import {
@@ -572,7 +573,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     const pluginRuntimeUpdateTailRef = React.useRef<Promise<void>>(Promise.resolve());
     const appNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
         placements: pluginUiProjection
-            ? Object.values(pluginUiProjection.surfacePlacementsById)
+            ? selectPluginDestinationSurfacePlacements(pluginUiProjection)
             : [],
         settingsPages: pluginUiProjection
             ? Object.values(pluginUiProjection.settingsPagesById)

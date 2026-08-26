@@ -28,8 +28,12 @@ import {
     createPluginSessionInfoSectionRendererIdV1,
     PluginUiResolvedSemanticCommandV1Schema,
     PluginUiDestinationBindingV1Schema,
+    PluginUiInlineSurfaceBindingV1Schema,
+    PluginUiSurfaceBindingV1Schema,
     PluginUiDestinationReferenceV1Schema,
     type PluginUiDestinationBindingV1,
+    type PluginUiInlineSurfaceBindingV1,
+    type PluginUiSurfaceBindingV1,
     type PluginUiDestinationReferenceV1,
     type PluginUiResolvedSemanticCommandV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -103,7 +107,7 @@ export type PluginUiPageHeaderActionProjection = Readonly<{
     command: PluginUiResolvedSemanticCommandV1;
 }>;
 
-export type PluginUiSurfacePlacementProjection = UnknownRecord & Readonly<{
+type PluginUiSurfacePlacementProjectionFields = UnknownRecord & Readonly<{
     id: string;
     pluginId: string;
     contributionKind: 'surfacePlacement';
@@ -114,7 +118,7 @@ export type PluginUiSurfacePlacementProjection = UnknownRecord & Readonly<{
      * projection owns admission and target/container pairing, while collision
      * admission remains at the registry before projection.
      */
-    binding: PluginUiDestinationBindingV1;
+    binding: PluginUiSurfaceBindingV1;
     target: UnknownRecord;
     renderer: UnknownRecord;
     display: UnknownRecord;
@@ -128,6 +132,27 @@ export type PluginUiSurfacePlacementProjection = UnknownRecord & Readonly<{
     headerActions: readonly PluginUiPageHeaderActionProjection[];
     rightSidebar?: UnknownRecord;
 }>;
+
+/** A navigable placement. Destination consumers must name this arm explicitly. */
+export type PluginUiSurfacePlacementProjection = PluginUiSurfacePlacementProjectionFields & Readonly<{
+    binding: PluginUiDestinationBindingV1;
+}>;
+
+/** A physical inline mount; it has no navigation or restoration identity. */
+export type PluginUiInlineSurfacePlacementProjection = PluginUiSurfacePlacementProjectionFields & Readonly<{
+    binding: PluginUiInlineSurfaceBindingV1;
+}>;
+
+/** The one daemon-projected physical host carrier. */
+export type PluginUiPhysicalSurfacePlacementProjection =
+    | PluginUiSurfacePlacementProjection
+    | PluginUiInlineSurfacePlacementProjection;
+
+export function isPluginUiDestinationSurfacePlacementProjection(
+    placement: PluginUiPhysicalSurfacePlacementProjection,
+): placement is PluginUiSurfacePlacementProjection {
+    return placement.binding.kind === 'destination';
+}
 
 /**
  * One daemon-admitted openable-content viewer declaration. This preserves the
@@ -204,7 +229,7 @@ export type PluginUiSessionInfoSectionProjection = UnknownRecord & Readonly<{
     actions: readonly Readonly<{ pluginId: string; localId: string }>[];
     renderer: UnknownRecord;
     runtime?: UnknownRecord;
-    placement: PluginUiSurfacePlacementProjection;
+    placement: PluginUiInlineSurfacePlacementProjection;
 }>;
 
 export type PluginVoiceProviderProjection = UnknownRecord & Readonly<{
@@ -280,7 +305,7 @@ export type PluginUiProjectionModel = Readonly<{
     sessionHeaderActionsById: Readonly<Record<string, PluginUiSessionHeaderActionProjection>>;
     hostedWebById: Readonly<Record<string, PluginUiHostedWebProjection>>;
     reactNativeBundlesById: Readonly<Record<string, PluginUiReactNativeBundleProjection>>;
-    surfacePlacementsById: Readonly<Record<string, PluginUiSurfacePlacementProjection>>;
+    surfacePlacementsById: Readonly<Record<string, PluginUiPhysicalSurfacePlacementProjection>>;
     openableContentViewersById: Readonly<Record<string, PluginUiOpenableContentViewerProjection>>;
     settingsGroupsById: Readonly<Record<string, PluginUiSettingsGroupProjection>>;
     settingsPagesById: Readonly<Record<string, PluginUiSettingsPageProjection>>;
@@ -488,7 +513,13 @@ function isNormalizedPluginUiDestinationBinding(
     return PluginUiDestinationBindingV1Schema.safeParse(value).success;
 }
 
-function isSurfacePlacement(entry: UnknownRecord): entry is PluginUiSurfacePlacementProjection {
+function isNormalizedPluginUiSurfaceBinding(
+    value: unknown,
+): value is PluginUiSurfaceBindingV1 {
+    return PluginUiSurfaceBindingV1Schema.safeParse(value).success;
+}
+
+function isSurfacePlacement(entry: UnknownRecord): entry is PluginUiPhysicalSurfacePlacementProjection {
     return entry.contributionKind === 'surfacePlacement'
         && readString(entry.id) !== null
         && readString(entry.pluginId) !== null
@@ -496,7 +527,7 @@ function isSurfacePlacement(entry: UnknownRecord): entry is PluginUiSurfacePlace
         // The CLI projection has one already-admitted binding. Do not call a
         // client-side normalizer here: the daemon projection owns that
         // normalization and consumers retain its exact object identity.
-        && isNormalizedPluginUiDestinationBinding(entry.binding)
+        && isNormalizedPluginUiSurfaceBinding(entry.binding)
         && asRecord(entry.target) !== null
         && asRecord(entry.renderer) !== null
         && asRecord(entry.display) !== null
@@ -626,11 +657,12 @@ function isSessionInfoSection(entry: UnknownRecord): entry is PluginUiSessionInf
     if (
         placement.pluginId !== pluginId
         || placement.descriptorId !== descriptorId
-        || binding.container !== 'sessionInfoSection'
+        || binding.kind !== 'inline'
+        || binding.role !== 'sessionInfoSection'
         || binding.targetKind !== 'session'
         || binding.target.kind !== 'session'
-        || binding.destination.pluginId !== pluginId
-        || binding.destination.localId !== descriptorId
+        || binding.surface.pluginId !== pluginId
+        || binding.surface.localId !== descriptorId
         || binding.renderer.pluginId !== pluginId
         || binding.renderer.localId !== expectedRendererId
         || readString(renderer?.contributionId) !== expectedRendererId
@@ -759,7 +791,7 @@ export function normalizePluginUiProjection(
     const sessionHeaderActionsById: Record<string, PluginUiSessionHeaderActionProjection> = {};
     const hostedWebById: Record<string, PluginUiHostedWebProjection> = {};
     const reactNativeBundlesById: Record<string, PluginUiReactNativeBundleProjection> = {};
-    const surfacePlacementsById: Record<string, PluginUiSurfacePlacementProjection> = {};
+    const surfacePlacementsById: Record<string, PluginUiPhysicalSurfacePlacementProjection> = {};
     const openableContentViewersById: Record<string, PluginUiOpenableContentViewerProjection> = {};
     const settingsGroupsById: Record<string, PluginUiSettingsGroupProjection> = {};
     const settingsPagesById: Record<string, PluginUiSettingsPageProjection> = {};
@@ -799,7 +831,7 @@ export function normalizePluginUiProjection(
         } else if (isSurfacePlacement(entry)) {
             const availability = readSurfaceAvailability(entry.availability);
             if (availability) {
-                const binding = entry.binding as PluginUiDestinationBindingV1;
+                const binding = entry.binding as PluginUiSurfaceBindingV1;
                 const target = asRecord(entry.target) ?? {};
                 const renderer = asRecord(entry.renderer) ?? {};
                 const display = asRecord(entry.display) ?? {};
@@ -819,7 +851,7 @@ export function normalizePluginUiProjection(
                     ...(runtime ? { runtime } : {}),
                     ...(rightSidebar ? { rightSidebar: Object.freeze({ ...rightSidebar }) } : {}),
                     availability,
-                }) as PluginUiSurfacePlacementProjection;
+                }) as PluginUiPhysicalSurfacePlacementProjection;
                 surfacePlacementsById[entry.id] = normalized;
             }
         } else if (entry.contributionKind === 'openableContentViewer') {

@@ -50,7 +50,10 @@ import type {
     PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
-import { selectPluginSurfacePlacementsByDestination } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import {
+    selectPluginDestinationSurfacePlacements,
+    selectPluginSurfacePlacementsByDestination,
+} from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import {
     captureActiveServerAccountScopeLifetime,
@@ -740,7 +743,7 @@ export function createPluginDetailsDestinationOpenSurfaceHandler(input: Readonly
     });
     const owners = createPluginDetailsDestinationNavigationOwners(input);
     return createPluginSurfaceDestinationOpenSurfaceHandler({
-        placements: input.projection ? Object.values(input.projection.surfacePlacementsById) : [],
+        placements: input.projection ? selectPluginDestinationSurfacePlacements(input.projection) : [],
         targetKind: input.targetKind,
         accountLifetime: input.accountLifetime,
         scopedLaunchFacts,

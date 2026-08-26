@@ -65,6 +65,32 @@ describe('hosted Artifact native-frame Expo module config', () => {
         expect(moduleSource).toContain('"onHistoryStateChange"');
     });
 
+    it('projects the resolved host title onto each child WebView without making its frame wrapper accessible', () => {
+        const iosViewSource = readFileSync(join(moduleRoot, 'ios/HostedWebArtifactView.swift'), 'utf8');
+        const iosModuleSource = readFileSync(join(moduleRoot, 'ios/HappierHostedWebFrameModule.swift'), 'utf8');
+        const androidViewSource = readFileSync(join(
+            moduleRoot,
+            'android/src/main/java/dev/happier/hostedwebframe/HostedWebArtifactView.kt',
+        ), 'utf8');
+        const androidModuleSource = readFileSync(join(
+            moduleRoot,
+            'android/src/main/java/dev/happier/hostedwebframe/HappierHostedWebFrameModule.kt',
+        ), 'utf8');
+
+        expect(iosModuleSource).toContain('Prop("title") { (view: HostedWebArtifactView, title: String?) in');
+        expect(iosModuleSource).toContain('view.setTitle(title)');
+        expect(iosViewSource).toContain('private var title: String?');
+        expect(iosViewSource).toContain('func setTitle(_ title: String?)');
+        expect(iosViewSource).toContain('nextWebView.accessibilityLabel = title');
+        expect(iosViewSource).not.toContain('isAccessibilityElement = true');
+
+        expect(androidModuleSource).toContain('Prop<String?>("title") { view, title ->');
+        expect(androidModuleSource).toContain('view.setTitle(title)');
+        expect(androidViewSource).toContain('private var title: String? = null');
+        expect(androidViewSource).toContain('fun setTitle(title: String?)');
+        expect(androidViewSource).toContain('nextWebView.contentDescription = title');
+    });
+
     it('uses a fresh AndroidX profile so remounting one partition cannot recover cookies', () => {
         const viewSource = readFileSync(join(
             moduleRoot,

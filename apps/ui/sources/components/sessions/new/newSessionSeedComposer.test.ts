@@ -105,6 +105,56 @@ describe('seedAndOpenNewSession', () => {
         });
     });
 
+    it('opens the incumbent worktree picker for checkout intents without fabricating a checkout draft', () => {
+        for (const checkoutIntent of ['createWorktree', 'ask'] as const) {
+            const { outcome, writeDraft, navigate } = harness({ seed: { checkoutIntent } });
+
+            expect(outcome, checkoutIntent).toEqual({ kind: 'seeded' });
+            expect(writeDraft, checkoutIntent).toHaveBeenCalledWith({
+                scope: { serverId: 'server-a', accountId: 'account-a' },
+                draftId: '00000000-0000-4000-8000-000000000042',
+                draft: expect.objectContaining({ entryIntent: 'session' }),
+            });
+            // A concrete checkout draft needs a user-selected worktree name
+            // and base ref. A profile only answers which question to ask, so
+            // this seam must send the reader to the existing picker instead.
+            expect(writeDraft.mock.calls[0]?.[0].draft, checkoutIntent)
+                .not.toHaveProperty('checkoutCreationDraft');
+            expect(navigate, checkoutIntent).toHaveBeenCalledWith({
+                dataId: null,
+                draftId: '00000000-0000-4000-8000-000000000042',
+                worktree: 'new',
+            });
+        }
+    });
+
+    it('keeps already-settled checkout intents on the ordinary New Session route', () => {
+        for (const checkoutIntent of ['none', 'reuseWorkspace'] as const) {
+            const { outcome, navigate } = harness({ seed: { checkoutIntent } });
+
+            expect(outcome, checkoutIntent).toEqual({ kind: 'seeded' });
+            expect(navigate, checkoutIntent).toHaveBeenCalledWith({
+                dataId: null,
+                draftId: '00000000-0000-4000-8000-000000000042',
+            });
+        }
+    });
+
+    it('refuses an unmaterialized prepared review workspace before writing or navigating', () => {
+        storeTempDataSpy.mockClear();
+        const { outcome, writeDraft, navigate } = harness({
+            seed: { checkoutIntent: 'preparedReviewWorkspace' },
+        });
+
+        expect(outcome).toEqual({
+            kind: 'unavailable',
+            reason: 'prepared_review_workspace_unavailable',
+        });
+        expect(writeDraft).not.toHaveBeenCalled();
+        expect(storeTempDataSpy).not.toHaveBeenCalled();
+        expect(navigate).not.toHaveBeenCalled();
+    });
+
     it('never navigates when the seed is invalid, empty, aborted or the surface is gone', () => {
         for (const [reasonLabel, overrides, expected] of [
             ['invalid', { seed: { arbitrary: true } }, { kind: 'invalid', reason: 'seed_invalid' }],

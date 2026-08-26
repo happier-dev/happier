@@ -88,7 +88,7 @@ describe('buildActionSettingsEntries', () => {
         expect(review?.targets.find((target) => target.id === 'plugin')).toMatchObject({ state: 'on' });
     });
 
-    it('builds contributed rows from one selected daemon projection with universal API availability', async () => {
+    it('keeps an Inspector-shaped contributed action visible with API and trusted-plugin controls', async () => {
         const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
 
         const entries = buildActionSettingsEntries({
@@ -103,22 +103,28 @@ describe('buildActionSettingsEntries', () => {
                 voiceShareDeviceInventory: true,
             },
             contributedActions: [{
-                pluginId: 'com.acme.review',
-                localId: 'review/start',
-                title: 'Start Acme review',
-                description: 'Starts a review from Acme.',
+                pluginId: 'happier.inspector',
+                localId: 'self-check',
+                title: 'Run Inspector self-check',
+                description: 'Checks the Inspector plugin.',
                 icon: 'sparkle',
-                surfaces: ['plugin'],
+                // `toolbar` is not an Action UI placement. The settings catalog must retain
+                // the contributed row through its canonical broad-surface targets instead of
+                // treating the unknown presentation binding as a reason to hide it.
+                surfaces: ['ui'],
+                placementBindings: ['toolbar'],
             }],
         });
 
-        const contributed = entries.find((entry) => entry.actionId === 'com.acme.review/actions/review/start');
+        const contributed = entries.find((entry) => entry.actionId === 'happier.inspector/actions/self-check');
         expect(contributed).toMatchObject({
-            title: 'Start Acme review',
-            description: 'Starts a review from Acme.',
+            kind: 'contributed',
+            title: 'Run Inspector self-check',
+            description: 'Checks the Inspector plugin.',
         });
         expect(contributed?.targets.find((target) => target.id === 'api')).toMatchObject({ state: 'on' });
         expect(contributed?.targets.find((target) => target.id === 'plugin')).toMatchObject({ state: 'on' });
+        expect(contributed?.targets.find((target) => target.id === 'contextual_ui')).toMatchObject({ state: 'on' });
     });
 
     it('retains removed qualified actions while preserving current long contributed labels', async () => {
@@ -159,7 +165,7 @@ describe('buildActionSettingsEntries', () => {
             title: longTitle,
         });
         expect(current?.targets.find((target) => target.id === 'api')).toMatchObject({ state: 'on' });
-        expect(current?.targets.find((target) => target.id === 'plugin')).toBeUndefined();
+        expect(current?.targets.find((target) => target.id === 'plugin')).toMatchObject({ state: 'on' });
         expect(entries.find((entry) => entry.actionId === 'com.acme.removed/actions/no-longer-installed')).toMatchObject({
             kind: 'retained',
             enabled: false,

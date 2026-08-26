@@ -8,7 +8,7 @@ import {
     type PluginUiSettingsPageProjection,
     type PluginUiSessionHeaderActionProjection,
     type PluginUiStructuredMessageProjection,
-    type PluginUiSurfacePlacementProjection,
+    type PluginUiPhysicalSurfacePlacementProjection,
     type PluginUiTranslationsProjection,
     type PluginVoiceProviderProjection,
 } from './projection';
@@ -400,7 +400,7 @@ export function unionPluginUiProjections(
     const sessionHeaderActionsById: Record<string, PluginUiSessionHeaderActionProjection> = {};
     const hostedWebById: Record<string, PluginUiHostedWebProjection> = {};
     const reactNativeBundlesById: Record<string, PluginUiReactNativeBundleProjection> = {};
-    const surfacePlacementsById: Record<string, PluginUiSurfacePlacementProjection> = {};
+    const surfacePlacementsById: Record<string, PluginUiPhysicalSurfacePlacementProjection> = {};
     const settingsGroupsById: Record<string, PluginUiSettingsGroupProjection> = {};
     const settingsPagesById: Record<string, PluginUiSettingsPageProjection> = {};
     const actionsById: Record<string, PluginUiActionProjection> = {};

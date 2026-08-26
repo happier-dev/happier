@@ -1,7 +1,7 @@
 import {
     isPluginUiDestinationBindingAdmittedAtRuntimeV1,
     type PluginUiDestinationRuntimeFormFactorV1,
-    type PluginUiContainerV1,
+    type PluginUiDestinationContainerV1,
     type PluginUiPlatformV1,
     type PluginUiTargetKindV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -47,7 +47,7 @@ export type PaneDestinationRuntimeAdmission = Readonly<{
 }>;
 
 export function resolveSelectedPaneDestination(input: Readonly<{
-    container: Extract<PluginUiContainerV1, 'rightPane' | 'rightSidebarTab' | 'detailsPane' | 'bottomPane'>;
+    container: Extract<PluginUiDestinationContainerV1, 'rightPane' | 'rightSidebarTab' | 'detailsPane' | 'bottomPane'>;
     targetKind: AppPaneDestinationTargetKind;
     projection: PluginUiProjectionModel | null | undefined;
     /**

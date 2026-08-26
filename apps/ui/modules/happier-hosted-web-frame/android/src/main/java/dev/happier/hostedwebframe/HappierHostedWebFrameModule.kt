@@ -60,6 +60,9 @@ class HappierHostedWebFrameModule : Module() {
     View(HostedWebArtifactView::class) {
       Events("onMessage", "onLoadStart", "onLoadEnd", "onLoadError", "onExternalNavigation", "onBlockedNavigation", "onHistoryStateChange")
 
+      Prop<String?>("title") { view, title ->
+        view.setTitle(title)
+      }
       Prop<String?>("artifactHandleToken") { view, token ->
         view.setArtifactHandleToken(token)
       }

@@ -1,8 +1,9 @@
 import {
     ComposerSurfaceMountBindingV1Schema,
-    matchesPluginUiDestinationBindingV1,
+    PluginUiSurfaceBindingV1Schema,
     type ComposerSurfaceMountBindingV1,
     type PluginUiDestinationBindingV1,
+    type PluginUiInlineSurfaceBindingV1,
     type PluginUiMountContextV1,
     type PluginUiTargetedContributionSurfaceV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -34,6 +35,16 @@ export type PluginSurfaceDestinationMountBinding<
     descriptor: TDescriptor;
     renderer: Readonly<Record<string, unknown>>;
     destinationBinding: PluginUiDestinationBindingV1;
+}>;
+
+/** The Registry-normalized inline arm of the generalized mount seam. */
+export type PluginSurfaceInlineMountBinding<
+    TDescriptor extends PluginSurfaceMountDescriptor = PluginSurfaceMountDescriptor,
+> = Readonly<{
+    kind: 'inline';
+    descriptor: TDescriptor;
+    renderer: Readonly<Record<string, unknown>>;
+    inlineBinding: PluginUiInlineSurfaceBindingV1;
 }>;
 
 /**
@@ -78,6 +89,7 @@ export type PluginSurfaceMountBinding<
     TComposerMount extends ComposerSurfaceMountBindingV1 = ComposerSurfaceMountBindingV1,
     TComposerCatalogEntry extends DaemonPluginUiComposerSurfaceCatalogEntryV1 = DaemonPluginUiComposerSurfaceCatalogEntryV1,
 > = PluginSurfaceDestinationMountBinding<TDescriptor>
+    | PluginSurfaceInlineMountBinding<TDescriptor>
     | PluginSurfaceTargetedMountBinding<TTargetedMount>
     | PluginSurfaceComposerMountBinding<TComposerMount, TComposerCatalogEntry>;
 
@@ -96,6 +108,24 @@ export function createPluginSurfaceDestinationMountContext<
         kind: 'destination',
         destination: mount.destinationBinding.destination,
         container: mount.destinationBinding.container,
+    });
+}
+
+/**
+ * The exact inline role is public embedded context, never a destination
+ * substitute. Presentation remains host-owned and is admitted by the role
+ * slot before this function is called.
+ */
+export function createPluginSurfaceInlineMountContext<
+    TDescriptor extends PluginSurfaceMountDescriptor,
+>(
+    mount: PluginSurfaceInlineMountBinding<TDescriptor>,
+    presentation: 'content' | 'fill',
+): PluginUiMountContextV1 {
+    return Object.freeze({
+        kind: 'embedded',
+        role: mount.inlineBinding.role,
+        presentation,
     });
 }
 
@@ -133,12 +163,6 @@ export function createPluginSurfaceComposerMountContext<
         role: mount.mount.role,
         presentation: 'content',
     });
-}
-
-function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-    return value !== null && typeof value === 'object' && !Array.isArray(value)
-        ? value as Readonly<Record<string, unknown>>
-        : null;
 }
 
 function readOptionalString(value: unknown): string | undefined {
@@ -237,10 +261,10 @@ export function readPluginSurfaceComposerMountBinding<
 }
 
 /**
- * Read the already-normalized destination mount binding without selecting,
- * normalizing, or cloning any fact. The Registry/CLI remains the only
- * destination admission owner; a mismatch returns `null` so its consumer can
- * fail closed before it constructs a controller, loader, or renderer.
+ * Read one already-normalized physical mount binding without selecting a
+ * renderer or inventing a destination. The Registry/CLI remains the only
+ * binding admission owner; a mismatch returns `null` so its consumer can fail
+ * closed before it constructs a controller, loader, or renderer.
  */
 export function readPluginSurfaceMountBinding<
     TDescriptor extends PluginSurfaceMountDescriptor,
@@ -249,33 +273,39 @@ export function readPluginSurfaceMountBinding<
     renderer: Readonly<Record<string, unknown>>;
 }>): PluginSurfaceMountBinding<TDescriptor> | null {
     const binding = input.descriptor.binding;
-    const bindingRecord = readRecord(binding);
-    const destination = readRecord(bindingRecord?.destination);
-    const container = readOptionalString(bindingRecord?.container);
-    const targetKind = readOptionalString(bindingRecord?.targetKind);
+    const normalizedBinding = PluginUiSurfaceBindingV1Schema.safeParse(binding);
     const rendererId = readRendererBindingId(input.renderer);
-    if (
-        !bindingRecord
-        || !destination
-        || !container
-        || !targetKind
-        || !rendererId
-        || readOptionalString(destination.pluginId) !== input.descriptor.pluginId
-        || readOptionalString(destination.localId) !== input.descriptor.descriptorId
-        || !matchesPluginUiDestinationBindingV1(binding, {
-            container,
-            targetKind,
-            pluginId: input.descriptor.pluginId,
-            rendererId,
-        })
-    ) {
+    if (!normalizedBinding.success || !rendererId) {
         return null;
     }
 
+    const normalized = normalizedBinding.data;
+    if (normalized.kind === 'destination') {
+        if (
+            normalized.destination.pluginId !== input.descriptor.pluginId
+            || normalized.destination.localId !== input.descriptor.descriptorId
+            || normalized.renderer.pluginId !== input.descriptor.pluginId
+            || normalized.renderer.localId !== rendererId
+        ) return null;
+        return Object.freeze({
+            kind: 'destination',
+            descriptor: input.descriptor,
+            renderer: input.renderer,
+            destinationBinding: normalized,
+        });
+    }
+
+    if (
+        normalized.surface.pluginId !== input.descriptor.pluginId
+        || normalized.surface.localId !== input.descriptor.descriptorId
+        || normalized.renderer.pluginId !== input.descriptor.pluginId
+        || normalized.renderer.localId !== rendererId
+    ) return null;
+
     return Object.freeze({
-        kind: 'destination',
+        kind: 'inline',
         descriptor: input.descriptor,
         renderer: input.renderer,
-        destinationBinding: binding,
+        inlineBinding: normalized,
     });
 }

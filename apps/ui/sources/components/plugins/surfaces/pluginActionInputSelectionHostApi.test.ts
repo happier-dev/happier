@@ -427,7 +427,10 @@ describe('plugin Action input selection Host API producer', () => {
             ...request(),
             payload: {
                 hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
-                seed: { prompt: { text: 'Repair the failing check', mode: 'replace' } },
+                seed: {
+                    prompt: { text: 'Repair the failing check', mode: 'replace' },
+                    checkoutIntent: 'createWorktree',
+                },
             },
         })).resolves.toEqual({ kind: 'newSessionSeeded' });
         // The two projections are separate destinations: seeding must not reach
@@ -435,7 +438,10 @@ describe('plugin Action input selection Host API producer', () => {
         expect(composeSessionServerStartDraft).not.toHaveBeenCalled();
         expect(seedNewSession).toHaveBeenCalledOnce();
         expect(seedNewSession.mock.calls[0]![0]).toMatchObject({
-            seed: { prompt: { text: 'Repair the failing check', mode: 'replace' } },
+            seed: {
+                prompt: { text: 'Repair the failing check', mode: 'replace' },
+                checkoutIntent: 'createWorktree',
+            },
             scope: { serverId: 'server-a', accountId: 'account-a' },
         });
     });
@@ -460,6 +466,34 @@ describe('plugin Action input selection Host API producer', () => {
                 seed: { placement: { directory: '/workspace' } },
             },
         })).resolves.toEqual({ code: 'stale_surface', diagnostics: ['host_retired'] });
+    });
+
+    it('projects an unmaterialized prepared review workspace as the existing unavailable result', async () => {
+        const handler = createPluginActionInputSelectionHostApiHandler({
+            host: {
+                machineId: 'machine-a',
+                serverId: 'server-a',
+                expectedGeneration: 7,
+                targetPluginId: 'acme.caller',
+                accountLifetime,
+            },
+            isCurrent: () => true,
+            seedNewSession: async () => ({
+                kind: 'unavailable' as const,
+                reason: 'prepared_review_workspace_unavailable' as const,
+            }),
+        });
+
+        await expect(handler({
+            ...request(),
+            payload: {
+                hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+                seed: { checkoutIntent: 'preparedReviewWorkspace' },
+            },
+        })).resolves.toEqual({
+            code: 'unavailable',
+            diagnostics: ['prepared_review_workspace_unavailable'],
+        });
     });
 
     it('refuses a literal Session draft whose server disagrees with the captured Account scope', async () => {

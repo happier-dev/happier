@@ -167,6 +167,7 @@ export function projectDeclarativeTargetedSurfaceInventory(
         }),
         inputSchema: mount.inputSchema,
         inputValidation: mount.inputValidation,
+        inputNormalizer: mount.inputNormalizer,
     })));
 }
 

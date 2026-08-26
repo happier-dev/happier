@@ -82,6 +82,8 @@ import { PluginDeclarativeDocumentSourceV1Schema } from '../plugins/contribution
 import {
   PluginUiContainerV1Schema,
   PluginUiDestinationBindingV1Schema,
+  PluginUiInlineSurfaceRoleV1Schema,
+  PluginUiSurfaceBindingV1Schema,
 } from '../plugins/contributions/ui/surfaceRegistry.js';
 import { PluginAgentCliMetadataSchema } from '../plugins/contributions/agentCliMetadata.js';
 import { PluginOptionalStringSchema } from '../plugins/_shared.js';
@@ -998,6 +1000,11 @@ export const DaemonPluginReactNativeCrashMountV1Schema = z.discriminatedUnion('k
     kind: z.literal('destination'),
     destination: PluginContributionIdentityV1Schema,
   }).strict(),
+  z.object({
+    kind: z.literal('inline'),
+    surface: PluginContributionIdentityV1Schema,
+    role: PluginUiInlineSurfaceRoleV1Schema,
+  }).strict(),
   DaemonPluginUiTargetedSurfaceMountIdentityV1Schema,
   z.object({
     kind: z.literal('composer'),
@@ -1035,6 +1042,13 @@ export function deriveDaemonPluginReactNativeCrashMountKeyV1(
         'destination',
         mount.destination.pluginId,
         mount.destination.localId,
+      ].join('\u0000');
+    case 'inline':
+      return [
+        'inline',
+        mount.surface.pluginId,
+        mount.surface.localId,
+        mount.role,
       ].join('\u0000');
     case 'targetedSurface':
       return [
@@ -2435,7 +2449,7 @@ const PluginProjectedUiEntryV2Schema = strictProjectedFamilyEntrySchema([
 ] as const).extend({
   command: PluginUiResolvedSemanticCommandV1Schema.optional(),
   headerActions: z.array(PluginProjectedUiHeaderActionV2Schema).optional(),
-  binding: PluginUiDestinationBindingV1Schema.optional(),
+  binding: PluginUiSurfaceBindingV1Schema.optional(),
   container: PluginUiContainerV1Schema.optional(),
   identity: PluginContributionIdentityV1Schema.optional(),
   viewer: OpenableContentViewerSelectorV1Schema.optional(),

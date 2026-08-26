@@ -1,5 +1,8 @@
 import type { ComposerAttachmentAuthorValueV1 } from '@happier-dev/protocol';
-import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
+import type {
+    PluginUiSessionCheckoutIntentV1,
+    PluginUiSessionPlacementCandidateV1,
+} from '@happier-dev/protocol/plugins/ui';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { writeNewSessionDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
@@ -63,6 +66,12 @@ export type NewSessionDraftAttachmentSeedV1 = Readonly<{
 export type NewSessionDraftSeedV1 = Readonly<{
     prompt?: NewSessionDraftPromptSeedV1;
     profileId?: string;
+    /**
+     * A reader question only. A concrete `checkoutCreationDraft` needs a
+     * user-selected name and base ref, so it remains solely in the mounted New
+     * Session checkout picker.
+     */
+    checkoutIntent?: PluginUiSessionCheckoutIntentV1;
     placement?: NewSessionDraftPlacementSeedV1;
     /**
      * An unresolved placement stays outside the persisted New Session draft.
@@ -93,6 +102,10 @@ function joinDraftInput(existingInput: string, promptText: string): string {
 export function newSessionDraftSeedDeclaresChangeV1(seed: NewSessionDraftSeedV1): boolean {
     return normalizedNonEmpty(seed.prompt?.text) !== null
         || normalizedNonEmpty(seed.profileId) !== null
+        // An explicit checkout question opens the established picker route. It
+        // is not persisted into this draft because it is not yet a concrete
+        // worktree selection, but it is still a whole user-visible request.
+        || seed.checkoutIntent !== undefined
         || normalizedNonEmpty(seed.placement?.serverId) !== null
         || normalizedNonEmpty(seed.placement?.machineId) !== null
         || normalizedNonEmpty(seed.placement?.directory) !== null

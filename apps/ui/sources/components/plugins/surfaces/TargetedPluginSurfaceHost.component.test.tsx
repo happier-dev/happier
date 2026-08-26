@@ -2,8 +2,14 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
-import { DaemonPluginUiTargetedSurfaceMountV1Schema } from '@happier-dev/protocol';
-import { preparePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import {
+    DaemonPluginUiTargetedSurfaceMountV1Schema,
+} from '@happier-dev/protocol';
+import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
+import {
+    preparePluginJsonSchema,
+    rehydrateCanonicalProtocolComposableSchema,
+} from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import {
     TargetedPluginSurfaceHost,
@@ -15,10 +21,13 @@ function prepareTargetedMount(
     rawMount: ReturnType<typeof DaemonPluginUiTargetedSurfaceMountV1Schema.parse>,
 ): PreparedDaemonPluginUiTargetedSurfaceMountV1 {
     const inputValidation = preparePluginJsonSchema(rawMount.inputSchema);
+    const inputNormalizer = rehydrateCanonicalProtocolComposableSchema(inputValidation.jsonSchema);
+    if (!inputNormalizer) throw new Error('Expected canonical Surface schema to rehydrate');
     return Object.freeze({
         ...rawMount,
         inputSchema: inputValidation.jsonSchema,
         inputValidation,
+        inputNormalizer,
     });
 }
 
@@ -48,7 +57,7 @@ const mount = prepareTargetedMount(DaemonPluginUiTargetedSurfaceMountV1Schema.pa
     contributor: surface.contributor,
     role: surface.role,
     presentation: surface.presentation,
-    inputSchema: Object.freeze({ type: 'object' }),
+    inputSchema: defineProtocolObject({}, { policy: 'additive-open/preserve' }).jsonSchema,
     rendererChain: Object.freeze([Object.freeze({ pluginId: 'acme.review', localId: 'review-detail' })]),
     selectedRenderer: Object.freeze({
         identity: Object.freeze({ pluginId: 'acme.review', localId: 'review-detail' }),

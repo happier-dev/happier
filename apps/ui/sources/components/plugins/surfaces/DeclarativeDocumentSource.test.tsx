@@ -3,6 +3,7 @@ import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import {
     preparePluginJsonSchema,
+    rehydrateCanonicalProtocolComposableSchema,
 } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import {
@@ -11,6 +12,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import type {
     PluginUiHostApi,
     ResourceContent,
@@ -30,13 +32,16 @@ type HostMethods = ReturnType<PluginUiHostApi['version']>['methods'];
 type ResourceDigest = Extract<ResourceSubscriptionEvent, { kind: 'invalidated' }>['digest'];
 
 function prepareTargetedSurfaceInventoryEntry(
-    input: Omit<PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1, 'inputValidation'>,
+    input: Omit<PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1, 'inputValidation' | 'inputNormalizer'>,
 ): PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1 {
     const inputValidation = preparePluginJsonSchema(input.inputSchema);
+    const inputNormalizer = rehydrateCanonicalProtocolComposableSchema(inputValidation.jsonSchema);
+    if (!inputNormalizer) throw new Error('Expected canonical Surface schema to rehydrate');
     return Object.freeze({
         ...input,
         inputSchema: inputValidation.jsonSchema,
         inputValidation,
+        inputNormalizer,
     });
 }
 
@@ -744,12 +749,9 @@ describe('useDeclarativeDocumentSource', () => {
                 role: 'detail',
                 presentation: 'content',
             },
-            inputSchema: {
-                type: 'object',
-                properties: { reviewId: { type: 'string' } },
-                required: ['reviewId'],
-                additionalProperties: false,
-            },
+            inputSchema: defineProtocolObject({
+                reviewId: defineProtocolString(),
+            }, { policy: 'closed' }).jsonSchema,
         })];
         let tree!: ReturnType<typeof create>;
 
@@ -792,12 +794,9 @@ describe('useDeclarativeDocumentSource', () => {
                 role: 'detail',
                 presentation: 'content',
             },
-            inputSchema: {
-                type: 'object',
-                properties: { reviewId: { type: 'string' } },
-                required: ['reviewId'],
-                additionalProperties: false,
-            },
+            inputSchema: defineProtocolObject({
+                reviewId: defineProtocolString(),
+            }, { policy: 'closed' }).jsonSchema,
         })];
         const hostApi = createDocumentHost({
             readResource: vi.fn(async () => resourceRead(dynamicDocument)),

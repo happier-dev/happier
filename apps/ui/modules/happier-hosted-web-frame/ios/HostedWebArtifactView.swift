@@ -144,6 +144,7 @@ final class HostedWebArtifactView: UIView, WKNavigationDelegate, WKScriptMessage
 
   private var artifactHandleToken: String?
   private var initialPathAndQuery: String?
+  private var title: String?
   private var allowedNavigationOrigins = Set<HostedWebArtifactOrigin>()
   private var activeOrigin: HostedWebArtifactOrigin?
   private var activeSchemeHandler: HostedWebArtifactSchemeHandler?
@@ -201,6 +202,14 @@ final class HostedWebArtifactView: UIView, WKNavigationDelegate, WKScriptMessage
     clearCurrentFrameState()
     artifactHandleToken = normalized
     loadIfReady()
+  }
+
+  func setTitle(_ title: String?) {
+    guard self.title != title else {
+      return
+    }
+    self.title = title
+    webView?.accessibilityLabel = title
   }
 
   func setInitialPathAndQuery(_ pathAndQuery: String?) {
@@ -266,6 +275,7 @@ final class HostedWebArtifactView: UIView, WKNavigationDelegate, WKScriptMessage
     configuration.userContentController.addUserScript(Self.documentStartBridge(origin: origin))
 
     let nextWebView = WKWebView(frame: .zero, configuration: configuration)
+    nextWebView.accessibilityLabel = title
     nextWebView.translatesAutoresizingMaskIntoConstraints = false
     nextWebView.navigationDelegate = self
     nextWebView.uiDelegate = self

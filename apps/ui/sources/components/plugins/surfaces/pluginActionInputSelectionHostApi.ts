@@ -208,12 +208,13 @@ async function seedDefaultNewSession(
             scope: params.scope,
             ...(params.signal ? { signal: params.signal } : {}),
             isCurrent: params.isCurrent,
-            navigateToNewSession: ({ dataId, draftId }) => {
+            navigateToNewSession: ({ dataId, draftId, worktree }) => {
                 router.push({
                     pathname: '/new',
                     params: {
                         draftId,
                         ...(dataId === null ? {} : { dataId }),
+                        ...(worktree === undefined ? {} : { worktree }),
                     },
                 });
             },

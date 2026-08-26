@@ -2,7 +2,7 @@ import * as React from 'react';
 import {
     isPluginUiDestinationBindingAdmittedAtRuntimeV1,
     type PluginUiDestinationRuntimeFormFactorV1,
-    type PluginUiContainerV1,
+    type PluginUiDestinationContainerV1,
     type PluginUiDestinationReferenceV1,
     type PluginUiInstanceKeyV1,
     type PluginUiLaunchInputV1,
@@ -71,7 +71,7 @@ export type PluginSurfaceDestinationContainerHandler<
     resolution: PluginSurfaceDestinationOpenResolution<TDestination>,
 ) => PluginSurfaceOpenOutcome | Promise<PluginSurfaceOpenOutcome>;
 
-type PluginSurfacePlacementContainer = Exclude<PluginUiContainerV1, 'settingsPage'>;
+type PluginSurfacePlacementContainer = Exclude<PluginUiDestinationContainerV1, 'settingsPage'>;
 
 /**
  * The handler map preserves the Registry's contribution-family boundary.
@@ -379,7 +379,7 @@ function createPluginSurfaceDestinationNavigationBindingFromReader(
     readInput: () => PluginSurfaceDestinationNavigationBindingInput,
 ): PluginSurfaceDestinationNavigationBinding {
     const ownersByContainer = new Map<
-        PluginUiContainerV1,
+        PluginUiDestinationContainerV1,
         Set<RegisteredPluginSurfaceDestinationOwner>
     >();
 
@@ -516,7 +516,7 @@ export function useRegisterPluginSurfaceDestinationNavigationOwner(
 export type PluginSurfacePaneLaunch = Readonly<{
     authority: PluginSurfaceLaunchAuthority;
     targetKind: Extract<PluginUiTargetKindV1, 'app' | 'session' | 'project'>;
-    container: Extract<PluginUiContainerV1, 'rightPane' | 'rightSidebarTab' | 'bottomPane'>;
+    container: Extract<PluginUiDestinationContainerV1, 'rightPane' | 'rightSidebarTab' | 'bottomPane'>;
     destination: PluginUiDestinationReferenceV1;
     instanceKey?: PluginUiInstanceKeyV1;
     input: PluginUiLaunchInputV1 | undefined;

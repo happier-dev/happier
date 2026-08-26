@@ -79,7 +79,7 @@ import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
 import {
     computePluginUiArtifactSha256DigestV1,
-    PluginUiDestinationBindingV1Schema,
+    PluginUiSurfaceBindingV1Schema,
     isPluginUiHermesBytecodeArtifactV1,
     PluginUiTargetedContributionsV1Schema,
     selectPluginUiRendererChainMemberV1,
@@ -555,6 +555,7 @@ function readMountedPreparedTargetedSurfaceInventories(input: Readonly<{
                     }),
                     inputSchema: surface.inputSchema,
                     inputValidation: surface.inputValidation,
+                    inputNormalizer: surface.targetProtocol.inputSchema,
                 }));
             }
         }
@@ -995,7 +996,7 @@ function toReactNativeHostRuntimeReadinessIdentity(
 
 /**
  * Reads the registry's own projected renderer/cache facts to derive every
- * currently executable destination binding. This is a projection reader, not
+ * currently executable physical surface binding. This is a projection reader, not
  * another artifact or renderer selector.
  */
 function readCurrentReactNativeCrashStateBindings(params: Readonly<{
@@ -1012,15 +1013,18 @@ function readCurrentReactNativeCrashStateBindings(params: Readonly<{
         ) {
             continue;
         }
-        const binding = PluginUiDestinationBindingV1Schema.safeParse(descriptor.binding);
+        const binding = PluginUiSurfaceBindingV1Schema.safeParse(descriptor.binding);
         const renderer = readRecord(descriptor.renderer);
         const rendererId = typeof renderer?.contributionId === 'string'
             ? renderer.contributionId.trim()
             : '';
         if (!binding.success || renderer?.kind !== 'reactNative' || !rendererId) continue;
 
+        const owner = binding.data.kind === 'destination'
+            ? binding.data.destination
+            : binding.data.surface;
         const rendererEntry = readRecord(entries[
-            `reactNativeBundle:${binding.data.destination.pluginId}:${rendererId}`
+            `reactNativeBundle:${owner.pluginId}:${rendererId}`
         ]);
         const rendererRuntime = readRecord(rendererEntry?.runtime);
         const cacheIdentity = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(
@@ -1028,16 +1032,22 @@ function readCurrentReactNativeCrashStateBindings(params: Readonly<{
         );
         if (
             !cacheIdentity.success
-            || cacheIdentity.data.pluginId !== binding.data.destination.pluginId
+            || cacheIdentity.data.pluginId !== owner.pluginId
             || cacheIdentity.data.contributionId !== rendererId
         ) {
             continue;
         }
         const current: ReactNativeCrashStateBinding = Object.freeze({
-            mount: Object.freeze({
-                kind: 'destination',
-                destination: Object.freeze({ ...binding.data.destination }),
-            }),
+            mount: binding.data.kind === 'destination'
+                ? Object.freeze({
+                    kind: 'destination' as const,
+                    destination: Object.freeze({ ...binding.data.destination }),
+                })
+                : Object.freeze({
+                    kind: 'inline' as const,
+                    surface: Object.freeze({ ...binding.data.surface }),
+                    role: binding.data.role,
+                }),
             renderer: Object.freeze({
                 pluginId: cacheIdentity.data.pluginId,
                 localId: cacheIdentity.data.contributionId,

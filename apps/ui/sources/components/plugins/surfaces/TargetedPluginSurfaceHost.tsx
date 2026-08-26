@@ -108,20 +108,25 @@ function readTargetedSurfaceInputSnapshot(
 }
 
 /**
- * Main selected the exact B mount and owns its role schema. The physical host
- * merely admits the already-bounded launch value against that correlated fact;
- * it neither reconstructs the role nor interprets its input.
+ * Main selected the exact B mount and Protocol owns its role normalizer. The
+ * physical host applies that retained parser and uses AJV only to verify the
+ * parser output still matches its emitted-schema projection.
  */
-function isTargetedSurfaceInputAdmitted(
+function normalizeTargetedSurfaceInput(
     mount: PreparedDaemonPluginUiTargetedSurfaceMountV1,
     input: PluginUiJsonValueV1,
-): boolean {
+): PluginUiJsonValueV1 | undefined {
     try {
-        return mount.inputValidation.validate(input) === true;
+        const normalized = mount.inputNormalizer.safeParse(input);
+        if (!normalized.success || mount.inputValidation.validate(normalized.data) !== true) return undefined;
+        return cloneStrictPluginJsonValue(
+            normalized.data,
+            'targetedSurface.normalizedInput',
+        ) as PluginUiJsonValueV1;
     } catch {
         // A malformed response-local schema is unavailable, never a reason to
         // relax B admission or disclose its renderer/Resource context.
-        return false;
+        return undefined;
     }
 }
 
@@ -149,10 +154,11 @@ export function readTargetedPluginSurfaceMountRequest(input: Readonly<{
         target: input.target,
         surface: surface.data,
     });
-    if (!mount || !isTargetedSurfaceInputAdmitted(mount.mount, launchInput.input)) return null;
+    const normalizedInput = mount && normalizeTargetedSurfaceInput(mount.mount, launchInput.input);
+    if (!mount || normalizedInput === undefined) return null;
     return Object.freeze({
         mount,
-        input: launchInput.input,
+        input: normalizedInput,
         instanceKey: instanceKey.data,
     });
 }
@@ -185,10 +191,11 @@ export function readTargetedPluginSurfaceReactMountRequest(input: Readonly<{
         target: input.target,
         surface: surface.data,
     });
-    if (!mount || !isTargetedSurfaceInputAdmitted(mount.mount, launchInput.input)) return null;
+    const normalizedInput = mount && normalizeTargetedSurfaceInput(mount.mount, launchInput.input);
+    if (!mount || normalizedInput === undefined) return null;
     return Object.freeze({
         mount,
-        input: launchInput.input,
+        input: normalizedInput,
         instanceKey: derivePluginUiTargetedSurfaceMountInstanceKeyV1({
             targetPluginId: mount.mount.target.pluginId,
             surface: surface.data,

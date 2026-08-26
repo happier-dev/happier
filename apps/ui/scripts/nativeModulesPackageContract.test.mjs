@@ -566,11 +566,12 @@ test('terminal-native declares Expo module metadata and gated package surface', 
         'ios/GhosttySurfaceBridge.swift',
         'ios/GhosttySurfaceView.swift',
         'ios/GhosttyInput.swift',
-        'ios/GhosttySelection.swift',
         'ios/GhosttyLinks.swift',
         'ios/GhosttyAccessibility.swift',
         'ios/HappierTerminalNative.podspec',
         'ios/Vendor/README.md',
+        'ios/Vendor/NOTICE.md',
+        'ios/Vendor/LICENSE-libghostty-spm.txt',
         'android/build.gradle',
         'android/src',
         'android/termux',
@@ -621,9 +622,10 @@ test('terminal-native declares Expo module metadata and gated package surface', 
         'ios/GhosttySurfaceBridge.swift',
         'ios/GhosttySurfaceView.swift',
         'ios/GhosttyInput.swift',
-        'ios/GhosttySelection.swift',
         'ios/GhosttyLinks.swift',
         'ios/GhosttyAccessibility.swift',
+        'ios/Vendor/NOTICE.md',
+        'ios/Vendor/LICENSE-libghostty-spm.txt',
         'android/src/main/java/dev/happier/terminal/TermuxView.kt',
         'android/src/main/java/dev/happier/terminal/TermuxBridge.kt',
         'android/src/main/java/dev/happier/terminal/TermuxInput.kt',
@@ -653,6 +655,12 @@ test('terminal-native records native renderer supply-chain gates', async () => {
     );
     assert.equal(rendererPolicy.iosGhostty.upstream.observedCommit, 'c069f05e0a4ef50143e943e954ed75e52e947009');
     assert.equal(rendererPolicy.iosGhostty.upstream.observedPackageVersion, '1.2.4');
+    assert.deepEqual(rendererPolicy.iosGhostty.license, {
+        kind: 'MIT',
+        bundledPath: 'ios/Vendor/LICENSE-libghostty-spm.txt',
+        noticePath: 'ios/Vendor/NOTICE.md',
+        sourceUrl: 'https://raw.githubusercontent.com/Lakr233/libghostty-spm/c069f05e0a4ef50143e943e954ed75e52e947009/LICENSE',
+    });
     assert.equal(rendererPolicy.iosGhostty.referenceImplementations.libghosttySpm.referenceOnly, false);
     assert.equal(rendererPolicy.iosGhostty.referenceImplementations.remodex.referenceOnly, true);
     assert.match(
@@ -831,8 +839,10 @@ test('terminal-native Android surface creation attaches the Expo module event si
     assert.match(session, /fun attachEventSink\(eventSink: TermuxEventSink\)/);
     assert.match(session, /fun attachEventSink\(eventSink: TermuxEventSink\)\s*\{/);
     assert.match(bridge, /attachEventSink\(eventSink\)/);
-    assert.match(bridge, /putIfAbsent\(surfaceId, created\)/);
-    assert.match(surface, /nativeModule\.createSurface\?\.\(props\.surfaceId\)/);
+    assert.match(bridge, /surfaces\[surfaceId\] = created/);
+    assert.match(surface, /const requestNativeSurface = React\.useCallback/);
+    assert.match(surface, /const subscriptions = TERMINAL_NATIVE_EVENT_NAMES[\s\S]*requestNativeSurface\(\);/);
+    assert.match(surface, /onLayout=\{requestNativeSurface\}/);
 });
 
 test('terminal-native Android replays readiness after attaching an event sink to a view-created surface', async () => {
@@ -877,7 +887,7 @@ test('terminal-native Android replays readiness after attaching an event sink to
     );
 });
 
-test('terminal-native Android surface creation returns canonical native availability on success', async () => {
+test('terminal-native Android surface creation returns per-surface availability on the main queue', async () => {
     const moduleSource = await readText(join(
         repoRoot,
         'packages',
@@ -892,10 +902,12 @@ test('terminal-native Android surface creation returns canonical native availabi
         'HappierTerminalNativeModule.kt',
     ));
     const createSurfaceDefinition = moduleSource.match(
-        /AsyncFunction\("createSurface"\)[\s\S]*?\n    }\n\n    AsyncFunction\("writeBytes"\)/,
+        /AsyncFunction\("createSurface"\)[\s\S]*?\.runOnQueue\(Queues\.MAIN\)/,
     )?.[0] ?? '';
 
-    assert.match(createSurfaceDefinition, /return@AsyncFunction TermuxBridge\.availability\(\)/);
+    assert.match(createSurfaceDefinition, /return@AsyncFunction TermuxBridge\.createSurface\(surfaceId\)\s*\{/);
+    assert.match(createSurfaceDefinition, /\.runOnQueue\(Queues\.MAIN\)/);
+    assert.doesNotMatch(createSurfaceDefinition, /TermuxBridge\.availability\(\)/);
 });
 
 test('terminal-native Android layout-driven renderer resize propagates back to the remote PTY', async () => {
@@ -1181,18 +1193,19 @@ test('EAS build install scopes include active first-party native Expo modules', 
     }
 });
 
-test('every EAS build profile includes terminal-native with the approved hard gates', async () => {
+test('EAS profiles include terminal-native without self-asserting external release gates', async () => {
     const easJsonPath = join(appRoot, 'eas.json');
     const easJson = await readJson(easJsonPath);
-    const requiredEnabledGates = [
-        'HAPPIER_ENABLE_TERMINAL_NATIVE',
+    const externalReleaseGates = [
         'HAPPIER_TERMINAL_NATIVE_IOS_PACKAGE_PROOF_ACCEPTED',
         'HAPPIER_TERMINAL_NATIVE_IOS_CRASH_FALLBACK_PROVEN',
+        'HAPPIER_TERMINAL_NATIVE_IOS_ACCESSIBILITY_NATIVE',
         'HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED',
         'HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED',
         'HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN',
         'HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED',
         'HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN',
+        'HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE',
     ];
 
     for (const profileId of Object.keys(easJson?.build ?? {})) {
@@ -1201,11 +1214,14 @@ test('every EAS build profile includes terminal-native with the approved hard ga
             parseScopeTokens(env.HAPPIER_INSTALL_SCOPE).has('terminal-native'),
             `Expected EAS profile ${profileId} to install terminal-native`,
         );
-        for (const gate of requiredEnabledGates) {
-            assert.equal(env[gate], '1', `Expected EAS profile ${profileId} ${gate}=1`);
+        assert.equal(env.HAPPIER_ENABLE_TERMINAL_NATIVE, '1');
+        for (const gate of externalReleaseGates) {
+            assert.equal(
+                env[gate],
+                undefined,
+                `EAS profile ${profileId} must not self-assert external release gate ${gate}`,
+            );
         }
-        assert.equal(env.HAPPIER_TERMINAL_NATIVE_IOS_ACCESSIBILITY_NATIVE, '0');
-        assert.equal(env.HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE, '0');
     }
 });
 

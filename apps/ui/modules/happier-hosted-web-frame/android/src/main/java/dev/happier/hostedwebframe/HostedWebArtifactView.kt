@@ -78,6 +78,7 @@ internal class HostedWebArtifactView(
   appContext: AppContext
 ) : ExpoView(context, appContext) {
   private var webView: WebView? = null
+  private var title: String? = null
   private val onMessage by EventDispatcher<Map<String, Any>>()
   private val onLoadStart by EventDispatcher<Map<String, Any>>()
   private val onLoadEnd by EventDispatcher<Map<String, Any>>()
@@ -103,6 +104,12 @@ internal class HostedWebArtifactView(
   }
 
   override val shouldUseAndroidLayout: Boolean = true
+
+  fun setTitle(title: String?) {
+    if (this.title == title) return
+    this.title = title
+    webView?.contentDescription = title
+  }
 
   fun setArtifactHandleToken(token: String?) {
     if (artifactHandleToken == token) return
@@ -235,6 +242,7 @@ internal class HostedWebArtifactView(
       .build()
     val profileName = newProfileName()
     val nextWebView = WebView(context)
+    nextWebView.contentDescription = title
     val installedDocumentStartScript = runCatching {
       // AndroidX requires the profile assignment before any settings, bridge,
       // client, or navigation operation on this WebView.

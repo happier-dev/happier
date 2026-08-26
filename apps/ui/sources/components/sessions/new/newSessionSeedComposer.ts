@@ -33,7 +33,10 @@ export type SessionNewSessionSeedOutcome =
         kind: 'invalid';
         reason: 'seed_invalid' | 'seed_empty' | 'seed_attachments_uncredited';
     }>
-    | Readonly<{ kind: 'unavailable'; reason: 'aborted' | 'navigation_unavailable' }>
+    | Readonly<{
+        kind: 'unavailable';
+        reason: 'aborted' | 'navigation_unavailable' | 'prepared_review_workspace_unavailable';
+    }>
     | Readonly<{ kind: 'stale'; reason: 'host_retired' }>;
 
 /** Parses the plugin-authored seed at its one boundary. */
@@ -47,10 +50,51 @@ function projectPluginNewSessionSeedV1(seed: PluginUiNewSessionSeedV1): NewSessi
     return {
         ...(seed.prompt === undefined ? {} : { prompt: seed.prompt }),
         ...(seed.profileId === undefined ? {} : { profileId: seed.profileId }),
+        ...(seed.checkoutIntent === undefined ? {} : { checkoutIntent: seed.checkoutIntent }),
         ...(seed.placement === undefined ? {} : { placement: seed.placement }),
         ...(seed.candidates === undefined ? {} : { candidates: seed.candidates }),
         ...(seed.attachments === undefined ? {} : { attachments: seed.attachments }),
     };
+}
+
+type NewSessionCheckoutIntentSettlement =
+    | Readonly<{ kind: 'routed'; worktree?: 'new' }>
+    | Readonly<{
+        kind: 'unavailable';
+        reason: 'prepared_review_workspace_unavailable';
+    }>;
+
+/**
+ * The router already owns the only generic handoff for a checkout question.
+ * A New Session seed does not know a worktree name or base ref, so it cannot
+ * truthfully manufacture `checkoutCreationDraft`; `worktree=new` opens the
+ * existing picker, whose mounted owner collects those concrete facts.
+ *
+ * A prepared review workspace is different: its directory and currentness
+ * facts must come from the selected SCM source operation. Until that producer
+ * has a canonical settlement into New Session, accepting the seed would drop
+ * a required checkout choice. Refuse it at this one choke point before any
+ * draft, handoff or navigation write.
+ */
+function settleNewSessionCheckoutIntent(
+    checkoutIntent: NewSessionDraftSeedV1['checkoutIntent'],
+): NewSessionCheckoutIntentSettlement {
+    switch (checkoutIntent) {
+        case undefined:
+        case 'none':
+        case 'reuseWorkspace':
+            return { kind: 'routed' };
+        case 'createWorktree':
+        case 'ask':
+            return { kind: 'routed', worktree: 'new' };
+        case 'preparedReviewWorkspace':
+            return {
+                kind: 'unavailable',
+                reason: 'prepared_review_workspace_unavailable',
+            };
+    }
+    const unhandledIntent: never = checkoutIntent;
+    return unhandledIntent;
 }
 
 function readIsCurrent(isCurrent: () => boolean): boolean {
@@ -73,7 +117,11 @@ export function seedAndOpenNewSession(params: Readonly<{
     scope?: ServerAccountScope | null;
     signal?: AbortSignal;
     isCurrent: () => boolean;
-    navigateToNewSession: (input: Readonly<{ dataId: string | null; draftId: string }>) => void;
+    navigateToNewSession: (input: Readonly<{
+        dataId: string | null;
+        draftId: string;
+        worktree?: 'new';
+    }>) => void;
     nowMs?: () => number;
     createDraftId?: Parameters<typeof seedNewSessionDraftV1>[0]['createDraftId'];
     writeDraft?: Parameters<typeof seedNewSessionDraftV1>[0]['writeDraft'];
@@ -94,6 +142,8 @@ export function seedAndOpenNewSession(params: Readonly<{
     }
     if (params.signal?.aborted === true) return { kind: 'unavailable', reason: 'aborted' };
     if (!readIsCurrent(params.isCurrent)) return { kind: 'stale', reason: 'host_retired' };
+    const checkoutSettlement = settleNewSessionCheckoutIntent(seed.checkoutIntent);
+    if (checkoutSettlement.kind === 'unavailable') return checkoutSettlement;
 
     const draftId = seedNewSessionDraftV1({
         seed,
@@ -125,7 +175,11 @@ export function seedAndOpenNewSession(params: Readonly<{
         : (params.storeTempData ?? storeTempData)({ pluginNewSessionSeed: handoff });
 
     try {
-        params.navigateToNewSession({ dataId, draftId });
+        params.navigateToNewSession({
+            dataId,
+            draftId,
+            ...(checkoutSettlement.worktree === undefined ? {} : { worktree: checkoutSettlement.worktree }),
+        });
     } catch {
         // The draft is already written, so the reader can still reach it by
         // opening New Session themselves. Reporting success would claim a

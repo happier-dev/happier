@@ -38,7 +38,10 @@ import { ProjectBrowseFilesSurface } from './surfaces/ProjectBrowseFilesSurface'
 import { ProjectGitSurface } from './surfaces/ProjectGitSurface';
 import { useProjectSurfaceActions } from './useProjectSurfaceActions';
 import { useProjectSurfaceController } from './useProjectSurfaceController';
-import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import {
+    selectPluginDestinationSurfacePlacements,
+    selectPluginRightSidebarTabPlacements,
+} from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { Icon } from '@/components/ui/icons/Icon';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
@@ -233,7 +236,7 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
     const targetNavigationBinding = usePluginSurfaceDestinationNavigationBinding();
     const fallbackNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
         placements: pluginProjection.pluginUiProjection
-            ? Object.values(pluginProjection.pluginUiProjection.surfacePlacementsById)
+            ? selectPluginDestinationSurfacePlacements(pluginProjection.pluginUiProjection)
             : [],
         targetKind: 'project',
         accountLifetime,

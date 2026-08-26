@@ -46,12 +46,15 @@ import type {
 import { resolvePluginContributedActionIconName } from './pluginContributedActionPresentation';
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
-const COMPOSER_ACTION_CHIP_SIZE = 32;
-const COMPOSER_ACTION_CHIP_HIT_SLOP = Math.ceil(
-    (resolveMinimumInteractiveTargetSize(Platform.OS) - COMPOSER_ACTION_CHIP_SIZE) / 2,
-);
 const COMPOSER_CONTROL_UNKNOWN_CHOICE_ID_SAMPLE_COUNT = 3;
 const COMPOSER_CONTROL_UNKNOWN_CHOICE_ID_SAMPLE_MAX_UTF8_BYTES = 96;
+
+function resolveComposerChipPhysicalTargetStyle(): Readonly<{ minWidth: number; minHeight: number }> | undefined {
+    const platform = Platform.OS;
+    if (platform !== 'ios' && platform !== 'android') return undefined;
+    const targetSize = resolveMinimumInteractiveTargetSize(platform);
+    return { minWidth: targetSize, minHeight: targetSize };
+}
 
 function actionChipKey(action: PluginContributedActionDescriptor): string {
     return `plugin-contributed-action:${action.placement}:${action.qualifiedActionId}`;
@@ -108,13 +111,7 @@ function createComposerActionChip(params: Readonly<{
                     accessibilityRole="button"
                     accessibilityLabel={params.action.title}
                     onPress={invoke}
-                    hitSlop={{
-                        top: COMPOSER_ACTION_CHIP_HIT_SLOP,
-                        bottom: COMPOSER_ACTION_CHIP_HIT_SLOP,
-                        left: COMPOSER_ACTION_CHIP_HIT_SLOP,
-                        right: COMPOSER_ACTION_CHIP_HIT_SLOP,
-                    }}
-                    style={({ pressed }) => chipStyle(pressed)}
+                    style={({ pressed }) => [chipStyle(pressed), resolveComposerChipPhysicalTargetStyle()]}
                 >
                     <Icon
                         name={iconName}
@@ -794,13 +791,7 @@ function renderComposerControlChipNode(params: Readonly<{
                     }
                     resolved.invokeDirectInteraction(context.chipAnchorRef);
                 }}
-                hitSlop={{
-                    top: COMPOSER_ACTION_CHIP_HIT_SLOP,
-                    bottom: COMPOSER_ACTION_CHIP_HIT_SLOP,
-                    left: COMPOSER_ACTION_CHIP_HIT_SLOP,
-                    right: COMPOSER_ACTION_CHIP_HIT_SLOP,
-                }}
-                style={({ pressed }) => context.chipStyle(pressed)}
+                style={({ pressed }) => [context.chipStyle(pressed), resolveComposerChipPhysicalTargetStyle()]}
             >
                 {compactContent ?? (
                     <>

@@ -1,15 +1,18 @@
 import type {
-    PluginUiContainerV1,
-    PluginUiDestinationBindingV1,
+    PluginContributionIdentityV1,
+    PluginUiDestinationContainerV1,
     PluginUiDestinationReferenceV1,
+    PluginUiInlineSurfaceRoleV1,
     PluginUiTargetKindV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiDestinationReferenceV1Schema } from '@happier-dev/protocol/plugins/ui';
 
 import type {
     PluginUiProjectionModel,
+    PluginUiInlineSurfacePlacementProjection,
     PluginUiSurfacePlacementProjection,
 } from './projection';
+import { isPluginUiDestinationSurfacePlacementProjection } from './projection';
 import { canRenderPluginUiProjectionEntry, type PluginUiPolicyEvaluationContext } from './policy';
 
 /**
@@ -17,19 +20,28 @@ import { canRenderPluginUiProjectionEntry, type PluginUiPolicyEvaluationContext 
  * This is deliberately not a string-derived placement or target normalizer.
  */
 export type PluginUiDestinationBindingSlot = Readonly<{
-    container: PluginUiContainerV1;
+    container: PluginUiDestinationContainerV1;
     targetKind: PluginUiTargetKindV1;
 }>;
 
 export type PluginSurfaceTargetKind = PluginUiTargetKindV1;
 
-function sortedPlacements(
-    placements: readonly PluginUiSurfacePlacementProjection[],
-): readonly PluginUiSurfacePlacementProjection[] {
+function sortedPlacements<TPlacement extends Readonly<{ id: string }>>(
+    placements: readonly TPlacement[],
+): readonly TPlacement[] {
     // V2 projections have no contributor-controlled placement rank. Keep the
     // host-owned registry selection stable by its generated qualified id rather
     // than reviving a raw `order` field from a stale projection row.
     return Object.freeze([...placements].sort((left, right) => left.id.localeCompare(right.id)));
+}
+
+/** The destination-only view of the one physical placement projection. */
+export function selectPluginDestinationSurfacePlacements(
+    model: PluginUiProjectionModel,
+): readonly PluginUiSurfacePlacementProjection[] {
+    return sortedPlacements(Object.values(model.surfacePlacementsById).filter(
+        isPluginUiDestinationSurfacePlacementProjection,
+    ));
 }
 
 /**
@@ -41,7 +53,7 @@ export function selectPluginSurfacePlacementsForBinding(
     model: PluginUiProjectionModel,
     slot: PluginUiDestinationBindingSlot,
 ): readonly PluginUiSurfacePlacementProjection[] {
-    return sortedPlacements(Object.values(model.surfacePlacementsById).filter((entry) => (
+    return sortedPlacements(selectPluginDestinationSurfacePlacements(model).filter((entry) => (
         entry.binding.container === slot.container
         && entry.binding.targetKind === slot.targetKind
     )));
@@ -98,9 +110,27 @@ export function selectPluginSurfacePlacementsByDestination(
     model: PluginUiProjectionModel,
     destination: PluginUiDestinationReferenceV1,
 ): readonly PluginUiSurfacePlacementProjection[] {
-    return sortedPlacements(Object.values(model.surfacePlacementsById).filter((entry) => (
+    return sortedPlacements(selectPluginDestinationSurfacePlacements(model).filter((entry) => (
         entry.binding.destination.pluginId === destination.pluginId
         && entry.binding.destination.localId === destination.localId
+    )));
+}
+
+/**
+ * Exact inline mount lookup. This is intentionally separate from destination
+ * lookup: an Agent slot may mount its declared surface, but cannot open or
+ * collide with a destination.
+ */
+export function selectPluginInlineSurfacePlacementsBySurface(
+    model: PluginUiProjectionModel,
+    surface: PluginContributionIdentityV1,
+    role: PluginUiInlineSurfaceRoleV1,
+): readonly PluginUiInlineSurfacePlacementProjection[] {
+    return sortedPlacements(Object.values(model.surfacePlacementsById).filter((entry): entry is PluginUiInlineSurfacePlacementProjection => (
+        !isPluginUiDestinationSurfacePlacementProjection(entry)
+            && entry.binding.surface.pluginId === surface.pluginId
+            && entry.binding.surface.localId === surface.localId
+            && entry.binding.role === role
     )));
 }
 

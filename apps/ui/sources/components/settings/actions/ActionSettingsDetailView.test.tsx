@@ -58,12 +58,22 @@ vi.doMock('@/sync/domains/machines/administration/useTargetSelection', () => ({
     },
 }));
 
+const daemonProjection = vi.hoisted(() => ({
+    byMachineId: {} as Record<string, unknown>,
+    reset() {
+        this.byMachineId = {};
+    },
+}));
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-    useDaemonMergedProjectionInputs: () => ({ phase: 'idle', inputs: null }),
+    useDaemonMergedProjectionInputs: (params: Readonly<{ machineId?: unknown }>) => {
+        const machineId = typeof params.machineId === 'string' ? params.machineId : '';
+        return daemonProjection.byMachineId[machineId] ?? { phase: 'idle', inputs: null };
+    },
 }));
 
 installSettingsViewCommonModuleMocks({
@@ -195,6 +205,7 @@ afterEach(() => {
     capture.reset();
     administrationTargetSelection.controller.reset();
     administrationSelectionCalls.length = 0;
+    daemonProjection.reset();
     resetSettingsViewCommonModuleMockState();
 });
 
@@ -421,6 +432,58 @@ describe('ActionSettingsDetailView', () => {
         await renderScreen(<ActionSettingsDetailView />);
 
         expect(capture.stackOptions?.headerTitle).toBe('Start review');
+    });
+
+    it('resolves an encoded qualified contributed id with API and trusted-plugin controls', async () => {
+        capture.routeActionId = 'happier.inspector%2Factions%2Fself-check';
+        daemonProjection.byMachineId = {
+            'machine-a': {
+                phase: 'ready',
+                inputs: {
+                    pluginProjectionById: {
+                        'happier.inspector': {
+                            pluginId: 'happier.inspector',
+                            actions: [{
+                                id: 'self-check',
+                                title: 'Run Inspector self-check',
+                                description: 'Checks the Inspector plugin.',
+                                icon: null,
+                                surfaces: ['ui'],
+                                placementBindings: ['toolbar'],
+                            }],
+                        },
+                    },
+                },
+            },
+        };
+        administrationTargetSelection.controller.select('machine-a');
+        const { ActionSettingsDetailView } = await import('./ActionSettingsDetailView');
+
+        const screen = await renderScreen(<ActionSettingsDetailView />);
+
+        expect(await screen.findByTestId(
+            'settings-actions:action:happier.inspector/actions/self-check:summary',
+        )).toBeTruthy();
+        expect(capture.items.some((item) => (
+            item.testID === 'settings-actions:action:happier.inspector/actions/self-check:target:api'
+        ))).toBe(true);
+        expect(capture.items.some((item) => (
+            item.testID === 'settings-actions:action:happier.inspector/actions/self-check:target:plugin'
+        ))).toBe(true);
+        expect(capture.items.some((item) => (
+            item.testID === 'settings-actions:action:happier.inspector/actions/self-check:target:contextual_ui'
+        ))).toBe(true);
+        for (const targetId of ['api', 'plugin'] as const) {
+            const modeControl = capture.segmentedTabBars.find((bar) => (
+                bar.testIDPrefix === `settings-actions:action:happier.inspector/actions/self-check:target:${targetId}:mode`
+            ));
+            expect(modeControl?.activeTabId).toBe('allowed');
+            expect((modeControl?.tabs as Array<{ id: string }>).map((tab) => tab.id)).toEqual([
+                'off',
+                'ask_first',
+                'allowed',
+            ]);
+        }
     });
 
     it('treats direct links to non-configurable runtime actions as invalid', async () => {

@@ -39,7 +39,10 @@ import { useSessionFileDetailsOpener } from './useSessionFileDetailsOpener';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
-import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import {
+    selectPluginDestinationSurfacePlacements,
+    selectPluginRightSidebarTabPlacements,
+} from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     useSessionPanePluginRuntime,
@@ -256,7 +259,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps) => {
     const targetNavigationBinding = usePluginSurfaceDestinationNavigationBinding();
     const fallbackNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
         placements: pluginRuntime.pluginUiProjection
-            ? Object.values(pluginRuntime.pluginUiProjection.surfacePlacementsById)
+            ? selectPluginDestinationSurfacePlacements(pluginRuntime.pluginUiProjection)
             : [],
         targetKind: 'session',
         accountLifetime,

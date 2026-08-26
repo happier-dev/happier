@@ -48,6 +48,8 @@ type HostedArtifactFrameNavigationCommand = Readonly<{
 }>;
 
 type HostedArtifactFrameNativeViewProps = Readonly<{
+    /** Host-resolved accessible title for the child native WebView. */
+    title: string;
     artifactHandleToken: string;
     initialPathAndQuery: string;
     allowedNavigationOrigins: readonly string[];
@@ -101,6 +103,8 @@ export function isHostedArtifactFrameNativeAdapterAvailable(): boolean {
 }
 
 type HostedArtifactFrameProps = Readonly<{
+    /** Host-resolved accessible title for the child native WebView. */
+    title: string;
     /** Artifact-owned opaque registration token; never an address or cache key. */
     artifactHandleToken: string;
     /** Host-built address facts only (the entry path plus bridge correlation). */
@@ -233,6 +237,7 @@ function LoadedHostedArtifactFrame(props: HostedArtifactFrameProps & Readonly<{
     return (
         <props.adapter.View
             ref={viewRef}
+            title={props.title}
             artifactHandleToken={props.artifactHandleToken}
             initialPathAndQuery={props.initialPathAndQuery}
             allowedNavigationOrigins={props.allowedNavigationOrigins}

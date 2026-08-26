@@ -15,7 +15,10 @@ import {
     type ComposerSnapshotV1,
     type PluginProjectionV2,
 } from '@happier-dev/protocol';
-import { preparePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import {
+    preparePluginJsonSchema,
+    rehydrateCanonicalProtocolComposableSchema,
+} from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import {
     PLUGIN_UI_HOST_METHODS_V1,
     buildPluginHostedWebStaticAssetPreviewId,
@@ -23,11 +26,13 @@ import {
     computePluginUiArtifactFileSetSha256DigestV1,
     computePluginUiArtifactSha256DigestV1,
     normalizePluginUiDestinationBindingV1,
+    normalizePluginUiInlineSurfaceBindingV1,
     normalizePluginUiSettingsPageBindingV1,
     PluginUiArtifactDigestV1Schema,
     PluginUiTargetedContributionsV1Schema,
     type PluginUiDestinationBindingInputV1,
     type PluginUiDestinationBindingV1,
+    type PluginUiInlineSurfaceBindingInputV1,
     type PluginUiHostMethodV1,
     type PluginUiTargetedContributionSurfaceV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -39,6 +44,7 @@ import {
 import { derivePluginUiTargetedSurfaceMountInstanceKeyV1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 
 import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 import { completePresentationPluginUiDataClient } from '@/dev/testkit/pluginUiDataClient';
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
@@ -90,6 +96,7 @@ import {
 } from '@/sync/domains/local/services/preview/store';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiPhysicalSurfacePlacementProjection,
     type PluginUiProjectionModel,
     type PluginUiSettingsPageProjection,
     type PluginUiSurfacePlacementProjection,
@@ -332,12 +339,9 @@ describe('external targeted source products through the bound surface host', () 
             contributor,
             role: surface.role,
             presentation: surface.presentation,
-            inputSchema: {
-                type: 'object',
-                properties: { entryId: { type: 'string' } },
-                required: ['entryId'],
-                additionalProperties: false,
-            },
+            inputSchema: defineProtocolObject({
+                entryId: defineProtocolString(),
+            }, { policy: 'closed' }).jsonSchema,
             rendererChain: [{
                 pluginId: contributor.pluginId,
                 localId: contributor.contributionId,
@@ -681,6 +685,8 @@ describe('external targeted source products through the bound surface host', () 
         });
         contributionProjectionDescribeMock.mockResolvedValue(fixture.response);
         const inputValidation = preparePluginJsonSchema(fixture.targetedMount.inputSchema);
+        const inputNormalizer = rehydrateCanonicalProtocolComposableSchema(inputValidation.jsonSchema);
+        if (!inputNormalizer) throw new Error('Expected canonical Surface schema to rehydrate');
         const admittedModel = normalizePluginDeclarativeDocumentV1({
             pluginId: targetPluginId,
             generation: String(fixture.response.projection.generation),
@@ -691,6 +697,7 @@ describe('external targeted source products through the bound surface host', () 
                 handle: surface,
                 inputSchema: inputValidation.jsonSchema,
                 inputValidation,
+                inputNormalizer,
             }],
         });
         const screen = await renderScreen(
@@ -2031,6 +2038,42 @@ function reactNativeSurfacePlacementFixture(
                         destination: { pluginId: binding.pluginId, localId: binding.destinationId },
                     },
                     renderer: { pluginId: binding.pluginId, localId: binding.rendererId },
+                    artifactDigest: PluginUiArtifactDigestV1Schema.parse(`sha256:${'e'.repeat(64)}`),
+                    crashStateEpoch: 7,
+                },
+                disabled: false,
+            },
+        },
+    });
+}
+
+function reactNativeInlineSurfacePlacementFixture(
+    input: PluginUiInlineSurfaceBindingInputV1,
+): PluginUiPhysicalSurfacePlacementProjection {
+    const binding = normalizePluginUiInlineSurfaceBindingV1(input);
+    if (!binding) {
+        throw new Error(`fixture inline surface binding is not admitted: ${input.role}/${input.target.kind}`);
+    }
+    return Object.freeze({
+        id: `surfacePlacement:${binding.surface.pluginId}:${binding.surface.localId}`,
+        pluginId: binding.surface.pluginId,
+        contributionKind: 'surfacePlacement' as const,
+        descriptorId: binding.surface.localId,
+        binding,
+        target: binding.target,
+        renderer: { kind: 'reactNative', contributionId: input.rendererId },
+        display: { label: 'Native inline surface' },
+        availability: { state: 'available' as const, reason: 'available', diagnostics: [] },
+        headerActions: [],
+        runtime: {
+            reactNativeCrashState: {
+                token: {
+                    mount: {
+                        kind: 'inline' as const,
+                        surface: binding.surface,
+                        role: binding.role,
+                    },
+                    renderer: { pluginId: input.pluginId, localId: input.rendererId },
                     artifactDigest: PluginUiArtifactDigestV1Schema.parse(`sha256:${'e'.repeat(64)}`),
                     crashStateEpoch: 7,
                 },
@@ -8346,7 +8389,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             contributor: surface.contributor,
             role: surface.role,
             presentation: surface.presentation,
-            inputSchema: Object.freeze({ type: 'object' }),
+            inputSchema: defineProtocolObject({}, { policy: 'additive-open/preserve' }).jsonSchema,
             rendererChain: Object.freeze([Object.freeze({
                 pluginId: surface.contributor.pluginId,
                 localId: surface.contributor.contributionId,
@@ -8520,7 +8563,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             contributor: surface.contributor,
             role: surface.role,
             presentation: surface.presentation,
-            inputSchema: Object.freeze({ type: 'object' }),
+            inputSchema: defineProtocolObject({}, { policy: 'additive-open/preserve' }).jsonSchema,
             rendererChain: Object.freeze([Object.freeze({
                 pluginId: surface.contributor.pluginId,
                 localId: surface.contributor.contributionId,
@@ -8806,7 +8849,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             contributor: surface.contributor,
             role: surface.role,
             presentation: surface.presentation,
-            inputSchema: Object.freeze({ type: 'object' }),
+            inputSchema: defineProtocolObject({}, { policy: 'additive-open/preserve' }).jsonSchema,
             rendererChain: Object.freeze([Object.freeze({
                 pluginId: surface.contributor.pluginId,
                 localId: surface.contributor.contributionId,
@@ -8837,10 +8880,13 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             }),
         });
         const inputValidation = preparePluginJsonSchema(blockedMount.inputSchema);
+        const inputNormalizer = rehydrateCanonicalProtocolComposableSchema(inputValidation.jsonSchema);
+        if (!inputNormalizer) throw new Error('Expected canonical Surface schema to rehydrate');
         const preparedBlockedMount = Object.freeze({
             ...blockedMount,
             inputSchema: inputValidation.jsonSchema,
             inputValidation,
+            inputNormalizer,
         });
         const request = Object.freeze({
             mount: Object.freeze({
@@ -9000,7 +9046,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             contributor: surface.contributor,
             role: surface.role,
             presentation: surface.presentation,
-            inputSchema: Object.freeze({ type: 'object' }),
+            inputSchema: defineProtocolObject({}, { policy: 'additive-open/preserve' }).jsonSchema,
             rendererChain: Object.freeze([Object.freeze({
                 pluginId: surface.contributor.pluginId,
                 localId: surface.contributor.contributionId,
@@ -9384,7 +9430,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             contributor: surface.contributor,
             role: surface.role,
             presentation: surface.presentation,
-            inputSchema: Object.freeze({ type: 'object' }),
+            inputSchema: defineProtocolObject({}, { policy: 'additive-open/preserve' }).jsonSchema,
             rendererChain: Object.freeze([Object.freeze({
                 pluginId: surface.contributor.pluginId,
                 localId: surface.contributor.contributionId,
@@ -10094,7 +10140,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         expect(observed).toEqual(cases.map((testCase) => testCase.expected));
     });
 
-    it('projects an admitted inline destination as the public embedded mount context', async () => {
+    it('projects an admitted inline binding as the public embedded mount context', async () => {
         reactNativeSurfaceProps.length = 0;
         await primeGeneratedArtifact();
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
@@ -10107,11 +10153,11 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             displayName: 'Browser Inspector',
             version: '3.2.1',
         });
-        const placement = reactNativeSurfacePlacementFixture({
+        const placement = reactNativeInlineSurfacePlacementFixture({
             pluginId: 'acme.browser',
-            destinationId: 'session-info-inline',
+            surfaceId: 'session-info-inline',
             rendererId: 'native-panel',
-            container: 'sessionInfoSection',
+            role: 'sessionInfoSection',
             target: { kind: 'session', sessionIdPath: '/sessionId' },
         });
 
@@ -10146,34 +10192,34 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
 
     it.each([
         {
-            name: 'the requested inline role maps to a different container',
-            placement: reactNativeSurfacePlacementFixture({
+            name: 'the requested inline role maps to a different role',
+            placement: reactNativeInlineSurfacePlacementFixture({
                 pluginId: 'acme.browser',
-                destinationId: 'session-info-inline-role-mismatch',
+                surfaceId: 'session-info-inline-role-mismatch',
                 rendererId: 'native-panel',
-                container: 'sessionInfoSection',
+                role: 'sessionInfoSection',
                 target: { kind: 'session', sessionIdPath: '/sessionId' },
             }),
             inlineMount: { role: 'sessionSubagentLaunch' as const, presentation: 'content' as const },
         },
         {
             name: 'the requested inline role does not admit its presentation',
-            placement: reactNativeSurfacePlacementFixture({
+            placement: reactNativeInlineSurfacePlacementFixture({
                 pluginId: 'acme.browser',
-                destinationId: 'session-info-inline-presentation-mismatch',
+                surfaceId: 'session-info-inline-presentation-mismatch',
                 rendererId: 'native-panel',
-                container: 'sessionInfoSection',
+                role: 'sessionInfoSection',
                 target: { kind: 'session', sessionIdPath: '/sessionId' },
             }),
             inlineMount: { role: 'sessionInfoSection' as const, presentation: 'fill' as const },
         },
-    ])('refuses an inline destination when $name', async ({ placement, inlineMount }) => {
+    ])('refuses an inline binding when $name', async ({ placement, inlineMount }) => {
         reactNativeSurfaceProps.length = 0;
         await primeGeneratedArtifact();
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const targetedFixture = primeExactTargetedContributions({
             pluginId: 'acme.browser',
-            immutableGenerationId: `browser-inline-rejection-${placement.binding.destination.localId}`,
+            immutableGenerationId: `browser-inline-rejection-${placement.descriptorId}`,
             projectionGeneration: 77,
         });
         const projection = withMountedTargetPackage(createGeneratedProjection(), targetedFixture, {

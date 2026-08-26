@@ -87,6 +87,7 @@ export function PluginHostedWebFrame(props: Readonly<{
                     style={styles.frame}
                 >
                     <HostedArtifactFrame
+                        title={props.title}
                         artifactHandleToken={artifact.artifactHandleToken}
                         initialPathAndQuery={artifact.initialPathAndQuery}
                         allowedNavigationOrigins={props.security.allowedNavigationOrigins}

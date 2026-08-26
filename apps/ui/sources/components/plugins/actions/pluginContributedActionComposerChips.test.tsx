@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { act, create } from 'react-test-renderer';
+import { Platform } from 'react-native';
 import { ComposerControlStateV1Schema } from '@happier-dev/protocol';
 import { PLUGIN_UI_HOST_API_DIAGNOSTIC_MAX_UTF8_BYTES_V1 } from '@happier-dev/protocol/plugins/ui';
 import type {
@@ -27,28 +28,28 @@ import {
     createPluginContributedActionComposerChips,
     type PluginComposerControlHost,
 } from './pluginContributedActionComposerChips';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 
 /**
- * The admitted translation bundle for `acme.channels`. Its values differ from
- * every declared fallback, so a fallback-only reader and a projection-backed
- * reader cannot produce the same string.
+ * The host's admitted translator boundary for `acme.channels`. Its values
+ * differ from every declared fallback, so a fallback-only reader and a
+ * projection-backed reader cannot produce the same string. The component under
+ * test receives this narrow host contract directly; translation-catalog
+ * projection has its own owner-level coverage.
  */
-const channelsProjection = {
-    ...EMPTY_PLUGIN_UI_PROJECTION,
-    translationsByPluginId: {
-        'acme.channels': {
-            pluginId: 'acme.channels',
-            bundles: {
-                en: {
-                    'acme.mode.label': 'Delivery mode',
-                    'acme.mode.fast': 'Fastest',
-                },
-            },
-        },
-    },
-} as never;
+const CHANNELS_TRANSLATIONS: Readonly<Record<string, string>> = {
+    'acme.mode.label': 'Delivery mode',
+    'acme.mode.fast': 'Fastest',
+};
+
+function localizeChannelsText(_pluginId: string, value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+    const candidate = value as Readonly<{ key?: unknown; fallback?: unknown }>;
+    const key = typeof candidate.key === 'string' ? candidate.key : null;
+    return key === null
+        ? typeof candidate.fallback === 'string' ? candidate.fallback : ''
+        : CHANNELS_TRANSLATIONS[key] ?? (typeof candidate.fallback === 'string' ? candidate.fallback : '');
+}
 
 function descriptor(input: Readonly<{
     localId: string;
@@ -113,7 +114,7 @@ function createComposerControlHost(
         scope: 'session',
         isCurrent: () => true,
         canMutateComposer: () => true,
-        localize: createPluginLocalizedTextResolver({ projection: channelsProjection }),
+        localize: localizeChannelsText,
         renderControlResourceState,
         openAction,
         applyComposer,
@@ -1520,10 +1521,13 @@ describe('plugin contributed composer Action chips', () => {
         ]);
     });
 
-    it('keeps the icon-only composer control labelled and inside the minimum interactive target', () => {
-        const primary = descriptor({ localId: 'configure', placement: 'composer.primary' });
+    it('gives adjacent plugin Actions and controls distinct native physical targets while retaining dense web chips', () => {
+        const primary = [
+            descriptor({ localId: 'configure', placement: 'composer.primary' }),
+            descriptor({ localId: 'refresh', placement: 'composer.primary' }),
+        ];
         const controller = {
-            list: ({ placement }: Readonly<{ placement: string }>) => (placement === 'composer.primary' ? [primary] : []),
+            list: ({ placement }: Readonly<{ placement: string }>) => (placement === 'composer.primary' ? primary : []),
             listSlashCommands: () => [],
             open: vi.fn(),
             isReferenceAvailable: () => false,
@@ -1531,23 +1535,71 @@ describe('plugin contributed composer Action chips', () => {
             invokeReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
             openSessionReference: async () => ({ kind: 'stale' as const, reason: 'action_retired' as const }),
         } satisfies PluginContributedActionController;
-        const chip = createPluginContributedActionComposerChips({ controller, openAction: vi.fn() })[0];
-        const node = chip?.render({
-            chipStyle: () => ({}),
+        const chips = createPluginContributedActionComposerChips({
+            controller,
+            openAction: vi.fn(),
+            composerControls: [
+                composerControl({ localId: 'first-control' }),
+                composerControl({ localId: 'second-control' }),
+            ],
+            composerControlHost: createComposerControlHost(),
+        });
+        const context = {
+            chipStyle: () => ({ width: 32, height: 32, marginRight: 6, marginBottom: 1 }),
             showLabel: false,
             iconColor: '#fff',
             textStyle: {},
             countTextStyle: {},
+            chipAnchorRef: React.createRef(),
             popoverAnchorRef: React.createRef(),
+        };
+        const renderFrames = () => chips.map((chip) => {
+            const node = chip.render(context);
+            if (!React.isValidElement<{
+                hitSlop?: unknown;
+                style?: (state: Readonly<{ pressed: boolean }>) => unknown;
+                testID?: string;
+            }>(node)) throw new Error('expected a visible plugin composer chip');
+            const style = node.props.style?.({ pressed: false });
+            const flattened = (Array.isArray(style) ? style : [style]).reduce<Record<string, unknown>>((result, part) => (
+                part && typeof part === 'object' ? { ...result, ...part } : result
+            ), {});
+            return { hitSlop: node.props.hitSlop, style: flattened, testID: node.props.testID };
         });
-        if (!React.isValidElement<{
-            accessibilityRole?: string;
-            accessibilityLabel?: string;
-            hitSlop?: unknown;
-        }>(node)) throw new Error('expected primary Action chip');
+        const platform = Platform as unknown as { OS: string };
+        const originalPlatform = platform.OS;
 
-        expect(node.props.accessibilityRole).toBe('button');
-        expect(node.props.accessibilityLabel).toBe('Configure channels');
-        expect(node.props.hitSlop).toEqual({ top: 6, bottom: 6, left: 6, right: 6 });
+        try {
+            for (const [nativePlatform, minimumTarget] of [['ios', 44], ['android', 48]] as const) {
+                platform.OS = nativePlatform;
+                const frames = renderFrames();
+                expect(frames.map((frame) => frame.testID)).toEqual([
+                    'plugin-composer-action:acme.channels/configure',
+                    'plugin-composer-action:acme.channels/refresh',
+                    'plugin-composer-control:acme.channels/first-control',
+                    'plugin-composer-control:acme.channels/second-control',
+                ]);
+                for (const frame of frames) {
+                    expect(frame.hitSlop).toBeUndefined();
+                    expect(frame.style).toMatchObject({ minWidth: minimumTarget, minHeight: minimumTarget });
+                }
+                const firstRowEnd = Math.max(Number(frames[0]?.style.width ?? 0), Number(frames[0]?.style.minWidth ?? 0));
+                const nextRowStart = firstRowEnd + Number(frames[0]?.style.marginRight ?? 0);
+                expect(nextRowStart).toBeGreaterThanOrEqual(firstRowEnd);
+                const firstColumnEnd = Math.max(Number(frames[0]?.style.height ?? 0), Number(frames[0]?.style.minHeight ?? 0));
+                const nextColumnStart = firstColumnEnd + Number(frames[0]?.style.marginBottom ?? 0);
+                expect(nextColumnStart).toBeGreaterThanOrEqual(firstColumnEnd);
+            }
+
+            platform.OS = 'web';
+            for (const frame of renderFrames()) {
+                expect(frame.hitSlop).toBeUndefined();
+                expect(frame.style).toMatchObject({ width: 32, height: 32 });
+                expect(frame.style.minWidth).toBeUndefined();
+                expect(frame.style.minHeight).toBeUndefined();
+            }
+        } finally {
+            platform.OS = originalPlatform;
+        }
     });
 });

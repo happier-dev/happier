@@ -49,6 +49,7 @@ import type {
 } from '@/sync/domains/plugins/availability/reactNativeArtifactAvailability';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage as persistentStorage } from '@/sync/domains/state/storageStore';
+import type { PluginUiPageHeaderActionProjection } from '@/sync/domains/plugins/ui/projection';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import {
@@ -57,12 +58,16 @@ import {
 } from '@/components/plugins/reactNative/bundleCache';
 import {
     getPluginUiClientExecutableComposition,
+    resolvePluginUiClientActionRegistration,
 } from '@/components/plugins/reactNative/clientExecutableContributions';
 import {
-    createPluginUiExecutableModuleHost,
+    getInstalledPluginUiExecutableModuleHost,
     type PluginUiExecutableModuleHost,
 } from '@/components/plugins/reactNative/executableModuleHost';
 import type { PluginReactNativeLoaderBackend } from '@/components/plugins/reactNative/loader';
+import type { PluginSurfaceLaunchAuthority } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
+import { PluginAppPageHeaderActions } from './pluginAppPageHeaderActions';
+import type { PluginAppPage } from './pluginAppPages';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -601,6 +606,23 @@ function requireConversationDeclaration(
 function ProjectionProbe() {
     const value = useAppShellPluginUiProjection();
     return React.createElement('ProjectionProbe', { value });
+}
+
+function ClientActionHeaderPresentationProbe(props: Readonly<{
+    action: PluginUiPageHeaderActionProjection;
+    page: PluginAppPage;
+    actionAuthority: PluginSurfaceLaunchAuthority;
+}>) {
+    const { pluginUiProjection } = useAppShellPluginUiProjection();
+    return (
+        <PluginAppPageHeaderActions
+            actions={[props.action]}
+            page={props.page}
+            projection={pluginUiProjection}
+            actionAuthority={props.actionAuthority}
+            openSurface={async () => ({ ok: true })}
+        />
+    );
 }
 
 function ScopedProjectionProbe() {
@@ -1275,8 +1297,29 @@ describe('AppShellPluginUiProjectionProvider', () => {
             pluginId,
             origin,
         });
+        const baseClientAction = baseProjection.actionsById[`${pluginId}/${actionId}`];
+        if (!baseClientAction) {
+            throw new Error('AppShell client Action test fixture is missing its Action declaration');
+        }
         const appProjection = PluginProjectionV2Schema.parse({
             ...baseProjection,
+            actionsById: {
+                ...baseProjection.actionsById,
+                [`${pluginId}/${actionId}`]: {
+                    ...baseClientAction,
+                    authorization: {
+                        generation: {
+                            targetGeneration: String(generation),
+                            desiredGeneration: String(generation),
+                            appliedGeneration: String(generation),
+                        },
+                        resourceSelections: [],
+                        scopedGrants: [],
+                        serviceAvailability: [],
+                        operatingSystemAuthorization: [],
+                    },
+                },
+            },
             familiesById: {
                 ...baseProjection.familiesById,
                 pluginUi: {
@@ -1302,6 +1345,25 @@ describe('AppShellPluginUiProjectionProvider', () => {
                 },
             },
         });
+        const clientActionHeaderAction = Object.freeze({
+            id: 'run-client-action',
+            title: 'Run client action',
+            command: Object.freeze({
+                kind: 'executeAction' as const,
+                action: Object.freeze({ pluginId, localId: actionId }),
+            }),
+        }) satisfies PluginUiPageHeaderActionProjection;
+        const clientActionHeaderPage = Object.freeze({
+            id: `plugin:${pluginId}:client-action`,
+            pluginId,
+        }) as unknown as PluginAppPage;
+        const clientActionHeaderAuthority = Object.freeze({
+            machineId: 'machine-a',
+            serverId: 'server-1',
+            generation,
+            accountLifetime: null,
+            executionOrigin: origin,
+        }) satisfies PluginSurfaceLaunchAuthority;
         const appPluginUiFamily = appProjection.familiesById.pluginUi;
         const appActionBundle = appPluginUiFamily?.entriesById[`reactNativeBundle:${pluginId}:${actionId}`];
         if (!appPluginUiFamily || !appActionBundle) {
@@ -1323,10 +1385,15 @@ describe('AppShellPluginUiProjectionProvider', () => {
                 },
             },
         });
-        const executableHost = createPluginUiExecutableModuleHost();
+        // The AppShell activation and page-header presentation both resolve
+        // the installed host in production. Keep this composed test on that
+        // same host rather than creating a test-only second registration index.
+        const executableHost = getInstalledPluginUiExecutableModuleHost();
         const executableCache = createPluginReactNativeBundleCache();
         executableCache.putInstalledArtifact({ identity: cacheIdentity, bytes, format: 'plainJs' });
+        let failActivation = true;
         const activate = vi.fn((api: PluginClientApi) => {
+            if (failActivation) throw new Error('synthetic client executable activation failure');
             api.actions.register(actionId, async () => null);
         });
         const loaderBackend: PluginReactNativeLoaderBackend = Object.freeze({
@@ -1334,11 +1401,11 @@ describe('AppShellPluginUiProjectionProvider', () => {
             available: true,
             loadInstalledBundle: vi.fn(async () => activate),
         });
-        const malformedProjectionArtifactAvailability = createAvailableClientArtifactHandle();
+        const failedActivationArtifactAvailability = createAvailableClientArtifactHandle();
         pluginExecutableHostState.override = executableHost;
         appShellClientExecutableRuntimeState.cache = executableCache;
         appShellClientExecutableRuntimeState.loaderBackend = loaderBackend;
-        appShellClientExecutableRuntimeState.availability = malformedProjectionArtifactAvailability.availability;
+        appShellClientExecutableRuntimeState.availability = failedActivationArtifactAvailability.availability;
         appShellClientExecutableRuntimeState.useRealActivation = true;
         let describedAppProjection = appProjection;
         projectionDescribeSpy.mockImplementation(async (machineId: string) => ({
@@ -1363,7 +1430,14 @@ describe('AppShellPluginUiProjectionProvider', () => {
 
         const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
         const screen = await renderScreen(
-            <AppShellPluginUiProjectionProvider><ProjectionProbe /></AppShellPluginUiProjectionProvider>,
+            <AppShellPluginUiProjectionProvider>
+                <ProjectionProbe />
+                <ClientActionHeaderPresentationProbe
+                    action={clientActionHeaderAction}
+                    page={clientActionHeaderPage}
+                    actionAuthority={clientActionHeaderAuthority}
+                />
+            </AppShellPluginUiProjectionProvider>,
         );
         await flushHookEffects({ cycles: 7 });
 
@@ -1407,8 +1481,46 @@ describe('AppShellPluginUiProjectionProvider', () => {
             executionOrigin: origin,
             projectionGeneration: generation,
         });
-        expect(registration()).not.toBeNull();
+        const headerControl = () => screen.tree.findByProps({
+            testID: 'plugin-app-page-header-action:run-client-action',
+        });
+        // A typed executable activation failure is fail-closed at the generic
+        // registration index. The daemon projection remains current, but no
+        // client Action can be presented or dispatched before its target
+        // commits the exact registration.
+        expect(registration()).toBeNull();
+        expect(failedActivationArtifactAvailability.dispose).toHaveBeenCalledTimes(1);
         expect(pluginRuntimeSpies.activate).not.toHaveBeenCalled();
+        expect(headerControl().props.disabled).toBe(true);
+        expect(headerControl().props.onPress).toBeUndefined();
+
+        // Projection invalidation is the incumbent reload signal. It must
+        // re-run the same complete-set owner without AppShell adding a retry
+        // loop or a second availability projection.
+        const recoveredActivationArtifactAvailability = createAvailableClientArtifactHandle();
+        appShellClientExecutableRuntimeState.availability = recoveredActivationArtifactAvailability.availability;
+        failActivation = false;
+        await act(async () => {
+            projectionRefreshState.publish();
+        });
+        await flushHookEffects({ cycles: 6 });
+        await vi.waitFor(() => {
+            expect(registration()).not.toBeNull();
+            expect(activate).toHaveBeenCalledTimes(2);
+            const projectedAction = screen.tree.findByType('ProjectionProbe' as never)
+                .props.value.pluginUiProjection?.actionsById[`${pluginId}/${actionId}`];
+            expect(projectedAction).toEqual(expect.objectContaining({
+                authorization: expect.any(Object),
+                available: true,
+            }));
+            expect(resolvePluginUiClientActionRegistration({
+                action: projectedAction!,
+                projectionGeneration: generation,
+                platform: 'web',
+            })).not.toBeNull();
+            expect(headerControl().props.disabled).toBe(false);
+            expect(headerControl().props.onPress).toEqual(expect.any(Function));
+        });
         const artifactAvailabilityCallCountBeforeMalformed = clientArtifactAvailabilitySpy.mock.calls.length;
 
         describedAppProjection = malformedActionProjection;
@@ -1419,9 +1531,9 @@ describe('AppShellPluginUiProjectionProvider', () => {
 
         await vi.waitFor(() => {
             expect(registration()).toBeNull();
-            expect(malformedProjectionArtifactAvailability.dispose).toHaveBeenCalledTimes(1);
+            expect(recoveredActivationArtifactAvailability.dispose).toHaveBeenCalledTimes(1);
         });
-        expect(activate).toHaveBeenCalledTimes(1);
+        expect(activate).toHaveBeenCalledTimes(2);
         expect(clientArtifactAvailabilitySpy).toHaveBeenCalledTimes(artifactAvailabilityCallCountBeforeMalformed);
 
         const accountTeardownArtifactAvailability = createAvailableClientArtifactHandle();
@@ -1434,7 +1546,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
 
         await vi.waitFor(() => {
             expect(registration()).not.toBeNull();
-            expect(activate).toHaveBeenCalledTimes(2);
+            expect(activate).toHaveBeenCalledTimes(3);
         });
 
         await act(async () => {

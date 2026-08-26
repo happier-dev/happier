@@ -49,6 +49,7 @@ import type {
     PaneSurfaceScope,
 } from './types';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 export type AppPaneScopeHostProps = Readonly<{
@@ -413,7 +414,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps) => {
         openOverlay: pane.openDetailsOverlay,
     });
     const targetNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
-        placements: paneProjection ? Object.values(paneProjection.surfacePlacementsById) : [],
+        placements: paneProjection ? selectPluginDestinationSurfacePlacements(paneProjection) : [],
         targetKind: paneSurfaceScope?.targetKind ?? 'session',
         accountLifetime,
         scopedLaunchFacts,

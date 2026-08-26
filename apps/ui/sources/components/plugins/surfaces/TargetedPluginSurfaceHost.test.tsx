@@ -2,8 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
     DaemonPluginUiTargetedSurfaceMountV1Schema,
+    rehydrateCanonicalProtocolComposableSchema,
     type DaemonPluginUiTargetedSurfaceMountV1,
 } from '@happier-dev/protocol';
+import {
+    defineProtocolJsonValue,
+    defineProtocolObject,
+    defineProtocolString,
+} from '@happier-dev/plugin-sdk/protocol';
 import { preparePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import {
     PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1,
@@ -27,10 +33,13 @@ function prepareTargetedMount(
     rawMount: DaemonPluginUiTargetedSurfaceMountV1,
 ): PreparedDaemonPluginUiTargetedSurfaceMountV1 {
     const inputValidation = preparePluginJsonSchema(rawMount.inputSchema);
+    const inputNormalizer = rehydrateCanonicalProtocolComposableSchema(inputValidation.jsonSchema);
+    if (!inputNormalizer) throw new Error('Expected canonical Surface schema to rehydrate');
     return Object.freeze({
         ...rawMount,
         inputSchema: inputValidation.jsonSchema,
         inputValidation,
+        inputNormalizer,
     });
 }
 
@@ -60,7 +69,7 @@ const rawMount = DaemonPluginUiTargetedSurfaceMountV1Schema.parse({
     contributor: surface.contributor,
     role: surface.role,
     presentation: surface.presentation,
-    inputSchema: Object.freeze({ type: 'object' }),
+    inputSchema: defineProtocolObject({}, { policy: 'additive-open/preserve' }).jsonSchema,
     rendererChain: Object.freeze([Object.freeze({
         pluginId: 'acme.review',
         localId: 'review-detail',
@@ -202,12 +211,9 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
     it('validates launch input with the exact selected B pair on both entry paths', () => {
         const roleBoundMount = prepareTargetedMount(DaemonPluginUiTargetedSurfaceMountV1Schema.parse({
             ...rawMount,
-            inputSchema: Object.freeze({
-                type: 'object',
-                properties: Object.freeze({ reviewId: Object.freeze({ type: 'string' }) }),
-                required: Object.freeze(['reviewId']),
-                additionalProperties: false,
-            }),
+            inputSchema: defineProtocolObject({
+                reviewId: defineProtocolString(),
+            }, { policy: 'closed' }).jsonSchema,
         }));
         const readRequests = [
             (input: PluginUiJsonValueV1) => readTargetedPluginSurfaceMountRequest({
@@ -230,6 +236,41 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
             expect(readRequest({ reviewId: 'review-42' })).toMatchObject({
                 input: { reviewId: 'review-42' },
             });
+        }
+    });
+
+    it('forwards canonical Surface parser output across declarative and React/RNW entry paths', () => {
+        const mountFor = (policy: 'closed' | 'additive-open/drop' | 'additive-open/preserve') => {
+            const inputSchema = defineProtocolObject({
+                known: defineProtocolString(),
+            }, { policy });
+            return prepareTargetedMount(DaemonPluginUiTargetedSurfaceMountV1Schema.parse({
+                ...rawMount,
+                inputSchema: inputSchema.jsonSchema,
+            }));
+        };
+        const readRequests = (mount: PreparedDaemonPluginUiTargetedSurfaceMountV1) => [
+            (input: PluginUiJsonValueV1) => readTargetedPluginSurfaceMountRequest({
+                node: { ...node, input },
+                mounts: [mount],
+                target,
+            }),
+            (input: PluginUiJsonValueV1) => readTargetedPluginSurfaceReactMountRequest({
+                presentation: { surface, input, instanceKey: 'review-42' },
+                mounts: [mount],
+                target,
+            }),
+        ];
+
+        for (const readRequest of readRequests(mountFor('additive-open/drop'))) {
+            expect(readRequest({ known: 'kept', future: 'drop-me' })?.input).toEqual({ known: 'kept' });
+        }
+        for (const readRequest of readRequests(mountFor('additive-open/preserve'))) {
+            expect(readRequest({ known: 'kept', future: 'retain-me' })?.input)
+                .toEqual({ known: 'kept', future: 'retain-me' });
+        }
+        for (const readRequest of readRequests(mountFor('closed'))) {
+            expect(readRequest({ known: 'kept', future: 'reject-me' })).toBeNull();
         }
     });
 
@@ -274,17 +315,29 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
         }
     });
 
-    it('keeps an explicit null launch input distinct from an omitted input', () => {
+    it('keeps scalar and null Protocol launch inputs distinct from a rejected omitted input', () => {
         const unrestrictedMount = prepareTargetedMount(DaemonPluginUiTargetedSurfaceMountV1Schema.parse({
             ...rawMount,
-            inputSchema: Object.freeze({}),
+            inputSchema: defineProtocolJsonValue().jsonSchema,
         }));
+        const readRequests = [
+            (input: PluginUiJsonValueV1) => readTargetedPluginSurfaceMountRequest({
+                node: { ...node, input },
+                mounts: [unrestrictedMount],
+                target,
+            }),
+            (input: PluginUiJsonValueV1) => readTargetedPluginSurfaceReactMountRequest({
+                presentation: { surface, input, instanceKey: 'review-42' },
+                mounts: [unrestrictedMount],
+                target,
+            }),
+        ];
 
-        expect(readTargetedPluginSurfaceMountRequest({
-            node: { ...node, input: null },
-            mounts: [unrestrictedMount],
-            target,
-        })).toMatchObject({ input: null });
+        for (const readRequest of readRequests) {
+            for (const input of [null, false, 0, '']) {
+                expect(readRequest(input)).toMatchObject({ input });
+            }
+        }
         expect(readTargetedPluginSurfaceMountRequest({
             node: {
                 kind: 'targetedSurface',

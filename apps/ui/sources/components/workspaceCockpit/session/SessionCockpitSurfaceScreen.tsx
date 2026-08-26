@@ -46,7 +46,10 @@ import {
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import {
+    selectPluginDestinationSurfacePlacements,
+    selectPluginRightSidebarTabPlacements,
+} from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 
 import { useServicesOpenInBrowser } from '@/components/sessions/localServices/useServicesOpenInBrowser';
@@ -247,7 +250,7 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
     }, [findPluginMobileTab, paneLaunchStore, selectRightDestination, surfaceNavigation]);
     const openSurface = React.useMemo(() => createPluginSurfaceDestinationOpenSurfaceHandler({
         placements: pluginProjection.pluginUiProjection
-            ? Object.values(pluginProjection.pluginUiProjection.surfacePlacementsById)
+            ? selectPluginDestinationSurfacePlacements(pluginProjection.pluginUiProjection)
             : [],
         targetKind: 'session',
         accountLifetime,

@@ -60,6 +60,7 @@ describe('HostedArtifactFrame native adapter', () => {
         await act(async () => {
             root = renderer.create(
                 <HostedArtifactFrame
+                    title="Preview"
                     artifactHandleToken="hpat_frame_token"
                     initialPathAndQuery="/?happierBridgeNonce=nonce_1"
                     allowedNavigationOrigins={['https://callback.example.test']}
@@ -71,6 +72,7 @@ describe('HostedArtifactFrame native adapter', () => {
         });
 
         expect(nativeViewMock).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Preview',
             artifactHandleToken: 'hpat_frame_token',
             initialPathAndQuery: '/?happierBridgeNonce=nonce_1',
             allowedNavigationOrigins: ['https://callback.example.test'],
@@ -81,6 +83,21 @@ describe('HostedArtifactFrame native adapter', () => {
         if (!nativeProps) throw new Error('Native Artifact view did not receive props.');
         expect(nativeProps).not.toHaveProperty('url');
         expect(attachHostMessages).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            root?.update(
+                <HostedArtifactFrame
+                    title="Updated preview"
+                    artifactHandleToken="hpat_frame_token"
+                    initialPathAndQuery="/?happierBridgeNonce=nonce_1"
+                    allowedNavigationOrigins={['https://callback.example.test']}
+                    attachHostMessages={attachHostMessages}
+                    onMessage={onMessage}
+                    testID="hosted-artifact-frame"
+                />,
+            );
+        });
+        expect(nativeViewMock.mock.calls.at(-1)?.[0]).toMatchObject({ title: 'Updated preview' });
 
         await act(async () => {
             send?.({ kind: 'bootstrap', payload: { value: 'from-host' } });
@@ -137,6 +154,7 @@ describe('HostedArtifactFrame native adapter', () => {
         await act(async () => {
             renderer.create(
                 <HostedArtifactFrame
+                    title="Preview"
                     artifactHandleToken="hpat_frame_token"
                     initialPathAndQuery="/?happierBridgeNonce=nonce_1"
                     allowedNavigationOrigins={[]}
@@ -198,6 +216,7 @@ describe('HostedArtifactFrame native adapter', () => {
         await act(async () => {
             root = renderer.create(
                 <HostedArtifactFrame
+                    title="Preview"
                     artifactHandleToken="hpat_frame_token"
                     initialPathAndQuery="/?happierBridgeNonce=nonce_1"
                     allowedNavigationOrigins={[]}
@@ -243,6 +262,7 @@ describe('HostedArtifactFrame native adapter', () => {
         await act(async () => {
             root = renderer.create(
                 <HostedArtifactFrame
+                    title="Preview"
                     artifactHandleToken="hpat_frame_token"
                     initialPathAndQuery="/?happierBridgeNonce=nonce_1"
                     allowedNavigationOrigins={[]}
@@ -276,6 +296,7 @@ describe('HostedArtifactFrame native adapter', () => {
         await act(async () => {
             renderer.create(
                 <HostedArtifactFrame
+                    title="Preview"
                     artifactHandleToken="hpat_frame_token"
                     initialPathAndQuery="/"
                     allowedNavigationOrigins={[]}
@@ -296,6 +317,7 @@ describe('HostedArtifactFrame native adapter', () => {
         await act(async () => {
             renderer.create(
                 <HostedArtifactFrame
+                    title="Preview"
                     artifactHandleToken="hpat_frame_token"
                     initialPathAndQuery="/"
                     allowedNavigationOrigins={[]}
@@ -339,6 +361,7 @@ describe('HostedArtifactFrame native adapter', () => {
         await act(async () => {
             renderer.create(
                 <HostedArtifactFrame
+                    title="Preview"
                     artifactHandleToken="hpat_frame_token"
                     initialPathAndQuery="/"
                     allowedNavigationOrigins={[]}
