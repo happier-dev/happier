@@ -6,6 +6,8 @@ import { logger } from '@/ui/logger';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startFileWatcher } from './startFileWatcher';
 
+const realSetTimeout = setTimeout;
+
 async function waitFor(condition: () => boolean, opts?: { timeoutMs?: number; intervalMs?: number }): Promise<void> {
   const timeoutMs = opts?.timeoutMs ?? 5_000;
   const intervalMs = opts?.intervalMs ?? 25;
@@ -25,6 +27,17 @@ function missingParentOutputFile(): string {
 
 function watcherDebugMessages(debugSpy: ReturnType<typeof vi.spyOn>): string[] {
   return debugSpy.mock.calls.map(([message]) => String(message));
+}
+
+async function advanceMissingParentRetriesUntilExpired(debugSpy: ReturnType<typeof vi.spyOn>): Promise<void> {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    if (watcherDebugMessages(debugSpy).some((message) => message.includes('Parent directory still missing'))) {
+      return;
+    }
+    await vi.advanceTimersByTimeAsync(1_000);
+    await new Promise<void>((resolve) => realSetTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for missing-parent watcher expiry. Logs:\n${watcherDebugMessages(debugSpy).join('\n')}`);
 }
 
 describe('startFileWatcher', () => {
@@ -169,13 +182,7 @@ describe('startFileWatcher', () => {
     await vi.waitFor(() => {
       expect(vi.getTimerCount()).toBeGreaterThan(0);
     });
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      await vi.advanceTimersByTimeAsync(120_000);
-      if (watcherDebugMessages(debugSpy).some((message) =>
-        message.includes('Parent directory still missing'))) {
-        break;
-      }
-    }
+    await advanceMissingParentRetriesUntilExpired(debugSpy);
     expect(watcherDebugMessages(debugSpy).some((message) =>
       message.includes('Parent directory still missing'))).toBe(true);
     expect(onWatcherUnavailable).toHaveBeenCalledOnce();
