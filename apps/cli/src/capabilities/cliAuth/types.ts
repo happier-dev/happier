@@ -1,38 +1,25 @@
-export type CliAuthState = 'logged_in' | 'logged_out' | 'unknown';
+import type { AgentCliAuthStatusV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-export type CliAuthMethod =
-  | 'api_key_env'
-  | 'auth_token_env'
-  | 'credentials_file'
-  | 'oauth_cli'
-  | 'config_file'
-  | 'gcloud_adc'
-  | 'unknown';
+export type CliAuthState = AgentCliAuthStatusV1['state'];
 
-export type CliAuthReason =
-  | 'missing_credentials'
-  | 'expired'
-  | 'cli_missing'
-  | 'probe_failed'
-  | 'timeout'
-  | 'unsupported'
-  | 'interactive_blocked'
-  | 'not_configured';
+export type CliAuthMethod = NonNullable<AgentCliAuthStatusV1['method']>;
 
-export type CliAuthSource = 'env' | 'file' | 'command' | 'mixed';
+export type CliAuthReason = NonNullable<AgentCliAuthStatusV1['reason']>;
 
-export type CliAuthStatus = Readonly<{
-  state: CliAuthState;
-  method?: CliAuthMethod | null;
-  accountLabel?: string | null;
-  reason?: CliAuthReason | null;
-  source?: CliAuthSource | null;
+export type CliAuthSource = NonNullable<AgentCliAuthStatusV1['source']>;
+
+export type CliAuthStatus = AgentCliAuthStatusV1 & Readonly<{
   checkedAt: number;
 }>;
 
-export type CliAuthStatusDraft = Omit<CliAuthStatus, 'checkedAt'>;
+export type CliAuthStatusDraft = AgentCliAuthStatusV1;
 
 export type CliAuthSpec = Readonly<{
   binaryNames: ReadonlyArray<string>;
+  /**
+   * Absent legacy/external declarations are intentionally unsafe. The value is
+   * derived from the strict manifest auth facts, never from an Agent parser.
+   */
+  isSafeForBackgroundChecks: boolean;
   detectAuthStatus?: (args: Readonly<{ resolvedPath: string }>) => Promise<CliAuthStatusDraft>;
 }>;

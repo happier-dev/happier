@@ -2,7 +2,7 @@ import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabili
 import {
     AGENT_IDS,
     type AgentId,
-    isAgentAuthProbeSafeForBackgroundChecks,
+    isAgentCliAuthBackgroundCheckSafe,
 } from '@happier-dev/agents';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import { buildProviderCliCapabilityId } from './cliCapabilityId';
@@ -12,7 +12,7 @@ const CLI_PROBE_AGENT_IDS = AGENT_IDS;
 function buildCliLoginStatusOverrides(): Record<string, { params: { includeLoginStatus: true } }> {
     const overrides: Record<string, { params: { includeLoginStatus: true } }> = {};
     for (const agentId of CLI_PROBE_AGENT_IDS) {
-        if (!isAgentAuthProbeSafeForBackgroundChecks(agentId)) continue;
+        if (!isAgentCliAuthBackgroundCheckSafe(agentId)) continue;
         overrides[buildProviderCliCapabilityId(agentId)] = { params: { includeLoginStatus: true } };
     }
     return overrides;

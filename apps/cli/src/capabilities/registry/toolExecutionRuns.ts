@@ -4,7 +4,6 @@ import {
   AGENT_IDS,
   hasBuiltInAcpConfig,
   isBundledAgentId,
-  resolveAgentRuntimeControlSurfaceForSession,
 } from '@happier-dev/agents';
 import {
 } from '@happier-dev/protocol';
@@ -17,7 +16,6 @@ import {
 import { resolveCliEngineRegistry } from '../../agent/runtime/registry/engineRegistry';
 import type { ResolvedAgentContribution } from '../../plugins/projection/registry/types';
 import { readAgentExecutionRunCapabilities } from '../../plugins/projection/registry/agentContributionDefinition';
-import { resolveProviderSessionRuntimePreferences } from '../../session/runtime/catalogHooks';
 import {
   evaluateContributionAvailability,
   resolveInvocationContributionPolicyFacts,
@@ -134,22 +132,13 @@ export const executionRunsCapability: Capability = {
     ]));
 
     const supportsVendorResumeByBackend = Object.fromEntries(
-      // An installed external Agent answers here exactly like a bundled one: its
-      // own registered session-control adapter decides the runtime surface, and
-      // an Agent that registers none has no vendor resume.
-      await Promise.all(backendIds.map(async (backendId) => {
-        const runtimePreferences = await resolveProviderSessionRuntimePreferences(backendId, {
-          settings: {},
-          processEnv: process.env,
-          startedBy: 'daemon',
-        });
-        const surface = resolveAgentRuntimeControlSurfaceForSession({
-          agentId: backendId,
-          metadata: {},
-          accountSettings: runtimePreferences,
-        });
-        return [backendId, surface !== null && surface.resume.vendorResume !== 'unsupported'] as const;
-      })),
+      backendIds.map((backendId) => [
+        backendId,
+        // This UI capability has no Session runtime selection. Only the
+        // manifest's unconditional support fact is affirmative here; an
+        // experimental Agent is decided later by the canonical spawn gate.
+        cliEngineRegistry.contributions.catalogEntriesById[backendId]?.vendorResumeSupport === 'supported',
+      ] as const),
     ) as Record<string, boolean>;
 
     const backends = Object.fromEntries(

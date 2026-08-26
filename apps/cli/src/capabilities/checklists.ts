@@ -1,4 +1,5 @@
 import { AGENTS } from '@/agent/catalog/registry';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
 import {
@@ -21,19 +22,16 @@ function mergeChecklistContributions(
 ): Record<ChecklistId, CapabilityDetectRequest[]> {
     const next: Record<ChecklistId, CapabilityDetectRequest[]> = { ...base };
 
-    for (const entry of Object.values(AGENTS) as AgentCatalogEntry[]) {
-        const contributions = entry.checklists;
-        if (!contributions) continue;
-
-        for (const [checklistId, requests] of Object.entries(contributions) as Array<
-            [ChecklistId, ReadonlyArray<{ id: string; params?: Record<string, unknown> }>]
-        >) {
-            const normalized: CapabilityDetectRequest[] = requests.map((r) => ({
-                id: r.id as CapabilityDetectRequest['id'],
-                ...(r.params ? { params: r.params } : {}),
-            }));
-            next[checklistId] = [...(next[checklistId] ?? []), ...normalized];
+    for (const [agentId, contribution] of readAgentCatalogSnapshot().agentDefinitionsById) {
+        if (contribution.richDefinition?.definition.catalog?.resumeChecklist?.includeLoginStatus !== true) {
+            continue;
         }
+
+        const checklistId = resumeChecklistId(agentId);
+        next[checklistId] = [
+            ...(next[checklistId] ?? []),
+            { id: `cli.${agentId}`, params: { includeLoginStatus: true } },
+        ];
     }
 
     return next;

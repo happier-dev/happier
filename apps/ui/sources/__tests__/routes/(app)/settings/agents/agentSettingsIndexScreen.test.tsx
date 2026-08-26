@@ -79,6 +79,29 @@ const machineListByServerIdState = vi.hoisted(() => ({
     } as Record<string, Machine[] | null>,
 }));
 
+function createQualifiedExternalAgentProjection() {
+    const agent = PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.agentsById['acme.review.provider'];
+    const backend = PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.backendsById['acme.review.backend'];
+    if (!agent || !backend) throw new Error('Expected the external Agent fixture to be complete.');
+
+    return {
+        ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        agentsById: {
+            'acme.review/provider': {
+                ...agent,
+                id: 'acme.review/provider',
+            },
+        },
+        backendsById: {
+            ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.backendsById,
+            'acme.review.backend': {
+                ...backend,
+                agentId: 'acme.review/provider',
+            },
+        },
+    };
+}
+
 installSessionSettingsEntryModuleMocks({
     textModule: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -232,11 +255,12 @@ describe('PluginAgentSettingsIndexScreen', () => {
     it('renders merged provider rows from the descriptor projection without relying on built-in registry lists', async () => {
         const getResolvedAgentCatalogEntriesSpy = vi.spyOn(agentCatalogProjection, 'getResolvedAgentCatalogEntries');
         const Screen = (await import('@/app/(app)/settings/agents')).default;
+        const projection = createQualifiedExternalAgentProjection();
 
         machineContributionRegistryProjectionDescribeMock.mockReset();
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
             supported: true,
-            projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+            projection,
         });
 
         const screen = await renderSettingsView(React.createElement(Screen));
@@ -253,13 +277,16 @@ describe('PluginAgentSettingsIndexScreen', () => {
         }));
         expect(getResolvedAgentCatalogEntriesSpy).toHaveBeenCalledWith(expect.objectContaining({
             mergedProviderProjectionById: expect.objectContaining({
-                'acme.review.provider': expect.objectContaining({ title: 'Acme Review Provider' }),
+                'acme.review/provider': expect.objectContaining({
+                    identity: { pluginId: 'acme.review', localId: 'provider' },
+                    title: 'Acme Review Provider',
+                }),
             }),
         }));
         expect(agentSetupFlowPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
             agentEntries: expect.arrayContaining([
                 expect.objectContaining({
-                    agentId: 'acme.review.provider',
+                    agentId: 'acme.review/provider',
                     catalogAgentId: 'claude',
                     title: 'Acme Review Provider',
                     iconAgentId: 'codex',
@@ -283,7 +310,7 @@ describe('PluginAgentSettingsIndexScreen', () => {
             screen.pressRowByTitle('Acme Review Provider');
         });
 
-        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/agents/acme.review.provider');
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/agents/provider?pluginId=acme.review');
         getResolvedAgentCatalogEntriesSpy.mockRestore();
     });
 
@@ -614,6 +641,7 @@ describe('PluginAgentSettingsIndexScreen', () => {
         const getResolvedAgentCatalogEntriesSpy = vi.spyOn(agentCatalogProjection, 'getResolvedAgentCatalogEntries');
         getResolvedAgentCatalogEntriesSpy.mockReturnValue([{
             agentId: 'acme.headless.provider',
+            identity: null,
             catalogAgentId: null,
             iconAgentId: 'claude',
             iconName: 'stack-simple',

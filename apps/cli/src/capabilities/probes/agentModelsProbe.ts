@@ -1,9 +1,6 @@
-import { resolveCliPathOverride } from '@/agent/runtime/cli/resolveCliPathOverride';
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
-import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
-import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import {
   getAgentModelConfig,
   getAgentStaticModels,
@@ -23,7 +20,6 @@ import { resolveProviderOwnedPreflightControlsProbeDecision } from './providerOw
 import { resolvePreflightSessionControlsProbeAdapter } from './resolvePreflightSessionControlsProbeAdapter';
 import { runPreflightSessionControlsProbe } from './runPreflightSessionControlsProbe';
 import { withPreflightSessionControlsProbeEnvironment } from './preflightSessionControlsProbeEnvironment';
-import { spawn } from 'node:child_process';
 import { z } from 'zod';
 
 type ProbedAgentModelOptionValue = ProbedCatalogOptionValue;
@@ -214,6 +210,10 @@ function normalizeDynamicModels(modelsRaw: unknown): ProbedAgentModel[] | null {
 }
 
 function normalizePreflightDynamicModels(modelsRaw: unknown): ProbedAgentModel[] | null {
+  if (typeof modelsRaw === 'string') {
+    const parsed = parseCliModelsOutput(modelsRaw);
+    return parsed.length > 0 ? normalizeDynamicModels(parsed) : null;
+  }
   const models = normalizeDynamicModels(modelsRaw);
   if (models) return models;
   return Array.isArray(modelsRaw) && modelsRaw.length === 0 ? [] : null;
@@ -352,94 +352,6 @@ function parseCliModelsOutput(stdout: string): ProbedAgentModel[] {
   }
 
   return parsed;
-}
-
-async function probeModelsFromCliModelsCommand(params: {
-  command: string;
-  args: ReadonlyArray<string>;
-  cwd: string;
-  timeoutMs: number;
-  env?: NodeJS.ProcessEnv;
-}): Promise<ReadonlyArray<ProbedAgentModel> | null> {
-  const timeoutMs = Math.max(250, params.timeoutMs);
-  const stdoutMaxBytes = 256 * 1024;
-
-  return await new Promise((resolve) => {
-    let stdout = '';
-    let stdoutBytes = 0;
-    let settled = false;
-
-    const finish = (result: ReadonlyArray<ProbedAgentModel> | null) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-
-    const invocation = resolveWindowsCommandInvocation({
-      command: params.command,
-      args: params.args,
-      resolveCommandOnPath: true,
-    });
-
-    const child = spawn(invocation.command, invocation.args, {
-      cwd: params.cwd,
-      env: { ...(params.env ?? process.env), CI: '1' },
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-    });
-
-    const timer = setTimeout(() => {
-      if (process.platform === 'win32') {
-        void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-      } else {
-        try { child.kill('SIGKILL'); } catch { /* best-effort */ }
-      }
-      finish(null);
-    }, timeoutMs);
-
-    child.on('error', () => {
-      clearTimeout(timer);
-      finish(null);
-    });
-
-    if (child.stdout) {
-      child.stdout.on('data', (chunk: Buffer) => {
-        if (settled) return;
-        stdoutBytes += chunk.length;
-        if (stdoutBytes > stdoutMaxBytes) {
-          clearTimeout(timer);
-          if (process.platform === 'win32') {
-            void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-          } else {
-            try { child.kill('SIGKILL'); } catch { /* best-effort */ }
-          }
-          finish(null);
-          return;
-        }
-        stdout += chunk.toString('utf8');
-      });
-    }
-
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (typeof code !== 'number' || code !== 0) return finish(null);
-
-      const parsed = parseCliModelsOutput(stdout);
-      if (parsed.length === 0) return finish(null);
-
-      const models: ProbedAgentModel[] = [{ id: 'default', name: 'Default' }, ...parsed.filter((m) => m.id !== 'default')];
-
-      const seen = new Set<string>();
-      finish(
-        models.filter((m) => {
-          if (seen.has(m.id)) return false;
-          seen.add(m.id);
-          return true;
-        }),
-      );
-    });
-  });
 }
 
 function normalizeModelsFromConfigOptions(configOptionsRaw: unknown): ProbedAgentModel[] | null {
@@ -627,31 +539,6 @@ export async function probeAgentModelsBestEffort(params: {
         const res = buildUnavailable(params.agentId);
         agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
         return res;
-      }
-
-      // Prefer lightweight CLI preflight probes when the provider offers a `models` command.
-      // This avoids needing to start a full ACP session just to populate a menu.
-      const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs;
-      if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
-        const launch = tryResolveAgentCliLaunchSpec(params.agentId);
-        const models = launch
-          ? await withPreflightSessionControlsProbeEnvironment({
-            agentId: params.agentId,
-            processEnv: params.env ?? process.env,
-            materializedEnv: params.materializedEnv,
-          }, async ({ env }) => await probeModelsFromCliModelsCommand({
-            command: launch.command,
-            args: [...launch.args, ...cliProbeArgs],
-            cwd,
-            timeoutMs,
-            env,
-          })).catch(() => null)
-          : null;
-        if (models) {
-          const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
-          agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
-          return res;
-        }
       }
 
       agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });

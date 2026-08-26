@@ -241,6 +241,46 @@ describe('ApiTokensSettingsScreen', () => {
         });
     });
 
+    it('names each token overflow control with the token label', async () => {
+        const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
+        const tokens = [{
+            tokenId: '11111111-1111-4111-8111-111111111111',
+            label: 'CI',
+            displayPrefix: 'hap_11111111',
+            createdAt: '2026-08-22T12:00:00.000Z',
+            lastUsedAt: null,
+            expiresAt: null,
+        }, {
+            tokenId: '22222222-2222-4222-8222-222222222222',
+            label: 'Release',
+            displayPrefix: 'hap_22222222',
+            createdAt: '2026-08-22T12:00:00.000Z',
+            lastUsedAt: null,
+            expiresAt: null,
+        }] as const;
+        const { controller } = createController({
+            phase: 'ready',
+            tokens: [...tokens],
+            isRefreshing: false,
+            listError: null,
+            createDraft: { label: '', expiryPreset: '90d' },
+            createPending: false,
+            createError: null,
+            reveal: null,
+            operation: null,
+            operationTokenId: null,
+            operationError: null,
+            operationNotice: null,
+        });
+
+        const screen = await renderScreen(<ApiTokensSettingsScreen controller={controller} />);
+
+        for (const token of tokens) {
+            expect(screen.findHostByTestId(`settings-api-tokens-overflow:${token.tokenId}`)?.props.accessibilityLabel)
+                .toBe(`settingsApiTokens.moreActionsAccessibilityLabel(label=${token.label})`);
+        }
+    });
+
     it('keeps its owned controller current through StrictMode effect replay', async () => {
         const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
         runtime.activeAccountScopeLifetime = createActiveAccountScopeLifetime();

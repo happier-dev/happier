@@ -24,10 +24,19 @@ function extractErrorCode(json: unknown): string | null {
 type QualifiedProviderAccountUsageRecordResponse = z.infer<
     typeof QualifiedProviderAccountUsageRecordResponseV4Schema
 >;
-type EncryptedQualifiedProviderAccountUsageRecordResponse = Extract<
-    QualifiedProviderAccountUsageRecordResponse,
-    Readonly<{ content: Readonly<{ t: 'encrypted'; c: string }> }>
->;
+type EncryptedQualifiedProviderAccountUsageRecordResponse =
+    QualifiedProviderAccountUsageRecordResponse & Readonly<{
+        content: Extract<
+            QualifiedProviderAccountUsageRecordResponse['content'],
+            Readonly<{ t: 'encrypted' }>
+        >;
+    }>;
+
+function hasEncryptedProviderAccountUsageContent(
+    response: QualifiedProviderAccountUsageRecordResponse,
+): response is EncryptedQualifiedProviderAccountUsageRecordResponse {
+    return response.content.t === 'encrypted';
+}
 
 function parseRecordId(recordId: ProviderAccountUsageRecordId): ProviderAccountUsageRecordId {
     return ProviderAccountUsageRecordIdSchema.parse(recordId);
@@ -165,7 +174,7 @@ export async function getProviderAccountUsageSnapshotSealed(
         }
 
         const parsed = parseQualifiedProviderAccountUsageRecordResponse(await response.json(), recordId);
-        if (parsed.content.t !== 'encrypted') {
+        if (!hasEncryptedProviderAccountUsageContent(parsed)) {
             return rejectContentModeMismatch(recordId);
         }
         return parsed;

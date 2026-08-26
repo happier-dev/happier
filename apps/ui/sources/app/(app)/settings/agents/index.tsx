@@ -14,6 +14,7 @@ import {
 } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { getAgentCore } from '@/agents/catalog/catalog';
+import { createPluginAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import { useSetting } from '@/sync/domains/state/storage';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
@@ -91,7 +92,11 @@ export default React.memo(function ProviderSettingsIndexScreen() {
                             title={entry.title}
                             subtitle={`${state} • ${channel}`}
                             icon={<Icon name={resolveAgentRowIconName(entry) as any} size={29} color={theme.colors.text.secondary} />}
-                            onPress={() => router.push(`/(app)/settings/agents/${entry.agentId}` as any)}
+                            onPress={() => router.push((
+                                entry.identity
+                                    ? createPluginAgentSettingsRoute(entry.identity)
+                                    : `/(app)/settings/agents/${entry.agentId}`
+                            ) as any)}
                         />
                     );
                 })}

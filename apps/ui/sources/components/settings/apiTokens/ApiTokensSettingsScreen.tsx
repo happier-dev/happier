@@ -287,6 +287,9 @@ function TokenRow(props: Readonly<{
                     layoutWidthPx={320}
                     compactActionIds={[]}
                     overflowTriggerTestID={`settings-api-tokens-overflow:${props.token.tokenId}`}
+                    overflowTriggerAccessibilityLabel={t('settingsApiTokens.moreActionsAccessibilityLabel', {
+                        label: props.token.label,
+                    })}
                 />
             )}
             rightElementOutsidePressable

@@ -52,4 +52,27 @@ describe('createEmptyCustomProfile', () => {
             expect(converted.extraEnvironmentVariables).not.toContainEqual(expect.objectContaining({ name: 'ANTHROPIC_BASE_URL' }));
         }
     });
+
+    it('converts the moving predecessor coding-prompt override to the sole V2 writer shape', () => {
+        const legacy = {
+            id: 'remote-dev-profile', name: 'Remote Dev Profile',
+            environmentVariables: [],
+            defaultPermissionModeByTargetKey: {},
+            defaultPersistenceModeByTargetKey: {},
+            compatibilityByTargetKey: {},
+            createdAt: 1, updatedAt: 1,
+            codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'initial' as const, responseOptions: 'disabled' as const },
+        };
+
+        for (const converted of [
+            convertBuiltInProfileToCustom(legacy as never),
+            duplicateProfileForEdit(legacy as never, { copySuffix: 'Copy' }),
+        ]) {
+            expect(converted.codingPromptBehaviorOverrides).toEqual({
+                sessionTitleUpdates: 'initial',
+                responseOptions: 'disabled',
+            });
+            expect(converted).not.toHaveProperty('codingPromptBehaviorV1');
+        }
+    });
 });

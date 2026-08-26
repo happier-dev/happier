@@ -646,6 +646,42 @@ describe('foreground admission composed real Provider authorization seam', () =>
     expect(boundaries.leaseRelease).toHaveBeenCalledTimes(1);
   });
 
+  it('refuses an orphaned previous Provider binding before foreground Agent bootstrap', async () => {
+    publishSettings({ version: 1 });
+
+    const admitted = await prepareForegroundAgentRuntimeAdmission(request({
+      selection: undefined,
+      previousBinding: {
+        v: 1,
+        connectionId,
+        contributionKey,
+        connectionRevision: 1,
+        protocol: 'openai-responses',
+        materialization: 'spawnEnv',
+        adapterBindingKey: 'gateway',
+        compatibilityFingerprint: 'compatibility:v1:one',
+        bindingSecurityFingerprint: 'binding-security:v1:one',
+        displaySnapshot: {
+          providerName: 'Gateway',
+          connectionName: 'Gateway',
+          connectionRole: 'default',
+          connectionDisplayNameMode: 'automatic',
+        },
+      },
+    }));
+
+    expect(admitted).toEqual({
+      ok: false,
+      error: createProviderErrorV1('provider_binding_changed', {
+        connectionId,
+        machineId: 'machine-1',
+      }),
+    });
+    expect(boundaries.bridgePrepared).not.toHaveBeenCalled();
+    expect(boundaries.bridgeCleanup).not.toHaveBeenCalled();
+    expect(boundaries.leaseRelease).toHaveBeenCalledTimes(1);
+  });
+
   it('binds Profile scope/version through final claim and redacts successful plaintext for admission lifetime', async () => {
     publishSettings({ version: 1 });
     const admitted = await prepareForegroundAgentRuntimeAdmission(request({

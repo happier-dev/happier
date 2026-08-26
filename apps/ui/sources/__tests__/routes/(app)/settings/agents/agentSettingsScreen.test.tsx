@@ -309,7 +309,6 @@ function buildCollidingInstalledAgentProjection(): PluginProjectionV2 {
                     install: { manual: { kind: 'none' } },
                     auth: {
                         support: 'login_terminal',
-                        probe: { parser: 'unknown', backgroundChecks: 'safe' },
                         loginLaunches: [{ kind: 'primary', args: ['login'] }],
                     },
                 },
@@ -355,7 +354,6 @@ function buildCollidingInstalledAgentProjection(): PluginProjectionV2 {
                     install: { manual: { kind: 'none' } },
                     auth: {
                         support: 'login_terminal',
-                        probe: { parser: 'unknown', backgroundChecks: 'safe' },
                         loginLaunches: [{ kind: 'primary', args: ['login'] }],
                     },
                 },

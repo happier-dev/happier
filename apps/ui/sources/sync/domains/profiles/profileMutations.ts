@@ -3,6 +3,7 @@ import {
     LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1,
     buildBackendTargetKeyV2,
     isLaunchProfileV2,
+    projectHistoricalBuiltInAiLaunchProfileV1,
     type AiLaunchProfile,
     type LaunchProfileV2,
 } from '@happier-dev/protocol';
@@ -28,19 +29,23 @@ export function createEmptyCustomProfile(): LaunchProfileV2 {
 
 function toSlimProfile(profile: AiLaunchProfile): LaunchProfileV2 {
     if (isLaunchProfileV2(profile)) return profile;
+    const legacy = projectHistoricalBuiltInAiLaunchProfileV1(profile);
     return {
         v: 2,
-        id: profile.id,
-        name: profile.name,
-        ...(profile.description !== undefined ? { description: profile.description } : {}),
-        extraEnvironmentVariables: profile.environmentVariables.filter(
+        id: legacy.id,
+        name: legacy.name,
+        ...(legacy.description !== undefined ? { description: legacy.description } : {}),
+        extraEnvironmentVariables: legacy.environmentVariables.filter(
             (entry) => !LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1.has(entry.name),
         ),
-        defaultPermissionModeByTargetKey: profile.defaultPermissionModeByTargetKey ?? {},
-        defaultPersistenceModeByTargetKey: profile.defaultPersistenceModeByTargetKey ?? {},
-        compatibilityByTargetKey: profile.compatibilityByTargetKey ?? {},
-        createdAt: profile.createdAt,
-        updatedAt: profile.updatedAt,
+        defaultPermissionModeByTargetKey: legacy.defaultPermissionModeByTargetKey ?? {},
+        defaultPersistenceModeByTargetKey: legacy.defaultPersistenceModeByTargetKey ?? {},
+        compatibilityByTargetKey: legacy.compatibilityByTargetKey ?? {},
+        ...(legacy.codingPromptBehaviorOverrides !== undefined
+            ? { codingPromptBehaviorOverrides: legacy.codingPromptBehaviorOverrides }
+            : {}),
+        createdAt: legacy.createdAt,
+        updatedAt: legacy.updatedAt,
     };
 }
 

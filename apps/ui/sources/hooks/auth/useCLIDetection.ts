@@ -6,7 +6,7 @@ import type { CapabilityDetectResult, CliAuthStatusData, CliCapabilityData, Tmux
 import {
     AGENT_IDS,
     type AgentId,
-    isAgentAuthProbeSafeForBackgroundChecks,
+    isAgentCliAuthBackgroundCheckSafe,
 } from '@happier-dev/agents';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -111,7 +111,7 @@ function resolveAutomaticLoginStatusAgentIds(includeLoginStatus: boolean, explic
     if (!includeLoginStatus) return [];
     const normalizedExplicit = normalizeRequestedAgentIds(explicitAgentIds);
     if (normalizedExplicit.length > 0) return normalizedExplicit;
-    return CLI_PROBE_AGENT_IDS.filter((agentId) => isAgentAuthProbeSafeForBackgroundChecks(agentId));
+    return CLI_PROBE_AGENT_IDS.filter((agentId) => isAgentCliAuthBackgroundCheckSafe(agentId));
 }
 
 function buildCliDetectionRequest(params: Readonly<{

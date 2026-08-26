@@ -108,4 +108,5 @@ describe('capabilities checklists', () => {
       expect.arrayContaining([{ id: 'cli.claude' }]),
     );
   });
+
 });

@@ -8,7 +8,7 @@ const agentsPackageState = vi.hoisted(() => ({
         codex: { detectKey: 'codex' },
         kiro: { detectKey: 'kiro-cli' },
     },
-    isAgentAuthProbeSafeForBackgroundChecks: (agentId: string) => agentId !== 'kiro',
+    isAgentCliAuthBackgroundCheckSafe: (agentId: string) => agentId !== 'kiro',
 }));
 
 function resolvePackageDetectKey(agentId: string): string {
@@ -24,13 +24,6 @@ vi.mock('@happier-dev/agents', () => ({
         machineLoginKey: agentId,
         supportKind: 'login_terminal',
         loginLaunch: null,
-    }),
-    getAgentAuthProbeConfig: (agentId: string) => ({
-        agentId,
-        binaryNames: [resolvePackageDetectKey(agentId)],
-        statusCommand: null,
-        parser: 'unknown',
-        backgroundChecks: agentsPackageState.isAgentAuthProbeSafeForBackgroundChecks(agentId) ? 'safe' : 'manual_only',
     }),
 }));
 
@@ -65,13 +58,6 @@ describe('CAPABILITIES_REQUEST_MACHINE_DETAILS', () => {
                 machineLoginKey: agentId,
                 supportKind: 'login_terminal',
                 loginLaunch: null,
-            }),
-            getAgentAuthProbeConfig: (agentId: string) => ({
-                agentId,
-                binaryNames: [resolvePackageDetectKey(agentId)],
-                statusCommand: null,
-                parser: 'unknown',
-                backgroundChecks: agentsPackageState.isAgentAuthProbeSafeForBackgroundChecks(agentId) ? 'safe' : 'manual_only',
             }),
         }));
         const { CAPABILITIES_REQUEST_MACHINE_DETAILS: request } = await import('./requests');

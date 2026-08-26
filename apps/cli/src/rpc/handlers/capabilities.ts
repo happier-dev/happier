@@ -239,15 +239,13 @@ async function invokeCliProbeOrInstallMethod(
         && (
             !materializationAgentId
             || !connectedServices
-            || preflightAdapter?.connectedServiceAuth !== 'materialized-env'
         )
     ) {
         return { ok: true, result: { v: 1, status: 'unavailable' } };
     }
     const requiresMaterializedAuth = Boolean(
         materializationAgentId
-        && connectedServices
-        && preflightAdapter?.connectedServiceAuth === 'materialized-env',
+        && connectedServices,
     );
     const probeContext = await resolveProbeBackendContext(
         { ...params, agentId },

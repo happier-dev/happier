@@ -147,7 +147,9 @@ describe('executionRunsCapability', () => {
     expect(typeof res.backends.claude.supportsVendorResume).toBe('boolean');
     expect(res.backends.codex).toMatchObject({
       available: true,
-      supportsVendorResume: true,
+      // Codex is experimental: without a concrete Session runtime selection,
+      // this UI capability must not manufacture a second decision path.
+      supportsVendorResume: false,
     });
     expect(res.backends.kiro).toBeTruthy();
     expect(typeof res.backends.kiro.supportsVendorResume).toBe('boolean');
@@ -211,7 +213,7 @@ describe('executionRunsCapability', () => {
     });
   });
 
-  it('reports Codex resume support after normalizing legacy mcp env mode to appServer', async () => {
+  it('does not affirm experimental Codex resume without a Session runtime selection', async () => {
     process.env.HAPPIER_CODEX_BACKEND_MODE = 'mcp';
 
     const res = await executionRunsCapability.detect({
@@ -227,7 +229,7 @@ describe('executionRunsCapability', () => {
     expect(res?.available).toBe(true);
     expect(res.backends.codex).toMatchObject({
       available: true,
-      supportsVendorResume: true,
+      supportsVendorResume: false,
     });
   });
 

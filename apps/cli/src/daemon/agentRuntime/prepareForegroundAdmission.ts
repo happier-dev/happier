@@ -271,7 +271,11 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
   >>;
 }>): Promise<Awaited<ReturnType<typeof prepareDirectProviderLaunch>> | null> {
   const { request, lease } = input;
-  if (!request.selection) return null;
+  // Only an explicitly native request without a prior Provider binding may
+  // bypass the canonical launch owner. An orphaned binding must reach
+  // `prepareProviderLaunch`, which owns the typed continuity refusal before
+  // any foreground bootstrap side effect is created.
+  if (!request.selection && !request.previousBinding) return null;
   const featureEnabled = (
     await resolveCliFeatureDecisionForServer({
       featureId: 'providers',

@@ -17,6 +17,8 @@ import {
 } from '@/sync/domains/machines/administration/targetSelection';
 import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { t } from '@/text';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type MachineAdministrationPickerMachine = ServerScopedMachinePresentation & Readonly<{
     target: MachineAdministrationTargetV1;
@@ -148,6 +150,12 @@ export function MachineAdministrationTargetSelector(props: MachineAdministration
     const accessibilityLabel = [current.title, current.subtitle, current.detail]
         .filter((value): value is string => Boolean(value))
         .join(', ');
+    const changeTarget = React.useCallback((change: () => void) => {
+        const result = runGuardedNavigation(change);
+        if (result !== true) {
+            fireAndForget(result, { tag: 'MachineAdministrationTargetSelector.changeTarget' });
+        }
+    }, []);
 
     return (
         <>
@@ -167,7 +175,7 @@ export function MachineAdministrationTargetSelector(props: MachineAdministration
                         testID={`${testIDPrefix}.clear`}
                         title={t('common.remove')}
                         showChevron={false}
-                        onPress={props.selection.clearTarget}
+                        onPress={() => changeTarget(props.selection.clearTarget)}
                     />
                 ) : null}
             </ItemGroup>
@@ -176,7 +184,9 @@ export function MachineAdministrationTargetSelector(props: MachineAdministration
                     groups={groups}
                     selectedMachineId={props.selection.selectedTarget?.machineId ?? null}
                     selectedServerId={selectedRow?.serverId ?? null}
-                    onSelect={(machine) => props.selection.selectTarget(machine.target)}
+                    onSelect={(machine) => changeTarget(() => {
+                        props.selection.selectTarget(machine.target);
+                    })}
                     resolveMachineAvailability={resolvePickerAvailability}
                     testIdPrefix={`${testIDPrefix}.picker`}
                 />

@@ -50,6 +50,7 @@ type CapturedItemProps = Readonly<{
 
 const capturedPickerProps: CapturedPickerProps[] = [];
 const capturedItemProps: CapturedItemProps[] = [];
+const runGuardedNavigationMock = vi.hoisted(() => vi.fn());
 
 installNewSessionComponentsCommonModuleMocks({
     text: async () => {
@@ -74,6 +75,9 @@ vi.mock('@/components/sessions/new/components/ServerScopedMachineSelector', () =
         capturedPickerProps.push(props);
         return null;
     },
+}));
+vi.mock('@/utils/navigation/runGuardedNavigation', () => ({
+    runGuardedNavigation: runGuardedNavigationMock,
 }));
 
 function createSelection(params: Readonly<{
@@ -132,6 +136,32 @@ function createSelection(params: Readonly<{
 }
 
 describe('MachineAdministrationTargetSelector', () => {
+    it('routes administration target changes through the active unsaved-draft guard', async () => {
+        const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
+        const { selection, selectTarget } = createSelection({ availability: 'online' });
+        capturedPickerProps.length = 0;
+        capturedItemProps.length = 0;
+        runGuardedNavigationMock.mockReset();
+        runGuardedNavigationMock.mockImplementation((navigate: () => void) => {
+            navigate();
+            return true;
+        });
+
+        await renderScreen(React.createElement(MachineAdministrationTargetSelector, {
+            selection,
+            testIDPrefix: 'administration.target',
+        }));
+
+        const picker = capturedPickerProps[0]!;
+        picker.onSelect(picker.groups[0]!.machines[0]!);
+
+        expect(runGuardedNavigationMock).toHaveBeenCalledTimes(1);
+        expect(selectTarget).toHaveBeenCalledWith({
+            serverIdentityId: 'portable-server-b',
+            machineId: 'machine-b',
+        });
+    });
+
     it('keeps the exact selected portable target visible and stale rows unavailable before the clear control', async () => {
         const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
         const { selection } = createSelection({ availability: 'online', observation: 'stale' });

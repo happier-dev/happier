@@ -33,6 +33,7 @@ export function buildLegacyProfileSave(input: Readonly<{
     updatedAt: number;
 }>): AIBackendProfile {
     const {
+        codingPromptBehaviorOverrides: _canonicalCodingPromptBehaviorOverrides,
         defaultPermissionModeClaude: _legacyClaude,
         defaultPermissionModeCodex: _legacyCodex,
         defaultPermissionModeGemini: _legacyGemini,

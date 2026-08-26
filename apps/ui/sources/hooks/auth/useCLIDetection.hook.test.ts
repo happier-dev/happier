@@ -21,7 +21,7 @@ const agentsPackageState = vi.hoisted(() => ({
         gemini: { detectKey: 'gemini' },
         kiro: { detectKey: 'kiro-cli' },
     },
-    isAgentAuthProbeSafeForBackgroundChecks: (agentId: string) => agentId !== 'kiro',
+    isAgentCliAuthBackgroundCheckSafe: (agentId: string) => agentId !== 'kiro',
 }));
 
 function resolvePackageDetectKey(agentId: string): string {
@@ -39,7 +39,8 @@ installAuthHookCommonModuleMocks({
     },
 });
 
-vi.mock('@happier-dev/agents', () => ({
+vi.mock('@happier-dev/agents', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@happier-dev/agents')>()),
     ...agentsPackageState,
     resolveAgentStateRequestCoverageOptions: () => ({}),
     isAgentStateRequestCoveredByCompletedRequests: () => false,
@@ -49,13 +50,6 @@ vi.mock('@happier-dev/agents', () => ({
         machineLoginKey: agentId,
         supportKind: 'login_terminal',
         loginLaunch: null,
-    }),
-    getAgentAuthProbeConfig: (agentId: string) => ({
-        agentId,
-        binaryNames: [resolvePackageDetectKey(agentId)],
-        statusCommand: null,
-        parser: 'unknown',
-        backgroundChecks: agentsPackageState.isAgentAuthProbeSafeForBackgroundChecks(agentId) ? 'safe' : 'manual_only',
     }),
 }));
 

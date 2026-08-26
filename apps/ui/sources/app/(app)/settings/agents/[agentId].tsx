@@ -28,7 +28,7 @@ import {
     type ResolvedAgentCatalogEntry,
 } from '@/agents/backendCatalog/agentCatalogProjection';
 import { t } from '@/text';
-import { getAgentCliRuntimeSpec, getAgentSessionModeDescriptor, getAgentStaticModels, isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
+import { getAgentCliRuntimeSpec, getAgentSessionModeDescriptor, getAgentStaticModels, isAgentCliAuthBackgroundCheckSafe } from '@happier-dev/agents';
 import {
     buildCatalogModelList,
     classifySessionModeDescriptor,
@@ -579,7 +579,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
         };
     }, [executionTarget, targetSelection]);
     const automaticLoginStatusAgentIds = React.useMemo(
-        () => (runtimeAgentId && isAgentAuthProbeSafeForBackgroundChecks(runtimeAgentId) ? [runtimeAgentId] : []),
+        () => (runtimeAgentId && isAgentCliAuthBackgroundCheckSafe(runtimeAgentId) ? [runtimeAgentId] : []),
         [runtimeAgentId],
     );
     const cliAvailability = useCLIDetection(primaryMachine?.id ?? null, {

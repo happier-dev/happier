@@ -62,7 +62,7 @@ import {
     connectedAccountPurposeTargetChoiceId,
     resolveConnectedAccountPurposeTargetDisplay,
 } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
-import { getConnectedAccountAuthenticationMode } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
     ProviderCompatibilitySection,
     ProviderEndpointOverridesSection,
@@ -440,10 +440,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                     serviceTitle: resolveQualifiedConnectedServiceRegistryDisplayName(
                         connectedServicesRegistry, declaration.service, t, localizePluginText,
                     ),
-                    resolveAuthenticationMode: (account) => getConnectedAccountAuthenticationMode(
-                        account.ref.service,
-                        account.authenticationModeId,
-                    ),
+                    resolveAuthentication: getConnectedAccountAuthentication,
                 });
                 const chosenId = connectedAccountPurposeTargetChoiceId(target);
                 if (!choices.some((choice) => choice.id === chosenId && choice.selectable)) {
