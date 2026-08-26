@@ -384,7 +384,7 @@ test('plugin SDK pair allocation reuses the SDK version after a UI publication f
   assert.match(result.source, /npm:catch-up/);
 });
 
-test('plugin SDK pair allocation advances only after both pair packages have the last version', async () => {
+test('plugin SDK pair allocation retains an immutable version until both final next tags complete its activation', async () => {
   const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
 
   const result = await resolveRollingPublishVersion({
@@ -400,6 +400,39 @@ test('plugin SDK pair allocation advances only after both pair packages have the
         npm: {
           '@happier-dev/plugin-sdk': ['0.1.0-preview.7'],
           '@happier-dev/plugin-ui': ['0.1.0-preview.7'],
+        },
+        npmDistTags: {
+          '@happier-dev/plugin-sdk': { 'next-staging': '0.1.0-preview.7', next: '0.1.0-preview.7' },
+          '@happier-dev/plugin-ui': { 'next-staging': '0.1.0-preview.7' },
+        },
+      }),
+    },
+  });
+
+  assert.equal(result.version, '0.1.0-preview.7');
+  assert.match(result.source, /npm:catch-up/);
+});
+
+test('plugin SDK pair allocation advances only after both pair packages have the last version and final tag', async () => {
+  const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+
+  const result = await resolveRollingPublishVersion({
+    repoRoot,
+    productId: 'plugin_sdk',
+    channel: 'preview',
+    baseVersion: '0.1.0',
+    publishSurface: 'npm',
+    env: {
+      ...process.env,
+      HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({
+        github: {},
+        npm: {
+          '@happier-dev/plugin-sdk': ['0.1.0-preview.7'],
+          '@happier-dev/plugin-ui': ['0.1.0-preview.7'],
+        },
+        npmDistTags: {
+          '@happier-dev/plugin-sdk': { 'next-staging': '0.1.0-preview.7', next: '0.1.0-preview.7' },
+          '@happier-dev/plugin-ui': { 'next-staging': '0.1.0-preview.7', next: '0.1.0-preview.7' },
         },
       }),
     },
@@ -443,7 +476,11 @@ test('authoritative npm E404 lets a partial plugin SDK pair reuse the already pu
     executable(join(bin, 'git'), '#!/bin/sh\nexit 0\n');
     executable(join(bin, 'npm'), `#!/bin/sh
 if [ "$2" = "@happier-dev/plugin-sdk" ]; then
-  printf '["0.1.0-preview.7"]\\n'
+  if [ "$3" = "versions" ]; then
+    printf '["0.1.0-preview.7"]\\n'
+  else
+    printf '{"next":"0.1.0-preview.7"}\\n'
+  fi
   exit 0
 fi
 printf 'npm error code E404\\n' >&2

@@ -110,6 +110,19 @@ function normalizeStringList(value) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {Record<string, string>}
+ */
+function normalizeNpmDistTags(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(/** @type {Record<string, unknown>} */ (value))
+      .map(([tag, version]) => [tag.trim(), String(version ?? '').trim()])
+      .filter(([tag, version]) => tag && version),
+  );
+}
+
+/**
  * @param {string} text
  */
 function parsePublishedVersionsJson(text) {
@@ -117,11 +130,12 @@ function parsePublishedVersionsJson(text) {
   if (!raw) return null;
   /** @type {unknown} */
   const parsed = JSON.parse(raw);
-  if (!parsed || typeof parsed !== 'object') return { github: {}, npm: {} };
-  const record = /** @type {{ github?: Record<string, unknown>; npm?: Record<string, unknown> }} */ (parsed);
+  if (!parsed || typeof parsed !== 'object') return { github: {}, npm: {}, npmDistTags: {} };
+  const record = /** @type {{ github?: Record<string, unknown>; npm?: Record<string, unknown>; npmDistTags?: Record<string, unknown> }} */ (parsed);
   return {
     github: record.github && typeof record.github === 'object' ? record.github : {},
     npm: record.npm && typeof record.npm === 'object' ? record.npm : {},
+    npmDistTags: record.npmDistTags && typeof record.npmDistTags === 'object' ? record.npmDistTags : {},
   };
 }
 
@@ -161,16 +175,18 @@ function sameBuild(left, right) {
 }
 
 /**
- * A lockstep npm product is caught up only when every package identity has
- * the same rolling build.  The allocator owns this fact so a failed second
- * publication retries the missing tarball instead of minting a new version.
+ * A lockstep npm product is complete only when every package has the same
+ * immutable rolling build and every final dist-tag points to that build. The
+ * allocator owns this fact so the pair publisher can retry its idempotent tag
+ * repair instead of minting a new version after a partial activation.
  *
  * @param {{ npmPackage?: string; npmPackages?: string[] }} product
  * @param {Array<{ run: number; attempt: number | null; version: string; surface: 'github' | 'npm'; target?: string }>} builds
  * @param {{ run: number; attempt: number | null }} candidate
  * @param {'github' | 'npm' | 'all'} publishSurface
+ * @param {{ npmDistTagsByPackage: Map<string, Record<string, string>>; finalNpmDistTag: string }} completion
  */
-function isBuildPublishedForSurface(product, builds, candidate, publishSurface) {
+function isBuildCompleteForPublishSurface(product, builds, candidate, publishSurface, completion) {
   const matches = (surface, target) => builds.some((build) => (
     build.surface === surface
     && (target === undefined || build.target === target)
@@ -178,12 +194,25 @@ function isBuildPublishedForSurface(product, builds, candidate, publishSurface) 
   ));
   if (publishSurface === 'npm') {
     const npmPackages = getNpmPackages(product);
-    return npmPackages.length > 1
+    const immutableComplete = npmPackages.length > 1
       ? npmPackages.every((npmPackage) => matches('npm', npmPackage))
       : matches('npm');
+    if (!immutableComplete || npmPackages.length <= 1) return immutableComplete;
+    return npmPackages.every(
+      (npmPackage) => completion.npmDistTagsByPackage.get(npmPackage)?.[completion.finalNpmDistTag] === candidate.version,
+    );
   }
   if (publishSurface === 'github') return matches('github');
   return matches('github') || matches('npm');
+}
+
+/**
+ * @param {import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId} channel
+ */
+function resolveRollingNpmDistTag(channel) {
+  if (channel === 'preview') return 'next';
+  if (channel === 'publicdev') return 'dev';
+  throw new Error(`[release] channel ${channel} has no rolling npm dist-tag`);
 }
 
 /**
@@ -245,6 +274,13 @@ function tryExecLines(cmd, args, opts) {
   }
 }
 
+/** @param {unknown} error */
+function isNpmNotFoundError(error) {
+  const failure = /** @type {{ status?: unknown; stdout?: unknown; stderr?: unknown }} */ (error);
+  const output = `${String(failure.stdout ?? '')}\n${String(failure.stderr ?? '')}`;
+  return failure.status === 1 && /\bnpm (?:ERR!|error) code E404\b/iu.test(output);
+}
+
 /**
  * @param {string} npmPackage
  * @param {{ cwd: string; env: Record<string, string | undefined> }} opts
@@ -268,12 +304,35 @@ function collectNpmVersions(npmPackage, opts) {
     }
     return { ok: true, values: [] };
   } catch (error) {
-    const failure = /** @type {{ status?: unknown; stdout?: unknown; stderr?: unknown }} */ (error);
-    const output = `${String(failure.stdout ?? '')}\n${String(failure.stderr ?? '')}`;
-    if (failure.status === 1 && /\bnpm (?:ERR!|error) code E404\b/iu.test(output)) {
+    if (isNpmNotFoundError(error)) {
       return { ok: true, values: [] };
     }
     return { ok: false, values: [] };
+  }
+}
+
+/**
+ * @param {string} npmPackage
+ * @param {{ cwd: string; env: Record<string, string | undefined> }} opts
+ */
+function collectNpmDistTags(npmPackage, opts) {
+  try {
+    const out = execFileSync('npm', ['view', npmPackage, 'dist-tags', '--json'], {
+      cwd: opts.cwd,
+      env: { ...process.env, ...opts.env },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 20_000,
+    }).trim();
+    /** @type {unknown} */
+    const parsed = JSON.parse(out);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, values: {} };
+    }
+    return { ok: true, values: normalizeNpmDistTags(parsed) };
+  } catch (error) {
+    if (isNpmNotFoundError(error)) return { ok: true, values: {} };
+    return { ok: false, values: {} };
   }
 }
 
@@ -391,6 +450,10 @@ export async function resolveRollingPublishVersion(opts) {
   let sourceAvailable = false;
   const npmPackages = getNpmPackages(product);
   const npmAvailability = new Map();
+  const npmDistTagsByPackage = new Map();
+  const finalNpmDistTag = publishSurface === 'npm' && npmPackages.length > 1
+    ? resolveRollingNpmDistTag(opts.channel)
+    : '';
 
   const fixture = parsePublishedVersionsJson(env.HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON);
   if (fixture) {
@@ -407,6 +470,7 @@ export async function resolveRollingPublishVersion(opts) {
       // A supplied fixture is an authoritative complete view for every listed
       // target, including an explicitly empty package-version list.
       npmAvailability.set(npmPackage, true);
+      npmDistTagsByPackage.set(npmPackage, normalizeNpmDistTags(fixture.npmDistTags[npmPackage]));
       for (const version of collectFromFixtureSection(fixture.npm, [npmPackage])) {
         publishedVersions.push({ version, surface: 'npm', target: npmPackage });
       }
@@ -427,7 +491,10 @@ export async function resolveRollingPublishVersion(opts) {
 
     for (const npmPackage of npmPackages) {
       const npm = collectNpmVersions(npmPackage, { cwd: opts.repoRoot, env });
-      npmAvailability.set(npmPackage, npm.ok);
+      const distTags = npm.ok && finalNpmDistTag
+        ? collectNpmDistTags(npmPackage, { cwd: opts.repoRoot, env })
+        : { ok: true, values: {} };
+      npmAvailability.set(npmPackage, npm.ok && distTags.ok);
       if (npm.ok) {
         sourceAvailable = true;
         sourceLabels.push('npm');
@@ -435,6 +502,7 @@ export async function resolveRollingPublishVersion(opts) {
           publishedVersions.push({ version, surface: 'npm', target: npmPackage });
         }
       }
+      if (distTags.ok) npmDistTagsByPackage.set(npmPackage, distTags.values);
     }
   }
 
@@ -468,7 +536,13 @@ export async function resolveRollingPublishVersion(opts) {
     }
     const comparisonBuild = previousForSurface ?? previous;
     const isOlderThanOverall = previous && compareBuildOrder(explicitBuild, previous) < 0;
-    const isAlreadyPublishedForTarget = isBuildPublishedForSurface(product, builds, explicitBuild, publishSurface);
+    const isAlreadyPublishedForTarget = isBuildCompleteForPublishSurface(
+      product,
+      builds,
+      explicitBuild,
+      publishSurface,
+      { npmDistTagsByPackage, finalNpmDistTag },
+    );
     const isBehindTarget = comparisonBuild && compareBuildOrder(explicitBuild, comparisonBuild) < 0;
     if (isOlderThanOverall || isAlreadyPublishedForTarget || isBehindTarget) {
       throw new Error(
@@ -505,7 +579,13 @@ export async function resolveRollingPublishVersion(opts) {
     publishSurface !== 'all'
     && previous
     && (
-      !isBuildPublishedForSurface(product, builds, previous, publishSurface)
+      !isBuildCompleteForPublishSurface(
+        product,
+        builds,
+        previous,
+        publishSurface,
+        { npmDistTagsByPackage, finalNpmDistTag },
+      )
       || !previousForSurface
       || compareBuildOrder(previousForSurface, previous) < 0
     )
