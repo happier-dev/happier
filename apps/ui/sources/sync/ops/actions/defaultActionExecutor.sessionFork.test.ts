@@ -570,7 +570,11 @@ describe('createDefaultActionExecutor (session.fork)', () => {
 
     const res = await executor.execute(
       'session.handoff' as any,
-      { sessionId: 'sess_parent', targetMachineId: 'machine_2' },
+      {
+        sessionId: 'sess_parent',
+        targetMachineId: 'machine_2',
+        targetPath: '/home/guest/workspace',
+      },
       { surface: 'ui', placement: 'session_action_menu' } as any,
     );
 
@@ -579,6 +583,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
       sessionId: 'sess_parent',
       sourceMachineId: 'machine_1',
       targetMachineId: 'machine_2',
+      targetPath: '/home/guest/workspace',
       sessionStorageMode: 'persisted',
       sourceMetadata: {
         machineId: 'machine_1',

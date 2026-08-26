@@ -102,6 +102,24 @@ describe('tracked session handoff coordinator', () => {
     ]);
   });
 
+  it('uses an explicitly selected target directory instead of the source-derived path', async () => {
+    const { deps } = createDeps();
+
+    await coordinateTrackedSessionHandoff({
+      input: {
+        sessionId: 'session-1',
+        targetMachineId: 'target-machine',
+        targetPath: '/home/guest/workspace',
+      },
+      signal: new AbortController().signal,
+      ...deps,
+    });
+
+    expect(deps.prepareTarget).toHaveBeenCalledWith(expect.objectContaining({
+      targetPath: '/home/guest/workspace',
+    }), expect.any(AbortSignal));
+  });
+
   it('polls a pending prepare result and never treats nested ok:false as success', async () => {
     const { deps } = createDeps({
       prepareTarget: vi.fn(async () => ({ handoffId: 'handoff-1', status: status('staging_target') })),

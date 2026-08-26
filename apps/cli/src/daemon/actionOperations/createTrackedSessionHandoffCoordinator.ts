@@ -113,6 +113,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       : {};
     const sessionId = readNonEmptyString(rawInput.sessionId);
     const targetMachineId = readNonEmptyString(rawInput.targetMachineId);
+    const targetPath = readNonEmptyString(rawInput.targetPath);
     if (!sessionId || !targetMachineId) {
       return { ok: false, errorCode: 'invalid_input', error: 'invalid_input' };
     }
@@ -131,6 +132,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       input: {
         sessionId,
         targetMachineId,
+        ...(targetPath ? { targetPath } : {}),
         ...(rawInput.targetSessionStorageMode === 'direct' || rawInput.targetSessionStorageMode === 'persisted'
           ? { targetSessionStorageMode: rawInput.targetSessionStorageMode }
           : {}),

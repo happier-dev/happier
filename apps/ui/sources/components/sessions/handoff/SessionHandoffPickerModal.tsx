@@ -38,11 +38,12 @@ import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 
 import type { SessionHandoffPickerResult } from './openSessionHandoffPicker';
 import { Icon } from '@/components/ui/icons/Icon';
 
-type Props = CustomModalInjectedProps & Readonly<{
+export type SessionHandoffPickerModalProps = CustomModalInjectedProps & Readonly<{
     sessionId: string;
     sourceMachineId?: string | null;
     serverId: string | null;
@@ -88,7 +89,7 @@ function mergeMachinesById(machineGroups: readonly (readonly any[] | null | unde
     return Array.from(merged.values());
 }
 
-export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessionId, sourceMachineId, serverId }: Props) {
+export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessionId, sourceMachineId, serverId }: SessionHandoffPickerModalProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const actionSpec = getActionSpec('session.handoff');
@@ -211,6 +212,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     }, [machines, resolvedSourceMachineId, sessions]);
 
     const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(null);
+    const [targetPath, setTargetPath] = React.useState<string | null>(null);
     const selectedMachine = React.useMemo(
         () => machines.find((machine: any) => normalizeId(machine?.id) === normalizeId(selectedMachineId)) ?? null,
         [machines, selectedMachineId],
@@ -249,12 +251,13 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         });
         onResolve({
             targetMachineId,
+            ...(targetPath ? { targetPath } : {}),
             targetSessionStorageMode: isExternalSession
                 ? (directTargetMode === 'convert_to_persisted' ? 'persisted' : 'direct')
                 : 'persisted',
             ...(workspaceTransfer ? { workspaceTransfer } : {}),
         });
-    }, [canAttemptSelectedMachine, conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isExternalSession, onResolve, selectedMachineId, workspaceTransferStrategy]);
+    }, [canAttemptSelectedMachine, conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isExternalSession, onResolve, selectedMachineId, targetPath, workspaceTransferStrategy]);
 
     const footer = React.useMemo(() => (
         <View style={styles.footer}>
@@ -298,6 +301,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                         dropdownTestID="session-handoff-machine-dropdown-trigger"
                         onSelect={(machine: any) => {
                             setSelectedMachineId(normalizeId(machine?.id) || null);
+                            setTargetPath(null);
                         }}
                         onToggleFavorite={(machine: any) => {
                             const machineId = normalizeId(machine?.id);
@@ -306,6 +310,28 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             setFavoriteMachinesRaw(exists ? favoriteMachineIds.filter((id: string) => id !== machineId) : [machineId, ...favoriteMachineIds]);
                         }}
                     />
+                    <ItemGroup title={t('machine.launchNewSessionInDirectory')}>
+                        <Item
+                            testID="session-handoff-target-path"
+                            title={t('machine.launchNewSessionInDirectory')}
+                            subtitle={targetPath ?? t('common.default')}
+                            icon={<Icon name="folder" size={16} color={theme.colors.text.secondary} />}
+                            disabled={!selectedMachineId}
+                            onPress={async () => {
+                                const machineId = normalizeId(selectedMachineId);
+                                if (!machineId) return;
+                                const selectedPath = await openMachinePathBrowserModal({
+                                    machineId,
+                                    serverId: normalizeId(serverId) || null,
+                                    initialPath: targetPath ?? undefined,
+                                    selectionMode: 'directory',
+                                    title: t('machine.launchNewSessionInDirectory'),
+                                });
+                                const normalizedPath = String(selectedPath ?? '').trim();
+                                if (normalizedPath) setTargetPath(normalizedPath);
+                            }}
+                        />
+                    </ItemGroup>
                     <ItemGroup
                         title={t('settingsSession.handoff.workspaceTransfer.groupTitle')}
                         footer={t('settingsSession.handoff.workspaceTransfer.groupFooter')}

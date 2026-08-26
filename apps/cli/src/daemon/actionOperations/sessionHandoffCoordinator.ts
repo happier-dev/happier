@@ -20,6 +20,7 @@ type RpcResult = unknown;
 type HandoffInput = Readonly<{
   sessionId: string;
   targetMachineId: string;
+  targetPath?: string;
   targetSessionStorageMode?: SessionHandoffStorageMode;
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
 }>;
@@ -188,7 +189,7 @@ export async function coordinateTrackedSessionHandoff(
     handoffId,
     sourceMachineId: source.sourceMachineId,
     targetMachineId: input.input.targetMachineId,
-    targetPath: started.data.targetPath,
+    targetPath: input.input.targetPath ?? started.data.targetPath,
     negotiatedTransportStrategy,
     sourceSessionStorageMode: source.sessionStorageMode,
     ...(input.input.targetSessionStorageMode

@@ -95,6 +95,7 @@ describe('createActionExecutor (session.handoff)', () => {
       'session.handoff',
       {
         targetMachineId: 'machine_2',
+        targetPath: '/home/guest/workspace',
         targetSessionStorageMode: 'persisted',
         workspaceTransfer: {
           enabled: true,
@@ -110,6 +111,7 @@ describe('createActionExecutor (session.handoff)', () => {
     expect(sessionHandoffStart).toHaveBeenCalledWith({
       sessionId: 'sess_1',
       targetMachineId: 'machine_2',
+      targetPath: '/home/guest/workspace',
       targetSessionStorageMode: 'persisted',
       workspaceTransfer: {
         enabled: true,

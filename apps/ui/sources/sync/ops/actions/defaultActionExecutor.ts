@@ -365,7 +365,7 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
     checkpointCodeRollback: async ({ request, serverId }) =>
       await rollbackSessionCheckpointCodeOp({ request, serverId }),
 
-    sessionHandoffStart: async ({ sessionId, targetMachineId, targetSessionStorageMode, workspaceTransfer, serverId }) => {
+    sessionHandoffStart: async ({ sessionId, targetMachineId, targetPath, targetSessionStorageMode, workspaceTransfer, serverId }) => {
       const sid = String(sessionId ?? '').trim();
       const tid = String(targetMachineId ?? '').trim();
       if (!sid || !tid) return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
@@ -392,6 +392,7 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
         sessionId: sid,
         sourceMachineId: sourceMachineId || undefined,
         targetMachineId: tid,
+        ...(targetPath ? { targetPath } : {}),
         sessionStorageMode,
         ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
         preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],

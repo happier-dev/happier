@@ -2,7 +2,7 @@ import { Modal } from '@/modal';
 import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
-import { MachinePathBrowserModal } from './MachinePathBrowserModal';
+import { MachinePathBrowserModalEntry } from './MachinePathBrowserModalEntry';
 
 export async function openMachinePathBrowserModal(params: Readonly<{
     machineId: string;
@@ -16,7 +16,7 @@ export async function openMachinePathBrowserModal(params: Readonly<{
     const deferred = createDeferredOnce<string | null>();
     Modal.show({
         webPortalTarget: params.webPortalTarget ?? null,
-        component: MachinePathBrowserModal,
+        component: MachinePathBrowserModalEntry,
         props: {
             machineId: params.machineId,
             serverId: params.serverId ?? null,

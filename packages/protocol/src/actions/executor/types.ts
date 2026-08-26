@@ -724,6 +724,7 @@ export type ActionExecutorDeps = Readonly<{
   sessionHandoffStart?: (args: Readonly<{
     sessionId: string;
     targetMachineId: string;
+    targetPath?: string;
     targetSessionStorageMode?: 'direct' | 'persisted';
     workspaceTransfer?: SessionHandoffWorkspaceTransfer;
     serverId?: string | null;

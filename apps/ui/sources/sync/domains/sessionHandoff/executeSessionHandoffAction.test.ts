@@ -40,6 +40,7 @@ describe('executeSessionHandoffAction', () => {
       execute: execute as any,
       sessionId: 'sess_1',
       targetMachineId: 'machine_target',
+      targetPath: '/home/guest/workspace',
       targetSessionStorageMode: 'persisted',
       workspaceTransfer: {
         enabled: true,
@@ -56,6 +57,7 @@ describe('executeSessionHandoffAction', () => {
       {
         sessionId: 'sess_1',
         targetMachineId: 'machine_target',
+        targetPath: '/home/guest/workspace',
         targetSessionStorageMode: 'persisted',
         workspaceTransfer: {
           enabled: true,

@@ -67,6 +67,7 @@ export type StartSessionHandoffOptions = Readonly<{
     sessionId: string;
     sourceMachineId?: string | null;
     targetMachineId: string;
+    targetPath?: string;
     serverId?: string | null;
     sessionStorageMode: SessionHandoffStorageMode;
     targetSessionStorageMode?: SessionHandoffStorageMode;
@@ -1147,6 +1148,9 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         sourceMachineId: started.sourceMachineId,
         targetMachineId: options.targetMachineId,
         targetPath: (() => {
+            const explicitTargetPath = String(options.targetPath ?? '').trim();
+            if (explicitTargetPath) return explicitTargetPath;
+
             // Prefer a daemon-supplied handoff-back target root when present. This avoids relying
             // on hydrated UI state (which can be stale after a cross-machine cutover).
             const daemonHandoffBackTargetRootPath = normalizeSessionHandoffWorkspaceRootPath(

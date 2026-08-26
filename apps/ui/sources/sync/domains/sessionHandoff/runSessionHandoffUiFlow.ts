@@ -25,6 +25,7 @@ export type RunSessionHandoffUiFlowArgs = Readonly<{
     execute: ExecuteAction;
     sessionId: string;
     targetMachineId: string;
+    targetPath?: string;
     targetSessionStorageMode?: 'direct' | 'persisted';
     workspaceTransfer?: SessionHandoffWorkspaceTransfer;
     context: ActionExecutorContext;

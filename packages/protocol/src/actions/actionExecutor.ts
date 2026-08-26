@@ -3859,11 +3859,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             data.targetSessionStorageMode === 'direct' || data.targetSessionStorageMode === 'persisted'
               ? data.targetSessionStorageMode
               : undefined;
+          const targetPath = normalizeId(data.targetPath);
           const workspaceTransferParsed = SessionHandoffWorkspaceTransferSchema.safeParse(data.workspaceTransfer);
           const workspaceTransfer = workspaceTransferParsed.success ? workspaceTransferParsed.data : undefined;
           const res = await deps.sessionHandoffStart({
             sessionId,
             targetMachineId,
+            ...(targetPath ? { targetPath } : {}),
             ...(targetSessionStorageMode ? { targetSessionStorageMode } : {}),
             ...(workspaceTransfer ? { workspaceTransfer } : {}),
             ...(serverId ? { serverId } : {}),

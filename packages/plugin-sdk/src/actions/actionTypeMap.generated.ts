@@ -945,6 +945,7 @@ export type PluginActionInputById = {
         [x: string]: unknown;
         sessionId?: string | undefined;
         targetMachineId?: string | undefined;
+        targetPath?: string | undefined;
         targetSessionStorageMode?: 'direct' | 'persisted' | undefined;
         workspaceTransfer?: {
             [x: string]: unknown;
