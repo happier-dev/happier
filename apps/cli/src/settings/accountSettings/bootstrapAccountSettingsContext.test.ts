@@ -601,6 +601,56 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(getActiveAccountSettingsSnapshot()).toBe(newer);
   });
 
+  it('persists a forced encrypted fetch when an equal-version live snapshot is already active', async () => {
+    const credentials = createCredentialsStub();
+    const cachePath = '/tmp/server/account.settings.cache.json';
+    const scopeKey = createAccountSettingsScopeKey({ cachePath, token: credentials.token });
+    const writeCache = vi.fn(async () => {});
+    setActiveAccountSettingsSnapshot({
+      source: 'network',
+      settings: accountSettingsParse({ sessionPendingQueueDeliveryTiming: 'after_runtime_idle' }),
+      settingsVersion: 3,
+      loadedAtMs: 900,
+      settingsSecretsReadKeys: [],
+      scopeKey,
+    });
+
+    await bootstrapAccountSettingsContext({
+      credentials,
+      mode: 'blocking',
+      refresh: 'force',
+      minSettingsVersion: 3,
+      nowMs: 1_000,
+      deps: {
+        resolveCachePath: () => cachePath,
+        readCache: async () => ({
+          version: 2,
+          cachedAt: 800,
+          settingsContent: { t: 'encrypted', c: 'older-ciphertext' },
+          settingsVersion: 2,
+        }),
+        fetchFromServer: async () => ({
+          settingsContent: { t: 'encrypted', c: 'equal-version-current-ciphertext' },
+          settingsVersion: 3,
+        }),
+        decryptCiphertext: async ({ ciphertext }) => ({
+          sessionPendingQueueDeliveryTiming: ciphertext === 'equal-version-current-ciphertext'
+            ? 'after_runtime_idle'
+            : 'after_foreground_ready',
+        }),
+        writeCache,
+        applySideEffects: () => {},
+      },
+    });
+
+    expect(writeCache).toHaveBeenCalledExactlyOnceWith(cachePath, {
+      version: 2,
+      cachedAt: 1_000,
+      settingsContent: { t: 'encrypted', c: 'equal-version-current-ciphertext' },
+      settingsVersion: 3,
+    }, expect.objectContaining({ shouldCommit: expect.any(Function) }));
+  });
+
   it('fast mode returns immediately and exposes whenRefreshed for stale cache', async () => {
     const fetchFromServer = vi.fn(async () => ({ settingsCiphertext: null, settingsVersion: 12 }));
     const nowMs = 1_000_000;

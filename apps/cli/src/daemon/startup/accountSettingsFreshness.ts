@@ -17,6 +17,7 @@ export async function refreshAccountSettingsForDaemonRequest(input: Readonly<{
             credentials: input.credentials,
             minSettingsVersion: input.accountSettingsVersionHint,
             mode: 'blocking',
+            forceRefresh: true,
         });
         return { ok: true };
     } catch (error) {

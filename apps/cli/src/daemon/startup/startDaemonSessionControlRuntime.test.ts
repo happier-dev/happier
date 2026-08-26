@@ -19936,6 +19936,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
             minSettingsVersion: 42,
             mode: 'blocking',
+            forceRefresh: true,
         });
         expect(fetchSessionByIdCompatMock).toHaveBeenCalledWith({
             token: 'token-daemon',
