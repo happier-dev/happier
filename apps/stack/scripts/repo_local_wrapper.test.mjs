@@ -106,6 +106,40 @@ test('repo-local wrapper defaults `tui` to `tui dev` when no forwarded args are 
   assert.equal(data.args[2], 'dev');
 });
 
+test('repo-local execution-host adapter receives the exact original argv before wrapper normalization', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+  const root = mkdtempSync(join(tmpdir(), 'happier-repo-local-controller-'));
+  const controller = join(root, 'controller.mjs');
+  const stackHome = join(root, 'stack-home');
+  mkdirSync(stackHome, { recursive: true });
+  writeFileSync(controller, 'process.stdout.write(JSON.stringify(process.argv.slice(2)));\n');
+  writeFileSync(join(stackHome, 'execution-host.json'), JSON.stringify({
+    version: 2,
+    controllerEntrypoint: controller,
+  }));
+  try {
+    const result = await runNode(
+      [join(packageRoot, 'scripts', 'repo_local.mjs'), 'tui', '--dry-run'],
+      {
+        cwd: repoRoot,
+        env: { ...process.env, HAPPIER_STACK_HOME_DIR: stackHome },
+      },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), [
+      '--workspace-id=0.2',
+      `--local-entrypoint=${join(packageRoot, 'scripts', 'repo_local.mjs')}`,
+      '--',
+      'tui',
+      '--dry-run',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('repo-local wrapper preserves explicit `tui` forwarded args', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir); // apps/stack
