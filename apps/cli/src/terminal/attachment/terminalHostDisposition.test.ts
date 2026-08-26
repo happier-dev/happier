@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as tmp from 'tmp';
+import { stat } from 'node:fs/promises';
 
 import type { TerminalHostAdapter, TerminalHostHandle } from '@happier-dev/agents';
+import { createSessionHooksService } from '@/plugins/runtime/hooks/session/service';
 import {
   readTerminalHostAttachmentInfo,
   writeTerminalHostAttachmentInfo,
@@ -210,6 +212,42 @@ describe('executeTerminalHostDisposition', () => {
       expect(dispose).toHaveBeenCalledTimes(1);
       await expect(readTerminalHostAttachmentInfo({ happyHomeDir: dir.name, sessionId: 'session-1' }))
         .resolves.toBeNull();
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
+  it('reclaims retained session-hook artifacts when the exact attachment is retired', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    const sessionId = 'session-hook-artifact-retirement';
+    try {
+      const hooks = createSessionHooksService({
+        happyHomeDir: dir.name,
+        hasCapability: (capability) => capability === 'sessionHooks',
+      });
+      const pluginDir = await hooks.createPluginDir({
+        providerId: 'claude',
+        lifecycle: { kind: 'session', sessionId },
+        files: [{ path: '.claude-plugin/plugin.json', json: { name: 'retained-terminal-hook' } }],
+      });
+      await hooks.disposePluginDir(pluginDir);
+      await expect(stat(pluginDir)).resolves.toBeDefined();
+
+      const attachment = await writeTerminalHostAttachmentInfo({
+        happyHomeDir: dir.name,
+        sessionId,
+        handle: HANDLE,
+      });
+
+      await expect(executeTerminalHostDisposition({
+        happyHomeDir: dir.name,
+        sessionId,
+        expectedAttachmentId: attachment.attachmentId,
+        intent: { kind: 'destroy_owned_host', reason: 'explicit_user_stop' },
+        adapter: buildAdapter(async () => undefined),
+      })).resolves.toEqual({ status: 'destroyed', attachmentId: attachment.attachmentId });
+
+      await expect(stat(pluginDir)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       dir.removeCallback();
     }

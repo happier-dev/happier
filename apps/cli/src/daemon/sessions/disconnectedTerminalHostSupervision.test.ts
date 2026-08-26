@@ -94,13 +94,10 @@ describe('disconnected terminal-host supervision', () => {
       retireExactTerminalControlServiceability: async () => {
         events.push('remote');
       },
-      onExactTerminalAttachmentRetired: async () => {
-        events.push('provider');
-      },
     })).resolves.toEqual({ state: 'stopped' });
     expect(removeAttachment).toHaveBeenCalled();
     expect(removeMarker).toHaveBeenCalledWith(42);
-    expect(events).toEqual(['remote', 'local', 'provider', 'marker']);
+    expect(events).toEqual(['remote', 'local', 'marker']);
   });
 
   it('keeps local retry identity when confirmed-dead remote retirement fails', async () => {

@@ -408,7 +408,7 @@ describe('createPtyTerminalHostAdapter', () => {
     })).resolves.toMatchObject({
       status: 'failed',
       reason: 'timeout',
-      phase: 'during_write',
+      phase: 'after_write_before_enter',
       duplicateRisk: 'possible',
       recoverable: true,
     });
@@ -417,16 +417,25 @@ describe('createPtyTerminalHostAdapter', () => {
 
   it('does not mistake Claude\'s submitted prompt row for an unsent Windows composer draft', async () => {
     const prompt = 'Reply exactly WINDOWS_CURRENT_BUILD_DIALOG_OK and then wait.';
-    const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process) => {
-      process.emitData(`\u001b[2J\u001b[H> ${prompt}`);
+    const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process, data) => {
+      if (data === prompt) {
+        process.emitData(`\u001b[2J\u001b[H> ${prompt}`);
+      } else if (data === '\r') {
+        process.emitData(`\u001b[2J\u001b[H> ${prompt}\r\nClaude Code is thinking\r\n> `);
+      }
     }));
+    let sawSubmittedPromptRow = false;
     const adapter = createPtyTerminalHostAdapter({
       ptyProvider: fake.provider,
       inputStabilityDelayMs: 0,
       postWriteLivenessDelayMs: 0,
       promptSubmitVerification: {
         shouldVerifyAfterSubmit: () => true,
-        verifyAfterSubmit: ({ screenText }) => screenText.includes(prompt),
+        verifyBeforeSubmitStaging: ({ screenText }) => screenText.includes(`> ${prompt}`),
+        verifyAfterSubmit: ({ screenText }) => {
+          sawSubmittedPromptRow = screenText.includes(prompt);
+          return false;
+        },
       },
     });
     const handle = await adapter.createOrAttachHost({
@@ -445,6 +454,7 @@ describe('createPtyTerminalHostAdapter', () => {
     })).resolves.toMatchObject({ status: 'injected' });
 
     expect(fake.processes[0]?.writes).toEqual([prompt, '\r']);
+    expect(sawSubmittedPromptRow).toBe(true);
   });
 
   it('reports pane death after the PTY exits', async () => {

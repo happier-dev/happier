@@ -1,10 +1,14 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { GhosttyTerminalSurface } from './surface.native';
 
 describe('GhosttyTerminalSurface', () => {
+    it('projects the native testID prop through its wrapper contract', () => {
+        expectTypeOf<React.ComponentProps<typeof GhosttyTerminalSurface>['testID']>().toEqualTypeOf<string | undefined>();
+    });
+
     it('reports native-module-missing once for a stable unavailable callback', async () => {
         const onUnavailable = vi.fn();
         const props = {

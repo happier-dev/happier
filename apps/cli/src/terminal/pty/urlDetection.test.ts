@@ -28,6 +28,15 @@ describe('TerminalUrlDetector', () => {
     ]);
   });
 
+  it('flushes a URL that ends at the stream boundary', () => {
+    const detector = createTerminalUrlDetector({ bufferLimit: 2048 });
+    expect(detector.ingest('Open https://example.com/final')).toEqual([]);
+
+    expect(detector.flush()).toEqual([
+      expect.objectContaining({ url: 'https://example.com/final', kind: 'generic' }),
+    ]);
+  });
+
   it('dedupes URLs across repeated output', () => {
     const detector = createTerminalUrlDetector({ bufferLimit: 2048 });
     expect(detector.ingest('https://example.com\n')).toHaveLength(1);

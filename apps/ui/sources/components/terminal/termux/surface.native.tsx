@@ -9,7 +9,16 @@ import { NativeTerminalSurface, type NativeTerminalSurfaceProps } from '@/compon
 
 export type TermuxTerminalSurfaceProps = Omit<TerminalNativeSurfaceProps, 'onUnavailable'> & Readonly<{
     onUnavailable?: (reason: TerminalNativeUnavailableReason) => void;
-}> & Pick<NativeTerminalSurfaceProps, 'accessibilityAccepted' | 'onWriteComplete'>;
+}> & Pick<
+    NativeTerminalSurfaceProps,
+    | 'accessibilityAccepted'
+    | 'accessibilityTerminalLabel'
+    | 'accessibilityFallbackValue'
+    | 'accessibilityFocusActionLabel'
+    | 'accessibilityCopySelectionActionLabel'
+    | 'onWriteComplete'
+    | 'testID'
+>;
 
 export const TermuxTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHandle, TermuxTerminalSurfaceProps>(function TermuxTerminalSurface(
     props,

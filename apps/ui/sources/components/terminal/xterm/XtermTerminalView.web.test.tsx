@@ -572,6 +572,7 @@ describe('XtermTerminalView.web', () => {
                 ackedByteOffset: 14,
                 writeGeneration: 1,
             },
+            deferredFrames: [],
         });
         expect(pendingWriteCallbacks).toHaveLength(1);
 

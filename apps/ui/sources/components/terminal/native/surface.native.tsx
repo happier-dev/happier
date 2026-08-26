@@ -28,6 +28,10 @@ type NativeTerminalViewProps = Readonly<{
     lineHeightPx: number;
     accessibilitySummary?: string;
     accessibilityAccepted?: boolean;
+    accessibilityTerminalLabel?: string;
+    accessibilityFallbackValue?: string;
+    accessibilityFocusActionLabel?: string;
+    accessibilityCopySelectionActionLabel?: string;
     style?: StyleProp<ViewStyle>;
     testID?: string;
     onLayout?: (event: LayoutChangeEvent) => void;
@@ -38,6 +42,10 @@ type NativeTerminalView = ComponentType<NativeTerminalViewProps>;
 export type NativeTerminalSurfaceProps = TerminalNativeSurfaceProps & Readonly<{
     accessibilityAccepted?: boolean;
     accessibilitySummary?: string;
+    accessibilityTerminalLabel?: string;
+    accessibilityFallbackValue?: string;
+    accessibilityFocusActionLabel?: string;
+    accessibilityCopySelectionActionLabel?: string;
     onWriteComplete?: (event: EmbeddedTerminalWriteCompleteEvent) => void;
     testID?: string;
 }>;
@@ -69,9 +77,11 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
 
     const requestNativeSurface = React.useCallback(() => {
         if (!nativeModule?.createSurface || unavailableReason) return;
+        const requestedSurfaceId = props.surfaceId;
 
-        void Promise.resolve(nativeModule.createSurface(props.surfaceId))
+        void Promise.resolve(nativeModule.createSurface(requestedSurfaceId))
             .then((value) => {
+                if (propsRef.current.surfaceId !== requestedSurfaceId) return;
                 if (value === undefined) return;
                 const availability = normalizeTerminalNativeAvailability(value);
                 if (!availability.available && availability.reason !== 'surface-not-ready') {
@@ -79,6 +89,7 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
                 }
             })
             .catch(() => {
+                if (propsRef.current.surfaceId !== requestedSurfaceId) return;
                 propsRef.current.onUnavailable?.('renderer-unavailable');
             });
     }, [nativeModule, props.surfaceId, unavailableReason]);
@@ -107,7 +118,7 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
 
     React.useEffect(() => (
         () => {
-            pendingWritesRef.current = [];
+            rejectAllPendingWrites(pendingWritesRef.current, propsRef.current.onWriteComplete);
             void nativeModule?.disposeSurface?.(props.surfaceId);
         }
     ), [nativeModule, props.surfaceId]);
@@ -188,6 +199,18 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
         return null;
     }
 
+    const nativeAccessibilityProps = props.accessibilityTerminalLabel
+        && props.accessibilityFallbackValue
+        && props.accessibilityFocusActionLabel
+        && props.accessibilityCopySelectionActionLabel
+        ? {
+            accessibilityTerminalLabel: props.accessibilityTerminalLabel,
+            accessibilityFallbackValue: props.accessibilityFallbackValue,
+            accessibilityFocusActionLabel: props.accessibilityFocusActionLabel,
+            accessibilityCopySelectionActionLabel: props.accessibilityCopySelectionActionLabel,
+        }
+        : {};
+
     return (
         <NativeView
             surfaceId={props.surfaceId}
@@ -195,6 +218,7 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
             lineHeightPx={props.lineHeightPx}
             accessibilitySummary={props.accessibilitySummary}
             accessibilityAccepted={props.accessibilityAccepted}
+            {...nativeAccessibilityProps}
             style={{ flex: 1, minHeight: 0, minWidth: 0 }}
             testID={props.testID}
             onLayout={requestNativeSurface}
@@ -214,6 +238,7 @@ function routeNativeEvent(input: Readonly<{
 
     switch (input.eventName) {
         case 'rendererCrash':
+            rejectAllPendingWrites(input.pendingWrites, input.props.onWriteComplete);
             input.props.onRendererCrash?.(event as Parameters<NonNullable<NativeTerminalSurfaceProps['onRendererCrash']>>[0]);
             input.props.onUnavailable?.('renderer-unavailable');
             return;
@@ -276,6 +301,19 @@ function rejectPendingWrite(input: Readonly<{
     input.onWriteComplete?.({
         ...input.event,
         ackedByteOffset: input.event.byteOffset,
+    });
+}
+
+function rejectAllPendingWrites(
+    pendingWrites: PendingWrite[],
+    onWriteComplete?: (event: EmbeddedTerminalWriteCompleteEvent) => void,
+) {
+    const rejectedWrites = pendingWrites.splice(0);
+    rejectedWrites.forEach((event) => {
+        onWriteComplete?.({
+            ...event,
+            ackedByteOffset: event.byteOffset,
+        });
     });
 }
 

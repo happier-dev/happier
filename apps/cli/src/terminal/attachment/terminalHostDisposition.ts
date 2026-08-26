@@ -1,5 +1,7 @@
 import type { TerminalHostAdapter, TerminalHostHandle } from '@happier-dev/agents';
 import type { AgentTerminalHostDisposeIntent } from '@happier-dev/plugin-sdk/agents/runtime';
+import { disposeSessionHookArtifactsForSession } from '@/plugins/runtime/hooks/session/service';
+import { logger } from '@/ui/logger';
 
 import {
   readTerminalHostAttachmentInfo,
@@ -33,6 +35,26 @@ export type TerminalHostDispositionResult =
     }>;
 
 const activeDispositionClaims = new Set<string>();
+
+async function disposeRetiredTerminalSessionHookArtifacts(input: Readonly<{
+  happyHomeDir: string;
+  sessionId: string;
+  attachmentId: TerminalAttachmentId | null;
+}>): Promise<void> {
+  try {
+    await disposeSessionHookArtifactsForSession({
+      happyHomeDir: input.happyHomeDir,
+      sessionId: input.sessionId,
+    });
+  } catch (error) {
+    // Attachment retirement is already durable; hook artifacts are best-effort cleanup.
+    logger.warn('[TERMINAL HOST] Failed to clean session-hook artifacts after terminal attachment retirement', {
+      sessionId: input.sessionId,
+      attachmentId: input.attachmentId,
+      error,
+    });
+  }
+}
 
 export function resolveRuntimeTerminalHostDispositionIntent(
   intent: AgentTerminalHostDisposeIntent,
@@ -107,9 +129,13 @@ export async function executeTerminalHostDisposition(input: Readonly<{
         sessionId: input.sessionId,
         expectedAttachmentId: current.attachmentId,
       });
-      return removed
-        ? { status: 'retired', attachmentId: current.attachmentId }
-        : { status: 'parked', reason: 'attachment_mismatch' };
+      if (!removed) return { status: 'parked', reason: 'attachment_mismatch' };
+      await disposeRetiredTerminalSessionHookArtifacts({
+        happyHomeDir: input.happyHomeDir,
+        sessionId: input.sessionId,
+        attachmentId: current.attachmentId,
+      });
+      return { status: 'retired', attachmentId: current.attachmentId };
     }
 
     const handle = current.handle;
@@ -143,9 +169,15 @@ export async function executeTerminalHostDisposition(input: Readonly<{
       sessionId: input.sessionId,
       expectedAttachmentId: current.attachmentId,
     }).catch(() => false);
-    return removed
-      ? { status: 'destroyed', attachmentId: current.attachmentId }
-      : { status: 'destroyed', attachmentId: current.attachmentId, descriptorRetained: true };
+    if (!removed) {
+      return { status: 'destroyed', attachmentId: current.attachmentId, descriptorRetained: true };
+    }
+    await disposeRetiredTerminalSessionHookArtifacts({
+      happyHomeDir: input.happyHomeDir,
+      sessionId: input.sessionId,
+      attachmentId: current.attachmentId,
+    });
+    return { status: 'destroyed', attachmentId: current.attachmentId };
   } finally {
     activeDispositionClaims.delete(claimKey);
   }
@@ -196,9 +228,13 @@ export async function executeConfirmedDeadTerminalHostAttachmentRetirement(input
       sessionId: input.sessionId,
       expectedHandle: expected.handle,
     }).catch(() => false);
-    return removed
-      ? { status: 'retired', attachmentId: null }
-      : { status: 'parked', reason: 'attachment_mismatch' };
+    if (!removed) return { status: 'parked', reason: 'attachment_mismatch' };
+    await disposeRetiredTerminalSessionHookArtifacts({
+      happyHomeDir: input.happyHomeDir,
+      sessionId: input.sessionId,
+      attachmentId: null,
+    });
+    return { status: 'retired', attachmentId: null };
   } finally {
     activeDispositionClaims.delete(claimKey);
   }

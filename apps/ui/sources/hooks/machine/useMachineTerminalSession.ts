@@ -34,9 +34,16 @@ import {
     createTerminalStreamCreditState,
     type TerminalStreamCreditState,
 } from '@/sync/domains/terminal/stream/credit';
-import type { TerminalStreamCursor } from '@/sync/domains/terminal/stream/model';
+import type {
+    TerminalStreamCursor,
+    TerminalStreamFrame,
+} from '@/sync/domains/terminal/stream/model';
 import { resolveTerminalReplayPlan } from '@/sync/domains/terminal/stream/replay';
-import { createTerminalStreamRuntime, createTerminalUtf8ProjectionDecoder } from '@/sync/domains/terminal/stream/runtime';
+import {
+    createTerminalStreamRuntime,
+    createTerminalUtf8ProjectionDecoder,
+    type TerminalStreamRuntime,
+} from '@/sync/domains/terminal/stream/runtime';
 import { machineTerminalClose, machineTerminalEnsure, machineTerminalRestart } from '@/sync/ops/machineTerminal';
 import { delay } from '@/utils/timing/time';
 
@@ -45,8 +52,11 @@ export type TerminalStatus = 'idle' | 'connecting' | 'connected' | 'error' | 'ex
 const embeddedTerminalRendererId = 'embedded-terminal';
 
 type PendingRendererWrite = EmbeddedTerminalWriteCompleteEvent & Readonly<{
-    previewText: string;
+    previewBytes: Uint8Array;
     nextCursor: TerminalStreamCursor;
+    deferredFrames: readonly TerminalStreamFrame[];
+    responseCursor: TerminalStreamCursor;
+    responseDone: boolean;
 }>;
 
 export function useMachineTerminalSession(params: Readonly<{
@@ -79,18 +89,24 @@ export function useMachineTerminalSession(params: Readonly<{
 
     const terminalIdRef = React.useRef<string | null>(initialSurfaceState.terminalId);
     const cursorRef = React.useRef(initialSurfaceState.cursor);
-    const cursorModeRef = React.useRef<TerminalStreamCursor['mode']>('byte-offset');
+    const cursorModeRef = React.useRef<TerminalStreamCursor['mode']>(initialSurfaceState.cursorMode);
     const terminalRendererHandleRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
     const terminalPreviewDecoderRef = React.useRef(createTerminalUtf8ProjectionDecoder());
     const terminalStreamCarrierRef = React.useRef<ReturnType<typeof createMachineRpcTerminalStreamCarrier> | null>(null);
+    const terminalStreamRuntimeRef = React.useRef<TerminalStreamRuntime | null>(null);
     const terminalCreditStateRef = React.useRef<TerminalStreamCreditState | null>(null);
     const pendingRendererWriteRef = React.useRef<PendingRendererWrite | null>(null);
-    const pendingWritePreviewTextRef = React.useRef(new Map<string, string>());
+    const pendingWritePreviewBytesRef = React.useRef(new Map<string, Uint8Array>());
+    const replaceCachedPreviewOnReplayRef = React.useRef(false);
+    const terminalStreamDoneRef = React.useRef(false);
     const clearActiveTerminalStream = React.useCallback(() => {
         terminalStreamCarrierRef.current = null;
+        terminalStreamRuntimeRef.current = null;
         terminalCreditStateRef.current = null;
         pendingRendererWriteRef.current = null;
-        pendingWritePreviewTextRef.current.clear();
+        pendingWritePreviewBytesRef.current.clear();
+        replaceCachedPreviewOnReplayRef.current = false;
+        terminalStreamDoneRef.current = false;
     }, []);
     const resetAutoRetryState = React.useCallback(() => {
         autoRetryAttemptRef.current = 0;
@@ -145,6 +161,52 @@ export function useMachineTerminalSession(params: Readonly<{
         clearNonceRef,
         hydrateOnRender: false,
     });
+    const acknowledgeAcceptedBytes = React.useCallback((input: Readonly<{
+        terminalId: string;
+        ackedByteOffset: number;
+        writeGeneration?: number;
+    }>) => {
+        const state = terminalCreditStateRef.current;
+        const carrier = terminalStreamCarrierRef.current;
+        if (!state || !carrier || input.terminalId !== terminalIdRef.current) {
+            return;
+        }
+        if (input.writeGeneration !== undefined && state.surfaceEpoch !== input.writeGeneration) {
+            return;
+        }
+        const ack = {
+            terminalId: input.terminalId,
+            rendererId: embeddedTerminalRendererId,
+            surfaceEpoch: state.surfaceEpoch,
+            ackedByteOffset: input.ackedByteOffset,
+            creditBytes: state.creditBytes,
+        };
+        const result = applyTerminalRendererAck(state, ack);
+        if (!result.accepted) {
+            return;
+        }
+        terminalCreditStateRef.current = result.state;
+        void carrier.acknowledge(ack);
+    }, []);
+    const replaceCachedPreviewWithReplay = React.useCallback((terminalId: string) => {
+        if (!replaceCachedPreviewOnReplayRef.current) {
+            return;
+        }
+        replaceCachedPreviewOnReplayRef.current = false;
+        terminalPreviewDecoderRef.current.reset();
+        const renderer = params.terminalRef.current;
+        if (renderer) {
+            terminalRendererHandleRef.current = renderer;
+            renderer.clear();
+        }
+        updateSurfaceState((current) => ({
+            ...current,
+            terminalId,
+            cursor: cursorRef.current,
+            cursorMode: cursorModeRef.current,
+            output: '',
+        }));
+    }, [params.terminalRef, terminalRendererHandleRef, updateSurfaceState]);
     const { initialTerminalSize, latestTerminalSizeRef, onInput, onPaste, onResize, onReady } = useEmbeddedTerminalTransportHandlers({
         machineId: params.machineId,
         terminalIdRef,
@@ -155,7 +217,8 @@ export function useMachineTerminalSession(params: Readonly<{
     const clearTerminal = React.useCallback(() => {
         terminalPreviewDecoderRef.current.reset();
         pendingRendererWriteRef.current = null;
-        pendingWritePreviewTextRef.current.clear();
+        pendingWritePreviewBytesRef.current.clear();
+        replaceCachedPreviewOnReplayRef.current = false;
         clearTerminalOutput();
     }, [clearTerminalOutput]);
 
@@ -280,23 +343,33 @@ export function useMachineTerminalSession(params: Readonly<{
             }
             resetAutoRetryState();
 
+            const replayMode: TerminalStreamCursor['mode'] = byteStreamEnabled
+                ? 'byte-offset'
+                : 'legacy-event-cursor';
             const replayPlan = resolveTerminalReplayPlan({
                 cachedTerminalId: cachedSurfaceState.terminalId,
                 ensuredTerminalId: ensured.terminalId,
                 reused: ensured.reused,
                 cachedOutput: cachedSurfaceState.output,
-                cachedCursor: cachedSurfaceState.cursor,
+                cachedCursor: {
+                    mode: cachedSurfaceState.cursorMode,
+                    value: cachedSurfaceState.cursor,
+                },
+                replayMode,
             });
             terminalIdRef.current = ensured.terminalId;
-            cursorRef.current = replayPlan.initialCursor;
-            cursorModeRef.current = byteStreamEnabled ? 'byte-offset' : 'legacy-event-cursor';
+            cursorRef.current = replayPlan.initialCursor.value;
+            cursorModeRef.current = replayPlan.initialCursor.mode;
+            replaceCachedPreviewOnReplayRef.current = replayPlan.replacePreviewOnReplay;
+            terminalStreamDoneRef.current = false;
             if (replayPlan.clearRenderer) {
                 terminalPreviewDecoderRef.current.reset();
                 terminalRendererHandleRef.current = params.terminalRef.current;
                 params.terminalRef.current?.clear();
                 replaceSurfaceState({
                     terminalId: ensured.terminalId,
-                    cursor: replayPlan.initialCursor,
+                    cursor: replayPlan.initialCursor.value,
+                    cursorMode: replayPlan.initialCursor.mode,
                     output: '',
                     detectedUrl: null,
                 });
@@ -305,7 +378,8 @@ export function useMachineTerminalSession(params: Readonly<{
                 replaceSurfaceState({
                     ...cachedSurfaceState,
                     terminalId: ensured.terminalId,
-                    cursor: replayPlan.initialCursor,
+                    cursor: replayPlan.initialCursor.value,
+                    cursorMode: replayPlan.initialCursor.mode,
                 });
                 hydrateTerminalRendererIfNeeded();
             }
@@ -335,7 +409,7 @@ export function useMachineTerminalSession(params: Readonly<{
                 writeTerminalOutput(data);
             };
             pendingRendererWriteRef.current = null;
-            pendingWritePreviewTextRef.current.clear();
+            pendingWritePreviewBytesRef.current.clear();
             const runtime = createTerminalStreamRuntime({
                 terminalId: ensured.terminalId,
                 rendererId: embeddedTerminalRendererId,
@@ -343,7 +417,6 @@ export function useMachineTerminalSession(params: Readonly<{
                 renderer: {
                     write: writeTerminalOutput,
                     writeBytes: (input) => {
-                        const decodedPreview = terminalPreviewDecoderRef.current.decode(input.bytes);
                         const renderer = params.terminalRef.current;
                         if (renderer?.writeBytes) {
                             const result = renderer.writeBytes(input);
@@ -351,15 +424,17 @@ export function useMachineTerminalSession(params: Readonly<{
                                 return false;
                             }
                             if (isQueuedRendererWriteResult(result)) {
-                                pendingWritePreviewTextRef.current.set(
+                                pendingWritePreviewBytesRef.current.set(
                                     getRendererWriteKey(input),
-                                    decodedPreview,
+                                    input.bytes,
                                 );
                                 return result;
                             }
+                            const decodedPreview = terminalPreviewDecoderRef.current.decode(input.bytes);
                             recordTerminalPreviewOutput(decodedPreview);
                             return result;
                         }
+                        const decodedPreview = terminalPreviewDecoderRef.current.decode(input.bytes);
                         return writeTerminalOutput(decodedPreview);
                     },
                     clear: () => params.terminalRef.current?.clear(),
@@ -381,11 +456,16 @@ export function useMachineTerminalSession(params: Readonly<{
                 },
                 onExit: () => {
                     writeDecodedStreamProjection(terminalPreviewDecoderRef.current.flush());
+                    terminalStreamDoneRef.current = true;
                     setStatus('exited');
                 },
             });
+            terminalStreamRuntimeRef.current = runtime;
             let idleCount = 0;
             while (!canceled) {
+                if (terminalStreamDoneRef.current) {
+                    return;
+                }
                 const terminalId = terminalIdRef.current;
                 if (!terminalId) break;
                 if (pendingRendererWriteRef.current) {
@@ -421,16 +501,19 @@ export function useMachineTerminalSession(params: Readonly<{
 
                 if (readClearNonce !== clearNonceRef.current) {
                     const priorCursor = cursorRef.current;
+                    const priorCursorMode = cursorModeRef.current;
                     cursorRef.current = read.nextCursor;
                     cursorModeRef.current = read.mode;
-                    if (read.nextCursor !== priorCursor) {
+                    if (read.nextCursor !== priorCursor || read.mode !== priorCursorMode) {
                         updateSurfaceState((current) => ({
                             ...current,
                             terminalId,
                             cursor: read.nextCursor,
+                            cursorMode: read.mode,
                         }));
                     }
                     if (read.frames.some((event) => event.t === 'exit') || read.done) {
+                        terminalStreamDoneRef.current = true;
                         setStatus('exited');
                         return;
                     }
@@ -445,21 +528,43 @@ export function useMachineTerminalSession(params: Readonly<{
                     idleCount = 0;
                 }
 
+                if (containsTerminalReplayOutput(read.frames, terminalId)) {
+                    replaceCachedPreviewWithReplay(terminalId);
+                }
                 const applied = runtime.applyFrames(read.frames);
                 const priorCursor = cursorRef.current;
                 if (applied.queuedWrite) {
+                    if (read.mode === 'byte-offset' && applied.acceptedByteOffset !== null) {
+                        const acceptedCursor = Math.min(read.nextCursor, applied.acceptedByteOffset);
+                        const priorAcceptedCursor = cursorRef.current;
+                        const priorAcceptedCursorMode = cursorModeRef.current;
+                        cursorRef.current = acceptedCursor;
+                        cursorModeRef.current = read.mode;
+                        if (acceptedCursor !== priorAcceptedCursor || read.mode !== priorAcceptedCursorMode) {
+                            updateSurfaceState((current) => ({
+                                ...current,
+                                terminalId,
+                                cursor: acceptedCursor,
+                                cursorMode: read.mode,
+                            }));
+                        }
+                        acknowledgeAcceptedBytes({ terminalId, ackedByteOffset: applied.acceptedByteOffset });
+                    }
                     const previewKey = getRendererWriteKey(applied.queuedWrite);
                     pendingRendererWriteRef.current = {
                         ...applied.queuedWrite,
-                        previewText: pendingWritePreviewTextRef.current.get(previewKey) ?? '',
+                        previewBytes: pendingWritePreviewBytesRef.current.get(previewKey) ?? new Uint8Array(),
                         nextCursor: read.mode === 'legacy-event-cursor'
                             ? { mode: 'legacy-event-cursor', value: applied.queuedWrite.seq + 1 }
                             : {
                                 mode: 'byte-offset',
                                 value: Math.min(read.nextCursor, applied.queuedWrite.ackedByteOffset),
                             },
+                        deferredFrames: applied.deferredFrames ?? [],
+                        responseCursor: { mode: read.mode, value: read.nextCursor },
+                        responseDone: read.done,
                     };
-                    pendingWritePreviewTextRef.current.delete(previewKey);
+                    pendingWritePreviewBytesRef.current.delete(previewKey);
                     idleCount = Math.min(10, idleCount + 1);
                     await delay(Math.min(250, 60 + idleCount * 10));
                     continue;
@@ -469,32 +574,20 @@ export function useMachineTerminalSession(params: Readonly<{
                     : read.mode === 'byte-offset' && applied.acceptedByteOffset !== null
                         ? Math.min(read.nextCursor, applied.acceptedByteOffset)
                         : read.nextCursor;
+                const priorCursorMode = cursorModeRef.current;
                 cursorRef.current = nextCursor;
                 cursorModeRef.current = read.mode;
-                if (nextCursor !== priorCursor) {
+                if (nextCursor !== priorCursor || read.mode !== priorCursorMode) {
                     updateSurfaceState((current) => ({
                         ...current,
                         terminalId,
                         cursor: nextCursor,
+                        cursorMode: read.mode,
                     }));
                 }
 
                 if (read.mode === 'byte-offset' && applied.acceptedByteOffset !== null) {
-                    const state = terminalCreditStateRef.current;
-                    if (state) {
-                        const ack = {
-                            terminalId,
-                            rendererId: embeddedTerminalRendererId,
-                            surfaceEpoch: state.surfaceEpoch,
-                            ackedByteOffset: applied.acceptedByteOffset,
-                            creditBytes: state.creditBytes,
-                        };
-                        const ackResult = applyTerminalRendererAck(state, ack);
-                        if (ackResult.accepted) {
-                            terminalCreditStateRef.current = ackResult.state;
-                            void carrier.acknowledge(ack);
-                        }
-                    }
+                    acknowledgeAcceptedBytes({ terminalId, ackedByteOffset: applied.acceptedByteOffset });
                 }
 
                 if (applied.rejectedByteOffset !== null) {
@@ -504,10 +597,13 @@ export function useMachineTerminalSession(params: Readonly<{
                 }
 
                 if (applied.status === 'exited') {
+                    terminalStreamDoneRef.current = true;
                     setStatus('exited');
+                    return;
                 }
 
                 if (read.done) {
+                    terminalStreamDoneRef.current = true;
                     setStatus('exited');
                     return;
                 }
@@ -529,6 +625,7 @@ export function useMachineTerminalSession(params: Readonly<{
             clearActiveTerminalStream();
         };
     }, [
+        acknowledgeAcceptedBytes,
         connectionNonce,
         byteStreamEnabled,
         clearActiveTerminalStream,
@@ -545,6 +642,7 @@ export function useMachineTerminalSession(params: Readonly<{
         params.terminalRef,
         replaceSurfaceState,
         recordTerminalPreviewOutput,
+        replaceCachedPreviewWithReplay,
         resetAutoRetryState,
         scheduleAutoRetry,
         setDetectedUrl,
@@ -573,44 +671,127 @@ export function useMachineTerminalSession(params: Readonly<{
 
     const onWriteComplete = React.useCallback((event: EmbeddedTerminalWriteCompleteEvent) => {
         const pendingWrite = pendingRendererWriteRef.current;
-        if (!pendingWrite || !isMatchingRendererWrite(event, pendingWrite)) {
+        const runtime = terminalStreamRuntimeRef.current;
+        if (!pendingWrite || !runtime || !isMatchingRendererWriteIdentity(event, pendingWrite)) {
             return;
         }
-        if (pendingWrite.previewText) {
-            recordTerminalPreviewOutput(pendingWrite.previewText);
+        const expectedAckedByteOffset = pendingWrite.byteOffset + pendingWrite.byteLength;
+        if (event.ackedByteOffset > expectedAckedByteOffset) {
+            return;
         }
         pendingRendererWriteRef.current = null;
-        pendingWritePreviewTextRef.current.delete(getRendererWriteKey(pendingWrite));
+        pendingWritePreviewBytesRef.current.delete(getRendererWriteKey(pendingWrite));
+        if (event.ackedByteOffset < expectedAckedByteOffset) {
+            const retryCursor = pendingWrite.nextCursor.mode === 'byte-offset'
+                ? pendingWrite.byteOffset
+                : cursorRef.current;
+            const priorCursor = cursorRef.current;
+            const priorCursorMode = cursorModeRef.current;
+            cursorRef.current = retryCursor;
+            cursorModeRef.current = pendingWrite.nextCursor.mode;
+            if (retryCursor !== priorCursor || pendingWrite.nextCursor.mode !== priorCursorMode) {
+                updateSurfaceState((current) => ({
+                    ...current,
+                    terminalId: event.terminalId,
+                    cursor: retryCursor,
+                    cursorMode: pendingWrite.nextCursor.mode,
+                }));
+            }
+            return;
+        }
+        if (pendingWrite.previewBytes.byteLength > 0) {
+            recordTerminalPreviewOutput(terminalPreviewDecoderRef.current.decode(pendingWrite.previewBytes));
+        }
         const nextCursor = pendingWrite.nextCursor.value;
+        const priorPendingCursor = cursorRef.current;
+        const priorPendingCursorMode = cursorModeRef.current;
+        cursorRef.current = nextCursor;
         cursorModeRef.current = pendingWrite.nextCursor.mode;
-        if (nextCursor !== cursorRef.current) {
-            cursorRef.current = nextCursor;
+        if (nextCursor !== priorPendingCursor || pendingWrite.nextCursor.mode !== priorPendingCursorMode) {
             updateSurfaceState((current) => ({
                 ...current,
                 terminalId: event.terminalId,
                 cursor: nextCursor,
+                cursorMode: pendingWrite.nextCursor.mode,
             }));
         }
-
-        const state = terminalCreditStateRef.current;
-        const carrier = terminalStreamCarrierRef.current;
-        if (!state || !carrier || event.terminalId !== terminalIdRef.current) {
-            return;
-        }
-        const ack = {
+        acknowledgeAcceptedBytes({
             terminalId: event.terminalId,
-            rendererId: embeddedTerminalRendererId,
-            surfaceEpoch: state.surfaceEpoch,
             ackedByteOffset: event.ackedByteOffset,
-            creditBytes: state.creditBytes,
-        };
-        const result = applyTerminalRendererAck(state, ack);
-        if (!result.accepted) {
+            writeGeneration: event.writeGeneration,
+        });
+
+        if (containsTerminalReplayOutput(pendingWrite.deferredFrames, event.terminalId)) {
+            replaceCachedPreviewWithReplay(event.terminalId);
+        }
+        const applied = runtime.applyFrames(pendingWrite.deferredFrames);
+        if (applied.queuedWrite) {
+            if (pendingWrite.responseCursor.mode === 'byte-offset' && applied.acceptedByteOffset !== null) {
+                const acceptedCursor = Math.min(pendingWrite.responseCursor.value, applied.acceptedByteOffset);
+                const priorAcceptedCursor = cursorRef.current;
+                const priorAcceptedCursorMode = cursorModeRef.current;
+                cursorRef.current = acceptedCursor;
+                cursorModeRef.current = pendingWrite.responseCursor.mode;
+                if (acceptedCursor !== priorAcceptedCursor || pendingWrite.responseCursor.mode !== priorAcceptedCursorMode) {
+                    updateSurfaceState((current) => ({
+                        ...current,
+                        terminalId: event.terminalId,
+                        cursor: acceptedCursor,
+                        cursorMode: pendingWrite.responseCursor.mode,
+                    }));
+                }
+                acknowledgeAcceptedBytes({ terminalId: event.terminalId, ackedByteOffset: applied.acceptedByteOffset });
+            }
+            const previewKey = getRendererWriteKey(applied.queuedWrite);
+            pendingRendererWriteRef.current = {
+                ...applied.queuedWrite,
+                previewBytes: pendingWritePreviewBytesRef.current.get(previewKey) ?? new Uint8Array(),
+                nextCursor: pendingWrite.responseCursor.mode === 'legacy-event-cursor'
+                    ? { mode: 'legacy-event-cursor', value: applied.queuedWrite.seq + 1 }
+                    : {
+                        mode: 'byte-offset',
+                        value: Math.min(pendingWrite.responseCursor.value, applied.queuedWrite.ackedByteOffset),
+                    },
+                deferredFrames: applied.deferredFrames ?? [],
+                responseCursor: pendingWrite.responseCursor,
+                responseDone: pendingWrite.responseDone,
+            };
+            pendingWritePreviewBytesRef.current.delete(previewKey);
             return;
         }
-        terminalCreditStateRef.current = result.state;
-        void carrier.acknowledge(ack);
-    }, [recordTerminalPreviewOutput, updateSurfaceState]);
+
+        const priorCursor = cursorRef.current;
+        const priorCursorMode = cursorModeRef.current;
+        const finalCursor = pendingWrite.responseCursor.mode === 'byte-offset'
+            && applied.rejectedByteOffset !== null
+            ? applied.acceptedByteOffset ?? priorCursor
+            : pendingWrite.responseCursor.value;
+        cursorRef.current = finalCursor;
+        cursorModeRef.current = pendingWrite.responseCursor.mode;
+        if (finalCursor !== priorCursor || pendingWrite.responseCursor.mode !== priorCursorMode) {
+            updateSurfaceState((current) => ({
+                ...current,
+                terminalId: event.terminalId,
+                cursor: finalCursor,
+                cursorMode: pendingWrite.responseCursor.mode,
+            }));
+        }
+        if (pendingWrite.responseCursor.mode === 'byte-offset' && applied.acceptedByteOffset !== null) {
+            acknowledgeAcceptedBytes({ terminalId: event.terminalId, ackedByteOffset: applied.acceptedByteOffset });
+        }
+        if (applied.rejectedByteOffset !== null) {
+            return;
+        }
+        if (applied.status === 'exited' || pendingWrite.responseDone) {
+            terminalStreamDoneRef.current = true;
+            setStatus('exited');
+        }
+    }, [
+        acknowledgeAcceptedBytes,
+        recordTerminalPreviewOutput,
+        replaceCachedPreviewWithReplay,
+        updateSurfaceState,
+    ]);
 
     return {
         status,
@@ -640,11 +821,15 @@ function isQueuedRendererWriteResult(
     return typeof result === 'object' && result !== null && result.status === 'queued';
 }
 
+function containsTerminalReplayOutput(frames: readonly TerminalStreamFrame[], terminalId: string): boolean {
+    return frames.some((frame) => frame.terminalId === terminalId && (frame.t === 'bytes' || frame.t === 'gap'));
+}
+
 function getRendererWriteKey(input: Pick<EmbeddedTerminalWriteCompleteEvent, 'terminalId' | 'seq' | 'byteOffset' | 'writeGeneration'>): string {
     return `${input.terminalId}:${input.seq}:${input.byteOffset}:${input.writeGeneration}`;
 }
 
-function isMatchingRendererWrite(
+function isMatchingRendererWriteIdentity(
     event: EmbeddedTerminalWriteCompleteEvent,
     pending: EmbeddedTerminalWriteCompleteEvent,
 ): boolean {
@@ -652,6 +837,5 @@ function isMatchingRendererWrite(
         && event.seq === pending.seq
         && event.byteOffset === pending.byteOffset
         && event.byteLength === pending.byteLength
-        && event.ackedByteOffset === pending.ackedByteOffset
         && event.writeGeneration === pending.writeGeneration;
 }

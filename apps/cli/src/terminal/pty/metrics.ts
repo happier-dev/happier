@@ -1,4 +1,5 @@
 export type TerminalPtyMetricsSnapshot = Readonly<{
+  activeTerminals: number;
   bytesWritten: number;
   bytesRead: number;
   chunksWritten: number;
@@ -18,7 +19,7 @@ export type TerminalPtyMetrics = Readonly<{
   recordLegacyOnlyProvider: () => void;
   recordExit: () => void;
   recordRendererAck: (input: Readonly<{ ackedByteOffset: number; availableByteOffset: number }>) => void;
-  snapshot: () => TerminalPtyMetricsSnapshot;
+  snapshot: (activeTerminals: number) => TerminalPtyMetricsSnapshot;
 }>;
 
 export function createTerminalPtyMetrics(): TerminalPtyMetrics {
@@ -60,6 +61,6 @@ export function createTerminalPtyMetrics(): TerminalPtyMetrics {
       counters.acknowledgedByteOffsetHighWater = Math.max(counters.acknowledgedByteOffsetHighWater, acked);
       counters.rendererAckLagBytesHighWater = Math.max(counters.rendererAckLagBytesHighWater, Math.max(0, available - acked));
     },
-    snapshot: () => ({ ...counters }),
+    snapshot: (activeTerminals) => ({ ...counters, activeTerminals }),
   };
 }

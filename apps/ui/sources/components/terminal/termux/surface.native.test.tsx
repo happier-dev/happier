@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import renderer, { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { TermuxTerminalSurface } from './surface.native';
 import type { EmbeddedTerminalWriteBytesResult } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
@@ -47,6 +47,10 @@ describe('TermuxTerminalSurface', () => {
         nativeModuleMock.writeBytes.mockReset();
         getOptionalNativeModuleMock.mockReset();
         getOptionalNativeViewManagerMock.mockReset();
+    });
+
+    it('projects the native testID prop through its wrapper contract', () => {
+        expectTypeOf<React.ComponentProps<typeof TermuxTerminalSurface>['testID']>().toEqualTypeOf<string | undefined>();
     });
 
     it('reports native-module-missing when the Expo module or view manager is unavailable', async () => {
@@ -171,7 +175,7 @@ describe('TermuxTerminalSurface', () => {
         });
         getOptionalNativeModuleMock.mockReturnValue(nativeModuleMock);
         getOptionalNativeViewManagerMock.mockReturnValue(NativeView);
-        let root: renderer.ReactTestRenderer | null = null;
+        let root!: renderer.ReactTestRenderer;
 
         await act(async () => {
             root = renderer.create(
@@ -191,7 +195,7 @@ describe('TermuxTerminalSurface', () => {
 
         expect(nativeModuleMock.createSurface).toHaveBeenCalledWith('surface-1');
         expect(onUnavailable).not.toHaveBeenCalled();
-        expect(root?.root.findByProps({ testID: 'native-terminal-view' })).toBeTruthy();
+        expect(root.root.findByProps({ testID: 'native-terminal-view' })).toBeTruthy();
 
         await act(async () => {
             listeners.get('surfaceReady')?.({ surfaceId: 'surface-1', cols: 100, rows: 32 });
@@ -224,7 +228,7 @@ describe('TermuxTerminalSurface', () => {
             });
         getOptionalNativeModuleMock.mockReturnValue(nativeModuleMock);
         getOptionalNativeViewManagerMock.mockReturnValue(NativeView);
-        let root: renderer.ReactTestRenderer | null = null;
+        let root!: renderer.ReactTestRenderer;
 
         await act(async () => {
             root = renderer.create(
@@ -243,12 +247,74 @@ describe('TermuxTerminalSurface', () => {
         });
 
         await act(async () => {
-            root?.root.findByType(View).props.onLayout?.();
+            root.root.findByType(View).props.onLayout?.();
             await Promise.resolve();
         });
 
         expect(nativeModuleMock.createSurface).toHaveBeenCalledTimes(2);
         expect(onReady).toHaveBeenCalledWith(100, 32);
+        expect(onUnavailable).not.toHaveBeenCalled();
+    });
+
+    it('ignores a stale surface-creation failure after the mounted surface changes', async () => {
+        const onUnavailable = vi.fn();
+        const NativeView = vi.fn((props: { testID?: string }) => <View testID={props.testID ?? 'termux-native-view'} />);
+        let resolveFirstCreate: ((value: unknown) => void) | null = null;
+        nativeModuleMock.createSurface
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolveFirstCreate = resolve;
+            }))
+            .mockResolvedValueOnce({
+                available: true,
+                platform: 'android',
+                renderer: 'android-termux',
+                moduleVersion: '0.0.0',
+                accessibility: 'fallback-required',
+            });
+        getOptionalNativeModuleMock.mockReturnValue(nativeModuleMock);
+        getOptionalNativeViewManagerMock.mockReturnValue(NativeView);
+        let root!: renderer.ReactTestRenderer;
+
+        await act(async () => {
+            root = renderer.create(
+                <TermuxTerminalSurface
+                    surfaceId="surface-1"
+                    fontSize={14}
+                    lineHeightPx={18}
+                    onInput={vi.fn()}
+                    onReady={vi.fn()}
+                    onResize={vi.fn()}
+                    onUnavailable={onUnavailable}
+                />,
+            );
+        });
+
+        await act(async () => {
+            root.update(
+                <TermuxTerminalSurface
+                    surfaceId="surface-2"
+                    fontSize={14}
+                    lineHeightPx={18}
+                    onInput={vi.fn()}
+                    onReady={vi.fn()}
+                    onResize={vi.fn()}
+                    onUnavailable={onUnavailable}
+                />,
+            );
+            await Promise.resolve();
+        });
+
+        expect(nativeModuleMock.createSurface).toHaveBeenLastCalledWith('surface-2');
+
+        await act(async () => {
+            resolveFirstCreate?.({
+                available: false,
+                reason: 'renderer-unavailable',
+                detail: 'The old surface failed after it was disposed.',
+            });
+            await Promise.resolve();
+        });
+
         expect(onUnavailable).not.toHaveBeenCalled();
     });
 
@@ -359,6 +425,16 @@ describe('TermuxTerminalSurface', () => {
             );
         });
 
+        expect(onWriteComplete).toHaveBeenCalledTimes(1);
+        expect(onWriteComplete).toHaveBeenLastCalledWith({
+            terminalId: 'terminal-1',
+            seq: 8,
+            byteOffset: 0,
+            byteLength: 3,
+            ackedByteOffset: 0,
+            writeGeneration: 1,
+        });
+
         await act(async () => {
             ref.current?.writeBytes?.({
                 terminalId: 'terminal-1',
@@ -374,15 +450,15 @@ describe('TermuxTerminalSurface', () => {
             await Promise.resolve();
         });
 
-        expect(onWriteComplete).not.toHaveBeenCalled();
+        expect(onWriteComplete).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             resolveSecondWrite?.({ accepted: true, byteOffset: 3 });
             await Promise.resolve();
         });
 
-        expect(onWriteComplete).toHaveBeenCalledTimes(1);
-        expect(onWriteComplete).toHaveBeenCalledWith({
+        expect(onWriteComplete).toHaveBeenCalledTimes(2);
+        expect(onWriteComplete).toHaveBeenLastCalledWith({
             terminalId: 'terminal-1',
             seq: 9,
             byteOffset: 0,
@@ -434,6 +510,115 @@ describe('TermuxTerminalSurface', () => {
             byteLength: 3,
             ackedByteOffset: 0,
             writeGeneration: 1,
+        });
+    });
+
+    it('rejects a queued write exactly once when a renderer crash falls back and unmounts', async () => {
+        const onWriteComplete = vi.fn();
+        const onUnavailable = vi.fn();
+        const onRendererCrash = vi.fn();
+        const NativeView = vi.fn((props: { testID?: string }) => <View testID={props.testID ?? 'termux-native-view'} />);
+        let resolveWrite: ((value: unknown) => void) | null = null;
+        nativeModuleMock.writeBytes.mockImplementation(() => new Promise((resolve) => {
+            resolveWrite = resolve;
+        }));
+        getOptionalNativeModuleMock.mockReturnValue(nativeModuleMock);
+        getOptionalNativeViewManagerMock.mockReturnValue(NativeView);
+        const ref = React.createRef<React.ElementRef<typeof TermuxTerminalSurface>>();
+        let root!: renderer.ReactTestRenderer;
+
+        await act(async () => {
+            root = renderer.create(
+                <TermuxTerminalSurface
+                    ref={ref}
+                    surfaceId="surface-1"
+                    fontSize={14}
+                    lineHeightPx={18}
+                    onInput={vi.fn()}
+                    onReady={vi.fn()}
+                    onResize={vi.fn()}
+                    onWriteComplete={onWriteComplete}
+                    onUnavailable={onUnavailable}
+                    onRendererCrash={onRendererCrash}
+                />,
+            );
+        });
+
+        await act(async () => {
+            ref.current?.writeBytes?.({
+                terminalId: 'terminal-1',
+                seq: 10,
+                byteOffset: 6,
+                writeGeneration: 4,
+                bytes: new Uint8Array([65, 66, 67]),
+            });
+            listeners.get('rendererCrash')?.({ surfaceId: 'surface-1', reason: 'draw failed', fatal: true });
+        });
+
+        expect(onWriteComplete).toHaveBeenCalledTimes(1);
+        expect(onWriteComplete).toHaveBeenCalledWith({
+            terminalId: 'terminal-1',
+            seq: 10,
+            byteOffset: 6,
+            byteLength: 3,
+            ackedByteOffset: 6,
+            writeGeneration: 4,
+        });
+        expect(onRendererCrash).toHaveBeenCalledTimes(1);
+        expect(onUnavailable).toHaveBeenCalledWith('renderer-unavailable');
+
+        await act(async () => {
+            root.unmount();
+            resolveWrite?.({ accepted: true, byteOffset: 9 });
+            await Promise.resolve();
+        });
+
+        expect(onWriteComplete).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a queued write exactly once when the native surface unmounts', async () => {
+        const onWriteComplete = vi.fn();
+        const NativeView = vi.fn((props: { testID?: string }) => <View testID={props.testID ?? 'termux-native-view'} />);
+        nativeModuleMock.writeBytes.mockReturnValue(new Promise(() => {}));
+        getOptionalNativeModuleMock.mockReturnValue(nativeModuleMock);
+        getOptionalNativeViewManagerMock.mockReturnValue(NativeView);
+        const ref = React.createRef<React.ElementRef<typeof TermuxTerminalSurface>>();
+        let root!: renderer.ReactTestRenderer;
+
+        await act(async () => {
+            root = renderer.create(
+                <TermuxTerminalSurface
+                    ref={ref}
+                    surfaceId="surface-1"
+                    fontSize={14}
+                    lineHeightPx={18}
+                    onInput={vi.fn()}
+                    onReady={vi.fn()}
+                    onResize={vi.fn()}
+                    onWriteComplete={onWriteComplete}
+                />,
+            );
+        });
+
+        await act(async () => {
+            ref.current?.writeBytes?.({
+                terminalId: 'terminal-1',
+                seq: 11,
+                byteOffset: 9,
+                writeGeneration: 5,
+                bytes: new Uint8Array([68, 69, 70]),
+            });
+            root.unmount();
+        });
+
+        expect(onWriteComplete).toHaveBeenCalledTimes(1);
+        expect(onWriteComplete).toHaveBeenCalledWith({
+            terminalId: 'terminal-1',
+            seq: 11,
+            byteOffset: 9,
+            byteLength: 3,
+            ackedByteOffset: 9,
+            writeGeneration: 5,
         });
     });
 

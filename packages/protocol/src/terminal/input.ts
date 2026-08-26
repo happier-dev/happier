@@ -7,22 +7,22 @@ export const TerminalInputEventSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('text'),
     text: z.string().max(100_000),
-  }),
+  }).strict(),
   z.object({
     t: z.literal('key'),
     key: z.string().min(1).max(200),
     modifiers: z.array(TerminalModifierSchema).max(4).default([]),
-  }),
+  }).strict(),
   z.object({
     t: z.literal('paste'),
     text: z.string().max(1_000_000),
     bracketed: z.boolean(),
-  }),
+  }).strict(),
   z.object({
     t: z.literal('ime'),
     phase: z.enum(['start', 'update', 'commit', 'cancel']),
     text: z.string().max(100_000).optional(),
-  }),
+  }).strict(),
   z.object({
     t: z.literal('mouse'),
     kind: z.enum(['down', 'up', 'move', 'wheel']),
@@ -30,27 +30,27 @@ export const TerminalInputEventSchema = z.discriminatedUnion('t', [
     x: z.number().int().min(0).max(10_000),
     y: z.number().int().min(0).max(10_000),
     modifiers: z.array(TerminalModifierSchema).max(4).default([]),
-  }),
+  }).strict(),
   z.object({
     t: z.literal('resize'),
     cols: z.number().int().min(2).max(500),
     rows: z.number().int().min(2).max(500),
-  }),
+  }).strict(),
 ]);
 export type TerminalInputEvent = z.infer<typeof TerminalInputEventSchema>;
 
 export const TerminalStreamInputRequestSchema = z.object({
   terminalId: TerminalIdSchema,
   event: TerminalInputEventSchema,
-});
+}).strict();
 export type TerminalStreamInputRequest = z.infer<typeof TerminalStreamInputRequestSchema>;
 
 export const TerminalStreamInputResponseSchema = z.union([
-  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(true) }).strict(),
   z.object({
     ok: z.literal(false),
     code: z.string().min(1).max(200),
     message: z.string().min(1).max(2000),
-  }),
+  }).strict(),
 ]);
 export type TerminalStreamInputResponse = z.infer<typeof TerminalStreamInputResponseSchema>;

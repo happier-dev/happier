@@ -1,9 +1,11 @@
 import {
-  readSessionMetadataRuntimeDescriptor,
+  readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata,
   resolveAgentIdFromSessionMetadata,
   type AttachSessionMetadataV1,
 } from '@happier-dev/agents';
-import { compareMachineHosts } from '@happier-dev/protocol';
+import {
+  compareMachineHosts,
+} from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
@@ -21,22 +23,10 @@ function readString(value: unknown): string | undefined {
 }
 
 function buildAttachSessionMetadata(metadata: Readonly<Record<string, unknown>>): AttachSessionMetadataV1 {
-  const openCodeRuntimeDescriptor = readSessionMetadataRuntimeDescriptor(metadata, 'opencode');
+  const runtimeDescriptorV1 = readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(metadata);
   return Object.freeze({
     ...(readString(metadata.path) !== undefined ? { path: readString(metadata.path) } : {}),
-    ...(readString(metadata.providerSessionId) !== undefined ? { providerSessionId: readString(metadata.providerSessionId) } : {}),
-    ...(openCodeRuntimeDescriptor?.providerSessionId
-      ? { opencodeSessionId: openCodeRuntimeDescriptor.providerSessionId }
-      : {}),
-    ...(openCodeRuntimeDescriptor?.backendMode
-      ? { opencodeBackendMode: openCodeRuntimeDescriptor.backendMode }
-      : {}),
-    ...(openCodeRuntimeDescriptor?.serverBaseUrl
-      ? { opencodeServerBaseUrl: openCodeRuntimeDescriptor.serverBaseUrl }
-      : {}),
-    ...(openCodeRuntimeDescriptor?.serverBaseUrl
-      ? { opencodeServerBaseUrlExplicit: openCodeRuntimeDescriptor.serverBaseUrlExplicit }
-      : {}),
+    ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
   });
 }
 

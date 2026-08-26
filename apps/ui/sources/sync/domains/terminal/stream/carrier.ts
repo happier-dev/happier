@@ -153,6 +153,12 @@ export function createMachineRpcTerminalStreamCarrier(
     };
     const sendLegacyInput = async (terminalId: string, protocolEvent: ProtocolTerminalInputEvent): Promise<void> => {
         const fallbackAction = terminalInputEventToPtyAction(protocolEvent);
+        if (fallbackAction.kind === 'unsupported') {
+            throw new TerminalStreamInputError(fallbackAction.code, fallbackAction.message);
+        }
+        if (fallbackAction.kind === 'noop') {
+            return;
+        }
         if (fallbackAction.kind === 'resize') {
             const resizeResponse = await machineTerminalResize(
                 options.machineId,

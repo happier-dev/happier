@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  TERMINAL_STREAM_MAX_FRAMES,
   TerminalStreamReadResponseSchema,
   decodeTerminalStreamBytesFrame,
   type TerminalStreamBytesFrame,
@@ -71,7 +72,7 @@ class FakeInteractivePty implements PtyProcess {
     return { dispose: () => { } };
   }
 
-  private emitBytes(data: Buffer): void {
+  emitBytes(data: Buffer | Uint8Array): void {
     for (const listener of this.onDataBytesListeners) {
       listener(data);
     }
@@ -394,17 +395,20 @@ describe('registerMachineTerminalRpcHandlers', () => {
   });
 
   it('bridges byte-stream reads to the daemon substrate when available', async () => {
+    let receivedInput: unknown = null;
     const sessionManager = {
-      readByteStream: async (input: unknown) => ({
-        ok: true,
-        terminalId: 'term-1',
-        frames: [],
-        nextByteOffset: 10,
-        availableByteOffset: 10,
-        droppedBeforeByteOffset: 0,
-        done: false,
-        input,
-      }),
+      readByteStream: async (input: unknown) => {
+        receivedInput = input;
+        return {
+          ok: true,
+          terminalId: 'term-1',
+          frames: [],
+          nextByteOffset: 10,
+          availableByteOffset: 10,
+          droppedBeforeByteOffset: 0,
+          done: false,
+        };
+      },
     };
     const registered = new Map<string, (params: unknown) => Promise<unknown>>();
     const rpcHandlerManager = {
@@ -429,6 +433,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
         terminalId: 'term-1',
         nextByteOffset: 10,
       }));
+    expect(receivedInput).toEqual({ terminalId: 'term-1', byteOffset: 0, maxBytes: 4096, maxFrames: 8 });
   });
 
   it('accepts stream input through RPC and exposes resulting PTY output via byte-stream reads', async () => {
@@ -505,6 +510,69 @@ describe('registerMachineTerminalRpcHandlers', () => {
     const byteFrames = read.frames.filter((frame): frame is TerminalStreamBytesFrame => frame.t === 'bytes');
     const decoded = Buffer.concat(byteFrames.map((frame) => Buffer.from(decodeTerminalStreamBytesFrame(frame)))).toString('utf8');
     expect(decoded).toContain('ran:printf terminal-marker');
+  });
+
+  it('caps omitted maxFrames responses including a gap frame', async () => {
+    const provider = new FakeInteractivePtyProvider();
+    const sessionManager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      env: { SHELL: '/bin/bash' } as any,
+      platform: 'linux',
+      now: () => 0,
+      config: {
+        maxSessions: 1,
+        idleTimeoutMs: 60_000,
+        bufferMaxBytes: TERMINAL_STREAM_MAX_FRAMES,
+        bufferMaxEvents: TERMINAL_STREAM_MAX_FRAMES + 10,
+        bufferRetentionMs: 10 * 60_000,
+        urlParseBufferLimit: 32_768,
+        maxWriteChunkBytes: TERMINAL_STREAM_MAX_FRAMES + 10,
+        defaultCols: 80,
+        defaultRows: 24,
+      },
+    });
+    const registered = new Map<string, (params: unknown) => Promise<unknown>>();
+
+    try {
+      registerMachineTerminalRpcHandlers({
+        rpcHandlerManager: {
+          registerHandler: (method: string, handler: (params: unknown) => Promise<unknown>) => registered.set(method, handler),
+        } as unknown as RpcHandlerManager,
+        deps: {
+          env: {},
+          workingDirectory: process.cwd(),
+          sessionManager,
+        },
+      });
+
+      const ensured = await registered.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)?.({
+        terminalKey: 'frame-cap',
+        cwd: process.cwd(),
+        cols: 80,
+        rows: 24,
+      });
+      if (!ensured || typeof ensured !== 'object' || !('ok' in ensured) || ensured.ok !== true || !('terminalId' in ensured)) {
+        throw new Error('expected terminal ensure to succeed');
+      }
+      const terminalId = String(ensured.terminalId);
+      const pty = provider.spawned[0]?.pty;
+      if (!pty) throw new Error('expected PTY to spawn');
+      for (let index = 0; index < TERMINAL_STREAM_MAX_FRAMES + 1; index += 1) {
+        pty.emitBytes(Buffer.from([index % 251]));
+      }
+
+      const response = TerminalStreamReadResponseSchema.parse(
+        await registered.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)?.({ terminalId, byteOffset: 0 }),
+      );
+      expect(response.ok).toBe(true);
+      if (!response.ok) throw new Error('expected byte stream read to succeed');
+      expect(response.frames).toHaveLength(TERMINAL_STREAM_MAX_FRAMES);
+      expect(response.frames[0]).toMatchObject({ t: 'gap', nextAvailableByteOffset: 1 });
+      expect(response.nextByteOffset).toBe(TERMINAL_STREAM_MAX_FRAMES);
+      expect(response.availableByteOffset).toBe(TERMINAL_STREAM_MAX_FRAMES + 1);
+    } finally {
+      sessionManager.dispose();
+    }
   });
 
   it('returns structured byte-stream unavailable fallback when the daemon substrate is still legacy-only', async () => {

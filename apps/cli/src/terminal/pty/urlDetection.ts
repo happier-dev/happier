@@ -62,6 +62,7 @@ function retainIncompleteTail(input: string): string {
 
 export type TerminalUrlDetector = Readonly<{
   ingest: (chunk: string) => readonly DetectedTerminalUrl[];
+  flush: () => readonly DetectedTerminalUrl[];
 }>;
 
 export function createTerminalUrlDetector(params: Readonly<{ bufferLimit: number; seenLimit?: number }>): TerminalUrlDetector {
@@ -83,6 +84,23 @@ export function createTerminalUrlDetector(params: Readonly<{ bufferLimit: number
     }
   };
 
+  const extractUrls = (allowBufferEnd: boolean, context: string): readonly DetectedTerminalUrl[] => {
+    const out: DetectedTerminalUrl[] = [];
+    const regex = /(https?:\/\/[^\s<>"'`]+)/g;
+    let match: RegExpExecArray | null = null;
+    while ((match = regex.exec(buffer))) {
+      const rawUrl = match[1] ?? '';
+      const endIndex = (match.index ?? 0) + rawUrl.length;
+      if (!allowBufferEnd && endIndex >= buffer.length) continue;
+      const url = coerceHttpUrl(rawUrl);
+      if (!url) continue;
+      if (seen.has(url)) continue;
+      remember(url);
+      out.push({ url, ...classifyUrl(url, context) });
+    }
+    return out;
+  };
+
   const ingest = (chunk: string): readonly DetectedTerminalUrl[] => {
     const clean = stripAnsi(String(chunk ?? ''));
     if (!clean) return [];
@@ -92,23 +110,17 @@ export function createTerminalUrlDetector(params: Readonly<{ bufferLimit: number
       buffer = buffer.slice(buffer.length - bufferLimit);
     }
 
-    const out: DetectedTerminalUrl[] = [];
-    const regex = /(https?:\/\/[^\s<>"'`]+)/g;
-    let match: RegExpExecArray | null = null;
-    while ((match = regex.exec(buffer))) {
-      const rawUrl = match[1] ?? '';
-      const endIndex = (match.index ?? 0) + rawUrl.length;
-      if (endIndex >= buffer.length) continue;
-      const url = coerceHttpUrl(rawUrl);
-      if (!url) continue;
-      if (seen.has(url)) continue;
-      remember(url);
-      out.push({ url, ...classifyUrl(url, clean) });
-    }
+    const out = extractUrls(false, clean);
 
     buffer = retainIncompleteTail(buffer);
     return out;
   };
 
-  return { ingest };
+  const flush = (): readonly DetectedTerminalUrl[] => {
+    const out = extractUrls(true, buffer);
+    buffer = '';
+    return out;
+  };
+
+  return { ingest, flush };
 }

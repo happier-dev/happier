@@ -41,6 +41,7 @@ export const TerminalStreamBytesFrameSchema = z
     encoding: TerminalStreamBytesEncodingSchema,
     data: z.string().max(TERMINAL_STREAM_MAX_ENCODED_BYTES),
   })
+  .strict()
   .superRefine((frame, ctx) => {
     const decodedLength = readStrictBase64DecodedLength(frame.data);
     if (decodedLength === null) {
@@ -74,7 +75,7 @@ export const TerminalStreamControlFrameSchema = z
       droppedBeforeByteOffset: ByteOffsetSchema,
       nextAvailableByteOffset: ByteOffsetSchema,
       reason: z.enum(['ring_overflow', 'consumer_too_slow', 'session_restarted']),
-    }),
+    }).strict(),
     z.object({
       t: z.literal('url'),
       terminalId: TerminalIdSchema,
@@ -82,20 +83,20 @@ export const TerminalStreamControlFrameSchema = z
       url: z.string().url(),
       kind: z.enum(['auth', 'generic']),
       suggestOpen: z.boolean().optional(),
-    }),
+    }).strict(),
     z.object({
       t: z.literal('exit'),
       terminalId: TerminalIdSchema,
       byteOffset: ByteOffsetSchema,
       exitCode: z.number().int().nullable(),
       signal: z.number().int().nullable(),
-    }),
+    }).strict(),
     z.object({
       t: z.literal('legacyOnly'),
       terminalId: TerminalIdSchema,
       provider: z.enum(['windows-conpty', 'python-relay', 'unknown']),
       reason: z.string().min(1).max(2000),
-    }),
+    }).strict(),
   ])
   .superRefine((frame, ctx) => {
     if (frame.t === 'gap' && frame.droppedBeforeByteOffset > frame.nextAvailableByteOffset) {
@@ -125,6 +126,7 @@ export const TerminalStreamReadRequestSchema = z
     rendererId: z.string().min(1).max(200).optional(),
     surfaceEpoch: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   })
+  .strict()
   .superRefine((request, ctx) => {
     if (request.ackedByteOffset !== undefined && request.ackedByteOffset > request.byteOffset) {
       ctx.addIssue({
@@ -146,6 +148,7 @@ export const TerminalStreamReadOkResponseSchema = z
     droppedBeforeByteOffset: ByteOffsetSchema,
     done: z.boolean(),
   })
+  .strict()
   .superRefine((response, ctx) => {
     if (response.droppedBeforeByteOffset > response.nextByteOffset) {
       ctx.addIssue({
@@ -162,6 +165,9 @@ export const TerminalStreamReadOkResponseSchema = z
       });
     }
     let decodedByteTotal = 0;
+    let expectedByteOffset: number | null = null;
+    let sawBytesFrame = false;
+    let sawGapFrame = false;
     response.frames.forEach((frame, index) => {
       if (frame.terminalId !== response.terminalId) {
         ctx.addIssue({
@@ -169,6 +175,17 @@ export const TerminalStreamReadOkResponseSchema = z
           path: ['frames', index, 'terminalId'],
           message: 'frame terminalId must match response terminalId',
         });
+      }
+      if (frame.t === 'gap') {
+        if (sawBytesFrame || sawGapFrame) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['frames', index],
+            message: 'gap frame must appear at most once and before byte frames',
+          });
+        }
+        sawGapFrame = true;
+        expectedByteOffset = frame.nextAvailableByteOffset;
       }
       if (frame.t === 'bytes') {
         const frameEnd = frame.byteOffset + frame.byteLength;
@@ -186,9 +203,25 @@ export const TerminalStreamReadOkResponseSchema = z
             message: 'bytes frame byteOffset must be greater than or equal to droppedBeforeByteOffset',
           });
         }
+        if (expectedByteOffset !== null && frame.byteOffset !== expectedByteOffset) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['frames', index, 'byteOffset'],
+            message: 'bytes frame ranges must be ordered and contiguous',
+          });
+        }
+        sawBytesFrame = true;
+        expectedByteOffset = frameEnd;
         decodedByteTotal += frame.byteLength;
       }
     });
+    if ((sawBytesFrame || sawGapFrame) && expectedByteOffset !== response.nextByteOffset) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['nextByteOffset'],
+        message: 'nextByteOffset must match the end of the delivered byte range',
+      });
+    }
     if (decodedByteTotal > TERMINAL_STREAM_MAX_READ_BYTES) {
       ctx.addIssue({
         code: 'custom',
@@ -202,7 +235,7 @@ export const TerminalStreamUnavailableResponseSchema = z.object({
   ok: z.literal(false),
   code: z.string().min(1).max(200),
   message: z.string().min(1).max(2000),
-});
+}).strict();
 
 export const TerminalStreamReadResponseSchema = z.union([
   TerminalStreamReadOkResponseSchema,
@@ -216,11 +249,11 @@ export const TerminalStreamAckRequestSchema = z.object({
   rendererId: z.string().min(1).max(200).optional(),
   surfaceEpoch: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   creditBytes: z.number().int().min(0).max(TERMINAL_STREAM_MAX_READ_BYTES).optional(),
-});
+}).strict();
 export type TerminalStreamAckRequest = z.infer<typeof TerminalStreamAckRequestSchema>;
 
 export const TerminalStreamAckResponseSchema = z.union([
-  z.object({ ok: z.literal(true) }),
+  z.object({ ok: z.literal(true) }).strict(),
   TerminalStreamUnavailableResponseSchema,
 ]);
 export type TerminalStreamAckResponse = z.infer<typeof TerminalStreamAckResponseSchema>;

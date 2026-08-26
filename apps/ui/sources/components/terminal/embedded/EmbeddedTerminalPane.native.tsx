@@ -14,8 +14,13 @@ import { Text } from '@/components/ui/text/Text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { t } from '@/text';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
-import { XtermWebViewSurface, type XtermWebViewSurfaceHandle } from '@/components/terminal/xterm/webview/XtermWebViewSurface.native';
+import {
+    XtermWebViewSurface,
+    type XtermWebViewRendererFailure,
+    type XtermWebViewSurfaceHandle,
+} from '@/components/terminal/xterm/webview/XtermWebViewSurface.native';
 import { resolveGhosttyRendererSelection, type GhosttyRendererSelectionOptions } from '@/components/terminal/ghostty/availability';
 import { GhosttyTerminalSurface } from '@/components/terminal/ghostty/surface.native';
 import { resolveTermuxRendererSelection, type TermuxRendererSelectionOptions } from '@/components/terminal/termux/availability';
@@ -89,6 +94,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
         [nativePlatform, resolvedNativeRendererOptions, terminalRendererPreference],
     );
     const [nativeRendererFailed, setNativeRendererFailed] = React.useState(false);
+    const [webViewRecoveryNonce, requestWebViewRecovery] = React.useReducer((value: number) => value + 1, 0);
     React.useEffect(() => {
         setNativeRendererFailed(false);
     }, [selectedRenderer]);
@@ -111,6 +117,10 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
             expiresAtMs: Date.now() + 24 * 60 * 60 * 1000,
         });
     }, [selectedRenderer, setNativeRendererQuarantine]);
+    const onWebViewRendererFailure = React.useCallback((_failure: XtermWebViewRendererFailure) => {
+        props.controller.retryConnect();
+        requestWebViewRecovery();
+    }, [props.controller]);
     const nativeAccessibilityAccepted = terminalRendererPreference === 'native'
         || hasAcceptedNativeAccessibility(resolvedNativeRendererOptions);
     const nativeSurfaceKey = props.nativeSurfaceKey?.trim() || props.testIdPrefix || 'embedded-terminal';
@@ -156,7 +166,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
             controller={props.controller}
             onRequestClose={props.onRequestClose}
             onPaste={onPaste}
-            onCopySelection={effectiveRenderer === 'ios-ghosttykit' ? onCopySelection : null}
+            onCopySelection={effectiveRenderer === 'ios-ghosttykit' || effectiveRenderer === 'android-termux' ? onCopySelection : null}
             toolbarActionsStart={props.toolbarActionsStart}
             testIdPrefix={props.testIdPrefix}
             footer={footer}
@@ -172,6 +182,10 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             fontSize={fontMetrics.fontSize}
                             lineHeightPx={fontMetrics.lineHeight}
                             accessibilityAccepted={nativeAccessibilityAccepted}
+                            accessibilityTerminalLabel={t('terminalEmbedded.nativeAccessibility.terminalLabel')}
+                            accessibilityFallbackValue={t('terminalEmbedded.nativeAccessibility.fallbackValue')}
+                            accessibilityFocusActionLabel={t('terminalEmbedded.nativeAccessibility.focusAction')}
+                            accessibilityCopySelectionActionLabel={t('terminalEmbedded.nativeAccessibility.copySelectionAction')}
                             onInput={props.controller.onInput}
                             onLink={(event) => props.controller.onLink?.(event.url)}
                             onTitle={(event) => props.controller.onTitle?.(event.title)}
@@ -191,6 +205,10 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             fontSize={fontMetrics.fontSize}
                             lineHeightPx={fontMetrics.lineHeight}
                             accessibilityAccepted={nativeAccessibilityAccepted}
+                            accessibilityTerminalLabel={t('terminalEmbedded.nativeAccessibility.terminalLabel')}
+                            accessibilityFallbackValue={t('terminalEmbedded.nativeAccessibility.fallbackValue')}
+                            accessibilityFocusActionLabel={t('terminalEmbedded.nativeAccessibility.focusAction')}
+                            accessibilityCopySelectionActionLabel={t('terminalEmbedded.nativeAccessibility.copySelectionAction')}
                             onInput={props.controller.onInput}
                             onLink={(event) => props.controller.onLink?.(event.url)}
                             onTitle={(event) => props.controller.onTitle?.(event.title)}
@@ -204,6 +222,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                         />
                     ) : (
                         <XtermWebViewSurface
+                            key={`xterm-webview-${webViewRecoveryNonce}`}
                             ref={webViewRef}
                             testID={props.testIdPrefix ? `${props.testIdPrefix}-xterm` : undefined}
                             fontSize={fontMetrics.fontSize}
@@ -214,6 +233,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             onResize={props.controller.onResize}
                             onReady={props.controller.onReady}
                             onWriteComplete={props.controller.onWriteComplete}
+                            onRendererFailure={onWebViewRendererFailure}
                         />
                     )}
                 </View>

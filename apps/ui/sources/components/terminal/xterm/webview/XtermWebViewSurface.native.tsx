@@ -19,6 +19,11 @@ import {
 import { buildXtermWebViewHtml } from './xtermWebViewHtml';
 
 const XTERM_WEBVIEW_BOOT_RETRY_LIMIT = 1;
+// Inline readiness retries finish in roughly 1.5 seconds; this only bounds a WebView that never boots.
+const XTERM_WEBVIEW_BOOT_READY_TIMEOUT_MS = 10_000;
+const XTERM_WEBVIEW_LOAD_ERROR_CODE = 'terminal_webview_load_error';
+const XTERM_WEBVIEW_PROCESS_TERMINATED_CODE = 'terminal_webview_process_terminated';
+const XTERM_WEBVIEW_READY_TIMEOUT_CODE = 'terminal_webview_ready_timeout';
 
 function createMessageId(): string {
     return Math.random().toString(36).slice(2);
@@ -31,6 +36,16 @@ export type XtermWebViewSurfaceHandle = Readonly<{
     focus: () => void;
 }>;
 
+export type XtermWebViewRejectedWrite = Readonly<Pick<XtermWriteCompleteEvent,
+    'terminalId' | 'seq' | 'byteOffset' | 'byteLength' | 'writeGeneration'
+>>;
+
+export type XtermWebViewRendererFailure = Readonly<{
+    type: 'boot-retry-exhausted';
+    code: string;
+    rejectedWrites: readonly XtermWebViewRejectedWrite[];
+}>;
+
 export type XtermWebViewSurfaceProps = Readonly<{
     onInput: (data: string) => void;
     onPaste?: (data: string) => void | Promise<unknown>;
@@ -38,6 +53,7 @@ export type XtermWebViewSurfaceProps = Readonly<{
     onResize: (cols: number, rows: number) => void;
     onReady: (cols: number, rows: number) => void;
     onWriteComplete?: (event: XtermWriteCompleteEvent) => void;
+    onRendererFailure?: (failure: XtermWebViewRendererFailure) => void;
     fontSize: number;
     lineHeightPx: number;
     bridgeMaxChunkBytes?: number;
@@ -61,6 +77,10 @@ function readStringPayloadField(value: unknown, key: string): string | null {
     if (!value || typeof value !== 'object') return null;
     const field = (value as Record<string, unknown>)[key];
     return typeof field === 'string' && field.length > 0 ? field : null;
+}
+
+function readBootErrorCode(value: unknown): string {
+    return readStringPayloadField(value, 'code') ?? 'terminal_boot_failed';
 }
 
 function readWriteCompleteEvent(value: unknown): XtermWriteCompleteEvent | null {
@@ -90,9 +110,13 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
         const readyRef = React.useRef(false);
         const pendingEnvelopeRef = React.useRef<HostEnvelope[]>([]);
         const pendingWriteBytesRef = React.useRef(0);
-        const pendingByteWritesRef = React.useRef(new Set<string>());
+        const pendingByteWritesRef = React.useRef(new Map<string, XtermWriteCompleteEvent>());
         const bootRetryCountRef = React.useRef(0);
+        const bootFailureReportedRef = React.useRef(false);
         const [reloadNonce, setReloadNonce] = React.useState(0);
+        const activeWebViewGenerationRef = React.useRef(reloadNonce);
+        const bootReadyTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+        const mountedRef = React.useRef(true);
         const maxChunkBytes = typeof props.bridgeMaxChunkBytes === 'number' ? props.bridgeMaxChunkBytes : 64_000;
         const maxPendingWriteBytes = props.maxPendingWriteBytes ?? DEFAULT_XTERM_WEBVIEW_MAX_PENDING_WRITE_BYTES;
 
@@ -125,10 +149,29 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
             ],
         );
 
+        const clearBootReadyTimeout = React.useCallback(() => {
+            if (bootReadyTimeoutRef.current === null) return;
+            clearTimeout(bootReadyTimeoutRef.current);
+            bootReadyTimeoutRef.current = null;
+        }, []);
+
         React.useEffect(() => {
             readyRef.current = false;
             bootRetryCountRef.current = 0;
-        }, [html]);
+            bootFailureReportedRef.current = false;
+            clearBootReadyTimeout();
+        }, [clearBootReadyTimeout, html]);
+
+        React.useLayoutEffect(() => {
+            activeWebViewGenerationRef.current = reloadNonce;
+        }, [reloadNonce]);
+
+        React.useEffect(() => {
+            mountedRef.current = true;
+            return () => {
+                mountedRef.current = false;
+            };
+        }, []);
 
         const postEnvelope = React.useCallback(
             (envelope: { v: 1; type: string; payload: unknown }) => {
@@ -160,6 +203,9 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
         }, []);
 
         const enqueueEnvelope = React.useCallback((envelope: HostEnvelope, byteLength: number) => {
+            if (bootFailureReportedRef.current) {
+                return false;
+            }
             if (readyRef.current) {
                 postEnvelope(envelope);
                 return true;
@@ -171,6 +217,54 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
             pendingWriteBytesRef.current += byteLength;
             return true;
         }, [maxPendingWriteBytes, postEnvelope]);
+
+        const rejectPendingWritesAfterBootFailure = React.useCallback((code: string) => {
+            if (bootFailureReportedRef.current) {
+                return;
+            }
+            bootFailureReportedRef.current = true;
+            const rejectedWrites = Array.from(pendingByteWritesRef.current.values(), (write) => ({
+                terminalId: write.terminalId,
+                seq: write.seq,
+                byteOffset: write.byteOffset,
+                byteLength: write.byteLength,
+                writeGeneration: write.writeGeneration,
+            }));
+            pendingByteWritesRef.current.clear();
+            pendingEnvelopeRef.current = [];
+            pendingWriteBytesRef.current = 0;
+            props.onRendererFailure?.({
+                type: 'boot-retry-exhausted',
+                code,
+                rejectedWrites,
+            });
+        }, [props.onRendererFailure]);
+
+        const handleWebViewBootFailure = React.useCallback((webViewGeneration: number, code: string) => {
+            if (!mountedRef.current || webViewGeneration !== activeWebViewGenerationRef.current || bootFailureReportedRef.current) {
+                return;
+            }
+            readyRef.current = false;
+            clearBootReadyTimeout();
+            if (bootRetryCountRef.current < XTERM_WEBVIEW_BOOT_RETRY_LIMIT) {
+                bootRetryCountRef.current += 1;
+                setReloadNonce((value) => value + 1);
+                return;
+            }
+            rejectPendingWritesAfterBootFailure(code);
+        }, [clearBootReadyTimeout, rejectPendingWritesAfterBootFailure]);
+
+        React.useEffect(() => {
+            const timeout = setTimeout(() => {
+                handleWebViewBootFailure(reloadNonce, XTERM_WEBVIEW_READY_TIMEOUT_CODE);
+            }, XTERM_WEBVIEW_BOOT_READY_TIMEOUT_MS);
+            bootReadyTimeoutRef.current = timeout;
+            return () => {
+                if (bootReadyTimeoutRef.current !== timeout) return;
+                clearTimeout(timeout);
+                bootReadyTimeoutRef.current = null;
+            };
+        }, [handleWebViewBootFailure, html, reloadNonce]);
 
         React.useImperativeHandle(
             ref,
@@ -200,7 +294,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                         },
                     }, bytes.byteLength);
                     if (!accepted) return false;
-                    pendingByteWritesRef.current.add(writeKey);
+                    pendingByteWritesRef.current.set(writeKey, completion);
                     return { status: 'queued' } as const;
                 },
                 clear: () => {
@@ -261,6 +355,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                     style={{ flex: 1 }}
                     keyboardDisplayRequiresUserAction={false}
                     onMessage={(event) => {
+                        if (!mountedRef.current || reloadNonce !== activeWebViewGenerationRef.current) return;
                         const raw = event.nativeEvent.data;
                         let parsed: unknown = null;
                         try {
@@ -272,8 +367,10 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                         if (!decoded) return;
 
                         if (decoded.type === 'ready') {
+                            if (bootFailureReportedRef.current) return;
                             const payload = readTerminalSizePayload(decoded.payload);
                             if (!payload) return;
+                            clearBootReadyTimeout();
                             readyRef.current = true;
                             requestNativeFocus();
                             props.onReady(payload.cols, payload.rows);
@@ -338,13 +435,18 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                         }
 
                         if (decoded.type === 'bootError') {
-                            readyRef.current = false;
-                            if (bootRetryCountRef.current < XTERM_WEBVIEW_BOOT_RETRY_LIMIT) {
-                                bootRetryCountRef.current += 1;
-                                setReloadNonce((value) => value + 1);
-                            }
+                            handleWebViewBootFailure(reloadNonce, readBootErrorCode(decoded.payload));
                             return;
                         }
+                    }}
+                    onError={() => {
+                        handleWebViewBootFailure(reloadNonce, XTERM_WEBVIEW_LOAD_ERROR_CODE);
+                    }}
+                    onContentProcessDidTerminate={() => {
+                        handleWebViewBootFailure(reloadNonce, XTERM_WEBVIEW_PROCESS_TERMINATED_CODE);
+                    }}
+                    onRenderProcessGone={() => {
+                        handleWebViewBootFailure(reloadNonce, XTERM_WEBVIEW_PROCESS_TERMINATED_CODE);
                     }}
                     key={`xterm-webview-${reloadNonce}`}
                 />

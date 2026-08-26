@@ -254,6 +254,42 @@ describe('machine RPC terminal stream carrier', () => {
         );
     });
 
+    it.each([
+        [RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, { t: 'mouse', kind: 'down', button: 0, x: 1, y: 1, modifiers: [] }],
+        [RPC_ERROR_CODES.METHOD_NOT_FOUND, { t: 'key', key: 'Unsupported', modifiers: [] }],
+    ] as const)('rejects unsupported legacy %s input with the canonical terminal error', async (rpcErrorCode, event) => {
+        machineTerminalStreamSendInputMock.mockRejectedValueOnce(Object.assign(
+            new Error('older daemon has no terminal stream input'),
+            { rpcErrorCode },
+        ));
+        const { createMachineRpcTerminalStreamCarrier, readTerminalStreamInputErrorCode } = await import('./carrier');
+
+        const carrier = createMachineRpcTerminalStreamCarrier({ machineId: 'machine-1' });
+        let caught: unknown;
+        await carrier.sendInput('term-1', event).catch((error) => {
+            caught = error;
+        });
+
+        expect(readTerminalStreamInputErrorCode(caught)).toBe('terminal_input_unsupported');
+        expect(machineTerminalInputMock).not.toHaveBeenCalled();
+        expect(machineTerminalResizeMock).not.toHaveBeenCalled();
+    });
+
+    it('allows a no-op legacy fallback without a legacy mutation RPC', async () => {
+        machineTerminalStreamSendInputMock.mockResolvedValueOnce({
+            ok: false,
+            code: 'terminal_byte_stream_unavailable',
+            message: 'unavailable',
+        });
+        const { createMachineRpcTerminalStreamCarrier } = await import('./carrier');
+
+        const carrier = createMachineRpcTerminalStreamCarrier({ machineId: 'machine-1' });
+        await expect(carrier.sendInput('term-1', { t: 'ime', phase: 'start' })).resolves.toBeUndefined();
+
+        expect(machineTerminalInputMock).not.toHaveBeenCalled();
+        expect(machineTerminalResizeMock).not.toHaveBeenCalled();
+    });
+
     it('does not start a second input send while the previous send is still in flight', async () => {
         let resolveFirst: (() => void) | undefined;
         machineTerminalStreamSendInputMock
@@ -439,7 +475,14 @@ describe('machine RPC terminal stream carrier', () => {
         const carrier = createMachineRpcTerminalStreamCarrier({ machineId: 'machine-1' });
         await carrier.sendInput('term-1', { t: 'paste', text: 'a\nb', bracketed: true });
         await carrier.sendInput('term-1', { t: 'key', key: 'Enter', modifiers: [] });
-        await carrier.sendInput('term-1', { t: 'mouse', kind: 'down', button: 0, x: 1, y: 1, modifiers: [] });
+        await expect(carrier.sendInput('term-1', {
+            t: 'mouse',
+            kind: 'down',
+            button: 0,
+            x: 1,
+            y: 1,
+            modifiers: [],
+        })).rejects.toEqual(expect.objectContaining({ code: 'terminal_input_unsupported' }));
         await carrier.sendInput('term-1', { t: 'resize', cols: 100, rows: 30 });
 
         expect(machineTerminalInputMock).toHaveBeenCalledTimes(2);

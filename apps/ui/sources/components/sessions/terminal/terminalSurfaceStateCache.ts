@@ -5,12 +5,18 @@ import {
     createEmptyTerminalPreviewState,
     TERMINAL_PREVIEW_MAX_OUTPUT_CHARS,
 } from '@/sync/domains/terminal/stream/replay';
+import type { TerminalStreamCursor } from '@/sync/domains/terminal/stream/model';
 
 export type TerminalSurfaceState = Readonly<{
     terminalId: string | null;
     cursor: number;
+    cursorMode: TerminalStreamCursor['mode'];
     output: string;
     detectedUrl: DaemonTerminalStreamEventUrl | null;
+}>;
+
+type TerminalSurfaceStateInput = Omit<TerminalSurfaceState, 'cursorMode'> & Readonly<{
+    cursorMode?: TerminalStreamCursor['mode'];
 }>;
 
 const TERMINAL_SURFACE_CACHE_MAX_ENTRIES = 12;
@@ -32,9 +38,10 @@ export function readTerminalSurfaceState(terminalKey: string): TerminalSurfaceSt
     return cached;
 }
 
-export function replaceTerminalSurfaceState(terminalKey: string, state: TerminalSurfaceState): TerminalSurfaceState {
+export function replaceTerminalSurfaceState(terminalKey: string, state: TerminalSurfaceStateInput): TerminalSurfaceState {
     const nextState = {
         ...state,
+        cursorMode: state.cursorMode ?? 'byte-offset',
         output: trimTerminalSurfaceOutput(state.output),
     } satisfies TerminalSurfaceState;
 

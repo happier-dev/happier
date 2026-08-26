@@ -178,6 +178,34 @@ describe('TerminalPtySessionManager', () => {
     expect(second).toEqual({ ok: true, terminalId: first.terminalId, reused: true });
   });
 
+  it('derives active terminal metrics from live sessions without retaining terminal content', () => {
+    const provider = new FakePtyProvider();
+    const manager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      config: defaultConfig(),
+      now: () => 0,
+      env: BASH_ENV,
+      platform: 'linux',
+    });
+
+    expect(manager.metrics()).toMatchObject({ activeTerminals: 0 });
+
+    const first = manager.ensure({ terminalKey: 'metrics-a', cwd: '/tmp' });
+    const second = manager.ensure({ terminalKey: 'metrics-b', cwd: '/tmp' });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (!first.ok || !second.ok) throw new Error('expected terminal sessions');
+
+    provider.spawned[0]?.pty.emitData('terminal-content-must-not-appear-in-metrics');
+    expect(manager.metrics()).toMatchObject({ activeTerminals: 2 });
+    expect(JSON.stringify(manager.metrics())).not.toContain('terminal-content-must-not-appear-in-metrics');
+
+    expect(manager.close({ terminalId: first.terminalId })).toEqual({ ok: true });
+    expect(manager.metrics()).toMatchObject({ activeTerminals: 1 });
+    expect(manager.close({ terminalId: second.terminalId })).toEqual({ ok: true });
+    expect(manager.metrics()).toMatchObject({ activeTerminals: 0 });
+  });
+
   it('releases every live PTY when the daemon-owned manager is disposed', () => {
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({
@@ -376,6 +404,103 @@ describe('TerminalPtySessionManager', () => {
         t: 'url',
         terminalId: ensured.terminalId,
         url: 'https://example.com/path',
+        kind: 'generic',
+      }),
+    ]));
+  });
+
+  it('keeps URL control frames available to independent byte and control readers', () => {
+    const provider = new FakePtyProvider();
+    const manager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      config: defaultConfig({ bufferMaxEvents: 10 }),
+      now: () => 0,
+      env: { SHELL: '/bin/bash' } as NodeJS.ProcessEnv,
+      platform: 'linux',
+    });
+
+    const ensured = manager.ensure({ terminalKey: 'k-url-readers', cwd: '/tmp', cols: 80, rows: 24 });
+    expect(ensured.ok).toBe(true);
+    if (!ensured.ok) throw new Error('expected ok');
+    const pty = provider.spawned[0]?.pty;
+    if (!pty) throw new Error('missing fake pty');
+
+    pty.emitData(Buffer.from('Open https://example.com/path\n', 'utf8'));
+
+    const controlRead = manager.readByteStream({
+      terminalId: ensured.terminalId,
+      byteOffset: 0,
+      maxBytes: 1024,
+      maxFrames: 10,
+      creditBytes: 0,
+      rendererId: 'control-reader',
+      surfaceEpoch: 1,
+    });
+    expect(controlRead).toMatchObject({ ok: true, terminalId: ensured.terminalId });
+    if (!controlRead.ok) throw new Error('expected ok');
+    expect(controlRead.frames).toEqual(expect.arrayContaining([
+      expect.objectContaining({ t: 'url', url: 'https://example.com/path' }),
+    ]));
+
+    const byteRead = manager.readByteStream({
+      terminalId: ensured.terminalId,
+      byteOffset: 0,
+      maxBytes: 1024,
+      maxFrames: 10,
+      rendererId: 'byte-reader',
+      surfaceEpoch: 1,
+    });
+    expect(byteRead).toMatchObject({ ok: true, terminalId: ensured.terminalId });
+    if (!byteRead.ok) throw new Error('expected ok');
+    expect(byteRead.frames).toEqual(expect.arrayContaining([
+      expect.objectContaining({ t: 'url', url: 'https://example.com/path' }),
+    ]));
+
+    const replayRead = manager.readByteStream({
+      terminalId: ensured.terminalId,
+      byteOffset: 0,
+      maxBytes: 1024,
+      maxFrames: 10,
+      creditBytes: 0,
+      rendererId: 'replay-reader',
+      surfaceEpoch: 1,
+    });
+    expect(replayRead).toMatchObject({ ok: true, terminalId: ensured.terminalId });
+    if (!replayRead.ok) throw new Error('expected ok');
+    expect(replayRead.frames).toEqual(expect.arrayContaining([
+      expect.objectContaining({ t: 'url', url: 'https://example.com/path' }),
+    ]));
+  });
+
+  it('flushes an unterminated URL control frame at the final byte offset on PTY exit', () => {
+    const provider = new FakePtyProvider();
+    const manager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      config: defaultConfig({ bufferMaxEvents: 10 }),
+      now: () => 0,
+      env: { SHELL: '/bin/bash' } as NodeJS.ProcessEnv,
+      platform: 'linux',
+    });
+
+    const ensured = manager.ensure({ terminalKey: 'k-url-exit', cwd: '/tmp', cols: 80, rows: 24 });
+    expect(ensured.ok).toBe(true);
+    if (!ensured.ok) throw new Error('expected ok');
+    const pty = provider.spawned[0]?.pty;
+    if (!pty) throw new Error('missing fake pty');
+
+    const output = 'Open https://example.com/final';
+    pty.emitData(Buffer.from(output, 'utf8'));
+    pty.emitExit({ exitCode: 0 });
+
+    const read = manager.readByteStream({ terminalId: ensured.terminalId, byteOffset: 0, maxBytes: 1024, maxFrames: 10 });
+    expect(read).toMatchObject({ ok: true, terminalId: ensured.terminalId, done: true });
+    if (!read.ok) throw new Error('expected ok');
+    expect(read.frames).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        t: 'url',
+        terminalId: ensured.terminalId,
+        byteOffset: Buffer.byteLength(output, 'utf8'),
+        url: 'https://example.com/final',
         kind: 'generic',
       }),
     ]));
@@ -756,6 +881,36 @@ describe('TerminalPtySessionManager', () => {
     expect(manager.metrics()).toMatchObject({
       acknowledgedByteOffsetHighWater: 2,
       rendererAckLagBytesHighWater: 4,
+    });
+  });
+
+  it('bounds renderer ACK identity retention while keeping the most recently active identity', () => {
+    const provider = new FakePtyProvider();
+    const manager = createTerminalPtySessionManager({
+      ptyProvider: provider,
+      config: defaultConfig({ bufferMaxEvents: 2 }),
+      now: () => 0,
+      env: { SHELL: '/bin/bash' } as NodeJS.ProcessEnv,
+      platform: 'linux',
+    });
+
+    const ensured = manager.ensure({ terminalKey: 'k-ack-retention', cwd: '/tmp', cols: 80, rows: 24 });
+    expect(ensured.ok).toBe(true);
+    if (!ensured.ok) throw new Error('expected ok');
+    const pty = provider.spawned[0]?.pty;
+    if (!pty) throw new Error('missing fake pty');
+
+    pty.emitData(Buffer.from('abcdefghijklmnopqrst', 'utf8'));
+
+    expect(manager.acknowledgeByteStream({ terminalId: ensured.terminalId, rendererId: 'renderer-a', surfaceEpoch: 1, ackedByteOffset: 10 })).toEqual({ ok: true });
+    expect(manager.acknowledgeByteStream({ terminalId: ensured.terminalId, rendererId: 'renderer-b', surfaceEpoch: 1, ackedByteOffset: 11 })).toEqual({ ok: true });
+    expect(manager.acknowledgeByteStream({ terminalId: ensured.terminalId, rendererId: 'renderer-a', surfaceEpoch: 1, ackedByteOffset: 12 })).toEqual({ ok: true });
+    expect(manager.acknowledgeByteStream({ terminalId: ensured.terminalId, rendererId: 'renderer-c', surfaceEpoch: 1, ackedByteOffset: 13 })).toEqual({ ok: true });
+
+    expect(manager.acknowledgeByteStream({ terminalId: ensured.terminalId, rendererId: 'renderer-b', surfaceEpoch: 1, ackedByteOffset: 1 })).toEqual({ ok: true });
+    expect(manager.metrics()).toMatchObject({
+      acknowledgedByteOffsetHighWater: 13,
+      rendererAckLagBytesHighWater: 19,
     });
   });
 

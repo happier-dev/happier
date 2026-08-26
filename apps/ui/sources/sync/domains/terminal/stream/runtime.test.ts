@@ -44,6 +44,7 @@ describe('terminal stream runtime', () => {
             terminalId: 'term-1',
             seq: 1,
             byteOffset: 0,
+            writeGeneration: 1,
             bytes: new Uint8Array([65, 66, 67]),
         });
         expect(renderer.write).not.toHaveBeenCalled();
@@ -136,9 +137,58 @@ describe('terminal stream runtime', () => {
                 byteOffset: 12,
                 byteLength: 3,
                 ackedByteOffset: 15,
+                writeGeneration: 1,
             },
+            deferredFrames: [{
+                t: 'bytes',
+                terminalId: 'term-1',
+                seq: 4,
+                byteOffset: 15,
+                byteLength: 3,
+                bytes: new Uint8Array([68, 69, 70]),
+                source: 'byte-stream',
+            }],
         });
         expect(renderer.writeBytes).toHaveBeenCalledTimes(1);
+    });
+
+    it('defers control frames after a queued byte write until its completion', () => {
+        const onUrl = vi.fn();
+        const renderer: EmbeddedTerminalRendererHandle = {
+            write: vi.fn(),
+            writeBytes: vi.fn(() => queuedWriteResult),
+            clear: vi.fn(),
+        };
+        const runtime = createTerminalStreamRuntime({
+            terminalId: 'term-1',
+            rendererId: 'renderer-a',
+            renderer,
+            surfaceEpoch: 4,
+            onUrl,
+        });
+
+        const url = {
+            t: 'url' as const,
+            terminalId: 'term-1',
+            byteOffset: 3,
+            url: 'https://example.com/login',
+            kind: 'auth' as const,
+        };
+        const result = runtime.applyFrames([
+            {
+                t: 'bytes',
+                terminalId: 'term-1',
+                seq: 3,
+                byteOffset: 0,
+                byteLength: 3,
+                bytes: new Uint8Array([65, 66, 67]),
+                source: 'byte-stream',
+            },
+            url,
+        ]);
+
+        expect(onUrl).not.toHaveBeenCalled();
+        expect(result.deferredFrames).toEqual([url]);
     });
 
     it('falls back to decoded strings when a renderer has not implemented writeBytes yet', () => {

@@ -18,6 +18,7 @@ export type TerminalStreamRuntime = Readonly<{
         acceptedByteOffset: number | null;
         rejectedByteOffset: number | null;
         queuedWrite: EmbeddedTerminalWriteCompleteEvent | null;
+        deferredFrames?: readonly TerminalStreamFrame[];
     }>;
 }>;
 
@@ -60,7 +61,9 @@ export function createTerminalStreamRuntime(input: Readonly<{
             let acceptedByteOffset: number | null = null;
             let rejectedByteOffset: number | null = null;
             let queuedWrite: EmbeddedTerminalWriteCompleteEvent | null = null;
-            for (const frame of frames) {
+            let deferredFrames: readonly TerminalStreamFrame[] | undefined;
+            for (let index = 0; index < frames.length; index += 1) {
+                const frame = frames[index]!;
                 if (frame.terminalId !== input.terminalId) {
                     continue;
                 }
@@ -86,6 +89,7 @@ export function createTerminalStreamRuntime(input: Readonly<{
                                 ackedByteOffset: frame.byteOffset + frame.byteLength,
                                 writeGeneration: input.surfaceEpoch,
                             };
+                            deferredFrames = frames.slice(index + 1);
                             break;
                         }
                     } else {
@@ -120,7 +124,13 @@ export function createTerminalStreamRuntime(input: Readonly<{
                 input.onExit?.(frame);
                 status = 'exited';
             }
-            return { status, acceptedByteOffset, rejectedByteOffset, queuedWrite };
+            return {
+                status,
+                acceptedByteOffset,
+                rejectedByteOffset,
+                queuedWrite,
+                ...(deferredFrames === undefined ? {} : { deferredFrames }),
+            };
         },
     };
 }

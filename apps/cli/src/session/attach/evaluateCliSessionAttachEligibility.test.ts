@@ -550,7 +550,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
     });
   });
 
-  it('projects canonical OpenCode runtime facts into the author-safe attach metadata', async () => {
+  it('forwards the canonical OpenCode descriptor into the author-safe attach metadata', async () => {
     const rawSession = createSessionRecordFixture({
       id: 'sid_local_opencode_canonical_1',
       active: true,
@@ -583,10 +583,16 @@ describe('evaluateCliSessionAttachEligibility', () => {
       attachStrategy: 'provider_attach',
       metadata: {
         path: '/tmp/opencode-workspace',
-        opencodeSessionId: 'opencode-session-canonical-1',
-        opencodeBackendMode: 'server',
-        opencodeServerBaseUrl: 'http://127.0.0.1:49196/',
-        opencodeServerBaseUrlExplicit: true,
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'opencode',
+          agent: {
+            backendMode: 'server',
+            providerSessionId: ' opencode-session-canonical-1 ',
+            serverBaseUrl: 'http://127.0.0.1:49196',
+            serverBaseUrlExplicit: true,
+          },
+        },
       },
     });
   });

@@ -7,7 +7,10 @@ import type {
     EmbeddedTerminalWriteBytesResult,
     EmbeddedTerminalWriteCompleteEvent,
 } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
-import { replaceTerminalSurfaceState } from '@/components/sessions/terminal/terminalSurfaceStateCache';
+import {
+    readTerminalSurfaceState,
+    replaceTerminalSurfaceState,
+} from '@/components/sessions/terminal/terminalSurfaceStateCache';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,6 +31,7 @@ const queuedWriteResult = { status: 'queued' } satisfies EmbeddedTerminalWriteBy
 const clipboardState = vi.hoisted(() => ({
     setClipboardStringSafe: vi.fn(async () => true),
 }));
+type EmbeddedTerminalWriteBytesInput = Parameters<NonNullable<EmbeddedTerminalRendererHandle['writeBytes']>>[0];
 
 function rendererWriteComplete(input: EmbeddedTerminalWriteCompleteEvent & Readonly<{
     writeGeneration: number;
@@ -356,7 +360,7 @@ describe('useMachineTerminalSession', () => {
                 done: false,
             });
 
-        const writeBytes = vi.fn(() => queuedWriteResult);
+        const writeBytes = vi.fn((_input: EmbeddedTerminalWriteBytesInput) => queuedWriteResult);
         const renderer: EmbeddedTerminalRendererHandle = {
             write: vi.fn(),
             writeBytes,
@@ -474,6 +478,202 @@ describe('useMachineTerminalSession', () => {
         await hook.unmount();
     });
 
+    it('releases a rejected queued native write and retries its original bytes without ACK credit', async () => {
+        terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'term-native-reject', reused: false });
+        const byteFrame = {
+            t: 'bytes' as const,
+            terminalId: 'term-native-reject',
+            seq: 5,
+            byteOffset: 0,
+            byteLength: 3,
+            encoding: 'base64' as const,
+            data: 'QUJD',
+        };
+        terminalOps.streamReadBytes
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 'term-native-reject',
+                frames: [byteFrame],
+                nextByteOffset: 3,
+                availableByteOffset: 3,
+                droppedBeforeByteOffset: 0,
+                done: false,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                terminalId: 'term-native-reject',
+                frames: [byteFrame],
+                nextByteOffset: 3,
+                availableByteOffset: 3,
+                droppedBeforeByteOffset: 0,
+                done: false,
+            });
+
+        const writeBytes = vi.fn((_input: EmbeddedTerminalWriteBytesInput) => queuedWriteResult);
+        const renderer: EmbeddedTerminalRendererHandle = {
+            write: vi.fn(),
+            writeBytes,
+            clear: vi.fn(),
+        };
+        const terminalRef = { current: renderer };
+        const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
+        const hook = await renderHook(
+            () => useMachineTerminalSession({
+                machineId: 'machine-1',
+                cwd: '/repo',
+                terminalKey: 'session:s-native-reject:terminal',
+                terminalRef,
+            }),
+            { flushOptions: { cycles: 1, turns: 1 } },
+        );
+
+        await act(async () => {
+            hook.getCurrent().onReady(80, 24);
+        });
+        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+
+        const firstWrite = writeBytes.mock.calls[0]?.[0];
+        const writeGeneration = readWriteGeneration(firstWrite);
+        expect(firstWrite).toEqual(expect.objectContaining({
+            terminalId: 'term-native-reject',
+            seq: 5,
+            byteOffset: 0,
+            bytes: new Uint8Array([65, 66, 67]),
+        }));
+        expect(writeGeneration).not.toBeNull();
+
+        await act(async () => {
+            hook.getCurrent().onWriteComplete(rendererWriteComplete({
+                terminalId: 'term-native-reject',
+                seq: 5,
+                byteOffset: 0,
+                byteLength: 3,
+                ackedByteOffset: 0,
+                writeGeneration: writeGeneration!,
+            }));
+        });
+        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+
+        expect(terminalOps.streamReadBytes).toHaveBeenNthCalledWith(
+            2,
+            'machine-1',
+            expect.objectContaining({ terminalId: 'term-native-reject', byteOffset: 0 }),
+            expect.any(Object),
+        );
+        expect(writeBytes).toHaveBeenCalledTimes(2);
+        expect(writeBytes.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+            terminalId: 'term-native-reject',
+            seq: 5,
+            byteOffset: 0,
+            bytes: new Uint8Array([65, 66, 67]),
+        }));
+        expect(terminalOps.streamAcknowledge).not.toHaveBeenCalled();
+
+        await hook.unmount();
+    });
+
+    it('delivers control frames after a matching queued write completion without rereading them', async () => {
+        terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'term-queued-url', reused: false });
+        terminalOps.streamReadBytes.mockResolvedValueOnce({
+            ok: true,
+            terminalId: 'term-queued-url',
+            frames: [
+                {
+                    t: 'bytes',
+                    terminalId: 'term-queued-url',
+                    seq: 5,
+                    byteOffset: 0,
+                    byteLength: 3,
+                    encoding: 'base64',
+                    data: 'QUJD',
+                },
+                {
+                    t: 'url',
+                    terminalId: 'term-queued-url',
+                    byteOffset: 3,
+                    url: 'https://example.com/login',
+                    kind: 'auth',
+                },
+            ],
+            nextByteOffset: 3,
+            availableByteOffset: 3,
+            droppedBeforeByteOffset: 0,
+            done: true,
+        });
+
+        const writeBytes = vi.fn((_input: EmbeddedTerminalWriteBytesInput) => queuedWriteResult);
+        const renderer: EmbeddedTerminalRendererHandle = {
+            write: vi.fn(),
+            writeBytes,
+            clear: vi.fn(),
+        };
+        const terminalRef = { current: renderer };
+        const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
+        const hook = await renderHook(
+            () => useMachineTerminalSession({
+                machineId: 'machine-1',
+                cwd: '/repo',
+                terminalKey: 'session:s-queued-url:terminal',
+                terminalRef,
+            }),
+            { flushOptions: { cycles: 1, turns: 1 } },
+        );
+
+        await act(async () => {
+            hook.getCurrent().onReady(80, 24);
+        });
+        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+
+        const writeGeneration = readWriteGeneration(writeBytes.mock.calls[0]?.[0]);
+        expect(writeGeneration).not.toBeNull();
+        expect(hook.getCurrent().detectedUrl).toBeNull();
+
+        await act(async () => {
+            hook.getCurrent().onWriteComplete(rendererWriteComplete({
+                terminalId: 'term-queued-url',
+                seq: 5,
+                byteOffset: 0,
+                byteLength: 3,
+                ackedByteOffset: 3,
+                writeGeneration: writeGeneration!,
+            }));
+        });
+        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+
+        expect(hook.getCurrent().detectedUrl).toEqual({
+            t: 'url',
+            url: 'https://example.com/login',
+            kind: 'auth',
+            suggestOpen: undefined,
+        });
+        expect(terminalOps.streamAcknowledge).toHaveBeenCalledWith(
+            'machine-1',
+            expect.objectContaining({
+                terminalId: 'term-queued-url',
+                ackedByteOffset: 3,
+                surfaceEpoch: writeGeneration,
+            }),
+            expect.any(Object),
+        );
+        expect(terminalOps.streamReadBytes).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            hook.getCurrent().onWriteComplete(rendererWriteComplete({
+                terminalId: 'term-queued-url',
+                seq: 5,
+                byteOffset: 0,
+                byteLength: 3,
+                ackedByteOffset: 3,
+                writeGeneration: writeGeneration!,
+            }));
+        });
+        await flushHookEffects({ cycles: 2, turns: 1, runOnlyPendingTimers: true });
+
+        expect(terminalOps.streamReadBytes).toHaveBeenCalledTimes(1);
+
+        await hook.unmount();
+    });
+
     it('rejects a same-identity parser completion from before terminal restart', async () => {
         terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'term-restart-generation', reused: false });
         terminalOps.restart.mockResolvedValue({ ok: true, terminalId: 'term-restart-generation', reused: false });
@@ -522,7 +722,7 @@ describe('useMachineTerminalSession', () => {
                 done: false,
             });
 
-        const writeBytes = vi.fn(() => queuedWriteResult);
+        const writeBytes = vi.fn((_input: EmbeddedTerminalWriteBytesInput) => queuedWriteResult);
         const renderer: EmbeddedTerminalRendererHandle = {
             write: vi.fn(),
             writeBytes,
@@ -602,7 +802,7 @@ describe('useMachineTerminalSession', () => {
 
         const renderer: EmbeddedTerminalRendererHandle = {
             write: vi.fn(),
-            writeBytes: vi.fn(() => queuedWriteResult),
+            writeBytes: vi.fn((_input: EmbeddedTerminalWriteBytesInput) => queuedWriteResult),
             clear: vi.fn(),
         };
         const terminalRef = { current: renderer };
@@ -700,6 +900,182 @@ describe('useMachineTerminalSession', () => {
             expect.objectContaining({ terminalId: 'term-fresh', byteOffset: 0 }),
             expect.any(Object),
         );
+
+        await hook.unmount();
+    });
+
+    it('resets a cached byte cursor when disabled terminal streaming selects legacy replay', async () => {
+        const terminalKey = 'session:s-legacy-cursor-mismatch:terminal';
+        useFeatureEnabledMock.mockImplementation((featureId: string) => featureId !== 'terminal.transport.byteStream');
+        replaceTerminalSurfaceState(terminalKey, {
+            terminalId: 'term-legacy-cursor-mismatch',
+            cursor: 42,
+            cursorMode: 'byte-offset',
+            output: 'cached byte preview',
+            detectedUrl: null,
+        });
+        terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'term-legacy-cursor-mismatch', reused: true });
+        terminalOps.streamRead.mockResolvedValueOnce({
+            ok: true,
+            terminalId: 'term-legacy-cursor-mismatch',
+            events: [],
+            nextCursor: 0,
+            done: true,
+        });
+
+        const renderer: EmbeddedTerminalRendererHandle = {
+            write: vi.fn(),
+            writeBytes: vi.fn(),
+            clear: vi.fn(),
+        };
+        const terminalRef = { current: renderer };
+        const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
+        const hook = await renderHook(
+            () => useMachineTerminalSession({
+                machineId: 'machine-1',
+                cwd: '/repo',
+                terminalKey,
+                terminalRef,
+            }),
+            { flushOptions: { cycles: 1, turns: 1 } },
+        );
+
+        await act(async () => {
+            hook.getCurrent().onReady(80, 24);
+        });
+        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+
+        expect(terminalOps.streamRead).toHaveBeenCalledWith(
+            'machine-1',
+            expect.objectContaining({ terminalId: 'term-legacy-cursor-mismatch', cursor: 0 }),
+            expect.any(Object),
+        );
+        expect(terminalOps.streamReadBytes).not.toHaveBeenCalled();
+
+        await hook.unmount();
+    });
+
+    it('records a legacy cursor mode when carrier fallback keeps the numeric cursor at zero', async () => {
+        const terminalKey = 'session:s-legacy-mode-transition:terminal';
+        terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'term-legacy-mode-transition', reused: false });
+        terminalOps.streamReadBytes.mockResolvedValueOnce({
+            ok: false,
+            code: 'terminal_byte_stream_unavailable',
+            message: 'older daemon',
+        });
+        terminalOps.streamRead.mockResolvedValueOnce({
+            ok: true,
+            terminalId: 'term-legacy-mode-transition',
+            events: [],
+            nextCursor: 0,
+            done: true,
+        });
+
+        const renderer: EmbeddedTerminalRendererHandle = {
+            write: vi.fn(),
+            writeBytes: vi.fn(),
+            clear: vi.fn(),
+        };
+        const terminalRef = { current: renderer };
+        const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
+        const hook = await renderHook(
+            () => useMachineTerminalSession({
+                machineId: 'machine-1',
+                cwd: '/repo',
+                terminalKey,
+                terminalRef,
+            }),
+            { flushOptions: { cycles: 1, turns: 1 } },
+        );
+
+        await act(async () => {
+            hook.getCurrent().onReady(80, 24);
+        });
+        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+
+        expect(readTerminalSurfaceState(terminalKey)).toEqual(expect.objectContaining({
+            terminalId: 'term-legacy-mode-transition',
+            cursor: 0,
+            cursorMode: 'legacy-event-cursor',
+        }));
+
+        await hook.unmount();
+    });
+
+    it('replaces same-mode cached preview text when daemon replay begins', async () => {
+        const terminalKey = 'session:s-preview-replacement:terminal';
+        replaceTerminalSurfaceState(terminalKey, {
+            terminalId: 'term-preview-replacement',
+            cursor: 3,
+            cursorMode: 'byte-offset',
+            output: 'cached preview',
+            detectedUrl: null,
+        });
+        terminalOps.ensure.mockResolvedValue({ ok: true, terminalId: 'term-preview-replacement', reused: true });
+        terminalOps.streamReadBytes.mockResolvedValueOnce({
+            ok: true,
+            terminalId: 'term-preview-replacement',
+            frames: [{
+                t: 'bytes',
+                terminalId: 'term-preview-replacement',
+                seq: 2,
+                byteOffset: 3,
+                byteLength: 5,
+                encoding: 'base64',
+                data: 'RlJFU0g=',
+            }],
+            nextByteOffset: 8,
+            availableByteOffset: 8,
+            droppedBeforeByteOffset: 0,
+            done: true,
+        });
+
+        const callOrder: string[] = [];
+        const renderer: EmbeddedTerminalRendererHandle = {
+            write: vi.fn((data: string) => {
+                callOrder.push(`write:${data}`);
+            }),
+            writeBytes: vi.fn((input) => {
+                callOrder.push(`bytes:${new TextDecoder().decode(input.bytes)}`);
+            }),
+            clear: vi.fn(() => {
+                callOrder.push('clear');
+            }),
+        };
+        const terminalRef = { current: renderer };
+        const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
+        const hook = await renderHook(
+            () => useMachineTerminalSession({
+                machineId: 'machine-1',
+                cwd: '/repo',
+                terminalKey,
+                terminalRef,
+            }),
+            { flushOptions: { cycles: 1, turns: 1 } },
+        );
+
+        await act(async () => {
+            hook.getCurrent().onReady(80, 24);
+        });
+        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+
+        expect(terminalOps.streamReadBytes).toHaveBeenCalledWith(
+            'machine-1',
+            expect.objectContaining({ terminalId: 'term-preview-replacement', byteOffset: 3 }),
+            expect.any(Object),
+        );
+        const previewIndex = callOrder.indexOf('write:cached preview');
+        const replayClearIndex = callOrder.lastIndexOf('clear');
+        const replayBytesIndex = callOrder.indexOf('bytes:FRESH');
+        expect(previewIndex).toBeGreaterThanOrEqual(0);
+        expect(replayClearIndex).toBeGreaterThan(previewIndex);
+        expect(replayClearIndex).toBeLessThan(replayBytesIndex);
+        expect(readTerminalSurfaceState(terminalKey)).toEqual(expect.objectContaining({
+            terminalId: 'term-preview-replacement',
+            cursor: 8,
+            cursorMode: 'byte-offset',
+            output: 'FRESH',
+        }));
 
         await hook.unmount();
     });

@@ -67,6 +67,17 @@ function emitEnvelope(envelope: any) {
     lastWebViewProps.onMessage({ nativeEvent: { data: JSON.stringify(envelope) } });
 }
 
+type NativeWebViewBootFailureHandler = 'onError' | 'onContentProcessDidTerminate' | 'onRenderProcessGone';
+
+function emitNativeWebViewBootFailure(
+    handlerName: NativeWebViewBootFailureHandler,
+    webViewProps = lastWebViewProps,
+) {
+    const handler = webViewProps?.[handlerName];
+    if (typeof handler !== 'function') throw new Error(`WebView ${handlerName} missing`);
+    handler({ nativeEvent: {} });
+}
+
 function findPostedEnvelopeByType(type: string): any {
     for (const call of postMessageSpy.mock.calls) {
         const raw = call?.[0];
@@ -94,6 +105,15 @@ function writeBytesInput(input: Readonly<{
 }>): Parameters<XtermWebViewSurfaceHandle['writeBytes']>[0] {
     return input as Parameters<XtermWebViewSurfaceHandle['writeBytes']>[0];
 }
+
+const nativeWebViewBootFailureCases = [
+    { handlerName: 'onError', code: 'terminal_webview_load_error' },
+    { handlerName: 'onContentProcessDidTerminate', code: 'terminal_webview_process_terminated' },
+    { handlerName: 'onRenderProcessGone', code: 'terminal_webview_process_terminated' },
+] as const satisfies readonly Readonly<{
+    handlerName: NativeWebViewBootFailureHandler;
+    code: string;
+}>[];
 
 describe('XtermWebViewSurface (native)', () => {
     it('buffers writes until ready and forwards input/resize', async () => {
@@ -300,12 +320,236 @@ describe('XtermWebViewSurface (native)', () => {
         expect(writeEnvelopes.map((message) => message.payload.data)).toEqual(['é', 'a']);
     });
 
-    it('keeps replay queued across a WebView reload before parser completion', async () => {
+    for (const failureCase of nativeWebViewBootFailureCases) {
+        it(`retries then rejects queued bytes once after ${failureCase.handlerName} without advancing a parser ACK`, async () => {
+            postMessageSpy.mockClear();
+            lastWebViewProps = null;
+            webViewRenderCount = 0;
+
+            const onWriteComplete = vi.fn();
+            const onRendererFailure = vi.fn();
+            const ref = React.createRef<XtermWebViewSurfaceHandle>();
+
+            await renderScreen(React.createElement(XtermWebViewSurface, {
+                ref,
+                fontSize: 12,
+                lineHeightPx: 18,
+                onInput: vi.fn(),
+                onResize: vi.fn(),
+                onReady: vi.fn(),
+                onWriteComplete,
+                onRendererFailure,
+                bridgeMaxChunkBytes: 64_000,
+            }));
+
+            const runtime = createTerminalStreamRuntime({
+                terminalId: 'native-pre-boot-failure',
+                rendererId: 'xterm-webview',
+                renderer: requireWebViewSurfaceHandle(ref),
+                surfaceEpoch: 21,
+            });
+            const applied = runtime.applyFrames([{
+                t: 'bytes',
+                terminalId: 'native-pre-boot-failure',
+                seq: 5,
+                byteOffset: 40,
+                byteLength: 2,
+                bytes: new Uint8Array([0x41, 0x42]),
+                source: 'byte-stream',
+            }]);
+
+            expect(applied).toMatchObject({
+                status: 'active',
+                acceptedByteOffset: null,
+                rejectedByteOffset: null,
+                queuedWrite: {
+                    terminalId: 'native-pre-boot-failure',
+                    seq: 5,
+                    byteOffset: 40,
+                    byteLength: 2,
+                    ackedByteOffset: 42,
+                    writeGeneration: 21,
+                },
+            });
+
+            const initialWebViewProps = lastWebViewProps;
+            const initialRenderCount = webViewRenderCount;
+            await act(async () => {
+                emitNativeWebViewBootFailure(failureCase.handlerName, initialWebViewProps);
+            });
+
+            expect(webViewRenderCount).toBeGreaterThan(initialRenderCount);
+            expect(onRendererFailure).not.toHaveBeenCalled();
+            expect(onWriteComplete).not.toHaveBeenCalled();
+
+            const recoveredWebViewProps = lastWebViewProps;
+            const recoveredRenderCount = webViewRenderCount;
+            await act(async () => {
+                emitNativeWebViewBootFailure(failureCase.handlerName, initialWebViewProps);
+            });
+
+            expect(webViewRenderCount).toBe(recoveredRenderCount);
+            expect(onRendererFailure).not.toHaveBeenCalled();
+
+            await act(async () => {
+                emitNativeWebViewBootFailure(failureCase.handlerName, recoveredWebViewProps);
+            });
+
+            expect(onRendererFailure).toHaveBeenCalledWith({
+                type: 'boot-retry-exhausted',
+                code: failureCase.code,
+                rejectedWrites: [{
+                    terminalId: 'native-pre-boot-failure',
+                    seq: 5,
+                    byteOffset: 40,
+                    byteLength: 2,
+                    writeGeneration: 21,
+                }],
+            });
+            expect(onRendererFailure).toHaveBeenCalledTimes(1);
+            expect(onWriteComplete).not.toHaveBeenCalled();
+        });
+    }
+
+    it('retries then rejects queued bytes once when a WebView never reports ready without advancing a parser ACK', async () => {
+        vi.useFakeTimers();
+        try {
+            postMessageSpy.mockClear();
+            lastWebViewProps = null;
+            webViewRenderCount = 0;
+
+            const onWriteComplete = vi.fn();
+            const onRendererFailure = vi.fn();
+            const ref = React.createRef<XtermWebViewSurfaceHandle>();
+
+            await renderScreen(React.createElement(XtermWebViewSurface, {
+                ref,
+                fontSize: 12,
+                lineHeightPx: 18,
+                onInput: vi.fn(),
+                onResize: vi.fn(),
+                onReady: vi.fn(),
+                onWriteComplete,
+                onRendererFailure,
+                bridgeMaxChunkBytes: 64_000,
+            }));
+
+            const runtime = createTerminalStreamRuntime({
+                terminalId: 'native-ready-timeout',
+                rendererId: 'xterm-webview',
+                renderer: requireWebViewSurfaceHandle(ref),
+                surfaceEpoch: 31,
+            });
+            const applied = runtime.applyFrames([{
+                t: 'bytes',
+                terminalId: 'native-ready-timeout',
+                seq: 7,
+                byteOffset: 64,
+                byteLength: 2,
+                bytes: new Uint8Array([0x43, 0x44]),
+                source: 'byte-stream',
+            }]);
+
+            expect(applied.acceptedByteOffset).toBeNull();
+            expect(applied.queuedWrite).toMatchObject({
+                terminalId: 'native-ready-timeout',
+                seq: 7,
+                byteOffset: 64,
+                byteLength: 2,
+                ackedByteOffset: 66,
+                writeGeneration: 31,
+            });
+            expect(vi.getTimerCount()).toBe(1);
+
+            const initialRenderCount = webViewRenderCount;
+            await act(async () => {
+                await vi.advanceTimersToNextTimerAsync();
+            });
+
+            expect(webViewRenderCount).toBeGreaterThan(initialRenderCount);
+            expect(onRendererFailure).not.toHaveBeenCalled();
+            expect(onWriteComplete).not.toHaveBeenCalled();
+            expect(vi.getTimerCount()).toBe(1);
+
+            await act(async () => {
+                await vi.advanceTimersToNextTimerAsync();
+            });
+
+            expect(onRendererFailure).toHaveBeenCalledWith({
+                type: 'boot-retry-exhausted',
+                code: 'terminal_webview_ready_timeout',
+                rejectedWrites: [{
+                    terminalId: 'native-ready-timeout',
+                    seq: 7,
+                    byteOffset: 64,
+                    byteLength: 2,
+                    writeGeneration: 31,
+                }],
+            });
+            expect(onRendererFailure).toHaveBeenCalledTimes(1);
+            expect(onWriteComplete).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('clears WebView boot readiness timers after recovery, ready, and unmount', async () => {
+        vi.useFakeTimers();
+        try {
+            postMessageSpy.mockClear();
+            lastWebViewProps = null;
+            webViewRenderCount = 0;
+
+            const onRendererFailure = vi.fn();
+            const rendered = await renderScreen(React.createElement(XtermWebViewSurface, {
+                fontSize: 12,
+                lineHeightPx: 18,
+                onInput: vi.fn(),
+                onResize: vi.fn(),
+                onReady: vi.fn(),
+                onRendererFailure,
+                bridgeMaxChunkBytes: 64_000,
+            }));
+
+            expect(vi.getTimerCount()).toBe(1);
+
+            const initialWebViewProps = lastWebViewProps;
+            await act(async () => {
+                emitNativeWebViewBootFailure('onError', initialWebViewProps);
+            });
+
+            expect(vi.getTimerCount()).toBe(1);
+
+            const recoveredWebViewProps = lastWebViewProps;
+            emitEnvelope({ v: 1, type: 'ready', payload: { cols: 80, rows: 24 } });
+            expect(vi.getTimerCount()).toBe(0);
+
+            await act(async () => {
+                rendered.tree.unmount();
+            });
+            expect(vi.getTimerCount()).toBe(0);
+
+            await act(async () => {
+                emitNativeWebViewBootFailure('onError', recoveredWebViewProps);
+                emitNativeWebViewBootFailure('onError', recoveredWebViewProps);
+            });
+
+            await act(async () => {
+                await vi.runAllTimersAsync();
+            });
+            expect(onRendererFailure).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('rejects an exact queued byte write after the allowed WebView boot retry is exhausted', async () => {
         postMessageSpy.mockClear();
         lastWebViewProps = null;
         webViewRenderCount = 0;
 
         const onWriteComplete = vi.fn();
+        const onRendererFailure = vi.fn();
         const ref = React.createRef<XtermWebViewSurfaceHandle>();
 
         await renderScreen(React.createElement(XtermWebViewSurface, {
@@ -316,6 +560,7 @@ describe('XtermWebViewSurface (native)', () => {
             onResize: vi.fn(),
             onReady: vi.fn(),
             onWriteComplete,
+            onRendererFailure,
             bridgeMaxChunkBytes: 64_000,
         }));
 
@@ -337,7 +582,7 @@ describe('XtermWebViewSurface (native)', () => {
             source: 'byte-stream',
         }]);
 
-        expect(applied).toEqual({
+        expect(applied).toMatchObject({
             status: 'active',
             acceptedByteOffset: null,
             rejectedByteOffset: null,
@@ -351,8 +596,56 @@ describe('XtermWebViewSurface (native)', () => {
             },
         });
 
+        const initialRenderCount = webViewRenderCount;
         await act(async () => {
             emitEnvelope({ v: 1, type: 'bootError', payload: { code: 'terminal_boot_failed' } });
+        });
+
+        expect(webViewRenderCount).toBeGreaterThan(initialRenderCount);
+        expect(onRendererFailure).not.toHaveBeenCalled();
+        expect(onWriteComplete).not.toHaveBeenCalled();
+
+        await act(async () => {
+            emitEnvelope({ v: 1, type: 'bootError', payload: { code: 'terminal_boot_failed' } });
+        });
+
+        expect(onRendererFailure).toHaveBeenCalledWith({
+            type: 'boot-retry-exhausted',
+            code: 'terminal_boot_failed',
+            rejectedWrites: [{
+                terminalId: 'native-reload',
+                seq: 8,
+                byteOffset: 24,
+                byteLength: 2,
+                writeGeneration: 11,
+            }],
+        });
+
+        expect(requireWebViewSurfaceHandle(ref).writeBytes(writeBytesInput({
+            terminalId: 'native-reload',
+            seq: 9,
+            byteOffset: 26,
+            bytes: new Uint8Array([0x43]),
+            writeGeneration: 11,
+        }))).toBe(false);
+
+        await act(async () => {
+            emitEnvelope({ v: 1, type: 'bootError', payload: { code: 'terminal_boot_failed' } });
+        });
+
+        expect(onRendererFailure).toHaveBeenCalledTimes(1);
+
+        emitEnvelope({
+            v: 1,
+            type: 'writeComplete',
+            payload: {
+                terminalId: 'native-reload',
+                seq: 8,
+                byteOffset: 24,
+                byteLength: 2,
+                ackedByteOffset: 26,
+                writeGeneration: 11,
+            },
         });
 
         expect(onWriteComplete).not.toHaveBeenCalled();

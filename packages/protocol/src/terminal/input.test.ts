@@ -49,6 +49,38 @@ describe('terminal input protocol', () => {
     }).success).toBe(false);
   });
 
+  it('rejects unknown fields at every terminal input wire boundary', () => {
+    const api = requireTerminalInputApi();
+    const events = [
+      { t: 'text', text: 'ls\n' },
+      { t: 'key', key: 'Enter', modifiers: [] },
+      { t: 'paste', text: 'hello', bracketed: true },
+      { t: 'ime', phase: 'commit', text: 'こんにちは' },
+      { t: 'mouse', kind: 'wheel', x: 10, y: 5, modifiers: [] },
+      { t: 'resize', cols: 120, rows: 40 },
+    ];
+
+    for (const event of events) {
+      expect(api.TerminalInputEventSchema.safeParse({ ...event, unexpected: true }).success).toBe(false);
+      expect(api.TerminalStreamInputRequestSchema.safeParse({
+        terminalId: 'term-1',
+        event: { ...event, unexpected: true },
+      }).success).toBe(false);
+    }
+    expect(api.TerminalStreamInputRequestSchema.safeParse({
+      terminalId: 'term-1',
+      event: events[0],
+      unexpected: true,
+    }).success).toBe(false);
+    expect(api.TerminalStreamInputResponseSchema.safeParse({ ok: true, unexpected: true }).success).toBe(false);
+    expect(api.TerminalStreamInputResponseSchema.safeParse({
+      ok: false,
+      code: 'terminal_not_found',
+      message: 'terminal_not_found',
+      unexpected: true,
+    }).success).toBe(false);
+  });
+
   it('maps renderer-neutral input events to safe PTY actions', () => {
     const api = requireTerminalInputApi();
 

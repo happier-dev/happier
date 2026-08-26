@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES,
+  TERMINAL_STREAM_MAX_FRAMES,
   terminalInputEventToPtyAction,
 } from '@happier-dev/protocol';
 import type {
@@ -22,7 +23,7 @@ import { createTerminalPtyMetrics, type TerminalPtyMetrics } from './metrics';
 import type { Disposable, PtyProvider, PtyProcess } from './provider';
 import type { TerminalLaunchProcess } from './launch';
 import { resolveTerminalShell } from './shells';
-import { createTerminalUrlDetector } from './urlDetection';
+import { createTerminalUrlDetector, type DetectedTerminalUrl } from './urlDetection';
 
 type ErrorResult = Readonly<{
   ok: false;
@@ -308,18 +309,12 @@ function pushControlFrame(session: PtySession, frame: TerminalByteStreamFrame, c
   }
 }
 
-function pushDecodedText(
+function pushDetectedUrls(
   session: PtySession,
-  text: string,
+  urls: readonly DetectedTerminalUrl[],
   config: TerminalPtySessionManagerConfig,
   streamByteOffset?: number,
 ): void {
-  if (!text) return;
-  const chunks = splitByApproxBytesUtf8(text, config.maxWriteChunkBytes);
-  for (const chunk of chunks) {
-    pushEvent(session.buffer, { t: 'data', data: chunk }, config);
-  }
-  const urls = session.urlDetector.ingest(text);
   for (const url of urls) {
     pushEvent(session.buffer, { t: 'url', ...url }, config);
     if (streamByteOffset !== undefined) {
@@ -331,6 +326,20 @@ function pushDecodedText(
       }, config);
     }
   }
+}
+
+function pushDecodedText(
+  session: PtySession,
+  text: string,
+  config: TerminalPtySessionManagerConfig,
+  streamByteOffset?: number,
+): void {
+  if (!text) return;
+  const chunks = splitByApproxBytesUtf8(text, config.maxWriteChunkBytes);
+  for (const chunk of chunks) {
+    pushEvent(session.buffer, { t: 'data', data: chunk }, config);
+  }
+  pushDetectedUrls(session, session.urlDetector.ingest(text), config, streamByteOffset);
 }
 
 export function createTerminalPtySessionManager(params: Readonly<{
@@ -353,6 +362,9 @@ export function createTerminalPtySessionManager(params: Readonly<{
   const platform = params.platform ?? process.platform;
   const config = params.config;
   const idleTimeoutMs = Math.max(0, Math.trunc(config.idleTimeoutMs));
+  const maxRendererAckIdentities = Number.isFinite(config.bufferMaxEvents)
+    ? Math.max(1, Math.trunc(config.bufferMaxEvents))
+    : 1;
   const terminalRegistry = params.terminalRegistry ?? null;
   const metrics = createTerminalPtyMetrics();
 
@@ -557,7 +569,9 @@ export function createTerminalPtySessionManager(params: Readonly<{
     session.disposables.push(
       pty.onExit((e) => {
         session.lastActivityAtMs = now();
-        pushDecodedText(session, session.decoder.flush(), config);
+        const finalByteOffset = session.byteRing.bounds().totalBytesWritten;
+        pushDecodedText(session, session.decoder.flush(), config, finalByteOffset);
+        pushDetectedUrls(session, session.urlDetector.flush(), config, finalByteOffset);
         session.ended = true;
         session.exit = { exitCode: e.exitCode ?? null, signal: typeof e.signal === 'number' ? e.signal : null };
         metrics.recordExit();
@@ -667,7 +681,10 @@ export function createTerminalPtySessionManager(params: Readonly<{
       ? Math.max(0, Math.trunc(input.creditBytes))
       : requestedMaxBytes;
     const maxBytes = Math.min(requestedMaxBytes, creditBytes);
-    const maxFrames = Math.max(1, Math.trunc(input.maxFrames ?? config.bufferMaxEvents));
+    const maxFrames = Math.min(
+      TERMINAL_STREAM_MAX_FRAMES,
+      Math.max(1, Math.trunc(input.maxFrames ?? config.bufferMaxEvents)),
+    );
     if (input.ackedByteOffset !== undefined) {
       const ack = acknowledgeByteStream({
         terminalId: input.terminalId,
@@ -712,16 +729,11 @@ export function createTerminalPtySessionManager(params: Readonly<{
           }]
         : [];
       session.controlFrames = session.controlFrames.filter((frame) => frame.t !== 'url' || frame.byteOffset >= bounds.droppedBeforeByteOffset);
-      const deliveredControlFrames = new Set<TerminalByteStreamFrame>();
       for (const frame of session.controlFrames) {
         if (frames.length >= maxFrames) break;
         if (frame.t !== 'url') continue;
         if (frame.byteOffset < requested || frame.byteOffset > bounds.totalBytesWritten) continue;
         frames.push(frame);
-        deliveredControlFrames.add(frame);
-      }
-      if (deliveredControlFrames.size > 0) {
-        session.controlFrames = session.controlFrames.filter((frame) => !deliveredControlFrames.has(frame));
       }
       const deliveredAllBytes = nextByteOffset >= bounds.totalBytesWritten;
       let deliveredExit = false;
@@ -812,16 +824,11 @@ export function createTerminalPtySessionManager(params: Readonly<{
     if (session) {
       const droppedBefore = raw.droppedBeforeByteOffset;
       session.controlFrames = session.controlFrames.filter((frame) => frame.t !== 'url' || frame.byteOffset >= droppedBefore);
-      const deliveredControlFrames = new Set<TerminalByteStreamFrame>();
       for (const frame of session.controlFrames) {
         if (frames.length >= maxFrames) break;
         if (frame.t !== 'url') continue;
         if (frame.byteOffset < input.byteOffset || frame.byteOffset > streamNextByteOffset) continue;
         frames.push(frame);
-        deliveredControlFrames.add(frame);
-      }
-      if (deliveredControlFrames.size > 0) {
-        session.controlFrames = session.controlFrames.filter((frame) => !deliveredControlFrames.has(frame));
       }
     }
     const deliveredAllReadBytes = streamNextByteOffset >= raw.nextByteOffset;
@@ -857,14 +864,27 @@ export function createTerminalPtySessionManager(params: Readonly<{
     const rendererId = input.rendererId ?? 'default';
     const surfaceEpoch = input.surfaceEpoch ?? 0;
     const key = `${rendererId}:${surfaceEpoch}`;
+    // ACK identities are retained only for content-free diagnostics. Their LRU
+    // bound cannot affect the request-owned byte offset or renderer credit.
     const previous = session.rendererAcks.get(key) ?? 0;
     const next = Math.max(previous, normalizeByteOffset(input.ackedByteOffset));
     if (next !== previous) {
+      session.rendererAcks.delete(key);
       session.rendererAcks.set(key, next);
+      while (session.rendererAcks.size > maxRendererAckIdentities) {
+        const oldest = session.rendererAcks.keys().next().value;
+        if (oldest === undefined) break;
+        session.rendererAcks.delete(oldest);
+      }
       metrics.recordRendererAck({
         ackedByteOffset: next,
         availableByteOffset: session.byteRing.bounds().totalBytesWritten,
       });
+    } else if (session.rendererAcks.has(key)) {
+      // This is diagnostic-only retention. Keep recently active identities while
+      // request byte offsets and credit remain the authoritative stream state.
+      session.rendererAcks.delete(key);
+      session.rendererAcks.set(key, previous);
     }
     return { ok: true };
   };
@@ -943,6 +963,6 @@ export function createTerminalPtySessionManager(params: Readonly<{
     resize,
     close,
     dispose,
-    metrics: () => metrics.snapshot(),
+    metrics: () => metrics.snapshot(sessionsById.size),
   };
 }

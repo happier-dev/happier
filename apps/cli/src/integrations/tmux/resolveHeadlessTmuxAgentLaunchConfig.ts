@@ -1,5 +1,5 @@
 import type { CatalogAgentId } from '@/agent/catalog/ids';
-import { CatalogAgentNotInstalledError, requireCatalogEntry } from '@/agent/catalog/registry';
+import { CatalogAgentNotInstalledError } from '@/agent/catalog/registry';
 import {
   resolveCatalogAgentId,
   resolveCatalogAgentIdForCliSubcommand,
@@ -26,13 +26,36 @@ function inferAgent(argv: string[]): CatalogAgentId {
   return catalogAgentId;
 }
 
+function ensureHeadlessTmuxRemoteStartingModeArgs(argv: string[]): string[] {
+  const modeFlagIndexes: number[] = [];
+  for (let index = 0; index < argv.length; index++) {
+    if (argv[index] === '--happy-starting-mode') {
+      modeFlagIndexes.push(index);
+    }
+  }
+
+  if (modeFlagIndexes.length === 0) {
+    return [...argv, '--happy-starting-mode', 'remote'];
+  }
+
+  for (const index of modeFlagIndexes) {
+    const value = argv[index + 1];
+    if (!value || value.startsWith('--')) {
+      throw new Error('Missing value for --happy-starting-mode (expected "remote" or "local" for terminal mode)');
+    }
+    if (value === 'remote') continue;
+
+    throw new Error('Headless tmux sessions require remote mode; terminal mode is not supported.');
+  }
+
+  return argv;
+}
+
 export async function resolveHeadlessTmuxAgentLaunchConfig(argv: string[]): Promise<HeadlessTmuxAgentLaunchConfig> {
   const agent = inferAgent(argv);
-  const entry = requireCatalogEntry(agent);
-  const transform = entry.getHeadlessTmuxArgvTransform ? await entry.getHeadlessTmuxArgvTransform() : null;
 
   return {
     agent,
-    childArgs: transform ? transform(argv) : argv,
+    childArgs: ensureHeadlessTmuxRemoteStartingModeArgs(argv),
   };
 }

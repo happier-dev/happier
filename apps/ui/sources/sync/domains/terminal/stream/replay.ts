@@ -1,16 +1,20 @@
 import type { DaemonTerminalStreamEventUrl } from '@happier-dev/protocol';
 
+import type { TerminalStreamCursor } from './model';
+
 export type TerminalPreviewState = Readonly<{
     terminalId: string | null;
     cursor: number;
+    cursorMode: TerminalStreamCursor['mode'];
     output: string;
     detectedUrl: DaemonTerminalStreamEventUrl | null;
 }>;
 
 export type TerminalReplayPlan = Readonly<{
-    initialCursor: number;
+    initialCursor: TerminalStreamCursor;
     renderPreview: boolean;
     clearRenderer: boolean;
+    replacePreviewOnReplay: boolean;
 }>;
 
 export const TERMINAL_PREVIEW_MAX_OUTPUT_CHARS = 64_000;
@@ -19,6 +23,7 @@ export function createEmptyTerminalPreviewState(): TerminalPreviewState {
     return {
         terminalId: null,
         cursor: 0,
+        cursorMode: 'byte-offset',
         output: '',
         detectedUrl: null,
     };
@@ -46,14 +51,20 @@ export function resolveTerminalReplayPlan(input: Readonly<{
     ensuredTerminalId: string;
     reused: boolean;
     cachedOutput: string;
-    cachedCursor: number;
+    cachedCursor: TerminalStreamCursor;
+    replayMode: TerminalStreamCursor['mode'];
 }>): TerminalReplayPlan {
     const sameTerminal = input.cachedTerminalId === input.ensuredTerminalId;
     const canRenderPreview = input.reused && sameTerminal && input.cachedOutput.length > 0;
+    const canReuseCursor = canRenderPreview && input.cachedCursor.mode === input.replayMode;
 
     return {
-        initialCursor: canRenderPreview ? Math.max(0, input.cachedCursor) : 0,
+        initialCursor: {
+            mode: input.replayMode,
+            value: canReuseCursor ? Math.max(0, input.cachedCursor.value) : 0,
+        },
         renderPreview: canRenderPreview,
         clearRenderer: !canRenderPreview,
+        replacePreviewOnReplay: canRenderPreview,
     };
 }

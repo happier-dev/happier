@@ -1,17 +1,9 @@
+import type { AgentTerminalPromptSubmitVerificationPolicyV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+
 const DEFAULT_POST_SUBMIT_SETTLE_MS = 50;
 const DEFAULT_PRE_SUBMIT_POLL_MS = 250;
 
-export type TerminalPromptSubmitVerificationPolicy = Readonly<{
-  shouldVerifyAfterSubmit(promptText: string): boolean;
-  verifyBeforeSubmitStaging?(params: Readonly<{
-    promptText: string;
-    screenText: string;
-  }>): boolean;
-  verifyAfterSubmit(params: Readonly<{
-    promptText: string;
-    screenText: string;
-  }>): boolean;
-}>;
+export type TerminalPromptSubmitVerificationPolicy = AgentTerminalPromptSubmitVerificationPolicyV1;
 
 export type TerminalPromptSubmitCommandResult = 'success' | 'timeout' | 'failed';
 

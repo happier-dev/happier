@@ -13,12 +13,31 @@ describe('terminal stream replay', () => {
             ensuredTerminalId: 'term-1',
             reused: true,
             cachedOutput: 'existing output',
-            cachedCursor: 12,
+            cachedCursor: { mode: 'byte-offset', value: 12 },
+            replayMode: 'byte-offset',
         });
 
+        expect(plan).toEqual({
+            initialCursor: { mode: 'byte-offset', value: 12 },
+            renderPreview: true,
+            clearRenderer: false,
+            replacePreviewOnReplay: true,
+        });
+    });
+
+    it('resets a byte cursor before replaying a cached preview through the legacy event carrier', () => {
+        const plan = resolveTerminalReplayPlan({
+            cachedTerminalId: 'term-1',
+            ensuredTerminalId: 'term-1',
+            reused: true,
+            cachedOutput: 'existing output',
+            cachedCursor: { mode: 'byte-offset', value: 12 },
+            replayMode: 'legacy-event-cursor',
+        });
+
+        expect(plan.initialCursor).toEqual({ mode: 'legacy-event-cursor', value: 0 });
         expect(plan.renderPreview).toBe(true);
-        expect(plan.clearRenderer).toBe(false);
-        expect(plan.initialCursor).toBe(12);
+        expect(plan.replacePreviewOnReplay).toBe(true);
     });
 
     it('clears stale preview when the daemon returns a different terminal id', () => {
@@ -27,12 +46,13 @@ describe('terminal stream replay', () => {
             ensuredTerminalId: 'term-2',
             reused: false,
             cachedOutput: 'old output',
-            cachedCursor: 12,
+            cachedCursor: { mode: 'byte-offset', value: 12 },
+            replayMode: 'byte-offset',
         });
 
         expect(plan.renderPreview).toBe(false);
         expect(plan.clearRenderer).toBe(true);
-        expect(plan.initialCursor).toBe(0);
+        expect(plan.initialCursor).toEqual({ mode: 'byte-offset', value: 0 });
     });
 
     it('bounds preview text so it cannot become an unbounded transcript source of truth', () => {

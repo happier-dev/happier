@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
@@ -89,8 +89,8 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
     let uiBaseUrl: string | null = null;
     let daemon: StartedDaemon | null = null;
 
-    test.beforeAll(async () => {
-        test.setTimeout(420_000);
+  test.beforeAll(async () => {
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
         await mkdir(cliHomeDir, { recursive: true });
         await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -227,7 +227,6 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
 
             const secondSessionId = await spawnSessionFromDaemon({ daemon, directory: testDir });
 
-            await page.getByTestId('session-header-back').click();
             const secondSessionItem = page.getByTestId(`session-list-item-${secondSessionId}`);
             await expect(secondSessionItem).toHaveCount(1, { timeout: 120_000 });
             await secondSessionItem.click();
@@ -236,7 +235,6 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
             await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
             await expect(page.getByTestId('session-bottompanel-surface-terminal')).toHaveCount(0, { timeout: 60_000 });
 
-            await page.getByTestId('session-header-back').click();
             const firstSessionItem = page.getByTestId(`session-list-item-${sessionId}`);
             await expect(firstSessionItem).toHaveCount(1, { timeout: 120_000 });
             await firstSessionItem.click();

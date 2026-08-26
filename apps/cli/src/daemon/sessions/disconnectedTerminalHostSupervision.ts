@@ -2,7 +2,6 @@ import type { TerminalHostAdapter, TerminalHostHandle } from '@happier-dev/agent
 
 import type { Metadata } from '@/api/types';
 import { probeTerminalHostForRecovery } from '@/integrations/terminal/host/recoveryLiveness';
-import { notifyTerminalAttachmentRetiredThroughCatalog } from '@/terminal/attachment/catalogHooks';
 import {
   readTerminalHostAttachmentInfo as readDefaultTerminalHostAttachmentInfo,
   removeTerminalHostAttachmentInfo as removeDefaultTerminalHostAttachmentInfo,
@@ -67,11 +66,6 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
   removeTerminalAttachmentInfo?: typeof removeDefaultTerminalHostAttachmentInfo;
   removeSessionMarker?: (pid: number) => Promise<void>;
   probeSessionServiceability?: (sessionId: string) => Promise<SessionRunnerServiceabilityProbe>;
-  onExactTerminalAttachmentRetired?: (input: Readonly<{
-    happyHomeDir: string;
-    sessionId: string;
-    attachmentInfo: BoundTerminalHostAttachmentInfo;
-  }>) => Promise<void>;
   retireExactTerminalControlServiceability?: (input: Readonly<{
     happyHomeDir: string;
     sessionId: string;
@@ -151,19 +145,6 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
       : undefined,
   });
   if (disposition.status !== 'retired') return { state: 'unknown', reason: 'retirement_failed' };
-  try {
-    await (input.onExactTerminalAttachmentRetired ?? notifyTerminalAttachmentRetiredThroughCatalog)({
-      happyHomeDir: input.candidate.happyHomeDir,
-      sessionId: input.candidate.sessionId,
-      attachmentInfo: current,
-    });
-  } catch (error) {
-    logger.debug('[DAEMON RUN] Terminal host retired but provider cleanup remains pending', {
-      sessionId: input.candidate.sessionId,
-      attachmentId: input.candidate.attachmentId,
-      error,
-    });
-  }
   await (input.removeSessionMarker ?? removeDefaultSessionMarker)(input.candidate.pid);
   return { state: 'stopped' };
 }

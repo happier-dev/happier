@@ -53,6 +53,89 @@ describe('terminal byte stream protocol', () => {
     expect(schema.safeParse({ ...valid, data: Uint8Array.from([1, 2, 3]) }).success).toBe(false);
   });
 
+  it('rejects unknown fields at every terminal stream wire boundary', () => {
+    const api = requireTerminalStreamApi();
+    const bytesFrame = {
+      t: 'bytes',
+      terminalId: 'term-1',
+      seq: 1,
+      byteOffset: 0,
+      byteLength: 1,
+      encoding: 'base64',
+      data: api.encodeTerminalStreamBytes(Uint8Array.from([1])),
+    };
+    const controlFrames = [
+      {
+        t: 'gap',
+        terminalId: 'term-1',
+        droppedBeforeByteOffset: 0,
+        nextAvailableByteOffset: 1,
+        reason: 'ring_overflow',
+      },
+      {
+        t: 'url',
+        terminalId: 'term-1',
+        byteOffset: 0,
+        url: 'https://example.test',
+        kind: 'generic',
+      },
+      {
+        t: 'exit',
+        terminalId: 'term-1',
+        byteOffset: 1,
+        exitCode: 0,
+        signal: null,
+      },
+      {
+        t: 'legacyOnly',
+        terminalId: 'term-1',
+        provider: 'windows-conpty',
+        reason: 'raw byte capture is unavailable',
+      },
+    ];
+    const readOk = {
+      ok: true,
+      terminalId: 'term-1',
+      frames: [bytesFrame],
+      nextByteOffset: 1,
+      availableByteOffset: 1,
+      droppedBeforeByteOffset: 0,
+      done: false,
+    };
+    const unavailable = {
+      ok: false,
+      code: 'terminal_not_found',
+      message: 'terminal_not_found',
+    };
+
+    expect(api.TerminalStreamBytesFrameSchema.safeParse({ ...bytesFrame, unexpected: true }).success).toBe(false);
+    expect(api.TerminalStreamFrameSchema.safeParse({ ...bytesFrame, unexpected: true }).success).toBe(false);
+    for (const frame of controlFrames) {
+      expect(api.TerminalStreamControlFrameSchema.safeParse({ ...frame, unexpected: true }).success).toBe(false);
+      expect(api.TerminalStreamFrameSchema.safeParse({ ...frame, unexpected: true }).success).toBe(false);
+    }
+    expect(api.TerminalStreamReadRequestSchema.safeParse({
+      terminalId: 'term-1',
+      byteOffset: 0,
+      unexpected: true,
+    }).success).toBe(false);
+    expect(api.TerminalStreamReadResponseSchema.safeParse({ ...readOk, unexpected: true }).success).toBe(false);
+    for (const frame of [bytesFrame, ...controlFrames]) {
+      expect(api.TerminalStreamReadResponseSchema.safeParse({
+        ...readOk,
+        frames: [{ ...frame, unexpected: true }],
+      }).success).toBe(false);
+    }
+    expect(api.TerminalStreamReadResponseSchema.safeParse({ ...unavailable, unexpected: true }).success).toBe(false);
+    expect(api.TerminalStreamAckRequestSchema.safeParse({
+      terminalId: 'term-1',
+      ackedByteOffset: 1,
+      unexpected: true,
+    }).success).toBe(false);
+    expect(api.TerminalStreamAckResponseSchema.safeParse({ ok: true, unexpected: true }).success).toBe(false);
+    expect(api.TerminalStreamAckResponseSchema.safeParse({ ...unavailable, unexpected: true }).success).toBe(false);
+  });
+
   it('rejects malformed offsets and ack ranges', () => {
     const api = requireTerminalStreamApi();
 
@@ -132,6 +215,93 @@ describe('terminal byte stream protocol', () => {
       droppedBeforeByteOffset: 0,
       done: false,
     }).success).toBe(false);
+  });
+
+  it.each([
+    {
+      name: 'reordered byte frames',
+      frames: [
+        { seq: 2, byteOffset: 1, bytes: [2] },
+        { seq: 1, byteOffset: 0, bytes: [1] },
+      ],
+    },
+    {
+      name: 'overlapping byte frames',
+      frames: [
+        { seq: 1, byteOffset: 0, bytes: [1, 2] },
+        { seq: 2, byteOffset: 1, bytes: [3] },
+      ],
+    },
+    {
+      name: 'non-contiguous byte frames',
+      frames: [
+        { seq: 1, byteOffset: 0, bytes: [1] },
+        { seq: 2, byteOffset: 2, bytes: [2] },
+      ],
+    },
+  ])('rejects $name', ({ frames }) => {
+    const api = requireTerminalStreamApi();
+
+    expect(api.TerminalStreamReadResponseSchema.safeParse({
+      ok: true,
+      terminalId: 'term-1',
+      frames: frames.map((frame) => ({
+        t: 'bytes',
+        terminalId: 'term-1',
+        seq: frame.seq,
+        byteOffset: frame.byteOffset,
+        byteLength: frame.bytes.length,
+        encoding: 'base64',
+        data: api.encodeTerminalStreamBytes(Uint8Array.from(frame.bytes)),
+      })),
+      nextByteOffset: 3,
+      availableByteOffset: 3,
+      droppedBeforeByteOffset: 0,
+      done: false,
+    }).success).toBe(false);
+  });
+
+  it('accepts contiguous byte frames with gap and control frames interleaved', () => {
+    const api = requireTerminalStreamApi();
+
+    expect(api.TerminalStreamReadResponseSchema.safeParse({
+      ok: true,
+      terminalId: 'term-1',
+      frames: [
+        {
+          t: 'gap',
+          terminalId: 'term-1',
+          droppedBeforeByteOffset: 4,
+          nextAvailableByteOffset: 4,
+          reason: 'ring_overflow',
+        },
+        { t: 'url', terminalId: 'term-1', byteOffset: 4, url: 'https://example.test/first', kind: 'generic' },
+        {
+          t: 'bytes',
+          terminalId: 'term-1',
+          seq: 1,
+          byteOffset: 4,
+          byteLength: 1,
+          encoding: 'base64',
+          data: api.encodeTerminalStreamBytes(Uint8Array.from([1])),
+        },
+        { t: 'url', terminalId: 'term-1', byteOffset: 5, url: 'https://example.test/second', kind: 'generic' },
+        {
+          t: 'bytes',
+          terminalId: 'term-1',
+          seq: 2,
+          byteOffset: 5,
+          byteLength: 1,
+          encoding: 'base64',
+          data: api.encodeTerminalStreamBytes(Uint8Array.from([2])),
+        },
+        { t: 'exit', terminalId: 'term-1', byteOffset: 6, exitCode: 0, signal: null },
+      ],
+      nextByteOffset: 6,
+      availableByteOffset: 6,
+      droppedBeforeByteOffset: 4,
+      done: true,
+    }).success).toBe(true);
   });
 
   it('rejects future control frames not emitted or handled by TERM V1 byte streams', () => {

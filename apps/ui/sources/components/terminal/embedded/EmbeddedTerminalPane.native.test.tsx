@@ -13,11 +13,13 @@ const platformState = vi.hoisted(() => ({
 
 const surfaceState = vi.hoisted(() => ({
     xtermProps: null as unknown,
+    xtermMountCount: 0,
     ghosttyProps: null as unknown,
     termuxProps: null as unknown,
     ghosttySurfaceIds: [] as string[],
     termuxSurfaceIds: [] as string[],
     ghosttyCopySelection: vi.fn(),
+    termuxCopySelection: vi.fn(),
 }));
 
 const featureState = vi.hoisted(() => ({
@@ -106,6 +108,9 @@ vi.mock('@happier-dev/terminal-native', async (importOriginal) => {
 vi.mock('@/components/terminal/xterm/webview/XtermWebViewSurface.native', () => ({
     XtermWebViewSurface: React.forwardRef<unknown, Readonly<{ children?: React.ReactNode }>>((props, _ref) => {
         surfaceState.xtermProps = props;
+        React.useEffect(() => {
+            surfaceState.xtermMountCount += 1;
+        }, []);
         React.useEffect(() => () => {
             if (surfaceState.xtermProps === props) surfaceState.xtermProps = null;
         }, [props]);
@@ -126,7 +131,8 @@ vi.mock('@/components/terminal/ghostty/surface.native', () => ({
 }));
 
 vi.mock('@/components/terminal/termux/surface.native', () => ({
-    TermuxTerminalSurface: React.forwardRef<unknown, Readonly<{ children?: React.ReactNode; surfaceId?: string }>>((props, _ref) => {
+    TermuxTerminalSurface: React.forwardRef<unknown, Readonly<{ children?: React.ReactNode; surfaceId?: string }>>((props, ref) => {
+        React.useImperativeHandle(ref, () => ({ copySelection: surfaceState.termuxCopySelection }));
         surfaceState.termuxProps = props;
         if (props.surfaceId) surfaceState.termuxSurfaceIds.push(props.surfaceId);
         React.useEffect(() => () => {
@@ -169,11 +175,13 @@ function makeController(): EmbeddedTerminalPaneController & Readonly<{
 
 function resetSurfaceState() {
     surfaceState.xtermProps = null;
+    surfaceState.xtermMountCount = 0;
     surfaceState.ghosttyProps = null;
     surfaceState.termuxProps = null;
     surfaceState.ghosttySurfaceIds = [];
     surfaceState.termuxSurfaceIds = [];
     surfaceState.ghosttyCopySelection.mockReset();
+    surfaceState.termuxCopySelection.mockReset();
     featureState.enabled = {};
     localSettingState.terminalRendererPreference = 'auto';
     localSettingState.terminalNativeRendererQuarantine = null;
@@ -213,7 +221,13 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         );
 
         expect(surfaceState.ghosttyProps).not.toBeNull();
-        expect((surfaceState.ghosttyProps as { accessibilityAccepted?: boolean }).accessibilityAccepted).toBe(true);
+        expect(surfaceState.ghosttyProps).toMatchObject({
+            accessibilityAccepted: true,
+            accessibilityTerminalLabel: 'terminalEmbedded.nativeAccessibility.terminalLabel',
+            accessibilityFallbackValue: 'terminalEmbedded.nativeAccessibility.fallbackValue',
+            accessibilityFocusActionLabel: 'terminalEmbedded.nativeAccessibility.focusAction',
+            accessibilityCopySelectionActionLabel: 'terminalEmbedded.nativeAccessibility.copySelectionAction',
+        });
         expect(surfaceState.xtermProps).toBeNull();
         expect(surfaceState.termuxProps).toBeNull();
     });
@@ -267,6 +281,40 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         expect((surfaceState.xtermProps as {
             onPaste?: (text: string) => void;
         }).onPaste).toBe(controller.onPaste);
+    });
+
+    it('reconnects and remounts xterm after its boot retry is exhausted without restarting the PTY', async () => {
+        platformState.os = 'android';
+        resetSurfaceState();
+        const controller = makeController();
+
+        await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={controller}
+                terminalRef={{ current: null }}
+            />,
+        );
+
+        expect(surfaceState.xtermMountCount).toBe(1);
+
+        await act(async () => {
+            (surfaceState.xtermProps as {
+                onRendererFailure?: (failure: Readonly<{
+                    type: 'boot-retry-exhausted';
+                    code: string;
+                    rejectedWrites: readonly unknown[];
+                }>) => void;
+            }).onRendererFailure?.({
+                type: 'boot-retry-exhausted',
+                code: 'terminal_boot_failed',
+                rejectedWrites: [],
+            });
+        });
+
+        expect(controller.retryConnect).toHaveBeenCalledTimes(1);
+        expect(controller.requestRestart).not.toHaveBeenCalled();
+        expect(surfaceState.xtermMountCount).toBe(2);
     });
 
     it('selects iOS Ghostty from canonical feature and native availability gates without an override prop', async () => {
@@ -450,6 +498,55 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         expect(clipboardState.setClipboardStringSafe).not.toHaveBeenCalled();
     });
 
+    it('asks the selected Android Termux surface to copy its real selection through the host clipboard path', async () => {
+        platformState.os = 'android';
+        resetSurfaceState();
+        localSettingState.terminalRendererPreference = 'native';
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.androidTermux': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'android',
+            renderer: 'android-termux',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+        const terminalRef = { current: null } as React.MutableRefObject<EmbeddedTerminalRendererHandle | null>;
+        const controller = makeController();
+        const screen = await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={controller}
+                terminalRef={terminalRef}
+                testIdPrefix="terminal"
+            />,
+        );
+
+        await act(async () => {
+            screen.tree?.root.findByProps({ testID: 'terminal-copy-selection' }).props.onPress();
+        });
+
+        expect(surfaceState.termuxCopySelection).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            (surfaceState.termuxProps as {
+                onCopy?: (event: Readonly<{ surfaceId: string; text: string }>) => void;
+            }).onCopy?.({
+                surfaceId: 'embedded-terminal:android-termux:terminal',
+                text: 'only Termux selection text',
+            });
+        });
+
+        expect(controller.copySelection).toHaveBeenCalledWith({
+            source: 'user-selection',
+            text: 'only Termux selection text',
+        });
+        expect(clipboardState.setClipboardStringSafe).not.toHaveBeenCalled();
+    });
+
     it('routes Android Termux copy events through the host clipboard owner', async () => {
         platformState.os = 'android';
         resetSurfaceState();
@@ -479,7 +576,13 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         );
 
         expect(surfaceState.termuxProps).not.toBeNull();
-        expect(surfaceState.termuxProps).toMatchObject({ testID: 'terminal-termux-native' });
+        expect(surfaceState.termuxProps).toMatchObject({
+            testID: 'terminal-termux-native',
+            accessibilityTerminalLabel: 'terminalEmbedded.nativeAccessibility.terminalLabel',
+            accessibilityFallbackValue: 'terminalEmbedded.nativeAccessibility.fallbackValue',
+            accessibilityFocusActionLabel: 'terminalEmbedded.nativeAccessibility.focusAction',
+            accessibilityCopySelectionActionLabel: 'terminalEmbedded.nativeAccessibility.copySelectionAction',
+        });
         expect(surfaceState.xtermProps).toBeNull();
 
         await act(async () => {
