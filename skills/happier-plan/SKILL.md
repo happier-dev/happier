@@ -47,7 +47,7 @@ Do not create a separate truth/artifact matrix when the plan's intent, target-st
 
 Include a constraint only when it excludes or materially changes a plausible implementation. Convert vague qualities such as “robust,” “clean,” “premium,” or “scalable” into an observable contract, deciding principle, or acceptance signal; otherwise omit the decorative wording.
 
-Do not promote an architectural possibility, speculative future consumer, generalized reuse opportunity, another proposed mechanism, or unsupported robustness/scalability target into a requirement. For every mechanism-sized topology or reliability decision, identify the approved outcome, constitution rule, external contract, reproduced failure, or reachable derived risk at the root of its justification. Do not manufacture coordination, exactly-once semantics, fencing, generations, new identities, timers, cross-restart durability, or similar machinery as generic hardening; remove the whole dependent mechanism chain when its root requirement disappears.
+Do not promote an architectural possibility, speculative future consumer, generalized reuse opportunity, another proposed mechanism, or unsupported robustness/scalability target into a requirement. Establish requirements from an approved outcome, constitution rule, external contract, reproduced failure, or reachable derived risk; mechanism selection and the recursive deletion test belong in the target-design step below.
 
 ## 3. Investigate the current system
 
@@ -65,9 +65,9 @@ Search broadly enough to establish these facts, then stop. Do not turn optional 
 
 ## 4. Select the smallest coherent target design
 
-When we talk about overengineering in a proposed design, the target is not the feature; it is the underlying implementation logic. Start from the feature's real intent and requirements, preserve those outcomes, and ask whether any disproportionate machinery exists only to satisfy unreal, assumed, speculative, or unreachable requirements. Choose the simplest design that satisfies the real requirements. Before proposing new logic, inspect whether the behavior can be satisfied by or folded into existing canonical logic through reuse, extraction, refinement, extension, consolidation, or refactoring; reject a new split-brain, similar-but-different, or parallel path when an existing owner can satisfy the need.
+Apply root **Scope-preserving solution economy** at design time: preserve the complete feature outcome, challenge unsupported machinery rather than the feature itself, and fold behavior into the canonical owner before proposing another path.
 
-Compare plausible designs when the work changes ownership, crosses packages, introduces persistence/concurrency, changes a public contract, or adds a protocol, state machine, registry, table, lease, credential, generation, gate, or parallel path. For each mechanism, trace its justification through any proposed dependencies to an approved outcome, required invariant, released or external contract, reproduced failure, or reachable material risk. Apply the deletion test recursively: remove the mechanism and everything that exists only to support it, then name the required outcome that fails. Another proposed mechanism, future consumer, generalized reuse, or architectural completeness is not a terminal justification.
+When the work changes ownership, crosses packages, introduces persistence/concurrency, changes a public contract, or adds a protocol, state machine, registry, table, lease, credential, generation, gate, or parallel path, write the intended caller-visible usage first and compare plausible designs from what callers should know. For each mechanism, trace its justification through proposed dependencies to an approved outcome, required invariant, released or external contract, reproduced failure, or reachable material risk. Apply the deletion test recursively: remove the mechanism and everything that exists only to support it, then name the required outcome that fails. Another proposed mechanism, future consumer, generalized reuse, or architectural completeness is not a terminal justification.
 
 Treat every new limit, quota, timeout, retry budget, or guard as product behavior. Name the resource or contract it protects, derive it from that boundary rather than a nearby number, and define what happens when it fires; preserve useful valid data when safe rather than turning a safety backstop into an ordinary product filter.
 
@@ -120,7 +120,7 @@ Before presenting a draft, attack it once at the plan-design phase:
 
 - re-derive whether it solves the real intent;
 - look for missing consumers, dependencies, removals, failure/recovery behavior, and half-wired verticals;
-- apply the recursive deletion test to each proposed mechanism, tracing through dependent machinery to the required outcome and checking the consequence, observability, recovery, and reversibility without it;
+- apply the target-design step's recursive deletion test to each proposed mechanism, including consequence, observability, recovery, and reversibility without it;
 - check split-brains, wrong-layer ownership, compatibility provenance, test value, and scope creep;
 - ensure every required outcome has a deciding check and no task can be marked complete from code presence alone.
 
