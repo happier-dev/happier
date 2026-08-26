@@ -23,7 +23,7 @@ reach; the other 106 are decided before you get there.
 
 ## Features you can turn on yourself
 
-These appear in **Settings → Features**. 16 of the 23 are marked experimental.
+These appear in **Settings → Features**. 15 of the 23 are marked experimental.
 
 | Feature | Id | Kind | Default |
 | --- | --- | --- | --- |
@@ -44,7 +44,7 @@ These appear in **Settings → Features**. 16 of the 23 are marked experimental.
 | **External Sessions** | `sessions.direct` | Standard | On |
 | **Session folders** | `sessions.folders` | Standard | On |
 | **Friends** | `social.friends` | Experimental | Off |
-| **Embedded terminal** | `terminal.embeddedPty` | Experimental | Off |
+| **Embedded terminal** | `terminal.embeddedPty` | Standard | On |
 | **Usage reporting** | `usage.reporting` | Standard | On |
 | **Voice** | `voice` | Experimental | Off |
 | **Voice agent** | `voice.agent` | Experimental | Off |
@@ -167,9 +167,9 @@ behaviour but still needs the server to advertise the capability.
 | `sharing.pendingQueueV2` | Pending queue v2 sharing/bridging surfaces and runtime. | server | — | — |
 | `sharing.public` | Public sharing link support for session content. | server | — | — |
 | `sharing.session` | Session sharing capability (share session with other users/devices). | server | — | — |
-| `terminal.renderer.androidTermux` | Optional Android Termux terminal-view native renderer experiment. | client | `terminal.renderer.native` | — |
-| `terminal.renderer.iosGhostty` | Optional iOS Ghostty-based native terminal renderer experiment. | client | `terminal.renderer.native` | — |
-| `terminal.renderer.native` | Optional native terminal renderer experiments gated behind the byte-stream terminal foundation. | client | `terminal.transport.byteStream` | — |
+| `terminal.renderer.androidTermux` | Optional Android Termux-based native terminal renderer. | client | `terminal.renderer.native` | — |
+| `terminal.renderer.iosGhostty` | Optional iOS Ghostty-based native terminal renderer. | client | `terminal.renderer.native` | — |
+| `terminal.renderer.native` | Optional native terminal renderers gated behind the byte-stream terminal foundation. | client | `terminal.transport.byteStream` | — |
 | `terminal.transport.byteStream` | Byte-stream terminal transport using bounded base64 frames over machine RPC. | server | `terminal.embeddedPty` | `HAPPIER_FEATURE_TERMINAL_TRANSPORT_BYTE_STREAM__ENABLED` |
 | `updates.ota` | Expo over-the-air update checks and apply flows. | server | — | `HAPPIER_FEATURE_UPDATES_OTA__ENABLED` |
 | `voice.happierVoice` | Happier-hosted voice backend availability (server-configured voice). | server | `voice` | — |
