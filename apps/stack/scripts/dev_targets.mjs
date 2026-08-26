@@ -1,6 +1,6 @@
 import './utils/env/env.mjs';
 import { spawnSync } from 'node:child_process';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,9 +10,12 @@ import {
   loadDevTargetsConfig,
   parseDevTargetsConfig,
   resolveDevTargetsConfigPath,
+  upgradeDevTargetsConfigToVersion3,
 } from './utils/dev_targets/config.mjs';
 import { runDevTargetsDoctor } from './utils/dev_targets/doctor.mjs';
+import { doctorManagedDevTargetRuntime } from './utils/dev_targets/managed_runtime.mjs';
 import { provisionPosixDevTarget } from './utils/dev_targets/provision.mjs';
+import { provisionManagedLimaDevTarget } from './utils/dev_targets/managed_worker.mjs';
 import {
   inspectDevTargetSync,
   runDevTargetCommand,
@@ -113,43 +116,32 @@ function exitCodeForCommandResult(result) {
 }
 
 function upgradePlacementConfig(config) {
-  if (config.version === 2) return config;
-  return parseDevTargetsConfig({
-    version: 2,
-    targets: config.targets,
-    runtimePlacement: {
-      server: { mode: 'local' },
-      expo: { mode: 'local' },
-      daemon: config.targets.length
-        ? { mode: 'local-and-targets', targets: config.targets.map((target) => target.name) }
-        : { mode: 'local' },
-    },
-    commandExecution: config.targets.length ? { mode: 'auto' } : { mode: 'local' },
-  });
+  return upgradeDevTargetsConfigToVersion3(config);
 }
 
 function withTargets(config, targets) {
-  if (config.version !== 2 || config.commandExecution.mode !== 'auto') {
-    return parseDevTargetsConfig({ ...config, targets });
+  const upgraded = upgradeDevTargetsConfigToVersion3(config);
+  if (upgraded.commandExecution.mode !== 'auto') {
+    return parseDevTargetsConfig({ ...upgraded, targets });
   }
-  const oldNames = config.targets.map((target) => target.name);
-  const selected = new Set(config.commandExecution.targets);
+  const oldNames = upgraded.targets.map((target) => target.name);
+  const selected = new Set(upgraded.commandExecution.targets);
   const followedAllTargets = oldNames.every((name) => selected.has(name));
   const nextNames = targets.map((target) => target.name);
   const nextSelected = followedAllTargets
     ? nextNames
-    : config.commandExecution.targets.filter((name) => nextNames.includes(name));
+    : upgraded.commandExecution.targets.filter((name) => nextNames.includes(name));
   return parseDevTargetsConfig({
-    ...config,
+    ...upgraded,
     targets,
     commandExecution: nextSelected.length
-      ? { ...config.commandExecution, targets: nextSelected }
+      ? { ...upgraded.commandExecution, targets: nextSelected }
       : { mode: 'local' },
   });
 }
 
 function findPlacementReferences(config, targetName) {
-  if (config.version !== 2) return [];
+  if (config.version !== 2 && config.version !== 3) return [];
   const references = [];
   for (const [surface, placement] of Object.entries(config.runtimePlacement)) {
     if (placement.target === targetName || placement.targets?.includes(targetName)) {
@@ -256,8 +248,9 @@ async function main() {
         '  hstack dev-targets placement set server|expo|daemon local|TARGET [--stack=NAME]',
         '  hstack dev-targets placement set commands local|TARGET|auto [--targets=NAME,...] [--include-local] [--fallback=local|error] [--load-probe-ttl-ms=MS] [--unavailable-probe-ttl-ms=MS] [--stack=NAME]',
         '  hstack dev-targets placement clear --downgrade-v1 [--stack=NAME]',
-        '  hstack dev-targets add NAME --host=HOST --user=USER [--repo-dir=PATH] [--cli-home-dir=PATH] [--stack=NAME]',
-        '  hstack dev-targets add NAME --platform=posix|windows --ssh=ALIAS --repo-dir=PATH --cli-home-dir=PATH [--ssh-config-file=PATH] [--lima-instance=NAME --lima-home=PATH] [--remote-server-port=PORT] [--stack=NAME]',
+        '  hstack dev-targets add NAME --host=HOST --user=USER [--managed-lima] [--lima-instance=NAME] [--lima-home=PATH] [--lima-profile=worker-balanced] [--repo-dir=PATH] [--cli-home-dir=PATH] [--stack=NAME]',
+        '  hstack dev-targets add NAME --managed-lima --outer-target=NAME [--lima-instance=NAME] [--lima-home=PATH] [--lima-profile=worker-balanced] [--repo-dir=PATH] [--cli-home-dir=PATH] [--stack=NAME]',
+        '  hstack dev-targets add NAME --platform=posix|windows --ssh=ALIAS --repo-dir=PATH --cli-home-dir=PATH [--ssh-config-file=PATH] [--lima-instance=NAME --lima-home=PATH --lima-profile=worker-balanced] [--remote-server-port=PORT] [--stack=NAME]',
         '  hstack dev-targets remove NAME [--stack=NAME]',
         '',
         'Mutagen is intentionally user-installed and remains available as the normal `mutagen` CLI.',
@@ -296,6 +289,9 @@ async function main() {
         `ssh\t${target.ssh}`,
         ...(target.sshConfigFile ? [`ssh config\t${target.sshConfigFile}`] : []),
         ...(target.limaInstance ? [`Lima\t${target.limaHome}:${target.limaInstance}`] : []),
+        ...(target.managedRuntime
+          ? [`managed Lima\t${target.managedRuntime.host.kind}:${target.managedRuntime.limaHome}:${target.managedRuntime.instance} (${target.managedRuntime.profile})`]
+          : []),
         `repo\t${target.repoDir}`,
         `CLI home\t${target.cliHomeDir}`,
         ...(target.remotePath?.length
@@ -331,17 +327,33 @@ async function main() {
   }
   if (command === 'status') {
     const target = requireTarget(loaded.config.targets, positionals[1], command);
-    const status = await inspectDevTargetSync({
-      target,
-      stackBaseDir: dirname(loaded.path),
-      env: process.env,
-    });
+    const [status, managedRuntime] = await Promise.all([
+      inspectDevTargetSync({
+        target,
+        stackBaseDir: dirname(loaded.path),
+        env: process.env,
+      }),
+      target.managedRuntime
+        ? doctorManagedDevTargetRuntime({ target, env: process.env })
+        : null,
+    ]);
     printResult({
       json,
-      data: { path, stackName, target, status },
-      text: formatSyncStatus(target, status),
+      data: {
+        path,
+        stackName,
+        target,
+        status,
+        ...(managedRuntime ? { managedRuntime } : {}),
+      },
+      text: [
+        formatSyncStatus(target, status),
+        ...(managedRuntime
+          ? [`[dev-targets] ${target.name} managed Lima\t${managedRuntime.status}\t${managedRuntime.ok ? 'ok' : 'failed'}`]
+          : []),
+      ].join('\n'),
     });
-    if (status.state !== 'ready') process.exitCode = 1;
+    if (status.state !== 'ready' || managedRuntime?.ok === false) process.exitCode = 1;
     return;
   }
   if (command === 'sync') {
@@ -521,35 +533,89 @@ async function main() {
     const name = String(positionals[1] ?? '').trim();
     if (!name) throw new Error('[dev-targets] add requires a target name');
     const host = kv.get('--host');
+    const outerTargetName = String(kv.get('--outer-target') ?? '').trim().toLowerCase();
     let candidate;
-    if (host) {
-      if (kv.get('--ssh') || kv.get('--ssh-config-file') || kv.get('--lima-instance') || kv.get('--lima-home')) {
-        throw new Error('[dev-targets] --host provisioning cannot be combined with manual SSH or Lima flags');
+    if (host || outerTargetName) {
+      if (host && outerTargetName) {
+        throw new Error('[dev-targets] --host and --outer-target are mutually exclusive');
+      }
+      if (kv.get('--ssh') || kv.get('--ssh-config-file')) {
+        throw new Error('[dev-targets] managed provisioning cannot be combined with manual SSH flags');
       }
       const requestedPlatform = String(kv.get('--platform') ?? 'posix').trim().toLowerCase();
       if (requestedPlatform !== 'posix') {
         throw new Error('[dev-targets] one-command --host provisioning currently supports POSIX targets only');
       }
-      candidate = await provisionPosixDevTarget({
-        name,
-        host,
-        user: kv.get('--user'),
-        stackBaseDir: dirname(path),
-        repoDir: kv.get('--repo-dir') ?? null,
-        cliHomeDir: kv.get('--cli-home-dir') ?? null,
-        env: process.env,
-      });
+      if (flags.has('--managed-lima')) {
+        const outerTarget = outerTargetName
+          ? loaded.config.targets.find((target) => target.name === outerTargetName)
+          : null;
+        if (outerTargetName && !outerTarget) {
+          throw new Error(`[dev-targets] outer target not found: ${outerTargetName}`);
+        }
+        if (outerTarget?.managedRuntime) {
+          throw new Error('[dev-targets] --outer-target must name the outer Mac, not another managed guest');
+        }
+        const guestProvisionScriptSource = await readFile(
+          new URL('./provision/linux-ubuntu-provision.sh', import.meta.url),
+          'utf8',
+        );
+        candidate = await provisionManagedLimaDevTarget({
+          name,
+          host,
+          user: kv.get('--user'),
+          outerTarget,
+          stackBaseDir: dirname(path),
+          instance: kv.get('--lima-instance') ?? `happier-worker-${String(name).toLowerCase()}`,
+          profile: kv.get('--lima-profile') ?? 'worker-balanced',
+          limaHome: kv.get('--lima-home') ?? null,
+          repoDir: kv.get('--repo-dir') ?? null,
+          cliHomeDir: kv.get('--cli-home-dir') ?? null,
+          allowInstall: !flags.has('--no-install'),
+          env: process.env,
+        }, { guestProvisionScriptSource });
+      } else {
+        if (outerTargetName) {
+          throw new Error('[dev-targets] --outer-target requires --managed-lima');
+        }
+        if (kv.get('--lima-instance') || kv.get('--lima-home') || kv.get('--lima-profile')) {
+          throw new Error('[dev-targets] Lima flags require --managed-lima when provisioning with --host');
+        }
+        candidate = await provisionPosixDevTarget({
+          name,
+          host,
+          user: kv.get('--user'),
+          stackBaseDir: dirname(path),
+          repoDir: kv.get('--repo-dir') ?? null,
+          cliHomeDir: kv.get('--cli-home-dir') ?? null,
+          env: process.env,
+        });
+      }
       if (kv.get('--remote-server-port') != null) {
         candidate.remoteServerPort = kv.get('--remote-server-port');
       }
     } else {
+      const limaInstance = kv.get('--lima-instance') ?? null;
+      const limaHome = kv.get('--lima-home') ?? null;
+      if (Boolean(limaInstance) !== Boolean(limaHome)) {
+        throw new Error('[dev-targets] --lima-instance and --lima-home must be configured together');
+      }
       candidate = {
         name,
         platform: kv.get('--platform'),
         ssh: kv.get('--ssh'),
         sshConfigFile: kv.get('--ssh-config-file') ?? null,
-        limaInstance: kv.get('--lima-instance') ?? null,
-        limaHome: kv.get('--lima-home') ?? null,
+        ...(limaInstance
+          ? {
+              managedRuntime: {
+                kind: 'lima',
+                host: { kind: 'local' },
+                instance: limaInstance,
+                limaHome,
+                profile: kv.get('--lima-profile') ?? 'worker-balanced',
+              },
+            }
+          : {}),
         repoDir: kv.get('--repo-dir'),
         cliHomeDir: kv.get('--cli-home-dir'),
         remoteServerPort: kv.get('--remote-server-port') ?? null,

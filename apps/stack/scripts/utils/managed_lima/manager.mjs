@@ -25,12 +25,19 @@ async function installLima(executor) {
       'MANAGED_LIMA_HOMEBREW_NOT_INSTALLED',
     );
   }
-  await executor.run('brew', ['install', 'lima']);
+  let installError = null;
+  try {
+    await executor.run('brew', ['install', 'lima']);
+  } catch (error) {
+    installError = error;
+  }
   if (!await probeLima(executor)) {
-    throw managedLimaError(
-      '[managed-lima] Homebrew completed but limactl is still unavailable on the selected host PATH',
+    const error = managedLimaError(
+      '[managed-lima] Homebrew installation did not make limactl available on the selected host PATH',
       'MANAGED_LIMA_INSTALL_FAILED',
     );
+    if (installError) error.cause = installError;
+    throw error;
   }
 }
 
@@ -38,6 +45,7 @@ export async function setupManagedLimaInstance({
   executor,
   instance,
   profileName = 'balanced',
+  architecture = 'aarch64',
   allowInstall = false,
 }) {
   let installed = false;
@@ -51,7 +59,7 @@ export async function setupManagedLimaInstance({
     await installLima(executor);
     installed = true;
   }
-  const profile = resolveManagedLimaProfile(profileName);
+  const profile = resolveManagedLimaProfile(profileName, { architecture });
   let reconciliation;
   try {
     reconciliation = await reconcileManagedLimaInstance({ executor, instance, profile });
@@ -81,6 +89,7 @@ export async function setupManagedLimaRuntime({
   executor,
   instance,
   profileName = 'balanced',
+  architecture = 'aarch64',
   allowInstall = false,
   guestProvisionScriptSource,
   guestProvisionProfile = 'happier',
@@ -93,6 +102,7 @@ export async function setupManagedLimaRuntime({
     executor,
     instance,
     profileName,
+    architecture,
     allowInstall,
   });
   const provision = await provisionGuest({
@@ -107,7 +117,12 @@ export async function setupManagedLimaRuntime({
   return { ...lifecycle, provision, guest };
 }
 
-export async function doctorManagedLimaInstance({ executor, instance, profileName = 'balanced' }) {
+export async function doctorManagedLimaInstance({
+  executor,
+  instance,
+  profileName = 'balanced',
+  architecture = 'aarch64',
+}) {
   const host = await executor.capture('uname', ['-s']);
   const lima = await executor.capture('limactl', ['--version']);
   if (host.exitCode !== 0 || lima.exitCode !== 0) {
@@ -131,7 +146,7 @@ export async function doctorManagedLimaInstance({ executor, instance, profileNam
       drift: { creation: [], resources: [], configuration: [] },
     };
   }
-  const profile = resolveManagedLimaProfile(profileName);
+  const profile = resolveManagedLimaProfile(profileName, { architecture });
   const drift = evaluateManagedLimaInstance(current.instance, profile);
   const ok = Object.values(drift).every((entries) => entries.length === 0)
     && current.status.toLowerCase() !== 'broken';

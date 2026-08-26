@@ -11,6 +11,7 @@ import {
   runDevTargetControlProcess,
 } from './sync_project.mjs';
 import { runDevTargetDependencyBootstrap } from './executor.mjs';
+import { startManagedDevTargetRuntime } from './managed_runtime.mjs';
 import { waitForExpoMetroRunning } from '../expo/expo.mjs';
 import {
   buildRemoteStackCommand,
@@ -202,6 +203,7 @@ export async function startStackDevTargets(
     waitForExpoReady = defaultWaitForExpoReady,
     waitForDaemonReady = defaultWaitForDaemonReady,
     runDependencyBootstrap = runDevTargetDependencyBootstrap,
+    startManagedRuntime = startManagedDevTargetRuntime,
     logger = console,
   } = {},
 ) {
@@ -321,7 +323,9 @@ export async function startStackDevTargets(
       try {
         beginPhase('prepare');
         if (!provisionedTargets.has(target.name)) {
-          if (target.limaInstance) {
+          if (target.managedRuntime) {
+            await startManagedRuntime({ target, env: infraEnv });
+          } else if (target.limaInstance) {
             requireSuccessful(
               await runProcess({
                 label: `remote:${target.name}`,

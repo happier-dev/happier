@@ -2,6 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { resolveStackEnvPath } from '../paths/paths.mjs';
+import {
+  normalizeManagedLimaArchitecture,
+  resolveManagedLimaProfile,
+} from '../managed_lima/profiles.mjs';
 
 const TARGET_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const SSH_TARGET_RE = /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$/;
@@ -33,7 +37,63 @@ function normalizeRemotePath(raw, platform, name) {
   return normalized;
 }
 
-function normalizeTarget(raw, index) {
+function normalizeManagedRuntime(raw, { name, platform }) {
+  if (raw == null) return null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`[dev-targets] target ${name}: managedRuntime must be an object`);
+  }
+  if (platform !== 'posix') {
+    throw new Error(`[dev-targets] target ${name}: managed Lima runtimes must use platform "posix"`);
+  }
+  const kind = requireNonEmptyString(raw.kind, `target ${name} managedRuntime kind`).toLowerCase();
+  if (kind !== 'lima') {
+    throw new Error(`[dev-targets] target ${name}: managedRuntime kind must be "lima"`);
+  }
+  const instance = requireNonEmptyString(raw.instance, `target ${name} managedRuntime instance`);
+  if (!LIMA_INSTANCE_RE.test(instance)) {
+    throw new Error(`[dev-targets] target ${name}: invalid managed Lima instance`);
+  }
+  const limaHome = requireNonEmptyString(raw.limaHome, `target ${name} managedRuntime limaHome`);
+  if (!limaHome.startsWith('/')) {
+    throw new Error(`[dev-targets] target ${name}: managedRuntime limaHome must be an absolute POSIX path`);
+  }
+  const profile = resolveManagedLimaProfile(
+    requireNonEmptyString(raw.profile, `target ${name} managedRuntime profile`),
+  ).name;
+  const architecture = normalizeManagedLimaArchitecture(raw.architecture ?? 'aarch64');
+  if (!raw.host || typeof raw.host !== 'object' || Array.isArray(raw.host)) {
+    throw new Error(`[dev-targets] target ${name}: managedRuntime host must be an object`);
+  }
+  const hostKind = requireNonEmptyString(raw.host.kind, `target ${name} managedRuntime host kind`).toLowerCase();
+  let host;
+  if (hostKind === 'local') {
+    host = { kind: 'local' };
+  } else if (hostKind === 'ssh') {
+    const ssh = requireNonEmptyString(raw.host.ssh, `target ${name} outer-host SSH alias`);
+    if (!/^[A-Za-z0-9._-]+$/.test(ssh)) {
+      throw new Error(`[dev-targets] target ${name}: invalid outer-host SSH alias`);
+    }
+    const sshConfigFile = requireNonEmptyString(
+      raw.host.sshConfigFile,
+      `target ${name} outer-host SSH config`,
+    );
+    if (!sshConfigFile.startsWith('/')) {
+      throw new Error(`[dev-targets] target ${name}: outer-host SSH config must be an absolute path`);
+    }
+    const remotePath = normalizeRemotePath(raw.host.remotePath, 'posix', `${name} managedRuntime host`);
+    host = {
+      kind: 'ssh',
+      ssh,
+      sshConfigFile,
+      ...(remotePath.length ? { remotePath } : {}),
+    };
+  } else {
+    throw new Error(`[dev-targets] target ${name}: managedRuntime host kind must be "local" or "ssh"`);
+  }
+  return { kind, host, instance, limaHome, profile, architecture };
+}
+
+function normalizeTarget(raw, index, version) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`[dev-targets] target ${index + 1} must be an object`);
   }
@@ -44,6 +104,9 @@ function normalizeTarget(raw, index) {
   const platform = requireNonEmptyString(raw.platform, `target ${name} platform`).toLowerCase();
   if (platform !== 'posix' && platform !== 'windows') {
     throw new Error(`[dev-targets] target ${name}: platform must be "posix" or "windows"`);
+  }
+  if (version === 3 && (raw.limaInstance != null || raw.limaHome != null)) {
+    throw new Error(`[dev-targets] target ${name}: legacy Lima fields are not allowed in version 3`);
   }
   const ssh = requireNonEmptyString(raw.ssh, `target ${name} ssh`);
   if (!SSH_TARGET_RE.test(ssh)) {
@@ -80,6 +143,9 @@ function normalizeTarget(raw, index) {
   if (limaInstance && platform !== 'posix') {
     throw new Error(`[dev-targets] target ${name}: Lima targets must use platform "posix"`);
   }
+  const managedRuntime = version === 3
+    ? normalizeManagedRuntime(raw.managedRuntime, { name, platform })
+    : null;
   const repoDir = requireNonEmptyString(raw.repoDir, `target ${name} repoDir`);
   if (repoDir === '/' || repoDir === '\\' || /^[A-Za-z]:[\\/]?$/.test(repoDir)) {
     throw new Error(`[dev-targets] target ${name}: unsafe repoDir`);
@@ -103,6 +169,7 @@ function normalizeTarget(raw, index) {
     ssh,
     ...(sshConfigFile ? { sshConfigFile } : {}),
     ...(limaInstance ? { limaInstance, limaHome } : {}),
+    ...(managedRuntime ? { managedRuntime } : {}),
     repoDir,
     cliHomeDir,
     ...(remotePath.length ? { remotePath } : {}),
@@ -226,7 +293,7 @@ function normalizeCommandExecution(raw, { targets, targetNames }) {
   });
 }
 
-function normalizeVersion2Config(raw, targets) {
+function normalizePlacedConfig(raw, targets) {
   const targetNames = new Set(targets.map((target) => target.name));
   const runtimePlacementRaw = raw.runtimePlacement;
   if (
@@ -247,20 +314,20 @@ function normalizeVersion2Config(raw, targets) {
     daemon: normalizeDaemonPlacement(runtimePlacementRaw?.daemon, { targetNames }),
   };
   const commandExecution = normalizeCommandExecution(raw.commandExecution, { targets, targetNames });
-  return { version: 2, targets, runtimePlacement, commandExecution };
+  return { version: raw.version, targets, runtimePlacement, commandExecution };
 }
 
 export function parseDevTargetsConfig(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('[dev-targets] configuration must be an object');
   }
-  if (raw.version !== 1 && raw.version !== 2) {
+  if (raw.version !== 1 && raw.version !== 2 && raw.version !== 3) {
     throw new Error(`[dev-targets] unsupported configuration version: ${String(raw.version)}`);
   }
   if (!Array.isArray(raw.targets)) {
     throw new Error('[dev-targets] targets must be an array');
   }
-  const targets = raw.targets.map(normalizeTarget);
+  const targets = raw.targets.map((target, index) => normalizeTarget(target, index, raw.version));
   const seen = new Set();
   for (const target of targets) {
     if (seen.has(target.name)) {
@@ -269,7 +336,46 @@ export function parseDevTargetsConfig(raw) {
     seen.add(target.name);
   }
   if (raw.version === 1) return { version: 1, targets };
-  return normalizeVersion2Config(raw, targets);
+  return normalizePlacedConfig(raw, targets);
+}
+
+export function upgradeDevTargetsConfigToVersion3(config) {
+  const parsed = parseDevTargetsConfig(config);
+  const placed = parsed.version === 1
+    ? {
+        version: 2,
+        targets: parsed.targets,
+        runtimePlacement: {
+          server: { mode: 'local' },
+          expo: { mode: 'local' },
+          daemon: parsed.targets.length
+            ? { mode: 'local-and-targets', targets: parsed.targets.map((target) => target.name) }
+            : { mode: 'local' },
+        },
+        commandExecution: parsed.targets.length ? { mode: 'auto' } : { mode: 'local' },
+      }
+    : parsed;
+  if (placed.version === 3) return placed;
+  return parseDevTargetsConfig({
+    ...placed,
+    version: 3,
+    targets: placed.targets.map((target) => {
+      const { limaInstance, limaHome, ...rest } = target;
+      return limaInstance
+        ? {
+            ...rest,
+            managedRuntime: {
+              kind: 'lima',
+              host: { kind: 'local' },
+              instance: limaInstance,
+              limaHome,
+              profile: 'worker-balanced',
+              architecture: 'aarch64',
+            },
+          }
+        : rest;
+    }),
+  });
 }
 
 export function resolveDevTargetExecutionPolicy(config) {
@@ -285,7 +391,7 @@ export function resolveDevTargetExecutionPolicy(config) {
         : { mode: 'local' },
     };
   }
-  if (config?.version !== 2) {
+  if (config?.version !== 2 && config?.version !== 3) {
     throw new Error(`[dev-targets] unsupported configuration version: ${String(config?.version)}`);
   }
   return {

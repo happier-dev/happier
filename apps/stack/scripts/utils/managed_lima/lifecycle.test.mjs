@@ -175,3 +175,19 @@ test('managed Lima status reports an absent retained instance without creating i
   });
   assert.equal(executor.calls.some((call) => call.kind === 'run'), false);
 });
+
+test('managed Lima status treats Lima 2.2 unmatched-instance output as an absent retained instance', async () => {
+  const executor = fakeExecutor({
+    'limactl list --all-fields --format=json happier-agent-primary': {
+      exitCode: 1,
+      out: '',
+      err: 'level=warning msg="No instance matching happier-agent-primary found."\nlevel=fatal msg="unmatched instances"\n',
+    },
+  });
+
+  assert.deepEqual(await getManagedLimaStatus({ executor, instance: 'happier-agent-primary' }), {
+    exists: false,
+    status: 'Absent',
+    instance: null,
+  });
+});

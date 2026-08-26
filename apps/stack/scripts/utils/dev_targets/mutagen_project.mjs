@@ -53,6 +53,9 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   '/workspace',
   '.expo',
   '.turbo',
+  // Slopo's large SQLite similarity index is derived, machine-local state. It
+  // is Git-ignored and must not consume continuous source-replica bandwidth.
+  '.slopo',
   // `target` is the Rust build-output convention. Tracked repository directories
   // that happen to carry that name are source and must still reach a dev target;
   // without these exceptions they are silently absent there and every routed

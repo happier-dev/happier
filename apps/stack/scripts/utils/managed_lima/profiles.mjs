@@ -1,4 +1,5 @@
 const INSTANCE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+const MANAGED_LIMA_ARCHITECTURES = new Set(['aarch64', 'x86_64']);
 
 const BASE_PROFILE = Object.freeze({
   schemaVersion: 1,
@@ -31,7 +32,16 @@ function requireInstanceName(value) {
   return instance;
 }
 
-export function resolveManagedLimaProfile(name) {
+export function normalizeManagedLimaArchitecture(value) {
+  const normalized = String(value ?? 'aarch64').trim().toLowerCase();
+  const architecture = normalized === 'arm64' ? 'aarch64' : normalized;
+  if (!MANAGED_LIMA_ARCHITECTURES.has(architecture)) {
+    throw new Error(`[managed-lima] unsupported managed Lima architecture: ${JSON.stringify(normalized)}`);
+  }
+  return architecture;
+}
+
+export function resolveManagedLimaProfile(name, { architecture = 'aarch64' } = {}) {
   const normalizedName = String(name ?? '').trim().toLowerCase();
   const size = PROFILE_SIZES[normalizedName];
   if (!size) throw new Error(`[managed-lima] unknown managed Lima profile: ${JSON.stringify(normalizedName)}`);
@@ -39,7 +49,7 @@ export function resolveManagedLimaProfile(name) {
     schemaVersion: BASE_PROFILE.schemaVersion,
     name: normalizedName,
     vmType: BASE_PROFILE.vmType,
-    arch: BASE_PROFILE.arch,
+    arch: normalizeManagedLimaArchitecture(architecture),
     template: BASE_PROFILE.template,
     diskImageFormat: BASE_PROFILE.diskImageFormat,
     cpus: size.cpus,

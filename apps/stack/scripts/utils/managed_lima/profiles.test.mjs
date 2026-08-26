@@ -48,6 +48,18 @@ test('managed Lima balanced profile is bounded, mount-free, ARM64 VZ, and contai
   ]);
 });
 
+test('managed Lima worker profile can render a native x86_64 guest without changing resource policy', () => {
+  const profile = resolveManagedLimaProfile('worker-balanced', { architecture: 'x86_64' });
+
+  assert.equal(profile.arch, 'x86_64');
+  assert.equal(profile.cpus, 8);
+  assert.equal(profile.memoryGiB, 24);
+  assert.deepEqual(
+    buildManagedLimaCreateArgs({ instance: 'happier-worker-intel', profile }).slice(0, 8),
+    ['create', '--name', 'happier-worker-intel', '--tty=false', '--vm-type', 'vz', '--arch', 'x86_64'],
+  );
+});
+
 test('managed Lima edit args update only mutable retained-instance settings', () => {
   assert.deepEqual(buildManagedLimaEditArgs({
     instance: 'happier-agent-primary',
@@ -69,6 +81,10 @@ test('managed Lima edit args update only mutable retained-instance settings', ()
 
 test('managed Lima profile rejects unknown profiles and unsafe instance names', () => {
   assert.throws(() => resolveManagedLimaProfile('enormous'), /unknown managed Lima profile/);
+  assert.throws(
+    () => resolveManagedLimaProfile('worker-balanced', { architecture: 'riscv64' }),
+    /unsupported managed Lima architecture/,
+  );
   assert.throws(
     () => buildManagedLimaCreateArgs({ instance: '../escape', profile: resolveManagedLimaProfile('small') }),
     /invalid managed Lima instance name/,

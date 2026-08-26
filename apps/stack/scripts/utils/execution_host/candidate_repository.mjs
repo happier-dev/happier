@@ -11,6 +11,7 @@ import {
   flushDevTargetSync,
   resumeDevTargetSync,
 } from '../dev_targets/sync_project.mjs';
+import { runDevTargetDependencyBootstrap } from '../dev_targets/executor.mjs';
 
 const CANDIDATE_SYNC_OWNER = 'execution-host-candidate';
 
@@ -35,6 +36,20 @@ function refsDigest(refs) {
   const hash = createHash('sha256');
   for (const ref of refs) hash.update(`${ref.object}\t${ref.name}\n`);
   return hash.digest('hex');
+}
+
+function projectCandidateCapture(capture) {
+  const {
+    refs = [],
+    worktreeHeads = [],
+    ...bounded
+  } = capture ?? {};
+  return {
+    ...bounded,
+    refCount: capture?.refCount ?? refs.length,
+    refsDigest: capture?.refsDigest ?? refsDigest(refs),
+    worktreeHeadCount: capture?.worktreeHeadCount ?? worktreeHeads.length,
+  };
 }
 
 async function defaultCaptureGitBasis({ sourceDir }) {
@@ -132,6 +147,41 @@ export function renderCandidateGitBootstrapScript() {
   ].join('\n');
 }
 
+export function renderCandidateGitRefreshScript() {
+  return [
+    'set -eu',
+    'repo=$1',
+    'bundle=$2',
+    'manifest=$3',
+    'head_ref=$4',
+    'expected_head=$5',
+    'staging=$6',
+    'backup=$7',
+    'shift 7',
+    '[ -d "$repo/.git" ]',
+    'rm -rf -- "$staging" "$backup"',
+    'git init -q "$staging"',
+    'git -C "$staging" fetch --quiet --update-head-ok "$bundle" "+refs/*:refs/*"',
+    'git -C "$staging" symbolic-ref HEAD "$head_ref"',
+    'git -C "$staging" read-tree "$expected_head"',
+    'actual_head=$(git -C "$staging" rev-parse HEAD)',
+    '[ "$actual_head" = "$expected_head" ]',
+    'actual_manifest=${manifest}.actual',
+    'git -C "$staging" for-each-ref --sort=refname --format="%(objectname)%09%(refname)" >"$actual_manifest"',
+    'cmp "$manifest" "$actual_manifest"',
+    'for worktree_head in "$@"; do git -C "$staging" cat-file -e "${worktree_head}^{commit}"; done',
+    'rm -f -- "$actual_manifest"',
+    'mv "$repo/.git" "$backup"',
+    'if mv "$staging/.git" "$repo/.git"; then',
+    '  rm -rf -- "$backup" "$staging"',
+    'else',
+    '  mv "$backup" "$repo/.git"',
+    '  exit 74',
+    'fi',
+    'printf "%s\\n" "$actual_head"',
+  ].join('\n');
+}
+
 async function defaultBootstrapGuestRepository({
   executor,
   profile,
@@ -168,6 +218,58 @@ async function defaultBootstrapGuestRepository({
     ]), 'candidate Git repository bootstrap');
     return {
       created: true,
+      verifiedHead: String(result.out ?? '').trim().split(/\r?\n/).at(-1),
+      verifiedRefs: basis.refs.length,
+    };
+  } finally {
+    await executor.capture('limactl', [
+      'shell', profile.instance, '--', 'rm', '-f', '--', guestBundle, guestManifest,
+    ]).catch(() => {});
+    await executor.capture('limactl', [
+      'shell', profile.instance, '--', 'rm', '-rf', '--', guestStaging,
+    ]).catch(() => {});
+  }
+}
+
+async function defaultRefreshGuestRepository({
+  executor,
+  profile,
+  guestRepositoryDir,
+  bundlePath,
+  manifestPath,
+  basis,
+}) {
+  const guestTransferDir = join(profile.guestWorkspaceDir, '.bootstrap');
+  const token = randomUUID();
+  const guestBundle = join(guestTransferDir, `${token}.bundle`);
+  const guestManifest = join(guestTransferDir, `${token}.refs`);
+  const guestStaging = `${guestRepositoryDir}.refresh-${token}`;
+  const guestBackup = `${guestRepositoryDir}.git-backup-${token}`;
+  requireSuccess(await executor.capture('limactl', [
+    'shell', profile.instance, '--', 'mkdir', '-p', guestTransferDir,
+  ]), 'guest refresh directory creation');
+  try {
+    requireSuccess(await executor.run('limactl', [
+      'copy', '--backend=scp', bundlePath, `${profile.instance}:${guestBundle}`,
+    ]), 'candidate Git refresh bundle copy');
+    requireSuccess(await executor.run('limactl', [
+      'copy', '--backend=scp', manifestPath, `${profile.instance}:${guestManifest}`,
+    ]), 'candidate ref refresh manifest copy');
+    const result = requireSuccess(await executor.capture('limactl', [
+      'shell', profile.instance, '--', 'sh', '-ceu', renderCandidateGitRefreshScript(),
+      'hstack-candidate-refresh',
+      guestRepositoryDir,
+      guestBundle,
+      guestManifest,
+      basis.headRef,
+      basis.head,
+      guestStaging,
+      guestBackup,
+      ...(basis.worktreeHeads ?? []),
+    ]), 'candidate Git repository refresh');
+    return {
+      created: false,
+      refreshed: true,
       verifiedHead: String(result.out ?? '').trim().split(/\r?\n/).at(-1),
       verifiedRefs: basis.refs.length,
     };
@@ -221,31 +323,34 @@ export async function readExecutionHostCandidateState(profile, env = process.env
     if (state?.version !== 1 || state?.authoritative !== false || state?.activation !== 'candidate') {
       throw new Error('unsupported candidate state');
     }
-    return state;
+    return {
+      ...state,
+      capture: projectCandidateCapture(state.capture),
+    };
   } catch (error) {
     throw new Error(`[execution-host] failed to read candidate state ${stateFile}: ${String(error?.message ?? error)}`);
   }
 }
 
-export async function prepareExecutionHostCandidateRepository(
-  { profile, sourceDir, env = process.env, executor },
-  {
-    captureGitBasis = defaultCaptureGitBasis,
-    exportGitBundle = defaultExportGitBundle,
-    bootstrapGuestRepository = defaultBootstrapGuestRepository,
-    getInstanceStatus = getManagedLimaStatus,
-    publishSshConfig = publishManagedLimaLocalSshConfig,
-    ensureSyncProject = ensureDevTargetSyncProject,
-    resumeSync = resumeDevTargetSync,
-    flushSync = flushDevTargetSync,
-  } = {},
-) {
-  if (profile?.activation !== 'candidate') {
-    throw new Error('[execution-host] candidate repository preparation requires activation=candidate');
-  }
+async function updateCandidateRepository({
+  profile,
+  sourceDir,
+  env,
+  executor,
+  transferPrefix,
+  applyGitState,
+  captureGitBasis,
+  exportGitBundle,
+  getInstanceStatus,
+  publishSshConfig,
+  ensureSyncProject,
+  resumeSync,
+  flushSync,
+  bootstrapDependencies,
+}) {
   const paths = resolveExecutionHostCandidatePaths(profile, env);
   await mkdir(paths.transferRoot, { recursive: true, mode: 0o700 });
-  const transferDir = await mkdtemp(join(paths.transferRoot, 'capture-'));
+  const transferDir = await mkdtemp(join(paths.transferRoot, transferPrefix));
   const bundlePath = join(transferDir, 'repository.bundle');
   const manifestPath = join(transferDir, 'refs.tsv');
   try {
@@ -261,7 +366,7 @@ export async function prepareExecutionHostCandidateRepository(
       { encoding: 'utf8', mode: 0o600 },
     );
     await exportGitBundle({ sourceDir, bundlePath, basis: normalizedBasis });
-    const bootstrap = await bootstrapGuestRepository({
+    const bootstrap = await applyGitState({
       executor,
       profile,
       guestRepositoryDir: paths.guestRepositoryDir,
@@ -292,17 +397,28 @@ export async function prepareExecutionHostCandidateRepository(
       env,
     });
     await resumeSync({ target, env: syncProject.env });
-    // This is the one initial capture barrier. Steady-state synchronization remains continuous;
+    // This is an explicit capture barrier. Steady-state synchronization remains continuous;
     // ordinary candidate commands never pause or flush Mutagen.
     await flushSync({ target, env: syncProject.env });
+    const dependencyResult = requireSuccess(await bootstrapDependencies({
+      target,
+      stackBaseDir: paths.syncBaseDir,
+      syncAlreadyVerified: true,
+      env,
+    }), 'candidate dependency bootstrap');
     const state = {
       version: 1,
       activation: 'candidate',
       authoritative: false,
       sourceDir,
       guestRepositoryDir: paths.guestRepositoryDir,
-      capture: normalizedBasis,
+      capture: projectCandidateCapture(normalizedBasis),
       bootstrap,
+      dependencies: {
+        ready: true,
+        preparedAt: new Date().toISOString(),
+        exitCode: dependencyResult.code ?? dependencyResult.exitCode,
+      },
       sync: {
         mode: 'continuous-one-way-replica',
         ownership: syncProject.ownership,
@@ -314,4 +430,81 @@ export async function prepareExecutionHostCandidateRepository(
   } finally {
     await rm(transferDir, { recursive: true, force: true });
   }
+}
+
+export async function prepareExecutionHostCandidateRepository(
+  { profile, sourceDir, env = process.env, executor },
+  {
+    captureGitBasis = defaultCaptureGitBasis,
+    exportGitBundle = defaultExportGitBundle,
+    bootstrapGuestRepository = defaultBootstrapGuestRepository,
+    getInstanceStatus = getManagedLimaStatus,
+    publishSshConfig = publishManagedLimaLocalSshConfig,
+    ensureSyncProject = ensureDevTargetSyncProject,
+    resumeSync = resumeDevTargetSync,
+    flushSync = flushDevTargetSync,
+    bootstrapDependencies = runDevTargetDependencyBootstrap,
+  } = {},
+) {
+  if (profile?.activation !== 'candidate') {
+    throw new Error('[execution-host] candidate repository preparation requires activation=candidate');
+  }
+  return await updateCandidateRepository({
+    profile,
+    sourceDir,
+    env,
+    executor,
+    transferPrefix: 'capture-',
+    applyGitState: bootstrapGuestRepository,
+    captureGitBasis,
+    exportGitBundle,
+    getInstanceStatus,
+    publishSshConfig,
+    ensureSyncProject,
+    resumeSync,
+    flushSync,
+    bootstrapDependencies,
+  });
+}
+
+export async function refreshExecutionHostCandidateRepository(
+  { profile, sourceDir, env = process.env, executor },
+  {
+    captureGitBasis = defaultCaptureGitBasis,
+    exportGitBundle = defaultExportGitBundle,
+    refreshGuestRepository = defaultRefreshGuestRepository,
+    getInstanceStatus = getManagedLimaStatus,
+    publishSshConfig = publishManagedLimaLocalSshConfig,
+    ensureSyncProject = ensureDevTargetSyncProject,
+    resumeSync = resumeDevTargetSync,
+    flushSync = flushDevTargetSync,
+    bootstrapDependencies = runDevTargetDependencyBootstrap,
+  } = {},
+) {
+  if (profile?.activation !== 'candidate') {
+    throw new Error('[execution-host] candidate repository refresh requires activation=candidate');
+  }
+  const previous = await readExecutionHostCandidateState(profile, env);
+  if (!previous) {
+    throw new Error('[execution-host] candidate repository is not prepared; run `hstack host mirror` first');
+  }
+  if (resolve(previous.sourceDir) !== resolve(sourceDir)) {
+    throw new Error(`[execution-host] candidate source mismatch: expected ${previous.sourceDir}`);
+  }
+  return await updateCandidateRepository({
+    profile,
+    sourceDir,
+    env,
+    executor,
+    transferPrefix: 'refresh-',
+    applyGitState: refreshGuestRepository,
+    captureGitBasis,
+    exportGitBundle,
+    getInstanceStatus,
+    publishSshConfig,
+    ensureSyncProject,
+    resumeSync,
+    flushSync,
+    bootstrapDependencies,
+  });
 }

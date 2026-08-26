@@ -1,5 +1,6 @@
 import { spawnProc } from '../proc/proc.mjs';
 import { buildRemoteDoctorCommand } from './remote_commands.mjs';
+import { doctorManagedDevTargetRuntime } from './managed_runtime.mjs';
 
 async function defaultRunProcess({ label, command, args, env }) {
   const child = spawnProc(label, command, args, env, { silent: true });
@@ -16,7 +17,10 @@ function processResult(result) {
 
 export async function runDevTargetsDoctor(
   { targets, env = process.env },
-  { runProcess = defaultRunProcess } = {},
+  {
+    runProcess = defaultRunProcess,
+    doctorManagedRuntime = doctorManagedDevTargetRuntime,
+  } = {},
 ) {
   const mutagen = processResult(
     await runProcess({
@@ -28,6 +32,9 @@ export async function runDevTargetsDoctor(
   );
   const targetResults = [];
   for (const target of targets) {
+    const managedRuntime = target.managedRuntime
+      ? await doctorManagedRuntime({ target, env })
+      : null;
     const sshArgs = [
       ...(target.sshConfigFile ? ['-F', target.sshConfigFile] : []),
       '-o',
@@ -39,18 +46,21 @@ export async function runDevTargetsDoctor(
       target.ssh,
       buildRemoteDoctorCommand(target),
     ];
+    const sshResult = processResult(
+      await runProcess({
+        label: `remote:${target.name}`,
+        command: 'ssh',
+        args: sshArgs,
+        env,
+      }),
+    );
     targetResults.push({
       name: target.name,
       platform: target.platform,
       ssh: target.ssh,
-      ...processResult(
-        await runProcess({
-          label: `remote:${target.name}`,
-          command: 'ssh',
-          args: sshArgs,
-          env,
-        }),
-      ),
+      ...sshResult,
+      ...(managedRuntime ? { managedRuntime, sshOk: sshResult.ok } : {}),
+      ok: sshResult.ok && (managedRuntime?.ok ?? true),
     });
   }
   return {

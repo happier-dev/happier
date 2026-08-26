@@ -50,6 +50,28 @@ test('explicit managed Lima setup installs Lima before reconciling when it is ab
   assert.equal(executor.calls.some((call) => call.kind === 'run' && call.args[0] === 'create'), true);
 });
 
+test('explicit setup accepts a usable Lima install when Homebrew fails only after installation', async () => {
+  const executor = executorWithLimaProbe({ installed: false });
+  const run = executor.run.bind(executor);
+  executor.run = async (command, args) => {
+    const result = await run(command, args);
+    if (command === 'brew' && args.join(' ') === 'install lima') {
+      throw new Error('brew cleanup failed after pouring lima');
+    }
+    return result;
+  };
+
+  const result = await setupManagedLimaInstance({
+    executor,
+    instance: 'happier-agent-primary',
+    profileName: 'small',
+    allowInstall: true,
+  });
+
+  assert.equal(result.installed, true);
+  assert.equal(executor.calls.some((call) => call.kind === 'run' && call.args[0] === 'create'), true);
+});
+
 test('managed Lima setup fails with explicit guidance instead of installing during ordinary reconcile', async () => {
   const executor = executorWithLimaProbe({ installed: false });
 

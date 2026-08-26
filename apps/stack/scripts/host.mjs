@@ -13,6 +13,7 @@ import { executeCandidateHostCommand, inspectExecutionHost } from './utils/execu
 import {
   prepareExecutionHostCandidateRepository,
   readExecutionHostCandidateState,
+  refreshExecutionHostCandidateRepository,
 } from './utils/execution_host/candidate_repository.mjs';
 import { createManagedLimaHostExecutor } from './utils/managed_lima/host_executor.mjs';
 import { startManagedLimaInstance, stopManagedLimaInstance } from './utils/managed_lima/lifecycle.mjs';
@@ -119,7 +120,11 @@ async function main() {
   if (!profile) throw new Error('[host] execution host is not configured; run `hstack host setup` explicitly');
   const executor = executorFor(profile);
   if (command === 'mirror') {
-    const result = await prepareExecutionHostCandidateRepository({
+    const existing = await readExecutionHostCandidateState(profile, process.env);
+    const prepareOrRefresh = existing
+      ? refreshExecutionHostCandidateRepository
+      : prepareExecutionHostCandidateRepository;
+    const result = await prepareOrRefresh({
       profile,
       sourceDir: flagValue(argv, '--source-dir').trim() || process.cwd(),
       env: process.env,

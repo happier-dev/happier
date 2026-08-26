@@ -65,3 +65,39 @@ test('dev-target doctor checks Mutagen and each target through passwordless SSH'
   assert.match(decodedPowerShell, /Get-Command node/);
   assert.match(decodedPowerShell, /Get-Command corepack/);
 });
+
+test('dev-target doctor includes read-only managed Lima lifecycle health before guest SSH health', async () => {
+  const calls = [];
+  const managedTarget = {
+    ...targets[0],
+    managedRuntime: {
+      kind: 'lima',
+      host: { kind: 'ssh', ssh: 'outer', sshConfigFile: '/tmp/outer.conf' },
+      instance: 'worker',
+      limaHome: '/Users/dev/.happier/lima',
+      profile: 'worker-balanced',
+    },
+  };
+
+  const result = await runDevTargetsDoctor(
+    { targets: [managedTarget], env: {} },
+    {
+      runProcess: async () => ({ code: 0 }),
+      doctorManagedRuntime: async ({ target }) => {
+        calls.push(target.name);
+        return { ok: false, exists: true, status: 'Stopped', drift: { creation: [], resources: [], configuration: [] } };
+      },
+    },
+  );
+
+  assert.deepEqual(calls, ['linux']);
+  assert.equal(result.ok, false);
+  assert.equal(result.targets[0].ok, false);
+  assert.equal(result.targets[0].sshOk, true);
+  assert.deepEqual(result.targets[0].managedRuntime, {
+    ok: false,
+    exists: true,
+    status: 'Stopped',
+    drift: { creation: [], resources: [], configuration: [] },
+  });
+});

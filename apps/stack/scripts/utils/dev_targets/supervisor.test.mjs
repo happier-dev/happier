@@ -925,8 +925,13 @@ test('supervisor keeps healthy targets and retries another target after its init
             name: 'linux',
             platform: 'posix',
             ssh: 'linux-ssh',
-            limaInstance: 'hslqa',
-            limaHome: '/tmp/lima-happier',
+            managedRuntime: {
+              kind: 'lima',
+              host: { kind: 'local' },
+              instance: 'hslqa',
+              limaHome: '/tmp/lima-happier',
+              profile: 'worker-balanced',
+            },
             repoDir: '/home/dev/happier',
             cliHomeDir: '/home/dev/.happier/linux',
           },
@@ -941,6 +946,10 @@ test('supervisor keeps healthy targets and retries another target after its init
         env: {},
       },
       {
+        startManagedRuntime: async ({ target }) => {
+          calls.push({ kind: 'managed-runtime-start', target });
+          return { changed: true, status: 'Running' };
+        },
         runDependencyBootstrap: async ({ target }) => {
           const count = (bootstrapCallCounts.get(target.name) ?? 0) + 1;
           bootstrapCallCounts.set(target.name, count);
@@ -969,9 +978,9 @@ test('supervisor keeps healthy targets and retries another target after its init
       },
     );
 
-    const limaStart = calls.find((call) => call.command === 'limactl');
-    assert.deepEqual(limaStart?.args, ['start', 'hslqa']);
-    assert.equal(limaStart?.env?.LIMA_HOME, '/tmp/lima-happier');
+    const limaStart = calls.find((call) => call.kind === 'managed-runtime-start');
+    assert.equal(limaStart?.target.name, 'linux');
+    assert.equal(calls.some((call) => call.command === 'limactl'), false);
     assert.deepEqual(controller.workers.map((worker) => worker.label), ['remote:linux']);
     assert.deepEqual(controller.targetFailures.map(({ name }) => name), ['windows']);
 

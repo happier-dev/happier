@@ -66,8 +66,6 @@ test('dev-targets command adds, shows, diagnoses, lists, and removes stack-scope
         '--platform=posix',
         '--ssh=happier-stack-linux',
         '--ssh-config-file=/tmp/lima-happier-stack-linux.conf',
-        '--lima-instance=hslqa',
-        '--lima-home=/tmp/lima-happier',
         '--repo-dir=/home/dev/happier',
         '--cli-home-dir=/home/dev/.happier/linux',
       ],
@@ -75,8 +73,7 @@ test('dev-targets command adds, shows, diagnoses, lists, and removes stack-scope
     );
     assert.equal(added.target.name, 'linux');
     assert.equal(added.target.sshConfigFile, '/tmp/lima-happier-stack-linux.conf');
-    assert.equal(added.target.limaInstance, 'hslqa');
-    assert.equal(added.target.limaHome, '/tmp/lima-happier');
+    assert.equal(added.target.managedRuntime, undefined);
 
     const shown = await run(['show', 'linux', '--stack=repo-test'], root);
     assert.equal(shown.target.repoDir, '/home/dev/happier');
@@ -120,7 +117,7 @@ test('dev-targets placement upgrades v1 safely, preserves policy while editing t
       ['placement', 'set', 'expo', 'mac', '--stack=repo-test'],
       root,
     );
-    assert.equal(placed.config.version, 2);
+    assert.equal(placed.config.version, 3);
     assert.deepEqual(placed.config.runtimePlacement.expo, {
       mode: 'prefer-target',
       target: 'mac',
@@ -162,7 +159,7 @@ test('dev-targets placement upgrades v1 safely, preserves policy while editing t
       '--cli-home-dir=/home-linux',
     ], root);
     const shown = await run(['placement', 'show', '--stack=repo-test'], root);
-    assert.equal(shown.config.version, 2, 'adding a target must not downgrade placement config');
+    assert.equal(shown.config.version, 3, 'adding a target must not downgrade placement config');
     assert.equal(shown.config.runtimePlacement.expo.target, 'mac');
     assert.equal(shown.config.targets.length, 2);
     assert.deepEqual(
@@ -321,6 +318,64 @@ test('dev-targets status, sync, and exec share the moving mirror without implici
       { ...commandEnv, DEV_TARGET_SSH_EXIT: '7' },
     );
     assert.equal(failed.code, 7, 'remote command exit status must be preserved');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('dev-targets status reports managed Lima lifecycle health alongside mirror readiness', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-targets-managed-status-'));
+  try {
+    const binDir = join(root, 'bin');
+    await mkdir(binDir, { recursive: true });
+    await writeFile(
+      join(binDir, 'mutagen'),
+      [
+        '#!/bin/sh',
+        'if [ "$1 $2" = "sync list" ]; then',
+        '  printf \'[{"name":"happier-linux","paused":false,"status":"watching","successfulCycles":4}]\\n\'',
+        'fi',
+        'exit 0',
+        '',
+      ].join('\n'),
+    );
+    await writeFile(join(binDir, 'uname'), '#!/bin/sh\nprintf "Darwin\\n"\n');
+    await writeFile(
+      join(binDir, 'limactl'),
+      [
+        '#!/bin/sh',
+        'if [ "$1" = "--version" ]; then',
+        '  printf "limactl version 2.0.0\\n"',
+        '  exit 0',
+        'fi',
+        'printf \'[{"status":"Running","vmType":"vz","arch":"aarch64","cpus":8,"memory":25769803776,"disk":171798691840,"config":{"mounts":[],"containerd":{"user":false,"system":false},"ssh":{"forwardAgent":false},"vmOpts":{"vz":{"diskImageFormat":"raw","rosetta":{"enabled":false,"binfmt":false}}},"portForwards":[{"guestPortRange":[13000,13999],"hostPortRange":[13000,13999]},{"guestPortRange":[18000,19099],"hostPortRange":[18000,19099]}]}}]\\n\'',
+        '',
+      ].join('\n'),
+    );
+    await Promise.all(['mutagen', 'uname', 'limactl'].map((name) => chmod(join(binDir, name), 0o700)));
+
+    await run(
+      [
+        'add',
+        'linux',
+        '--stack=repo-test',
+        '--platform=posix',
+        '--ssh=happier-stack-linux',
+        '--repo-dir=/home/dev/happier',
+        '--cli-home-dir=/home/dev/.happier/linux',
+        '--lima-instance=happier-worker-linux',
+        [`--lima-home=${join(root, 'lima')}`],
+        '--lima-profile=worker-balanced',
+      ],
+      root,
+    );
+    const status = await run(['status', 'linux', '--stack=repo-test'], root, {
+      PATH: `${binDir}:${process.env.PATH}`,
+    });
+
+    assert.equal(status.status.state, 'ready');
+    assert.equal(status.managedRuntime.ok, true);
+    assert.equal(status.managedRuntime.status, 'Running');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -116,6 +116,10 @@ export async function inspectManagedLimaInstance({ executor, instance: rawInstan
   const instance = validateManagedLimaInstanceName(rawInstance);
   const result = await executor.capture('limactl', ['list', '--all-fields', '--format=json', instance]);
   if (result.exitCode !== 0) {
+    const detail = String(result.err ?? '');
+    if (/No instance matching .* found\./i.test(detail) && /unmatched instances/i.test(detail)) {
+      return null;
+    }
     throw new Error(`[managed-lima] failed to inspect ${instance}: ${String(result.err ?? '').trim() || 'limactl list failed'}`);
   }
   return parseInstanceOutput(result.out);

@@ -5,6 +5,7 @@ import {
   parseDevTargetsConfig,
   resolveDevTargetExecutionPolicy,
   resolveDevTargetsConfigPath,
+  upgradeDevTargetsConfigToVersion3,
 } from './config.mjs';
 
 test('resolveDevTargetsConfigPath keeps dev target state inside the selected stack', () => {
@@ -310,4 +311,140 @@ test('version 2 rejects unknown target references and unsupported fallback modes
     }),
     /unknown target/i,
   );
+});
+
+test('version 3 normalizes local and remote managed Lima runtimes without changing guest execution fields', () => {
+  const config = parseDevTargetsConfig({
+    version: 3,
+    targets: [
+      {
+        name: 'local-linux',
+        platform: 'posix',
+        ssh: 'happier-local-linux',
+        sshConfigFile: '/controller/guests/local.conf',
+        repoDir: '/home/dev/happier',
+        cliHomeDir: '/home/dev/.happier',
+        managedRuntime: {
+          kind: 'lima',
+          host: { kind: 'local' },
+          instance: 'happier-worker-local',
+          limaHome: '/Users/dev/.happier/lima',
+          profile: 'worker-balanced',
+          architecture: 'aarch64',
+        },
+      },
+      {
+        name: 'remote-linux',
+        platform: 'posix',
+        ssh: 'happier-remote-linux',
+        sshConfigFile: '/controller/guests/remote.conf',
+        repoDir: '/home/dev/happier',
+        cliHomeDir: '/home/dev/.happier',
+        managedRuntime: {
+          kind: 'lima',
+          host: {
+            kind: 'ssh',
+            ssh: 'outer-mac',
+            sshConfigFile: '/controller/outer-hosts.conf',
+          },
+          instance: 'happier-worker-remote',
+          limaHome: '/Users/worker/.happier/lima',
+          profile: 'worker-balanced',
+          architecture: 'x86_64',
+        },
+      },
+    ],
+  });
+
+  assert.equal(config.version, 3);
+  assert.deepEqual(config.targets[0].managedRuntime.host, { kind: 'local' });
+  assert.deepEqual(config.targets[1].managedRuntime.host, {
+    kind: 'ssh',
+    ssh: 'outer-mac',
+    sshConfigFile: '/controller/outer-hosts.conf',
+  });
+  assert.equal(config.targets[1].managedRuntime.profile, 'worker-balanced');
+  assert.equal(config.targets[1].managedRuntime.architecture, 'x86_64');
+  assert.equal(config.targets[1].ssh, 'happier-remote-linux');
+});
+
+test('version 3 rejects legacy raw Lima fields and unsafe managed runtime combinations', () => {
+  const base = {
+    name: 'linux',
+    platform: 'posix',
+    ssh: 'linux',
+    repoDir: '/repo',
+    cliHomeDir: '/home',
+  };
+  assert.throws(() => parseDevTargetsConfig({
+    version: 3,
+    targets: [{ ...base, limaInstance: 'legacy', limaHome: '/tmp/lima' }],
+  }), /legacy Lima fields/i);
+  assert.throws(() => parseDevTargetsConfig({
+    version: 3,
+    targets: [{
+      ...base,
+      managedRuntime: {
+        kind: 'lima', host: { kind: 'local' }, instance: 'worker',
+        limaHome: '/tmp/lima', profile: 'worker-balanced', architecture: 'riscv64',
+      },
+    }],
+  }), /architecture/i);
+  assert.throws(() => parseDevTargetsConfig({
+    version: 3,
+    targets: [{
+      ...base,
+      platform: 'windows',
+      repoDir: 'C:/repo',
+      cliHomeDir: 'C:/home',
+      managedRuntime: {
+        kind: 'lima', host: { kind: 'local' }, instance: 'worker',
+        limaHome: '/tmp/lima', profile: 'worker-balanced',
+      },
+    }],
+  }), /managed Lima runtimes must use platform "posix"/i);
+  assert.throws(() => parseDevTargetsConfig({
+    version: 3,
+    targets: [{
+      ...base,
+      managedRuntime: {
+        kind: 'lima',
+        host: { kind: 'ssh', ssh: 'user@outer', sshConfigFile: 'relative.conf' },
+        instance: 'worker', limaHome: '/tmp/lima', profile: 'worker-balanced',
+      },
+    }],
+  }), /outer-host SSH alias|absolute path/i);
+});
+
+test('explicit version 3 upgrade converts legacy local Lima ownership at the config boundary', () => {
+  const version2 = parseDevTargetsConfig({
+    version: 2,
+    targets: [{
+      name: 'linux',
+      platform: 'posix',
+      ssh: 'linux',
+      sshConfigFile: '/tmp/linux.conf',
+      limaInstance: 'hslqa',
+      limaHome: '/tmp/lima-happier',
+      repoDir: '/repo',
+      cliHomeDir: '/home',
+    }],
+    runtimePlacement: { server: { mode: 'local' } },
+    commandExecution: { mode: 'auto' },
+  });
+
+  const upgraded = upgradeDevTargetsConfigToVersion3(version2);
+
+  assert.equal(upgraded.version, 3);
+  assert.equal('limaInstance' in upgraded.targets[0], false);
+  assert.equal('limaHome' in upgraded.targets[0], false);
+  assert.deepEqual(upgraded.targets[0].managedRuntime, {
+    kind: 'lima',
+    host: { kind: 'local' },
+    instance: 'hslqa',
+    limaHome: '/tmp/lima-happier',
+    profile: 'worker-balanced',
+    architecture: 'aarch64',
+  });
+  assert.deepEqual(resolveDevTargetExecutionPolicy(upgraded).commands, version2.commandExecution);
 });

@@ -64,6 +64,42 @@ function discoveryCommand() {
   return `remote_shell="${'${SHELL:-/bin/sh}'}"; "$remote_shell" -lic ${posixQuote(inner)}`;
 }
 
+function normalizeDiscovery(discovery, { requireToolchain }) {
+  if (!discovery?.ok) {
+    const detail = String(discovery?.err ?? '').trim() || 'remote discovery failed';
+    throw new Error(`[dev-targets] SSH provisioned, but remote discovery failed: ${detail}`);
+  }
+  const uname = readMarker(discovery.out, 'UNAME');
+  if (uname !== 'Darwin' && uname !== 'Linux') {
+    throw new Error(`[dev-targets] one-command SSH provisioning currently supports macOS and Linux targets; found ${uname || 'unknown'}`);
+  }
+  const remoteHome = requireAbsolutePosixPath(readMarker(discovery.out, 'HOME'), 'discovered remote home');
+  const nodePath = readMarker(discovery.out, 'NODE');
+  const nodeVersion = readMarker(discovery.out, 'NODE_VERSION');
+  const corepackPath = readMarker(discovery.out, 'COREPACK');
+  if (requireToolchain && (!nodePath.startsWith('/') || !corepackPath.startsWith('/'))) {
+    throw new Error(
+      '[dev-targets] SSH is ready, but Node.js and Corepack were not discoverable in the remote login shell; install them and rerun add',
+    );
+  }
+  const nodeMajor = Number(nodeVersion.match(/^v?(\d+)/)?.[1]);
+  if (requireToolchain && Number.isInteger(nodeMajor) && nodeMajor < 22) {
+    throw new Error(
+      `[dev-targets] SSH is ready, but Node.js 22 or newer is required; found ${nodeVersion}`,
+    );
+  }
+  const discoveredPath = readMarker(discovery.out, 'PATH')
+    .split(':')
+    .map((entry) => entry.trim().replace(/\/+$/, ''))
+    .filter((entry) => entry.startsWith('/'));
+  const remotePath = [...new Set([
+    ...(nodePath.startsWith('/') ? [dirname(nodePath)] : []),
+    ...(corepackPath.startsWith('/') ? [dirname(corepackPath)] : []),
+    ...discoveredPath,
+  ])];
+  return { remoteHome, remotePath };
+}
+
 async function writeSshConfig(path, content) {
   const temporary = `${path}.${process.pid}.tmp`;
   await writeFile(temporary, content, { mode: 0o600 });
@@ -102,6 +138,7 @@ export async function provisionPosixDevTarget(
     stackBaseDir,
     repoDir = null,
     cliHomeDir = null,
+    requireToolchain = true,
     env = process.env,
   },
   {
@@ -188,50 +225,20 @@ export async function provisionPosixDevTarget(
     await writeSshConfig(configPath, strictConfig);
   }
 
-  if (!discovery?.ok) {
-    const detail = String(discovery?.err ?? '').trim() || 'remote discovery failed';
-    throw new Error(`[dev-targets] SSH provisioned, but remote discovery failed: ${detail}`);
-  }
-
   const strictProbe = await runCaptureResultImpl({ command: 'ssh', args: probeArgs, env });
   if (!strictProbe?.ok) {
     const detail = String(strictProbe?.err ?? '').trim() || 'strict host-key verification failed';
     throw new Error(`[dev-targets] SSH provisioned, but strict host-key verification failed after enrollment: ${detail}`);
   }
-  const uname = readMarker(discovery.out, 'UNAME');
-  if (uname !== 'Darwin' && uname !== 'Linux') {
-    throw new Error(`[dev-targets] one-command SSH provisioning currently supports macOS and Linux targets; found ${uname || 'unknown'}`);
-  }
-  const remoteHome = requireAbsolutePosixPath(readMarker(discovery.out, 'HOME'), 'discovered remote home');
-  const nodePath = readMarker(discovery.out, 'NODE');
-  const nodeVersion = readMarker(discovery.out, 'NODE_VERSION');
-  const corepackPath = readMarker(discovery.out, 'COREPACK');
-  if (!nodePath.startsWith('/') || !corepackPath.startsWith('/')) {
-    throw new Error(
-      '[dev-targets] SSH is ready, but Node.js and Corepack were not discoverable in the remote login shell; install them and rerun add',
-    );
-  }
-  const nodeMajor = Number(nodeVersion.match(/^v?(\d+)/)?.[1]);
-  if (Number.isInteger(nodeMajor) && nodeMajor < 22) {
-    throw new Error(
-      `[dev-targets] SSH is ready, but Node.js 22 or newer is required; found ${nodeVersion}`,
-    );
-  }
-  const discoveredPath = readMarker(discovery.out, 'PATH')
-    .split(':')
-    .map((entry) => entry.trim().replace(/\/+$/, ''))
-    .filter((entry) => entry.startsWith('/'));
-  const remotePath = [...new Set([
-    dirname(nodePath),
-    dirname(corepackPath),
-    ...discoveredPath,
-  ])];
+  const { remoteHome, remotePath } = normalizeDiscovery(discovery, { requireToolchain });
 
   return {
     name: targetName,
     platform: 'posix',
     ssh: sshAlias,
     sshConfigFile: configPath,
+    remoteHome,
+    controllerKey: { privateKeyPath: keyPath, publicKeyPath },
     repoDir: repoDir == null
       ? join(remoteHome, 'happier-dev')
       : requireAbsolutePosixPath(repoDir, 'remote repo directory'),
@@ -240,5 +247,40 @@ export async function provisionPosixDevTarget(
       : requireAbsolutePosixPath(cliHomeDir, 'remote CLI home directory'),
     remotePath,
     remoteServerPort: null,
+  };
+}
+
+export async function inspectProvisionedPosixDevTarget(
+  { target, requireToolchain = false, env = process.env },
+  {
+    pathExists = existsSync,
+    runCaptureResult: runCaptureResultImpl = defaultRunCaptureResult,
+  } = {},
+) {
+  if (target?.platform !== 'posix' || !target.sshConfigFile) {
+    throw new Error('[dev-targets] an existing POSIX target with a managed SSH config is required');
+  }
+  const privateKeyPath = join(dirname(target.sshConfigFile), 'id_ed25519');
+  const publicKeyPath = `${privateKeyPath}.pub`;
+  if (!pathExists(privateKeyPath) || !pathExists(publicKeyPath)) {
+    throw new Error(`[dev-targets] existing target ${target.name} does not own a reusable controller key pair`);
+  }
+  const baseArgs = ['-T', '-F', target.sshConfigFile, target.ssh];
+  const probe = await runCaptureResultImpl({ command: 'ssh', args: [...baseArgs, 'true'], env });
+  if (!probe?.ok) {
+    const detail = String(probe?.err ?? '').trim() || 'strict SSH probe failed';
+    throw new Error(`[dev-targets] existing target ${target.name} is not reachable: ${detail}`);
+  }
+  const discovery = await runCaptureResultImpl({
+    command: 'ssh',
+    args: [...baseArgs, discoveryCommand()],
+    env,
+  });
+  const { remoteHome, remotePath } = normalizeDiscovery(discovery, { requireToolchain });
+  return {
+    ...target,
+    remoteHome,
+    remotePath,
+    controllerKey: { privateKeyPath, publicKeyPath },
   };
 }

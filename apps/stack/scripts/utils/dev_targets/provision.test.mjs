@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { provisionPosixDevTarget } from './provision.mjs';
+import { inspectProvisionedPosixDevTarget, provisionPosixDevTarget } from './provision.mjs';
 
 test('POSIX provisioning creates a dedicated key, installs it when needed, and discovers remote paths', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-provision-'));
@@ -168,6 +168,91 @@ test('POSIX provisioning fails before registration when Node and Corepack are no
       ),
       /Node\.js and Corepack/i,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('POSIX outer-host enrollment can omit the guest toolchain requirement while retaining controller-key metadata', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-outer-host-'));
+  const keyDir = join(root, 'dev-target-ssh', 'worker-host');
+  try {
+    const target = await provisionPosixDevTarget(
+      {
+        name: 'worker-host',
+        host: 'mac.example.test',
+        user: 'dev',
+        stackBaseDir: root,
+        requireToolchain: false,
+        env: {},
+      },
+      {
+        pathExists: (path) => path === join(keyDir, 'id_ed25519') || path === join(keyDir, 'id_ed25519.pub'),
+        runInteractive: async () => {},
+        runCaptureResult: async ({ args }) => (
+          args.at(-1) === 'true'
+            ? { ok: true, exitCode: 0, out: '', err: '' }
+            : {
+                ok: true,
+                exitCode: 0,
+                out: '__HAPPIER_UNAME__=Darwin\n__HAPPIER_HOME__=/Users/dev\n__HAPPIER_PATH__=/usr/bin:/bin\n__HAPPIER_NODE__=\n__HAPPIER_COREPACK__=\n',
+                err: '',
+              }
+        ),
+      },
+    );
+
+    assert.equal(target.remoteHome, '/Users/dev');
+    assert.deepEqual(target.controllerKey, {
+      privateKeyPath: join(keyDir, 'id_ed25519'),
+      publicKeyPath: join(keyDir, 'id_ed25519.pub'),
+    });
+    assert.deepEqual(target.remotePath, ['/usr/bin', '/bin']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('existing POSIX target inspection reuses its strict controller connection without enrollment', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-existing-'));
+  const keyDir = join(root, 'dev-target-ssh', 'mac');
+  const calls = [];
+  try {
+    const target = await inspectProvisionedPosixDevTarget(
+      {
+        target: {
+          name: 'mac',
+          platform: 'posix',
+          ssh: 'happier-dev-target-mac',
+          sshConfigFile: join(keyDir, 'ssh.config'),
+          repoDir: '/Users/dev/happier-dev',
+          cliHomeDir: '/Users/dev/.happier/dev-targets/mac',
+        },
+        env: {},
+      },
+      {
+        pathExists: (path) => path === join(keyDir, 'id_ed25519') || path === join(keyDir, 'id_ed25519.pub'),
+        runCaptureResult: async ({ command, args }) => {
+          calls.push([command, ...args]);
+          if (args.at(-1) === 'true') return { ok: true, exitCode: 0, out: '', err: '' };
+          return {
+            ok: true,
+            exitCode: 0,
+            out: '__HAPPIER_UNAME__=Darwin\n__HAPPIER_HOME__=/Users/dev\n__HAPPIER_PATH__=/opt/homebrew/bin:/usr/bin:/bin\n__HAPPIER_NODE__=\n__HAPPIER_COREPACK__=\n',
+            err: '',
+          };
+        },
+      },
+    );
+
+    assert.equal(calls.length, 2);
+    assert.ok(calls.every((call) => call.includes(join(keyDir, 'ssh.config'))));
+    assert.equal(target.remoteHome, '/Users/dev');
+    assert.deepEqual(target.remotePath, ['/opt/homebrew/bin', '/usr/bin', '/bin']);
+    assert.deepEqual(target.controllerKey, {
+      privateKeyPath: join(keyDir, 'id_ed25519'),
+      publicKeyPath: join(keyDir, 'id_ed25519.pub'),
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

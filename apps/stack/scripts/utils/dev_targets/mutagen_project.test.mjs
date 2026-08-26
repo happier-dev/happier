@@ -73,6 +73,7 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
     '/workspace',
     '.expo',
     '.turbo',
+    '.slopo',
     'target',
     '!packages/protocol/src/browser/target',
     '!packages/protocol/src/browser/target/**',
