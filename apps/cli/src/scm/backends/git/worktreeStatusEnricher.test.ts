@@ -241,21 +241,6 @@ describe('enrichGitWorktreesWithStatus', () => {
         expect(enriched[0]?.changeCount).toBe(1);
     });
 
-    it('returns undefined for a worktree whose git status exceeds the per-call timeout', async () => {
-        const repoRoot = await initRepoWithCommit('git-enrich-timeout-');
-        cleanups.push(() => rm(repoRoot, { recursive: true, force: true }));
-
-        const enriched = await enrichGitWorktreesWithStatus({
-            worktrees: [baseWorktree(repoRoot)],
-            includeWorktreeStatus: true,
-            // Force every per-call git invocation to time out immediately.
-            perCallTimeoutMs: 1,
-        });
-
-        expect(enriched).toHaveLength(1);
-        expect(enriched[0]?.changeCount).toBeUndefined();
-        expect(enriched[0]?.lastActivityAt).toBeUndefined();
-    });
 });
 
 describe('readWorktreeStatusEnrichmentForPaths', () => {

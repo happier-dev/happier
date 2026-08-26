@@ -91,7 +91,7 @@ test.describe('ui e2e: /new path picker (Phase 11 SelectionList migration)', () 
             testDir: suiteDir,
             env: {
                 ...process.env,
-                HAPPIER_SERVER_URL: server.baseUrl,
+                EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
             },
         });
         uiBaseUrl = ui.baseUrl;
@@ -129,13 +129,15 @@ test.describe('ui e2e: /new path picker (Phase 11 SelectionList migration)', () 
 
         // Open the agent-input path chip → popover.
         await page.getByTestId('agent-input-path-chip').click();
+        const activePopover = page.getByTestId('agent-input-content-popover');
+        await expect(activePopover).toHaveCount(1, { timeout: 30_000 });
 
         // The new PathSelectionList surface mounts under the path-selection-list root testID.
-        await expect(page.getByTestId('path-selection-list')).toBeVisible({ timeout: 30_000 });
+        await expect(activePopover.getByTestId('path-selection-list')).toBeVisible({ timeout: 30_000 });
         // The input prefix/value field is part of the SelectionList header.
-        await expect(page.getByTestId('path-selection-list:header:input')).toBeVisible();
+        await expect(activePopover.getByTestId('path-selection-list:header:input')).toBeVisible();
         // The open-tree-browser escape hatch lives inside the input suffix slot (NOT the footer).
-        await expect(page.getByTestId('path-selection-list:open-tree-browser')).toBeVisible();
+        await expect(activePopover.getByTestId('path-selection-list:open-tree-browser')).toBeVisible();
         // The legacy PathSelector testIDs are gone.
         await expect(page.getByTestId('path-selector-input')).toHaveCount(0);
     });

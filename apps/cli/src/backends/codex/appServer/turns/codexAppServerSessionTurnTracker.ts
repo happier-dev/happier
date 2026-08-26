@@ -332,10 +332,13 @@ export function createCodexAppServerSessionTurnTracker(params: Readonly<{
         async beginTurn(paramsForTurn: Readonly<{
             turnId: string | null;
             startUserMessageLocalId?: string | null;
+            startUserMessageSeq?: number | null;
             startSeqInclusive: number | null;
         }>): Promise<void> {
             const providerTurnId = readTrimmedString(paramsForTurn.turnId);
-            const startUserMessageSeq = await resolveCommittedUserMessageSeq(paramsForTurn.startUserMessageLocalId);
+            const suppliedStartUserMessageSeq = normalizeSeq(paramsForTurn.startUserMessageSeq);
+            const startUserMessageSeq = suppliedStartUserMessageSeq
+                ?? await resolveCommittedUserMessageSeq(paramsForTurn.startUserMessageLocalId);
             const startSeqInclusive = normalizeSeq(paramsForTurn.startSeqInclusive);
             if (await mergeBeginIntoActiveTurn({ providerTurnId, startUserMessageSeq, startSeqInclusive })) return;
             const lifecycle = params.session.sessionTurnLifecycle;

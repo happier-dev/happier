@@ -69,7 +69,7 @@ async function clickFirstMachineMatch(page: Page, machineId: string): Promise<Ma
   }
 }
 
-async function selectCurrentPathCheckoutIfPresent(page: Page): Promise<void> {
+export async function selectCurrentPathCheckoutIfPresent(page: Page): Promise<void> {
   let checkoutChip: ReturnType<Page['getByTestId']>;
   try {
     checkoutChip = page.getByTestId('new-session-checkout-chip');
@@ -248,5 +248,6 @@ export async function createSessionFromNewSessionComposer(
   if (!sessionId) {
     throw new Error(`failed to parse session id from url: ${page.url()}`);
   }
+
   return sessionId;
 }

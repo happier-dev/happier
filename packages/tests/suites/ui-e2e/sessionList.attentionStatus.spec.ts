@@ -592,29 +592,33 @@ test.describe('ui e2e: session list attention', () => {
     // fresh session here so this scenario proves the live in-progress projection it establishes,
     // rather than accidentally accepting the prior test's still-in-progress status.
     const currentWorking = await createPlainSession({
+        baseUrl: server.baseUrl,
+        token,
+        title: 'Static working attention e2e',
+    });
+    const workingRuntime = await connectWorkingSessionInProgress({
       baseUrl: server.baseUrl,
       token,
-      title: 'Static working attention e2e',
+      sessionId: currentWorking.id,
     });
 
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
-    await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-
-    await chooseSessionListPlacementMode({
-      page,
-      baseUrl: uiBaseUrl,
-      triggerTestId: sessionListTestIds.workingPlacementModeTrigger,
-      placement: 'withinGroups',
-    });
-    await disableWorkingStatusAnimatedText({ page, baseUrl: uiBaseUrl });
-    await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'cozy' });
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
-
-    await expect(row(page, currentWorking.id)).toHaveCount(1, { timeout: 120_000 });
-    await expect(row(page, ready.id)).toHaveCount(1, { timeout: 120_000 });
-    const workingRuntime = await connectWorkingSessionInProgress({ baseUrl: server.baseUrl, token, sessionId: currentWorking.id });
     try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
+      await waitForInitialAppUi({ page, timeoutMs: 180_000 });
+
+      await chooseSessionListPlacementMode({
+        page,
+        baseUrl: uiBaseUrl,
+        triggerTestId: sessionListTestIds.workingPlacementModeTrigger,
+        placement: 'withinGroups',
+      });
+      await disableWorkingStatusAnimatedText({ page, baseUrl: uiBaseUrl });
+      await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'cozy' });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+
+      await expect(row(page, currentWorking.id)).toHaveCount(1, { timeout: 120_000 });
+      await expect(row(page, ready.id)).toHaveCount(1, { timeout: 120_000 });
       await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: ready.id });
       await updateSessionRuntimeStatus({
         baseUrl: server.baseUrl,

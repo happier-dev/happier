@@ -1607,7 +1607,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string }>
                     showInlineHeader={false}
                     resumeBrowse={browseEnabled ? {
                         enabled: true,
-                        onBrowse: async ({ webPortalTarget }) => {
+                        onBrowse: async () => {
                             if (!selectedMachineId) return null;
                             const source = resolveDirectBrowseLockedSource({
                                 providerId: agentType as any,
@@ -1630,7 +1630,6 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string }>
                                     source,
                                 },
                                 title: t('directSessions.browseTitle'),
-                                webPortalTarget,
                             });
                         },
                     } : null}

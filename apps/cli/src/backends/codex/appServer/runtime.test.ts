@@ -11403,7 +11403,6 @@ describe('createCodexAppServerRuntime', () => {
             session: {
                 updateMetadata,
                 getLastObservedMessageSeq: vi.fn(() => lastObservedMessageSeq),
-                waitForCommittedUserMessageSeq: vi.fn(async (localId: string) => localId === 'rollback-latest-local' ? 7 : null),
                 sendAgentMessageCommitted: vi.fn(async () => {
                     lastObservedMessageSeq = 11;
                 }),
@@ -11412,7 +11411,7 @@ describe('createCodexAppServerRuntime', () => {
         });
 
         await runtime.startOrLoad({});
-        await (runtime as any).sendPrompt('bridge-streams', { localId: 'rollback-latest-local' });
+        await runtime.sendPrompt('bridge-streams', { userMessageSeq: 7 });
         await (runtime as any).rollbackConversation({ v: 1, target: { type: 'latest_turn' } });
 
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));

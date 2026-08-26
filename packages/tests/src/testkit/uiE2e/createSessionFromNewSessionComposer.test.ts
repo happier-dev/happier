@@ -24,7 +24,6 @@ type CountableLocator = Readonly<{
 }>;
 
 const MACHINE_OPTION_SELECTOR = '[data-testid^="new-session-machine:"]:visible, [data-testid^="new-session-machine-option:"]:visible';
-
 function exactMachineSelector(machineId: string): string {
   return `[data-testid="new-session-machine:${machineId}"]:visible, [data-testid="new-session-machine-option:${machineId}"]:visible`;
 }

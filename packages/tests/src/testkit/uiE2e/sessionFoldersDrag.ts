@@ -100,7 +100,11 @@ export async function ensureSessionFolderTreeView(page: Page): Promise<void> {
   // then exercise the real menu action to enable tree view deterministically.
   await mutateUiE2eScopedAccountSettings({
     page,
-    settingsPatch: { sessionFolderViewModeV1: 'off' },
+    settingsPatch: {
+      sessionFolderViewModeV1: 'off',
+      sessionListActiveGroupingV1: 'project',
+      sessionListInactiveGroupingV1: 'project',
+    },
   });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('session-list-ordering-menu-trigger').first()).toHaveCount(1, { timeout: 120_000 });

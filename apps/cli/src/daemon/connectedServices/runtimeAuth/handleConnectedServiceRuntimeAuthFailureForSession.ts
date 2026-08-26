@@ -29,6 +29,7 @@ import {
   type RuntimeRecoverySelection,
 } from './resolveConnectedServiceRuntimeAuthRecoverySelection';
 import type { ConnectedServiceRuntimeAuthApplyCapability } from '../credentials/lifecycleTypes';
+import { resolveSwitchAttemptEventOutcomeForFailure } from '../sessionAuthSwitch/events/resolveSwitchAttemptEventOutcome';
 
 type SwitchCoordinatorLike = Parameters<typeof handleConnectedServiceRuntimeAuthFailure>[0]['switchCoordinator'];
 type SwitchAfterClassifiedFailureInput = Parameters<SwitchCoordinatorLike['switchAfterClassifiedFailure']>[0];
@@ -740,6 +741,34 @@ function finalizeRuntimeGroupSwitchAttempt(input: Readonly<{
   });
 }
 
+function emitRuntimeGroupSwitchApplyFailureEvent(input: Readonly<{
+  emitSessionEvent?: ((sessionId: string, event: unknown) => void) | null;
+  sessionId: string;
+  reason: ConnectedServiceRuntimeFailureClassification['kind'];
+  result: ConnectedServiceAuthGroupSwitchResult;
+}>): void {
+  if (input.result.status !== 'generation_apply_failed') return;
+  const attemptedAction = input.result.errorCode.startsWith('hot_apply_')
+    ? 'hot_applied' as const
+    : undefined;
+  const projection = resolveSwitchAttemptEventOutcomeForFailure({
+    errorCode: input.result.errorCode,
+    ...(attemptedAction ? { attemptedAction } : {}),
+  });
+  input.emitSessionEvent?.(input.sessionId, {
+    type: 'connected_service_account_switch_attempt',
+    ok: false,
+    action: projection.action,
+    reason: input.reason,
+    attemptedContinuityMode: projection.attemptedContinuityMode,
+    outcome: projection.outcome,
+    outcomeAction: projection.outcomeAction,
+    errorCode: input.result.errorCode,
+    groupGeneration: input.result.generation,
+    partialState: null,
+  });
+}
+
 function maybeRestartAfterRuntimeGroupSwitch(input: Readonly<{
   sessionId: string;
   tracked: TrackedSession;
@@ -1331,6 +1360,12 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
       failedProfileId: normalizeNullableProfileId(classification.profileId),
       failedCredentialRevision: classification.credentialRevision ?? null,
       switchAttemptTracker: input.switchAttemptTracker ?? null,
+    });
+    emitRuntimeGroupSwitchApplyFailureEvent({
+      emitSessionEvent: input.emitSessionEvent ?? null,
+      sessionId: input.sessionId,
+      reason: classification.kind,
+      result: result.result,
     });
     let supersedingGenerationSettled = false;
     if (

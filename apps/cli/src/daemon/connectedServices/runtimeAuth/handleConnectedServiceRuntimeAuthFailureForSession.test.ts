@@ -1369,13 +1369,13 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     });
     expect(switchAfterClassifiedFailure).not.toHaveBeenCalled();
   });
-  it('leaves group-switch transcript event emission to the switch coordinator', async () => {
+  it('surfaces a failed runtime group apply as a switch-attempt transcript event', async () => {
     const emitSessionEvent = vi.fn();
     const switchAfterClassifiedFailure = vi.fn(async () => ({
-      status: 'switched' as const,
+      status: 'generation_apply_failed' as const,
       activeProfileId: 'backup',
       generation: 2,
-      mode: 'hot_apply' as const,
+      errorCode: 'hot_apply_restart_required',
     }));
 
     await expect(handleConnectedServiceRuntimeAuthFailureForSession({
@@ -1416,10 +1416,26 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
       },
     })).resolves.toMatchObject({
       status: 'switch_attempted',
-      result: { status: 'switched', activeProfileId: 'backup', generation: 2 },
+      result: {
+        status: 'generation_apply_failed',
+        activeProfileId: 'backup',
+        generation: 2,
+        errorCode: 'hot_apply_restart_required',
+      },
     });
 
-    expect(emitSessionEvent).not.toHaveBeenCalled();
+    expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', {
+      type: 'connected_service_account_switch_attempt',
+      ok: false,
+      action: 'hot_applied',
+      reason: 'usage_limit',
+      attemptedContinuityMode: 'hot_apply',
+      outcome: 'failed',
+      outcomeAction: 'none',
+      errorCode: 'hot_apply_restart_required',
+      groupGeneration: 2,
+      partialState: null,
+    });
   });
 
   it('keeps an untracked classified group report passive instead of committing a fallback switch', async () => {
