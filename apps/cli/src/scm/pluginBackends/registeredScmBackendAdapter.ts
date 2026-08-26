@@ -174,6 +174,19 @@ function createWorkspaceIntegrationAdapter(
                 );
             },
         } : {}),
+        ...(handlers.prepareReviewWorkspace ? {
+            prepareReviewWorkspace: async (input) => {
+                const operationInput = withOperationSignal(input);
+                return await runWithScmBackendRuntimeServices(
+                    services,
+                    async () => await runWithScmHostingProviderRuntimeServices(
+                        hostingServices,
+                        async () => await handlers.prepareReviewWorkspace!(operationInput),
+                        { signal: operationInput.signal },
+                    ),
+                );
+            },
+        } : {}),
         ...(handlers.realizeWorkspaceCheckout ? {
             realizeWorkspaceCheckout: async (input) => await runWithScmBackendRuntimeServices(
                 services,

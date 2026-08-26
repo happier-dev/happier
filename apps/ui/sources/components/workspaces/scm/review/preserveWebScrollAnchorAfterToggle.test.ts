@@ -9,10 +9,12 @@ describe('preserveWebScrollAnchorAfterToggle', () => {
             frames.push(callback);
             return frames.length;
         });
-        const scrollRoot = { scrollTop: 100 };
+        const detachedScrollRoot = { scrollTop: 100 };
+        const currentScrollRoot = { scrollTop: 100 };
+        const scrollRoots = [detachedScrollRoot, detachedScrollRoot, currentScrollRoot];
         const anchorPositions = [40, 40, 140, 40];
         const readCurrentAnchor = vi.fn(() => ({
-            scrollRoot,
+            scrollRoot: scrollRoots.shift() ?? currentScrollRoot,
             anchorY: anchorPositions.shift() ?? 40,
         }));
         const onRestored = vi.fn();
@@ -24,15 +26,17 @@ describe('preserveWebScrollAnchorAfterToggle', () => {
             onRestored,
         });
 
-        expect(scrollRoot.scrollTop).toBe(100);
+        expect(detachedScrollRoot.scrollTop).toBe(100);
+        expect(currentScrollRoot.scrollTop).toBe(100);
         frames.shift()?.(1);
-        expect(scrollRoot.scrollTop).toBe(100);
+        expect(currentScrollRoot.scrollTop).toBe(100);
         frames.shift()?.(2);
-        expect(scrollRoot.scrollTop).toBe(100);
+        expect(currentScrollRoot.scrollTop).toBe(100);
         frames.shift()?.(3);
-        expect(scrollRoot.scrollTop).toBe(200);
+        expect(detachedScrollRoot.scrollTop).toBe(100);
+        expect(currentScrollRoot.scrollTop).toBe(200);
         frames.shift()?.(4);
-        expect(scrollRoot.scrollTop).toBe(200);
+        expect(currentScrollRoot.scrollTop).toBe(200);
 
         while (frames.length > 0) {
             frames.shift()?.(5);

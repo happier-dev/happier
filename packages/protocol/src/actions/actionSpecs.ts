@@ -8278,12 +8278,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       title: 'Materialize prepared review workspace',
       fields: [
         { path: 'cwd', title: 'Selected workspace root', widget: 'text', required: true },
-        { path: 'displayName', title: 'Branch name', widget: 'text', required: true },
-        { path: 'baseRef', title: 'Prepared base ref', widget: 'text' },
-        { path: 'branchMode', title: 'Branch mode', widget: 'select', required: true, options: [
-          { value: 'new', label: 'New branch' },
-          { value: 'existing', label: 'Existing branch' },
-        ] },
+        { path: 'displayName', title: 'Workspace label', widget: 'text', required: true },
+        { path: 'sourceTip', title: 'Provider-authorized source tip', widget: 'json', required: true },
       ],
     },
   },

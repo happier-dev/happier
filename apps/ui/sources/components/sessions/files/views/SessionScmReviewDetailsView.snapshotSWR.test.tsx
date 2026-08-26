@@ -64,7 +64,6 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: {},
-    BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: {},
 }));
 
 vi.mock('@/sync/http/client', () => ({

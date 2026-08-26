@@ -31,7 +31,6 @@ import {
 
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ScmBackendRegistry } from '@/scm/registry';
-import { realizeWorkspaceCheckoutWithResolvedScmSelection } from '@/scm/workspace';
 import { notRepositoryResponse, runScmRoute } from '@/scm/rpc/dispatch';
 import {
     runScmHostingRepositoryDescribePublishTargetsRoute,
@@ -149,38 +148,15 @@ function runLocalScmAction(params: ExecuteScmActionOperationParams & Readonly<{
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmReviewWorkspaceMaterializePreparedResponse>(),
                 runWithBackend: async ({ context, selection }) => {
-                    try {
-                        const realized = await realizeWorkspaceCheckoutWithResolvedScmSelection({
-                            sourcePath: context.cwd,
-                            checkoutCreation: {
-                                kind: 'git_worktree',
-                                displayName: request.displayName,
-                                baseRef: request.baseRef,
-                                branchMode: request.branchMode,
-                            },
-                            context,
-                            selection,
-                        });
-                        if (!realized) {
-                            return {
-                                success: false,
-                                error: 'SCM workspace materialization is unavailable',
-                                errorCode: 'FEATURE_UNSUPPORTED',
-                            };
-                        }
-                        return {
-                            success: true,
-                            targetPath: realized.targetPath,
-                            branchName: realized.branchName,
-                            created: realized.created,
-                        };
-                    } catch (error) {
+                    const prepareReviewWorkspace = selection.backend.workspaceIntegration?.prepareReviewWorkspace;
+                    if (!prepareReviewWorkspace) {
                         return {
                             success: false,
-                            error: error instanceof Error ? error.message : String(error),
-                            errorCode: 'COMMAND_FAILED',
+                            error: 'SCM review-workspace materialization is unavailable',
+                            errorCode: 'FEATURE_UNSUPPORTED',
                         };
                     }
+                    return await prepareReviewWorkspace({ context, request });
                 },
             }));
         }

@@ -59,6 +59,8 @@ import type {
     ScmRepositoryRemoveIndexLockRequest,
     ScmRepositoryRemoveIndexLockResponse,
     ScmRepoMode,
+    ScmReviewWorkspaceMaterializePreparedRequest,
+    ScmReviewWorkspaceMaterializePreparedResponse,
     ScmStashApplyRequest,
     ScmStashApplyResponse,
     ScmStashDropRequest,
@@ -170,6 +172,11 @@ export type ScmWorkspaceIntegrationWorkspaceCheckoutRealizationInput = Readonly<
 
 export type { ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult };
 
+export type ScmWorkspaceIntegrationPrepareReviewWorkspaceInput = Readonly<{
+    context: ScmBackendContext;
+    request: ScmReviewWorkspaceMaterializePreparedRequest;
+}>;
+
 export type ScmWorkspaceIntegrationPortableWorkspaceEntriesInput = Readonly<{
     entries: readonly Readonly<{
         relativePath: string;
@@ -187,6 +194,9 @@ export type ScmWorkspaceIntegration = Readonly<{
         context: ScmBackendContext;
     }>) => Promise<ScmWorkspaceIntegrationWorkspaceLocationInspection | null>;
     reconcilePostMaterialization?: (input: ScmWorkspaceIntegrationPostMaterializationInput) => Promise<void>;
+    prepareReviewWorkspace?: (
+        input: ScmWorkspaceIntegrationPrepareReviewWorkspaceInput,
+    ) => Promise<ScmReviewWorkspaceMaterializePreparedResponse>;
     realizeWorkspaceCheckout?: (
         input: ScmWorkspaceIntegrationWorkspaceCheckoutRealizationInput,
     ) => Promise<ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult>;
