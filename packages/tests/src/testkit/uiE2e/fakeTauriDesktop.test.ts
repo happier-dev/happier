@@ -152,4 +152,27 @@ describe('fakeTauriDesktop', () => {
             'desktop_activity_overlay_get_window_state',
         ]);
     });
+
+    it('admits synthetic pet overlay window state through the canonical desktop bridge', async () => {
+        const windowState = {
+            activity: {
+                state: 'running',
+                reason: 'running',
+                sessionId: 'pets-overlay-synthetic-session',
+                trayItems: [],
+            },
+        };
+        const initial = createFakeTauriDesktopState({
+            currentWindowLabel: 'pet_overlay',
+            desktopPetOverlayState: windowState,
+        });
+
+        const read = await applyFakeTauriDesktopCommand(
+            initial,
+            'desktop_pet_overlay_read_window_state',
+        );
+
+        expect(read.result).toEqual(windowState);
+        expect(read.state.invokeLog.at(-1)?.command).toBe('desktop_pet_overlay_read_window_state');
+    });
 });

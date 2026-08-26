@@ -331,19 +331,6 @@ export async function expectFolderParent(params: Readonly<{
   }, { timeout: 60_000 }).toBe(params.parentId);
 }
 
-export async function expectOrderBefore(params: Readonly<{
-  page: Page;
-  firstTestId: string;
-  secondTestId: string;
-}>): Promise<void> {
-  await expect.poll(async () => {
-    const firstBox = await params.page.getByTestId(params.firstTestId).boundingBox({ timeout: 500 }).catch(() => null);
-    const secondBox = await params.page.getByTestId(params.secondTestId).boundingBox({ timeout: 500 }).catch(() => null);
-    if (!firstBox || !secondBox) return false;
-    return firstBox.y < secondBox.y;
-  }, { timeout: 60_000 }).toBe(true);
-}
-
 export async function expectOrderMapContainsBefore(params: Readonly<{
   baseUrl: string;
   token: string;

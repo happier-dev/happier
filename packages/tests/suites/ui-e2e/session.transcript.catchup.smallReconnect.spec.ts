@@ -8,7 +8,10 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
@@ -46,15 +49,6 @@ async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: nu
     }
   }
   return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
-}
-
-async function createSessionFromComposer(params: {
-  page: Page;
-  uiBaseUrl: string;
-  machineId: string;
-  prompt: string;
-}): Promise<string> {
-  return createSessionFromNewSessionComposer(params);
 }
 
 test.describe('ui e2e: transcript small reconnect catch-up', () => {
@@ -170,10 +164,16 @@ test.describe('ui e2e: transcript small reconnect catch-up', () => {
     });
 
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-    const sessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: 'hello small gap' });
+    const session = await createSessionFromNewSessionComposer({
+      page,
+      uiBaseUrl,
+      machineId,
+      prompt: 'hello small gap',
+      readiness: 'first-turn-reload-safe',
+    });
+    const { sessionId } = session;
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session });
 
     const requests: Array<{ url: string; ts: number }> = [];
     page.on('request', (req) => requests.push({ url: req.url(), ts: Date.now() }));

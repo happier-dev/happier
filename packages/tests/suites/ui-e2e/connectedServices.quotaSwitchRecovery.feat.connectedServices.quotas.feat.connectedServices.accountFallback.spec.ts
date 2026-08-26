@@ -18,6 +18,7 @@ import {
     fetchQualifiedConnectedAccountGroup,
 } from '../../src/testkit/connectedServicesRecovery';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBase64Normalized';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -400,8 +401,7 @@ async function expectRealSwitchAttemptSessionEventRecorded(params: Readonly<{
     baseUrl: string;
     token: string;
     sessionId: string;
-    serviceId: ConnectedServiceId;
-    groupId: string;
+    secret: Uint8Array;
 }>): Promise<void> {
     await waitFor(async () => {
         const url = new URL(`${params.baseUrl}/v1/sessions/${params.sessionId}/messages`);
@@ -415,16 +415,34 @@ async function expectRealSwitchAttemptSessionEventRecorded(params: Readonly<{
         });
         expect(response.status).toBe(200);
         const messages = Array.isArray(response.data?.messages) ? response.data.messages : [];
-        const localIdPrefix = [
-            'connected-service-account-switch-attempt',
-            params.serviceId,
-            params.groupId,
-        ].join(':');
         return messages.some((message) => {
             const record = asRecord(message);
-            return record?.messageRole === 'event'
-                && typeof record.localId === 'string'
-                && record.localId.startsWith(`${localIdPrefix}:`);
+            if (
+                record?.messageRole !== 'event'
+                || typeof record.localId !== 'string'
+                || !record.localId.startsWith('connected-service-account-switch-attempt:failed:')
+            ) {
+                return false;
+            }
+            const storedContent = asRecord(record.content);
+            let payload: UnknownRecord | null = null;
+            if (storedContent?.t === 'plain') {
+                payload = asRecord(storedContent.v);
+            } else if (storedContent?.t === 'encrypted' && typeof storedContent.c === 'string') {
+                payload = asRecord(decryptLegacyBase64Normalized(storedContent.c, params.secret));
+            }
+            const content = asRecord(payload?.content);
+            const data = asRecord(content?.data);
+            return payload?.role === 'agent'
+                && content?.type === 'event'
+                && data?.type === 'connected-service-account-switch-attempt'
+                && data.ok === false
+                && data.action === 'hot_applied'
+                && data.reason === 'manual'
+                && data.attemptedContinuityMode === 'hot_apply'
+                && data.outcome === 'failed'
+                && data.outcomeAction === 'none'
+                && data.errorCode === 'hot_apply_restart_required';
         });
     }, {
         timeoutMs: 30_000,
@@ -971,8 +989,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
                 baseUrl: server.baseUrl,
                 token: authToken,
                 sessionId,
-                serviceId,
-                groupId,
+                secret,
             });
         } finally {
             await daemon?.stop().catch(() => {});

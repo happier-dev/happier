@@ -8,7 +8,10 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
@@ -45,15 +48,6 @@ async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: nu
     }
   }
   return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
-}
-
-async function createSessionFromComposer(params: {
-  page: Page;
-  uiBaseUrl: string;
-  machineId: string;
-  prompt: string;
-}): Promise<string> {
-  return createSessionFromNewSessionComposer(params);
 }
 
 async function readComputedStylesForLocator(locator: Locator): Promise<{ fontSize: string; color: string }> {
@@ -168,15 +162,15 @@ test.describe('ui e2e: thinking markdown rendering', () => {
     });
 
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-    const sessionId = await createSessionFromComposer({
+    const session = await createSessionFromNewSessionComposer({
       page,
       uiBaseUrl,
       machineId,
       prompt: `thinking markdown ${run.runId}`,
+      readiness: 'first-turn-reload-safe',
     });
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session });
 
     await expect(page.getByTestId('transcript-thinking-header').first()).toBeVisible({ timeout: 180_000 });
     await page.getByTestId('transcript-thinking-header').first().click();

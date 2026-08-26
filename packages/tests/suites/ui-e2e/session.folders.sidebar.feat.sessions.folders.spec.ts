@@ -187,8 +187,11 @@ test.describe('ui e2e: session folders sidebar', () => {
     await expect(page.getByTestId(`session-folder-drop-target-${FOLDER_ID}`)).toHaveCount(1, { timeout: 60_000 });
 
     await openSessionRowMenu({ page, sessionId: firstSessionId });
-    await expect(page.getByTestId(`dropdown-option-move-to-folder_${FOLDER_ID}`)).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId(`dropdown-option-move-to-folder_${FOLDER_ID}`).click();
+    await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
+    await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByRole('option', { name: FOLDER_NAME })).toHaveCount(1, { timeout: 60_000 });
+    await page.getByRole('option', { name: FOLDER_NAME }).click();
 
     await page.getByTestId(`session-folder-header-${FOLDER_ID}`).click();
     await expect(page.getByTestId('session-folder-breadcrumb')).toHaveCount(1, { timeout: 60_000 });
@@ -199,8 +202,11 @@ test.describe('ui e2e: session folders sidebar', () => {
     await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
 
     await openSessionRowMenu({ page, sessionId: firstSessionId });
-    await expect(page.getByTestId('dropdown-option-move-to-folder_null')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('dropdown-option-move-to-folder_null').click();
+    await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
+    await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByRole('option', { name: /Workspace root/i })).toHaveCount(1, { timeout: 60_000 });
+    await page.getByRole('option', { name: /Workspace root/i }).click();
 
     await page.getByTestId(`session-folder-header-${FOLDER_ID}`).click();
     await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(0, { timeout: 120_000 });

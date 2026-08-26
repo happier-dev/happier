@@ -185,14 +185,34 @@ test.describe('ui e2e: desktop sidebar chrome window controls', () => {
     await expect(page.getByTestId('desktop-sidebar-chrome-utility-row')).toHaveCount(0);
   });
 
-  test('excludes global desktop chrome from the desktop pet overlay route', async ({ page }) => {
+  test('admits synthetic pet tray activity through the desktop bridge without global chrome', async ({ page }) => {
     test.setTimeout(300_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
+    const syntheticSessionId = 'pets-overlay-tray-synthetic-session';
 
     await page.setViewportSize({ width: 800, height: 600 });
     await installFakeTauriDesktopBridge(page, {
       state: {
         currentWindowLabel: 'pet_overlay',
+        desktopPetOverlayState: {
+          activity: {
+            state: 'running',
+            reason: 'running',
+            sessionId: syntheticSessionId,
+            trayItems: [{
+              id: `running:${syntheticSessionId}:e2e`,
+              dismissKey: `running:${syntheticSessionId}:e2e`,
+              sessionId: syntheticSessionId,
+              status: 'running',
+              priority: 10,
+              title: 'Synthetic pet overlay session',
+              subtitle: null,
+              activityAtMs: null,
+              expiresAtMs: null,
+              actions: { open: true, dismiss: true, quickReply: true },
+            }],
+          },
+        },
         platform: 'windows',
         strategy: 'custom-controls',
         updateAvailable: { version: '9.9.9' },
@@ -205,5 +225,22 @@ test.describe('ui e2e: desktop sidebar chrome window controls', () => {
     await expect(page.getByTestId('desktop-sidebar-chrome')).toHaveCount(0);
     await expect(page.getByTestId('root-shell-app-update-status-tag')).toHaveCount(0);
     await expect(page.getByTestId('app-update-status-tag')).toHaveCount(0);
+
+    await expect.poll(async () => (
+      await readFakeTauriDesktopState(page)
+    ).invokeLog.some((entry) => entry.command === 'desktop_pet_overlay_read_window_state'), {
+      timeout: 120_000,
+    }).toBe(true);
+
+    const trayItem = page.getByTestId(`desktop-pet-overlay-tray-item-${syntheticSessionId}`);
+    await expect(trayItem).toHaveCount(1, { timeout: 120_000 });
+    await expect(trayItem).toHaveAttribute('data-pet-no-drag', 'true');
+    await trayItem.dispatchEvent('click');
+
+    await expect.poll(async () => (
+      await readFakeTauriDesktopState(page)
+    ).invokeLog.some((entry) => entry.command === 'desktop_pet_overlay_show_main_window'), {
+      timeout: 120_000,
+    }).toBe(true);
   });
 });

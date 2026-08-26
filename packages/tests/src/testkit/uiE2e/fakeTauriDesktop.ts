@@ -33,6 +33,7 @@ export type FakeTauriDesktopState = Readonly<{
     controls: FakeTauriDesktopControlsState;
     currentWindowLabel: string;
     desktopActivityOverlayState: unknown | null;
+    desktopPetOverlayState: unknown | null;
     invokeLog: readonly FakeTauriDesktopInvokeLogEntry[];
     isMaximized: boolean;
     platform: FakeTauriDesktopPlatform;
@@ -251,6 +252,7 @@ export function createFakeTauriDesktopState(
         },
         currentWindowLabel: overrides.currentWindowLabel ?? MAIN_WINDOW_LABEL,
         desktopActivityOverlayState: overrides.desktopActivityOverlayState ?? null,
+        desktopPetOverlayState: overrides.desktopPetOverlayState ?? null,
         invokeLog: overrides.invokeLog ?? [],
         isMaximized: false,
         platform,
@@ -279,6 +281,11 @@ export async function applyFakeTauriDesktopCommand(
         case 'desktop_activity_overlay_get_window_state':
             return {
                 result: nextStateBase.desktopActivityOverlayState,
+                state: nextStateBase,
+            };
+        case 'desktop_pet_overlay_read_window_state':
+            return {
+                result: nextStateBase.desktopPetOverlayState,
                 state: nextStateBase,
             };
         case 'desktop_activity_overlay_set_expanded':
@@ -595,6 +602,11 @@ export async function installFakeTauriDesktopBridge(
                 case 'desktop_activity_overlay_get_window_state':
                     return {
                         result: nextStateBase.desktopActivityOverlayState,
+                        state: nextStateBase,
+                    };
+                case 'desktop_pet_overlay_read_window_state':
+                    return {
+                        result: nextStateBase.desktopPetOverlayState,
                         state: nextStateBase,
                     };
                 case 'desktop_activity_overlay_set_expanded': {

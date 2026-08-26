@@ -9,6 +9,7 @@ import {
   anySessionAttentionIndicator,
   chooseSessionListDensity,
   chooseSessionListPlacementMode,
+  connectAuthenticatedSessionPublisher,
   expectRowInSection,
   expectRowNotInSection,
   seedAttentionSession,
@@ -132,15 +133,24 @@ test.describe('ui e2e: session list attention status', () => {
     await expect(sessionRow(page, working.id)).toHaveCount(1, { timeout: 120_000 });
     await expect(sessionRow(page, ready.id)).toHaveCount(1, { timeout: 120_000 });
 
-    await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: working.id, latestTurnStatus: 'in_progress' });
-    await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: ready.id });
-    await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: ready.id, latestTurnStatus: 'completed' });
+    const workingPublisher = await connectAuthenticatedSessionPublisher({
+      baseUrl: server.baseUrl,
+      token,
+      sessionId: working.id,
+    });
+    try {
+      await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: working.id, latestTurnStatus: 'in_progress' });
+      await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: ready.id });
+      await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: ready.id, latestTurnStatus: 'completed' });
 
-    await expect(anySessionAttentionIndicator(page, quiet.id)).toHaveCount(0);
-    await expect(page.getByTestId(sessionListAttentionTestIds.attentionIndicator(working.id, 'working'))).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(sessionListAttentionTestIds.attentionIndicator(ready.id, 'ready'))).toHaveCount(1, { timeout: 60_000 });
-    await expect(sessionStatusSubtitle(page, working.id, 'working')).toHaveCount(0);
-    await expect(sessionStatusSubtitle(page, ready.id, 'ready')).toHaveCount(0);
+      await expect(anySessionAttentionIndicator(page, quiet.id)).toHaveCount(0);
+      await expect(page.getByTestId(sessionListAttentionTestIds.attentionIndicator(working.id, 'working'))).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByTestId(sessionListAttentionTestIds.attentionIndicator(ready.id, 'ready'))).toHaveCount(1, { timeout: 60_000 });
+      await expect(sessionStatusSubtitle(page, working.id, 'working')).toHaveCount(0);
+      await expect(sessionStatusSubtitle(page, ready.id, 'ready')).toHaveCount(0);
+    } finally {
+      workingPublisher.close();
+    }
   });
 
   test('shows ready subtitle outside narrow mode and exposes a working-text animation toggle', async ({ page }) => {
@@ -160,15 +170,24 @@ test.describe('ui e2e: session list attention status', () => {
     await expect(sessionRow(page, working.id)).toHaveCount(1, { timeout: 120_000 });
     await expect(sessionRow(page, ready.id)).toHaveCount(1, { timeout: 120_000 });
 
-    await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: working.id, latestTurnStatus: 'in_progress' });
-    await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: ready.id });
-    await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: ready.id, latestTurnStatus: 'completed' });
+    const workingPublisher = await connectAuthenticatedSessionPublisher({
+      baseUrl: server.baseUrl,
+      token,
+      sessionId: working.id,
+    });
+    try {
+      await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: working.id, latestTurnStatus: 'in_progress' });
+      await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: ready.id });
+      await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: ready.id, latestTurnStatus: 'completed' });
 
-    await expect(sessionStatusSubtitle(page, ready.id, 'ready')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(sessionListAttentionTestIds.secondaryReadyIndicator(ready.id))).toHaveCount(1, { timeout: 60_000 });
-    await expect(sessionStatusSubtitleText(page, ready.id, 'ready')).not.toHaveText('', { timeout: 60_000 });
+      await expect(sessionStatusSubtitle(page, ready.id, 'ready')).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByTestId(sessionListAttentionTestIds.secondaryReadyIndicator(ready.id))).toHaveCount(1, { timeout: 60_000 });
+      await expect(sessionStatusSubtitleText(page, ready.id, 'ready')).not.toHaveText('', { timeout: 60_000 });
 
-    await expect(sessionStatusSubtitle(page, working.id, 'working')).toHaveCount(1, { timeout: 60_000 });
+      await expect(sessionStatusSubtitle(page, working.id, 'working')).toHaveCount(1, { timeout: 60_000 });
+    } finally {
+      workingPublisher.close();
+    }
   });
 
   test('moves live working rows to the working section and unread completion to attention', async ({ page }) => {
@@ -187,20 +206,36 @@ test.describe('ui e2e: session list attention status', () => {
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
 
     await expect(sessionRow(page, live.id)).toHaveCount(1, { timeout: 120_000 });
-    await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: live.id, latestTurnStatus: 'in_progress' });
-    await expect(page.getByTestId(sessionListAttentionTestIds.workingHeader)).toHaveCount(1, { timeout: 60_000 });
-    await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: live.id });
-
-    await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: live.id });
-    await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: live.id, latestTurnStatus: 'completed' });
-    await expect(page.getByTestId(sessionListAttentionTestIds.attentionHeader)).toHaveCount(1, { timeout: 60_000 });
-    await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.attentionHeader, sessionId: live.id });
-    await expectRowNotInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: live.id });
-
     await expect(sessionRow(page, cancelled.id)).toHaveCount(1, { timeout: 120_000 });
-    await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: cancelled.id, latestTurnStatus: 'in_progress' });
-    await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: cancelled.id });
-    await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: cancelled.id, latestTurnStatus: 'cancelled' });
-    await expectRowNotInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: cancelled.id });
+    const livePublisher = await connectAuthenticatedSessionPublisher({
+      baseUrl: server.baseUrl,
+      token,
+      sessionId: live.id,
+    });
+    let cancelledPublisher: Readonly<{ close: () => void }> | null = null;
+    try {
+      cancelledPublisher = await connectAuthenticatedSessionPublisher({
+        baseUrl: server.baseUrl,
+        token,
+        sessionId: cancelled.id,
+      });
+      await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: live.id, latestTurnStatus: 'in_progress' });
+      await expect(page.getByTestId(sessionListAttentionTestIds.workingHeader)).toHaveCount(1, { timeout: 60_000 });
+      await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: live.id });
+
+      await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: live.id });
+      await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: live.id, latestTurnStatus: 'completed' });
+      await expect(page.getByTestId(sessionListAttentionTestIds.attentionHeader)).toHaveCount(1, { timeout: 60_000 });
+      await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.attentionHeader, sessionId: live.id });
+      await expectRowNotInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: live.id });
+
+      await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: cancelled.id, latestTurnStatus: 'in_progress' });
+      await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: cancelled.id });
+      await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: cancelled.id, latestTurnStatus: 'cancelled' });
+      await expectRowNotInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: cancelled.id });
+    } finally {
+      cancelledPublisher?.close();
+      livePublisher.close();
+    }
   });
 });

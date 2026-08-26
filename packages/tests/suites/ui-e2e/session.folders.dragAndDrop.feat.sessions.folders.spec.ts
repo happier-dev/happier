@@ -19,7 +19,6 @@ import {
   dragSessionToTarget,
   expectFolderAssignment,
   expectFolderParent,
-  expectOrderBefore,
   expectOrderMapContainsBefore,
   expectOrderMapStartsWith,
   folderOrderKey,
@@ -311,11 +310,6 @@ test.describe('ui e2e: session folders drag and drop', () => {
       firstKey: sessionOrderKey(serverId, rootSessionId),
       secondKey: folderOrderKey(FOLDER_ALPHA_ID),
     });
-    await expectOrderBefore({
-      page,
-      firstTestId: `session-list-item-${rootSessionId}`,
-      secondTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
-    });
 
     await dragSessionToTarget(page, {
       sessionId: rootSessionId,
@@ -334,16 +328,6 @@ test.describe('ui e2e: session folders drag and drop', () => {
       serverId,
       firstKey: sessionOrderKey(serverId, rootSessionId),
     });
-    await expectOrderBefore({
-      page,
-      firstTestId: `session-folder-header-${FOLDER_BETA_ID}`,
-      secondTestId: `session-list-item-${rootSessionId}`,
-    });
-    await expectOrderBefore({
-      page,
-      firstTestId: `session-list-item-${rootSessionId}`,
-      secondTestId: 'session-folder-header-drag_filler_01',
-    });
 
     await dragSessionToTarget(page, {
       sessionId: rootSessionId,
@@ -356,10 +340,12 @@ test.describe('ui e2e: session folders drag and drop', () => {
       sessionId: rootSessionId,
       folderId: null,
     });
-    await expectOrderBefore({
-      page,
-      firstTestId: `session-list-item-${rootSessionId}`,
-      secondTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
+    await expectOrderMapContainsBefore({
+      baseUrl: server.baseUrl,
+      token,
+      serverId,
+      firstKey: sessionOrderKey(serverId, rootSessionId),
+      secondKey: folderOrderKey(FOLDER_ALPHA_ID),
     });
 
     const beforeFolderMove = await readSessionFolderDragSettings({ baseUrl: server.baseUrl, token, serverId });

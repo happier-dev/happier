@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
+import { upsertPlainAccountSettingsV2 } from '../../src/testkit/accountSettings';
 import { createTestAuthMtls } from '../../src/testkit/auth';
 import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { repoRootDir } from '../../src/testkit/paths';
@@ -11,7 +12,6 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { seedDismissedPendingSetupIntent } from '../../src/testkit/uiE2e/pendingSetupIntent';
-import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import {
   createPlainSession,
   readSessionFolderDragSettings,
@@ -35,46 +35,10 @@ const IDENTITY_HEADERS = {
 } as const;
 
 const SESSION_CREATE_TIMESTAMP_SEPARATION_MS = 35;
-const ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX = 'account-settings:v2:';
 const STORAGE_SCOPE = `e2e-session-list-ordering-${run.runId}`;
-
-type PersistedSettingsEnvelope = {
-  settings?: Record<string, unknown>;
-};
 
 async function pauseForDistinctCreatedAt(): Promise<void> {
   await new Promise((resolvePause) => setTimeout(resolvePause, SESSION_CREATE_TIMESTAMP_SEPARATION_MS));
-}
-
-async function readPersistedAccountSettings(page: Page): Promise<Record<string, unknown>> {
-  return page.evaluate(({ accountSettingsLogicalKeyPrefix }) => {
-    const keys: string[] = [];
-    for (let index = 0; index < window.localStorage.length; index += 1) {
-      const rawKey = window.localStorage.key(index);
-      if (!rawKey) continue;
-      const separatorIndex = rawKey.lastIndexOf('\\');
-      if (separatorIndex <= 0) continue;
-      const logicalKey = rawKey.slice(separatorIndex + 1);
-      if (logicalKey.startsWith(accountSettingsLogicalKeyPrefix)) {
-        keys.push(rawKey);
-      }
-    }
-    if (keys.length !== 1) {
-      throw new Error(`expected exactly one scoped persisted settings record, found ${keys.length}`);
-    }
-
-    const rawSettings = window.localStorage.getItem(keys[0]!);
-    if (!rawSettings) throw new Error('missing persisted settings');
-    const parsed = JSON.parse(rawSettings) as PersistedSettingsEnvelope;
-    return typeof parsed.settings === 'object' && parsed.settings ? parsed.settings : {};
-  }, { accountSettingsLogicalKeyPrefix: ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX });
-}
-
-async function expectPersistedOrderingMode(page: Page, mode: 'custom' | 'created' | 'updated'): Promise<void> {
-  await expect.poll(async () => {
-    const settings = await readPersistedAccountSettings(page);
-    return settings.sessionListOrderingModeV1;
-  }, { timeout: 60_000 }).toBe(mode);
 }
 
 async function selectOrderingMode(page: Page, mode: 'custom' | 'created' | 'updated'): Promise<void> {
@@ -82,7 +46,6 @@ async function selectOrderingMode(page: Page, mode: 'custom' | 'created' | 'upda
   const option = page.getByTestId(`session-list-ordering-mode-${mode}`);
   await expect(option).toHaveCount(1, { timeout: 60_000 });
   await option.click();
-  await expectPersistedOrderingMode(page, mode);
 }
 
 async function waitForVisibleSessionOrder(page: Page, sessionIds: readonly string[]): Promise<string[]> {
@@ -109,6 +72,46 @@ async function expectVisibleSessionOrder(page: Page, orderedSessionIds: readonly
     const visible = await readVisibleSessionRowOrder(page);
     return visible.filter((id) => expectedIds.has(id));
   }, { timeout: 120_000 }).toEqual([...orderedSessionIds]);
+}
+
+async function reloadAndWaitForImportedOrganizationProjection(params: Readonly<{
+  page: Page;
+  uiBaseUrl: string;
+  projectGroupKey: string;
+  orderedSessionIds: readonly string[];
+}>): Promise<void> {
+  const organizationResponse = params.page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname.endsWith('/v2/session-organization')
+      && response.request().method() === 'GET'
+      && response.status() === 200;
+  }, { timeout: 120_000 });
+
+  await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/?happier_hmr=0`, 120_000);
+  const response = await organizationResponse;
+  const body = await response.json() as {
+    snapshot?: {
+      version?: unknown;
+      orderEntries?: Array<{
+        scopeKind?: unknown;
+        scopeKey?: unknown;
+        itemKind?: unknown;
+        itemKey?: unknown;
+        sortKey?: unknown;
+      }>;
+    };
+  };
+  expect(body.snapshot?.version).toEqual(expect.any(Number));
+  const importedOrder = (body.snapshot?.orderEntries ?? [])
+    .filter((entry) => entry.scopeKind === 'group'
+      && entry.scopeKey === params.projectGroupKey
+      && entry.itemKind === 'session'
+      && typeof entry.itemKey === 'string')
+    .sort((left, right) => String(left.sortKey ?? '').localeCompare(String(right.sortKey ?? '')))
+    .map((entry) => entry.itemKey as string)
+    .filter((sessionId) => params.orderedSessionIds.includes(sessionId));
+  expect(importedOrder).toEqual([...params.orderedSessionIds]);
+  await expectVisibleSessionOrder(params.page, params.orderedSessionIds);
 }
 
 test.describe('ui e2e: session list ordering mode', () => {
@@ -174,6 +177,18 @@ test.describe('ui e2e: session list ordering mode', () => {
       fingerprint: IDENTITY_HEADERS.fingerprint,
     });
     token = auth.token;
+    await upsertPlainAccountSettingsV2({
+      baseUrl: server.baseUrl,
+      token,
+      settings: {
+        experiments: true,
+        featureToggles: { 'sessions.folders': true },
+        sessionFolderViewModeV1: 'tree',
+        sessionListActiveGroupingV1: 'project',
+        sessionListInactiveGroupingV1: 'project',
+        sessionListOrderingModeV1: 'custom',
+      },
+    });
     await registerMachineIdentity({
       baseUrl: server.baseUrl,
       token,
@@ -239,13 +254,6 @@ test.describe('ui e2e: session list ordering mode', () => {
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
 
-    await setUiFeatureToggle({
-      page,
-      baseUrl: uiBaseUrl,
-      featureId: 'sessions.folders',
-      enabled: true,
-    });
-
     await expect(page.getByTestId(`session-list-item-${oldestSessionId}`)).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId(`session-list-item-${middleSessionId}`)).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId(`session-list-item-${newestSessionId}`)).toHaveCount(1, { timeout: 120_000 });
@@ -275,8 +283,12 @@ test.describe('ui e2e: session list ordering mode', () => {
         sessionListGroupOrderV1: customOrderMap,
       }),
     });
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
-    await expectVisibleSessionOrder(page, customOrder);
+    await reloadAndWaitForImportedOrganizationProjection({
+      page,
+      uiBaseUrl,
+      projectGroupKey,
+      orderedSessionIds: customOrder,
+    });
 
     const organizationRouteParams = {
       baseUrl: server.baseUrl,

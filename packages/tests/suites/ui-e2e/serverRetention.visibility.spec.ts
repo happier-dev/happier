@@ -158,7 +158,7 @@ test.describe('ui e2e: server retention visibility', () => {
     });
 
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-    const sessionId = await createSessionFromNewSessionComposer({
+    const session = await createSessionFromNewSessionComposer({
       page,
       uiBaseUrl,
       machineId,
@@ -169,7 +169,9 @@ test.describe('ui e2e: server retention visibility', () => {
     await expect(page.getByTestId('server-retention-summary')).toContainText('30', { timeout: 120_000 });
     await expect(page.getByTestId('server-retention-row-accountChanges')).toContainText('45', { timeout: 60_000 });
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}/info`, { waitUntil: 'domcontentloaded' });
+    const sessionInfoUrl = new URL(session.sessionHref);
+    sessionInfoUrl.pathname = `${sessionInfoUrl.pathname}/info`;
+    await page.goto(sessionInfoUrl.toString(), { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('session-info-screen')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('session-retention-notice')).toContainText('30', { timeout: 60_000 });
 

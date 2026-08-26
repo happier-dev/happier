@@ -185,7 +185,7 @@ describeReleasedServer(releasedServerSuiteName, () => {
     };
     page.on('request', recordPendingEnqueue);
 
-    const sessionId = await createSessionFromNewSessionComposer({
+    const { sessionId } = await createSessionFromNewSessionComposer({
       page,
       uiBaseUrl,
       machineId,

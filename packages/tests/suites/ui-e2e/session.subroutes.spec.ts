@@ -9,7 +9,10 @@ import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '.
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import {
+  createSessionFromNewSessionComposer,
+  reloadCreatedSessionFromNewSessionComposer,
+} from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 
@@ -47,13 +50,10 @@ async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: nu
   return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
 }
 
-async function createSessionFromComposer(params: {
-  page: Page;
-  uiBaseUrl: string;
-  machineId: string;
-  prompt: string;
-}): Promise<string> {
-  return createSessionFromNewSessionComposer(params);
+function sessionRouteHref(params: { sessionHref: string; suffix: string }): string {
+  const url = new URL(params.sessionHref);
+  url.pathname = `${url.pathname}${params.suffix}`;
+  return url.toString();
 }
 
 test.describe('ui e2e: session subroutes', () => {
@@ -153,10 +153,16 @@ test.describe('ui e2e: session subroutes', () => {
     });
 
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
-    const sessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: `hello ${run.runId}` });
+    const session = await createSessionFromNewSessionComposer({
+      page,
+      uiBaseUrl,
+      machineId,
+      prompt: `hello ${run.runId}`,
+      readiness: 'first-turn-reload-safe',
+    });
+    const { sessionId } = session;
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session });
     await expect(page.getByText('FAKE_CLAUDE_OK_1')).toHaveCount(1, { timeout: 180_000 });
 
     // In-app navigation should resolve session subroutes.
@@ -165,19 +171,18 @@ test.describe('ui e2e: session subroutes', () => {
     await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/info$`));
     await expect(page.getByTestId('session-info-screen')).toHaveCount(1, { timeout: 60_000 });
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await reloadCreatedSessionFromNewSessionComposer({ page, session });
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}/info`, { waitUntil: 'domcontentloaded' });
+    await page.goto(sessionRouteHref({ sessionHref: session.sessionHref, suffix: '/info' }), { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/info$`));
     await expect(page.getByTestId('debug-router-pathname')).toHaveText(`/session/${sessionId}/info`, { timeout: 60_000 });
     await expect(page.getByTestId('session-info-screen')).toHaveCount(1, { timeout: 60_000 });
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}/runs`, { waitUntil: 'domcontentloaded' });
+    await page.goto(sessionRouteHref({ sessionHref: session.sessionHref, suffix: '/runs' }), { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/runs$`));
     await expect(page.getByTestId('session-runs-screen')).toHaveCount(1, { timeout: 60_000 });
 
-    await page.goto(`${uiBaseUrl}/session/${sessionId}/files`, { waitUntil: 'domcontentloaded' });
+    await page.goto(sessionRouteHref({ sessionHref: session.sessionHref, suffix: '/files' }), { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(new RegExp(`/session/${sessionId}/files$`));
     await expect(page.getByTestId('session-files-screen')).toHaveCount(1, { timeout: 60_000 });
   });

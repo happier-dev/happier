@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 
 import { fetchJson } from '../http';
 import { repoRootDir } from '../paths';
+import { createMachineBoundSessionScopedSocketCollector } from '../sessionSocketBinding';
 import { fetchSessionV2 } from '../sessions';
+import type { SocketCollector } from '../socketClient';
 import { waitFor } from '../timing';
 import { createPlainSession } from './sessionFoldersDrag';
 import { gotoDomContentLoadedWithRetries } from './pageNavigation';
@@ -71,6 +73,31 @@ export async function seedAttentionSession(params: Readonly<{
     tagPrefix: 'session-list-attention',
   });
   return { id, title: params.title };
+}
+
+export async function connectAuthenticatedSessionPublisher(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  thinking?: boolean;
+}>): Promise<SocketCollector> {
+  const { socket } = await createMachineBoundSessionScopedSocketCollector(params);
+  socket.connect();
+  try {
+    await waitFor(async () => socket.isConnected(), {
+      timeoutMs: 20_000,
+      context: `connect authenticated machine publisher for ${params.sessionId}`,
+    });
+    socket.emit('session-alive', {
+      sid: params.sessionId,
+      time: Date.now(),
+      thinking: params.thinking ?? false,
+    });
+    return socket;
+  } catch (error) {
+    socket.close();
+    throw error;
+  }
 }
 
 async function postPlainMessage(params: Readonly<{

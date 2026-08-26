@@ -1236,12 +1236,13 @@ test.describe('packed candidate: targeted projection app-page client Action', ()
           .toBeVisible({ timeout: 180_000 });
 
         const privateSessionPrompt = `UCX private Session ${run.runId}`;
-        const privateSessionId = await createSessionFromNewSessionComposer({
+        const privateSession = await createSessionFromNewSessionComposer({
           page,
           uiBaseUrl,
           machineId: seeded.machineId,
           prompt: privateSessionPrompt,
         });
+        const privateSessionId = privateSession.sessionId;
         await setSessionSummaryPrivacy({
           page,
           serverBaseUrl: server.baseUrl,
@@ -1254,15 +1255,9 @@ test.describe('packed candidate: targeted projection app-page client Action', ()
           uiBaseUrl,
           mode: 'on_demand',
         });
-        await gotoDomContentLoadedWithRetries(
-          page,
-          buildServerScopedUiUrl(
-            uiBaseUrl,
-            server.baseUrl,
-            `/session/${privateSessionId}?happier_hmr=0`,
-          ),
-          180_000,
-        );
+        const privateSessionUrl = new URL(privateSession.sessionHref);
+        privateSessionUrl.searchParams.set('happier_hmr', '0');
+        await gotoDomContentLoadedWithRetries(page, privateSessionUrl.toString(), 180_000);
         await waitForAuthenticatedRouteUi({
           page,
           expectedPathname: `/session/${privateSessionId}`,

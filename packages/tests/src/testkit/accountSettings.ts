@@ -88,6 +88,48 @@ export async function readEncryptedAccountSettingsV2OrEmpty(params: Readonly<{
   return openEncryptedAccountSettingsV2Row(current, params);
 }
 
+export async function upsertPlainAccountSettingsV2(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  settings: unknown;
+  expectedVersion?: number;
+}>): Promise<number> {
+  const current = await fetchAccountSettingsV2(params);
+  if (current.content?.t === 'encrypted') {
+    throw new Error('Cannot write plain account settings over encrypted account settings');
+  }
+  const expectedVersion = params.expectedVersion ?? current.version;
+  const postRes = await fetchJson<unknown>(`${params.baseUrl}/v2/account/settings`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      expectedVersion,
+      content: { t: 'plain', v: params.settings },
+    }),
+    timeoutMs: 20_000,
+  });
+
+  if (postRes.status !== 200) {
+    throw new Error(`Failed to update plain account settings (status=${postRes.status})`);
+  }
+  const parsed = AccountSettingsV2UpdateResponseSchema.safeParse(postRes.data);
+  if (!parsed.success) {
+    throw new Error('Failed to parse plain account settings update response');
+  }
+  if (!parsed.data.success) {
+    if (parsed.data.error === 'invalid') {
+      throw new Error(`Failed to update plain account settings due to invalid content (${parsed.data.reason})`);
+    }
+    throw new Error(
+      `Failed to update plain account settings due to version mismatch (expected=${expectedVersion}, current=${parsed.data.currentVersion})`,
+    );
+  }
+  return parsed.data.version;
+}
+
 export async function upsertEncryptedAccountSettingsV2(params: Readonly<{
   baseUrl: string;
   token: string;
