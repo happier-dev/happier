@@ -23,17 +23,17 @@ describe('resolveSessionTagPlacement', () => {
         })).toBe('inline');
     });
 
-    it('keeps compact tags below when their combined labels exceed the inline budget', () => {
+    it('keeps compact tags in the right area when their combined labels exceed the inline budget', () => {
         expect(resolveSessionTagPlacement({
             density: 'compact',
             tags: [{ label: 'tag' }, { label: 'tag 12' }, { label: 'tag 3' }],
             rowWidth: null,
             hasTrailingMeta: true,
             hasRowActions: false,
-        })).toBe('below');
+        })).toBe('inline');
     });
 
-    it('keeps cozy tags below when the leading identity leaves only a small inline budget', () => {
+    it('keeps cozy tags in the right area with a leading identity', () => {
         expect(resolveSessionTagPlacement({
             density: 'compact',
             tags: [{ label: 'tag' }, { label: 'tag 2' }],
@@ -41,7 +41,7 @@ describe('resolveSessionTagPlacement', () => {
             hasTrailingMeta: true,
             hasRowActions: false,
             hasLeadingIdentity: true,
-        })).toBe('below');
+        })).toBe('inline');
     });
 
     it('places the same cozy tags inline when the leading identity is hidden', () => {
@@ -55,24 +55,24 @@ describe('resolveSessionTagPlacement', () => {
         })).toBe('inline');
     });
 
-    it('keeps compact tags below when actions own the trailing area', () => {
+    it('does not render tags while actions own the trailing area', () => {
         expect(resolveSessionTagPlacement({
             density: 'compact',
             tags: [{ label: 'v2' }],
             rowWidth: null,
             hasTrailingMeta: false,
             hasRowActions: true,
-        })).toBe('below');
+        })).toBe('inline');
     });
 
-    it('keeps compact tags below when measured width would leave too little title room', () => {
+    it('keeps compact tags in the right area when measured width is narrow', () => {
         expect(resolveSessionTagPlacement({
             density: 'compact',
             tags: [{ label: 'v2' }],
             rowWidth: 170,
             hasTrailingMeta: true,
             hasRowActions: false,
-        })).toBe('below');
+        })).toBe('inline');
     });
 
     it('keeps short compact tags inline even when they take modest title space', () => {
@@ -85,13 +85,13 @@ describe('resolveSessionTagPlacement', () => {
         })).toBe('inline');
     });
 
-    it('does not place default-density tags inline', () => {
+    it('places default-density tags in the right area', () => {
         expect(resolveSessionTagPlacement({
             density: 'default',
             tags: [{ label: 'v2' }],
             rowWidth: 360,
             hasTrailingMeta: true,
             hasRowActions: false,
-        })).toBe('below');
+        })).toBe('inline');
     });
 });

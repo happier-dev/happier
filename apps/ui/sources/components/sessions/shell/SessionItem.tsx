@@ -48,7 +48,7 @@ import {
 } from './sessionListRowHeights';
 import { shouldUseReadableNativePhoneMinimalSessionRow } from './sessionListRowDensity';
 import { planSessionTagDisplay } from './sessionTagPlacement';
-import { resolveSessionTagColorRole } from './sessionTagColors';
+import { resolveSessionTagChipColors } from './sessionTagColors';
 import { useIsTablet } from '@/utils/platform/responsive';
 import type { SessionStatus } from '@/utils/sessions/sessionUtils';
 import { useSessionRowActionMenu } from './row/actionMenu/useSessionRowActionMenu';
@@ -473,7 +473,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         marginTop: 0,
         marginRight: 4,
-        maxWidth: 82,
+        maxWidth: 180,
     },
     tagChip: {
         borderRadius: 999,
@@ -495,7 +495,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: 96,
     },
     tagChipInline: {
-        maxWidth: 74,
+        maxWidth: 140,
     },
     tagChipText: {
         fontSize: 10,
@@ -1156,7 +1156,7 @@ const SessionItemContent = React.memo(
                 ]}
             >
                 {tagChips.map((tag) => {
-                    const colors = theme.colors.state[resolveSessionTagColorRole(tag.label, tag.isOverflow)];
+                    const colors = resolveSessionTagChipColors(tag.label, tag.isOverflow, theme.dark);
                     return (
                         <View
                             key={tag.key}
@@ -1165,7 +1165,7 @@ const SessionItemContent = React.memo(
                                 tagChipDensity === 'compact' ? styles.tagChipCompact : null,
                                 tagChipDensity === 'minimal' ? styles.tagChipMinimal : null,
                                 placement === 'inline' ? styles.tagChipInline : null,
-                                { backgroundColor: colors.background, borderColor: colors.border },
+                                { backgroundColor: colors.backgroundColor, borderColor: colors.borderColor },
                             ]}
                         >
                             <Text
@@ -1173,7 +1173,7 @@ const SessionItemContent = React.memo(
                                     styles.tagChipText,
                                     tagChipDensity === 'compact' ? styles.tagChipTextCompact : null,
                                     tagChipDensity === 'minimal' ? styles.tagChipTextMinimal : null,
-                                    { color: colors.onTint },
+                                    { color: colors.color },
                                 ]}
                                 numberOfLines={1}
                             >

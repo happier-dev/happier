@@ -3,9 +3,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { lightTheme } from '@/theme';
 import { createSessionItemTestRowModel, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
-import { resolveSessionTagColorRole } from './sessionTagColors';
+import { resolveSessionTagChipColors } from './sessionTagColors';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -246,10 +245,10 @@ describe('SessionItem tags (layout)', () => {
 
         const tagText = screen.findAllByType('Text').find((node) => node.props.children === 'focus');
         const tagChip = tagText?.parent;
-        const colors = lightTheme.colors.state[resolveSessionTagColorRole('focus')];
+        const colors = resolveSessionTagChipColors('focus', false, false);
 
-        expect(tagChip?.props.style).toContainEqual({ backgroundColor: colors.background, borderColor: colors.border });
-        expect(tagText?.props.style).toContainEqual({ color: colors.onTint });
+        expect(tagChip?.props.style).toContainEqual({ backgroundColor: colors.backgroundColor, borderColor: colors.borderColor });
+        expect(tagText?.props.style).toContainEqual({ color: colors.color });
     });
 
     it('keeps narrow tags in the trailing metadata cluster', async () => {
@@ -279,7 +278,7 @@ describe('SessionItem tags (layout)', () => {
         expect(screen.findByTestId('session-item-tags-below-sess_1')).toBeNull();
     });
 
-    it('shows shortest narrow tags inline with an overflow chip instead of wrapping', async () => {
+    it('keeps narrow tags inline without moving them below the session', async () => {
         const screen = await renderScreen(
             <SessionItem
                 session={createSession()}
@@ -304,8 +303,7 @@ describe('SessionItem tags (layout)', () => {
         const rightAreaText = rightArea?.findAllByType('Text').map((node) => node.props.children).join(' ');
         expect(rightAreaText).toContain('tag');
         expect(rightAreaText).toContain('tag 3');
-        expect(rightAreaText).toContain('+1');
-        expect(rightAreaText).not.toContain('tag 12');
+        expect(rightAreaText).toContain('tag 12');
         expect(screen.findByTestId('session-item-tags-below-sess_1')).toBeNull();
     });
 
