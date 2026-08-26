@@ -195,12 +195,23 @@ describe('happier session delegate start command', () => {
     const output = captureConsoleJsonOutput();
     try {
       await handleSessionCommand(
-        ['delegate', 'start', 'sess-delegate', '--agent', 'Acme Agent', 'Delegate.', '--json'],
+        [
+          'delegate',
+          'start',
+          'sess-delegate',
+          '--agent',
+          'Acme Agent',
+          'Delegate.',
+          '--machine-id',
+          'machine-selected',
+          '--json',
+        ],
         { readCredentialsFn: async () => apiTokenCredentials },
       );
 
       expect(createCliActionExecutorFromCredentials).toHaveBeenCalledWith({
         credentials: apiTokenCredentials,
+        machineId: 'machine-selected',
       });
       expect(resolveSessionTarget).toHaveBeenCalledWith('sess-delegate');
       expect(createCliActionExecutor).not.toHaveBeenCalled();
