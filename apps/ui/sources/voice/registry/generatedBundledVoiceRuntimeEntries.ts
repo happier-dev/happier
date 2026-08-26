@@ -53,8 +53,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "conversationRollback": true,
             "delivery": [
               "newTurn",
-              "steer",
-              "followUp"
+              "steer"
             ],
             "goals": {
               "active": {
