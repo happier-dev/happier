@@ -10475,6 +10475,12 @@ settingsSession: {
     },
 
     terminalEmbedded: {
+        nativeAccessibility: {
+            terminalLabel: 'Terminal',
+            fallbackValue: 'El contingut del terminal natiu no està disponible. Utilitza la WebView xterm per accedir al contingut del terminal.',
+            focusAction: 'Posa el focus al terminal',
+            copySelectionAction: 'Copia la selecció',
+        },
         dockMenuA11y: 'Acoblar terminal',
         largePasteTitle: 'Vols enganxar una entrada gran al terminal?',
         largePasteDescription: "Aquest contingut enganxat és gran i pot executar ordres al terminal. Revisa'l abans de continuar.",

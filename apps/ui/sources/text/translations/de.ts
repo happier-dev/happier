@@ -11891,6 +11891,12 @@ settingsSession: {
     },
 
     terminalEmbedded: {
+        nativeAccessibility: {
+            terminalLabel: 'Terminal',
+            fallbackValue: 'Native Terminalinhalte sind nicht verfügbar. Nutze die xterm-WebView für barrierefreie Terminalinhalte.',
+            focusAction: 'Terminal fokussieren',
+            copySelectionAction: 'Auswahl kopieren',
+        },
         dockMenuA11y: 'Terminal andocken',
         largePasteTitle: 'Große Eingabe ins Terminal einfügen?',
         largePasteDescription: 'Diese Eingabe ist groß und führt im Terminal womöglich Befehle aus. Prüf sie, bevor du weitermachst.',

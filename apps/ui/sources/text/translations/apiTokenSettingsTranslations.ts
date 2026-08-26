@@ -18,6 +18,7 @@ const english = {
             expired: 'Expired',
         },
         rowAccessibilityLabel: ({ label, state }: { label: string; state: string }) => `${label}, ${state}`,
+        moreActionsAccessibilityLabel: ({ label }: { label: string }) => `More actions for ${label}`,
         create: {
             button: 'Create token',
             title: 'Create API token',
@@ -106,6 +107,7 @@ export const apiTokenSettingsTranslations = {
                 expired: 'Caducat',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}, estat: ${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `Més accions per a ${label}`,
             create: {
                 button: 'Crea un token',
                 title: "Crea un token d'API",
@@ -187,6 +189,7 @@ export const apiTokenSettingsTranslations = {
                 expired: 'Abgelaufen',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}, Status: ${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `Weitere Aktionen für ${label}`,
             create: {
                 button: 'Token erstellen',
                 title: 'API-Token erstellen',
@@ -268,6 +271,7 @@ export const apiTokenSettingsTranslations = {
                 expired: 'Caducado',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}, estado: ${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `Más acciones para ${label}`,
             create: {
                 button: 'Crear token',
                 title: 'Crear token de API',
@@ -349,6 +353,7 @@ export const apiTokenSettingsTranslations = {
                 expired: 'Expiré',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}, état : ${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `Plus d’actions pour ${label}`,
             create: {
                 button: 'Créer un jeton',
                 title: 'Créer un jeton API',
@@ -430,6 +435,7 @@ export const apiTokenSettingsTranslations = {
                 expired: 'Scaduto',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}, stato: ${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `Altre azioni per ${label}`,
             create: {
                 button: 'Crea token',
                 title: 'Crea token API',
@@ -511,6 +517,7 @@ export const apiTokenSettingsTranslations = {
                 expired: '期限切れ',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}、${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `${label}のその他の操作`,
             create: {
                 button: 'トークンを作成',
                 title: 'API トークンを作成',
@@ -592,6 +599,7 @@ export const apiTokenSettingsTranslations = {
                 expired: 'Wygasł',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}, stan: ${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `Więcej działań dla: ${label}`,
             create: {
                 button: 'Utwórz token',
                 title: 'Utwórz token API',
@@ -673,6 +681,7 @@ export const apiTokenSettingsTranslations = {
                 expired: 'Expirado',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}, status: ${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `Mais ações para ${label}`,
             create: {
                 button: 'Criar token',
                 title: 'Criar token de API',
@@ -754,6 +763,7 @@ export const apiTokenSettingsTranslations = {
                 expired: 'Истёк',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}, статус: ${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `Дополнительные действия для ${label}`,
             create: {
                 button: 'Создать токен',
                 title: 'Создать токен API',
@@ -835,6 +845,7 @@ export const apiTokenSettingsTranslations = {
                 expired: '已过期',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}，${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `${label}的更多操作`,
             create: {
                 button: '创建令牌',
                 title: '创建 API 令牌',
@@ -916,6 +927,7 @@ export const apiTokenSettingsTranslations = {
                 expired: '已到期',
             },
             rowAccessibilityLabel: ({ label, state }) => `${label}，${state}`,
+            moreActionsAccessibilityLabel: ({ label }) => `${label}的更多操作`,
             create: {
                 button: '建立權杖',
                 title: '建立 API 權杖',

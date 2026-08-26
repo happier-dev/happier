@@ -11968,6 +11968,12 @@ settingsSession: {
     },
 
     terminalEmbedded: {
+        nativeAccessibility: {
+            terminalLabel: 'Terminal',
+            fallbackValue: 'Native terminal content is unavailable. Use the xterm WebView fallback for accessible terminal content.',
+            focusAction: 'Focus terminal',
+            copySelectionAction: 'Copy selection',
+        },
         dockMenuA11y: 'Dock terminal',
         largePasteTitle: 'Paste large terminal input?',
         largePasteDescription: 'This paste is large and may run commands in the terminal. Review it before continuing.',

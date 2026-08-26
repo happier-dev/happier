@@ -11552,6 +11552,12 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    nativeAccessibility: {
+      terminalLabel: 'Terminal',
+      fallbackValue: 'Le contenu du terminal natif est indisponible. Utilisez la WebView xterm pour un contenu de terminal accessible.',
+      focusAction: 'Activer le terminal',
+      copySelectionAction: 'Copier la sélection',
+    },
     dockMenuA11y: "Ancrer le terminal",
     largePasteTitle: "Coller une saisie terminal volumineuse ?",
     largePasteDescription: "Ce collage est volumineux et peut exécuter des commandes dans le terminal. Relis-le avant de continuer.",

@@ -11181,6 +11181,12 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    nativeAccessibility: {
+      terminalLabel: '终端',
+      fallbackValue: '原生终端内容不可用。请使用 xterm WebView 访问无障碍终端内容。',
+      focusAction: '聚焦终端',
+      copySelectionAction: '复制所选内容',
+    },
     dockMenuA11y: "停靠终端",
     largePasteTitle: "要粘贴大量终端输入吗？",
     largePasteDescription: "这段粘贴内容较大，可能会在终端中执行命令。继续前请先检查。",

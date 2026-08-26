@@ -11557,6 +11557,12 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    nativeAccessibility: {
+      terminalLabel: 'Terminal',
+      fallbackValue: 'Natywna zawartość terminala jest niedostępna. Użyj widoku xterm WebView, aby uzyskać dostęp do terminala.',
+      focusAction: 'Ustaw fokus na terminalu',
+      copySelectionAction: 'Kopiuj zaznaczenie',
+    },
     dockMenuA11y: "Dokuj terminal",
     largePasteTitle: "Wkleić dużą zawartość do terminala?",
     largePasteDescription: "Ta wklejana zawartość jest duża i może uruchomić polecenia w terminalu. Sprawdź ją przed kontynuowaniem.",

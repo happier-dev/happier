@@ -11900,6 +11900,12 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    nativeAccessibility: {
+      terminalLabel: 'Terminale',
+      fallbackValue: 'Il contenuto del terminale nativo non è disponibile. Usa la WebView xterm per contenuti del terminale accessibili.',
+      focusAction: 'Attiva il terminale',
+      copySelectionAction: 'Copia selezione',
+    },
     dockMenuA11y: "Aggancia terminale",
     largePasteTitle: "Incollare un input grande nel terminale?",
     largePasteDescription: "Questo testo incollato è grande e potrebbe eseguire comandi nel terminale. Controllalo prima di continuare.",

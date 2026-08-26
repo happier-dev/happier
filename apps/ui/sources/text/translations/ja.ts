@@ -11797,6 +11797,12 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    nativeAccessibility: {
+      terminalLabel: 'ターミナル',
+      fallbackValue: 'ネイティブターミナルの内容を利用できません。アクセシブルなターミナル内容には xterm WebView を使用してください。',
+      focusAction: 'ターミナルにフォーカス',
+      copySelectionAction: '選択範囲をコピー',
+    },
     dockMenuA11y: "ターミナルをドック",
     largePasteTitle: "大きなターミナル入力を貼り付けますか？",
     largePasteDescription: "この貼り付け内容は大きく、ターミナルでコマンドを実行する可能性があります。続行する前に確認してください。",

@@ -25,10 +25,14 @@ describe('apiTokenSettingsTranslations', () => {
             .filter((entry) => entry.key.startsWith('settingsApiTokens.'));
         const inheritedFormatters = locales.flatMap(({ code, root }) => {
             const englishRowLabel = en.settingsApiTokens.rowAccessibilityLabel({ label: 'TOKEN_LABEL', state: 'TOKEN_STATE' });
+            const englishMoreActionsLabel = en.settingsApiTokens.moreActionsAccessibilityLabel({ label: 'TOKEN_LABEL' });
             const englishRevokeTitle = en.settingsApiTokens.revoke.title({ label: 'TOKEN_LABEL' });
             return [
                 root.settingsApiTokens.rowAccessibilityLabel({ label: 'TOKEN_LABEL', state: 'TOKEN_STATE' }) === englishRowLabel
                     ? `${code}: settingsApiTokens.rowAccessibilityLabel falls back to English`
+                    : null,
+                root.settingsApiTokens.moreActionsAccessibilityLabel({ label: 'TOKEN_LABEL' }) === englishMoreActionsLabel
+                    ? `${code}: settingsApiTokens.moreActionsAccessibilityLabel falls back to English`
                     : null,
                 root.settingsApiTokens.revoke.title({ label: 'TOKEN_LABEL' }) === englishRevokeTitle
                     ? `${code}: settingsApiTokens.revoke.title falls back to English`

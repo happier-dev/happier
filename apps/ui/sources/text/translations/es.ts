@@ -11551,6 +11551,12 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    nativeAccessibility: {
+      terminalLabel: 'Terminal',
+      fallbackValue: 'El contenido del terminal nativo no está disponible. Usa la vista web de xterm para acceder al contenido del terminal.',
+      focusAction: 'Enfocar el terminal',
+      copySelectionAction: 'Copiar selección',
+    },
     dockMenuA11y: "Acoplar terminal",
     largePasteTitle: "¿Pegar una entrada grande en el terminal?",
     largePasteDescription: "Este texto pegado es grande y puede ejecutar comandos en el terminal. Revísalo antes de continuar.",

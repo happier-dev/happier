@@ -9238,6 +9238,12 @@ settingsSession: {
     },
 
     terminalEmbedded: {
+        nativeAccessibility: {
+            terminalLabel: '終端機',
+            fallbackValue: '原生終端機內容無法使用。請使用 xterm WebView 存取無障礙終端機內容。',
+            focusAction: '聚焦終端機',
+            copySelectionAction: '複製所選內容',
+        },
         dockMenuA11y: '停靠終端',
         largePasteTitle: '要貼上大量終端機輸入嗎？',
         largePasteDescription: '這段貼上內容較大，可能會在終端機中執行指令。繼續前請先檢查。',

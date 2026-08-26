@@ -11517,6 +11517,12 @@ settingsSession: {
   },
 
   terminalEmbedded: {
+    nativeAccessibility: {
+      terminalLabel: 'Терминал',
+      fallbackValue: 'Содержимое нативного терминала недоступно. Используйте xterm WebView для доступного содержимого терминала.',
+      focusAction: 'Перейти к терминалу',
+      copySelectionAction: 'Копировать выделение',
+    },
     dockMenuA11y: "Закрепить терминал",
     largePasteTitle: "Вставить большой ввод в терминал?",
     largePasteDescription: "Этот вставляемый текст большой и может выполнить команды в терминале. Проверьте его перед продолжением.",
