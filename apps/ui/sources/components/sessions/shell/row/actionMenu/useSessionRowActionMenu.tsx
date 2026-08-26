@@ -318,7 +318,6 @@ export function useSessionRowActionMenu(params: Readonly<{
     ]);
 
     const contextMenuItems = React.useMemo((): DropdownMenuItem[] => {
-        if (!params.isNativeMobile) return [];
         const items: DropdownMenuItem[] = [];
         if (params.selectionModeAvailable === true && typeof params.onEnterSelectionMode === 'function') {
             items.push({

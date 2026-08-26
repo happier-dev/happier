@@ -69,6 +69,8 @@ import {
 } from '@/components/sessions/debug/sessionDebugInformation';
 import { copySessionDebugInformationToClipboard } from '@/components/sessions/debug/sessionDebugClipboard';
 import { Icon } from '@/components/ui/icons/Icon';
+import { Modal } from '@/modal';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import {
     createCopySessionDebugInformationMenuItem,
     SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID,
@@ -88,6 +90,7 @@ const SESSION_IDENTITY_SKELETON_ANIMATION_MS = 900;
 const SESSION_FOLDER_ROW_CHROME_INDENT_BASE = 38;
 const SESSION_FOLDER_ROW_CHROME_INDENT_STEP = 12;
 const SESSION_FOLDER_ROW_INDENT_CAP = 3;
+const SESSION_COPY_ID_MENU_ITEM_ID = 'session.copyId';
 
 type SessionItemActivityTimeMode = 'meaningful' | 'updatedAt';
 type SessionItemIdentityDisplay = 'avatar' | 'agentLogo' | 'none';
@@ -758,13 +761,27 @@ const SessionItemContent = React.memo(
                 providerSessionId,
             });
         }, [resolvedSession]);
-        const leadingMenuItems = React.useMemo(
-            () => devModeEnabled
-                ? [createCopySessionDebugInformationMenuItem({ iconColor: rowActionIconColor })]
-                : [],
-            [devModeEnabled, rowActionIconColor],
-        );
+        const leadingMenuItems = React.useMemo(() => {
+            const items: DropdownMenuItem[] = [{
+                id: SESSION_COPY_ID_MENU_ITEM_ID,
+                title: `${t('common.copy')} ${t('sessionInfo.happySessionId')}`,
+                icon: <Icon name="copy" size={16} color={rowActionIconColor} />,
+            }];
+            if (devModeEnabled) {
+                items.push(createCopySessionDebugInformationMenuItem({ iconColor: rowActionIconColor }));
+            }
+            return items;
+        }, [devModeEnabled, rowActionIconColor]);
         const handleSelectLeadingMenuItem = React.useCallback(async (itemId: string) => {
+            if (itemId === SESSION_COPY_ID_MENU_ITEM_ID) {
+                const copied = await setClipboardStringSafe(resolvedSession.id);
+                if (copied) {
+                    copyFeedback.markCopied(resolvedSession.id);
+                    return;
+                }
+                Modal.alert(t('common.error'), t('sessionInfo.failedToCopySessionId'));
+                return;
+            }
             if (itemId !== SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID) return;
             const copied = await copySessionDebugInformationToClipboard(resolveSessionDebugInformation());
             if (copied) {
@@ -1081,6 +1098,12 @@ const SessionItemContent = React.memo(
             suppressNextPressRef.current = true;
             setContextMenuOpen(true);
         }, [clearContextMenuPressInTimer, enableLongPressContextMenu, setContextMenuOpen]);
+        const handleWebContextMenu = React.useCallback((event: unknown) => {
+            if (!isWeb || contextMenuItems.length === 0) return;
+            stopRowPressPropagation(event);
+            suppressNextRowPressTemporarily();
+            setContextMenuOpen(true);
+        }, [contextMenuItems.length, isWeb, setContextMenuOpen, stopRowPressPropagation, suppressNextRowPressTemporarily]);
 
         const shouldRenderAvatarMonochrome = resolvedSession.active !== true || !sessionStatus.isConnected;
         const avatarSize = isMinimal
@@ -1174,6 +1197,8 @@ const SessionItemContent = React.memo(
                     embedded && !embeddedIsLast ? styles.embeddedSeparator : null,
                 ]}
                 onPress={handleRowPress}
+                // @ts-expect-error - React Native types omit this web-only event.
+                onContextMenu={isWeb ? (handleWebContextMenu as any) : undefined}
                 onPressIn={enableLongPressContextMenu ? () => {
                     clearContextMenuPressInTimer();
                     contextMenuPressInTimerRef.current = setTimeout(() => {
@@ -1552,11 +1577,11 @@ const SessionItemContent = React.memo(
                             : null,
         ];
 
-        const shouldRenderNativeContextMenu = isNativeMobile && contextMenuOpen && contextMenuItems.length > 0;
+        const shouldRenderContextMenu = contextMenuOpen && contextMenuItems.length > 0;
         const shouldRenderNativeTagMenu = isNativeMobile && supportsTag && tagMenuOpen;
-        const menuNodes = shouldRenderNativeContextMenu || shouldRenderNativeTagMenu ? (
+        const menuNodes = shouldRenderContextMenu || shouldRenderNativeTagMenu ? (
             <>
-                {shouldRenderNativeContextMenu ? (
+                {shouldRenderContextMenu ? (
                     <ContextMenu
                         open={contextMenuOpen}
                         onOpenChange={setContextMenuOpen}

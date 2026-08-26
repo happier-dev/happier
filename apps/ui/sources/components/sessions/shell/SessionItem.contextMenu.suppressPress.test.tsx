@@ -8,7 +8,11 @@ import {
     SessionListSelectionProvider,
     useSessionListSelectionActions,
 } from './selection/SessionListSelectionContext';
-import { SESSION_ACTION_RENAME_ID } from '@/components/sessions/actions/sessionActionIds';
+import {
+    SESSION_ACTION_EDIT_TAGS_ID,
+    SESSION_ACTION_PIN_ID,
+    SESSION_ACTION_RENAME_ID,
+} from '@/components/sessions/actions/sessionActionIds';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -74,6 +78,22 @@ function hasCopyDebugInformationMenuItem(items: unknown): boolean {
     return items.some((item: unknown) => {
         if (!item || typeof item !== 'object') return false;
         return (item as { id?: unknown }).id === 'session.copyDebugInformation';
+    });
+}
+
+function hasCopySessionIdMenuItem(items: unknown): boolean {
+    if (!Array.isArray(items)) return false;
+    return items.some((item: unknown) => {
+        if (!item || typeof item !== 'object') return false;
+        return (item as { id?: unknown }).id === 'session.copyId';
+    });
+}
+
+function hasMenuItem(items: unknown, id: string): boolean {
+    if (!Array.isArray(items)) return false;
+    return items.some((item: unknown) => {
+        if (!item || typeof item !== 'object') return false;
+        return (item as { id?: unknown }).id === id;
     });
 }
 
@@ -248,6 +268,51 @@ describe('SessionItem context menu press suppression', () => {
         const menus = screen.tree.root.findAllByType('DropdownMenu' as React.ElementType);
         expect(menus).toHaveLength(1);
         expect(hasRenameMenuItem(menus[0].props.items)).toBe(true);
+    });
+
+    it('opens a web right-click menu with Copy Session ID, Tags, and Pin', async () => {
+        platformOs = 'web';
+        const session = createSessionFixture({
+            id: 'sess_web_context_menu',
+            active: false,
+            metadata: null,
+        });
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_a"
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                tagsEnabled
+                tags={[]}
+                allKnownTags={[]}
+                onSetTags={() => {}}
+                onTogglePinned={() => {}}
+            />,
+        );
+
+        const row = screen.findByTestId('session-list-item-sess_web_context_menu');
+        const preventDefault = vi.fn();
+        const stopPropagation = vi.fn();
+        expect(typeof row.props.onContextMenu).toBe('function');
+
+        await act(async () => {
+            row.props.onContextMenu({ preventDefault, stopPropagation });
+        });
+
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+        expect(navigateToSessionSpy).not.toHaveBeenCalled();
+        const menu = screen.findByType('DropdownMenu' as React.ElementType);
+        expect(hasCopySessionIdMenuItem(menu.props.items)).toBe(true);
+        expect(hasMenuItem(menu.props.items, SESSION_ACTION_EDIT_TAGS_ID)).toBe(true);
+        expect(hasMenuItem(menu.props.items, SESSION_ACTION_PIN_ID)).toBe(true);
+        expect(hasRenameMenuItem(menu.props.items)).toBe(true);
     });
 
     it('shows the copy information context menu item in developer-mode builds', async () => {
