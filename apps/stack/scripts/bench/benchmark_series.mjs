@@ -52,13 +52,47 @@ function humanSummary({ aggregate, manifest, warmupCount }) {
     `- Environment: ${manifest.platform?.os ?? 'unknown'} ${manifest.platform?.arch ?? ''}`.trimEnd(),
     `- Measured runs: ${aggregate.samples}`,
     `- Warmup runs: ${warmupCount}`,
+    `- Identical command concurrency: ${aggregate.concurrency}`,
+    `- Throughput: p50 ${formatMetric(aggregate.commandsPerMinute.p50, ' commands/min')}; p95 ${formatMetric(aggregate.commandsPerMinute.p95, ' commands/min')}`,
     `- Duration: p50 ${formatMetric(aggregate.durationMs.p50, ' ms')}; p95 ${formatMetric(aggregate.durationMs.p95, ' ms')}; p99 ${formatMetric(aggregate.durationMs.p99, ' ms')}`,
     `- Peak RSS: p50 ${formatMetric(aggregate.peakRssBytes.p50, ' bytes')}; max ${formatMetric(aggregate.peakRssBytes.max, ' bytes')}`,
     `- Average CPU: p50 ${formatMetric(aggregate.averageCpuPercent.p50, '%')}; max ${formatMetric(aggregate.averageCpuPercent.max, '%')}`,
+    `- Host run queue: p50 ${formatMetric(aggregate.maxHostRunQueue.p50)}; p95 ${formatMetric(aggregate.maxHostRunQueue.p95)}`,
+    `- Host memory PSI avg10: p50 ${formatMetric(aggregate.maxHostMemoryPsiAvg10.p50, '%')}; max ${formatMetric(aggregate.maxHostMemoryPsiAvg10.max, '%')}`,
+    `- Host responsiveness: shell p95 ${formatMetric(aggregate.shellSpawnLatencyP95Ms.p95, ' ms')}; filesystem p95 ${formatMetric(aggregate.filesystemLatencyP95Ms.p95, ' ms')}`,
     '',
     'This file is generated from aggregate.json. Raw command arguments and environment values are intentionally omitted.',
     '',
   ].join('\n');
+}
+
+const aggregateMetricSelectors = {
+  peakRssBytes: (summary) => summary.metrics?.peakRssBytes,
+  averageCpuPercent: (summary) => summary.metrics?.averageCpuPercent,
+  maxProcessCount: (summary) => summary.metrics?.maxProcessCount,
+  maxThreadCount: (summary) => summary.metrics?.maxThreadCount,
+  maxHostLoadAverage1m: (summary) => summary.metrics?.maxHostLoadAverage1m,
+  maxHostRunQueue: (summary) => summary.metrics?.maxHostRunQueue,
+  minHostAvailableMemoryBytes: (summary) => summary.metrics?.minHostAvailableMemoryBytes,
+  maxHostCompressedMemoryBytes: (summary) => summary.metrics?.maxHostCompressedMemoryBytes,
+  minHostMemoryFreePercent: (summary) => summary.metrics?.minHostMemoryFreePercent,
+  maxSwapUsedBytes: (summary) => summary.metrics?.maxSwapUsedBytes,
+  swapInPagesDelta: (summary) => summary.metrics?.swapInPagesDelta,
+  swapOutPagesDelta: (summary) => summary.metrics?.swapOutPagesDelta,
+  contextSwitchesDelta: (summary) => summary.metrics?.contextSwitchesDelta,
+  maxHostCpuPsiAvg10: (summary) => summary.metrics?.maxHostCpuPsiAvg10,
+  maxHostMemoryPsiAvg10: (summary) => summary.metrics?.maxHostMemoryPsiAvg10,
+  maxHostIoPsiAvg10: (summary) => summary.metrics?.maxHostIoPsiAvg10,
+  maxHostThermalPressure: (summary) => summary.metrics?.maxHostThermalPressure,
+  shellSpawnLatencyP95Ms: (summary) => summary.metrics?.responsiveness?.shellSpawnLatencyMs?.p95,
+  filesystemLatencyP95Ms: (summary) => summary.metrics?.responsiveness?.filesystemLatencyMs?.p95,
+};
+
+function aggregateMetrics(summaries) {
+  return Object.fromEntries(Object.entries(aggregateMetricSelectors).map(([name, select]) => [
+    name,
+    distribution(summaries.map(select)),
+  ]));
 }
 
 export async function runBenchmarkSeries({
@@ -70,12 +104,16 @@ export async function runBenchmarkSeries({
   outputDir,
   warmupCount = 0,
   repeatCount = 5,
+  concurrency = 1,
   sampleIntervalMs = 500,
   silent = false,
   boundary = defaultBoundary(),
 } = {}) {
   if (!Number.isInteger(warmupCount) || warmupCount < 0) throw new Error('benchmark warmupCount must be a non-negative integer');
   if (!Number.isInteger(repeatCount) || repeatCount < 1) throw new Error('benchmark repeatCount must be a positive integer');
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 64) {
+    throw new Error('benchmark concurrency must be an integer between 1 and 64');
+  }
   if (!outputDir) throw new Error('benchmark series outputDir is required');
   await mkdir(outputDir, { recursive: true, mode: 0o700 });
   const manifest = await boundary.collectManifest({ cwd, env });
@@ -83,9 +121,13 @@ export async function runBenchmarkSeries({
 
   const execute = async (kind, index) => {
     const runLabel = `${label}:${kind}:${index + 1}`;
+    const measuredCommand = concurrency === 1 ? command : process.execPath;
+    const measuredArgs = concurrency === 1
+      ? args
+      : [new URL('./concurrent_command.mjs', import.meta.url).pathname, `--count=${concurrency}`, '--', command, ...args];
     return await boundary.runCommand({
-      command,
-      args,
+      command: measuredCommand,
+      args: measuredArgs,
       cwd,
       env,
       label: runLabel,
@@ -112,9 +154,10 @@ export async function runBenchmarkSeries({
     schemaVersion: 1,
     label,
     samples: summaries.length,
+    concurrency,
     durationMs: distribution(summaries.map((summary) => summary.durationMs)),
-    peakRssBytes: distribution(summaries.map((summary) => summary.metrics?.peakRssBytes)),
-    averageCpuPercent: distribution(summaries.map((summary) => summary.metrics?.averageCpuPercent)),
+    commandsPerMinute: distribution(summaries.map((summary) => concurrency * 60_000 / summary.durationMs)),
+    ...aggregateMetrics(summaries),
   };
   await Promise.all([
     writeFile(join(outputDir, 'aggregate.json'), `${JSON.stringify(aggregate, null, 2)}\n`, { mode: 0o600 }),

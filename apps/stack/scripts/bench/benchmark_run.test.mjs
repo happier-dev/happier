@@ -8,6 +8,8 @@ import { runBenchmarkCommand } from './benchmark_run.mjs';
 test('runBenchmarkCommand records sampled command metrics and machine-readable artifacts without raw arguments', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-bench-run-' });
   let completed = false;
+  const operations = [];
+  let waitCount = 0;
   let finishCommand;
   const completion = new Promise((resolve) => {
     finishCommand = () => {
@@ -34,17 +36,36 @@ test('runBenchmarkCommand records sampled command metrics and machine-readable a
         pid: 42,
         completion,
       }),
-      sample: async () => ({
-        process: { rssBytes: 1024, cpuPercent: 50, processCount: 2, threadCount: 4 },
-        host: {
-          loadAverage1m: 3,
-          availableMemoryBytes: 4096,
-          swapUsedBytes: 0,
-          responsiveness: { shellSpawnLatencyMs: 4, filesystemLatencyMs: 2 },
-        },
-      }),
+      sample: async () => {
+        operations.push('sample');
+        return {
+          process: { rssBytes: 1024, cpuPercent: 50, processCount: 2, threadCount: 4 },
+          host: {
+            loadAverage1m: 3,
+            runQueue: 5,
+            availableMemoryBytes: 4096,
+            totalMemoryBytes: 8192,
+            swapUsedBytes: 0,
+            swapTotalBytes: 16384,
+            swapInPages: 7,
+            swapOutPages: 11,
+            contextSwitches: 13,
+            compressedMemoryBytes: 1024,
+            memoryFreePercent: 25,
+            thermalPressure: null,
+            psi: {
+              cpu: { some: { avg10: 1 } },
+              memory: { some: { avg10: 2 } },
+              io: { some: { avg10: 3 } },
+            },
+            responsiveness: { shellSpawnLatencyMs: 4, filesystemLatencyMs: 2 },
+          },
+        };
+      },
       wait: async () => {
-        if (!completed) finishCommand();
+        operations.push('wait');
+        waitCount += 1;
+        if (waitCount === 2 && !completed) finishCommand();
       },
       collectManifest: async () => ({ schemaVersion: 1, platform: { os: 'test' } }),
     },
@@ -55,8 +76,15 @@ test('runBenchmarkCommand records sampled command metrics and machine-readable a
   assert.equal(result.summary.metrics.peakRssBytes, 1024);
   assert.equal(result.summary.metrics.maxProcessCount, 2);
   assert.equal(result.summary.metrics.maxThreadCount, 4);
+  assert.equal(result.summary.metrics.maxHostRunQueue, 5);
+  assert.equal(result.summary.metrics.minHostAvailableMemoryBytes, 4096);
+  assert.equal(result.summary.metrics.maxHostMemoryPsiAvg10, 2);
+  assert.equal(result.summary.metrics.maxHostCompressedMemoryBytes, 1024);
+  assert.equal(result.summary.metrics.minHostMemoryFreePercent, 25);
+  assert.equal(result.summary.metrics.swapInPagesDelta, 0);
   assert.equal(result.summary.metrics.responsiveness.shellSpawnLatencyMs.p95, 4);
   assert.equal(result.summary.metrics.responsiveness.filesystemLatencyMs.p95, 2);
+  assert.deepEqual(operations.slice(0, 2), ['wait', 'sample']);
   assert.ok(result.summary.durationMs > 0);
 
   const eventsText = await readFile(fixture.path('results', 'events.jsonl'), 'utf8');

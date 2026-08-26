@@ -31,6 +31,15 @@ function maximum(values) {
   return values.length > 0 ? Math.max(...values) : null;
 }
 
+function minimum(values) {
+  return values.length > 0 ? Math.min(...values) : null;
+}
+
+function counterDelta(values) {
+  if (values.length < 2) return values.length === 1 ? 0 : null;
+  return Math.max(0, values.at(-1) - values[0]);
+}
+
 function average(values) {
   return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 }
@@ -75,7 +84,21 @@ function summarize({ label, command, args, startedAtNs, endedAtNs, outcome, samp
       maxProcessCount: maximum(finiteValues(samples, (sample) => sample.process?.processCount)),
       maxThreadCount: maximum(finiteValues(samples, (sample) => sample.process?.threadCount)),
       maxHostLoadAverage1m: maximum(finiteValues(samples, (sample) => sample.host?.loadAverage1m)),
+      maxHostRunQueue: maximum(finiteValues(samples, (sample) => sample.host?.runQueue)),
+      minHostAvailableMemoryBytes: minimum(finiteValues(samples, (sample) => sample.host?.availableMemoryBytes)),
+      hostTotalMemoryBytes: maximum(finiteValues(samples, (sample) => sample.host?.totalMemoryBytes)),
+      maxHostCompressedMemoryBytes: maximum(finiteValues(samples, (sample) => sample.host?.compressedMemoryBytes)),
+      maxHostWiredMemoryBytes: maximum(finiteValues(samples, (sample) => sample.host?.wiredMemoryBytes)),
+      minHostMemoryFreePercent: minimum(finiteValues(samples, (sample) => sample.host?.memoryFreePercent)),
       maxSwapUsedBytes: maximum(finiteValues(samples, (sample) => sample.host?.swapUsedBytes)),
+      hostSwapTotalBytes: maximum(finiteValues(samples, (sample) => sample.host?.swapTotalBytes)),
+      swapInPagesDelta: counterDelta(finiteValues(samples, (sample) => sample.host?.swapInPages)),
+      swapOutPagesDelta: counterDelta(finiteValues(samples, (sample) => sample.host?.swapOutPages)),
+      contextSwitchesDelta: counterDelta(finiteValues(samples, (sample) => sample.host?.contextSwitches)),
+      maxHostCpuPsiAvg10: maximum(finiteValues(samples, (sample) => sample.host?.psi?.cpu?.some?.avg10)),
+      maxHostMemoryPsiAvg10: maximum(finiteValues(samples, (sample) => sample.host?.psi?.memory?.some?.avg10)),
+      maxHostIoPsiAvg10: maximum(finiteValues(samples, (sample) => sample.host?.psi?.io?.some?.avg10)),
+      maxHostThermalPressure: maximum(finiteValues(samples, (sample) => sample.host?.thermalPressure)),
       responsiveness: {
         shellSpawnLatencyMs: latencyDistribution(samples, (sample) => sample.host?.responsiveness?.shellSpawnLatencyMs),
         filesystemLatencyMs: latencyDistribution(samples, (sample) => sample.host?.responsiveness?.filesystemLatencyMs),
@@ -94,6 +117,11 @@ function summaryCsv(summary) {
   const headers = [
     'label', 'duration_ms', 'exit_code', 'signal', 'peak_rss_bytes', 'average_cpu_percent',
     'max_process_count', 'max_thread_count', 'max_host_load_1m', 'max_swap_used_bytes',
+    'max_host_run_queue', 'min_host_available_memory_bytes', 'host_total_memory_bytes',
+    'host_swap_total_bytes', 'swap_in_pages_delta', 'swap_out_pages_delta', 'context_switches_delta',
+    'max_host_cpu_psi_avg10', 'max_host_memory_psi_avg10', 'max_host_io_psi_avg10',
+    'max_host_compressed_memory_bytes', 'max_host_wired_memory_bytes', 'min_host_memory_free_percent',
+    'max_host_thermal_pressure',
   ];
   const values = [
     summary.label,
@@ -106,6 +134,20 @@ function summaryCsv(summary) {
     summary.metrics.maxThreadCount,
     summary.metrics.maxHostLoadAverage1m,
     summary.metrics.maxSwapUsedBytes,
+    summary.metrics.maxHostRunQueue,
+    summary.metrics.minHostAvailableMemoryBytes,
+    summary.metrics.hostTotalMemoryBytes,
+    summary.metrics.hostSwapTotalBytes,
+    summary.metrics.swapInPagesDelta,
+    summary.metrics.swapOutPagesDelta,
+    summary.metrics.contextSwitchesDelta,
+    summary.metrics.maxHostCpuPsiAvg10,
+    summary.metrics.maxHostMemoryPsiAvg10,
+    summary.metrics.maxHostIoPsiAvg10,
+    summary.metrics.maxHostCompressedMemoryBytes,
+    summary.metrics.maxHostWiredMemoryBytes,
+    summary.metrics.minHostMemoryFreePercent,
+    summary.metrics.maxHostThermalPressure,
   ];
   return `${headers.join(',')}\n${values.map(csvCell).join(',')}\n`;
 }
@@ -161,6 +203,8 @@ export async function runBenchmarkCommand({
   });
 
   while (!settled) {
+    await Promise.race([completion, boundary.wait(sampleIntervalMs)]);
+    if (settled) break;
     try {
       const sample = await boundary.sample({ pid: child.pid, cwd, env });
       if (!settled) {
@@ -180,7 +224,6 @@ export async function runBenchmarkCommand({
         code: error?.code ?? null,
       });
     }
-    if (!settled) await Promise.race([completion, boundary.wait(sampleIntervalMs)]);
   }
   await completion;
   const endedAtNs = completedAtNs ?? boundary.nowNs();

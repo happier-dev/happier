@@ -25,6 +25,34 @@ function firstNonEmptyLine(value) {
   return String(value ?? '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? null;
 }
 
+export function classifyRepositoryPlacement(cwd) {
+  const normalized = String(cwd ?? '').replaceAll('\\', '/').toLowerCase();
+  const knownCloudSegments = [
+    '/library/mobile documents/',
+    '/dropbox/',
+    '/onedrive/',
+    '/google drive/',
+    '/google drive file stream/',
+  ];
+  if (knownCloudSegments.some((segment) => normalized.includes(segment))) return 'known-cloud-provider';
+  if (/^\/users\/[^/]+\/(desktop|documents)(\/|$)/.test(normalized)) return 'possibly-managed-home-folder';
+  return 'local-path';
+}
+
+export function detectSecurityProcessFamilies(processListText) {
+  const text = String(processListText ?? '').toLowerCase();
+  const signatures = {
+    'crowdstrike': ['falconctl', 'falcond'],
+    'microsoft-defender': ['wdavdaemon', 'microsoft defender'],
+    'sentinel-one': ['sentinelone', 'sentinel-agent', 'sentineld'],
+    'sophos': ['sophos'],
+  };
+  return Object.entries(signatures)
+    .filter(([, needles]) => needles.some((needle) => text.includes(needle)))
+    .map(([family]) => family)
+    .sort();
+}
+
 async function capture(command, args, { cwd, env }) {
   const result = await runCaptureResult(command, args, {
     cwd,
@@ -93,6 +121,48 @@ function defaultPlatform() {
   };
 }
 
+async function defaultHostObservations({ cwd, env }) {
+  const repositoryPlacement = classifyRepositoryPlacement(cwd);
+  if (platform() !== 'darwin') {
+    return {
+      repositoryPlacement,
+      spotlight: { available: false, indexingEnabled: null },
+      timeMachine: { available: false, excluded: null },
+      securityProcessFamilies: [],
+    };
+  }
+  const captureResult = (command, args) => runCaptureResult(command, args, {
+    cwd,
+    env,
+    timeoutMs: 5_000,
+  }).catch(() => ({ exitCode: 1, out: '', err: '' }));
+  const [spotlightResult, timeMachineResult, processResult] = await Promise.all([
+    captureResult('mdutil', ['-s', cwd]),
+    captureResult('tmutil', ['isexcluded', cwd]),
+    captureResult('ps', ['-axo', 'comm=']),
+  ]);
+  const spotlightText = `${spotlightResult.out ?? ''}\n${spotlightResult.err ?? ''}`;
+  const timeMachineText = `${timeMachineResult.out ?? ''}\n${timeMachineResult.err ?? ''}`;
+  return {
+    repositoryPlacement,
+    spotlight: {
+      available: spotlightResult.exitCode === 0,
+      indexingEnabled: spotlightResult.exitCode === 0
+        ? /indexing enabled/i.test(spotlightText)
+        : null,
+    },
+    timeMachine: {
+      available: timeMachineResult.exitCode === 0,
+      excluded: timeMachineResult.exitCode === 0
+        ? /\[excluded\]/i.test(timeMachineText)
+        : null,
+    },
+    securityProcessFamilies: processResult.exitCode === 0
+      ? detectSecurityProcessFamilies(processResult.out)
+      : [],
+  };
+}
+
 function defaultBoundary() {
   return {
     nowIso: () => new Date().toISOString(),
@@ -100,15 +170,17 @@ function defaultBoundary() {
     toolVersion: defaultToolVersion,
     git: defaultGit,
     filesystem: defaultFilesystem,
+    hostObservations: defaultHostObservations,
   };
 }
 
 export async function collectEnvironmentManifest({ cwd, env = process.env, boundary = defaultBoundary() } = {}) {
   const toolNames = Object.keys(TOOL_PROBES);
-  const [toolVersions, filesystem, git] = await Promise.all([
+  const [toolVersions, filesystem, git, host] = await Promise.all([
     Promise.all(toolNames.map((tool) => boundary.toolVersion(tool, { cwd, env }))),
     boundary.filesystem({ cwd, env }),
     boundary.git({ cwd, env }),
+    boundary.hostObservations({ cwd, env }),
   ]);
   const tools = Object.fromEntries(toolNames.map((tool, index) => [tool, toolVersions[index]]));
   const present = {};
@@ -120,6 +192,7 @@ export async function collectEnvironmentManifest({ cwd, env = process.env, bound
     capturedAt: boundary.nowIso(),
     platform: boundary.platform(),
     filesystem,
+    host,
     git,
     tools,
     environment: { present },

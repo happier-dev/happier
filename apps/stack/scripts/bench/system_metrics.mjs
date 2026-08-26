@@ -4,6 +4,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { runCaptureResult } from '../utils/proc/proc.mjs';
 
 function numberOrNull(value) {
+  if (value == null || String(value).trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -103,24 +104,70 @@ function parsePsi(text) {
   return result;
 }
 
+function parseCounterFile(text) {
+  const values = new Map();
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const [key, rawValue] = line.trim().split(/\s+/, 2);
+    const value = numberOrNull(rawValue);
+    if (key && value != null) values.set(key, value);
+  }
+  return values;
+}
+
+export function parseLinuxHostMetrics({
+  meminfoText,
+  loadavgText,
+  vmstatText,
+  statText,
+  cpuPsiText,
+  memoryPsiText,
+  ioPsiText,
+}) {
+  const meminfo = parseMeminfo(meminfoText);
+  const vmstat = parseCounterFile(vmstatText);
+  const stat = parseCounterFile(statText);
+  const loadavgFields = String(loadavgText ?? '').trim().split(/\s+/);
+  const runQueue = numberOrNull(loadavgFields[3]?.split('/')[0]);
+  const swapTotalBytes = meminfo.get('SwapTotal') ?? 0;
+  const swapFreeBytes = meminfo.get('SwapFree') ?? 0;
+  return {
+    loadAverage1m: numberOrNull(loadavgFields[0]),
+    runQueue,
+    runningProcesses: stat.get('procs_running') ?? runQueue,
+    contextSwitches: stat.get('ctxt') ?? null,
+    availableMemoryBytes: meminfo.get('MemAvailable') ?? null,
+    totalMemoryBytes: meminfo.get('MemTotal') ?? null,
+    swapUsedBytes: Math.max(0, swapTotalBytes - swapFreeBytes),
+    swapTotalBytes,
+    swapInPages: vmstat.get('pswpin') ?? null,
+    swapOutPages: vmstat.get('pswpout') ?? null,
+    psi: {
+      cpu: parsePsi(cpuPsiText),
+      memory: parsePsi(memoryPsiText),
+      io: parsePsi(ioPsiText),
+    },
+  };
+}
+
 async function collectLinuxHostMetrics() {
-  const [meminfoText, cpuPsi, memoryPsi, ioPsi] = await Promise.all([
+  const [meminfoText, loadavgText, vmstatText, statText, cpuPsiText, memoryPsiText, ioPsiText] = await Promise.all([
     readFile('/proc/meminfo', 'utf8'),
+    readFile('/proc/loadavg', 'utf8'),
+    readFile('/proc/vmstat', 'utf8'),
+    readFile('/proc/stat', 'utf8'),
     readFile('/proc/pressure/cpu', 'utf8').catch(() => ''),
     readFile('/proc/pressure/memory', 'utf8').catch(() => ''),
     readFile('/proc/pressure/io', 'utf8').catch(() => ''),
   ]);
-  const meminfo = parseMeminfo(meminfoText);
-  return {
-    loadAverage1m: loadavg()[0] ?? null,
-    availableMemoryBytes: meminfo.get('MemAvailable') ?? freemem(),
-    swapUsedBytes: Math.max(0, (meminfo.get('SwapTotal') ?? 0) - (meminfo.get('SwapFree') ?? 0)),
-    psi: {
-      cpu: parsePsi(cpuPsi),
-      memory: parsePsi(memoryPsi),
-      io: parsePsi(ioPsi),
-    },
-  };
+  return parseLinuxHostMetrics({
+    meminfoText,
+    loadavgText,
+    vmstatText,
+    statText,
+    cpuPsiText,
+    memoryPsiText,
+    ioPsiText,
+  });
 }
 
 function parseScaledBytes(value, unit) {
@@ -130,16 +177,68 @@ function parseScaledBytes(value, unit) {
   return Math.round(number * scale);
 }
 
+function parseDarwinVmStat(text) {
+  const pageSize = Number(/page size of\s+(\d+)\s+bytes/i.exec(String(text ?? ''))?.[1]);
+  const values = new Map();
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const match = /^([^:]+):\s+([0-9]+)\.$/.exec(line.trim());
+    if (match) values.set(match[1], Number(match[2]));
+  }
+  return { pageSize: Number.isFinite(pageSize) ? pageSize : null, values };
+}
+
+export function parseDarwinHostMetrics({
+  vmStatText,
+  memoryPressureText,
+  swapUsageText,
+  totalMemoryText,
+  thermalPressureText,
+}) {
+  const { pageSize, values } = parseDarwinVmStat(vmStatText);
+  const pagesToBytes = (key) => {
+    const pages = values.get(key);
+    return pageSize != null && pages != null ? pages * pageSize : null;
+  };
+  const freeBytes = pagesToBytes('Pages free');
+  const speculativeBytes = pagesToBytes('Pages speculative');
+  const memoryPressureMatch = /memory free percentage:\s*([0-9.]+)%/i.exec(String(memoryPressureText ?? ''));
+  const swapTotalMatch = /total\s*=\s*([0-9.]+)([KMGT]?)/i.exec(String(swapUsageText ?? ''));
+  const swapUsedMatch = /used\s*=\s*([0-9.]+)([KMGT]?)/i.exec(String(swapUsageText ?? ''));
+  return {
+    availableMemoryBytes: freeBytes != null && speculativeBytes != null ? freeBytes + speculativeBytes : freemem(),
+    totalMemoryBytes: numberOrNull(String(totalMemoryText ?? '').trim()),
+    compressedMemoryBytes: pagesToBytes('Pages occupied by compressor'),
+    wiredMemoryBytes: pagesToBytes('Pages wired down'),
+    memoryFreePercent: numberOrNull(memoryPressureMatch?.[1]),
+    swapUsedBytes: swapUsedMatch ? parseScaledBytes(swapUsedMatch[1], swapUsedMatch[2]) : null,
+    swapTotalBytes: swapTotalMatch ? parseScaledBytes(swapTotalMatch[1], swapTotalMatch[2]) : null,
+    swapInPages: values.get('Swapins') ?? null,
+    swapOutPages: values.get('Swapouts') ?? null,
+    thermalPressure: numberOrNull(String(thermalPressureText ?? '').trim()),
+  };
+}
+
 async function collectDarwinHostMetrics({ env }) {
-  const swap = await runCaptureResult('sysctl', ['-n', 'vm.swapusage'], {
+  const capture = (command, args) => runCaptureResult(command, args, {
     env,
     timeoutMs: 5_000,
-  }).catch(() => ({ code: 1, out: '' }));
-  const match = /used\s*=\s*([0-9.]+)([KMGT]?)/i.exec(swap.out);
+  }).then((result) => result.exitCode === 0 ? result.out : '').catch(() => '');
+  const [vmStatText, memoryPressureText, swapUsageText, totalMemoryText, thermalPressureText] = await Promise.all([
+    capture('vm_stat', []),
+    capture('memory_pressure', ['-Q']),
+    capture('sysctl', ['-n', 'vm.swapusage']),
+    capture('sysctl', ['-n', 'hw.memsize']),
+    capture('sysctl', ['-n', 'kern.thermal_pressure']),
+  ]);
   return {
     loadAverage1m: loadavg()[0] ?? null,
-    availableMemoryBytes: freemem(),
-    swapUsedBytes: match ? parseScaledBytes(match[1], match[2]) : null,
+    ...parseDarwinHostMetrics({
+      vmStatText,
+      memoryPressureText,
+      swapUsageText,
+      totalMemoryText,
+      thermalPressureText,
+    }),
   };
 }
 
