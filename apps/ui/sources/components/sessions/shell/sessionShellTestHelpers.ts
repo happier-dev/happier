@@ -247,6 +247,10 @@ export function installSessionShellCommonModuleMocks(
         return createModalModuleMock().module;
     });
 
+    vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+        useFeatureEnabled: () => false,
+    }));
+
     vi.mock('expo-router', async () => {
         const activeOptions = sessionShellModuleState.options;
         if (activeOptions.router) {

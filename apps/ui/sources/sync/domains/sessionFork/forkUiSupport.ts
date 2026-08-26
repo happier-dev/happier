@@ -1,8 +1,11 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionForkPoint } from '@happier-dev/protocol';
 import { evaluateAgentSessionCapabilitySupport, inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
-export type SessionForkSupportSource = Pick<Session, 'metadata'>;
+export type SessionForkSupportSource =
+  | Pick<Session, 'metadata'>
+  | Pick<SessionListRenderableSession, 'metadata'>;
 
 /**
  * Why the Native route is closed for this exact Session + cutoff.
