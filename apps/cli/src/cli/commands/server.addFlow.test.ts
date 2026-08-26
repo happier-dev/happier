@@ -599,6 +599,61 @@ describe('happier server add guided flow', () => {
     }
   });
 
+  it('refreshes the Stack-selected server profile by its stable id', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-server-set-stack-profile-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const restoreTty = setTtyMode(false, false);
+    const stackServerId = 'stack_agent-qa-api-sdk-0824__id_default';
+
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      reloadConfiguration();
+
+      await handleServerCommand([
+        'add',
+        '--name',
+        'User relay',
+        '--server-url',
+        'https://user.example.test',
+        '--webapp-url',
+        'https://app.user.example.test',
+        '--no-use',
+      ]);
+
+      await handleServerCommand([
+        'set',
+        '--server-id',
+        stackServerId,
+        '--server-url',
+        'http://127.0.0.1:3010',
+        '--local-server-url',
+        'http://127.0.0.1:3010',
+        '--webapp-url',
+        'http://localhost:3010',
+      ]);
+
+      const settings = await readSettings();
+      expect(settings.activeServerId).toBe(stackServerId);
+      expect(settings.servers?.[stackServerId]).toMatchObject({
+        id: stackServerId,
+        serverUrl: 'http://127.0.0.1:3010',
+        webappUrl: 'http://localhost:3010',
+      });
+      expect(settings.servers?.['User-relay']).toMatchObject({
+        id: 'User-relay',
+        serverUrl: 'https://user.example.test',
+        webappUrl: 'https://app.user.example.test',
+      });
+    } finally {
+      restoreTty();
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+      spawnHappyCLIMock.mockReset();
+    }
+  });
+
   it('adopts canonical URL from server capabilities without persisting remote http as localServerUrl', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-server-add-adopt-canonical-safe-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;

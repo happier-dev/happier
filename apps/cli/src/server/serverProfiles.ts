@@ -412,6 +412,60 @@ export async function upsertServerProfileByUrl(opts: Readonly<{
   return await getServerProfile(resolvedId);
 }
 
+/**
+ * Updates the endpoints of one known profile without selecting, copying, or migrating any
+ * other profile-scoped state. Stack orchestration uses this when a stack-owned runtime port
+ * changes between starts.
+ */
+export async function setServerProfileEndpointsById(opts: Readonly<{
+  id: string;
+  name?: string;
+  serverUrl: string;
+  localServerUrl?: string;
+  webappUrl: string;
+  use?: boolean;
+}>): Promise<ServerProfile> {
+  const id = asStringId(opts.id);
+  if (sanitizeServerIdForFilesystem(id, '') !== id) {
+    throw new Error(`Invalid server profile id: ${id}`);
+  }
+
+  const serverUrl = String(opts.serverUrl ?? '').trim();
+  const localServerUrl = String(opts.localServerUrl ?? '').trim();
+  const webappUrl = String(opts.webappUrl ?? '').trim();
+  const requestedName = String(opts.name ?? '').trim();
+  const shouldUse = opts.use === true;
+  const now = Date.now();
+
+  await updateSettings((current: any) => {
+    const servers = current?.servers && typeof current.servers === 'object' ? current.servers : {};
+    const rawExisting = servers[id] && typeof servers[id] === 'object' ? servers[id] : {};
+    const existing = coerceProfile(rawExisting);
+    const name = existing?.name || requestedName || id;
+    const createdAt = existing?.createdAt || now;
+    const next = {
+      ...rawExisting,
+      id,
+      name,
+      serverUrl,
+      ...(opts.localServerUrl !== undefined
+        ? { localServerUrl: localServerUrl && localServerUrl !== serverUrl ? localServerUrl : undefined }
+        : {}),
+      webappUrl,
+      createdAt,
+      updatedAt: now,
+      lastUsedAt: shouldUse ? now : (existing?.lastUsedAt ?? 0),
+    };
+    return {
+      ...current,
+      activeServerId: shouldUse ? id : current?.activeServerId,
+      servers: { ...servers, [id]: next },
+    };
+  });
+
+  return shouldUse ? await getActiveServerProfile() : await getServerProfile(id);
+}
+
 export async function removeServerProfile(
   identifierRaw: string,
   opts: Readonly<{ force?: boolean }> = {},

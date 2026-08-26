@@ -13,7 +13,7 @@ ${chalk.bold('Usage:')}
   happier server use <name-or-id>
   happier server remove <name-or-id> [--force]
   happier server test [<name-or-id>]
-  happier server set --server-url <url> [--local-server-url <url>] [--webapp-url <url>]
+  happier server set [--server-id <id>] --server-url <url> [--local-server-url <url>] [--webapp-url <url>]
 
 ${chalk.bold('Notes:')}
   • Profiles are stored in ${configuration.settingsFile}

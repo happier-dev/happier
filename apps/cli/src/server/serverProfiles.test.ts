@@ -6,6 +6,7 @@ import { configuration, reloadConfiguration } from '@/configuration';
 import { readCredentials, writeCredentialsDataKey } from '@/persistence';
 import { deriveServerIdFromUrl } from '@/server/serverId';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('server profiles', () => {
@@ -223,6 +224,86 @@ describe('server profiles', () => {
       expect(updated.id).toBe(created.id);
       expect(updated.localServerUrl).toBe('http://127.0.0.1:3012');
       expect(await listServerProfiles()).toHaveLength(2);
+    });
+  });
+
+  it('refreshes one named profile endpoint without mutating other profiles or server-scoped settings', async () => {
+    await withTempDir('happier-cli-servers-set-endpoints-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+      });
+
+      vi.resetModules();
+      const {
+        addServerProfile,
+        getActiveServerProfile,
+        getServerProfile,
+        setServerProfileEndpointsById,
+      } = await import('./serverProfiles');
+      const { updateSettings } = await import('@/persistence');
+
+      const stackProfile = await addServerProfile({
+        name: 'stack-agent-qa',
+        serverUrl: 'http://127.0.0.1:3012',
+        localServerUrl: 'http://127.0.0.1:3012',
+        webappUrl: 'http://localhost:3012',
+        use: true,
+      });
+      const userProfile = await addServerProfile({
+        name: 'user-relay',
+        serverUrl: 'https://user.example.test',
+        webappUrl: 'https://app.user.example.test',
+        use: false,
+      });
+      await updateSettings((current) => {
+        const servers = current.servers;
+        if (!servers) {
+          throw new Error('Expected server profiles to exist after adding test profiles');
+        }
+        return {
+          ...current,
+          machineIdByServerId: {
+            ...(current.machineIdByServerId ?? {}),
+            [stackProfile.id]: 'stack-machine',
+            [userProfile.id]: 'user-machine',
+          },
+          servers: {
+            ...servers,
+            [stackProfile.id]: { ...servers[stackProfile.id], preservedStackField: 'keep-stack' },
+            [userProfile.id]: { ...servers[userProfile.id], preservedUserField: 'keep-user' },
+          },
+        };
+      });
+
+      const updated = await setServerProfileEndpointsById({
+        id: stackProfile.id,
+        serverUrl: 'http://127.0.0.1:3010',
+        localServerUrl: 'http://127.0.0.1:3010',
+        webappUrl: 'http://localhost:3010',
+        use: true,
+      });
+
+      expect(updated).toMatchObject({
+        id: stackProfile.id,
+        serverUrl: 'http://127.0.0.1:3010',
+        webappUrl: 'http://localhost:3010',
+      });
+      expect((await getActiveServerProfile()).id).toBe(stackProfile.id);
+      expect(await getServerProfile(userProfile.id)).toMatchObject({
+        id: userProfile.id,
+        serverUrl: 'https://user.example.test',
+        webappUrl: 'https://app.user.example.test',
+      });
+
+      const raw = JSON.parse(await readFile(join(homeDir, 'settings.json'), 'utf-8'));
+      expect(raw.servers[stackProfile.id]).toMatchObject({ preservedStackField: 'keep-stack' });
+      expect(raw.servers[userProfile.id]).toMatchObject({ preservedUserField: 'keep-user' });
+      expect(raw.machineIdByServerId).toEqual({
+        [stackProfile.id]: 'stack-machine',
+        [userProfile.id]: 'user-machine',
+      });
     });
   });
 
