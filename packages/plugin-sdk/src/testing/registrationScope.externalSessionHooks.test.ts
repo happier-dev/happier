@@ -170,6 +170,29 @@ describe('Agent External Session hook registration staging', () => {
         });
     });
 
+    it('ignores trusted External Sessions helpers while snapshotting declared operations', () => {
+        const authorOnly = vi.fn();
+        const contribution = {
+            ...externalSessions,
+            authorOnly,
+        };
+        const registrationScope = scope();
+
+        registrationScope.api.agents.registerExternalSessions(
+            'assistant',
+            contribution as AgentExternalSessionsContribution,
+        );
+
+        const [registration] = registrationScope.commit();
+        expect(registration?.family).toBe('agents');
+        if (registration?.family !== 'agents') {
+            throw new Error('Expected Agent External Sessions snapshot');
+        }
+        expect(registration.value.externalSessions).toMatchObject(externalSessionsSnapshotShape());
+        expect(registration.value.externalSessions).not.toHaveProperty('authorOnly');
+        expect(authorOnly).not.toHaveBeenCalled();
+    });
+
     it('fails the whole activation for duplicates, adapter cardinality, or missing co-registration', () => {
         const duplicate = scope();
         const externalSessionHooks = createExternalSessionHooks();

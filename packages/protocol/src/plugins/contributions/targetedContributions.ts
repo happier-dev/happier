@@ -138,6 +138,8 @@ export type RehydratedPluginContributionPointOperationV1 = Readonly<{
 
 export type RehydratedPluginContributionPointSurfaceV1 = Readonly<{
   role: string;
+  /** Exact target-owned launch-input parser rehydrated from canonical manifest bytes. */
+  inputSchema: ProtocolComposableSchema<ProtocolJsonValue, ProtocolJsonValue>;
   presentation: PluginTargetedContributionSurfacePresentationV1;
 }>;
 
@@ -179,8 +181,10 @@ export function rehydratePluginContributionPointSemanticsV1(
   const surfaces: RehydratedPluginContributionPointSurfaceV1[] = [];
   for (const role of Object.keys(protocol.surfaces ?? {}).sort()) {
     const surface = protocol.surfaces?.[role];
-    if (!surface || rehydrateCanonicalProtocolComposableSchema(surface.inputSchema) === null) return null;
-    surfaces.push(Object.freeze({ role, presentation: surface.presentation }));
+    if (!surface) return null;
+    const inputSchema = rehydrateCanonicalProtocolComposableSchema(surface.inputSchema);
+    if (inputSchema === null) return null;
+    surfaces.push(Object.freeze({ role, inputSchema, presentation: surface.presentation }));
   }
 
   return Object.freeze({

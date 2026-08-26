@@ -3,8 +3,8 @@ title: Public API surface
 description: Every symbol the Plugin SDK exports and the entrypoint it comes from — generated from the SDK's own api-surface projection.
 ---
 
-The SDK exports **2,215 symbols** across **48 entrypoints**:
-470 values and 1,745 types. This page is the index — it answers
+The SDK exports **2,208 symbols** across **47 entrypoints**:
+467 values and 1,741 types. This page is the index — it answers
 "does this exist, and where do I import it from", which is the question a type
 definition file cannot answer until you already know the answer.
 
@@ -15,7 +15,7 @@ counterpart to it.
 ## How to read it
 
 **Visibility** separates the 45 entrypoints a plugin author may import
-from the 3 the host reserves for itself.
+from the 2 the host reserves for itself.
 
 <Callout type="warn">
   Importing a `host` entrypoint from a plugin is not a compile error. It is a
@@ -50,7 +50,6 @@ catch.
 | `@happier-dev/plugin-sdk/hooks` | author | daemon | 11 | 22 |
 | `@happier-dev/plugin-sdk/host/fs/json-owner-file-lock` | host | daemon | 2 | 0 |
 | `@happier-dev/plugin-sdk/host/registration` | host | any | 2 | 3 |
-| `@happier-dev/plugin-sdk/host/targeted-contributions` | host | daemon | 3 | 4 |
 | `@happier-dev/plugin-sdk/http` | author | any | 0 | 13 |
 | `@happier-dev/plugin-sdk/interactions` | author | any | 0 | 26 |
 | `@happier-dev/plugin-sdk/managed-services` | author | daemon | 3 | 23 |
@@ -254,16 +253,6 @@ Host-only. Anywhere. Source: `src/host/registration/index.ts`.
 **Values** — `createPluginActionHandlerNotStartedError`, `createPluginRegistrationScope`
 
 **Types** — `PluginAgentRuntimeRegistration`, `PluginRegistrationRight`, `PluginRuntimeRegistration`
-
-</Accordion>
-
-<Accordion title="@happier-dev/plugin-sdk/host/targeted-contributions — 7 exports">
-
-Host-only. Daemon only. Source: `src/host/targeted-contributions/index.ts`.
-
-**Values** — `decodeTargetedContributionPointSemantics`, `projectDefinedTargetedContributionPointSemanticRefs`, `readTargetedContributionPointSemanticRefs`
-
-**Types** — `TargetedContributionPointSemanticInput`, `TargetedContributionPointSemanticOperation`, `TargetedContributionPointSemanticProjection`, `TargetedContributionPointSemanticSurface`
 
 </Accordion>
 

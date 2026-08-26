@@ -35,6 +35,7 @@ export { VoiceProviderContributionSchema } from './projections.js';
 export type { PluginVoiceProviderDefinition } from '../definePlugin.js';
 export type { VoiceProviderSettings } from './projections.js';
 export type { VoiceProvidersRegistrationApi } from './projections.js';
+export type { RegisteredVoiceProviderRuntime } from './projections.js';
 export type { VoiceRawCredentialAccess } from './projections.js';
 export type { VoiceRawCredentialGrantDeclaration } from './projections.js';
 export type { VoiceSchema } from './projections.js';

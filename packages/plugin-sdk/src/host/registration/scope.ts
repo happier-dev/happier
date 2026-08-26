@@ -40,12 +40,29 @@ import {
     type AgentExternalSessionTakeoverContribution,
 } from '../../sessions/externalSessionTakeover.js';
 import type {
+    AgentCliAuthContributionV1,
+    AgentCliSessionCommandDeclarationV1,
+    AgentConnectedAccountLaunchContributionV1,
+    AgentConnectedAccountStateSharingDescriptorV1,
+    AgentExperimentalVendorResumeSupportContributionV1,
+    AgentPreflightSessionControlsCommandV1,
+    AgentPreflightSessionControlsContributionV1,
+    AgentPreflightSessionControlsModelsV1,
+    AgentTerminalPromptSubmitVerificationPolicyV1,
     AgentProviderBindingAdapter,
     AgentDaemonSpawnHooks,
+    AgentProviderCliAttachDeclarationV1,
     AgentRuntimeFactory,
     AgentRuntimeRegistrationOptions,
+    AgentSessionStartupContributionV1,
     AgentSessionRunnerFactoryLocatorV1,
 } from '../../agentRuntime/index.js';
+import {
+    ConnectedAccountRequestAuthUsesV1Schema,
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
+import type {
+    ConnectedAccountRequestAuthUse,
+} from '../../connectedAccounts.js';
 import type { BackgroundServiceRunner } from '../../backgroundServices.js';
 import type { JsonValue } from '../../identity.js';
 import type { PromptAssetAdapter } from '../../resources.js';
@@ -59,12 +76,10 @@ import type { VoiceProvidersRegistrationApi } from '../../voice/projections.js';
 import {
     snapshotManagedProviderRuntime,
     snapshotPromptAssetDescriptor,
+    snapshotStaticRegistrationData,
     snapshotStaticRegistrationValue,
 } from './staticRegistrationSnapshots.js';
-import {
-    captureStaticRegistrationMethod,
-    requireStaticRegistrationObject,
-} from '../../registration/staticCapture.js';
+import { captureStaticRegistrationMethod } from '../../registration/staticCapture.js';
 import {
     type PluginAgentRuntimeRegistration,
     type PluginRegistrationFamily,
@@ -128,6 +143,7 @@ type RegisteredVoiceProviderRuntime = Parameters<VoiceProvidersRegistrationApi['
 type StagedAgentRuntimeRegistration = Readonly<{
     factory?: AgentRuntimeFactory;
     options?: AgentRuntimeRegistrationOptions;
+    cliAuth?: AgentCliAuthContributionV1;
     externalSessions?: AgentExternalSessionsContribution;
     externalSessionHooks?: AgentExternalSessionHooksContribution;
     externalSessionObservation?: AgentExternalSessionObservationContribution;
@@ -274,29 +290,33 @@ const AGENT_EXTERNAL_SESSION_OBSERVATION_KEYS = Object.freeze([
     'observeResource',
     'reconcileResource',
 ] as const);
-const AGENT_DAEMON_SPAWN_HOOK_KEYS = Object.freeze([
-    'resolveRuntimePrerequisites',
-    'augmentEnv',
-] as const);
-
-function readOwnEnumerableDataValue(
-    value: object,
-    key: string,
-    subject = 'Agent provider binding',
-): unknown {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-        throw new TypeError(`${subject} field '${key}' must be an own enumerable data property`);
+function readAgentRegistrationObject(
+    value: unknown,
+    subject: string,
+): Readonly<Record<string, unknown>> {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new TypeError(`${subject} must be an object`);
     }
-    return descriptor.value;
+    return value as Readonly<Record<string, unknown>>;
+}
+
+function bindAgentRegistrationCallback<T>(
+    receiver: object,
+    value: unknown,
+    subject: string,
+): T {
+    if (typeof value !== 'function') {
+        throw new TypeError(`${subject} must be a function`);
+    }
+    return value.bind(receiver) as T;
 }
 
 function snapshotAgentProviderBindingAdapter(
     value: AgentProviderBindingAdapter,
 ): AgentProviderBindingAdapter {
-    const receiver = requireStaticRegistrationObject(value, 'Agent provider binding');
-    const v = Reflect.get(receiver, 'v');
-    const adapterVersion = Reflect.get(receiver, 'adapterVersion');
+    const receiver = readAgentRegistrationObject(value, 'Agent provider binding');
+    const v = receiver.v;
+    const adapterVersion = receiver.adapterVersion;
     if (v !== 1
         || !Number.isSafeInteger(adapterVersion)
         || (adapterVersion as number) < 1) {
@@ -305,48 +325,40 @@ function snapshotAgentProviderBindingAdapter(
     return Object.freeze({
         v: 1,
         adapterVersion: adapterVersion as number,
-        prepare: captureStaticRegistrationMethod<AgentProviderBindingAdapter['prepare']>(
+        prepare: bindAgentRegistrationCallback<AgentProviderBindingAdapter['prepare']>(
             receiver,
-            'prepare',
+            receiver.prepare,
             'Agent provider binding.prepare',
-            true,
-        )!,
-        materialize: captureStaticRegistrationMethod<AgentProviderBindingAdapter['materialize']>(
+        ),
+        materialize: bindAgentRegistrationCallback<AgentProviderBindingAdapter['materialize']>(
             receiver,
-            'materialize',
+            receiver.materialize,
             'Agent provider binding.materialize',
-            true,
-        )!,
+        ),
     });
 }
 
 function snapshotAgentDaemonSpawnHooks(
     value: AgentDaemonSpawnHooks,
 ): AgentDaemonSpawnHooks {
-    const receiver = requireStaticRegistrationObject(value, 'Agent daemon spawn hooks');
-    if (Reflect.ownKeys(receiver).some((key) => (
-        typeof key !== 'string'
-        || !AGENT_DAEMON_SPAWN_HOOK_KEYS.includes(
-            key as (typeof AGENT_DAEMON_SPAWN_HOOK_KEYS)[number],
-        )
-    ))) {
-        throw new TypeError('Agent daemon spawn hooks contain unknown fields');
-    }
-    const resolveRuntimePrerequisites = captureStaticRegistrationMethod<
+    const receiver = readAgentRegistrationObject(value, 'Agent daemon spawn hooks');
+    const resolveRuntimePrerequisites = receiver.resolveRuntimePrerequisites === undefined
+        ? undefined
+        : bindAgentRegistrationCallback<
         NonNullable<AgentDaemonSpawnHooks['resolveRuntimePrerequisites']>
     >(
         receiver,
-        'resolveRuntimePrerequisites',
+        receiver.resolveRuntimePrerequisites,
         'Agent daemon spawn hooks.resolveRuntimePrerequisites',
-        false,
     );
-    const augmentEnv = captureStaticRegistrationMethod<
+    const augmentEnv = receiver.augmentEnv === undefined
+        ? undefined
+        : bindAgentRegistrationCallback<
         NonNullable<AgentDaemonSpawnHooks['augmentEnv']>
     >(
         receiver,
-        'augmentEnv',
+        receiver.augmentEnv,
         'Agent daemon spawn hooks.augmentEnv',
-        false,
     );
     if (!resolveRuntimePrerequisites && !augmentEnv) {
         throw new TypeError('Agent daemon spawn hooks must define at least one hook');
@@ -357,38 +369,532 @@ function snapshotAgentDaemonSpawnHooks(
     });
 }
 
+function snapshotAgentProviderCliAttachDeclaration(
+    value: AgentProviderCliAttachDeclarationV1,
+): AgentProviderCliAttachDeclarationV1 {
+    const receiver = readAgentRegistrationObject(value, 'Agent provider CLI attach declaration');
+    return Object.freeze({
+        resolveTarget: bindAgentRegistrationCallback<
+            AgentProviderCliAttachDeclarationV1['resolveTarget']
+        >(
+            receiver,
+            receiver.resolveTarget,
+            'Agent provider CLI attach declaration.resolveTarget',
+        ),
+        createArgs: bindAgentRegistrationCallback<
+            AgentProviderCliAttachDeclarationV1['createArgs']
+        >(
+            receiver,
+            receiver.createArgs,
+            'Agent provider CLI attach declaration.createArgs',
+        ),
+        buildHealthUrl: bindAgentRegistrationCallback<
+            AgentProviderCliAttachDeclarationV1['buildHealthUrl']
+        >(
+            receiver,
+            receiver.buildHealthUrl,
+            'Agent provider CLI attach declaration.buildHealthUrl',
+        ),
+    });
+}
+
+function snapshotAgentCliSessionCommandString(
+    value: unknown,
+    subject: string,
+): string {
+    if (typeof value !== 'string' || value.length === 0) {
+        throw new TypeError(`${subject} must be a non-empty string`);
+    }
+    return value;
+}
+
+function snapshotAgentCliSessionCommandStringArray(
+    value: unknown,
+    subject: string,
+): readonly string[] {
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string' || entry.length === 0)) {
+        throw new TypeError(`${subject} must be an array of non-empty strings`);
+    }
+    return Object.freeze([...value]);
+}
+
+function snapshotAgentCliSessionCommandStringArrayArray(
+    value: unknown,
+    subject: string,
+): readonly (readonly string[])[] {
+    if (!Array.isArray(value)) {
+        throw new TypeError(`${subject} must be an array of argument arrays`);
+    }
+    return Object.freeze(value.map((entry, index) => (
+        snapshotAgentCliSessionCommandStringArray(entry, `${subject}[${index}]`)
+    )));
+}
+
+function snapshotAgentCliSessionCommandDeclaration(
+    value: AgentCliSessionCommandDeclarationV1,
+): AgentCliSessionCommandDeclarationV1 {
+    const receiver = readAgentRegistrationObject(value, 'Agent CLI session-command declaration');
+    const implicitResumeDelegation = receiver.implicitResumeDelegation;
+    const snapshot: {
+        sessionRuntimeId?: string;
+        deprecatedAliasAgentId?: string;
+        accountSettingsAgentId?: string;
+        implicitResumeDelegation?: Readonly<{ resumeFlags: readonly string[] }>;
+        directoryFlags?: readonly string[];
+        forwardModelFlag?: boolean;
+        forwardResumeFlag?: boolean;
+        yoloAgentArgs?: readonly string[];
+        versionFlags?: readonly string[];
+        infoCommandPrefixes?: readonly (readonly string[])[];
+        buildSessionOptions?: AgentCliSessionCommandDeclarationV1['buildSessionOptions'];
+    } = {};
+    if (receiver.sessionRuntimeId !== undefined) {
+        snapshot.sessionRuntimeId = snapshotAgentCliSessionCommandString(
+            receiver.sessionRuntimeId,
+            'Agent CLI session-command declaration.sessionRuntimeId',
+        );
+    }
+    if (receiver.deprecatedAliasAgentId !== undefined) {
+        snapshot.deprecatedAliasAgentId = snapshotAgentCliSessionCommandString(
+            receiver.deprecatedAliasAgentId,
+            'Agent CLI session-command declaration.deprecatedAliasAgentId',
+        );
+    }
+    if (receiver.accountSettingsAgentId !== undefined) {
+        snapshot.accountSettingsAgentId = snapshotAgentCliSessionCommandString(
+            receiver.accountSettingsAgentId,
+            'Agent CLI session-command declaration.accountSettingsAgentId',
+        );
+    }
+    if (implicitResumeDelegation !== undefined) {
+        const resume = readAgentRegistrationObject(
+            implicitResumeDelegation,
+            'Agent CLI session-command declaration.implicitResumeDelegation',
+        );
+        snapshot.implicitResumeDelegation = Object.freeze({
+            resumeFlags: snapshotAgentCliSessionCommandStringArray(
+                resume.resumeFlags,
+                'Agent CLI session-command declaration.implicitResumeDelegation.resumeFlags',
+            ),
+        });
+    }
+    if (receiver.directoryFlags !== undefined) {
+        snapshot.directoryFlags = snapshotAgentCliSessionCommandStringArray(
+            receiver.directoryFlags,
+            'Agent CLI session-command declaration.directoryFlags',
+        );
+    }
+    if (receiver.forwardModelFlag !== undefined) {
+        if (typeof receiver.forwardModelFlag !== 'boolean') {
+            throw new TypeError('Agent CLI session-command declaration.forwardModelFlag must be boolean');
+        }
+        snapshot.forwardModelFlag = receiver.forwardModelFlag;
+    }
+    if (receiver.forwardResumeFlag !== undefined) {
+        if (typeof receiver.forwardResumeFlag !== 'boolean') {
+            throw new TypeError('Agent CLI session-command declaration.forwardResumeFlag must be boolean');
+        }
+        snapshot.forwardResumeFlag = receiver.forwardResumeFlag;
+    }
+    if (receiver.yoloAgentArgs !== undefined) {
+        snapshot.yoloAgentArgs = snapshotAgentCliSessionCommandStringArray(
+            receiver.yoloAgentArgs,
+            'Agent CLI session-command declaration.yoloAgentArgs',
+        );
+    }
+    if (receiver.versionFlags !== undefined) {
+        snapshot.versionFlags = snapshotAgentCliSessionCommandStringArray(
+            receiver.versionFlags,
+            'Agent CLI session-command declaration.versionFlags',
+        );
+    }
+    if (receiver.infoCommandPrefixes !== undefined) {
+        snapshot.infoCommandPrefixes = snapshotAgentCliSessionCommandStringArrayArray(
+            receiver.infoCommandPrefixes,
+            'Agent CLI session-command declaration.infoCommandPrefixes',
+        );
+    }
+    if (receiver.buildSessionOptions !== undefined) {
+        snapshot.buildSessionOptions = bindAgentRegistrationCallback<
+            NonNullable<AgentCliSessionCommandDeclarationV1['buildSessionOptions']>
+        >(
+            receiver,
+            receiver.buildSessionOptions,
+            'Agent CLI session-command declaration.buildSessionOptions',
+        );
+    }
+    return Object.freeze(snapshot);
+}
+
+function snapshotAgentCliAuthContribution(
+    value: AgentCliAuthContributionV1,
+): AgentCliAuthContributionV1 {
+    const receiver = readAgentRegistrationObject(value, 'Agent CLI auth contribution');
+    return Object.freeze({
+        detectAuthStatus: bindAgentRegistrationCallback<
+            AgentCliAuthContributionV1['detectAuthStatus']
+        >(
+            receiver,
+            receiver.detectAuthStatus,
+            'Agent CLI auth contribution.detectAuthStatus',
+        ),
+    });
+}
+
+function snapshotAgentConnectedAccountStateSharingDescriptor(
+    value: AgentConnectedAccountStateSharingDescriptorV1,
+): AgentConnectedAccountStateSharingDescriptorV1 {
+    return snapshotStaticRegistrationData(
+        value,
+        'Agent connected-account launch state-sharing descriptor',
+    ) as AgentConnectedAccountStateSharingDescriptorV1;
+}
+
+function snapshotAgentConnectedAccountLaunchContribution(
+    value: AgentConnectedAccountLaunchContributionV1,
+): AgentConnectedAccountLaunchContributionV1 {
+    const receiver = readAgentRegistrationObject(value, 'Agent connected-account launch contribution');
+    const requestAuthUses = receiver.requestAuthUses === undefined
+        ? undefined
+        : snapshotStaticRegistrationData(
+            ConnectedAccountRequestAuthUsesV1Schema.parse(receiver.requestAuthUses),
+            'Agent connected-account launch request-auth uses',
+        ) as readonly ConnectedAccountRequestAuthUse[];
+    const stateSharingDescriptor = receiver.stateSharingDescriptor === undefined
+        ? undefined
+        : snapshotAgentConnectedAccountStateSharingDescriptor(
+            receiver.stateSharingDescriptor as AgentConnectedAccountStateSharingDescriptorV1,
+        );
+    if (requestAuthUses === undefined && stateSharingDescriptor === undefined) {
+        throw new TypeError('Agent connected-account launch contribution must declare at least one launch fact');
+    }
+    return Object.freeze({
+        ...(requestAuthUses === undefined ? {} : { requestAuthUses }),
+        ...(stateSharingDescriptor === undefined ? {} : { stateSharingDescriptor }),
+    });
+}
+
+function snapshotAgentPreflightSessionControlsString(
+    value: unknown,
+    subject: string,
+): string {
+    if (typeof value !== 'string' || value.length === 0) {
+        throw new TypeError(`${subject} must be a non-empty string`);
+    }
+    return value;
+}
+
+function snapshotAgentPreflightSessionControlsArgs(
+    value: unknown,
+    subject: string,
+): readonly string[] {
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string' || entry.length === 0)) {
+        throw new TypeError(`${subject} must be an array of non-empty strings`);
+    }
+    return Object.freeze([...value]);
+}
+
+function snapshotAgentPreflightSessionControlsEnvironmentKeys(
+    value: unknown,
+    subject: string,
+): readonly string[] {
+    if (!Array.isArray(value) || value.length === 0) {
+        throw new TypeError(`${subject} must be a non-empty array of exact environment names`);
+    }
+    const keys: string[] = [];
+    const seen = new Set<string>();
+    for (const entry of value) {
+        if (typeof entry !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(entry)) {
+            throw new TypeError(`${subject} must contain only exact environment names`);
+        }
+        if (seen.has(entry)) continue;
+        seen.add(entry);
+        keys.push(entry);
+    }
+    return Object.freeze(keys);
+}
+
+function snapshotAgentPreflightSessionControlsCommand(
+    value: AgentPreflightSessionControlsCommandV1,
+    subject: string,
+): AgentPreflightSessionControlsCommandV1 {
+    const receiver = readAgentRegistrationObject(value, subject);
+    if (Reflect.ownKeys(receiver).some((key) => (
+        key !== 'toolId'
+        && key !== 'args'
+        && key !== 'environmentKeys'
+        && key !== 'environmentExcludeKeys'
+        && key !== 'ci'
+    ))) {
+        throw new TypeError(`${subject} contains unknown fields`);
+    }
+    if (receiver.environmentKeys !== undefined && receiver.environmentExcludeKeys !== undefined) {
+        throw new TypeError(`${subject} cannot set both environmentKeys and environmentExcludeKeys`);
+    }
+    if (receiver.ci !== undefined && receiver.ci !== 'omit') {
+        throw new TypeError(`${subject}.ci must be 'omit' when present`);
+    }
+    return Object.freeze({
+        toolId: snapshotAgentPreflightSessionControlsString(receiver.toolId, `${subject}.toolId`),
+        args: snapshotAgentPreflightSessionControlsArgs(receiver.args, `${subject}.args`),
+        ...(receiver.environmentKeys === undefined
+            ? {}
+            : {
+                environmentKeys: snapshotAgentPreflightSessionControlsEnvironmentKeys(
+                    receiver.environmentKeys,
+                    `${subject}.environmentKeys`,
+                ),
+            }),
+        ...(receiver.environmentExcludeKeys === undefined
+            ? {}
+            : {
+                environmentExcludeKeys: snapshotAgentPreflightSessionControlsEnvironmentKeys(
+                    receiver.environmentExcludeKeys,
+                    `${subject}.environmentExcludeKeys`,
+                ),
+            }),
+        ...(receiver.ci === 'omit' ? { ci: 'omit' as const } : {}),
+    });
+}
+
+function snapshotAgentPreflightSessionControlsModels(
+    value: AgentPreflightSessionControlsModelsV1,
+): AgentPreflightSessionControlsModelsV1 {
+    const receiver = readAgentRegistrationObject(value, 'Agent preflight models declaration');
+    if (Reflect.ownKeys(receiver).some((key) => (
+        key !== 'command' && key !== 'parseOutput' && key !== 'fallback'
+    ))) {
+        throw new TypeError('Agent preflight models declaration contains unknown fields');
+    }
+    const fallback = receiver.fallback === undefined
+        ? undefined
+        : readAgentRegistrationObject(
+            receiver.fallback,
+            'Agent preflight models declaration.fallback',
+        );
+    if (fallback && Reflect.ownKeys(fallback).some((key) => (
+        key !== 'command' && key !== 'parseOutput'
+    ))) {
+        throw new TypeError('Agent preflight models declaration.fallback contains unknown fields');
+    }
+    return Object.freeze({
+        command: snapshotAgentPreflightSessionControlsCommand(
+            receiver.command as AgentPreflightSessionControlsCommandV1,
+            'Agent preflight models declaration.command',
+        ),
+        ...(receiver.parseOutput === undefined
+            ? {}
+            : {
+                parseOutput: bindAgentRegistrationCallback<
+                    NonNullable<AgentPreflightSessionControlsModelsV1['parseOutput']>
+                >(
+                    receiver,
+                    receiver.parseOutput,
+                    'Agent preflight models declaration.parseOutput',
+                ),
+            }),
+        ...(fallback === undefined
+            ? {}
+            : {
+                fallback: Object.freeze({
+                    command: snapshotAgentPreflightSessionControlsCommand(
+                        fallback.command as AgentPreflightSessionControlsCommandV1,
+                        'Agent preflight models declaration.fallback.command',
+                    ),
+                    ...(fallback.parseOutput === undefined
+                        ? {}
+                        : {
+                            parseOutput: bindAgentRegistrationCallback<
+                                NonNullable<NonNullable<
+                                    AgentPreflightSessionControlsModelsV1['fallback']
+                                >['parseOutput']>
+                            >(
+                                fallback,
+                                fallback.parseOutput,
+                                'Agent preflight models declaration.fallback.parseOutput',
+                            ),
+                        }),
+                }),
+            }),
+    });
+}
+
+function snapshotAgentPreflightSessionControlsContribution(
+    value: AgentPreflightSessionControlsContributionV1,
+): AgentPreflightSessionControlsContributionV1 {
+    const receiver = readAgentRegistrationObject(value, 'Agent preflight Session controls contribution');
+    if (Reflect.ownKeys(receiver).some((key) => (
+        key !== 'resolveProbeVariant'
+        && key !== 'models'
+        && key !== 'jsonRpcCommand'
+        && key !== 'probeModels'
+        && key !== 'probeModes'
+        && key !== 'probeConfigOptions'
+        && key !== 'probePassiveRealtimeSetup'
+    ))) {
+        throw new TypeError('Agent preflight Session controls contribution contains unknown fields');
+    }
+    if (receiver.models !== undefined && receiver.probeModels !== undefined) {
+        throw new TypeError('Agent preflight Session controls contribution cannot declare both models and probeModels');
+    }
+    const snapshot: {
+        resolveProbeVariant?: AgentPreflightSessionControlsContributionV1['resolveProbeVariant'];
+        models?: AgentPreflightSessionControlsModelsV1;
+        jsonRpcCommand?: AgentPreflightSessionControlsCommandV1;
+        probeModels?: AgentPreflightSessionControlsContributionV1['probeModels'];
+        probeModes?: AgentPreflightSessionControlsContributionV1['probeModes'];
+        probeConfigOptions?: AgentPreflightSessionControlsContributionV1['probeConfigOptions'];
+        probePassiveRealtimeSetup?: AgentPreflightSessionControlsContributionV1['probePassiveRealtimeSetup'];
+    } = {};
+    if (receiver.resolveProbeVariant !== undefined) {
+        snapshot.resolveProbeVariant = bindAgentRegistrationCallback<
+            NonNullable<AgentPreflightSessionControlsContributionV1['resolveProbeVariant']>
+        >(
+            receiver,
+            receiver.resolveProbeVariant,
+            'Agent preflight Session controls contribution.resolveProbeVariant',
+        );
+    }
+    if (receiver.models !== undefined) {
+        snapshot.models = snapshotAgentPreflightSessionControlsModels(
+            receiver.models as AgentPreflightSessionControlsModelsV1,
+        );
+    }
+    if (receiver.jsonRpcCommand !== undefined) {
+        snapshot.jsonRpcCommand = snapshotAgentPreflightSessionControlsCommand(
+            receiver.jsonRpcCommand as AgentPreflightSessionControlsCommandV1,
+            'Agent preflight Session controls contribution.jsonRpcCommand',
+        );
+    }
+    for (const key of [
+        'probeModels',
+        'probeModes',
+        'probeConfigOptions',
+        'probePassiveRealtimeSetup',
+    ] as const) {
+        if (receiver[key] === undefined) continue;
+        snapshot[key] = bindAgentRegistrationCallback(
+            receiver,
+            receiver[key],
+            `Agent preflight Session controls contribution.${key}`,
+        ) as never;
+    }
+    if (Object.keys(snapshot).length === 0) {
+        throw new TypeError('Agent preflight Session controls contribution cannot be empty');
+    }
+    return Object.freeze(snapshot);
+}
+
+function snapshotAgentTerminalPromptSubmitVerificationPolicy(
+    value: AgentTerminalPromptSubmitVerificationPolicyV1,
+): AgentTerminalPromptSubmitVerificationPolicyV1 {
+    const receiver = readAgentRegistrationObject(
+        value,
+        'Agent terminal prompt-submit verification policy',
+    );
+    if (Reflect.ownKeys(receiver).some((key) => (
+        key !== 'shouldVerifyAfterSubmit'
+        && key !== 'verifyBeforeSubmitStaging'
+        && key !== 'verifyAfterSubmit'
+    ))) {
+        throw new TypeError('Agent terminal prompt-submit verification policy contains unknown fields');
+    }
+    return Object.freeze({
+        shouldVerifyAfterSubmit: bindAgentRegistrationCallback<
+            AgentTerminalPromptSubmitVerificationPolicyV1['shouldVerifyAfterSubmit']
+        >(
+            receiver,
+            receiver.shouldVerifyAfterSubmit,
+            'Agent terminal prompt-submit verification policy.shouldVerifyAfterSubmit',
+        ),
+        ...(receiver.verifyBeforeSubmitStaging === undefined
+            ? {}
+            : {
+                verifyBeforeSubmitStaging: bindAgentRegistrationCallback<
+                    NonNullable<AgentTerminalPromptSubmitVerificationPolicyV1['verifyBeforeSubmitStaging']>
+                >(
+                    receiver,
+                    receiver.verifyBeforeSubmitStaging,
+                    'Agent terminal prompt-submit verification policy.verifyBeforeSubmitStaging',
+                ),
+            }),
+        verifyAfterSubmit: bindAgentRegistrationCallback<
+            AgentTerminalPromptSubmitVerificationPolicyV1['verifyAfterSubmit']
+        >(
+            receiver,
+            receiver.verifyAfterSubmit,
+            'Agent terminal prompt-submit verification policy.verifyAfterSubmit',
+        ),
+    });
+}
+
+function snapshotAgentSessionStartupContribution(
+    value: AgentSessionStartupContributionV1,
+): AgentSessionStartupContributionV1 {
+    const receiver = readAgentRegistrationObject(value, 'Agent Session startup contribution');
+    if (Reflect.ownKeys(receiver).some((key) => key !== 'shouldUseDeferredBootstrap')) {
+        throw new TypeError('Agent Session startup contribution contains unknown fields');
+    }
+    return Object.freeze({
+        shouldUseDeferredBootstrap: bindAgentRegistrationCallback<
+            AgentSessionStartupContributionV1['shouldUseDeferredBootstrap']
+        >(
+            receiver,
+            receiver.shouldUseDeferredBootstrap,
+            'Agent Session startup contribution.shouldUseDeferredBootstrap',
+        ),
+    });
+}
+
+function snapshotAgentExperimentalVendorResumeSupportContribution(
+    value: AgentExperimentalVendorResumeSupportContributionV1,
+): AgentExperimentalVendorResumeSupportContributionV1 {
+    const receiver = readAgentRegistrationObject(
+        value,
+        'Agent experimental vendor-resume support contribution',
+    );
+    if (Reflect.ownKeys(receiver).some((key) => key !== 'supportsVendorResume')) {
+        throw new TypeError('Agent experimental vendor-resume support contribution contains unknown fields');
+    }
+    return Object.freeze({
+        supportsVendorResume: bindAgentRegistrationCallback<
+            AgentExperimentalVendorResumeSupportContributionV1['supportsVendorResume']
+        >(
+            receiver,
+            receiver.supportsVendorResume,
+            'Agent experimental vendor-resume support contribution.supportsVendorResume',
+        ),
+    });
+}
+
 function snapshotAgentRuntimeRegistrationOptions(
     options: AgentRuntimeRegistrationOptions | undefined,
 ): AgentRuntimeRegistrationOptions {
     if (options === undefined) return Object.freeze({});
-    if (typeof options !== 'object' || options === null || Array.isArray(options)) {
-        throw new TypeError('Agent runtime registration options must be a plain object');
-    }
-    const prototype = Object.getPrototypeOf(options);
-    if (prototype !== Object.prototype && prototype !== null) {
-        throw new TypeError('Agent runtime registration options must be a plain object');
-    }
-    const ownKeys = Reflect.ownKeys(options);
-    if (ownKeys.some((key) => (
-        key !== 'providerBinding'
-        && key !== 'sessionRunnerFactory'
-        && key !== 'daemonSpawnHooks'
-    ))) {
-        throw new TypeError('Agent runtime registration options contain unknown fields');
-    }
-    const providerBinding = ownKeys.includes('providerBinding')
-        ? readOwnEnumerableDataValue(options, 'providerBinding')
-        : undefined;
-    const sessionRunnerFactory = ownKeys.includes('sessionRunnerFactory')
-        ? readOwnEnumerableDataValue(options, 'sessionRunnerFactory')
-        : undefined;
-    const daemonSpawnHooks = ownKeys.includes('daemonSpawnHooks')
-        ? readOwnEnumerableDataValue(options, 'daemonSpawnHooks')
-        : undefined;
+    const source = readAgentRegistrationObject(options, 'Agent runtime registration options');
+    const providerBinding = source.providerBinding;
+    const sessionRunnerFactory = source.sessionRunnerFactory;
+    const daemonSpawnHooks = source.daemonSpawnHooks;
+    const providerCliAttach = source.providerCliAttach;
+    const cliSessionCommand = source.cliSessionCommand;
+    const cliAuth = source.cliAuth;
+    const connectedAccountLaunch = source.connectedAccountLaunch;
+    const preflightSessionControls = source.preflightSessionControls;
+    const terminalPromptSubmitVerification = source.terminalPromptSubmitVerification;
+    const sessionStartup = source.sessionStartup;
+    const vendorResumeSupport = source.vendorResumeSupport;
     const snapshot: {
         providerBinding?: AgentProviderBindingAdapter;
         sessionRunnerFactory?: AgentSessionRunnerFactoryLocatorV1;
         daemonSpawnHooks?: AgentDaemonSpawnHooks;
+        providerCliAttach?: AgentProviderCliAttachDeclarationV1;
+        cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
+        cliAuth?: AgentCliAuthContributionV1;
+        connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+        preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
+        terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
+        sessionStartup?: AgentSessionStartupContributionV1;
+        vendorResumeSupport?: AgentExperimentalVendorResumeSupportContributionV1;
     } = {};
     if (providerBinding !== undefined) {
         snapshot.providerBinding = snapshotAgentProviderBindingAdapter(
@@ -396,37 +902,22 @@ function snapshotAgentRuntimeRegistrationOptions(
         );
     }
     if (sessionRunnerFactory !== undefined) {
-        if (
-            typeof sessionRunnerFactory !== 'object'
-            || sessionRunnerFactory === null
-            || Array.isArray(sessionRunnerFactory)
-            || (Object.getPrototypeOf(sessionRunnerFactory) !== Object.prototype
-                && Object.getPrototypeOf(sessionRunnerFactory) !== null)
-        ) {
-            throw new TypeError('Agent session runner factory locator must be a plain object');
-        }
-        const locatorKeys = Reflect.ownKeys(sessionRunnerFactory);
-        const hasExternalSessionsExport = locatorKeys.includes('externalSessionsExport');
-        if (
-            locatorKeys.length !== (hasExternalSessionsExport ? 4 : 3)
-            || locatorKeys.some((key) => (
-                key !== 'module'
-                && key !== 'export'
-                && key !== 'runtimeApiVersion'
-                && key !== 'externalSessionsExport'
-            ))
-        ) {
-            throw new TypeError('Agent session runner factory locator contains unknown or missing fields');
-        }
-        const module = readOwnEnumerableDataValue(sessionRunnerFactory, 'module');
-        const exportName = readOwnEnumerableDataValue(sessionRunnerFactory, 'export');
-        const runtimeApiVersion = readOwnEnumerableDataValue(
+        const locator = readAgentRegistrationObject(
             sessionRunnerFactory,
-            'runtimeApiVersion',
+            'Agent session runner factory locator',
         );
-        const externalSessionsExport = hasExternalSessionsExport
-            ? readOwnEnumerableDataValue(sessionRunnerFactory, 'externalSessionsExport')
-            : undefined;
+        if (Reflect.ownKeys(locator).some((key) => (
+            key !== 'module'
+            && key !== 'export'
+            && key !== 'runtimeApiVersion'
+            && key !== 'externalSessionsExport'
+        ))) {
+            throw new TypeError('Agent session runner factory locator contains unknown fields');
+        }
+        const module = locator.module;
+        const exportName = locator.export;
+        const runtimeApiVersion = locator.runtimeApiVersion;
+        const externalSessionsExport = locator.externalSessionsExport;
         if (
             typeof module !== 'string'
             || !/^\.[/][A-Za-z0-9._/-]+$/u.test(module)
@@ -437,7 +928,7 @@ function snapshotAgentRuntimeRegistrationOptions(
             || typeof exportName !== 'string'
             || !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(exportName)
             || runtimeApiVersion !== 1
-            || (hasExternalSessionsExport && (
+            || (externalSessionsExport !== undefined && (
                 typeof externalSessionsExport !== 'string'
                 || !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(externalSessionsExport)
             ))
@@ -448,7 +939,7 @@ function snapshotAgentRuntimeRegistrationOptions(
             module,
             export: exportName,
             runtimeApiVersion: 1,
-            ...(hasExternalSessionsExport
+            ...(externalSessionsExport !== undefined
                 ? { externalSessionsExport: externalSessionsExport as string }
                 : {}),
         });
@@ -458,38 +949,71 @@ function snapshotAgentRuntimeRegistrationOptions(
             daemonSpawnHooks as AgentDaemonSpawnHooks,
         );
     }
+    if (providerCliAttach !== undefined) {
+        snapshot.providerCliAttach = snapshotAgentProviderCliAttachDeclaration(
+            providerCliAttach as AgentProviderCliAttachDeclarationV1,
+        );
+    }
+    if (cliSessionCommand !== undefined) {
+        snapshot.cliSessionCommand = snapshotAgentCliSessionCommandDeclaration(
+            cliSessionCommand as AgentCliSessionCommandDeclarationV1,
+        );
+    }
+    if (cliAuth !== undefined) {
+        snapshot.cliAuth = snapshotAgentCliAuthContribution(
+            cliAuth as AgentCliAuthContributionV1,
+        );
+    }
+    if (connectedAccountLaunch !== undefined) {
+        snapshot.connectedAccountLaunch = snapshotAgentConnectedAccountLaunchContribution(
+            connectedAccountLaunch as AgentConnectedAccountLaunchContributionV1,
+        );
+    }
+    if (preflightSessionControls !== undefined) {
+        snapshot.preflightSessionControls = snapshotAgentPreflightSessionControlsContribution(
+            preflightSessionControls as AgentPreflightSessionControlsContributionV1,
+        );
+    }
+    if (terminalPromptSubmitVerification !== undefined) {
+        snapshot.terminalPromptSubmitVerification = snapshotAgentTerminalPromptSubmitVerificationPolicy(
+            terminalPromptSubmitVerification as AgentTerminalPromptSubmitVerificationPolicyV1,
+        );
+    }
+    if (sessionStartup !== undefined) {
+        snapshot.sessionStartup = snapshotAgentSessionStartupContribution(
+            sessionStartup as AgentSessionStartupContributionV1,
+        );
+    }
+    if (vendorResumeSupport !== undefined) {
+        snapshot.vendorResumeSupport = snapshotAgentExperimentalVendorResumeSupportContribution(
+            vendorResumeSupport as AgentExperimentalVendorResumeSupportContributionV1,
+        );
+    }
     return Object.freeze(snapshot);
 }
 
 function snapshotAgentExternalSessionsContribution(
     contribution: AgentExternalSessionsContribution,
 ): AgentExternalSessionsContribution {
-    const receiver = requireStaticRegistrationObject(
+    const receiver = readAgentRegistrationObject(
         contribution,
         'Agent External Sessions contribution',
     );
-    const allowedKeys = new Set<PropertyKey>([
-        ...AGENT_EXTERNAL_SESSIONS_KEYS,
-        ...AGENT_EXTERNAL_SESSIONS_OPTIONAL_KEYS,
-    ]);
-    if (Reflect.ownKeys(receiver).some((key) => !allowedKeys.has(key))) {
-        throw new TypeError('Agent External Sessions contribution contains unknown operations');
-    }
     const snapshot: Record<string, unknown> = {};
     for (const key of AGENT_EXTERNAL_SESSIONS_KEYS) {
-        snapshot[key] = captureStaticRegistrationMethod(
+        snapshot[key] = bindAgentRegistrationCallback(
             receiver,
-            key,
+            receiver[key],
             `Agent External Sessions contribution.${key}`,
-            true,
         );
     }
     for (const key of AGENT_EXTERNAL_SESSIONS_OPTIONAL_KEYS) {
-        const operation = captureStaticRegistrationMethod(
+        const operation = receiver[key] === undefined
+            ? undefined
+            : bindAgentRegistrationCallback(
             receiver,
-            key,
+            receiver[key],
             `Agent External Sessions contribution.${key}`,
-            false,
         );
         if (operation !== undefined) snapshot[key] = operation;
     }
@@ -499,31 +1023,16 @@ function snapshotAgentExternalSessionsContribution(
 function snapshotAgentExternalSessionObservationContribution(
     contribution: AgentExternalSessionObservationContribution,
 ): AgentExternalSessionObservationContribution {
-    const receiver = requireStaticRegistrationObject(
+    const receiver = readAgentRegistrationObject(
         contribution,
         'Agent External Session observation',
     );
-    const hasUnknownPublicOperation = Reflect.ownKeys(receiver).some((key) => {
-        const knownKey = typeof key === 'string'
-            && AGENT_EXTERNAL_SESSION_OBSERVATION_KEYS.includes(
-                key as (typeof AGENT_EXTERNAL_SESSION_OBSERVATION_KEYS)[number],
-            );
-        if (knownKey) return false;
-        const descriptor = Object.getOwnPropertyDescriptor(receiver, key);
-        return descriptor?.enumerable === true
-            && 'value' in descriptor
-            && typeof descriptor.value === 'function';
-    });
-    if (hasUnknownPublicOperation) {
-        throw new TypeError('Agent External Session observation contains unknown operations');
-    }
     const snapshot: Record<string, unknown> = {};
     for (const key of AGENT_EXTERNAL_SESSION_OBSERVATION_KEYS) {
-        snapshot[key] = captureStaticRegistrationMethod(
+        snapshot[key] = bindAgentRegistrationCallback(
             receiver,
-            key,
+            receiver[key],
             `Agent External Session observation.${key}`,
-            true,
         );
     }
     return Object.freeze(snapshot) as AgentExternalSessionObservationContribution;
@@ -545,6 +1054,9 @@ function snapshotAgentRuntimeRegistration(
     staged: StagedAgentRuntimeRegistration,
 ): PluginAgentRuntimeRegistration {
     const options = snapshotAgentRuntimeRegistrationOptions(staged.options);
+    const cliAuth = staged.cliAuth === undefined
+        ? options.cliAuth
+        : snapshotAgentCliAuthContribution(staged.cliAuth);
     if (staged.factory !== undefined && typeof staged.factory !== 'function') {
         throw new TypeError('Agent runtime factory must be a function');
     }
@@ -556,6 +1068,28 @@ function snapshotAgentRuntimeRegistration(
             : {}),
         ...(options.daemonSpawnHooks !== undefined
             ? { daemonSpawnHooks: options.daemonSpawnHooks }
+            : {}),
+        ...(options.providerCliAttach !== undefined
+            ? { providerCliAttach: options.providerCliAttach }
+            : {}),
+        ...(options.cliSessionCommand !== undefined
+            ? { cliSessionCommand: options.cliSessionCommand }
+            : {}),
+        ...(cliAuth !== undefined ? { cliAuth } : {}),
+        ...(options.connectedAccountLaunch !== undefined
+            ? { connectedAccountLaunch: options.connectedAccountLaunch }
+            : {}),
+        ...(options.preflightSessionControls !== undefined
+            ? { preflightSessionControls: options.preflightSessionControls }
+            : {}),
+        ...(options.terminalPromptSubmitVerification !== undefined
+            ? { terminalPromptSubmitVerification: options.terminalPromptSubmitVerification }
+            : {}),
+        ...(options.sessionStartup !== undefined
+            ? { sessionStartup: options.sessionStartup }
+            : {}),
+        ...(options.vendorResumeSupport !== undefined
+            ? { vendorResumeSupport: options.vendorResumeSupport }
             : {}),
         ...(staged.externalSessions !== undefined
             ? { externalSessions: snapshotAgentExternalSessionsContribution(staged.externalSessions) }
@@ -946,8 +1480,11 @@ export function createPluginRegistrationScope(
             fail(`Plugin '${params.pluginId}' registered conflicting contribution 'agents/${localId}'`);
         }
         const current = existing?.value as StagedAgentRuntimeRegistration | undefined;
+        const fieldsDeclareCliAuth = fields.cliAuth !== undefined || fields.options?.cliAuth !== undefined;
+        const currentDeclaresCliAuth = current?.cliAuth !== undefined || current?.options?.cliAuth !== undefined;
         if ((fields.factory !== undefined && current?.factory !== undefined)
             || (fields.options !== undefined && current?.options !== undefined)
+            || (fieldsDeclareCliAuth && currentDeclaresCliAuth)
             || (fields.externalSessions !== undefined && current?.externalSessions !== undefined)
             || (fields.externalSessionHooks !== undefined
                 && current?.externalSessionHooks !== undefined)
@@ -960,6 +1497,7 @@ export function createPluginRegistrationScope(
         const value = Object.freeze({
             ...(current?.factory !== undefined ? { factory: current.factory } : {}),
             ...(current?.options !== undefined ? { options: current.options } : {}),
+            ...(current?.cliAuth !== undefined ? { cliAuth: current.cliAuth } : {}),
             ...(current?.externalSessions !== undefined
                 ? { externalSessions: current.externalSessions }
                 : {}),
@@ -1023,6 +1561,13 @@ export function createPluginRegistrationScope(
                     factory,
                     ...(options !== undefined ? { options } : {}),
                 }), 'Agent runtime');
+            },
+            registerCliAuth: (id: string, contribution: AgentCliAuthContributionV1) => {
+                return registerAgentFields(
+                    id,
+                    Object.freeze({ cliAuth: contribution }),
+                    'Agent CLI auth contribution',
+                );
             },
             registerExternalSessions: (id: string, contribution: AgentExternalSessionsContribution) => {
                 return registerAgentFields(

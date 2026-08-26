@@ -1214,3 +1214,8 @@ export type {
     ScmRemoteMutationGuardResult,
     ScmRemoteMutationReasonMapper,
 } from './remoteMutationPreconditions.js';
+
+export type {
+    ScmReviewWorkspaceCurrentness,
+    ScmReviewWorkspaceSourceTip,
+} from '@happier-dev/protocol/scm';

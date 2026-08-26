@@ -29,15 +29,15 @@ export type AdmittedTargetedOperationIdentity<TRole extends string = string> = R
  * An exact-generation execution capability projected from an admitted
  * target-owned operation. Its identity may be copied for display or
  * comparison, but only the original host-created handle can execute. The
- * declaration-only nominal carrier retains exact input/result types without
- * exposing the host-private execution binding.
+ * optional declaration-only projection retains exact input/result types while
+ * remaining structurally compatible across independently installed SDK copies.
  */
 export declare abstract class AdmittedTargetedOperationExecutionHandle<
   TInput extends JsonValue = JsonValue,
   TResult extends JsonValue | void = JsonValue | void,
   TRole extends string = string,
 > {
-  protected readonly opaqueTypes: Readonly<{
+  readonly typeProjection?: Readonly<{
     readonly input: TInput;
     readonly result: TResult;
   }>;

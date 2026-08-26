@@ -26,6 +26,10 @@ import {
   isValidPluginJsonSchemaValue,
   type PreparedPluginJsonSchema,
 } from '../../actions/jsonSchemaValidation.js';
+import type {
+  ProtocolComposableSchema,
+  ProtocolJsonValue,
+} from '../../actions/protocolComposableSchema.js';
 import { cloneStrictPluginJsonValue } from '../strictJsonValue.js';
 import type {
   PluginContributionReferenceV2,
@@ -545,6 +549,8 @@ export type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1 = Readonly<
   inputSchema: PluginJsonSchemaV2;
   /** One validator compiled by the admitted target/contributor generation owner. */
   inputValidation: PreparedPluginJsonSchema;
+  /** Exact target-owned normalizer retained by cold admission for this generation. */
+  inputNormalizer: ProtocolComposableSchema<ProtocolJsonValue, ProtocolJsonValue>;
 }>;
 
 const PluginDeclarativeTargetedSurfaceHandleV1Schema: z.ZodType<
@@ -580,7 +586,10 @@ function isPreparedTargetedSurfaceInventoryEntry(
     || Array.isArray(entry.inputSchema)
     || !entry.inputValidation
     || typeof entry.inputValidation !== 'object'
-    || typeof entry.inputValidation.validate !== 'function') {
+    || typeof entry.inputValidation.validate !== 'function'
+    || !entry.inputNormalizer
+    || typeof entry.inputNormalizer !== 'object'
+    || typeof entry.inputNormalizer.safeParse !== 'function') {
     return false;
   }
   // The generation owner retains one exact pair. A sibling schema plus an
@@ -627,6 +636,7 @@ function buildPreparedTargetedSurfaceInventory(
       }),
       inputSchema: entry.inputSchema,
       inputValidation: entry.inputValidation,
+      inputNormalizer: entry.inputNormalizer,
     }));
   }
   return inventory;
@@ -662,7 +672,11 @@ function normalizeTargetedSurfaceNode(input: Readonly<{
     );
   }
   const parsedInput = PluginJsonValueV2Schema.safeParse(input.source.input);
-  if (!parsedInput.success || !isValidPluginJsonSchemaValue(admitted.inputValidation.validate, parsedInput.data)) {
+  const normalizedByTarget = parsedInput.success
+    ? admitted.inputNormalizer.safeParse(parsedInput.data)
+    : undefined;
+  if (!normalizedByTarget?.success
+    || !isValidPluginJsonSchemaValue(admitted.inputValidation.validate, normalizedByTarget.data)) {
     return fail(
       'plugin_declarative_targeted_surface_input_invalid',
       `Targeted Surface '${key}' input does not satisfy its target role schema`,
@@ -671,7 +685,7 @@ function normalizeTargetedSurfaceNode(input: Readonly<{
   let normalizedInput: PluginJsonValueV2;
   try {
     normalizedInput = cloneStrictPluginJsonValue(
-      parsedInput.data,
+      normalizedByTarget.data,
       'targeted Surface input',
     ) as PluginJsonValueV2;
   } catch {

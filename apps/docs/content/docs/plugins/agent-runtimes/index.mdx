@@ -160,6 +160,21 @@ Omit the block and Happier infers `supported` or `unsupported` from whether
 `capabilities.sessions.open` contains `"resume"`. Declare it when that inference
 is wrong for your Agent, which is the only way to express `experimental`.
 
+The same strict `catalog` block can declare two bounded static host behaviors:
+
+- `codingPromptBehavior.blocks` is an ordered list of prompt blocks. Each block
+  has an id and bounded text, with optional `when: 'disableTodos'`; no callback
+  or arbitrary prompt hook crosses this seam.
+- `resumeChecklist: { includeLoginStatus: true }` includes the Agent's existing
+  `cli.<agentId>` login-status probe in the host resume checklist. Plugins
+  cannot declare arbitrary checklist ids or host capabilities here.
+
+For Agent-native CLI session parsing and focused preflight/startup/resume
+callbacks, put `cliSessionCommand`, `preflightSessionControls`,
+`sessionStartup`, and `vendorResumeSupport` on the same code-defined Agent
+entry. [Agent runtimes](/plugins/agent-runtimes/agent-runtime) describes their
+bounded inputs and host ownership.
+
 ## Client UI behavior
 
 An Agent's client presentation behavior — permission-footer handling,

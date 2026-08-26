@@ -1,6 +1,9 @@
-import type { PluginApi, PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
-import type { VoiceAccountOperationService } from '@happier-dev/plugin-sdk/voice';
+import type {
+    RegisteredVoiceProviderRuntime,
+    VoiceAccountOperationService,
+} from '@happier-dev/plugin-sdk/voice';
 import type {
     RealtimeVoiceProviderRuntime,
     VoiceClientAuthArtifact,
@@ -18,7 +21,6 @@ const CURRENT_UI_INVOKE_RESPONSE_PREFIX = 'public-authoring-current-ui-invoke-re
 const CURRENT_UI_READ_CALL_PREFIX = 'public-authoring-current-ui-read-call-';
 const CURRENT_UI_INVOKE_CALL_PREFIX = 'public-authoring-current-ui-invoke-call-';
 const CURRENT_UI_CONTEXT_CONFORMANCE_TEXT = 'run current UI context conformance';
-type RegisteredVoiceProviderRuntime = Parameters<PluginApi['voiceProviders']['register']>[1];
 
 type ProviderManagedInputCapture = Readonly<{
     setMuted(muted: boolean): void;

@@ -30,6 +30,24 @@ const SUPPORTED_DECLARATION = {
       spawnSessionExtras: { kind: 'static', value: { acmeMode: 'fast' } },
       sessionExtras: { outputKey: 'acmeMode', values: ['fast', 'thorough'] },
     },
+    askUserQuestion: {
+      dialogs: [{
+        dialogId: 'review_scope_confirmation',
+        settingMutation: {
+          settingId: 'reviewScopePreference',
+          allowedValues: ['ask_every_time', 'always_include'],
+        },
+        terminalNotice: {
+          headerKey: 'tools.askUserQuestion.reviewScope.header',
+          questionKey: 'tools.askUserQuestion.reviewScope.question',
+        },
+        terminalSecondaryAction: {
+          kind: 'openAttachedTerminal',
+          labelKey: 'tools.askUserQuestion.reviewScope.openTerminal',
+          descriptionKey: 'tools.askUserQuestion.reviewScope.description',
+        },
+      }],
+    },
     externalSessions: {
       browse: {
         order: 4,
@@ -84,6 +102,35 @@ describe('public Agent UI authoring grammar', () => {
     }).success).toBe(false);
     expect(parse({
       behavior: { newSession: { transcriptStorageModes: ['ephemeral'] } },
+    }).success).toBe(false);
+    expect(parse({
+      behavior: {
+        askUserQuestion: {
+          dialogs: [{ dialogId: 'review_scope_confirmation' }],
+        },
+      },
+    }).success).toBe(false);
+    expect(parse({
+      behavior: {
+        askUserQuestion: {
+          dialogs: [
+            {
+              dialogId: 'review_scope_confirmation',
+              settingMutation: {
+                settingId: 'reviewScopePreference',
+                allowedValues: ['ask_every_time'],
+              },
+            },
+            {
+              dialogId: 'review_scope_confirmation',
+              terminalNotice: {
+                headerKey: 'tools.askUserQuestion.reviewScope.header',
+                questionKey: 'tools.askUserQuestion.reviewScope.question',
+              },
+            },
+          ],
+        },
+      },
     }).success).toBe(false);
   });
 

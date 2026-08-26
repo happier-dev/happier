@@ -290,6 +290,7 @@ const authorControlledListSelection: ListSelectionProps = {
 };
 
 const authorControlledList: ListProps<AuthorReview> = {
+  accessibilityLabel: 'Review queue',
   items: [{ id: 'review-1', title: 'Review current changes' }],
   keyForItem: (review) => review.id,
   renderItem: (review) => review.title,
@@ -300,10 +301,26 @@ const authorControlledList: ListProps<AuthorReview> = {
 // Sections and virtualization are one arm, not two components: the sectioned
 // list keeps the same row renderer and reports each row's section key.
 const authorSectionedList: ListProps<AuthorReview> = {
+  accessibilityLabelKey: 'acme.reviewSections',
   sections: [{ key: 'blocked', title: 'Blocked', data: [{ id: 'review-1', title: 'Review current changes' }] }],
   keyForItem: (review) => review.id,
   renderItem: (review, index, sectionKey: string | null) => `${sectionKey ?? ''}:${index}:${review.title}`,
   selection: authorControlledListSelection,
+};
+
+// @ts-expect-error A selectable virtualized List owns a listbox and therefore requires an author name.
+const authorSelectableListWithoutAccessibleName: ListProps<AuthorReview> = {
+  items: [{ id: 'review-1', title: 'Review current changes' }],
+  keyForItem: (review) => review.id,
+  renderItem: (review) => review.title,
+  selection: authorControlledListSelection,
+};
+
+// Ordinary virtualized lists retain their existing unnamed public shape.
+const authorNonSelectableListWithoutAccessibleName: ListProps<AuthorReview> = {
+  items: [{ id: 'review-1', title: 'Review current changes' }],
+  keyForItem: (review) => review.id,
+  renderItem: (review) => review.title,
 };
 
 // @ts-expect-error One virtualized arm per List: flat items or labelled sections.

@@ -280,6 +280,40 @@ const AgentUiExternalSessionsSchema = z.object({
   }).strict().optional(),
 }).strict();
 
+/**
+ * One declared AskUserQuestion dialog can opt into a narrowly host-owned
+ * setting mutation and/or attached-terminal presentation. The declaration is
+ * data only: it never supplies a callback, a route, or a generic action.
+ */
+const AgentUiAskUserQuestionDialogSchema = z.object({
+  dialogId: AgentUiIdSchema,
+  settingMutation: z.object({
+    settingId: AgentUiIdSchema,
+    allowedValues: AgentUiIdArraySchema.min(1),
+  }).strict().optional(),
+  terminalNotice: z.object({
+    headerKey: AgentUiTranslationKeySchema,
+    questionKey: AgentUiTranslationKeySchema,
+  }).strict().optional(),
+  terminalSecondaryAction: z.object({
+    kind: z.literal('openAttachedTerminal'),
+    labelKey: AgentUiTranslationKeySchema,
+    descriptionKey: AgentUiTranslationKeySchema,
+  }).strict().optional(),
+}).strict().refine(
+  (dialog) => dialog.settingMutation !== undefined
+    || dialog.terminalNotice !== undefined
+    || dialog.terminalSecondaryAction !== undefined,
+  { message: 'AskUserQuestion dialogs require a declared host-owned behavior.' },
+);
+
+const AgentUiAskUserQuestionSchema = z.object({
+  dialogs: z.array(AgentUiAskUserQuestionDialogSchema).min(1),
+}).strict().refine(
+  (declaration) => new Set(declaration.dialogs.map((dialog) => dialog.dialogId)).size === declaration.dialogs.length,
+  { message: 'AskUserQuestion dialog ids must be unique.' },
+);
+
 export const AgentUiBehaviorDeclarationV1Schema = z.object({
   /** Author-owned identity for this declaration, surfaced in diagnostics. */
   descriptorId: AgentUiIdSchema.optional(),
@@ -314,6 +348,7 @@ export const AgentUiBehaviorDeclarationV1Schema = z.object({
   contextWindow: AgentUiContextWindowSchema.optional(),
   newSession: AgentUiNewSessionSchema.optional(),
   payload: AgentUiPayloadSchema.optional(),
+  askUserQuestion: AgentUiAskUserQuestionSchema.optional(),
   externalSessions: AgentUiExternalSessionsSchema.optional(),
 }).strict();
 export type AgentUiBehaviorDeclarationV1 = z.infer<typeof AgentUiBehaviorDeclarationV1Schema>;

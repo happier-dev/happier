@@ -48,12 +48,13 @@ Declare the Agent local ID and the `externalSessions` capability right in
 }
 ```
 
-## Activation
+## Authoring
 
-Register the exact six-method contribution on that same local ID:
+Put the exact six-method contribution on the same code-defined Agent entry.
+`definePlugin` projects the manifest and generates its one activation binding:
 
 ```ts
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { definePlugin } from '@happier-dev/plugin-sdk';
 import type {
   AgentExternalSessionTranscriptRawRecord,
   AgentExternalSessionsContribution,
@@ -102,11 +103,38 @@ const externalSessions = {
   }),
 } satisfies AgentExternalSessionsContribution;
 
-// Low-level ABI equivalent only: ordinary author modules put this value on
-// `definePlugin({ agents: { example: { externalSessions } } })`.
-export function activate(api: PluginApi): void {
-  api.agents.registerExternalSessions('example', externalSessions);
-}
+export const { manifest, activate } = definePlugin({
+  id: 'examples.external-session-source',
+  version: '0.1.0',
+  entrypoints: { daemon: './dist/index.js' },
+  agents: {
+    example: {
+      declaration: {
+        title: 'Example Agent',
+        capabilities: { surfaces: ['externalSessions'] },
+        surfaces: {
+          externalSession: {
+            sources: [{
+              sourceKind: 'exampleStore',
+              schema: {
+                fields: [{
+                  name: 'kind',
+                  kind: 'literal',
+                  value: 'exampleStore',
+                }],
+              },
+              key: {
+                segments: [{ kind: 'literal', value: 'exampleStore' }],
+              },
+              instances: [{ kind: 'default', constants: {} }],
+            }],
+          },
+        },
+      },
+      externalSessions,
+    },
+  },
+});
 ```
 
 ## Host boundary

@@ -26,7 +26,7 @@ description: Contribution families that a plugin can declare for projection and 
 | MCP servers | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Hosted or managed MCP server descriptors | `mcp.servers.<id>.runtime` when dynamic |
 | MCP discovery | Runtime MCP discovery | `mcp.discoverySources.<id>.discover` |
 | UI | Host-rendered descriptors or React Native surfaces; hosted web availability is reported per host, and an unavailable host reports a typed reason | generated artifact tree where executable UI is declared |
-| `managedDependencies` | Host-managed tool/runtime dependencies | dependency installer/validator |
+| `managedDependencies` | Host-managed tool/runtime dependencies | declarative descriptor only; the host owns resolution, installation, validation, update, and removal |
 | `voiceModelPacks` | Immutable STT/TTS model and voice assets for host-owned engines | none; declarative data only |
 | `voiceProviders` | Conversation, STT, and TTS providers with strict settings, catalogs, limits, and credential declarations | `voiceProviders.<id>.runtime` when the declared realm needs one |
 | `sessionHeaderActions` | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Declarative Session-header actions | manifest action reference |

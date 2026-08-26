@@ -8,9 +8,47 @@ import {
   listPluginProjectionFamilyIdsV2,
   PLUGIN_CONTRIBUTION_CATALOG_V2,
 } from './catalog.js';
-import { PluginContributesV2Schema, PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 } from './v2.js';
+import {
+  PluginAgentRuntimeAcpV2Schema,
+  PluginContributesV2Schema,
+  PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2,
+} from './v2.js';
 
 describe('plugin contribution catalog', () => {
+  it('admits only the strict data-only ACP definition contract', () => {
+    const declarativeRuntime = {
+      kind: 'acp' as const,
+      transport: {
+        kind: 'tcp' as const,
+        host: '127.0.0.1',
+        port: 4242,
+      },
+      definition: {
+        modelConfigOptionId: 'model',
+        stderrRules: {
+          suppress: [{
+            includes: ['known harmless ACP notification'],
+          }],
+        },
+        mcp: { policy: 'pass_through' as const },
+      },
+    };
+
+    expect(PluginAgentRuntimeAcpV2Schema.parse(declarativeRuntime))
+      .toEqual(declarativeRuntime);
+    expect(PluginAgentRuntimeAcpV2Schema.safeParse({
+      ...declarativeRuntime,
+      definition: {
+        ...declarativeRuntime.definition,
+        callbacks: { argvBuilder: 'forbidden' },
+      },
+    }).success).toBe(false);
+    expect(PluginAgentRuntimeAcpV2Schema.safeParse({
+      ...declarativeRuntime,
+      ux: { title: 'forbidden runtime presentation' },
+    }).success).toBe(false);
+  });
+
   it('accounts for every schema family with executable semantic metadata', () => {
     expect(PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2.map((entry) => entry.family)).toEqual([
       'agents', 'providers', 'actions', 'commands', 'tools', 'resources', 'transcriptActivities', 'sessionInfoSections',

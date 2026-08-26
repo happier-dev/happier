@@ -45,6 +45,15 @@ const plan = {
     },
 } as const satisfies AgentExternalSessionTakeoverLaunchPlan;
 
+const runtimeDescriptorV1 = {
+    v: 1,
+    agentId: 'fixture.agent',
+    agent: {
+        providerSessionId: 'native-session-1',
+        sessionFile: '/agent/sessions/native-session-1.jsonl',
+    },
+} as const;
+
 const result = {
     ok: true,
     value: plan,
@@ -149,6 +158,13 @@ describe('External Session takeover public contract', () => {
 
     it('accepts only the exact bounded launch-plan fields', () => {
         expect(validateAgentExternalSessionTakeoverLaunchPlan(plan)).toEqual(plan);
+        const planWithRuntimeDescriptor = {
+            ...plan,
+            runtimeDescriptorV1,
+        } as const;
+        expect(validateAgentExternalSessionTakeoverLaunchPlan(
+            planWithRuntimeDescriptor,
+        )).toEqual(planWithRuntimeDescriptor);
         expect(validateAgentExternalSessionTakeoverLaunchPlan({
             directory: 'd'.repeat(AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxDirectoryCodeUnits),
             backendModeHint: 'm'.repeat(
@@ -235,6 +251,7 @@ describe('External Session takeover public contract', () => {
             },
             broadHints,
             { directory: '/work/project', existingSessionId: 'authority-smuggling' },
+            { directory: '/work/project', unrecognizedHostExtension: 'rejected' },
             { directory: '/work/project', metadata: {} },
             { directory: '/work/project', sessionStateUpdates: [] },
             { directory: '/work/project', connectedServices: {} },

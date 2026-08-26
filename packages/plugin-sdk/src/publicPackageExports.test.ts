@@ -516,6 +516,8 @@ describe('CORE-A curated package exports', () => {
         expect(exportedNames).toEqual(expect.arrayContaining([
             'ConnectedAccountsService',
             'ConnectedAccountBindingSummary',
+            'ConnectedAccountAuthDiagnostic',
+            'ConnectedAccountAuthFailure',
             'ConnectedAccountMaterialization',
             'ConnectedAccountRuntime',
             'ConnectedServiceCredentialRecordV1',
@@ -525,6 +527,13 @@ describe('CORE-A curated package exports', () => {
             'QualifiedConnectedAccountRefSchema',
         ]));
         for (const privateName of [
+            'AuthCredentialWriteInput',
+            'AuthCredentialWriteResult',
+            'AuthDiagnostic',
+            'AuthenticateOptions',
+            'AuthenticateResult',
+            'Authenticator',
+            'AuthenticatorContext',
             'ConnectedAccountAuthFailureRequestV1Schema',
             'ConnectedAccountQuotaFailureRequestV1Schema',
             'ConnectedAccountRequestAuthMaterialization',
@@ -568,6 +577,7 @@ describe('CORE-A curated package exports', () => {
             'QualifiedConnectedAccountPurposeBindingV1Schema',
             'QualifiedConnectedAccountPurposeBindingsV1',
             'buildConnectedServiceCredentialRecord',
+            'isAuthenticateResult',
             'normalizeConnectedServiceLimitCategoryV1',
             'resolveConnectedServicesProviderStateSharingPolicyV1',
         ]) {

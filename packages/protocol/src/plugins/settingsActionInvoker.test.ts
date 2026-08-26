@@ -93,6 +93,31 @@ describe('host-internal plugin settings action invoker', () => {
     expect(order).toEqual(['confirm', 'snapshot', 'execute', 'apply']);
   });
 
+  it('passes the exact settings snapshot revision to the host execution adapter', async () => {
+    const execute = vi.fn(async () => ({ patch: { endpoint: 'new' } }));
+    const invoker = createHostPluginSettingsActionInvoker({
+      createError,
+      confirm: async () => true,
+      snapshot: async () => ({ values: { endpoint: 'old' }, revision: '7' }),
+      execute,
+      applyPatch: async () => undefined,
+    });
+
+    await invoker.invoke({
+      key: 'revision',
+      declaration,
+      userGesture: true,
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+    });
+
+    expect(execute).toHaveBeenCalledWith({
+      actionId: 'discover',
+      settings: { endpoint: 'old' },
+      settingsRevision: '7',
+    }, undefined, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
   it('rejects undeclared or oversized patches before the persistence port', async () => {
     const applyPatch = vi.fn();
     const execute = vi.fn()

@@ -63,6 +63,30 @@ export type PluginTestkitRegistrationByFamily = Readonly<{
         daemonSpawnHooks?: NonNullable<NonNullable<
             Parameters<PluginApi['agents']['register']>[2]
         >['daemonSpawnHooks']>;
+        providerCliAttach?: NonNullable<NonNullable<
+            Parameters<PluginApi['agents']['register']>[2]
+        >['providerCliAttach']>;
+        cliSessionCommand?: NonNullable<NonNullable<
+            Parameters<PluginApi['agents']['register']>[2]
+        >['cliSessionCommand']>;
+        cliAuth?: NonNullable<NonNullable<
+            Parameters<PluginApi['agents']['register']>[2]
+        >['cliAuth']>;
+        connectedAccountLaunch?: NonNullable<NonNullable<
+            Parameters<PluginApi['agents']['register']>[2]
+        >['connectedAccountLaunch']>;
+        preflightSessionControls?: NonNullable<NonNullable<
+            Parameters<PluginApi['agents']['register']>[2]
+        >['preflightSessionControls']>;
+        terminalPromptSubmitVerification?: NonNullable<NonNullable<
+            Parameters<PluginApi['agents']['register']>[2]
+        >['terminalPromptSubmitVerification']>;
+        sessionStartup?: NonNullable<NonNullable<
+            Parameters<PluginApi['agents']['register']>[2]
+        >['sessionStartup']>;
+        vendorResumeSupport?: NonNullable<NonNullable<
+            Parameters<PluginApi['agents']['register']>[2]
+        >['vendorResumeSupport']>;
         externalSessions?: Parameters<PluginApi['agents']['registerExternalSessions']>[1];
         externalSessionHooks?: Parameters<PluginApi['agents']['registerExternalSessionHooks']>[1];
         externalSessionObservation?: Parameters<

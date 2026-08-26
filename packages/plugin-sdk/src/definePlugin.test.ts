@@ -2078,6 +2078,132 @@ describe('definePlugin', () => {
         });
     });
 
+    it('routes every authored Agent registration capability through definePlugin', async () => {
+        const completeFactory: AgentRuntimeFactory = () => Object.freeze({
+            sessions: Object.freeze({ open: vi.fn() }),
+            executionRuns: Object.freeze({ open: vi.fn() }),
+        });
+        const providerBinding = Object.freeze({
+            v: 1,
+            adapterVersion: 1,
+            prepare() {
+                return Object.freeze({
+                    v: 1 as const,
+                    materialization: 'spawnEnv' as const,
+                });
+            },
+            async materialize() {
+                return Object.freeze({
+                    v: 1 as const,
+                    kind: 'spawnEnv' as const,
+                    env: Object.freeze([]),
+                });
+            },
+        }) satisfies AgentProviderBindingAdapter;
+        const daemonSpawnHooks = Object.freeze({
+            augmentEnv: () => ({ EXAMPLE_AGENT_SPAWN: 'enabled' }),
+        });
+        const providerCliAttach = Object.freeze({
+            resolveTarget: () => ({ ok: false as const, reason: 'fixture target is unavailable' }),
+            createArgs: () => [],
+            buildHealthUrl: () => null,
+        });
+        const preflightSessionControls = Object.freeze({
+            models: Object.freeze({
+                command: Object.freeze({
+                    toolId: 'example-cli',
+                    args: Object.freeze(['models']),
+                }),
+            }),
+        });
+        const terminalPromptSubmitVerification = Object.freeze({
+            shouldVerifyAfterSubmit: (promptText: string) => promptText.trim().length > 0,
+            verifyAfterSubmit: ({ promptText, screenText }: Readonly<{
+                promptText: string;
+                screenText: string;
+            }>) => screenText.includes(promptText),
+        });
+        const connectedAccountLaunch = Object.freeze({
+            requestAuthUses: Object.freeze([Object.freeze({
+                purpose: 'model_upstream',
+                materialization: Object.freeze({
+                    kind: 'httpHeaders' as const,
+                    origin: 'https://api.example.test',
+                    headerNames: Object.freeze(['authorization']),
+                }),
+            })]),
+            stateSharingDescriptor: Object.freeze({
+                providerSupportStatus: 'unsupported' as const,
+                config: Object.freeze({
+                    supported: false,
+                    modes: Object.freeze(['isolated']),
+                    entries: Object.freeze([]),
+                    unavailableReason: 'not_implemented' as const,
+                }),
+                state: Object.freeze({
+                    supported: false,
+                    modes: Object.freeze(['isolated']),
+                    entries: Object.freeze([]),
+                    symlinkUnavailableDegradePolicy: 'degrade_to_isolated' as const,
+                    unavailableReason: 'not_implemented' as const,
+                }),
+                authIsolation: Object.freeze({
+                    mode: 'process_env' as const,
+                    secretEntries: Object.freeze(['EXAMPLE_API_KEY']),
+                }),
+            }),
+        });
+        const plugin = definePlugin({
+            id: 'example.complete-agent-registration',
+            version: '0.1.0',
+            agents: {
+                assistant: {
+                    declaration: {
+                        title: 'Complete Agent registration',
+                        runtime: { kind: 'custom' },
+                        primary: 'sessions',
+                        capabilities: {
+                            sessions: {
+                                open: ['create'],
+                                delivery: ['newTurn'],
+                                cancel: true,
+                            },
+                        },
+                    },
+                    factory: completeFactory,
+                    providerBinding,
+                    sessionRunnerFactory: {
+                        module: './agent/runtime/factory.js',
+                        export: 'mixedFactory',
+                        runtimeApiVersion: 1,
+                    },
+                    daemonSpawnHooks,
+                    providerCliAttach,
+                    preflightSessionControls,
+                    terminalPromptSubmitVerification,
+                    connectedAccountLaunch,
+                },
+            },
+        } as unknown as Parameters<typeof definePlugin>[0]);
+        const register = vi.fn();
+
+        await plugin.activate({ agents: { register } } as never);
+
+        expect(register).toHaveBeenCalledWith('assistant', completeFactory, {
+            providerBinding,
+            sessionRunnerFactory: {
+                module: './agent/runtime/factory.js',
+                export: 'mixedFactory',
+                runtimeApiVersion: 1,
+            },
+            daemonSpawnHooks,
+            providerCliAttach,
+            preflightSessionControls,
+            terminalPromptSubmitVerification,
+            connectedAccountLaunch,
+        });
+    });
+
     it('preserves the canonical provider-binding adapter in generated Agent registration', async () => {
         const providerBinding = Object.freeze({
             v: 1,

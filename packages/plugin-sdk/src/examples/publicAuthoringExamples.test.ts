@@ -37,6 +37,10 @@ import type {
     PluginClientActionHandler,
 } from '@happier-dev/plugin-sdk/actions';
 import type {
+    AgentRuntimeFactory,
+    AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
     PluginAccountCollection,
     PluginAccountCollectionDefinition,
     PluginAccountCollectionForDefinition,
@@ -67,6 +71,7 @@ import {
 import type { VoiceProvidersRegistrationApi } from '../voice/projections.js';
 import type { SpeechProviderRuntime } from '../voice/speech.js';
 import {
+    createAgentSessionRuntimeHarness,
     createPluginTestkit,
     createPluginUiTestkit,
     type PluginUiSemanticSurfaceAdapter,
@@ -143,7 +148,9 @@ const copyableExamples = [
     { name: 'multi-mode-fallback', sourceEntry: 'src/index.ts', ui: 'both', coldManifest: true },
     { name: 'production-hosted-reference', sourceEntry: 'index.ts', ui: 'hostedWeb', coldManifest: true },
     { name: 'code-defined', sourceEntry: 'index.ts', ui: 'none', coldManifest: false },
+    { name: 'session-agent', sourceEntry: 'index.ts', ui: 'none', coldManifest: false },
     { name: 'tracked-action', sourceEntry: 'index.ts', ui: 'none', coldManifest: false },
+    { name: 'operation-only-channel-provider', sourceEntry: 'src/index.ts', ui: 'none', coldManifest: false },
     { name: 'public-authoring', sourceEntry: 'index.ts', ui: 'both', coldManifest: false },
     { name: 'advanced-package-root', sourceEntry: 'index.ts', ui: 'none', coldManifest: false },
 ] as const;
@@ -176,6 +183,26 @@ function deferred<T>() {
         reject = rejectPromise;
     });
     return Object.freeze({ promise, resolve, reject });
+}
+
+function createSessionAgentRuntimeContext(input: Readonly<{
+    sessionId: string;
+    confirm: (request: unknown, options?: unknown) => Promise<unknown>;
+}>): AgentSessionRuntimeContext {
+    // This is the genuine host-services boundary: the example reads only the
+    // session identity and the public interaction capability below. All other
+    // host-owned services deliberately remain absent from this fixture.
+    return {
+        session: {
+            id: input.sessionId,
+            services: {},
+        },
+        services: {
+            interactions: {
+                confirm: input.confirm,
+            },
+        },
+    } as unknown as AgentSessionRuntimeContext;
 }
 
 function createHostedReviewPanelRoot() {
@@ -920,6 +947,43 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         }
     });
 
+    it('keeps the beginner cross-plugin example operation-only and external-author-supported', async () => {
+        const sourcePath = join(
+            examplesRoot,
+            'operation-only-channel-provider',
+            'src',
+            'index.ts',
+        );
+        const source = readFileSync(sourcePath, 'utf8');
+        const module = await import(pathToFileURL(sourcePath).href) as Pick<DefinedPlugin, 'manifest' | 'activate'>;
+        const testkit = await createPluginTestkit({
+            manifest: module.manifest,
+            module,
+        });
+
+        try {
+            expect(testkit.registrations()).toEqual(expect.arrayContaining([
+                { family: 'actions', localId: 'acme/connect' },
+                { family: 'actions', localId: 'acme/check-connection' },
+                { family: 'actions', localId: 'acme/send-message' },
+                { family: 'actions', localId: 'acme/stop-socket' },
+            ]));
+        } finally {
+            await testkit.dispose();
+        }
+
+        expect(source).toContain("from '@happier-dev/channels-protocol/v1'");
+        expect(source).toContain("'happier.channels'");
+        expect(source).toContain('ConversationProvidersContributionProtocolV1.contribute({');
+        expect(source).not.toContain('descriptor:');
+        expect(source).not.toContain('renderers:');
+
+        const support = JSON.parse(readFileSync(join(examplesRoot, 'authoring-support.json'), 'utf8')) as {
+            assets?: Record<string, string>;
+        };
+        expect(support.assets?.['examples/operation-only-channel-provider']).toBe('external-author-supported');
+    });
+
     it('does not synthesize a host engine constraint into code-defined authoring examples', async () => {
         const [codeDefined, advanced] = await Promise.all([
             import(pathToFileURL(join(examplesRoot, 'code-defined', 'index.ts')).href),
@@ -1454,9 +1518,23 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             join(examplesRoot, 'public-authoring', 'ui', 'reviewPanel.native.tsx'),
             'utf8',
         );
-        expect(nativeSurface).toContain('publishCurrentUiContext({');
-        expect(nativeSurface).toContain("action: 'open-review-status'");
+        const webSurface = readFileSync(
+            join(examplesRoot, 'public-authoring', 'ui', 'reviewPanel.web.tsx'),
+            'utf8',
+        );
+        const reviewClientActions = readFileSync(
+            join(examplesRoot, 'public-authoring', 'ui', 'reviewClientActions.ts'),
+            'utf8',
+        );
+        expect(nativeSurface).toContain(
+            'context.hostApi.publishCurrentUiContext(PROJECT_COMPANION_ACTIVITY_CURRENT_UI_CONTEXT);',
+        );
+        expect(webSurface).toContain(
+            'context.hostApi.publishCurrentUiContext(PROJECT_COMPANION_ACTIVITY_CURRENT_UI_CONTEXT);',
+        );
+        expect(reviewClientActions).toContain("action: 'open-review-status'");
         expect(nativeSurface).toContain('return () => context.hostApi.publishCurrentUiContext(null);');
+        expect(webSurface).toContain('context.hostApi.publishCurrentUiContext(null);');
 
         const webOnlyAction = manifest.contributes.actions.find(
             ({ id }) => id === 'open-review-status-web-only-fixture',
@@ -1623,9 +1701,13 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         expect(publicAuthoringVoice).not.toMatch(
             /\btype Voice(?:ClientAuthArtifact|CatalogItem)\b/u,
         );
-        expect(publicAuthoringSpeech).toContain("from '@happier-dev/plugin-sdk'");
+        expect(publicAuthoringSpeech).toMatch(
+            /import type\s*\{\s*RegisteredVoiceProviderRuntime\s*\}\s*from '@happier-dev\/plugin-sdk\/voice';/u,
+        );
         expect(publicAuthoringSpeech).toContain("from '@happier-dev/plugin-sdk/voice/speech'");
-        expect(publicAuthoringSpeech).not.toContain("from '@happier-dev/plugin-sdk/voice'");
+        expect(`${publicAuthoringVoice}\n${publicAuthoringSpeech}`).not.toContain(
+            "Parameters<PluginApi['voiceProviders']['register']>[1]",
+        );
         expect(`${publicAuthoringVoice}\n${publicAuthoringSpeech}`).not.toMatch(
             /@happier-dev\/plugin-sdk\/(?:runtime|ui\/client)|registerSpeech|PluginVoice|accountMediation|speechProviderIds|catalogProviders/u,
         );
@@ -1755,6 +1837,187 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         }
     });
 
+    it('runs the minimal public Session Agent through admission, an interaction, and one terminal turn', async () => {
+        const exampleRoot = join(examplesRoot, 'session-agent');
+        const module = await import(pathToFileURL(join(exampleRoot, 'index.ts')).href) as Readonly<{
+            manifest: PluginManifest;
+            activate: DefinedPlugin['activate'];
+        }>;
+        const runnerLeaf = await import(pathToFileURL(
+            join(exampleRoot, 'agent', 'deterministicSessionAgent.ts'),
+        ).href) as Readonly<{
+            createDeterministicSessionAgentRuntime: AgentRuntimeFactory;
+        }>;
+        const confirmation = deferred<Readonly<{
+            requestId: string;
+            kind: 'confirmation';
+            status: 'approved';
+        }>>();
+        const confirm = vi.fn(() => confirmation.promise);
+        const testkit = await createPluginTestkit({
+            manifest: module.manifest,
+            module,
+        });
+        try {
+            expect(testkit.registration('agents', 'session-agent')).toMatchObject({
+                factory: runnerLeaf.createDeterministicSessionAgentRuntime,
+                sessionRunnerFactory: {
+                    module: './agent/deterministicSessionAgent.js',
+                    export: 'createDeterministicSessionAgentRuntime',
+                    runtimeApiVersion: 1,
+                },
+            });
+
+            const runtime = await runnerLeaf.createDeterministicSessionAgentRuntime({
+                plugin: { id: 'examples.session-agent', version: '0.1.0' },
+                agent: { id: 'session-agent' },
+                signal: new AbortController().signal,
+            });
+            if (!runtime.sessions) {
+                throw new Error('Expected the minimal Agent example to provide a Session runtime.');
+            }
+            const session = await runtime.sessions.open({
+                kind: 'create',
+                sessionId: 'minimal-session-agent-success',
+                cwd: '/tmp/minimal-session-agent',
+            }, createSessionAgentRuntimeContext({
+                sessionId: 'minimal-session-agent-success',
+                confirm,
+            }));
+            const harness = createAgentSessionRuntimeHarness();
+            try {
+                harness.attachRuntime({
+                    subscribeRuntimeEvents: session.watch.bind(session),
+                });
+                const send = session.send({
+                    inputIds: ['input-success'],
+                    input: { text: 'Review this change.' },
+                    delivery: { kind: 'newTurn', turnId: 'turn-success' },
+                });
+                await harness.until('tool-call');
+                expect(confirm).toHaveBeenCalledWith(
+                    expect.objectContaining({ kind: 'confirmation' }),
+                    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+                );
+                confirmation.resolve({
+                    requestId: 'confirmation-success',
+                    kind: 'confirmation',
+                    status: 'approved',
+                });
+
+                await expect(send).resolves.toEqual({ status: 'admitted' });
+                await harness.until('turn-complete');
+                harness.expectAllEventsValidated();
+                harness.expectExactlyOneTerminalEvent({ turnId: 'turn-success' });
+                expect(harness.canonicalEvents().map((event) => event.kind)).toEqual([
+                    'input-accepted',
+                    'turn-start',
+                    'message-delta',
+                    'tool-call',
+                    'tool-result',
+                    'message-delta',
+                    'turn-complete',
+                ]);
+                expect(harness.canonicalEvents().filter((event) => event.kind === 'message-delta')
+                    .map((event) => event.channel)).toEqual(['reasoning', 'assistant']);
+                expect(harness.canonicalEvents().find((event) => event.kind === 'tool-result'))
+                    .toMatchObject({ output: { status: 'approved' } });
+            } finally {
+                harness.dispose();
+                await session.dispose();
+            }
+        } finally {
+            await testkit.dispose();
+        }
+    });
+
+    it('cancels the minimal public Session Agent while its host interaction is pending', async () => {
+        const exampleRoot = join(examplesRoot, 'session-agent');
+        const module = await import(pathToFileURL(join(exampleRoot, 'index.ts')).href) as Readonly<{
+            manifest: PluginManifest;
+            activate: DefinedPlugin['activate'];
+        }>;
+        const runnerLeaf = await import(pathToFileURL(
+            join(exampleRoot, 'agent', 'deterministicSessionAgent.ts'),
+        ).href) as Readonly<{
+            createDeterministicSessionAgentRuntime: AgentRuntimeFactory;
+        }>;
+        const confirmation = deferred<Readonly<{
+            requestId: string;
+            kind: 'confirmation';
+            status: 'approved';
+        }>>();
+        const confirm = vi.fn(() => confirmation.promise);
+        const testkit = await createPluginTestkit({
+            manifest: module.manifest,
+            module,
+        });
+        try {
+            const runtime = await runnerLeaf.createDeterministicSessionAgentRuntime({
+                plugin: { id: 'examples.session-agent', version: '0.1.0' },
+                agent: { id: 'session-agent' },
+                signal: new AbortController().signal,
+            });
+            if (!runtime.sessions) {
+                throw new Error('Expected the minimal Agent example to provide a Session runtime.');
+            }
+            const session = await runtime.sessions.open({
+                kind: 'create',
+                sessionId: 'minimal-session-agent-cancel',
+                cwd: '/tmp/minimal-session-agent',
+            }, createSessionAgentRuntimeContext({
+                sessionId: 'minimal-session-agent-cancel',
+                confirm,
+            }));
+            if (!session.cancel) {
+                throw new Error('Expected the minimal Agent example to implement declared cancellation.');
+            }
+            const harness = createAgentSessionRuntimeHarness();
+            try {
+                harness.attachRuntime({
+                    subscribeRuntimeEvents: session.watch.bind(session),
+                });
+                const send = session.send({
+                    inputIds: ['input-cancel'],
+                    input: { text: 'Cancel this change review.' },
+                    delivery: { kind: 'newTurn', turnId: 'turn-cancel' },
+                });
+                await harness.until('tool-call');
+
+                await expect(session.cancel({
+                    turnId: 'turn-cancel',
+                    reason: 'user',
+                })).resolves.toEqual({
+                    status: 'requested',
+                    turnId: 'turn-cancel',
+                });
+                await harness.until('turn-cancelled');
+                confirmation.resolve({
+                    requestId: 'confirmation-cancel',
+                    kind: 'confirmation',
+                    status: 'approved',
+                });
+                await expect(send).resolves.toEqual({ status: 'admitted' });
+                await Promise.resolve();
+
+                harness.expectAllEventsValidated();
+                harness.expectExactlyOneTerminalEvent({ turnId: 'turn-cancel' });
+                expect(harness.canonicalEvents().map((event) => event.kind)).toEqual([
+                    'input-accepted',
+                    'turn-start',
+                    'message-delta',
+                    'tool-call',
+                    'turn-cancelled',
+                ]);
+            } finally {
+                harness.dispose();
+                await session.dispose();
+            }
+        } finally {
+            await testkit.dispose();
+        }
+    });
+
     it('declares each production reference\'s packed Action and packaged Resource contract', async () => {
         const publicAuthoringManifest = readExampleManifest('public-authoring');
         const productionHostedManifest = readExampleManifest('production-hosted-reference');
@@ -1805,7 +2068,12 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         );
         expect(hostedRenderer).toMatchObject({
             kind: 'hostedWeb',
-            requiredHostMethods: expect.arrayContaining(['context', 'executeAction', 'readResource']),
+            requiredHostMethods: expect.arrayContaining([
+                'context',
+                'executeAction',
+                'publishCurrentUiContext',
+                'readResource',
+            ]),
         });
         const hostedSource = readFileSync(
             join(examplesRoot, 'public-authoring', 'ui', 'reviewPanel.web.tsx'),
@@ -2129,6 +2397,7 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
             'context',
             'executeAction',
             'openSurface',
+            'publishCurrentUiContext',
             'readResource',
             'watchResource',
         ]);
@@ -2399,6 +2668,59 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
         } finally {
             await testkit.dispose();
         }
+    });
+
+    it('publishes and clears Project Companion activity context through the hosted-web mount lifetime', async () => {
+        const manifest = readExampleManifest('public-authoring');
+        const hostedPanel = await import(pathToFileURL(
+            join(examplesRoot, 'public-authoring', 'ui', 'reviewPanel.web.tsx'),
+        ).href) as Readonly<{
+            mountSessionStatus?: (
+                root: HTMLElement,
+                context: unknown,
+                activity?: boolean,
+            ) => Promise<void> | void;
+        }>;
+        expect(hostedPanel.mountSessionStatus).toBeTypeOf('function');
+        if (typeof hostedPanel.mountSessionStatus !== 'function') {
+            throw new Error('review_session_status_mount_not_exported');
+        }
+
+        const controller = new AbortController();
+        const published: unknown[] = [];
+        const root = createHostedReviewPanelRoot();
+        await hostedPanel.mountSessionStatus(root.root, {
+            signal: controller.signal,
+            surface: { target: { kind: 'session', sessionId: 'session-1' } },
+            hostApi: {
+                version: () => ({ methods: ['watchResource'] }),
+                publishCurrentUiContext: (enrichment: unknown) => published.push(enrichment),
+                readResource: async () => ({
+                    contentType: 'text/plain',
+                    digest: `sha256:${'a'.repeat(64)}`,
+                    bytes: new TextEncoder().encode('Current review status.'),
+                }),
+                watchResource: async () => ({ digest: `sha256:${'a'.repeat(64)}` }),
+            },
+        }, true);
+
+        expect(published).toEqual([{
+            entity: {
+                kind: 'review',
+                label: 'Project Companion activity',
+                summary: 'Review guidance and status are available for this Session.',
+            },
+            detail: { source: 'public-authoring-project-companion-activity' },
+            commands: [{
+                title: 'Open review status',
+                description: 'Open the existing review-status destination on this client.',
+                command: { kind: 'executeAction', action: 'open-review-status' },
+            }],
+        }]);
+
+        controller.abort('review_activity_retired');
+        expect(published).toHaveLength(2);
+        expect(published[1]).toBeNull();
     });
 
     it('declares the Project Companion dashboard as one dynamic declarative document through the public Resource path', async () => {
@@ -3913,7 +4235,9 @@ describe('public SDK authoring examples', { timeout: 60_000 }, () => {
                     'background-indexer',
                     'projects-tasks',
                     'code-defined',
+                    'session-agent',
                     'tracked-action',
+                    'operation-only-channel-provider',
                     'public-authoring',
                     'production-hosted-reference',
                     'advanced-package-root',

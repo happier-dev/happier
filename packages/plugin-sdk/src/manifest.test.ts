@@ -257,7 +257,6 @@ describe('manifest authoring contract', () => {
             'PluginAgentCliManualInstallRecipesSchema',
             'PluginAgentCliInstallCommandSchema',
             'PluginAgentCliAuthMetadataSchema',
-            'PluginAgentCliAuthProbeMetadataSchema',
             'PluginAgentCliLoginLaunchSchema',
             'PluginAgentCliSourcePreferenceSchema',
             'PluginAgentCliMetadataSchema',
@@ -297,12 +296,7 @@ describe('manifest authoring contract', () => {
                         },
                         auth: {
                             support: 'login_terminal',
-                            probe: {
-                                parser: 'unknown',
-                                backgroundChecks: 'safe',
-                                statusArgs: null,
-                                envVars: [],
-                            },
+                            environmentVariables: [],
                             loginLaunches: [
                                 { kind: 'primary', args: ['login'], initialInput: '' },
                                 { kind: 'device_code', args: ['login', '--device-code'], initialInput: '' },

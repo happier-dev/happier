@@ -101,7 +101,10 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function loadGeneratedClient() {
+async function loadGeneratedClient(input: Readonly<{
+  requestTimeoutMs?: number;
+  authFailureRequestTimeoutMs?: number;
+}> = {}) {
   const root = await mkdtemp(join(tmpdir(), 'happier-request-auth-client-'));
   roots.push(root);
   const modulePath = join(root, 'client.mjs');
@@ -114,6 +117,7 @@ async function loadGeneratedClient() {
     '};',
     buildConnectedAccountRequestAuthClientSource({
       capabilityPathEnv: CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+      ...input,
     }),
     'export {',
     '  lookupConnectedAccountRequestAuth,',
@@ -174,6 +178,55 @@ function writeTestCapabilityFileSync(
 }
 
 describe('generated connected-account request-auth client source', () => {
+  it('gives authentication recovery a longer transport budget without extending ordinary lookups', async () => {
+    await configureFiles();
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    globalThis.fetch = vi.fn(async (url) => {
+      const value = String(url).endsWith('/lookup')
+        ? {
+            accessToken: 'access',
+            credentialContext: {
+              account: {
+                service: {
+                  pluginId: 'happier.connected-account.test',
+                  localId: 'subscription',
+                },
+                accountId: 'work',
+              },
+              credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+            },
+          }
+        : { status: 'current_changed' };
+      return new Response(JSON.stringify({ ok: true, value }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const client = await loadGeneratedClient({
+      requestTimeoutMs: 30_000,
+      authFailureRequestTimeoutMs: 310_000,
+    });
+
+    const lease = await client.lookupConnectedAccountRequestAuth({ purpose }) as {
+      credentialContext: unknown;
+    };
+    await client.reportConnectedAccountAuthFailure({
+      credentialContext: lease.credentialContext,
+      normalizedFailure: {
+        class: 'authentication',
+        evidence: {
+          httpStatus: 401,
+          limitCategory: 'auth_invalid',
+          quotaScope: 'unknown',
+          evidenceSource: { kind: 'structured' },
+        },
+      },
+    });
+
+    expect(timeoutSpy).toHaveBeenNthCalledWith(1, 30_000);
+    expect(timeoutSpy).toHaveBeenNthCalledWith(2, 310_000);
+  });
+
   it('rereads the scoped capability on every independent operation and never reads the master token', async () => {
     const { root, capability } = await configureFiles();
     const firstDocument = capability.document;

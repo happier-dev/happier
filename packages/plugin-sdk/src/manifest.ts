@@ -182,6 +182,24 @@ export type AgentUiBehaviorDeclarationV1 = {
       agentExtra?: AgentUiRuntimeDescriptorAgentExtraIdentityV1;
     };
   };
+  askUserQuestion?: {
+    dialogs: {
+      dialogId: string;
+      settingMutation?: {
+        settingId: string;
+        allowedValues: string[];
+      };
+      terminalNotice?: {
+        headerKey: string;
+        questionKey: string;
+      };
+      terminalSecondaryAction?: {
+        kind: 'openAttachedTerminal';
+        labelKey: string;
+        descriptionKey: string;
+      };
+    }[];
+  };
   externalSessions?: {
     browse?: {
       order?: number;

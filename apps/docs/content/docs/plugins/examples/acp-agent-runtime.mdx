@@ -7,8 +7,11 @@ Use ACP in one of two modes; they must not be blended.
 
 ## Declarative ACP
 
-Declare `runtime.kind: 'acp'` with the cold transport, Session primary, and
-capabilities. The host constructs this runtime. Do not add a plugin factory,
+Declare `runtime.kind: 'acp'` with the cold transport, optional strict
+data-only `definition`, Session primary, and capabilities. The definition can
+contain only `modelConfigOptionId`, bounded `stderrRules`, and an MCP policy of
+`pass_through` or `drop`; the host normalizes it once and constructs the
+runtime. Kiro is the current source example. Do not add a plugin factory,
 activation registration, runner locator, or runner module.
 
 ## Custom ACP composition
@@ -21,4 +24,6 @@ provides the exact distinct runner factory leaf/locator.
 1. Return an `AgentRuntime` with a `sessions.open(request, context)` method.
 2. Inside `open`, call `context.protocols.acp.open(request, options)` and return the resulting `AgentSessionRuntime`.
 
-Put Agent-specific transport, authentication, model, timeout, tool, stderr, and extension behavior in the ACP options. The host retains shared session, input, transcript, activity, and persistence ownership.
+Put executable Agent-specific authentication, dynamic model projection, tool
+shaping, and protocol extensions in the custom ACP options. The host retains
+shared session, input, transcript, activity, and persistence ownership.

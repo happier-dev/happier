@@ -1,5 +1,15 @@
 /** @moduleRealm daemon */
 import type {
+    ScmReviewWorkspaceMaterializePreparedRequest as ProtocolScmReviewWorkspaceMaterializePreparedRequest,
+    ScmReviewWorkspaceMaterializePreparedResponse as ProtocolScmReviewWorkspaceMaterializePreparedResponse,
+} from '@happier-dev/protocol';
+
+export type ScmReviewWorkspaceMaterializePreparedRequest =
+    ProtocolScmReviewWorkspaceMaterializePreparedRequest;
+export type ScmReviewWorkspaceMaterializePreparedResponse =
+    ProtocolScmReviewWorkspaceMaterializePreparedResponse;
+
+import type {
     ScmBranchCheckoutRequest,
     ScmBranchCheckoutResponse,
     ScmBranchCreateRequest,
@@ -371,6 +381,20 @@ export type WorkspaceIntegrationHandlers = Readonly<{
             workspaceIntegrationMetadata?: WorkspaceTransferMetadata;
         }>
     ) => Promise<void> | void;
+    /**
+     * Materializes an already-authorized pull-request source tip at one exact
+     * local root. The caller supplies no backend/provider selector here: the
+     * selected backend owns remote verification, fetch, safe movement and the
+     * resulting local-head currentness.
+     */
+    prepareReviewWorkspace?: (
+        input: Readonly<{
+            context: BackendRuntimeContext;
+            request: ScmReviewWorkspaceMaterializePreparedRequest;
+            /** Operation-scoped cancellation; forward it across external awaits. */
+            signal: AbortSignal;
+        }>
+    ) => Promise<ScmReviewWorkspaceMaterializePreparedResponse> | ScmReviewWorkspaceMaterializePreparedResponse;
     realizeWorkspaceCheckout?: (
         input: Readonly<{
             context: BackendRuntimeContext;

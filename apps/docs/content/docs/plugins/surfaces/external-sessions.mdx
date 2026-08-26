@@ -97,80 +97,6 @@ projects at runtime carries no literal for the compiler to read, so
 `definePlugin` still refuses both mistakes with a `TypeError` at definition
 time — which is also what a JavaScript author gets.
 
-## Low-level ABI equivalent
-
-The following direct `PluginApi` shape explains the bindings `definePlugin`
-generates, for host conformance fixtures. It is not a second ordinary authoring
-path, and it is the only ABI block on this page: every optional facet below is
-authored as a field on the same `definePlugin` Agent entry.
-
-```ts
-import type { PluginApi } from '@happier-dev/plugin-sdk';
-import type {
-  AgentExternalSessionHooksContribution,
-  AgentExternalSessionObservationContribution,
-  AgentExternalSessionsContribution,
-  AgentExternalSessionTakeoverContribution,
-} from '@happier-dev/plugin-sdk/sessions/external';
-
-declare const externalSessions: AgentExternalSessionsContribution;
-declare const hooks: AgentExternalSessionHooksContribution;
-declare const takeover: AgentExternalSessionTakeoverContribution;
-const observation = {
-  describeResource(request) {
-    // Grouping only: no watch, read, or observation authority is granted here.
-    return {
-      resourceKey: `exampleReviewHome:${String(request.source.home ?? 'default')}`,
-      linkKey: request.remoteSessionId,
-    };
-  },
-
-  observeResource(request) {
-    // Ask the host to reconcile rather than pushing unsolicited evidence, and
-    // dispose whatever this call started.
-    request.requestReconcile();
-    return { dispose() {} };
-  },
-
-  reconcileResource(request) {
-    const observedAtMs = Date.now();
-    if (request.purpose === 'resource_descriptors') {
-      return {
-        purpose: 'resource_descriptors',
-        outcomes: request.links.map(({ linkKey }) => ({
-          kind: 'described',
-          descriptor: {
-            resourceKey: request.resourceKey,
-            linkKey,
-            changeObservation: 'reconcile_only',
-          },
-        })),
-      };
-    }
-    return {
-      purpose: 'observation_evidence',
-      outcomes: request.links.map(({ linkKey }) => ({
-        linkKey,
-        facts: [{
-          kind: 'successful_empty',
-          evidenceClass: 'reconciliation',
-          emptyTurnPhase: 'idle',
-          observedAtMs,
-          expiresAtMs: observedAtMs + 30_000,
-        }],
-      })),
-    };
-  },
-} satisfies AgentExternalSessionObservationContribution;
-
-export function activate(api: PluginApi) {
-  api.agents.registerExternalSessions('example', externalSessions);
-  api.agents.registerExternalSessionHooks('example', hooks);
-  api.agents.registerExternalSessionTakeover('example', takeover);
-  api.agents.registerExternalSessionObservation('example', observation);
-}
-```
-
 The contribution has exactly six required methods:
 
 - `resolveSource`
@@ -600,7 +526,7 @@ other same-Agent author fields in any order. The same `definePlugin` Agent entry
 must provide the exact-six External Sessions contribution and have its existing
 `externalSessions` manifest right. Hook registration adds no capability,
 manifest declaration, or separate contribution family. The generated binding
-appears once under "Low-level ABI equivalent" and is for conformance only.
+is part of the one `activate` function returned by `definePlugin`.
 
 `installationVariants` is the complete registration-time snapshot. Each
 variant declares its configuration targets and every event the host must
@@ -747,7 +673,7 @@ contribution or the complete activation is rejected. A primary runtime factory
 is not required for the declaration, so auxiliary-only and declarative ACP
 Agents can provide the facet; an actual takeover still requires a current
 spawnable primary runtime immediately before spawn. The generated binding
-appears once under "Low-level ABI equivalent" and is for conformance only.
+is part of the one `activate` function returned by `definePlugin`.
 
 Immediately before `resolveLaunch`, the host calls the same current
 generation's `resolveLinkedIdentity` and uses that fresh successful result.
@@ -757,7 +683,8 @@ The callback receives:
   controls;
 - `linkedSessionId` correlation, limited to 2,000 code units;
 - the freshly resolved `source`, `remoteSessionId`, and `linkData`; and
-- optional `linkedDirectory` context, limited to 10,000 code units.
+- the required host-selected `targetDirectory` plus optional
+  `linkedDirectory` context, each limited to 10,000 code units.
 
 Persisted session metadata alone is never launch authority. The wrapper binds
 the call to the current Agent generation, combines caller cancellation with
@@ -779,22 +706,29 @@ with exactly:
     directory: string;
     backendModeHint?: string;
     environmentVariables?: Readonly<Record<string, string>>;
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
   };
 }
 ```
 
-`directory` is required and limited to 10,000 code units.
+`directory` is required and limited to 10,000 code units. It is Agent-native
+launch context; the host-selected `targetDirectory` remains the spawned
+process working directory.
 `backendModeHint`, when used, is the Agent's existing narrow backend-mode
 vocabulary and is limited to 256 code units. Environment variables are limited
 to 64 entries, 128 code units per key, and 16,384 code units per value. Every
 key must also pass that Agent's existing process-environment authorization and
 the host's reserved/custody-key denial; one invalid key rejects the whole plan.
+`runtimeDescriptorV1`, when present, is the strict bounded Agent-owned runtime
+identity carried to the target Agent's Session opener. The host validates the
+descriptor and transports it without interpreting its Agent-specific payload;
+do not replace it with a private native-resume alias or generic metadata bag.
 
 This callback does not choose the target Agent, existing/resume identity,
 transcript storage or authority, directory admission, Connected Services,
 Pending/admission behavior, runtime services, or spawn/control lifecycle. Do
 not return `SpawnSessionOptions`, `BackendSessionLaunchHintsV1`,
-`resumePlanOptions`, session-state updates, source/session identities,
+`resumePlanOptions`, session-state updates, source/session identities, generic
 metadata, or other launch hints. The host privately maps the accepted fields,
 then rechecks both the originating generation and a current spawnable primary
 runtime immediately before the spawn effect. Retirement or replacement fails

@@ -1,26 +1,23 @@
 export type { AuthCallbackCreateInput } from '../connectedAccounts.js';
-export type { AuthCallbackCreateResult } from '../connectedAccounts.js';
 export type { AuthCallbackMode } from '../connectedAccounts.js';
-export type { AuthCallbackResult } from '../connectedAccounts.js';
-export type { AuthCallbackService } from '../connectedAccounts.js';
-export type { AuthCallbackSession } from '../connectedAccounts.js';
 export type { AuthCallbackWaitInput } from '../connectedAccounts.js';
-export type { AuthCredentialWriteInput } from '../connectedAccounts.js';
-export type { AuthCredentialWriteResult } from '../connectedAccounts.js';
-export type { AuthDiagnostic } from '../connectedAccounts.js';
 export type { AuthFailureCode } from '../connectedAccounts.js';
 export type { AuthLoopbackInput } from '../connectedAccounts.js';
-export type { AuthLoopbackResult } from '../connectedAccounts.js';
 export type { AuthMaterializationBinding } from '../connectedAccounts.js';
 export type { AuthMaterializationHelpers } from '../connectedAccounts.js';
-export type { AuthOpenBrowserResult } from '../connectedAccounts.js';
 export type { AuthPkceChallenge } from '../connectedAccounts.js';
 export type { AuthPromptTextInput } from '../connectedAccounts.js';
-export type { AuthPromptTextResult } from '../connectedAccounts.js';
-export type { AuthenticateOptions } from '../connectedAccounts.js';
-export type { AuthenticateResult } from '../connectedAccounts.js';
-export type { Authenticator } from '../connectedAccounts.js';
-export type { AuthenticatorContext } from '../connectedAccounts.js';
+export type {
+    AuthCallbackCreateResult,
+    AuthCallbackResult,
+    AuthCallbackService,
+    AuthCallbackSession,
+    AuthLoopbackResult,
+    AuthOpenBrowserResult,
+    AuthPromptTextResult,
+    ConnectedAccountAuthDiagnostic,
+    ConnectedAccountAuthFailure,
+} from './projections.js';
 export type { PluginConnectedAccountAuthCompletionResult as ConnectedAccountAuthCompletionResult } from '../services/connectedAccounts.js';
 export type { PluginConnectedAccountAuthenticationAttempt as ConnectedAccountAuthenticationAttempt } from '../services/connectedAccounts.js';
 export type { ConnectedAccountAuthenticationContext } from '../connectedAccounts.js';
@@ -105,7 +102,6 @@ export type { UnsupportedAccountUsage } from '../connectedAccounts.js';
 export { buildOauthAuthEntry } from '../connectedAccounts.js';
 export { classifyProviderLimitEvidence } from '../connectedAccounts.js';
 export { defineAuthMaterialization } from '../connectedAccounts.js';
-export { isAuthenticateResult } from '../connectedAccounts.js';
 export { parseCredentialRecord } from '../connectedAccounts.js';
 export { requireOauthCredentialRecordWithExpiry } from '../connectedAccounts.js';
 export { requireTokenCredentialRecord } from '../connectedAccounts.js';

@@ -434,6 +434,7 @@ describe('plugin UI open and Action components', () => {
         const seed = {
             prompt: { text: 'Repair the failing check', mode: 'replace' },
             profileId: 'profile-review',
+            checkoutIntent: 'createWorktree',
             placement: { serverId: 'server-1', machineId: 'machine-1', directory: '/workspace' },
         } as const;
 

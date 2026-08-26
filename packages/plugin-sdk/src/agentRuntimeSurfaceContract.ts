@@ -426,10 +426,13 @@ type _SessionOpenMustNotExposeOpaqueOrAttachState = AssertNever<
   Extract<keyof AgentSessionOpenRequest, 'initialRuntimeState' | 'resume' | 'attach'>
 >;
 
-type _SessionOpenMustCarryOnlyTheBoundedVB4Inputs = AssertTrue<
+type _SessionOpenMustCarryOnlyTheBoundedRuntimeInputs = AssertTrue<
   Equal<
-    Extract<keyof AgentSessionOpenRequest, 'launchEnvironment' | 'configuration'>,
-    'launchEnvironment' | 'configuration'
+    Extract<
+      keyof AgentSessionOpenRequest,
+      'launchEnvironment' | 'runtimeDescriptorV1' | 'configuration'
+    >,
+    'launchEnvironment' | 'runtimeDescriptorV1' | 'configuration'
   >
 >;
 
@@ -552,7 +555,7 @@ type _AgentRuntimeMustNotExposeGenericControls = AssertNever<
 type _TerminalLaunchRequestMustStayHostResolved = AssertTrue<
   Equal<
     keyof AgentTerminalLaunchRequest,
-    'sessionId' | 'cwd' | 'metadata' | 'modelSelection'
+    'sessionId' | 'cwd' | 'metadata' | 'configuration' | 'modelSelection'
   >
 >;
 

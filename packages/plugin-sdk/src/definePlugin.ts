@@ -24,8 +24,17 @@ import type {
 } from './storage/database.js';
 
 import type {
+    AgentCliAuthContributionV1,
+    AgentCliSessionCommandDeclarationV1,
+    AgentConnectedAccountLaunchContributionV1,
+    AgentExperimentalVendorResumeSupportContributionV1,
+    AgentPreflightSessionControlsContributionV1,
+    AgentTerminalPromptSubmitVerificationPolicyV1,
     AgentProviderBindingAdapter,
+    AgentDaemonSpawnHooks,
+    AgentProviderCliAttachDeclarationV1,
     AgentRuntimeFactory,
+    AgentSessionStartupContributionV1,
     AgentSessionRunnerFactoryLocatorV1,
 } from './agentRuntime/index.js';
 import type { AgentContribution } from './agents.js';
@@ -328,12 +337,30 @@ export type PluginAgentDefinition = Readonly<{
         factory: AgentRuntimeFactory;
         providerBinding?: AgentProviderBindingAdapter;
         sessionRunnerFactory?: AgentSessionRunnerFactoryLocatorV1;
+        daemonSpawnHooks?: AgentDaemonSpawnHooks;
+        providerCliAttach?: AgentProviderCliAttachDeclarationV1;
+        cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
+        cliAuth?: AgentCliAuthContributionV1;
+        connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+        preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
+        terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
+        sessionStartup?: AgentSessionStartupContributionV1;
+        vendorResumeSupport?: AgentExperimentalVendorResumeSupportContributionV1;
     }>
     | Readonly<{
         declaration: PluginHostOwnedAgentDeclaration;
         factory?: never;
         providerBinding?: never;
         sessionRunnerFactory?: never;
+        daemonSpawnHooks?: never;
+        providerCliAttach?: never;
+        cliSessionCommand?: never;
+        cliAuth?: AgentCliAuthContributionV1;
+        connectedAccountLaunch?: never;
+        preflightSessionControls?: never;
+        terminalPromptSubmitVerification?: never;
+        sessionStartup?: never;
+        vendorResumeSupport?: never;
     }>
 );
 
@@ -1726,6 +1753,15 @@ const AGENTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
                     definition.factory,
                     definition.providerBinding === undefined
                         && definition.sessionRunnerFactory === undefined
+                        && definition.daemonSpawnHooks === undefined
+                        && definition.providerCliAttach === undefined
+                        && definition.cliSessionCommand === undefined
+                        && definition.cliAuth === undefined
+                        && definition.connectedAccountLaunch === undefined
+                        && definition.preflightSessionControls === undefined
+                        && definition.terminalPromptSubmitVerification === undefined
+                        && definition.sessionStartup === undefined
+                        && definition.vendorResumeSupport === undefined
                         ? undefined
                         : {
                             ...(definition.providerBinding === undefined
@@ -1734,8 +1770,40 @@ const AGENTS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
                             ...(definition.sessionRunnerFactory === undefined
                                 ? {}
                                 : { sessionRunnerFactory: definition.sessionRunnerFactory }),
+                            ...(definition.daemonSpawnHooks === undefined
+                                ? {}
+                                : { daemonSpawnHooks: definition.daemonSpawnHooks }),
+                            ...(definition.providerCliAttach === undefined
+                                ? {}
+                                : { providerCliAttach: definition.providerCliAttach }),
+                            ...(definition.cliSessionCommand === undefined
+                                ? {}
+                                : { cliSessionCommand: definition.cliSessionCommand }),
+                            ...(definition.cliAuth === undefined
+                                ? {}
+                                : { cliAuth: definition.cliAuth }),
+                            ...(definition.connectedAccountLaunch === undefined
+                                ? {}
+                                : { connectedAccountLaunch: definition.connectedAccountLaunch }),
+                            ...(definition.preflightSessionControls === undefined
+                                ? {}
+                                : { preflightSessionControls: definition.preflightSessionControls }),
+                            ...(definition.terminalPromptSubmitVerification === undefined
+                                ? {}
+                                : {
+                                    terminalPromptSubmitVerification:
+                                        definition.terminalPromptSubmitVerification,
+                                }),
+                            ...(definition.sessionStartup === undefined
+                                ? {}
+                                : { sessionStartup: definition.sessionStartup }),
+                            ...(definition.vendorResumeSupport === undefined
+                                ? {}
+                                : { vendorResumeSupport: definition.vendorResumeSupport }),
                         },
                 );
+            } else if (definition.cliAuth !== undefined) {
+                api.agents.registerCliAuth(localId, definition.cliAuth);
             }
             if (definition.externalSessions !== undefined) {
                 api.agents.registerExternalSessions(localId, definition.externalSessions);

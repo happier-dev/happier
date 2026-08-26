@@ -65,6 +65,27 @@ const producer = definePlugin({
 });
 
 describe('single-declaration Action contracts', () => {
+    it('keeps admitted targeted-operation handles structurally compatible across SDK copies', () => {
+        type Input = Readonly<{ id: string }>;
+        type Result = Readonly<{ accepted: true }>;
+        type LocalHandle = AdmittedTargetedOperationExecutionHandle<Input, Result, 'inspect'>;
+        type IndependentSdkCopy = Readonly<{
+            typeProjection?: Readonly<{ input: Input; result: Result }>;
+            identity: LocalHandle['identity'];
+        }>;
+
+        if (false) {
+            const local = null as unknown as LocalHandle;
+            const independent = null as unknown as IndependentSdkCopy;
+            const acceptsIndependentCopy: LocalHandle = independent;
+            const acceptsLocalCopy: IndependentSdkCopy = local;
+            void acceptsIndependentCopy;
+            void acceptsLocalCopy;
+        }
+
+        expect(true).toBe(true);
+    });
+
     it('requires one closed author execution target with a relative client module path', () => {
         if (false) {
             const daemonExecution: PluginActionExecutionV2 = { target: 'daemon' };

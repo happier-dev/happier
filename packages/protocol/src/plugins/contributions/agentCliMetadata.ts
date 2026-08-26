@@ -117,27 +117,6 @@ export const PluginAgentCliInstallMetadataSchema = z.object({
 }).strict();
 export type PluginAgentCliInstallMetadata = z.infer<typeof PluginAgentCliInstallMetadataSchema>;
 
-export const PluginAgentCliAuthProbeMetadataSchema = z.object({
-  parser: z.enum([
-    'none',
-    'unknown',
-    'envOnly',
-    'claudeCredentialsFile',
-    'codexLoginStatus',
-    'geminiCredentialFiles',
-    'opencodeAuthList',
-    'piEnvOnly',
-    'copilotGhAuth',
-    'kiroWhoamiJson',
-    'cursorAboutJson',
-  ]),
-  backgroundChecks: z.enum(['safe', 'manual_only']),
-  statusArgs: z.array(z.string()).nullable().optional(),
-  envVars: UniqueNonEmptyStringsSchema.optional(),
-  credentialPaths: UniqueNonEmptyStringsSchema.optional(),
-}).strict();
-export type PluginAgentCliAuthProbeMetadata = z.infer<typeof PluginAgentCliAuthProbeMetadataSchema>;
-
 export const PluginAgentCliLoginLaunchSchema = z.object({
   kind: z.enum(['primary', 'device_code']),
   args: z.array(z.string()),
@@ -148,7 +127,24 @@ export type PluginAgentCliLoginLaunch = z.infer<typeof PluginAgentCliLoginLaunch
 export const PluginAgentCliAuthMetadataSchema = z.object({
   support: z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']),
   machineLoginKey: NonEmptyStringSchema.optional(),
-  probe: PluginAgentCliAuthProbeMetadataSchema,
+  /**
+   * Host-owned credential presence facts. These never select an Agent parser
+   * or execute a command: the host only checks declared environment keys.
+   */
+  environmentVariables: UniqueNonEmptyStringsSchema.optional(),
+  /** Host-owned JSON credential-file presence facts. */
+  credentialPaths: UniqueNonEmptyStringsSchema.optional(),
+  /**
+   * The declared status command is a bounded, noninteractive system-tool
+   * probe. This is a scheduling fact only: the host still owns executable
+   * resolution, environment, process lifetime, cancellation, and bounds.
+   */
+  nonInteractiveStatusProbe: z.literal(true).optional(),
+  /**
+   * Existing status-only Agents that intentionally cannot infer a signed-out
+   * state retain that distinction when no declared credential is present.
+   */
+  missingCredentialState: z.enum(['logged_out', 'unknown']).optional(),
   loginLaunches: z.array(PluginAgentCliLoginLaunchSchema).max(2)
     .refine(
       (launches) => new Set(launches.map((launch) => launch.kind)).size === launches.length,
@@ -171,6 +167,20 @@ export const PluginAgentCliAuthMetadataSchema = z.object({
   }
 });
 export type PluginAgentCliAuthMetadata = z.infer<typeof PluginAgentCliAuthMetadataSchema>;
+
+/**
+ * Background auth checks are allowed only when the manifest provides a
+ * host-owned static credential fact or explicitly declares its bounded status
+ * tool as noninteractive. Keeping this derivation beside the wire shape stops
+ * UI scheduling and CLI projection from maintaining separate safety policies.
+ */
+export function isPluginAgentCliAuthBackgroundCheckSafe(
+  cli: Pick<PluginAgentCliMetadata, 'auth'>,
+): boolean {
+  return cli.auth.environmentVariables !== undefined
+    || cli.auth.credentialPaths !== undefined
+    || cli.auth.nonInteractiveStatusProbe === true;
+}
 
 export const PluginAgentCliMetadataSchema = z.object({
   displayName: NonEmptyStringSchema.optional(),

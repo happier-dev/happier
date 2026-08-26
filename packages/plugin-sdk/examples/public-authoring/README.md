@@ -111,9 +111,10 @@ frame owner. Do not substitute a private host bridge or a knowingly stale
 runtime.
 
 It is advanced reference material, not the ordinary starting path. Prefer the
-CLI scaffold and `definePlugin(...)` for a normal plugin. For a compiled
-`definePlugin` package-root reference with a custom Session Agent and distinct
-runner leaf, see `../advanced-package-root/`.
+CLI scaffold and `definePlugin(...)` for a normal plugin. For the smallest
+custom Session Agent and distinct runner leaf, see `../session-agent/`; use
+`../advanced-package-root/` when the same package needs its composite Agent,
+Provider, Account, Resource, or background capabilities.
 
 The Voice leaves use only the final public `/voice`, `/voice/client`, and
 `/voice/speech` subpaths. The browser client entry binds its two conversation

@@ -358,4 +358,59 @@ describe('author signature closure source contract', () => {
             expect(manifestPublicSource).toContain(`export type { ${name} } from '../manifest.js';`);
         }
     });
+
+    it('projects shared runtime and prepared-workspace leaves through their semantic author entrypoints', async () => {
+        const [
+            agentSessionSource,
+            agentRuntimeProjectionSource,
+            agentRuntimePublicSource,
+            externalSessionsPublicSource,
+            scmBackendSource,
+            scmBackendPublicSource,
+            scmPublicSource,
+            scmGitMaterializerSource,
+        ] = await Promise.all([
+            readFile(new URL('./agentRuntime/session.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./agentRuntime/projections.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./agents/runtime/index.public.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./sessions/external/index.public.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./scm/backend.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./scm/backend/index.public.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./scm/index.public.ts', import.meta.url), 'utf8'),
+            readFile(new URL('../../plugins/scm-git/src/operations/materializeGitWorkspaceCheckout.ts', import.meta.url), 'utf8'),
+        ]);
+
+        expect(agentSessionSource).toContain(
+            "RuntimeDescriptorV1 as ProtocolRuntimeDescriptorV1",
+        );
+        expect(agentSessionSource).toContain(
+            'export type RuntimeDescriptorV1 = ProtocolRuntimeDescriptorV1;',
+        );
+        expect(agentRuntimeProjectionSource).toMatch(
+            /export type \{[\s\S]*\bRuntimeDescriptorV1,[\s\S]*\} from '\.\/session\.js';/u,
+        );
+        expect(agentRuntimePublicSource).toContain(
+            "export type { RuntimeDescriptorV1 } from '../../agentRuntime/projections.js';",
+        );
+        expect(externalSessionsPublicSource).toContain(
+            "export type { RuntimeDescriptorV1 } from '../../agentRuntime/projections.js';",
+        );
+
+        for (const source of [scmBackendSource, scmBackendPublicSource]) {
+            expect(source).toContain('ScmReviewWorkspaceMaterializePreparedRequest');
+            expect(source).toContain('ScmReviewWorkspaceMaterializePreparedResponse');
+        }
+        expect(scmBackendSource).toContain("from '@happier-dev/protocol';");
+        expect(scmBackendPublicSource).toContain("from '../backend.js';");
+        for (const name of [
+            'ScmReviewWorkspaceCurrentness',
+            'ScmReviewWorkspaceSourceTip',
+        ]) {
+            expect(scmPublicSource).toContain(
+                `export type { ${name} } from './projections.js';`,
+            );
+        }
+        expect(scmGitMaterializerSource).toContain("from '@happier-dev/plugin-sdk/scm';");
+        expect(scmGitMaterializerSource).not.toContain("from '@happier-dev/protocol'");
+    });
 });

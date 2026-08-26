@@ -8,3 +8,28 @@ Implement `AgentRuntime.surfaces.terminal.resolveLaunch(request)` when the Agent
 The result contains the executable argument vector, optional launch environment, supported process presentation, and bounded result metadata. The Agent leaf owns its CLI arguments and native breadcrumbs. The host owns terminal selection, process presentation, liveness, input policy, session continuity, and public state.
 
 Terminal metadata does not grant write access to a running session. Do not write Happier transcript rows or session state directly; return the public launch plan and let the host apply supported result metadata.
+
+## Provider CLI attach
+
+When an Agent has a provider-native CLI attach mode, declare
+`providerCliAttach` on the same `definePlugin` Agent entry. Its three required
+callbacks have deliberately narrow jobs:
+
+- `resolveTarget({ metadata, fallbackServerBaseUrl })` derives a string-only
+  target from bounded Session metadata;
+- `createArgs(target)` creates the Agent CLI argument vector; and
+- `buildHealthUrl(target)` returns the endpoint the host should probe, or
+  `null` when no health probe applies.
+
+Happier owns executable resolution, process creation, credentials, health
+probing, connection custody, and Session continuity. OpenCode is the current
+positive consumer of this public declaration.
+
+## Prompt-submit verification
+
+Declare `terminalPromptSubmitVerification` only when the Agent must recognize
+its own terminal prompts around Happier's existing submit verification. The
+policy may decide whether a prompt needs verification and inspect bounded
+screen text before staging and after submit. It never receives a terminal
+handle or owns submission, retry, cancellation, or cleanup. Claude is the
+current positive consumer.

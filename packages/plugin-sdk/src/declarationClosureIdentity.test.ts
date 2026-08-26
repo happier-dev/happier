@@ -821,7 +821,7 @@ describe('normal SDK declaration closure identities', () => {
         )).toBeUndefined();
     });
 
-    it('publishes targeted operation and surface handles as nameable opaque declaration classes', async () => {
+    it('publishes targeted operation and surface handles as cross-copy structural declaration classes', async () => {
         const [operationSourceText, authoringSourceText] = await Promise.all([
             readFile(new URL('./actions/admittedTargetedOperation.ts', import.meta.url), 'utf8'),
             readFile(new URL('./targetedContributionAuthoring.ts', import.meta.url), 'utf8'),
@@ -839,15 +839,17 @@ describe('normal SDK declaration closure identities', () => {
             /export declare abstract class AdmittedTargetedOperationExecutionHandle\b/u,
         );
         expect(operationDeclaration).toMatch(
-            /protected readonly opaqueTypes: Readonly<\{\s*readonly input: TInput;\s*readonly result: TResult;\s*\}>;/u,
+            /readonly typeProjection\?: Readonly<\{\s*readonly input: TInput;\s*readonly result: TResult;\s*\}>;/u,
         );
+        expect(operationDeclaration).not.toMatch(/\b(?:private|protected) readonly\b/u);
         expect(operationDeclaration).not.toMatch(
             /declare const admittedTargetedOperationExecutionHandleEvidence\b/u,
         );
         expect(authoringDeclaration).toMatch(
             /export declare abstract class ContributionSurfaceHandle\b/u,
         );
-        expect(authoringDeclaration).toMatch(/protected readonly opaqueInput: TInput;/u);
+        expect(authoringDeclaration).toMatch(/readonly inputProjection\?: TInput;/u);
+        expect(authoringDeclaration).not.toMatch(/protected readonly opaqueInput/u);
         expect(authoringDeclaration).not.toMatch(
             /declare const contributionSurfaceInputEvidence\b/u,
         );

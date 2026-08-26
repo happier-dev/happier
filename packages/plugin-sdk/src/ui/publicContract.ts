@@ -373,6 +373,12 @@ export type PluginUiSelectActionInputHostRequestV1 = {
 export type PluginUiNewSessionSeedV1 = {
     prompt?: { text: string; mode: 'replace' | 'append' };
     profileId?: string;
+    /**
+     * The resolved checkout question. It carries no worktree identity: the
+     * host's New Session screen still owns the actual worktree selection and
+     * any persisted checkout draft.
+     */
+    checkoutIntent?: PluginUiSessionCheckoutIntentV1;
     placement?: { serverId?: string; machineId?: string; directory?: string };
     /**
      * Exact placement candidates in the same grammar as the existing
@@ -390,6 +396,14 @@ export type PluginUiNewSessionSeedV1 = {
      */
     attachments?: { attachmentLocalId: string; value: ComposerAttachmentAuthorValueV1 }[];
 };
+
+/** The canonical host checkout-question vocabulary projected for UI authors. */
+export type PluginUiSessionCheckoutIntentV1 =
+    | 'none'
+    | 'preparedReviewWorkspace'
+    | 'reuseWorkspace'
+    | 'createWorktree'
+    | 'ask';
 
 export type PluginUiSessionPlacementCandidateV1 = {
     projectKey: ProjectKeyV1;

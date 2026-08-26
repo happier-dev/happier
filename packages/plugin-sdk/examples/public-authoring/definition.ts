@@ -520,6 +520,7 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                     'context',
                     'executeAction',
                     'openSurface',
+                    'publishCurrentUiContext',
                     'readResource',
                     'watchResource',
                 ],

@@ -49,11 +49,12 @@ deny a matching request or continue it with an in-scope URL, method, or
 non-protected-header rewrite; it does not rewrite bodies, inject provider
 authentication, or add a second fetch or interception chain.
 
-When the host has attached a Connected Account credential to the request, the
-chain may still deny it or rewrite its non-protected headers, but it may not
-change the URL or method. That credential is authorized for one exact request,
-so a retargeted call would carry the secret to a destination its owner never
-approved; the host refuses the rewrite instead.
+When a request carries a protected header—including a Connected Account
+credential that the host has attached—the chain may still deny it or rewrite
+its non-protected headers, but it may not change the URL or method. The host
+restores protected headers from the original request after interception, so a
+retargeted call could carry a secret to a destination or method its caller
+never approved; the host refuses the rewrite instead.
 
 Credential, identity, cookie, token, signature, and API-key headers require an
 explicit closed policy rather than name heuristics. The host always hides and
@@ -64,10 +65,11 @@ the current request. It also hides and protects the closed V1 standard set:
 `proxy-authentication-info`, `dpop`, `signature`, `signature-input`, `host`,
 `origin`, `referer`, `forwarded`, `x-api-key`, `api-key`, `x-auth-token`,
 `x-client-ip`, `x-real-ip`, `x-signature`, `x-hub-signature-256`, and headers
-whose names begin with `sec-` or `x-forwarded-`. Other caller-supplied headers
-are visible and mutable to a matching trusted installation-wide interceptor;
-Happier does not infer additional protected headers from words such as “token” or
-“identity”.
+whose names begin with `sec-` or `x-forwarded-`. A request carrying any
+protected header is recipient- and method-bound during interception. Other
+caller-supplied headers are visible and mutable to a matching trusted
+installation-wide interceptor; Happier does not infer additional protected
+headers from words such as “token” or “identity”.
 
 The Protocol retains `browser`, `clipboard`, and `externalLinks` as internal declarations;
 the public SDK rejects them until a named maintained product consumer proves the complete

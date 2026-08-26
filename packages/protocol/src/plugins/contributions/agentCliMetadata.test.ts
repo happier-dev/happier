@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AgentDefinitionV1Schema } from '../agentDefinitionV1.js';
 import { ingestPluginManifestV2 } from '../manifest/ingest.js';
+import { isPluginAgentCliAuthBackgroundCheckSafe } from './agentCliMetadata.js';
 import { PluginAgentContributionV2Schema } from './v2.js';
 
 function nativeAgent(cli: unknown) {
@@ -45,12 +46,8 @@ function validCliMetadata() {
     },
     auth: {
       support: 'login_terminal',
-      probe: {
-        parser: 'unknown',
-        backgroundChecks: 'safe',
-        statusArgs: null,
-        envVars: ['XAI_API_KEY'],
-      },
+      environmentVariables: ['XAI_API_KEY'],
+      missingCredentialState: 'unknown',
       loginLaunches: [
         { kind: 'primary', args: ['login'] },
         { kind: 'device_code', args: ['login', '--device-auth'] },
@@ -64,6 +61,46 @@ describe('native Agent CLI/auth metadata', () => {
     const parsed = PluginAgentContributionV2Schema.parse(nativeAgent(validCliMetadata()));
 
     expect(parsed.cli).toEqual(validCliMetadata());
+  });
+
+  it('rejects retired host-owned auth parser metadata', () => {
+    const cli = validCliMetadata();
+    expect(PluginAgentContributionV2Schema.safeParse(nativeAgent({
+      ...cli,
+      auth: {
+        ...cli.auth,
+        probe: { parser: 'unknown', backgroundChecks: 'safe' },
+      },
+    })).success).toBe(false);
+  });
+
+  it('derives background-safe auth only from declared static facts or an explicit noninteractive probe', () => {
+    const cli = validCliMetadata();
+    const staticCredential = PluginAgentContributionV2Schema.parse(nativeAgent(cli)).cli;
+    if (!staticCredential) throw new Error('Expected CLI metadata');
+
+    expect(isPluginAgentCliAuthBackgroundCheckSafe(staticCredential)).toBe(true);
+
+    const noninteractiveProbe = PluginAgentContributionV2Schema.parse(nativeAgent({
+      ...cli,
+      auth: {
+        support: 'status_only',
+        nonInteractiveStatusProbe: true,
+        loginLaunches: [],
+      },
+    })).cli;
+    if (!noninteractiveProbe) throw new Error('Expected CLI metadata');
+    expect(isPluginAgentCliAuthBackgroundCheckSafe(noninteractiveProbe)).toBe(true);
+
+    const manualOnly = PluginAgentContributionV2Schema.parse(nativeAgent({
+      ...cli,
+      auth: {
+        support: 'status_only',
+        loginLaunches: [],
+      },
+    })).cli;
+    if (!manualOnly) throw new Error('Expected CLI metadata');
+    expect(isPluginAgentCliAuthBackgroundCheckSafe(manualOnly)).toBe(false);
   });
 
   it('preserves bounded first-party resolver, setup, and machine-login compatibility facts', () => {

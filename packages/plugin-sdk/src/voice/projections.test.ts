@@ -63,6 +63,7 @@ import type {
 import type {
     VoiceAccountOperationService as CurrentVoiceAccountOperationService,
     VoiceCredentialAccess as CurrentVoiceCredentialAccess,
+    RegisteredVoiceProviderRuntime as CurrentRegisteredVoiceProviderRuntime,
     VoiceRawCredentialAccess as CurrentVoiceRawCredentialAccess,
     VoiceSettingsActionContext as CurrentVoiceSettingsActionContext,
 } from './index.js';
@@ -117,6 +118,7 @@ import {
     type VoiceProviderContribution,
     type VoiceProviderSettings,
     type VoiceProvidersRegistrationApi,
+    type RegisteredVoiceProviderRuntime,
     type VoiceRawCredentialAccess,
     type VoiceRawCredentialGrantDeclaration,
     type VoiceSettingReadinessDeclaration,
@@ -170,6 +172,7 @@ const APPROVED_ROOT_VOICE_PROJECTION_EXPORTS = [
     'VoiceProviderContributionSchema',
     'VoiceProviderSettings',
     'VoiceProvidersRegistrationApi',
+    'RegisteredVoiceProviderRuntime',
     'VoiceRawCredentialAccess',
     'VoiceRawCredentialGrantDeclaration',
     'VoiceSchema',
@@ -261,6 +264,7 @@ const SDK_OWNED_VOICE_PROJECTION_TYPE_ALIASES = [
     'VoiceCredentialAccess',
     'VoiceSettingsActionContext',
     'VoiceProvidersRegistrationApi',
+    'RegisteredVoiceProviderRuntime',
 ] as const;
 
 type IsMutuallyAssignable<Left, Right> =
@@ -591,6 +595,10 @@ describe('Voice package-local publication projection', () => {
         expectTypeOf<IsMutuallyAssignable<
             VoiceProvidersRegistrationApi,
             CurrentVoiceProvidersRegistrationApi
+        >>().toEqualTypeOf<true>();
+        expectTypeOf<IsMutuallyAssignable<
+            RegisteredVoiceProviderRuntime,
+            CurrentRegisteredVoiceProviderRuntime
         >>().toEqualTypeOf<true>();
         expectTypeOf<IsMutuallyAssignable<
             VoiceRawCredentialAccess,

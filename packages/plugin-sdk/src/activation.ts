@@ -1,5 +1,6 @@
 /** @moduleRealm daemon */
 import type {
+    AgentCliAuthContributionV1,
     AgentRuntimeFactory,
     AgentRuntimeRegistrationOptions,
 } from './agentRuntime/index.js';
@@ -346,6 +347,11 @@ export interface PluginApi {
             factory: AgentRuntimeFactory,
             options?: AgentRuntimeRegistrationOptions,
         ): void;
+        /**
+         * Registers the focused auth interpretation for a declarative Agent
+         * whose runtime remains host-owned (for example an ACP Agent).
+         */
+        registerCliAuth(id: string, contribution: AgentCliAuthContributionV1): void;
         registerExternalSessions(id: string, contribution: AgentExternalSessionsContribution): void;
         registerExternalSessionHooks(
             id: string,

@@ -8,8 +8,8 @@ import {
 import { PluginUiChannelV1Schema, PluginUiPlatformV1Schema } from '../contributions/ui/compatibility.js';
 import { PluginSessionResourceTargetV1Schema } from '../contributions/ui/resources.js';
 import {
-  PluginUiContainerV1Schema,
-  type PluginUiContainerV1,
+  PluginUiDestinationContainerV1Schema,
+  type PluginUiDestinationContainerV1,
 } from '../contributions/ui/surfaceRegistry.js';
 import { PluginUiTargetedContributionsV1Schema } from './targetedContributions.js';
 import {
@@ -37,7 +37,7 @@ export const PluginUiMountContextV1Schema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('destination'),
     destination: asProtocolZod(PluginContributionIdentityV1Schema),
-    container: PluginUiContainerV1Schema,
+    container: PluginUiDestinationContainerV1Schema,
   }).strict(),
   z.object({
     kind: z.literal('embedded'),
@@ -49,7 +49,7 @@ export type PluginUiMountContextV1 =
   | Readonly<{
     kind: 'destination';
     destination: PluginContributionIdentityV1;
-    container: PluginUiContainerV1;
+    container: PluginUiDestinationContainerV1;
   }>
   | Readonly<{
     kind: 'embedded';

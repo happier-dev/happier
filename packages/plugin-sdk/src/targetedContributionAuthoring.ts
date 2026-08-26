@@ -512,15 +512,15 @@ export type ContributionOperationContracts<
 /**
  * A target-local admitted surface handle. It is deliberately unable to reveal
  * renderer/artifact/materialization/credential/controller or Action authority.
- * Its declaration-only nominal carrier retains the surface input type without
- * exposing a runtime materialization handle.
+ * Its optional declaration-only projection retains the surface input type
+ * while remaining structurally compatible across installed SDK copies.
  */
 export declare abstract class ContributionSurfaceHandle<
     TInput extends JsonValue = JsonValue,
     TPointId extends string = string,
     TPresentation extends ContributionSurfacePresentation = ContributionSurfacePresentation,
 > {
-    protected readonly opaqueInput: TInput;
+    readonly inputProjection?: TInput;
     point: Readonly<{
         pointId: TPointId;
         protocol: Readonly<{

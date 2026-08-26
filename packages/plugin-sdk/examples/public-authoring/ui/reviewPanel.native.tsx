@@ -23,6 +23,7 @@ import {
     readReviewOpenableContentReference,
     type ReviewOpenableContentResult,
 } from './reviewOpenableContent.js';
+import { PROJECT_COMPANION_ACTIVITY_CURRENT_UI_CONTEXT } from './reviewClientActions.js';
 
 const REVIEW_SESSION_STATUS_VIEW_ID = 'review-session-status-details';
 const PROJECT_COMPANION_ACTIVITY_VIEW_ID = 'project-companion-activity-log';
@@ -88,22 +89,7 @@ function ReviewSessionStatusPanel({
     const title = activity ? 'Project Companion activity' : 'Review status';
     React.useEffect(() => {
         if (!activity) return;
-        context.hostApi.publishCurrentUiContext({
-            entity: {
-                kind: 'review',
-                label: 'Project Companion activity',
-                summary: 'Review guidance and status are available for this Session.',
-            },
-            detail: { source: 'public-authoring-project-companion-activity' },
-            commands: [{
-                title: 'Open review status',
-                description: 'Open the existing review-status destination on this client.',
-                command: {
-                    kind: 'executeAction',
-                    action: 'open-review-status',
-                },
-            }],
-        });
+        context.hostApi.publishCurrentUiContext(PROJECT_COMPANION_ACTIVITY_CURRENT_UI_CONTEXT);
         return () => context.hostApi.publishCurrentUiContext(null);
     }, [activity, context.hostApi]);
     const refreshAction = <Action.Refresh title="Refresh status" onRefresh={refresh} />;

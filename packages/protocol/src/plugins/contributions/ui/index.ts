@@ -19,7 +19,10 @@ export * from './surfaceRegistry.js';
 export * from './surfaceTargets.js';
 export * from './tokens.js';
 export type {
+  PluginUiViewDestinationBindingV2,
   PluginUiViewDestinationBindingInputV2,
+  PluginUiViewInlineBindingInputV2,
+  PluginUiViewInlineBindingV2,
   PluginUiViewV2,
   PluginUiViewV2Input,
 } from './v2.js';

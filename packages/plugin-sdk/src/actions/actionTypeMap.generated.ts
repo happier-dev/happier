@@ -5712,8 +5712,17 @@ export type PluginActionInputById = {
     readonly "scm.reviewWorkspace.materializePrepared": {
         cwd: string;
         displayName: string;
-        baseRef: string | null;
-        branchMode: 'existing' | 'new';
+        sourceTip: {
+            repository: {
+                kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                deployment: string;
+                repository: string;
+            };
+            cloneUrl: string;
+            branch: string;
+            sourceHeadSha: string;
+            fetchRef: string;
+        };
     };
     readonly "scm.pullRequest.runStacked": {
         [x: string]: unknown;
@@ -27751,6 +27760,19 @@ export type PluginActionResultById = {
         targetPath: string;
         branchName: string;
         created: boolean;
+        currentness: {
+            kind: 'currentAtObservedHead';
+        } | {
+            kind: 'movedToObservedHead';
+            fromSha: string;
+            observedHeadSha: string;
+            recoveryRef: string;
+        } | {
+            kind: 'preservedStale';
+            resolvedHeadSha: string;
+            observedHeadSha: string;
+            reason: 'localCommits' | 'dirtyWorktree' | 'unresolvedHead';
+        };
     } | {
         success: false;
         error: string;

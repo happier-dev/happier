@@ -40,6 +40,7 @@ vi.mock('react-native', async () => {
       ListEmptyComponent?: React.ReactNode;
       ListFooterComponent?: React.ReactNode;
       role?: 'list' | 'listbox';
+      accessibilityLabel?: string;
       contentContainerStyle?: unknown;
       keyboardShouldPersistTaps?: unknown;
       // React 19 passes `ref` as an ordinary prop to a function component, so
@@ -92,7 +93,7 @@ vi.mock('react-native', async () => {
       });
       flatListCapture.windowStarts.push(boundedWindowStart);
       return (
-        <div role={props.role}>
+        <div aria-label={props.accessibilityLabel} role={props.role}>
           {props.ListHeaderComponent}
           {props.data.length === 0
             ? props.ListEmptyComponent
@@ -120,8 +121,7 @@ import { List } from './List.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { Text } from './Text.js';
 
-function mountList(children: React.ReactNode) {
-  const context = createSurfaceContext();
+function mountList(children: React.ReactNode, context = createSurfaceContext()) {
   return mountThroughReactNativeWeb(
     <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
       <PluginUiPresentationHostProviderInternal host={{
@@ -300,6 +300,7 @@ describe('virtualized List data ownership', () => {
 
     const mount = mountList(
       <List
+        accessibilityLabel="Findings"
         items={items}
         keyForItem={(item) => item.id}
         selection={{ defaultSelectedKey: 'first' }}
@@ -310,8 +311,47 @@ describe('virtualized List data ownership', () => {
     const listbox = mount.container.querySelector<HTMLElement>('[role="listbox"]');
     expect(flatListCapture.role.at(-1)).toBe('listbox');
     expect(listbox).not.toBeNull();
+    expect(listbox?.getAttribute('aria-label')).toBe('Findings');
     expect(listbox?.querySelectorAll('[role="option"]')).toHaveLength(2);
     expect(listbox?.querySelectorAll('[role="listitem"]')).toHaveLength(0);
+    mount.unmount();
+  });
+
+  it('rejects blank selectable-list names supplied by an untyped bundle', () => {
+    const items = [{ id: 'first', label: 'First finding' }] as const;
+    const UntypedList = List as unknown as React.ComponentType<Readonly<{
+      accessibilityLabel?: string;
+      items: typeof items;
+      keyForItem: (item: (typeof items)[number]) => string;
+      selection: Readonly<{ defaultSelectedKey: string | null }>;
+      renderItem: (item: (typeof items)[number]) => React.ReactNode;
+    }>>;
+
+    expect(() => mountList(
+      <UntypedList
+        accessibilityLabel="   "
+        items={items}
+        keyForItem={(item) => item.id}
+        selection={{ defaultSelectedKey: 'first' }}
+        renderItem={(item) => <List.Item title={item.label} />}
+      />,
+    )).toThrow('Selectable List requires a non-empty accessible name.');
+  });
+
+  it('resolves a selectable-list name from the plugin translation catalog', () => {
+    const items = [{ id: 'first', label: 'First finding' }] as const;
+    const mount = mountList(
+      <List
+        accessibilityLabelKey="acme.findings"
+        items={items}
+        keyForItem={(item) => item.id}
+        selection={{ defaultSelectedKey: 'first' }}
+        renderItem={(item) => <List.Item title={item.label} />}
+      />,
+      createSurfaceContext({ translations: { 'acme.findings': 'Constats' } }),
+    );
+
+    expect(mount.container.querySelector('[role="listbox"]')?.getAttribute('aria-label')).toBe('Constats');
     mount.unmount();
   });
 
@@ -323,6 +363,7 @@ describe('virtualized List data ownership', () => {
 
     const mount = mountList(
       <List
+        accessibilityLabel="Findings"
         items={items}
         keyForItem={(item) => item.id}
         selection={{ defaultSelectedKey: 'first' }}
@@ -446,6 +487,7 @@ describe('virtualized List data ownership', () => {
 
     const mount = mountList(
       <List
+        accessibilityLabel="Review items"
         items={items}
         keyForItem={(item) => item.id}
         search={{
@@ -512,6 +554,7 @@ describe('virtualized List data ownership', () => {
       const [selectedKey, setSelectedKey] = React.useState<string | null>('review-002');
       return (
         <List
+          accessibilityLabel="Controlled review items"
           items={items}
           keyForItem={(item) => item.id}
           search={{
@@ -552,6 +595,7 @@ describe('virtualized List data ownership', () => {
 
     const mount = mountList(
       <List
+        accessibilityLabel="Review items"
         items={items}
         keyForItem={(item) => item.id}
         search={{
@@ -600,6 +644,7 @@ describe('virtualized List data ownership', () => {
       return (
         <>
           <List
+            accessibilityLabel="Review details"
             items={items}
             keyForItem={keyForItem}
             renderItem={renderItem}
@@ -728,6 +773,7 @@ describe('virtualized List data ownership', () => {
 
       return (
         <List
+          accessibilityLabel="Large review items"
           items={items}
           keyForItem={keyForItem}
           renderItem={renderItem}

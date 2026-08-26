@@ -8,6 +8,7 @@ import {
 import { trimBugReportTextHeadToMaxBytes } from '../../bugs/reports/redaction.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonicalDigest.js';
+import type { JsonValue as StrictJsonValue } from '../../json/strictJsonValue.js';
 import { z } from 'zod';
 import { isPluginError } from '../errors.js';
 import {
@@ -26,14 +27,6 @@ import type {
   PluginActionConfirmationV2,
   PluginActionDangerLevelV2,
 } from './v2.js';
-
-type StrictJsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly StrictJsonValue[]
-  | { readonly [key: string]: StrictJsonValue };
 
 const PLUGIN_ACTION_FAILURE_FALLBACK_CODE = 'plugin_action_execution_failed';
 const PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE = 'Plugin operation failed';
@@ -102,7 +95,7 @@ export function parseQualifiedPluginActionId(value: unknown): PluginContribution
 }
 
 export type PluginActionInvocationResult = Readonly<
-  | { status: 'executed'; value: StrictJsonValue | null }
+  | { status: 'executed'; value: StrictJsonValue }
   | {
     status: 'unavailable';
     code: string;

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { AutomationRunStateV3Schema } from '../../automations/automationRunStateV3.js';
+import { AutomationRunCauseSchema } from '../../automations/automationRunCause.js';
 import { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from '../../runtime/eventKindsV1.js';
 import { SessionIdSchema } from '../../sessions/idsV1.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
@@ -33,7 +34,7 @@ export const AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1 =
 export const AutomationRunStateChangedHostEventV1Schema = z.object({
   runId: z.string().min(1),
   automationId: z.string().min(1),
-  originKind: z.enum(['scheduled', 'manual', 'pluginEvent', 'conversation']),
+  runCause: AutomationRunCauseSchema,
   previousState: AutomationRunStateV3Schema.nullable(),
   currentState: AutomationRunStateV3Schema,
   transitionedAt: z.number().int().min(0),
@@ -44,7 +45,7 @@ export const AutomationRunStateChangedHostEventV1Schema = z.object({
    * so a newer producer cause degrades to the generic lifecycle handling
    * instead of invalidating the whole observation.
    */
-  cause: z.string().min(1).max(64).optional(),
+  transitionCause: z.string().min(1).max(64).optional(),
 }).strict().superRefine((payload, context) => {
   if (payload.previousState === null) {
     if (payload.currentState === 'queued') return;

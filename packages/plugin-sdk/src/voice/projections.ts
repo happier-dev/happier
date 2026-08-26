@@ -226,14 +226,17 @@ export type VoiceSettingsActionContext = Readonly<{
     tools: readonly VoiceClientToolDefinition[];
 }>;
 
+/** The complete runtime shape accepted by one `voiceProviders.register` call. */
+export type RegisteredVoiceProviderRuntime = (
+    | RealtimeVoiceProviderRuntime
+    | SpeechProviderRuntime
+) & Readonly<{
+    settingsActions?: PluginSettingsActionRuntime<VoiceSettingsActionContext>;
+}>;
+
 export type VoiceProvidersRegistrationApi = Readonly<{
     register(
         localId: PluginContributionLocalId,
-        runtime: (
-            | RealtimeVoiceProviderRuntime
-            | SpeechProviderRuntime
-        ) & Readonly<{
-            settingsActions?: PluginSettingsActionRuntime<VoiceSettingsActionContext>;
-        }>,
+        runtime: RegisteredVoiceProviderRuntime,
     ): void;
 }>;

@@ -2152,6 +2152,71 @@ describe('createPluginTestkit', () => {
     })).rejects.toThrow(/missing Agent External Sessions contribution/u);
   });
 
+  it('projects a trusted class-shaped provider CLI attach declaration through definePlugin', async () => {
+    class TrustedProviderCliAttachDeclaration {
+      readonly authorOnly = 'preserved outside the host snapshot';
+      readonly baseUrl = 'http://127.0.0.1:4096';
+
+      resolveTarget() {
+        return {
+          ok: true as const,
+          value: { baseUrl: this.baseUrl },
+        };
+      }
+
+      createArgs() {
+        return ['attach'];
+      }
+
+      buildHealthUrl() {
+        return `${this.baseUrl}/global/health`;
+      }
+    }
+
+    const providerCliAttach = new TrustedProviderCliAttachDeclaration();
+    const plugin = definePlugin({
+      id: 'acme.trusted-provider-cli-attach',
+      version: '1.0.0',
+      agents: {
+        assistant: {
+          declaration: {
+            title: 'Assistant',
+            runtime: { kind: 'custom' },
+            primary: 'sessions',
+            capabilities: {
+              sessions: {
+                open: ['create'],
+                delivery: ['newTurn'],
+                cancel: true,
+              },
+            },
+          },
+          factory: agentFactory,
+          sessionRunnerFactory,
+          providerCliAttach,
+        },
+      },
+    });
+
+    const testkit = await createPluginTestkit({
+      manifest: plugin.manifest,
+      module: plugin,
+    });
+    const captured = testkit.registration('agents', 'assistant')?.providerCliAttach;
+
+    expect(captured).toBeDefined();
+    expect(captured).not.toBe(providerCliAttach);
+    expect(Object.isFrozen(captured)).toBe(true);
+    expect(captured?.resolveTarget({ metadata: {} })).toEqual({
+      ok: true,
+      value: { baseUrl: 'http://127.0.0.1:4096' },
+    });
+    expect(captured?.createArgs({ baseUrl: 'http://127.0.0.1:4096' })).toEqual(['attach']);
+    expect(captured?.buildHealthUrl({ baseUrl: 'http://127.0.0.1:4096' }))
+      .toBe('http://127.0.0.1:4096/global/health');
+    await testkit.dispose();
+  });
+
   it('captures class, prototype, and accessor-backed Agent provider bindings', async () => {
     class StructuralProviderBinding {
       readonly ignoredByRegistration = true;

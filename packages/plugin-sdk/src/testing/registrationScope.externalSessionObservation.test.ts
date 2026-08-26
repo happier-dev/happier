@@ -177,7 +177,7 @@ describe('Agent External Session observation registration staging', () => {
         expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/u);
     });
 
-    it('rejects a fourth enumerable observation operation before publishing the aggregate', () => {
+    it('ignores a trusted fourth observation helper while publishing declared operations', () => {
         const registrationScope = scope();
         const fourthOperationName = ['resolve', 'TopologyRoots'].join('');
         const fourthOperation = vi.fn(() => ['/provider/sessions']);
@@ -191,7 +191,15 @@ describe('Agent External Session observation registration staging', () => {
             'assistant',
             contributed,
         );
-        expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/u);
+        const [registration] = registrationScope.commit();
+        expect(registration?.family).toBe('agents');
+        if (registration?.family !== 'agents') {
+            throw new Error('Expected Agent External Session observation snapshot');
+        }
+        expect(registration.value.externalSessionObservation).toMatchObject(
+            observationSnapshotShape(),
+        );
+        expect(registration.value.externalSessionObservation).not.toHaveProperty(fourthOperationName);
         expect(fourthOperation).not.toHaveBeenCalled();
     });
 

@@ -6,10 +6,13 @@ description: Compose a native AgentSessionRuntime for an Agent Client Protocol p
 ACP has two deliberately different authoring modes. Choose one; do not add a
 custom factory or locator to a declarative ACP contribution.
 
+> This page describes the current plugin-preview contract in development
+> source. Published SDK availability may differ until that preview ships.
+
 | | Declarative ACP | Custom ACP composition |
 | --- | --- | --- |
-| Choose it when | Cold transport data completely describes the Agent | The plugin must adapt Agent-specific behavior before opening ACP |
-| Manifest runtime | `runtime.kind: 'acp'` with `transport` | `runtime.kind: 'custom'` |
+| Choose it when | Transport plus static ACP behavior completely describes the Agent | The plugin must adapt Agent-specific behavior before opening ACP |
+| Manifest runtime | `runtime.kind: 'acp'` with `transport` and optional data-only `definition` | `runtime.kind: 'custom'` |
 | Factory / registration | None | One `AgentRuntimeFactory` supplied as `agents.<id>.factory`; generated activation registers it |
 | Session runner locator | None | Required for a Session-capable custom Agent; names a distinct exact leaf |
 | ACP opening | Host-owned | Leaf calls `context.protocols.acp.open(...)` |
@@ -20,6 +23,24 @@ Declare `runtime.kind: 'acp'`, the transport, Session primary, and capabilities
 in the code-defined Agent declaration. This has no `factory`, generated
 registration, `sessionRunnerFactory`, or runner module. The host constructs the
 runtime directly from the declaration.
+
+The optional `runtime.definition` is strict data, not a second runtime API. It
+can contain only `modelConfigOptionId`, data-only `stderrRules`, and an MCP
+input policy (`pass_through` or `drop`). Transport continues to own the
+executable, arguments, environment, endpoint, headers, and transport timeouts.
+Agent title and description remain top-level Agent fields, and Session
+capabilities remain on the Agent capability declaration.
+
+Omitting `mcp` keeps MCP input out of the ACP launch. Declare
+`mcp: { policy: 'pass_through' }` only when the Agent should receive the
+host-provided MCP servers.
+
+The manifest schema is the canonical public definition and the host normalizes
+that definition once before opening ACP; plugins do not register another ACP
+definition object at activation time. Kiro is the current positive consumer:
+its `definePlugin(...)` declaration supplies `modelConfigOptionId`, bounded
+stderr suppression rules, and `mcp: { policy: 'pass_through' }` beside its
+stdio transport, with no runtime factory or runner locator.
 
 ## Custom ACP composition
 
@@ -53,7 +74,10 @@ export const runtime: AgentRuntime = {
 
 Use the exact transport and definition types exported by the installed SDK version; the abbreviated values above show ownership, not a copy-paste-complete transport.
 
-Agent-specific authentication, model projection, timeouts, verified image input, tool-name shaping, stderr rules, and protocol extensions belong in the ACP definition. Happier still owns session and turn lifecycle, input custody, transcript persistence, activity, and terminal process facts.
+Agent-specific authentication, dynamic model projection, verified image input,
+tool-name shaping, function-valued extensions, and other executable behavior
+belong in custom ACP composition. Happier still owns session and turn lifecycle,
+input custody, transcript persistence, activity, and terminal process facts.
 
 If the custom Agent also supports execution-runs, expose the native
 `executionRuns` factory on the same `AgentRuntime`. Do not create a second

@@ -88,6 +88,7 @@ const APPROVED_VALUE_ONLY_EXPORTS = [
   'ACP_AGENT_CLI_TRANSPORT_TIMEOUTS',
   'ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES',
   'ACP_WRITE_LIKE_PERMISSION_KINDS',
+  'createExecutionRunHostBackendFromSessionRuntime',
 ] as const;
 
 const DECLARATION_CLOSURE_GENUINE_EXPORTS = [
@@ -146,6 +147,14 @@ const DECLARATION_REFINED_EXPORTS = new Set([
   'HandoffExportRequestV1',
   'HandoffExportSessionMetadata',
   'HandoffImportResultV1',
+  'HandoffMediaScannableRecordsRequestV1',
+  'HandoffNativeTranscriptPathCandidateRequestV1',
+  'HandoffNativeTranscriptPathCandidateV1',
+  'HandoffRuntimeDescriptorV1',
+  'HandoffRuntimeLocalExternalSessionSourceV1',
+  'HandoffRuntimeLocalMetadataIdentityV1',
+  'HandoffRuntimeLocalMetadataRequestV1',
+  'HandoffRuntimeLocalMetadataV1',
   'HandoffSurfaceV1',
   'ReplayForkChildLaunchRequestV1',
   'RuntimeOutboundTranscriptToolNormalizationV1',

@@ -3,6 +3,9 @@ import {
     ExternalSessionsSourceSchema,
     PluginAgentExternalSessionLinkDataSchema,
 } from '@happier-dev/protocol/plugins/agents';
+import {
+    RuntimeDescriptorV1Schema,
+} from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 
 import type {
     AgentExternalSessionLinkData,
@@ -18,6 +21,7 @@ import {
     captureStaticRegistrationMethod,
     requireStaticRegistrationObject,
 } from '../registration/staticCapture.js';
+import type { RuntimeDescriptorV1 } from '../agentRuntime/session.js';
 
 export const AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS = Object.freeze({
     maxLinkedSessionIdCodeUnits: 2_000,
@@ -39,12 +43,14 @@ export const AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS = Object.freeze({
 
 export type AgentExternalSessionTakeoverLaunchPlan = Readonly<{
     /**
-     * Provider-native launch context retained for public plugin parity. The
-     * host enforces the request targetDirectory as the spawned process cwd.
+     * Agent-native launch context. The host enforces the request
+     * targetDirectory as the spawned process cwd.
      */
     directory: string;
     backendModeHint?: string;
     environmentVariables?: Readonly<Record<string, string>>;
+    /** Agent-owned identity carried to the target Agent's session opener. */
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>;
 
 export type AgentExternalSessionTakeoverResolveLaunchRequest =
@@ -307,7 +313,12 @@ export function validateAgentExternalSessionTakeoverLaunchPlan(
 ): AgentExternalSessionTakeoverLaunchPlan {
     const record = readRecord(
         value,
-        ['directory', 'backendModeHint', 'environmentVariables'],
+        [
+            'directory',
+            'backendModeHint',
+            'environmentVariables',
+            'runtimeDescriptorV1',
+        ],
         ['directory'],
         'launch plan',
     );
@@ -322,6 +333,20 @@ export function validateAgentExternalSessionTakeoverLaunchPlan(
     const environmentVariables = record.environmentVariables === undefined
         ? undefined
         : snapshotEnvironmentVariables(record.environmentVariables);
+    const runtimeDescriptorV1 = record.runtimeDescriptorV1 === undefined
+        ? undefined
+        : (() => {
+            const parsed = RuntimeDescriptorV1Schema.safeParse(
+                record.runtimeDescriptorV1,
+            );
+            if (!parsed.success) {
+                return invalid(
+                    'launch plan runtimeDescriptorV1',
+                    'is not a valid bounded runtime descriptor',
+                );
+            }
+            return parsed.data;
+        })();
     return Object.freeze({
         directory: boundedString(
             record.directory,
@@ -331,6 +356,7 @@ export function validateAgentExternalSessionTakeoverLaunchPlan(
         ),
         ...(backendModeHint === undefined ? {} : { backendModeHint }),
         ...(environmentVariables === undefined ? {} : { environmentVariables }),
+        ...(runtimeDescriptorV1 === undefined ? {} : { runtimeDescriptorV1 }),
     });
 }
 

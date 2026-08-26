@@ -7,12 +7,17 @@ const externalSessionsDocPath = fileURLToPath(
   new URL('../content/docs/plugins/surfaces/external-sessions.mdx', import.meta.url),
 );
 
-test('documents the exact External Session hooks contribution without retired planning APIs', () => {
+test('documents definePlugin-only External Session authoring without retired registration paths', () => {
   const source = readFileSync(externalSessionsDocPath, 'utf8');
 
   for (const requiredSource of [
+    "import { definePlugin } from '@happier-dev/plugin-sdk'",
+    'export const { manifest, activate } = definePlugin({',
     'AgentExternalSessionHooksContribution',
-    "api.agents.registerExternalSessionHooks('example', hooks)",
+    'externalSessions,',
+    'externalSessionHooks: hooks,',
+    'externalSessionTakeover: takeover,',
+    'externalSessionObservation: observation,',
     'installationVariants',
     'resolveInstallation(request, context)',
     'mapHookEvent(request)',
@@ -25,7 +30,15 @@ test('documents the exact External Session hooks contribution without retired pl
     'planConfiguration',
     'registerExternalSessionHookRecipes',
     'hookRecipes',
+    'PluginApi',
+    'api.agents.registerExternalSessions',
+    'api.agents.registerExternalSessionHooks',
+    'api.agents.registerExternalSessionTakeover',
+    'api.agents.registerExternalSessionObservation',
   ]) {
-    assert.doesNotMatch(source, new RegExp(`\\b${retiredSource}\\b`, 'u'));
+    assert.doesNotMatch(
+      source,
+      new RegExp(retiredSource.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'),
+    );
   }
 });

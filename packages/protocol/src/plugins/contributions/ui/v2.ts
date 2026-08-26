@@ -25,8 +25,8 @@ import {
 } from '../publicTypes.js';
 import {
   PluginUiDestinationInstancePolicyV1Schema,
-  PluginUiViewContainerV1Schema,
   PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1,
+  PLUGIN_UI_INLINE_SURFACE_SLOTS_V1,
   type PluginUiDestinationInstancePolicyV1,
 } from './surfaceRegistry.js';
 import { preflightPluginDeclarativeDocumentV1 } from './declarativeDocumentPreflightV1.js';
@@ -321,7 +321,7 @@ export const PluginUiRendererV2Schema = z.discriminatedUnion('kind', [
 ]);
 export type PluginUiRendererV2 = z.infer<typeof PluginUiRendererV2Schema>;
 export const MAX_PLUGIN_UI_PAGE_HEADER_ACTIONS_V1 = 16;
-type PluginUiViewTargetKindV1 =
+type PluginUiViewDestinationTargetKindV1 =
   typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number]['targetKind'];
 
 const PluginUiViewTargetSchemaByKindV1 = Object.freeze({
@@ -330,7 +330,7 @@ const PluginUiViewTargetSchemaByKindV1 = Object.freeze({
   project: PluginSurfaceProjectTargetV1Schema,
   browser: PluginSurfaceBrowserTargetV1Schema,
   services: PluginSurfaceServicesTargetV1Schema,
-} satisfies Readonly<Record<PluginUiViewTargetKindV1, z.ZodType<PluginSurfaceTargetV1>>>);
+} satisfies Readonly<Record<PluginUiViewDestinationTargetKindV1, z.ZodType<PluginSurfaceTargetV1>>>);
 
 /** Static presentation defaults only; the host and user still own final placement. */
 export const MAX_PLUGIN_UI_DESTINATION_BADGE_UTF8_BYTES_V1 = 80;
@@ -373,7 +373,7 @@ export const PluginUiDestinationRankHintV1Schema = z.number().int().min(
   MIN_PLUGIN_UI_DESTINATION_RANK_HINT_V1,
 ).max(MAX_PLUGIN_UI_DESTINATION_RANK_HINT_V1).optional();
 
-const PluginUiViewCommonShapeV2 = {
+const PluginUiViewDestinationCommonShapeV2 = {
   id: asProtocolZod(PluginContributionLocalIdSchema),
   renderer: asProtocolZod(PluginContributionLocalIdSchema),
   fallbackRenderers: z.array(asProtocolZod(PluginContributionLocalIdSchema))
@@ -385,6 +385,20 @@ const PluginUiViewCommonShapeV2 = {
   groupHint: PluginUiDestinationGroupHintV1Schema.optional(),
   rankHint: PluginUiDestinationRankHintV1Schema,
   instancePolicy: PluginUiDestinationInstancePolicyV1Schema.default('singleton'),
+};
+
+/**
+ * Inline roles share `ui.views` authoring syntax but deliberately do not gain
+ * destination-only metadata, instance policy, or header ownership.
+ */
+const PluginUiViewInlineCommonShapeV2 = {
+  id: asProtocolZod(PluginContributionLocalIdSchema),
+  renderer: asProtocolZod(PluginContributionLocalIdSchema),
+  fallbackRenderers: z.array(asProtocolZod(PluginContributionLocalIdSchema))
+    .max(PLUGIN_UI_MAX_RENDERER_CHAIN_LENGTH - 1)
+    .optional(),
+  title: PluginLocalizedStringV2Schema.optional(),
+  icon: PluginUiIconTokenV1Schema.optional(),
 };
 
 /**
@@ -406,11 +420,11 @@ const PluginUiViewHeaderActionsSchemaV2 = Object.freeze({
  * union from the Registry rows themselves so generated authoring schema and
  * canonical parsing reject the same container/target pairs.
  */
-function createPluginUiViewDestinationBindingSchemaV2() {
-  const variants = PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1
-    .filter((slot) => PluginUiViewContainerV1Schema.safeParse(slot.container).success)
+function createPluginUiViewBindingSchemaV2() {
+  const destinationVariants = PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1
+    .filter((slot) => slot.container !== 'settingsPage')
     .map((slot) => z.object({
-      ...PluginUiViewCommonShapeV2,
+      ...PluginUiViewDestinationCommonShapeV2,
       // The generated authoring schema derives its policy from the same
       // registry row as parser/projection/wire validation. A singleton-only
       // host therefore cannot publish a declaration that no launcher can key.
@@ -423,14 +437,22 @@ function createPluginUiViewDestinationBindingSchemaV2() {
       container: z.literal(slot.container),
       target: PluginUiViewTargetSchemaByKindV1[slot.targetKind],
     }).strict());
+  const inlineVariants = Object.values(PLUGIN_UI_INLINE_SURFACE_SLOTS_V1)
+    .filter((slot) => slot.role !== 'sessionInfoSection')
+    .map((slot) => z.object({
+      ...PluginUiViewInlineCommonShapeV2,
+      container: z.literal(slot.role),
+      target: PluginUiViewTargetSchemaByKindV1.session,
+    }).strict());
+  const variants = [...destinationVariants, ...inlineVariants];
   const [first, second, ...remaining] = variants;
   if (!first || !second) {
-    throw new Error('Plugin UI destination Registry must declare at least two ui.views binding slots.');
+    throw new Error('Plugin UI surface Registry must declare at least two ui.views binding slots.');
   }
   return z.union([first, second, ...remaining]);
 }
 
-const PluginUiViewV2SchemaRaw = createPluginUiViewDestinationBindingSchemaV2().superRefine((view, ctx) => {
+const PluginUiViewV2SchemaRaw = createPluginUiViewBindingSchemaV2().superRefine((view, ctx) => {
   const rendererChain = validatePluginUiRendererChainFieldsV1({
     renderer: view.renderer,
     fallbackRenderers: view.fallbackRenderers,
@@ -458,7 +480,7 @@ const PluginUiViewV2SchemaRaw = createPluginUiViewDestinationBindingSchemaV2().s
 export type PluginUiViewDestinationBindingInputV2 = {
   [TSlot in Exclude<
     typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
-    Readonly<{ container: 'settingsPage' | 'sessionInfoSection' }>
+    Readonly<{ container: 'settingsPage' }>
   > as `${TSlot['container']}:${TSlot['targetKind']}`]: Readonly<{
     container: TSlot['container'];
     target: z.input<typeof PluginUiViewTargetSchemaByKindV1[TSlot['targetKind']]>;
@@ -470,15 +492,25 @@ export type PluginUiViewDestinationBindingInputV2 = {
 }[keyof {
   [TSlot in Exclude<
     typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
-    Readonly<{ container: 'settingsPage' | 'sessionInfoSection' }>
+    Readonly<{ container: 'settingsPage' }>
   > as `${TSlot['container']}:${TSlot['targetKind']}`]: TSlot;
 }];
+type PluginUiViewInlineSlotV1 = Exclude<
+  typeof PLUGIN_UI_INLINE_SURFACE_SLOTS_V1[keyof typeof PLUGIN_UI_INLINE_SURFACE_SLOTS_V1],
+  Readonly<{ role: 'sessionInfoSection' }>
+>;
+export type PluginUiViewInlineBindingInputV2 = {
+  [TSlot in PluginUiViewInlineSlotV1 as TSlot['role']]: Readonly<{
+    container: TSlot['role'];
+    target: z.input<typeof PluginUiViewTargetSchemaByKindV1.session>;
+  }>;
+}[PluginUiViewInlineSlotV1['role']];
 export type PluginUiViewV2Input = z.input<typeof PluginUiViewV2SchemaRaw>
-  & PluginUiViewDestinationBindingInputV2;
-export type PluginUiViewV2 = z.output<typeof PluginUiViewV2SchemaRaw> & {
+  & (PluginUiViewDestinationBindingInputV2 | PluginUiViewInlineBindingInputV2);
+export type PluginUiViewDestinationBindingV2 = z.output<typeof PluginUiViewV2SchemaRaw> & {
   [TSlot in Exclude<
     typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
-    Readonly<{ container: 'settingsPage' | 'sessionInfoSection' }>
+    Readonly<{ container: 'settingsPage' }>
   > as `${TSlot['container']}:${TSlot['targetKind']}`]: Readonly<{
     container: TSlot['container'];
     target: z.output<typeof PluginUiViewTargetSchemaByKindV1[TSlot['targetKind']]>;
@@ -490,9 +522,18 @@ export type PluginUiViewV2 = z.output<typeof PluginUiViewV2SchemaRaw> & {
 }[keyof {
   [TSlot in Exclude<
     typeof PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1[number],
-    Readonly<{ container: 'settingsPage' | 'sessionInfoSection' }>
+    Readonly<{ container: 'settingsPage' }>
   > as `${TSlot['container']}:${TSlot['targetKind']}`]: TSlot;
 }];
+export type PluginUiViewInlineBindingV2 = {
+  [TSlot in PluginUiViewInlineSlotV1 as TSlot['role']]: Readonly<{
+    container: TSlot['role'];
+    target: z.output<typeof PluginUiViewTargetSchemaByKindV1.session>;
+  }>;
+}[PluginUiViewInlineSlotV1['role']];
+export type PluginUiViewV2 = z.output<typeof PluginUiViewV2SchemaRaw> & (
+  PluginUiViewDestinationBindingV2 | PluginUiViewInlineBindingV2
+);
 export const PluginUiViewV2Schema: z.ZodType<PluginUiViewV2, PluginUiViewV2Input> =
   PluginUiViewV2SchemaRaw as z.ZodType<PluginUiViewV2, PluginUiViewV2Input>;
 

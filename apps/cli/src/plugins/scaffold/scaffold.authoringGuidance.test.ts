@@ -181,10 +181,11 @@ describe('scaffoldLocalPlugin authoring guidance', () => {
         'SKILL.md',
       ), 'utf8');
 
-      expect(skill).toContain('node_modules/@happier-dev/plugin-sdk/examples/action-contract-producer/');
-      expect(skill).toContain('node_modules/@happier-dev/plugin-sdk/examples/action-contract-consumer/');
+      expect(skill).toContain('node_modules/@happier-dev/plugin-sdk/examples/operation-only-channel-provider/');
+      expect(skill).toContain('@happier-dev/channels-protocol/v1');
+      expect(skill).toContain('does not declare a target, descriptor, or surface');
+      expect(skill).toContain('first-party Preview');
       expect(skill).toContain('This beginner scaffold does not declare a feature integration.');
-      expect(skill).not.toContain('@happier-dev/channels-protocol');
       expect(skill).not.toContain('defineTargetedContributionProtocol');
       expect(skill).not.toContain('defineTargetedContributionPoint');
       expect(skill).not.toContain('defineContributionProtocol');

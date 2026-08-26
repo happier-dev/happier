@@ -1,4 +1,7 @@
-import type { AgentLaunchEnvironment } from './session.js';
+import type {
+  AgentLaunchEnvironment,
+  AgentSessionConfigurationSnapshot,
+} from './session.js';
 import type {
   AgentTerminalSessionStateUpdate,
   AttachSurface,
@@ -54,38 +57,27 @@ export type AgentRuntimeHandoffSurface = Readonly<{
     request: Parameters<HandoffSurfaceV1['importBundle']>[0],
     context: PluginInvocationContext,
   ) => ReturnType<HandoffSurfaceV1['importBundle']>;
+  extractMediaScannableRecords?: (
+    request: Parameters<NonNullable<HandoffSurfaceV1['extractMediaScannableRecords']>>[0],
+    context: PluginInvocationContext,
+  ) => ReturnType<NonNullable<HandoffSurfaceV1['extractMediaScannableRecords']>>;
+  buildRuntimeLocalMetadata?: (
+    request: Parameters<NonNullable<HandoffSurfaceV1['buildRuntimeLocalMetadata']>>[0],
+    context: PluginInvocationContext,
+  ) => ReturnType<NonNullable<HandoffSurfaceV1['buildRuntimeLocalMetadata']>>;
+  resolveNativeTranscriptPathCandidate?: (
+    request: Parameters<NonNullable<HandoffSurfaceV1['resolveNativeTranscriptPathCandidate']>>[0],
+    context: PluginInvocationContext,
+  ) => ReturnType<NonNullable<HandoffSurfaceV1['resolveNativeTranscriptPathCandidate']>>;
 }>;
 
+/** Agent-owned runtime identity, interpreted only by the target Agent. */
 export type AgentTerminalLaunchMetadata = Readonly<Partial<{
-  terminalRuntime: Readonly<Partial<{
-    claudeArgs: readonly string[];
-    codexArgs: readonly string[];
-    promptInteractive: boolean;
-    conversationId: string;
-    continueLatest: boolean;
-    sandbox: boolean;
-    logFile: string;
-    print: boolean;
-    unsafeSkipPermissions: boolean;
-  }>>;
-  antigravity: Readonly<Partial<{
-    promptInteractive: boolean;
-    conversationId: string;
-    continueLatest: boolean;
-    sandbox: boolean;
-    logFile: string;
-    print: boolean;
-    unsafeSkipPermissions: boolean;
-  }>>;
-  providerSessionId: string;
-  codexSessionId: string;
-  resumeId: string;
-  permissionMode: string;
-  codexArgs: readonly string[];
-  claudeArgs: readonly string[];
-  fallbackModel: string;
-  customSystemPrompt: string;
-  appendSystemPrompt: string;
+  runtimeDescriptorV1: Readonly<{
+    v: 1;
+    agentId: string;
+    agent: Readonly<Record<string, unknown>>;
+  } & Record<string, unknown>>;
 }>>;
 
 export type AgentTerminalControlPresentation = Readonly<{
@@ -114,6 +106,8 @@ export type AgentTerminalLaunchRequest = Readonly<{
   sessionId: string;
   cwd: string;
   metadata: AgentTerminalLaunchMetadata;
+  /** Host-owned current Session configuration, shared with Session open. */
+  configuration?: AgentSessionConfigurationSnapshot;
   modelSelection: ProviderBoundModelRef | null;
 }>;
 

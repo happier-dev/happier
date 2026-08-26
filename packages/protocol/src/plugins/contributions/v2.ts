@@ -135,6 +135,10 @@ import {
   PluginTargetedContributionV1Schema,
   validateTargetedContributionEnvelopeBoundsV1,
 } from './targetedContributions.js';
+import {
+  AgentSessionStartupInstructionsIdV1Schema,
+  AgentSessionStartupInstructionsTextV1Schema,
+} from '../../runtime/agentSessionStartupInstructionsV1.js';
 
 const LEGACY_ACTIVITY_PROVIDER_FAMILY = `activity${'Providers'}`;
 const PluginVoiceModelPackContributionV2Schema = VoiceModelPackContributionV1Schema
@@ -168,9 +172,52 @@ function rejectForbiddenKey(
   });
 }
 
+const PluginAgentAcpStderrMatchRuleV2Schema = z.object({
+  includes: z.array(z.string().min(1)).min(1),
+  caseSensitive: z.boolean().optional(),
+}).strict();
+
+const PluginAgentAcpStderrStatusErrorRuleV2Schema =
+  PluginAgentAcpStderrMatchRuleV2Schema.extend({
+    detail: z.string().min(1),
+  }).strict();
+
+const PluginAgentAcpStderrRulesV2Schema = z.object({
+  suppress: z.array(PluginAgentAcpStderrMatchRuleV2Schema)
+    .min(1)
+    .optional(),
+  statusErrors: z.array(PluginAgentAcpStderrStatusErrorRuleV2Schema)
+    .min(1)
+    .optional(),
+}).strict().refine(
+  (value) => value.suppress !== undefined || value.statusErrors !== undefined,
+  'ACP stderr rules must declare at least one rule.',
+);
+
+/**
+ * Data-only behavior the host ACP composer can apply without invoking plugin
+ * code. Dynamic ACP behavior remains a custom Agent runtime responsibility.
+ */
+export const PluginAgentAcpDefinitionV2Schema = z.object({
+  modelConfigOptionId: z.string().trim().min(1).optional(),
+  stderrRules: PluginAgentAcpStderrRulesV2Schema.optional(),
+  mcp: z.object({
+    policy: z.enum(['pass_through', 'drop']),
+  }).strict().optional(),
+}).strict().refine(
+  (value) => (
+    value.modelConfigOptionId !== undefined
+    || value.stderrRules !== undefined
+    || value.mcp !== undefined
+  ),
+  'ACP definitions must declare at least one behavior.',
+);
+export type PluginAgentAcpDefinitionV2 = z.infer<typeof PluginAgentAcpDefinitionV2Schema>;
+
 export const PluginAgentRuntimeAcpV2Schema = z.object({
   kind: z.literal('acp'),
   transport: PluginAgentAcpTransportSchema,
+  definition: PluginAgentAcpDefinitionV2Schema.optional(),
 }).strict();
 export type PluginAgentRuntimeAcpV2 = z.infer<typeof PluginAgentRuntimeAcpV2Schema>;
 
@@ -273,6 +320,20 @@ export type PluginAgentCapabilitiesV2 = z.infer<typeof PluginAgentCapabilitiesV2
 export const PluginAgentVendorResumeSupportV2Schema = z.enum(['supported', 'unsupported', 'experimental']);
 export type PluginAgentVendorResumeSupportV2 = z.infer<typeof PluginAgentVendorResumeSupportV2Schema>;
 
+const PluginAgentCodingPromptBehaviorBlockV1Schema = z.object({
+  id: AgentSessionStartupInstructionsIdV1Schema,
+  text: AgentSessionStartupInstructionsTextV1Schema,
+  when: z.enum(['disableTodos']).optional(),
+}).strict();
+
+const PluginAgentCodingPromptBehaviorV1Schema = z.object({
+  blocks: z.array(PluginAgentCodingPromptBehaviorBlockV1Schema).min(1),
+}).strict();
+
+const PluginAgentResumeChecklistV1Schema = z.object({
+  includeLoginStatus: z.literal(true),
+}).strict();
+
 /**
  * The client UI-behavior declaration an Agent contributes: the data-only
  * `plugin.ui.v1` surface (permission-footer handling, transcript storage modes,
@@ -324,8 +385,17 @@ export const PluginAgentCatalogV2Schema = z.object({
   agentCliSystemTool: z.object({
     toolId: asProtocolZod(PluginContributionLocalIdSchema),
   }).strict().optional(),
+  /** Ordered data-only blocks the canonical coding prompt composer may include. */
+  codingPromptBehavior: PluginAgentCodingPromptBehaviorV1Schema.optional(),
+  /** The only Agent-specific resume-checklist policy currently supported by the host. */
+  resumeChecklist: PluginAgentResumeChecklistV1Schema.optional(),
 }).strict().refine(
-  (value) => value.vendorResume !== undefined || value.agentCliSystemTool !== undefined,
+  (value) => (
+    value.vendorResume !== undefined
+    || value.agentCliSystemTool !== undefined
+    || value.codingPromptBehavior !== undefined
+    || value.resumeChecklist !== undefined
+  ),
   'At least one Agent catalog declaration is required.',
 );
 export type PluginAgentCatalogV2 = z.infer<typeof PluginAgentCatalogV2Schema>;

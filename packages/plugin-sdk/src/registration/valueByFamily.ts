@@ -14,9 +14,17 @@ import type {
     HostingProviderRuntime,
 } from '../activation.js';
 import type {
+    AgentCliAuthContributionV1,
+    AgentCliSessionCommandDeclarationV1,
+    AgentConnectedAccountLaunchContributionV1,
+    AgentExperimentalVendorResumeSupportContributionV1,
+    AgentPreflightSessionControlsContributionV1,
+    AgentTerminalPromptSubmitVerificationPolicyV1,
     AgentProviderBindingAdapter,
     AgentDaemonSpawnHooks,
+    AgentProviderCliAttachDeclarationV1,
     AgentRuntimeFactory,
+    AgentSessionStartupContributionV1,
     AgentSessionRunnerFactoryLocatorV1,
 } from '../agentRuntime/index.js';
 import type { BackgroundServiceRunner } from '../backgroundServices.js';
@@ -50,6 +58,14 @@ export interface PluginRegistrationValueByFamily {
         providerBinding?: AgentProviderBindingAdapter;
         sessionRunnerFactory?: AgentSessionRunnerFactoryLocatorV1;
         daemonSpawnHooks?: AgentDaemonSpawnHooks;
+        providerCliAttach?: AgentProviderCliAttachDeclarationV1;
+        cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
+        cliAuth?: AgentCliAuthContributionV1;
+        connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+        preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
+        terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
+        sessionStartup?: AgentSessionStartupContributionV1;
+        vendorResumeSupport?: AgentExperimentalVendorResumeSupportContributionV1;
         externalSessions?: AgentExternalSessionsContribution;
         externalSessionHooks?: AgentExternalSessionHooksContribution;
         externalSessionObservation?: AgentExternalSessionObservationContribution;

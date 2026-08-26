@@ -26,6 +26,7 @@ export type {
     PluginUiSchema,
     PluginUiSettingsPageV1,
     PluginUiIconTokenV1,
+    PluginUiSessionCheckoutIntentV1,
     PluginUiSessionPlacementCandidateV1,
     PluginUiToneV1,
     PluginUiAttachmentToneV1,

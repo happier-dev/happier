@@ -395,10 +395,7 @@ test('publication inventory requires exact canonical semver and forbids future p
 test('admits the host API surface', () => {
   const inventory = validateApiSurfaceInventory(validInventory());
 
-  for (const expected of [
-    HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
-    HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
-  ]) {
+  for (const expected of HOST_SYMBOLS) {
     assert.ok(inventory.symbols.some((symbol) => (
       symbol.specifier === expected.specifier
       && symbol.exportName === expected.exportName
@@ -591,14 +588,11 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
     () => validateApiSurfaceInventory(validInventory({
       symbols: [
         AUTHOR_SYMBOL,
+        HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
         { ...HOST_REGISTRATION_SYMBOL, sourceModule: HOST_REGISTRATION_ENTRYPOINT.sourceModule },
         ...HOST_REGISTRATION_TYPE_SYMBOLS,
         HOST_FILE_LOCK_RECLAIM_SYMBOL,
         HOST_FILE_LOCK_SYMBOL,
-        HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
-        HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
-        HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
-        ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
       ],
     })),
     (error) => error instanceof ApiSurfaceValidationError
@@ -665,6 +659,7 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
     () => validateApiSurfaceInventory(validInventory({
       symbols: [
         AUTHOR_SYMBOL,
+        HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
         HOST_REGISTRATION_SYMBOL,
         {
           ...HOST_REGISTRATION_SYMBOL,
@@ -675,15 +670,11 @@ test('inventory validation owns uniqueness, audience, deprecation, and canonical
         ...HOST_REGISTRATION_TYPE_SYMBOLS,
         HOST_FILE_LOCK_RECLAIM_SYMBOL,
         HOST_FILE_LOCK_SYMBOL,
-        HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
-        HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
-        HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
-        ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
       ],
     })),
     (error) => error instanceof ApiSurfaceValidationError
       && error.diagnostics.includes(
-        'symbols[2] declares unapproved host export ./host/registration:PluginRegistrationScopeTarget',
+        'symbols[3] declares unapproved host export ./host/registration:PluginRegistrationScopeTarget',
       ),
   );
 });
@@ -877,10 +868,6 @@ test('generation uses locale-independent code-point ordering for emitted symbols
       ...HOST_REGISTRATION_TYPE_SYMBOLS,
       HOST_FILE_LOCK_RECLAIM_SYMBOL,
       HOST_FILE_LOCK_SYMBOL,
-      HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
-      HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
-      HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
-      ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
     ],
   })));
 

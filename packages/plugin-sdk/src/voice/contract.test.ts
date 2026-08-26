@@ -47,7 +47,7 @@ import type {
   PluginSettingsActionInput,
   PluginSettingsActionRuntime,
 } from '../settings/index.js';
-import type { VoiceSettingsActionContext } from './index.js';
+import type { RegisteredVoiceProviderRuntime, VoiceSettingsActionContext } from './index.js';
 import {
   createVoiceRecordSchema,
   withVoiceSchemaField,
@@ -100,17 +100,13 @@ import type {
   VoiceSpeechTranscribeResult,
 } from './speech.js';
 
-type RegisteredVoiceProviderRuntime =
-  (RealtimeVoiceProviderRuntime | SpeechProviderRuntime) & Readonly<{
-    settingsActions?: PluginSettingsActionRuntime<VoiceSettingsActionContext>;
-  }>;
-
 describe('Voice author source contract', () => {
   it('publishes neutral Voice composition from the actual /voice package entry', () => {
     const voiceBarrel = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 
     expect(voiceBarrel).not.toMatch(/@(?:preview|experimental|stable|incubating)\b/u);
     expect(voiceBarrel).not.toContain('@happier-dev/plugin-sdk/protocol');
+    expect(voiceBarrel).toContain("export type { RegisteredVoiceProviderRuntime } from './projections.js';");
     expect(createVoiceRecordSchema).toBe(canonicalCreateVoiceRecordSchema);
     expect(withVoiceSchemaField).toBe(canonicalWithVoiceSchemaField);
   });
@@ -244,6 +240,8 @@ describe('Voice author source contract', () => {
       .toEqualTypeOf<PluginContributionLocalId>();
     expectTypeOf<Parameters<VoiceProvidersRegistrationApi['register']>[1]>()
       .toEqualTypeOf<RegisteredVoiceProviderRuntime>();
+    expectTypeOf<RegisteredVoiceProviderRuntime['settingsActions']>()
+      .toEqualTypeOf<PluginSettingsActionRuntime<VoiceSettingsActionContext> | undefined>();
     expectTypeOf<RealtimeVoiceProviderRuntime['kind']>().toEqualTypeOf<'conversation'>();
     type ProviderManagedRealtimeRuntime = Extract<
       RealtimeVoiceProviderRuntime,

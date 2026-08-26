@@ -180,9 +180,11 @@ export type {
   AgentExecutionRunOpenRequest,
   AgentExecutionRunRuntime,
   AgentExecutionRunRuntimeFactory,
+  AgentExecutionRunSessionAdapterOptions,
   AgentExecutionRunSendResult,
   AgentExecutionRunStopResult,
 } from './executionRun.js';
+export { createExecutionRunHostBackendFromSessionRuntime } from './executionRun.js';
 export type {
     AgentRuntime,
     AgentToolExecutionLifecycle,
@@ -207,7 +209,36 @@ export type {
   AgentDaemonSpawnRuntimeSelectionV1,
   AgentDaemonSpawnToolResolutionContextV1,
   AgentDaemonSpawnValidationResult,
+  AgentCliAuthCommandResultV1,
+  AgentCliAuthContributionV1,
+  AgentCliAuthStatusV1,
+  AgentConnectedAccountLaunchContributionV1,
+  AgentConnectedAccountRequestAuthUseV1,
+  AgentConnectedAccountStateSharingDescriptorEntryV1,
+  AgentConnectedAccountStateSharingDescriptorTransformV1,
+  AgentConnectedAccountStateSharingDynamicEntryPatternV1,
+  AgentConnectedAccountStateSharingDescriptorV1,
+  AgentPreflightJsonRpcRequestClientV1,
+  AgentPreflightSessionControlsCommandResultV1,
+  AgentPreflightSessionControlsCommandV1,
+  AgentPreflightSessionControlsContributionV1,
+  AgentPreflightSessionControlsModelsV1,
+  AgentPreflightSessionControlsProbeContextV1,
+  AgentPreflightSessionControlsProbeInputV1,
+  AgentTerminalPromptSubmitVerificationPolicyV1,
+  AgentDeferredStartupEligibilityInputV1,
+  AgentExperimentalVendorResumeSupportContributionV1,
+  AgentExperimentalVendorResumeSupportInputV1,
+  AgentCliSessionCommandBuildInputV1,
+  AgentCliSessionCommandBuildOptionsResultV1,
+  AgentCliSessionCommandDeclarationV1,
+  AgentCliSessionCommandOptionsV1,
+  AgentCliSessionCommandParsedArgsV1,
+  AgentProviderCliAttachDeclarationV1,
+  AgentProviderCliAttachTargetResolutionV1,
+  AgentProviderCliAttachTargetV1,
   AgentRuntimeRegistrationOptions,
+  AgentSessionStartupContributionV1,
   AgentSessionRunnerFactoryLocatorV1,
 } from './registration.js';
 export type {
@@ -224,6 +255,7 @@ export type {
   AgentSessionInput,
   AgentSessionMcpLaunchConfig,
   AgentSessionOpenRequest,
+  RuntimeDescriptorV1,
   AgentSessionProviderBinding,
   AgentSessionProviderBindingUpstream,
   AgentSessionRuntime,
@@ -682,6 +714,51 @@ export type HandoffExportRequestV1 = Readonly<{
   directory: string;
 }>;
 
+/** Declaration-neutral runtime identity for focused Agent handoff leaves. */
+export type HandoffRuntimeDescriptorV1 = Readonly<{
+  v: 1;
+  agentId: string;
+  agent: Readonly<Record<string, unknown>>;
+} & Record<string, unknown>>;
+
+export type HandoffMediaScannableRecordsRequestV1 = Readonly<{
+  bundle: Readonly<Record<string, unknown>>;
+}>;
+
+export type HandoffRuntimeLocalMetadataIdentityV1 = Readonly<{
+  machineId: string | null;
+  workingDirectory: string | null;
+  transcriptStorage: 'direct' | 'persisted' | null;
+  vendorResumeId: string;
+}>;
+
+export type HandoffRuntimeLocalExternalSessionSourceV1 = Readonly<{
+  kind: string;
+} & Record<string, JsonValue>>;
+
+/** Agent-owned source details; host owns the resulting persisted link. */
+export type HandoffRuntimeLocalMetadataV1 = Readonly<Partial<{
+  externalSessionSource: HandoffRuntimeLocalExternalSessionSourceV1;
+}>>;
+
+export type HandoffRuntimeLocalMetadataRequestV1 = Readonly<{
+  identity: HandoffRuntimeLocalMetadataIdentityV1;
+  runtimeDescriptorV1: HandoffRuntimeDescriptorV1;
+}>;
+
+export type HandoffNativeTranscriptPathCandidateV1 = Readonly<{
+  path: string;
+  containmentRoot: string;
+}>;
+
+export type HandoffNativeTranscriptPathCandidateRequestV1 = Readonly<{
+  identity: Readonly<{
+    v: 1;
+    vendorResumeId: string;
+  }>;
+  runtimeDescriptorV1: HandoffRuntimeDescriptorV1;
+}>;
+
 export type HandoffSurfaceV1 = Readonly<{
   evaluateAvailability?: (
     request: HandoffAvailabilityRequestV1,
@@ -694,6 +771,17 @@ export type HandoffSurfaceV1 = Readonly<{
     request: HandoffImportRequestV1,
   ) => BackendSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1>
     | Promise<BackendSurfaceResultV1<HandoffImportResultV1, HandoffFailureCodeV1>>;
+  extractMediaScannableRecords?: (
+    request: HandoffMediaScannableRecordsRequestV1,
+  ) => readonly unknown[] | Promise<readonly unknown[]>;
+  buildRuntimeLocalMetadata?: (
+    request: HandoffRuntimeLocalMetadataRequestV1,
+  ) => HandoffRuntimeLocalMetadataV1 | null | Promise<HandoffRuntimeLocalMetadataV1 | null>;
+  resolveNativeTranscriptPathCandidate?: (
+    request: HandoffNativeTranscriptPathCandidateRequestV1,
+  ) => HandoffNativeTranscriptPathCandidateV1
+    | null
+    | Promise<HandoffNativeTranscriptPathCandidateV1 | null>;
 }>;
 
 export type RuntimeOutboundTranscriptToolNormalizationV1 = Readonly<{

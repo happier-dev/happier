@@ -922,7 +922,7 @@ test('keeps first-party Agent UI descriptors generator-private behind narrow beh
     'opencode',
     'pi',
   ] as const;
-  const behaviorPackages = new Set(['auggie', 'claude', 'codex', 'pi']);
+  const predecessorMessageMetaPackages = new Set(['claude']);
 
   for (const packageId of agentPackages) {
     const packageJson = JSON.parse(readFileSync(
@@ -936,9 +936,9 @@ test('keeps first-party Agent UI descriptors generator-private behind narrow beh
     assert.equal(packageJson.exports?.['./ui'], undefined, `${packageId} must not expose a broad UI barrel`);
     assert.doesNotMatch(packageRoot, /ui\/(?:index|descriptor)/u, `${packageId} root must not expose UI descriptors`);
     assert.equal(
-      packageJson.exports?.['./ui/behavior'] !== undefined,
-      behaviorPackages.has(packageId),
-      `${packageId} behavior export mismatch`,
+      packageJson.exports?.['./ui/predecessor-message-meta'] !== undefined,
+      predecessorMessageMetaPackages.has(packageId),
+      `${packageId} predecessor message metadata export mismatch`,
     );
   }
 
@@ -950,7 +950,8 @@ test('keeps first-party Agent UI descriptors generator-private behind narrow beh
     'utf8',
   );
   assert.doesNotMatch(generatedBehaviorProjection, /plugins-[^'"]+\/ui['"]/u);
-  assert.match(generatedBehaviorProjection, /plugins-auggie\/ui\/behavior/u);
+  assert.match(generatedBehaviorProjection, /plugins-claude\/ui\/predecessor-message-meta/u);
+  assert.doesNotMatch(generatedBehaviorProjection, /plugins-(?:auggie|codex|pi)\/ui/u);
 });
 
 test('keeps every bundled first-party manifest behind an inert package subpath', () => {
@@ -1984,7 +1985,6 @@ test('emits an immutable package and staged runner leaf for an execution-primary
         '      install: { managed: null, manual: { kind: "none" } },',
         '      auth: {',
         '        support: "unsupported",',
-        '        probe: { parser: "none", backgroundChecks: "manual_only", statusArgs: null },',
         '        loginLaunches: [],',
         '      },',
         '    },',
@@ -2293,7 +2293,6 @@ function pluginManifestSource(input: Readonly<{
       '      install: { managed: null, manual: { kind: "none" } },',
       '      auth: {',
       '        support: "unsupported",',
-      '        probe: { parser: "none", backgroundChecks: "manual_only", statusArgs: null },',
       '        loginLaunches: [],',
       '      },',
       '    },',
@@ -2978,7 +2977,6 @@ function writeAgentPluginFixture(
             install: { managed: null, manual: { kind: "none" } },
             auth: {
               support: "unsupported",
-              probe: { parser: "none", backgroundChecks: "manual_only", statusArgs: null },
               loginLaunches: [],
             },
           },
@@ -3289,7 +3287,6 @@ function writeAntigravityCanonicalBackendFixture(repoRoot: string): void {
               install: { managed: null, manual: { kind: "vendor_recipe" } },
               auth: {
                 support: "unsupported",
-                probe: { parser: "none", backgroundChecks: "manual_only", statusArgs: null },
                 loginLaunches: [],
               },
             },
@@ -3382,22 +3379,17 @@ function writeUiDescriptorFixture(
   );
 }
 
-function writeUiBehaviorOverrideFixture(
+function writeClaudePredecessorMessageMetaWriterFixture(
   repoRoot: string,
   pluginPackageId: string,
-  agentId = pluginPackageId,
 ): void {
-  const exportName = `${agentId
-    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-    .replace(/[^A-Za-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .toUpperCase()}_UI_BEHAVIOR_OVERRIDE`;
+  assert.equal(pluginPackageId, 'claude');
   mkdirSync(resolve(repoRoot, `packages/plugins/${pluginPackageId}/src/ui`), { recursive: true });
   writeFileSync(
-    resolve(repoRoot, `packages/plugins/${pluginPackageId}/src/ui/uiBehavior.ts`),
+    resolve(repoRoot, `packages/plugins/${pluginPackageId}/src/ui/predecessorMessageMeta.ts`),
     [
-      `export const ${exportName} = Object.freeze({`,
-      `  debug: { providerMarker: ${JSON.stringify(agentId)} },`,
+      'export const CLAUDE_PREDECESSOR_MESSAGE_META_WRITER = Object.freeze({',
+      '  buildPredecessorMessageMeta: () => ({ claudeRemoteAgentSdkEnabled: true }),',
       '});',
       '',
     ].join('\n'),
@@ -4129,7 +4121,6 @@ function writeManifestOwnedExternalSessionSourceFixture(
         '      install: { managed: null, manual: { kind: "none" } },',
         '      auth: {',
         '        support: "unsupported",',
-        '        probe: { parser: "none", backgroundChecks: "manual_only", statusArgs: null },',
         '        loginLaunches: [],',
         '      },',
         '    },',
@@ -4187,12 +4178,10 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   writeCursorUiDescriptorFixture(repoRoot);
   writeAgentPluginFixture(repoRoot, 'auggie');
   writeAuggieUiDescriptorFixture(repoRoot);
-  writeUiBehaviorOverrideFixture(repoRoot, 'auggie');
   writeAgentPluginFixture(repoRoot, 'kimi');
   writeKimiUiDescriptorFixture(repoRoot);
   writeAgentPluginFixture(repoRoot, 'pi');
   writePiUiDescriptorFixture(repoRoot);
-  writeUiBehaviorOverrideFixture(repoRoot, 'pi');
 
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src'), { recursive: true });
   writeFileSync(
@@ -4224,7 +4213,7 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
     'utf8',
   );
   writeClaudeUiDescriptorFixture(repoRoot);
-  writeUiBehaviorOverrideFixture(repoRoot, 'claude');
+  writeClaudePredecessorMessageMetaWriterFixture(repoRoot, 'claude');
 
   mkdirSync(resolve(repoRoot, 'packages/plugins/codex/src'), { recursive: true });
   writeFileSync(
@@ -4265,7 +4254,6 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
     'utf8',
   );
   writeCodexUiDescriptorFixture(repoRoot);
-  writeUiBehaviorOverrideFixture(repoRoot, 'codex');
   writeProviderContributionPluginFixture(repoRoot);
 
   writeGeneratorOutputScaffold(
@@ -4364,16 +4352,12 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
     'utf8',
   );
   assertNoExecutableUiProjectionImports(uiBehaviorOverridesOut, { allowPluginUiBehaviorImports: true });
-  assert.match(uiBehaviorOverridesOut, /BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES/);
+  assert.match(uiBehaviorOverridesOut, /BUNDLED_CANONICAL_AGENT_PREDECESSOR_MESSAGE_META_WRITERS/);
   assert.match(uiBehaviorOverridesOut, /BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS/);
-  assert.match(uiBehaviorOverridesOut, /@happier-dev\/plugins-auggie\/ui/);
-  assert.match(uiBehaviorOverridesOut, /@happier-dev\/plugins-claude\/ui/);
-  assert.match(uiBehaviorOverridesOut, /@happier-dev\/plugins-codex\/ui/);
-  assert.doesNotMatch(uiBehaviorOverridesOut, /@happier-dev\/plugins-pi\/ui\/behavior/);
-  assert.match(uiBehaviorOverridesOut, /auggie:\s*AUGGIE_UI_BEHAVIOR_OVERRIDE/);
-  assert.match(uiBehaviorOverridesOut, /claude:\s*CLAUDE_UI_BEHAVIOR_OVERRIDE/);
-  assert.match(uiBehaviorOverridesOut, /codex:\s*CODEX_UI_BEHAVIOR_OVERRIDE/);
-  assert.doesNotMatch(uiBehaviorOverridesOut, /PI_UI_BEHAVIOR_OVERRIDE/);
+  assert.match(uiBehaviorOverridesOut, /@happier-dev\/plugins-claude\/ui\/predecessor-message-meta/);
+  assert.doesNotMatch(uiBehaviorOverridesOut, /@happier-dev\/plugins-(?:auggie|codex|pi)\/ui/u);
+  assert.match(uiBehaviorOverridesOut, /claude:\s*CLAUDE_PREDECESSOR_MESSAGE_META_WRITER/);
+  assert.doesNotMatch(uiBehaviorOverridesOut, /UI_BEHAVIOR_OVERRIDE/);
   assert.match(uiBehaviorOverridesOut, /claude\.uiBehavior\.v1/);
   assert.match(uiBehaviorOverridesOut, /auggie\.uiBehavior\.v1/);
   assert.match(uiBehaviorOverridesOut, /firstParty\.auggie\.allowIndexingChip/);
@@ -4961,7 +4945,6 @@ test('generateBundledPluginEntries derives bundled CLI runtime facts from native
             auth: {
               support: "login_terminal",
               machineLoginKey: "nativefixture-account",
-              probe: { parser: "unknown", backgroundChecks: "safe", statusArgs: null },
               loginLaunches: [
                 { kind: "primary", args: ["login"] },
                 { kind: "device_code", args: ["login", "--device"] },
@@ -5021,7 +5004,6 @@ test('generateBundledPluginEntries rejects legacy CLI/auth source authority besi
             install: { managed: null, manual: { kind: "none" } },
             auth: {
               support: "unsupported",
-              probe: { parser: "none", backgroundChecks: "manual_only", statusArgs: null },
               loginLaunches: [],
             },
           },
@@ -5071,7 +5053,6 @@ test('generateBundledPluginEntries emits manifest-declared plugin UI translation
             install: { managed: null, manual: { kind: "none" } },
             auth: {
               support: "unsupported",
-              probe: { parser: "none", backgroundChecks: "manual_only", statusArgs: null },
               loginLaunches: [],
             },
           },
@@ -5903,7 +5884,6 @@ test('generateBundledPluginEntries projects review-only agent runtime contributi
         '      install: { managed: null, manual: { kind: "none" } },',
         '      auth: {',
         '        support: "status_only",',
-        '        probe: { parser: "unknown", backgroundChecks: "safe", statusArgs: null },',
         '        loginLaunches: [],',
         '      },',
         '    },',
@@ -6075,7 +6055,6 @@ test('generateBundledPluginEntries keeps executable Agent facts in implementatio
             install: { managed: null, manual: { kind: "none" } },
             auth: {
               support: "unsupported",
-              probe: { parser: "none", backgroundChecks: "manual_only", statusArgs: null },
               loginLaunches: [],
             },
           },

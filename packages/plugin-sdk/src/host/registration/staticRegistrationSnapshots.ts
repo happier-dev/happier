@@ -108,6 +108,15 @@ function snapshotStaticData(
     return Object.freeze(snapshot);
 }
 
+/**
+ * Captures trusted plugin declaration data at registration commit time. This
+ * is intentionally a data snapshot rather than another domain validator; the
+ * owning consumer validates its operational invariants.
+ */
+export function snapshotStaticRegistrationData(value: unknown, label: string): unknown {
+    return snapshotStaticData(value, label);
+}
+
 function snapshotMethodGroup(
     value: unknown,
     methodNames: readonly string[],

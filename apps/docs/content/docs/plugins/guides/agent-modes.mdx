@@ -41,20 +41,29 @@ second activation route. A runner imports only that leaf and never invokes
 `activate`. Activation and runner execution can be separate realms, so do not
 put mutable process-global singleton state in either module.
 
-The maintained
-[`advanced-package-root`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/advanced-package-root)
-reference shows the activation entry, the distinct leaf, and a same-module
-External Sessions companion. It compiles and validates its packed
-disposable-daemon path with:
+After `happier plugins create`, start from the maintained
+[`session-agent`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/session-agent)
+reference. It is the minimal executable public-SDK Session Agent: one
+`definePlugin(...)` declaration, one distinct runner leaf, strict runtime
+events, a host confirmation, and cancellation without a Provider or private
+host import.
 
 ```bash
 happier plugins dev typecheck .
 happier plugins dev build .
-happier plugins test . --packed
+happier plugins test .
+happier plugins pack . --out ../session-agent.tgz
+happier plugins install ../session-agent.tgz --kind archive
 ```
 
-Those commands prove source, build, and package/load behavior; they do not
-claim a mounted client surface or a real third-party Agent service.
+The archive install is an explicit lifecycle canary and requires present-user
+trust approval. Do not add `--trust` to the archive flow.
+
+For a package that also needs External Sessions, a managed Provider, Connected
+Accounts, Resources, or background work, use the composite
+[`advanced-package-root`](https://github.com/happier-dev/happier/tree/main/packages/plugin-sdk/examples/advanced-package-root)
+reference. Neither source reference claims a mounted client surface or a real
+third-party Agent service.
 
 ## 4. Composite Agent
 

@@ -390,7 +390,7 @@ describe('plugin UI destination binding normalization', () => {
   });
 
   it.each(['sessionSubagentLaunch', 'sessionSubagentDetails'] as const)(
-    'admits %s only as a Session-targeted non-navigable inline view',
+    'keeps %s as a Session-targeted inline view, never a destination binding',
     (container) => {
       const localId = container === 'sessionSubagentLaunch' ? 'subagent-launch' : 'subagent-details';
       const parsed = PluginUiViewV2Schema.safeParse({
@@ -406,8 +406,30 @@ describe('plugin UI destination binding normalization', () => {
         container,
         target: { kind: 'app' },
       }).success).toBe(false);
+      expect(normalizePluginUiDestinationBindingV1({
+        pluginId: 'acme.subagents',
+        destinationId: localId,
+        rendererId: `${localId}-renderer`,
+        container,
+        target: { kind: 'session' },
+      })).toBeNull();
+      expect(surfaceRegistry.resolvePluginUiDestinationBindingSlotV1(container, 'session')).toBeNull();
     },
   );
+
+  it('keeps Session info sections out of destination slots', () => {
+    expect(normalizePluginUiDestinationBindingV1({
+      pluginId: 'acme.sessions',
+      destinationId: 'activity',
+      rendererId: 'session-info-activity',
+      container: 'sessionInfoSection',
+      target: { kind: 'session' },
+    })).toBeNull();
+    expect(surfaceRegistry.resolvePluginUiDestinationBindingSlotV1(
+      'sessionInfoSection',
+      'session',
+    )).toBeNull();
+  });
 
   it('normalizes a Settings page through the fixed app target instead of a Settings-local target rule', () => {
     expect(normalizePluginUiSettingsPageBindingV1({

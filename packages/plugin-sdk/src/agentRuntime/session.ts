@@ -1,9 +1,13 @@
 import type { PermissionIntent } from '@happier-dev/agents';
+import type { RuntimeDescriptorV1 as ProtocolRuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 import type { JsonValue } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { AgentSessionConversationRollbackControl } from './controls.js';
+
+/** Agent-owned runtime identity carried across host-owned session lifecycle. */
+export type RuntimeDescriptorV1 = ProtocolRuntimeDescriptorV1;
 
 export type AgentSessionConnectedAccountSelection = Readonly<{
   purpose: string;
@@ -614,6 +618,8 @@ export type AgentSessionOpenRequest =
     sessionId: string;
     cwd: string;
     launchEnvironment?: AgentLaunchEnvironment;
+    /** Agent-owned runtime identity, interpreted only by the target Agent. */
+    runtimeDescriptorV1?: RuntimeDescriptorV1;
     configuration?: AgentSessionConfigurationSnapshot;
     connectedAccounts?: readonly AgentSessionConnectedAccountSelection[];
     mcpServers?: Readonly<Record<string, AgentSessionMcpLaunchConfig>>;
@@ -734,6 +740,12 @@ export type AgentSessionDisposeReason =
 
 export interface AgentSessionRuntime extends Disposable {
   dispose(reason?: AgentSessionDisposeReason): void | Promise<void>;
+  /**
+   * Bounded Agent-owned runtime identity resolved while this Session opened.
+   * The host publishes it through its canonical Session identity owner before
+   * exposing the runtime to consumers.
+   */
+  readonly runtimeDescriptorV1?: RuntimeDescriptorV1;
   readonly conversationRollback?: AgentSessionConversationRollbackControl;
   readonly runtimeAuth?: AgentSessionRuntimeAuthControl;
   connectedServiceApplicationSettled?(request: Readonly<{

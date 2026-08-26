@@ -11,6 +11,7 @@ import {
     readReviewOpenableContentReference,
     type ReviewOpenableContentResult,
 } from './reviewOpenableContent.js';
+import { PROJECT_COMPANION_ACTIVITY_CURRENT_UI_CONTEXT } from './reviewClientActions.js';
 
 const REVIEW_SESSION_STATUS_VIEW_ID = 'review-session-status-details';
 const PROJECT_COMPANION_ACTIVITY_VIEW_ID = 'project-companion-activity-log';
@@ -183,6 +184,7 @@ export function mountSessionStatus(
     const dispose = () => {
         if (disposed) return;
         disposed = true;
+        if (activity) context.hostApi.publishCurrentUiContext(null);
         unsubscribe();
         resourceStore.dispose();
         context.signal.removeEventListener('abort', dispose);
@@ -243,6 +245,9 @@ export function mountSessionStatus(
         return;
     }
     context.signal.addEventListener('abort', dispose, { once: true });
+    if (activity) {
+        context.hostApi.publishCurrentUiContext(PROJECT_COMPANION_ACTIVITY_CURRENT_UI_CONTEXT);
+    }
 }
 
 function mountProjectCompanionProjectActivity(root: HTMLElement): void {

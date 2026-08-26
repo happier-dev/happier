@@ -495,6 +495,13 @@ export const PluginUiNewSessionSeedV1Schema = z.object({
     mode: z.enum(['replace', 'append']),
   }).strict().optional(),
   profileId: z.string().trim().min(1).optional(),
+  /**
+   * A resolved checkout question, not a concrete checkout draft. The New
+   * Session screen owns the eventual worktree name, base ref and persisted
+   * `checkoutCreationDraft`; a seed can only state which existing reader
+   * choice it needs to present.
+   */
+  checkoutIntent: PluginUiSessionCheckoutIntentV1Schema.optional(),
   placement: z.object({
     serverId: z.string().trim().min(1).optional(),
     machineId: z.string().trim().min(1).optional(),

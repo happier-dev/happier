@@ -71,6 +71,17 @@ type ListBaseProps = Readonly<{
   density?: 'compact' | 'regular';
 }>;
 
+/** A selectable virtualized List becomes an RNW listbox and must be named. */
+type ListAccessibleNameProps =
+  | Readonly<{
+      accessibilityLabel: string;
+      accessibilityLabelKey?: string;
+    }>
+  | Readonly<{
+      accessibilityLabel?: string;
+      accessibilityLabelKey: string;
+    }>;
+
 type ListSearchBaseProps<Item> = Readonly<{
   /** Visible and assistive-technology name for List's owned search input. */
   label: string;
@@ -218,8 +229,6 @@ type VirtualizedListSharedProps<Item> = Readonly<{
   header?: ReactNode | ((context: ListHeaderContext<Item>) => ReactNode);
   /** Search/filter state owned by this List before the native virtualizer receives rows. */
   search?: ListSearchProps<Item>;
-  /** Makes one semantic List.Item per row an accessible selected option. */
-  selection?: ListSelectionProps<Item>;
   /** Content shown beside the collection when it has no rows. */
   empty?: ReactNode;
   /** Content below the collection. */
@@ -229,12 +238,29 @@ type VirtualizedListSharedProps<Item> = Readonly<{
   children?: never;
 }>;
 
-type FlatVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & Readonly<{
+type NonSelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & Readonly<{
+  selection?: undefined;
+}>;
+
+type SelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item>
+  & ListAccessibleNameProps
+  & Readonly<{
+    /** Makes one semantic List.Item per row an accessible selected option. */
+    selection: ListSelectionProps<Item>;
+  }>;
+
+type FlatVirtualizedListProps<Item> = (
+  | NonSelectableVirtualizedListProps<Item>
+  | SelectableVirtualizedListProps<Item>
+) & Readonly<{
   items: readonly Item[];
   sections?: never;
 }>;
 
-type SectionedVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & Readonly<{
+type SectionedVirtualizedListProps<Item> = (
+  | NonSelectableVirtualizedListProps<Item>
+  | SelectableVirtualizedListProps<Item>
+) & Readonly<{
   items?: never;
   /** Labelled groups virtualized together; sections and rows share one scroller. */
   sections: readonly ListSectionData<Item>[];
@@ -1203,8 +1229,16 @@ function ListRoot<Item>(props: ListProps<Item>): ReactElement {
     accessibilityLabel,
     accessibilityLabelKey,
   );
-  const resolvedProps = { ...rest, accessibilityLabel: resolvedAccessibilityLabel } as ListProps<Item>;
-  if (isVirtualizedList(resolvedProps)) return <VirtualizedList {...resolvedProps} />;
+  if (isVirtualizedList(props)) {
+    if (
+      props.selection !== undefined
+      && (typeof resolvedAccessibilityLabel !== 'string' || resolvedAccessibilityLabel.trim().length === 0)
+    ) {
+      throw new Error('Selectable List requires a non-empty accessible name.');
+    }
+    const resolvedProps = { ...rest, accessibilityLabel: resolvedAccessibilityLabel } as ListBaseProps & VirtualizedListProps<Item>;
+    return <VirtualizedList {...resolvedProps} />;
+  }
   const densityStyle: HappierPortableStyle = props.density === 'compact' ? { gap: 4 } : { gap: 8 };
   return (
     <HappierList

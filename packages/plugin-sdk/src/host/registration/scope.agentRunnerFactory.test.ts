@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+  AgentCliAuthContributionV1,
+  AgentCliSessionCommandDeclarationV1,
   AgentDaemonSpawnRuntimeSelectionV1,
+  AgentProviderCliAttachDeclarationV1,
   AgentRuntimeFactory,
   AgentSessionRunnerFactoryLocatorV1,
 } from '../../agentRuntime/index.js';
@@ -71,6 +74,276 @@ describe('Agent runner-factory registration transaction', () => {
     expect(daemonSpawnHooks?.augmentEnv?.(spawnSelection)).toEqual({
       ACME_SPAWN_HOOK: 'enabled',
     });
+  });
+
+  it('captures the focused provider CLI attach declaration in the one Agent registration', () => {
+    const scope = scopeFor(['factory']);
+    const providerCliAttach = Object.freeze({
+      resolveTarget: () => ({ ok: false as const, reason: 'fixture target is unavailable' }),
+      createArgs: () => [],
+      buildHealthUrl: () => null,
+    }) satisfies AgentProviderCliAttachDeclarationV1;
+
+    scope.api.agents.register('assistant', factory, {
+      providerCliAttach,
+    });
+
+    const [registration] = scope.commit();
+    const capturedProviderCliAttach = (registration?.value as {
+      providerCliAttach?: AgentProviderCliAttachDeclarationV1;
+    }).providerCliAttach;
+
+    expect(capturedProviderCliAttach).toBeDefined();
+    expect(capturedProviderCliAttach).not.toBe(providerCliAttach);
+    expect(Object.isFrozen(capturedProviderCliAttach)).toBe(true);
+    expect(capturedProviderCliAttach?.resolveTarget({ metadata: {} })).toEqual({
+      ok: false,
+      reason: 'fixture target is unavailable',
+    });
+    expect(capturedProviderCliAttach?.createArgs({})).toEqual([]);
+    expect(capturedProviderCliAttach?.buildHealthUrl({})).toBeNull();
+  });
+
+  it('captures a focused Agent CLI session-command declaration in the one Agent registration', () => {
+    const scope = scopeFor(['factory']);
+    const declaration = {
+      sessionRuntimeId: 'assistant',
+      directoryFlags: ['--directory'],
+      buildSessionOptions: vi.fn(() => ({
+        ok: true as const,
+        options: { assistantArgs: ['--fast'] },
+      })),
+    } satisfies AgentCliSessionCommandDeclarationV1;
+
+    scope.api.agents.register('assistant', factory, { cliSessionCommand: declaration });
+
+    const [registration] = scope.commit();
+    const capturedCliSessionCommand = (registration?.value as {
+      cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
+    }).cliSessionCommand;
+    declaration.directoryFlags.push('--later-mutation');
+
+    expect(capturedCliSessionCommand).toBeDefined();
+    expect(capturedCliSessionCommand).not.toBe(declaration);
+    expect(Object.isFrozen(capturedCliSessionCommand)).toBe(true);
+    expect(capturedCliSessionCommand?.sessionRuntimeId).toBe('assistant');
+    expect(capturedCliSessionCommand?.directoryFlags).toEqual(['--directory']);
+    expect(capturedCliSessionCommand?.buildSessionOptions?.({
+      isExplicitCliSubcommand: true,
+      parsed: { agentArgs: [] },
+      settings: {},
+      environment: {},
+      startOrigin: 'terminal',
+    })).toEqual({
+      ok: true,
+      options: { assistantArgs: ['--fast'] },
+    });
+  });
+
+  it('captures deferred-startup eligibility and experimental vendor-resume policy in the one Agent registration', () => {
+    const scope = scopeFor(['factory']);
+    const sessionStartup = {
+      shouldUseDeferredBootstrap: vi.fn((input: Readonly<{
+        startedBy: 'terminal' | 'daemon';
+        hasPersistedPermissionModeSeed: boolean;
+      }>) => input.startedBy === 'terminal' && input.hasPersistedPermissionModeSeed),
+    };
+    const vendorResumeSupport = {
+      supportsVendorResume: vi.fn((input: Readonly<{
+        agentRuntimeSelection?: Readonly<Record<string, unknown>>;
+      }>) => input.agentRuntimeSelection?.mode === 'acp'),
+    };
+
+    scope.api.agents.register('assistant', factory, {
+      sessionStartup,
+      vendorResumeSupport,
+    });
+
+    const [registration] = scope.commit();
+    const captured = registration?.value as {
+      sessionStartup?: typeof sessionStartup;
+      vendorResumeSupport?: typeof vendorResumeSupport;
+    };
+
+    expect(captured.sessionStartup).toBeDefined();
+    expect(captured.sessionStartup).not.toBe(sessionStartup);
+    expect(Object.isFrozen(captured.sessionStartup)).toBe(true);
+    expect(captured.sessionStartup?.shouldUseDeferredBootstrap({
+      startedBy: 'terminal',
+      hasPersistedPermissionModeSeed: true,
+    })).toBe(true);
+
+    expect(captured.vendorResumeSupport).toBeDefined();
+    expect(captured.vendorResumeSupport).not.toBe(vendorResumeSupport);
+    expect(Object.isFrozen(captured.vendorResumeSupport)).toBe(true);
+    expect(captured.vendorResumeSupport?.supportsVendorResume({
+      agentRuntimeSelection: { mode: 'acp' },
+    })).toBe(true);
+  });
+
+  it('captures strict data-only connected-account launch facts in the one Agent registration', () => {
+    const scope = scopeFor(['factory']);
+    const connectedAccountLaunch = {
+      requestAuthUses: [{
+        purpose: 'model_upstream',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.example.test',
+          headerNames: ['authorization'],
+        },
+      }],
+      stateSharingDescriptor: {
+        providerSupportStatus: 'supported',
+        config: {
+          supported: true,
+          modes: ['linked', 'copied', 'isolated'],
+          entries: [{ path: 'config.toml', mode: 'linked_or_copied' }],
+        },
+        state: {
+          supported: true,
+          modes: ['isolated', 'shared'],
+          entries: [{ path: 'sessions', mode: 'linked' }],
+          symlinkUnavailableDegradePolicy: 'degrade_to_isolated',
+        },
+        authIsolation: {
+          mode: 'materialized_home',
+          secretEntries: ['auth.json'],
+        },
+      },
+    };
+
+    scope.api.agents.register('assistant', factory, {
+      ...({ connectedAccountLaunch } as unknown as object),
+    });
+
+    const [registration] = scope.commit();
+    const captured = (registration?.value as {
+      connectedAccountLaunch?: typeof connectedAccountLaunch;
+    }).connectedAccountLaunch;
+    connectedAccountLaunch.requestAuthUses[0]!.purpose = 'mutated';
+    connectedAccountLaunch.stateSharingDescriptor.config.entries[0]!.path = 'mutated.toml';
+
+    expect(captured).toEqual({
+      requestAuthUses: [{
+        purpose: 'model_upstream',
+        materialization: {
+          kind: 'httpHeaders',
+          origin: 'https://api.example.test',
+          headerNames: ['authorization'],
+        },
+      }],
+      stateSharingDescriptor: {
+        providerSupportStatus: 'supported',
+        config: {
+          supported: true,
+          modes: ['linked', 'copied', 'isolated'],
+          entries: [{ path: 'config.toml', mode: 'linked_or_copied' }],
+        },
+        state: {
+          supported: true,
+          modes: ['isolated', 'shared'],
+          entries: [{ path: 'sessions', mode: 'linked' }],
+          symlinkUnavailableDegradePolicy: 'degrade_to_isolated',
+        },
+        authIsolation: {
+          mode: 'materialized_home',
+          secretEntries: ['auth.json'],
+        },
+      },
+    });
+    expect(Object.isFrozen(captured)).toBe(true);
+    expect(Object.isFrozen(captured?.requestAuthUses)).toBe(true);
+    expect(Object.isFrozen(captured?.stateSharingDescriptor)).toBe(true);
+  });
+
+  it('captures a focused Agent CLI auth contribution in the one Agent registration', async () => {
+    const scope = scopeFor(['factory']);
+    const cliAuth = {
+      detectAuthStatus: vi.fn(async () => ({
+        state: 'logged_in' as const,
+        method: 'oauth_cli' as const,
+        source: 'command' as const,
+      })),
+    } satisfies AgentCliAuthContributionV1;
+
+    scope.api.agents.register('assistant', factory, { cliAuth });
+
+    const [registration] = scope.commit();
+    const capturedCliAuth = (registration?.value as {
+      cliAuth?: AgentCliAuthContributionV1;
+    }).cliAuth;
+
+    expect(capturedCliAuth).toBeDefined();
+    expect(capturedCliAuth).not.toBe(cliAuth);
+    expect(Object.isFrozen(capturedCliAuth)).toBe(true);
+    await expect(capturedCliAuth?.detectAuthStatus({
+      runDeclaredSystemToolCommand: vi.fn(async () => ({
+        ok: false,
+        stdout: '',
+        stderr: '',
+        exitCode: null,
+      })),
+    })).resolves.toEqual({
+      state: 'logged_in',
+      method: 'oauth_cli',
+      source: 'command',
+    });
+  });
+
+  it('captures focused terminal prompt recognition in the one Agent registration', () => {
+    const scope = scopeFor(['factory']);
+    const terminalPromptSubmitVerification = {
+      shouldVerifyAfterSubmit: vi.fn((promptText: string) => promptText.trim().length > 0),
+      verifyBeforeSubmitStaging: vi.fn((input: Readonly<{ promptText: string; screenText: string }>) => (
+        input.screenText.includes(input.promptText)
+      )),
+      verifyAfterSubmit: vi.fn((input: Readonly<{ promptText: string; screenText: string }>) => (
+        input.screenText.includes(input.promptText)
+      )),
+    };
+
+    scope.api.agents.register('assistant', factory, { terminalPromptSubmitVerification });
+
+    const [registration] = scope.commit();
+    const captured = (registration?.value as {
+      terminalPromptSubmitVerification?: typeof terminalPromptSubmitVerification;
+    }).terminalPromptSubmitVerification;
+
+    expect(captured).toBeDefined();
+    expect(captured).not.toBe(terminalPromptSubmitVerification);
+    expect(Object.isFrozen(captured)).toBe(true);
+    expect(captured?.shouldVerifyAfterSubmit('continue')).toBe(true);
+    expect(captured?.verifyBeforeSubmitStaging?.({ promptText: 'continue', screenText: 'continue' })).toBe(true);
+    expect(captured?.verifyAfterSubmit({ promptText: 'continue', screenText: 'continue' })).toBe(true);
+  });
+
+  it('captures an auth-only auxiliary registration for a declarative ACP Agent', async () => {
+    const scope = createPluginRegistrationScope({
+      pluginId: 'example.declarative-acp-agent',
+      target: { realm: 'daemon' },
+      rights: [{
+        family: 'agents',
+        localId: 'acp-agent',
+        target: { realm: 'daemon' },
+      }],
+    });
+    const cliAuth = {
+      detectAuthStatus: vi.fn(async () => ({
+        state: 'logged_in' as const,
+        method: 'oauth_cli' as const,
+        source: 'command' as const,
+      })),
+    } satisfies AgentCliAuthContributionV1;
+    const agents = scope.api.agents as typeof scope.api.agents & Readonly<{
+      registerCliAuth?: (id: string, contribution: AgentCliAuthContributionV1) => void;
+    }>;
+
+    expect(agents.registerCliAuth).toBeTypeOf('function');
+    agents.registerCliAuth?.('acp-agent', cliAuth);
+
+    const [registration] = scope.commit();
+    expect(registration?.value).toMatchObject({ cliAuth: expect.any(Object) });
+    expect((registration?.value as { factory?: unknown }).factory).toBeUndefined();
   });
 
   it('rejects an empty daemon spawn hook bag before it can become an open callback registry', () => {

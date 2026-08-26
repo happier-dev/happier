@@ -107,7 +107,11 @@ async function collectPublicExampleFiles(root, prefix = '') {
   const entries = await readdir(join(root, prefix), { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
-    if (entry.name === 'dist' || entry.name === 'node_modules') continue;
+    if (
+      entry.name === 'dist'
+      || entry.name === 'node_modules'
+      || entry.name === '.happier-daemon-outputs.json'
+    ) continue;
     const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
       files.push(...await collectPublicExampleFiles(root, relativePath));
@@ -117,6 +121,24 @@ async function collectPublicExampleFiles(root, prefix = '') {
   }
   return files;
 }
+
+test('public example inventory excludes daemon-owned build manifests', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-public-example-inventory-'));
+  try {
+    await writeFixtureFile(root, 'public-authoring/index.ts', 'export {};\n');
+    await writeFixtureFile(
+      root,
+      'public-authoring/.happier-plugin/.happier-daemon-outputs.json',
+      '{}\n',
+    );
+
+    assert.deepEqual(await collectPublicExampleFiles(root), [
+      'examples/public-authoring/index.ts',
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 async function collectSourceDeclarationSidecars(root, prefix = 'src') {
   const entries = await readdir(join(root, prefix), { withFileTypes: true });

@@ -30,6 +30,12 @@ export const PluginUiTargetKindV1Schema = z.enum([
 ]);
 export type PluginUiTargetKindV1 = z.infer<typeof PluginUiTargetKindV1Schema>;
 
+/**
+ * Physical host vocabulary. This is intentionally broader than destinations:
+ * the three inline roles share the same physical host but are not navigation
+ * containers. Consumers that make a destination decision must use
+ * `PluginUiDestinationContainerV1` instead.
+ */
 export const PluginUiContainerV1Schema = z.enum([
   'appPage',
   'settingsPage',
@@ -46,11 +52,25 @@ export const PluginUiContainerV1Schema = z.enum([
 ]);
 export type PluginUiContainerV1 = z.infer<typeof PluginUiContainerV1Schema>;
 
+export const PluginUiDestinationContainerV1Schema = PluginUiContainerV1Schema.exclude([
+  'sessionSubagentLaunch',
+  'sessionSubagentDetails',
+  'sessionInfoSection',
+]);
+export type PluginUiDestinationContainerV1 = z.infer<
+  typeof PluginUiDestinationContainerV1Schema
+>;
+
 /**
  * Author-selectable `ui.views` containers. `settingsPage` remains a real host
  * container, but its declaration is owned exclusively by `ui.settingsPages`.
  * Keeping that distinction structural makes the generated public JSON schema
  * reject the same wrong-owner shape as the canonical parser.
+ */
+/**
+ * `ui.views` is the one authored spelling for both destination and Agent
+ * inline views. Its parsed binding arm, rather than this input vocabulary,
+ * decides whether a view is navigable.
  */
 export const PluginUiViewContainerV1Schema = PluginUiContainerV1Schema.exclude([
   'settingsPage',
@@ -66,22 +86,32 @@ export const PluginUiInlineSurfaceRoleV1Schema = z.enum([
 export type PluginUiInlineSurfaceRoleV1 = z.infer<typeof PluginUiInlineSurfaceRoleV1Schema>;
 export type PluginUiInlineSurfacePresentationV1 = 'content' | 'fill';
 
+const ALL_UI_SURFACE_PLATFORMS: readonly PluginUiPlatformV1[] = Object.freeze([
+  ...PluginUiPlatformV1Schema.options,
+]);
+
 /** Exact host-owned inline roles. This is admission, not a generic author slot. */
 export const PLUGIN_UI_INLINE_SURFACE_SLOTS_V1 = Object.freeze({
   sessionSubagentLaunch: Object.freeze({
-    container: 'sessionSubagentLaunch' as const,
+    role: 'sessionSubagentLaunch' as const,
     targetKind: 'session' as const,
     presentations: Object.freeze(['content'] as const),
+    surfaceContextPlacement: 'sessionPane' as const,
+    platforms: ALL_UI_SURFACE_PLATFORMS,
   }),
   sessionSubagentDetails: Object.freeze({
-    container: 'sessionSubagentDetails' as const,
+    role: 'sessionSubagentDetails' as const,
     targetKind: 'session' as const,
     presentations: Object.freeze(['content', 'fill'] as const),
+    surfaceContextPlacement: 'sessionPane' as const,
+    platforms: ALL_UI_SURFACE_PLATFORMS,
   }),
   sessionInfoSection: Object.freeze({
-    container: 'sessionInfoSection' as const,
+    role: 'sessionInfoSection' as const,
     targetKind: 'session' as const,
     presentations: Object.freeze(['content'] as const),
+    surfaceContextPlacement: 'sessionPane' as const,
+    platforms: ALL_UI_SURFACE_PLATFORMS,
   }),
 });
 
@@ -89,18 +119,22 @@ export function resolvePluginUiInlineSurfaceSlotV1(
   role: unknown,
   presentation: unknown,
 ): Readonly<{
-  container: 'sessionSubagentLaunch' | 'sessionSubagentDetails' | 'sessionInfoSection';
+  role: PluginUiInlineSurfaceRoleV1;
   targetKind: 'session';
   presentation: PluginUiInlineSurfacePresentationV1;
+  surfaceContextPlacement: 'sessionPane';
+  platforms: readonly PluginUiPlatformV1[];
 }> | null {
   const parsedRole = PluginUiInlineSurfaceRoleV1Schema.safeParse(role);
   if (!parsedRole.success || (presentation !== 'content' && presentation !== 'fill')) return null;
   const slot = PLUGIN_UI_INLINE_SURFACE_SLOTS_V1[parsedRole.data];
   if (!(slot.presentations as readonly string[]).includes(presentation)) return null;
   return Object.freeze({
-    container: slot.container,
+    role: slot.role,
     targetKind: slot.targetKind,
     presentation,
+    surfaceContextPlacement: slot.surfaceContextPlacement,
+    platforms: slot.platforms,
   });
 }
 
@@ -112,7 +146,7 @@ export type PluginUiDestinationInstancePolicyV1 =
   z.infer<typeof PluginUiDestinationInstancePolicyV1Schema>;
 
 export type PluginUiDestinationCollisionDomainV1<
-  TContainer extends PluginUiContainerV1 = PluginUiContainerV1,
+  TContainer extends PluginUiDestinationContainerV1 = PluginUiDestinationContainerV1,
   TTargetKind extends PluginUiTargetKindV1 = PluginUiTargetKindV1,
 > = Readonly<{
   container: TContainer;
@@ -127,7 +161,7 @@ export const PluginUiRightSidebarScopeV1Schema = z.enum([
 export type PluginUiRightSidebarScopeV1 = z.infer<typeof PluginUiRightSidebarScopeV1Schema>;
 
 export type PluginUiDestinationBindingSlotV1<
-  TContainer extends PluginUiContainerV1 = PluginUiContainerV1,
+  TContainer extends PluginUiDestinationContainerV1 = PluginUiDestinationContainerV1,
   TTargetKind extends PluginUiTargetKindV1 = PluginUiTargetKindV1,
   TInstancePolicy extends PluginUiDestinationInstancePolicyV1 = PluginUiDestinationInstancePolicyV1,
 > = Readonly<{
@@ -152,9 +186,7 @@ export type PluginUiDestinationBindingSlotV1<
   instancePolicies: readonly TInstancePolicy[];
 }>;
 
-const ALL_DESTINATION_PLATFORMS: readonly PluginUiPlatformV1[] = Object.freeze([
-  ...PluginUiPlatformV1Schema.options,
-]);
+const ALL_DESTINATION_PLATFORMS = ALL_UI_SURFACE_PLATFORMS;
 const DESKTOP_DESTINATION_PLATFORMS: readonly PluginUiPlatformV1[] = Object.freeze([
   'desktop',
   'web',
@@ -194,7 +226,7 @@ const INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES = Object.freeze([
 ] as const) satisfies readonly PluginUiDestinationInstancePolicyV1[];
 
 function surfaceContextPlacementForDestinationBindingSlot(
-  container: PluginUiContainerV1,
+  container: PluginUiDestinationContainerV1,
   targetKind: PluginUiTargetKindV1,
 ): PluginUiSurfacePlacementV1 {
   if (container === 'rightSidebarTab') return 'rightSidebarSurface';
@@ -213,7 +245,7 @@ function surfaceContextPlacementForDestinationBindingSlot(
 }
 
 function defineDestinationBindingSlot<
-  const TContainer extends PluginUiContainerV1,
+  const TContainer extends PluginUiDestinationContainerV1,
   const TTargetKind extends PluginUiTargetKindV1,
   const TInstancePolicies extends readonly PluginUiDestinationInstancePolicyV1[] =
     typeof SINGLETON_DESTINATION_INSTANCE_POLICIES,
@@ -336,21 +368,6 @@ export const PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1 = Object.freeze([
       'services',
       ALL_DESTINATION_PLATFORMS,
     ),
-    defineDestinationBindingSlot(
-      'sessionSubagentLaunch',
-      'session',
-      ALL_DESTINATION_PLATFORMS,
-    ),
-    defineDestinationBindingSlot(
-      'sessionSubagentDetails',
-      'session',
-      ALL_DESTINATION_PLATFORMS,
-    ),
-    defineDestinationBindingSlot(
-      'sessionInfoSection',
-      'session',
-      ALL_DESTINATION_PLATFORMS,
-    ),
   ] as const satisfies readonly PluginUiDestinationBindingSlotV1[]);
 
 const DESTINATION_BINDING_SLOT_BY_KEY: ReadonlyMap<string, PluginUiDestinationBindingSlotV1> = new Map(
@@ -361,7 +378,7 @@ const DESTINATION_BINDING_SLOT_BY_KEY: ReadonlyMap<string, PluginUiDestinationBi
 );
 
 function destinationBindingSlotKey(
-  container: PluginUiContainerV1,
+  container: PluginUiDestinationContainerV1,
   targetKind: PluginUiTargetKindV1,
 ): string {
   return `${container}\u0000${targetKind}`;
@@ -371,7 +388,7 @@ export function resolvePluginUiDestinationBindingSlotV1(
   container: unknown,
   targetKind: unknown,
 ): PluginUiDestinationBindingSlotV1 | null {
-  const parsedContainer = PluginUiContainerV1Schema.safeParse(container);
+  const parsedContainer = PluginUiDestinationContainerV1Schema.safeParse(container);
   const parsedTargetKind = PluginUiTargetKindV1Schema.safeParse(targetKind);
   if (!parsedContainer.success || !parsedTargetKind.success) return null;
   return DESTINATION_BINDING_SLOT_BY_KEY.get(
@@ -390,7 +407,7 @@ export const PluginUiDestinationBindingInputV1Schema = z.object({
    * normalized binding carries qualified identities, never a second registry.
    */
   availableRendererIds: z.array(asProtocolZod(PluginContributionLocalIdSchema)).optional(),
-  container: PluginUiContainerV1Schema,
+  container: PluginUiDestinationContainerV1Schema,
   target: PluginSurfaceTargetV1Schema,
   instancePolicy: PluginUiDestinationInstancePolicyV1Schema.default('singleton'),
 }).strict();
@@ -404,12 +421,13 @@ export type PluginUiDestinationBindingInputV1 =
  * mount time.
  */
 export type PluginUiDestinationBindingV1 = Readonly<{
+  kind: 'destination';
   destination: PluginContributionIdentityV1;
   /** Authored primary followed by fallbacks, in declaration order. */
   rendererChain: readonly PluginContributionIdentityV1[];
   /** The currently admitted member of {@link rendererChain}. */
   renderer: PluginContributionIdentityV1;
-  container: PluginUiContainerV1;
+  container: PluginUiDestinationContainerV1;
   target: PluginSurfaceTargetV1;
   targetKind: PluginUiTargetKindV1;
   /** Registry-owned host-API context classification; never a legacy surface id. */
@@ -431,6 +449,16 @@ export function isPluginUiDestinationBindingPotentiallySupportedOnPlatformV1(
   return binding.platforms.includes(platform)
     || (isNativePluginUiPlatformV1(platform)
       && hasDesktopTabletDestinationPlatformV1(binding.platforms));
+}
+
+/** Projection-time counterpart of the physical-host admission predicate. */
+export function isPluginUiSurfaceBindingPotentiallySupportedOnPlatformV1(
+  binding: PluginUiSurfaceBindingV1,
+  platform: PluginUiPlatformV1,
+): boolean {
+  return binding.kind === 'destination'
+    ? isPluginUiDestinationBindingPotentiallySupportedOnPlatformV1(binding, platform)
+    : binding.platforms.includes(platform);
 }
 
 /**
@@ -460,6 +488,21 @@ export function isPluginUiDestinationBindingAdmittedAtRuntimeV1(input: Readonly<
     || (input.formFactor === 'tablet'
       && isNativePluginUiPlatformV1(input.platform)
       && hasDesktopTabletDestinationPlatformV1(input.binding.platforms));
+}
+
+/**
+ * The physical host has one platform-admission seam. Inline roles do not use
+ * the destination phone/tablet exception because their registry rows declare
+ * concrete supported platforms directly.
+ */
+export function isPluginUiSurfaceBindingAdmittedAtRuntimeV1(input: Readonly<{
+  binding: PluginUiSurfaceBindingV1;
+  platform: PluginUiPlatformV1;
+  formFactor: PluginUiDestinationRuntimeFormFactorV1;
+}>): boolean {
+  return input.binding.kind === 'destination'
+    ? isPluginUiDestinationBindingAdmittedAtRuntimeV1(input)
+    : input.binding.platforms.includes(input.platform);
 }
 
 export function normalizePluginUiRendererChainV1(input: Readonly<{
@@ -510,6 +553,7 @@ export function normalizePluginUiDestinationBindingV1(
   if (!rendererChain) return null;
   const renderer = rendererChain[0]!;
   return Object.freeze({
+    kind: 'destination',
     destination: Object.freeze(destination),
     rendererChain,
     renderer,
@@ -531,10 +575,11 @@ export function normalizePluginUiDestinationBindingV1(
  * can never advertise a value outside the current registry slot.
  */
 export const PluginUiDestinationBindingV1Schema = z.object({
+  kind: z.literal('destination'),
   destination: asProtocolZod(PluginContributionIdentityV1Schema),
   rendererChain: z.array(asProtocolZod(PluginContributionIdentityV1Schema)).min(1),
   renderer: asProtocolZod(PluginContributionIdentityV1Schema),
-  container: PluginUiContainerV1Schema,
+  container: PluginUiDestinationContainerV1Schema,
   target: PluginSurfaceTargetV1Schema,
   targetKind: PluginUiTargetKindV1Schema,
   surfaceContextPlacement: PluginUiSurfacePlacementV1Schema,
@@ -628,12 +673,152 @@ export const PluginUiDestinationBindingV1Schema = z.object({
 });
 
 /**
+ * Inline bindings are physical mounts, not destinations. In particular they
+ * carry a qualified surface identity and exact role but no destination,
+ * collision domain, instance policy, pane state, or restoration identity.
+ */
+export const PluginUiInlineSurfaceBindingInputV1Schema = z.object({
+  pluginId: asProtocolZod(PluginIdSchema),
+  surfaceId: asProtocolZod(PluginContributionLocalIdSchema),
+  rendererId: asProtocolZod(PluginContributionLocalIdSchema),
+  fallbackRendererIds: z.array(asProtocolZod(PluginContributionLocalIdSchema)).optional(),
+  availableRendererIds: z.array(asProtocolZod(PluginContributionLocalIdSchema)).optional(),
+  role: PluginUiInlineSurfaceRoleV1Schema,
+  target: PluginSurfaceTargetV1Schema,
+}).strict();
+export type PluginUiInlineSurfaceBindingInputV1 = z.input<
+  typeof PluginUiInlineSurfaceBindingInputV1Schema
+>;
+
+export type PluginUiInlineSurfaceBindingV1 = Readonly<{
+  kind: 'inline';
+  surface: PluginContributionIdentityV1;
+  role: PluginUiInlineSurfaceRoleV1;
+  rendererChain: readonly PluginContributionIdentityV1[];
+  renderer: PluginContributionIdentityV1;
+  target: PluginSurfaceTargetV1;
+  targetKind: 'session';
+  surfaceContextPlacement: 'sessionPane';
+  platforms: readonly PluginUiPlatformV1[];
+}>;
+
+export function normalizePluginUiInlineSurfaceBindingV1(
+  input: unknown,
+): PluginUiInlineSurfaceBindingV1 | null {
+  const parsed = PluginUiInlineSurfaceBindingInputV1Schema.safeParse(input);
+  if (!parsed.success || parsed.data.target.kind !== 'session') return null;
+  const slot = PLUGIN_UI_INLINE_SURFACE_SLOTS_V1[parsed.data.role];
+  const rendererChain = normalizePluginUiRendererChainV1({
+    pluginId: parsed.data.pluginId,
+    rendererId: parsed.data.rendererId,
+    fallbackRendererIds: parsed.data.fallbackRendererIds,
+    availableRendererIds: parsed.data.availableRendererIds,
+  });
+  if (!rendererChain) return null;
+  return Object.freeze({
+    kind: 'inline',
+    surface: Object.freeze(PluginContributionIdentityV1Schema.parse({
+      pluginId: parsed.data.pluginId,
+      localId: parsed.data.surfaceId,
+    })),
+    role: slot.role,
+    rendererChain,
+    renderer: rendererChain[0]!,
+    target: Object.freeze({ ...parsed.data.target }),
+    targetKind: slot.targetKind,
+    surfaceContextPlacement: slot.surfaceContextPlacement,
+    platforms: slot.platforms,
+  });
+}
+
+export const PluginUiInlineSurfaceBindingV1Schema = z.object({
+  kind: z.literal('inline'),
+  surface: asProtocolZod(PluginContributionIdentityV1Schema),
+  role: PluginUiInlineSurfaceRoleV1Schema,
+  rendererChain: z.array(asProtocolZod(PluginContributionIdentityV1Schema)).min(1),
+  renderer: asProtocolZod(PluginContributionIdentityV1Schema),
+  target: PluginSurfaceTargetV1Schema,
+  targetKind: z.literal('session'),
+  surfaceContextPlacement: z.literal('sessionPane'),
+  platforms: z.array(PluginUiPlatformV1Schema).min(1),
+}).strict().superRefine((binding, ctx) => {
+  const slot = PLUGIN_UI_INLINE_SURFACE_SLOTS_V1[binding.role];
+  if (binding.target.kind !== slot.targetKind) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetKind'],
+      message: 'Plugin inline surface binding target kind must match its role.',
+    });
+  }
+  if (binding.surfaceContextPlacement !== slot.surfaceContextPlacement) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['surfaceContextPlacement'],
+      message: 'Plugin inline surface binding context placement must be registry-derived.',
+    });
+  }
+  if (binding.renderer.pluginId !== binding.surface.pluginId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['renderer', 'pluginId'],
+      message: 'Plugin inline surface and renderer must have the same plugin owner.',
+    });
+  }
+  if (binding.rendererChain.some((renderer) => renderer.pluginId !== binding.surface.pluginId)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['rendererChain'],
+      message: 'Plugin inline surface renderer chain must have the same plugin owner.',
+    });
+  }
+  if (
+    new Set(binding.rendererChain.map((renderer) => buildQualifiedPluginContributionKey(renderer))).size
+      !== binding.rendererChain.length
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['rendererChain'],
+      message: 'Plugin inline surface renderer chain must not repeat a renderer.',
+    });
+  }
+  if (!binding.rendererChain.some((renderer) => (
+    renderer.pluginId === binding.renderer.pluginId
+      && renderer.localId === binding.renderer.localId
+  ))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['renderer'],
+      message: 'Plugin inline surface selected renderer must be a member of its renderer chain.',
+    });
+  }
+  if (
+    new Set(binding.platforms).size !== binding.platforms.length
+      || binding.platforms.some((platform) => !slot.platforms.includes(platform))
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['platforms'],
+      message: 'Plugin inline surface platforms must be a unique registry-admitted subset.',
+    });
+  }
+});
+
+/** One physical-host binding grammar; its `kind` closes the two ownership arms. */
+export const PluginUiSurfaceBindingV1Schema = z.discriminatedUnion('kind', [
+  PluginUiDestinationBindingV1Schema,
+  PluginUiInlineSurfaceBindingV1Schema,
+]);
+export type PluginUiSurfaceBindingV1 =
+  | PluginUiDestinationBindingV1
+  | PluginUiInlineSurfaceBindingV1;
+
+/**
  * Exact binding selector for a host that already knows its insertion slot and
  * projected renderer. It accepts no legacy placement name and does not infer
  * either identity from an id prefix.
  */
 export const PluginUiDestinationBindingSelectorV1Schema = z.object({
-  container: PluginUiContainerV1Schema,
+  container: PluginUiDestinationContainerV1Schema,
   targetKind: PluginUiTargetKindV1Schema,
   pluginId: asProtocolZod(PluginIdSchema),
   rendererId: asProtocolZod(PluginContributionLocalIdSchema),
@@ -699,6 +884,24 @@ export function selectPluginUiDestinationBindingRendererV1(
   eligibleRendererIds: unknown,
 ): PluginUiDestinationBindingV1 | null {
   const parsedBinding = PluginUiDestinationBindingV1Schema.safeParse(binding);
+  if (!parsedBinding.success) return null;
+  const renderer = selectPluginUiRendererChainMemberV1(
+    parsedBinding.data.rendererChain,
+    eligibleRendererIds,
+  );
+  if (!renderer) return null;
+  return Object.freeze({
+    ...binding,
+    renderer,
+  });
+}
+
+/** The same registry-owned renderer-chain ordering for an exact inline role. */
+export function selectPluginUiInlineSurfaceBindingRendererV1(
+  binding: PluginUiInlineSurfaceBindingV1,
+  eligibleRendererIds: unknown,
+): PluginUiInlineSurfaceBindingV1 | null {
+  const parsedBinding = PluginUiInlineSurfaceBindingV1Schema.safeParse(binding);
   if (!parsedBinding.success) return null;
   const renderer = selectPluginUiRendererChainMemberV1(
     parsedBinding.data.rendererChain,

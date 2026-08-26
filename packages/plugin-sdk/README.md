@@ -481,10 +481,45 @@ Choose the task before writing a factory:
 
 The daemon activation entry calls `activate`; the Session runner imports only
 the named leaf. They can run in different realms, so neither relies on a
-process-global singleton. The maintained
-`examples/advanced-package-root/` reference is a compiled package-root example
-with a custom Session Agent, External Sessions companion, Connected Account
-purpose, managed Provider, background runner, and public-testkit check.
+process-global singleton. Start a custom persistent Session Agent from the
+minimal executable `examples/session-agent/` reference. It demonstrates one
+public `definePlugin(...)` registration, a distinct runner leaf, strict runtime
+events, a host interaction, and cancellation without a Provider or private host
+import. Use `examples/advanced-package-root/` only when that same package also
+needs an External Sessions companion, Connected Account purpose, managed
+Provider, Resource, or background runner.
+
+After its source checks pass, keep the Session-Agent lifecycle canary explicit:
+
+```bash
+happier plugins pack . --out ../session-agent.tgz
+happier plugins install ../session-agent.tgz --kind archive
+```
+
+Archive installation requires present-user trust approval. The public Agent
+authoring route remains the one `definePlugin(...)` entry; its current focused
+fields include:
+
+- `providerCliAttach` for target resolution, CLI arguments, and a health URL
+  while the host retains process and connection custody;
+- `cliSessionCommand` for static Agent-native CLI forwarding and an optional
+  bounded Session-options builder whose input includes parsed arguments,
+  host-resolved settings and environment, and `startOrigin`;
+- `preflightSessionControls` for bounded Agent-native control discovery while
+  the host owns tool/process/JSON-RPC execution and caching;
+- `terminalPromptSubmitVerification` for Agent-native recognition around the
+  host's existing terminal submit verification; and
+- `sessionStartup` and `vendorResumeSupport` for narrow eligibility decisions
+  inside host-owned deferred startup and experimental vendor-resume gates.
+
+Static prompt blocks and login-status resume-checklist inclusion belong in the
+Agent declaration's strict `catalog.codingPromptBehavior` and
+`catalog.resumeChecklist` fields. For a declarative ACP Agent, the optional
+strict `runtime.definition` carries only `modelConfigOptionId`, bounded
+`stderrRules`, and the MCP input policy; Kiro is the current positive consumer.
+When finite Runs reuse the Session adapter, call
+`createExecutionRunHostBackendFromSessionRuntime` instead of owning a second
+Run lifecycle.
 
 ## Task guides
 

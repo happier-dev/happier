@@ -95,6 +95,8 @@ export type { ScmRemoteSetUrlRequest } from './projections.js';
 export type { ScmRemoteUrlNormalizationResult } from './projections.js';
 export type { ScmRemoteUrlScheme } from './projections.js';
 export type { ScmRepoMode } from './projections.js';
+export type { ScmReviewWorkspaceCurrentness } from './projections.js';
+export type { ScmReviewWorkspaceSourceTip } from './projections.js';
 export type { ScmRepositoryCloneInput } from './projections.js';
 export type { ScmRepositoryCloneOutput } from './projections.js';
 export type { ScmRepositoryCloneTarget } from './projections.js';

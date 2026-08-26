@@ -8,7 +8,12 @@ import {
   normalizePluginDeclarativeDocumentV1,
   type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
 } from './declarativeDocument.js';
-import { preparePluginJsonSchema } from '../../actions/jsonSchemaValidation.js';
+import {
+  defineProtocolObject,
+  defineProtocolString,
+  preparePluginJsonSchema,
+  rehydrateCanonicalProtocolComposableSchema,
+} from '../../actions/jsonSchemaValidation.js';
 import { PluginDeclarativeNodeV2Schema } from './v2.js';
 
 describe('declarative document normalizer v1', () => {
@@ -25,13 +30,16 @@ describe('declarative document normalizer v1', () => {
   }
 
   function prepareTargetedSurface(
-    input: Omit<PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1, 'inputValidation'>,
+    input: Omit<PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1, 'inputValidation' | 'inputNormalizer'>,
   ): PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1 {
     const inputValidation = preparePluginJsonSchema(input.inputSchema);
+    const inputNormalizer = rehydrateCanonicalProtocolComposableSchema(inputValidation.jsonSchema);
+    if (!inputNormalizer) throw new Error('Expected canonical Surface schema to rehydrate');
     return Object.freeze({
       ...input,
       inputSchema: inputValidation.jsonSchema,
       inputValidation,
+      inputNormalizer,
     });
   }
 
@@ -440,12 +448,9 @@ describe('declarative document normalizer v1', () => {
           role: 'detail',
           presentation: 'content',
         },
-        inputSchema: {
-          type: 'object',
-          properties: { reviewId: { type: 'string' } },
-          required: ['reviewId'],
-          additionalProperties: false,
-        },
+        inputSchema: defineProtocolObject({
+          reviewId: defineProtocolString(),
+        }, { policy: 'closed' }).jsonSchema,
       })],
     });
 
@@ -493,13 +498,76 @@ describe('declarative document normalizer v1', () => {
     ]);
   });
 
-  it('uses the retained admitted launch validator rather than compiling during document normalization', () => {
-    const inputSchema = preparePluginJsonSchema({
-      type: 'object',
-      properties: { reviewId: { type: 'string' } },
-      required: ['reviewId'],
-      additionalProperties: false,
+  it('uses the admitted Protocol parser to distinguish Surface unknown-key policies', () => {
+    const handle = {
+      point: { pointId: 'details', protocol: { id: 'review-detail', version: 1 } },
+      contributor: {
+        pluginId: 'com.acme.review',
+        contributionId: 'detail',
+        immutableGenerationId: 'review-generation-a',
+      },
+      role: 'detail',
+      presentation: 'content',
+    } as const;
+    const documentFor = (input: unknown) => ({
+      version: 1,
+      root: {
+        kind: 'targetedSurface' as const,
+        surface: {
+          point: handle.point,
+          contributor: {
+            pluginId: handle.contributor.pluginId,
+            contributionId: handle.contributor.contributionId,
+          },
+          role: handle.role,
+        },
+        input,
+        instanceKey: 'review-42',
+      },
     });
+    const normalize = (
+      policy: 'closed' | 'additive-open/drop' | 'additive-open/preserve',
+      input: unknown,
+    ) => {
+      const inputSchema = defineProtocolObject({
+        known: defineProtocolString(),
+      }, { policy });
+      const inputValidation = preparePluginJsonSchema(inputSchema.jsonSchema);
+      const inputNormalizer = rehydrateCanonicalProtocolComposableSchema(inputSchema.jsonSchema);
+      if (!inputNormalizer) throw new Error('Expected canonical Surface schema to rehydrate');
+      return normalizePluginDeclarativeDocumentV1({
+        pluginId: 'com.acme.dashboard',
+        generation: 'generation-4',
+        actions: [],
+        document: documentFor(input),
+        preparedTargetedSurfaces: [{
+          targetPluginId: 'com.acme.dashboard',
+          handle,
+          inputSchema: inputValidation.jsonSchema,
+          inputValidation,
+          inputNormalizer,
+        }],
+      } as unknown as Parameters<typeof normalizePluginDeclarativeDocumentV1>[0]);
+    };
+
+    const dropped = normalize('additive-open/drop', { known: 'kept', future: 'drop-me' }).root;
+    const preserved = normalize('additive-open/preserve', { known: 'kept', future: 'retain-me' }).root;
+    if (dropped.kind !== 'targetedSurface' || preserved.kind !== 'targetedSurface') {
+      throw new Error('Expected normalized targeted Surface leaves');
+    }
+    expect(dropped.input).toEqual({ known: 'kept' });
+    expect(preserved.input).toEqual({ known: 'kept', future: 'retain-me' });
+    expectNormalizationFailure(
+      () => normalize('closed', { known: 'kept', future: 'reject-me' }),
+      'plugin_declarative_targeted_surface_input_invalid',
+    );
+  });
+
+  it('uses the retained admitted launch validator rather than compiling during document normalization', () => {
+    const targetSchema = defineProtocolObject({
+      reviewId: defineProtocolString(),
+    }, { policy: 'closed' }).jsonSchema;
+    const inputSchema = preparePluginJsonSchema(targetSchema);
     let validationCalls = 0;
     const inputValidation = Object.freeze({
       jsonSchema: inputSchema.jsonSchema,
@@ -508,6 +576,8 @@ describe('declarative document normalizer v1', () => {
         return inputSchema.validate(value) && false;
       },
     });
+    const inputNormalizer = rehydrateCanonicalProtocolComposableSchema(targetSchema);
+    if (!inputNormalizer) throw new Error('Expected canonical Surface schema to rehydrate');
     const handle = {
       point: { pointId: 'details', protocol: { id: 'review-detail', version: 1 } },
       contributor: {
@@ -552,6 +622,7 @@ describe('declarative document normalizer v1', () => {
         handle,
         inputSchema: inputSchema.jsonSchema,
         inputValidation,
+        inputNormalizer,
       }],
     } as unknown as Parameters<typeof normalizePluginDeclarativeDocumentV1>[0]), 'plugin_declarative_targeted_surface_input_invalid');
     expect(validationCalls).toBe(1);
@@ -607,12 +678,9 @@ describe('declarative document normalizer v1', () => {
       role: 'detail',
       presentation: 'content',
     } as const;
-    const inputSchema = {
-      type: 'object',
-      properties: { reviewId: { type: 'string' } },
-      required: ['reviewId'],
-      additionalProperties: false,
-    } as const;
+    const inputSchema = defineProtocolObject({
+      reviewId: defineProtocolString(),
+    }, { policy: 'closed' }).jsonSchema;
 
     expectNormalizationFailure(() => normalizePluginDeclarativeDocumentV1({
       ...base,
@@ -657,7 +725,7 @@ describe('declarative document normalizer v1', () => {
         contributor: { ...surface.contributor, immutableGenerationId: 'review-generation-a' },
         presentation: 'fill',
       },
-      inputSchema: { type: 'object' },
+      inputSchema: defineProtocolObject({}, { policy: 'additive-open/preserve' }).jsonSchema,
     })];
     const base = {
       pluginId: 'com.acme.dashboard',
@@ -706,7 +774,7 @@ describe('declarative document normalizer v1', () => {
           contributor: { ...surface.contributor, immutableGenerationId: 'review-generation-a' },
           presentation: 'content',
         },
-        inputSchema: { type: 'object' },
+        inputSchema: defineProtocolObject({}, { policy: 'additive-open/preserve' }).jsonSchema,
       })],
     };
     const targetedSurfaceWith = (fallback: unknown) => ({

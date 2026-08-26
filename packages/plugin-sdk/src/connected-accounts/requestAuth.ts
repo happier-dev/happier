@@ -16,6 +16,8 @@ export type ConnectedAccountRequestAuthClientSourceParams = Readonly<{
   /** Env var containing the private, atomically rotated request-auth endpoint/capability document. */
   capabilityPathEnv: string;
   requestTimeoutMs?: number;
+  /** Authentication recovery may rotate an OAuth credential and fetch provider evidence, so it has a larger bounded wait. */
+  authFailureRequestTimeoutMs?: number;
 }>;
 
 function js(value: unknown): string {
@@ -43,6 +45,17 @@ export function buildConnectedAccountRequestAuthClientSource(
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 120_000) {
     throw new Error('Invalid request-auth timeout');
   }
+  // The host recovery owner allows 300 seconds for the provider-owned refresh/evidence
+  // sequence. Keep the generated transport just above that owner without extending the
+  // ordinary lookup/quota budget.
+  const authFailureRequestTimeoutMs = input.authFailureRequestTimeoutMs ?? 310_000;
+  if (
+    !Number.isSafeInteger(authFailureRequestTimeoutMs)
+    || authFailureRequestTimeoutMs < 1
+    || authFailureRequestTimeoutMs > 600_000
+  ) {
+    throw new Error('Invalid request-auth recovery timeout');
+  }
 
   return `const CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV = ${js(capabilityPathEnv)};
 const CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER = ${js(CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER)};
@@ -50,6 +63,7 @@ const CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH = ${js(CONNECTED_ACCOUNT_REQUES
 const CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH = ${js(CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH)};
 const CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH = ${js(CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH)};
 const CONNECTED_ACCOUNT_REQUEST_AUTH_TIMEOUT_MS = ${requestTimeoutMs};
+const CONNECTED_ACCOUNT_REQUEST_AUTH_RECOVERY_TIMEOUT_MS = ${authFailureRequestTimeoutMs};
 const CONNECTED_ACCOUNT_REQUEST_AUTH_RESPONSE_MAX_BYTES = 256 * 1024;
 const CONNECTED_ACCOUNT_REQUEST_AUTH_PINNED_TERMINAL_FRONTIER = Object.freeze({
   producerVersions: Object.freeze(${js(PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1)}),
@@ -334,9 +348,9 @@ function requestAuthReadTransportTuple() {
   };
 }
 
-function requestAuthComposeSignal(signal) {
+function requestAuthComposeSignal(signal, timeoutMs) {
   const timeout = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
-    ? AbortSignal.timeout(CONNECTED_ACCOUNT_REQUEST_AUTH_TIMEOUT_MS)
+    ? AbortSignal.timeout(timeoutMs)
     : null;
   if (signal && timeout && typeof AbortSignal.any === "function") return AbortSignal.any([signal, timeout]);
   return signal || timeout || undefined;
@@ -384,7 +398,7 @@ async function requestAuthReadBoundedResponse(response) {
   }
 }
 
-async function requestAuthCall(path, body, signal) {
+async function requestAuthCall(path, body, signal, timeoutMs = CONNECTED_ACCOUNT_REQUEST_AUTH_TIMEOUT_MS) {
   const transport = requestAuthReadTransportTuple();
   let response;
   try {
@@ -396,7 +410,7 @@ async function requestAuthCall(path, body, signal) {
       },
       body: JSON.stringify(body),
       redirect: "error",
-      signal: requestAuthComposeSignal(signal),
+      signal: requestAuthComposeSignal(signal, timeoutMs),
     });
   } catch (error) {
     if (signal && signal.aborted) throw error;
@@ -458,6 +472,7 @@ async function reportConnectedAccountAuthFailure(input) {
     CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
     body,
     input.signal,
+    CONNECTED_ACCOUNT_REQUEST_AUTH_RECOVERY_TIMEOUT_MS,
   ));
 }
 

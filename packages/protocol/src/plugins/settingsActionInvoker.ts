@@ -119,6 +119,8 @@ export function createHostPluginSettingsActionInvoker<Context = undefined, Apply
     input: Readonly<{
       actionId: string;
       settings: Readonly<Record<PluginSettingFieldIdV2, JsonValue>>;
+      /** Exact host snapshot used later by the sole patch/CAS owner. */
+      settingsRevision: string;
     }>,
     context: Context,
     options: Readonly<{ signal: AbortSignal }>,
@@ -173,6 +175,7 @@ export function createHostPluginSettingsActionInvoker<Context = undefined, Apply
         const result = await ports.execute({
           actionId: input.declaration.id,
           settings: snapshot.values,
+          settingsRevision: snapshot.revision,
         }, input.context as Context, { signal: input.signal });
         assertCurrent(input.signal, input.isCurrent, ports.createError);
         const patch = normalizePatch(input.declaration, result, ports.createError);
