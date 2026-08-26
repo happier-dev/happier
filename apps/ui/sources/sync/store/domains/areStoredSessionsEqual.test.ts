@@ -59,6 +59,47 @@ describe('areStoredSessionsEqual', () => {
         expect(areStoredSessionsEqual(previous, next)).toBe(false);
     });
 
+    it('treats structured session turn projection changes as stored session changes', () => {
+        const sessionTurns = {
+            v: 1 as const,
+            sessionId: 's1',
+            latestTurnId: 'turn-1',
+            updatedAt: 10,
+            turns: [{
+                turnId: 'turn-1',
+                status: 'completed' as const,
+                startedAt: 1,
+                updatedAt: 10,
+                terminalAt: 10,
+                transcriptAnchors: {
+                    startUserMessageSeq: 1,
+                    userMessageSeqs: [1],
+                    startSeqInclusive: 1,
+                    endSeqInclusive: 2,
+                },
+                rollback: { state: 'eligible' as const, updatedAt: 10 },
+            }],
+        };
+        const previous = {
+            ...makeSession({ rollbackEligibleTurnStarts: [1] }),
+            sessionTurns,
+        } as Session;
+        const next = {
+            ...makeSession({ rollbackEligibleTurnStarts: [1] }),
+            sessionTurns: {
+                ...sessionTurns,
+                updatedAt: 20,
+                turns: sessionTurns.turns.map((turn) => ({
+                    ...turn,
+                    updatedAt: 20,
+                    rollback: { state: 'not_eligible' as const, reason: 'not_latest_turn', updatedAt: 20 },
+                })),
+            },
+        } as Session;
+
+        expect(areStoredSessionsEqual(previous, next)).toBe(false);
+    });
+
     it('treats layout and owner metadata view changes as stored session changes', () => {
         const previous = makeSession({
             metadataLayoutVersion: 1,

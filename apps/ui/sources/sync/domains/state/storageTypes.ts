@@ -10,6 +10,7 @@ import type {
     ScmPullRequestStatusProjection,
     SessionMessageRole,
     SessionRuntimeIssueV1,
+    SessionTurnsProjectionV1,
     SessionContextUsageSnapshotV1,
 } from "@happier-dev/protocol";
 import { 
@@ -470,6 +471,7 @@ export interface Session {
     latestTurnStatus?: PrimaryTurnStatusV1 | null,
     latestTurnStatusObservedAt?: number | null,
     rollbackEligibleTurnStarts?: readonly number[] | null,
+    sessionTurns?: SessionTurnsProjectionV1 | null,
     latestReadyEventSeq?: number | null,
     latestReadyEventAt?: number | null,
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null,
