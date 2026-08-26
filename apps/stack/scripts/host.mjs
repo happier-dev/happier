@@ -17,6 +17,7 @@ import {
   pauseExecutionHostCandidateMirror,
   prepareExecutionHostCandidateRepository,
   readExecutionHostCandidateState,
+  recoverExecutionHostCandidateRepository,
   refreshExecutionHostCandidateRepository,
   syncExecutionHostCandidateMirror,
 } from './utils/execution_host/candidate_repository.mjs';
@@ -42,7 +43,7 @@ function usage(json) {
       '[host] usage:',
       '  hstack host setup [--instance=happier-agent-primary] [--profile=balanced] [--workspace=ID=/absolute/source ...] [--json]',
       '  hstack host mirror [--workspace-id=ID] [--source-dir=/absolute/path/to/repo] [--json]',
-      '  hstack host mirror status|sync|stop|adopt-legacy [--workspace-id=ID] [--json]',
+      '  hstack host mirror status|sync|stop|adopt-legacy|recover [--workspace-id=ID] [--json]',
       '  hstack host status|doctor|start|stop [--json]',
       '  hstack host shell [--guest-cwd=/absolute/path] [-- COMMAND...]',
       '  hstack host exec [--guest-cwd=/absolute/path] -- COMMAND [ARG...]',
@@ -165,6 +166,14 @@ async function main() {
   const executor = executorFor(profile);
   if (command === 'mirror') {
     const workspaceId = workspaceIdForProfile(profile, argv);
+    const configuredSourceDir = profile.version === 2
+      ? profile.workspaces.find((workspace) => workspace.id === workspaceId).hostSourceDir
+      : '';
+    const explicitSourceDir = flagValue(argv, '--source-dir').trim();
+    if (configuredSourceDir && explicitSourceDir && resolve(configuredSourceDir) !== resolve(explicitSourceDir)) {
+      throw new Error(`[host] workspace ${workspaceId} source is configured as ${configuredSourceDir}`);
+    }
+    const sourceDir = configuredSourceDir || explicitSourceDir || process.cwd();
     const mirrorArgument = argv[argv.indexOf(command) + 1] ?? '';
     const mirrorAction = mirrorArgument.startsWith('-') ? '' : mirrorArgument;
     if (mirrorAction === 'status') {
@@ -209,22 +218,29 @@ async function main() {
         text: `[host] legacy candidate adopted as workspace ${workspaceId}`,
       });
     }
+    if (mirrorAction === 'recover') {
+      const result = await recoverExecutionHostCandidateRepository({
+        profile,
+        workspaceId,
+        sourceDir,
+        env: process.env,
+        executor,
+      });
+      return printResult({
+        json,
+        data: result,
+        text: `[host] candidate workspace ${workspaceId || 'default'} recovered`,
+      });
+    }
     if (mirrorAction) throw new Error(`[host] unknown mirror command: ${mirrorAction}`);
     const existing = await readExecutionHostCandidateState(profile, process.env, workspaceId);
     const prepareOrRefresh = existing
       ? refreshExecutionHostCandidateRepository
       : prepareExecutionHostCandidateRepository;
-    const configuredSourceDir = profile.version === 2
-      ? profile.workspaces.find((workspace) => workspace.id === workspaceId).hostSourceDir
-      : '';
-    const explicitSourceDir = flagValue(argv, '--source-dir').trim();
-    if (configuredSourceDir && explicitSourceDir && resolve(configuredSourceDir) !== resolve(explicitSourceDir)) {
-      throw new Error(`[host] workspace ${workspaceId} source is configured as ${configuredSourceDir}`);
-    }
     const result = await prepareOrRefresh({
       profile,
       workspaceId,
-      sourceDir: configuredSourceDir || explicitSourceDir || process.cwd(),
+      sourceDir,
       env: process.env,
       executor,
     });
