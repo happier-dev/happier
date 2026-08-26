@@ -20,12 +20,30 @@ function defaultBoundary() {
   };
 }
 
+function relativeInside(parent, candidate) {
+  const suffix = relative(resolve(parent), resolve(candidate));
+  if (suffix === '') return '';
+  if (suffix === '..' || suffix.startsWith(`..${posix.sep}`) || isAbsolute(suffix)) return null;
+  return suffix;
+}
+
 export function mapHostCwdToGuest(profile, hostCwd) {
+  if (profile.version === 2) {
+    const cwd = resolve(String(hostCwd ?? ''));
+    for (const workspace of profile.workspaces) {
+      for (const hostRoot of [workspace.hostSourceDir, workspace.hostMirrorDir]) {
+        const suffix = relativeInside(hostRoot, cwd);
+        if (suffix != null) {
+          return posix.join(workspace.guestDir, ...suffix.split('/').filter(Boolean));
+        }
+      }
+    }
+    throw new Error(`[execution-host] host cwd does not belong to a configured execution-host workspace: ${cwd}`);
+  }
   const mirror = resolve(profile.mirrorWorkspaceDir);
   const cwd = resolve(String(hostCwd ?? ''));
-  const suffix = relative(mirror, cwd);
-  const insideMirror = suffix === '' || (!suffix.startsWith(`..${posix.sep}`) && suffix !== '..' && !isAbsolute(suffix));
-  return insideMirror
+  const suffix = relativeInside(mirror, cwd);
+  return suffix != null
     ? posix.join(profile.guestWorkspaceDir, ...suffix.split('/').filter(Boolean))
     : profile.guestWorkspaceDir;
 }
@@ -55,6 +73,7 @@ export async function runDelegatedHstackCommand({
   env = process.env,
   prepare = prepareManagedHost,
   boundary = defaultBoundary(),
+  guestInvocation = { command: 'hstack', args: [] },
 }) {
   await prepare(profile);
   const guestCwd = mapHostCwdToGuest(profile, cwd);
@@ -63,7 +82,7 @@ export async function runDelegatedHstackCommand({
     'env',
     'HAPPIER_STACK_EXECUTION_HOST_REENTRY=1',
     `HAPPIER_STACK_INVOKED_CWD=${guestCwd}`,
-    'hstack', ...argv,
+    guestInvocation.command, ...(guestInvocation.args ?? []), ...argv,
   ], {
     cwd,
     env: { ...env, LIMA_HOME: profile.limaHome },

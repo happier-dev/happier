@@ -24,8 +24,8 @@ test('managed Lima balanced profile is bounded, mount-free, ARM64 VZ, and contai
     mountNone: true,
     rosetta: false,
     portForwards: [
-      { guestStart: 13000, guestEnd: 13999, hostStart: 13000, hostEnd: 13999 },
-      { guestStart: 18000, guestEnd: 19099, hostStart: 18000, hostEnd: 19099 },
+      { guestStart: 52005, guestEnd: 54004, hostStart: 52005, hostEnd: 54004 },
+      { guestStart: 18081, guestEnd: 20080, hostStart: 18081, hostEnd: 20080 },
     ],
   });
 
@@ -43,7 +43,7 @@ test('managed Lima balanced profile is bounded, mount-free, ARM64 VZ, and contai
     '--set', '.vmOpts.vz.diskImageFormat = "raw"',
     '--set', '.ssh.forwardAgent = false',
     '--set', '.vmOpts.vz.rosetta.enabled = false | .vmOpts.vz.rosetta.binfmt = false',
-    '--set', '.portForwards = [{"guestPortRange":[13000,13999],"hostPortRange":[13000,13999],"static":true},{"guestPortRange":[18000,19099],"hostPortRange":[18000,19099],"static":true}]',
+    '--set', '.portForwards = [{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004],"static":true},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080],"static":true}]',
     'template:ubuntu-24.04',
   ]);
 });
@@ -74,7 +74,7 @@ test('managed Lima edit args update only mutable retained-instance settings', ()
     '--set', '.ssh.forwardAgent = false',
     '--set', '.vmOpts.vz.rosetta.enabled = false | .vmOpts.vz.rosetta.binfmt = false',
     '--set', '.containerd.user = false | .containerd.system = false',
-    '--set', '.portForwards = [{"guestPortRange":[13000,13999],"hostPortRange":[13000,13999],"static":true},{"guestPortRange":[18000,19099],"hostPortRange":[18000,19099],"static":true}]',
+    '--set', '.portForwards = [{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004],"static":true},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080],"static":true}]',
     'happier-agent-primary',
   ]);
 });

@@ -289,6 +289,40 @@ process.exit(0);
   return join(cliBinDir, 'happier.mjs');
 }
 
+function buildProfileCaptureDaemonCliScript({ cliHomeDir, capturePath }) {
+  const activeServerId = 'stack_dev__id_default';
+  const statePath = join(cliHomeDir, 'servers', activeServerId, 'daemon.state.json');
+  return `
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawnDaemonLikeProcess } from ${JSON.stringify(DAEMON_TEST_PROCESS_HELPER_PATH)};
+
+const args = process.argv.slice(2);
+const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
+if (!home) process.exit(2);
+
+if (args[0] !== 'daemon') process.exit(0);
+const sub = args[1] || '';
+if (sub === 'stop' || sub === 'status') process.exit(0);
+if (sub !== 'start') process.exit(0);
+
+const settings = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf-8'));
+const activeServerId = String(settings.activeServerId || '');
+writeFileSync(
+  ${JSON.stringify(capturePath)},
+  JSON.stringify({ activeServerId, profile: settings.servers?.[activeServerId] ?? null }) + '\\n',
+  'utf-8',
+);
+spawnDaemonLikeProcess({
+  cliHomeDir: home,
+  internalServerUrl: String(process.env.HAPPIER_SERVER_URL || ''),
+  publicServerUrl: String(process.env.HAPPIER_WEBAPP_URL || ''),
+  statePaths: [${JSON.stringify(statePath)}],
+});
+process.exit(0);
+`.trimStart();
+}
+
 async function overwriteStubCliDist(cliDir, source) {
   await writeFile(join(cliDir, 'dist', 'index.mjs'), source, 'utf-8');
   writeStubCliDistBuildManifest(cliDir);
@@ -395,6 +429,180 @@ test('startLocalDaemonWithAuth treats daemon start exit=0 as failure when daemon
       /Failed to auto re-seed daemon credentials|Failed to start daemon/
     );
   } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth reconciles a stale active stack profile before spawning the daemon', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-profile-reconcile-'));
+  let daemonPid = null;
+  try {
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    const cliBin = join(tmp, 'bin', 'happier');
+    const cliCommandScript = join(tmp, 'profile-capture-daemon.mjs');
+    const capturePath = join(tmp, 'profile-at-daemon-start.json');
+    const activeServerId = 'stack_dev__id_default';
+    const internalServerUrl = 'http://127.0.0.1:4311';
+    const publicServerUrl = 'http://localhost:4311';
+    const credentialContents = 'credential-must-remain-unchanged\\n';
+
+    await mkdir(dirname(cliBin), { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(cliBin, '#!/bin/sh\nexit 0\n', 'utf-8');
+    await chmod(cliBin, 0o755);
+    await writeFile(
+      cliCommandScript,
+      buildProfileCaptureDaemonCliScript({ cliHomeDir, capturePath }),
+      'utf-8',
+    );
+    await writeFile(
+      join(cliHomeDir, 'settings.json'),
+      JSON.stringify({
+        schemaVersion: 6,
+        activeServerId,
+        servers: {
+          [activeServerId]: {
+            id: activeServerId,
+            name: 'Controlled stack profile',
+            serverUrl: 'http://127.0.0.1:3012',
+            localServerUrl: 'http://127.0.0.1:3012',
+            webappUrl: 'http://localhost:3012',
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: 1,
+            preservedProfileField: 'keep-me',
+          },
+        },
+      }, null, 2) + '\n',
+      'utf-8',
+    );
+
+    const env = {
+      ...createFixtureStackEnv(tmp),
+      HAPPIER_STACK_STORAGE_DIR: join(tmp, 'storage'),
+      HAPPIER_STACK_STACK: 'dev',
+      HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+      HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+      HAPPIER_STACK_CLI_BUILD: '1',
+      HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '10',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '2000',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '25',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+    };
+    const credentialPaths = resolveStackCredentialPaths({
+      cliHomeDir,
+      serverUrl: internalServerUrl,
+      env: { ...env, HAPPIER_ACTIVE_SERVER_ID: activeServerId },
+    });
+    await mkdir(dirname(credentialPaths.serverScopedPath), { recursive: true });
+    await writeFile(credentialPaths.serverScopedPath, credentialContents, 'utf-8');
+
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliCommand: process.execPath,
+      cliCommandArgs: [cliCommandScript],
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      isShuttingDown: () => false,
+      forceRestart: true,
+      env,
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+
+    const daemonState = JSON.parse(
+      await readFile(join(cliHomeDir, 'servers', activeServerId, 'daemon.state.json'), 'utf-8'),
+    );
+    daemonPid = Number(daemonState?.pid);
+
+    const profileAtDaemonStart = JSON.parse(await readFile(capturePath, 'utf-8'));
+    assert.equal(profileAtDaemonStart.activeServerId, activeServerId);
+    assert.equal(profileAtDaemonStart.profile?.serverUrl, internalServerUrl);
+    assert.equal(profileAtDaemonStart.profile?.localServerUrl, internalServerUrl);
+    assert.equal(profileAtDaemonStart.profile?.webappUrl, publicServerUrl);
+    assert.equal(profileAtDaemonStart.profile?.preservedProfileField, 'keep-me');
+
+    const persistedSettings = JSON.parse(await readFile(join(cliHomeDir, 'settings.json'), 'utf-8'));
+    assert.equal(persistedSettings.activeServerId, activeServerId);
+    assert.equal(persistedSettings.servers[activeServerId].serverUrl, internalServerUrl);
+    assert.equal(persistedSettings.servers[activeServerId].localServerUrl, internalServerUrl);
+    assert.equal(persistedSettings.servers[activeServerId].webappUrl, publicServerUrl);
+    assert.equal(persistedSettings.servers[activeServerId].preservedProfileField, 'keep-me');
+    assert.equal(await readFile(credentialPaths.serverScopedPath, 'utf-8'), credentialContents);
+  } finally {
+    if (Number.isFinite(daemonPid) && daemonPid > 1) {
+      killDetachedProcessGroup(daemonPid, 'SIGKILL');
+    }
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth does not present a daemon log from before the failed start attempt', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-current-log-'));
+  const cliHomeDir = join(tmp, 'stack', 'cli');
+  const cliBin = join(tmp, 'bin', 'happier');
+  const cliCommandScript = join(tmp, 'cli-command.mjs');
+  const originalConsoleError = console.error;
+  const errorOutput = [];
+
+  try {
+    await mkdir(dirname(cliBin), { recursive: true });
+    await mkdir(join(cliHomeDir, 'logs'), { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'seed-access-key\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'logs', '1-pid-1-daemon.log'), 'historical daemon failure\n', 'utf-8');
+    await writeFile(cliBin, '#!/bin/sh\nexit 0\n', 'utf-8');
+    await chmod(cliBin, 0o755);
+    await writeFile(
+      cliCommandScript,
+      `
+const [scope, action] = process.argv.slice(2);
+if (scope !== 'daemon') process.exit(0);
+if (action === 'stop') process.exit(0);
+if (action === 'status') process.exit(1);
+if (action === 'start') process.exit(0);
+process.exit(0);
+      `.trimStart(),
+      'utf-8',
+    );
+
+    console.error = (...args) => {
+      errorOutput.push(args.map((arg) => String(arg)).join(' '));
+    };
+
+    await assert.rejects(
+      startLocalDaemonWithAuth({
+        cliBin,
+        cliCommand: process.execPath,
+        cliCommandArgs: [cliCommandScript],
+        cliHomeDir,
+        internalServerUrl: 'http://127.0.0.1:4301',
+        publicServerUrl: 'http://localhost:4301',
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env: {
+          ...createFixtureStackEnv(tmp),
+          HAPPIER_STACK_STACK: 'dev',
+          HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+          HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+          HAPPIER_STACK_CLI_BUILD: '1',
+          HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '10',
+          HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '20',
+          HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
+          HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+        },
+        stackName: 'dev',
+        cliIdentity: 'default',
+      }),
+      /Failed to start daemon/,
+    );
+
+    const diagnostics = errorOutput.join('\n');
+    assert.doesNotMatch(diagnostics, /historical daemon failure/);
+    assert.match(diagnostics, /no daemon log found/);
+  } finally {
+    console.error = originalConsoleError;
     await rm(tmp, { recursive: true, force: true });
   }
 });

@@ -34,6 +34,7 @@ import {
   resolveCliDistEntrypointFromBin,
 } from './utils/cli/cliDistIntegrity.mjs';
 import { withStackDaemonLifecycleLock } from './utils/stack/daemon_lifecycle_lock.mjs';
+import { buildStackServerProfileSetArgs } from './utils/stack/server_profile_reconciliation.mjs';
 import {
   resolveCliDistBuildLockPath,
   withCliDistBuildLock,
@@ -694,15 +695,22 @@ async function daemonEnvMatches({ pid, cliHomeDir, internalServerUrl, publicServ
   return match ? match.matches === true : null;
 }
 
-function getLatestDaemonLogPath(homeDir) {
+function listDaemonLogPaths(homeDir) {
   try {
     const logsDir = join(homeDir, 'logs');
-    const files = readdirSync(logsDir).filter((f) => f.endsWith('-daemon.log')).sort();
-    if (!files.length) return null;
-    return join(logsDir, files[files.length - 1]);
+    return readdirSync(logsDir)
+      .filter((file) => file.endsWith('-daemon.log'))
+      .sort()
+      .map((file) => join(logsDir, file));
   } catch {
-    return null;
+    return [];
   }
+}
+
+function getLatestDaemonLogPath(homeDir, excludedLogPaths = new Set()) {
+  const currentAttemptLogPaths = listDaemonLogPaths(homeDir)
+    .filter((logPath) => !excludedLogPaths.has(logPath));
+  return currentAttemptLogPaths[currentAttemptLogPaths.length - 1] ?? null;
 }
 
 function resolveJavaScriptRuntimeForStackDaemon({ env = process.env } = {}) {
@@ -2157,6 +2165,24 @@ export async function startLocalDaemonWithAuth({
   return await withStackDaemonLifecycleLock(
     { cliHomeDir, internalServerUrl, stackName: resolvedStackName },
     async () => {
+  if (existsSync(join(cliHomeDir, 'settings.json'))) {
+    const serverId = String(daemonEnv.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
+    if (serverId) {
+      await run(
+        daemonCommand.command,
+        [
+          ...daemonCommand.argsPrefix,
+          ...buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl }),
+        ],
+        {
+          env: daemonEnv,
+          stdio: 'ignore',
+          timeoutMs: 10_000,
+          captureFailureDiagnostic: { env: daemonEnv },
+        },
+      );
+    }
+  }
 
   if (distCheck.generationAdmissionRequired && distCheck.current !== true) {
     const existingAtAdmission = await checkDaemonStatePingAware(cliHomeDir, {
@@ -2483,6 +2509,7 @@ export async function startLocalDaemonWithAuth({
     let startOutput = '';
     const startOutputTeePath = join(cliHomeDir, 'logs', `${Date.now()}-pid-${process.pid}-daemon-start-attempt.log`);
     await mkdir(dirname(startOutputTeePath), { recursive: true }).catch(() => {});
+    const daemonLogsBeforeStart = new Set(listDaemonLogPaths(cliHomeDir));
     const appendStartOutput = (chunk) => {
       if (!chunk) return;
       startOutput += chunk.toString();
@@ -2556,7 +2583,7 @@ export async function startLocalDaemonWithAuth({
     }
     await outputDrainedPromise;
 
-    const logPath = getLatestDaemonLogPath(cliHomeDir);
+    const logPath = getLatestDaemonLogPath(cliHomeDir, daemonLogsBeforeStart);
     const excerpt = logPath ? await readLastLines(logPath, 120) : null;
     const teeExcerpt = existsSync(startOutputTeePath) ? await readLastLines(startOutputTeePath, 120).catch(() => null) : null;
     return {

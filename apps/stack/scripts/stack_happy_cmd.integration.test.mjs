@@ -16,9 +16,17 @@ const rootDir = dirname(scriptsDir);
 
 function buildStubHappyCliScript({ message }) {
   return [
+      `import { appendFileSync } from 'node:fs';`,
+      `import { join } from 'node:path';`,
+      `const args = process.argv.slice(2);`,
+      `const serverSetCapturePath = process.env.HAPPIER_STACK_TEST_SERVER_SET_CAPTURE_PATH || (process.env.HAPPIER_HOME_DIR ? join(process.env.HAPPIER_HOME_DIR, '.hstack-test-server-set-calls.ndjson') : null);`,
+      `if (serverSetCapturePath && args[0] === 'server' && args[1] === 'set') {`,
+      `  appendFileSync(serverSetCapturePath, JSON.stringify({ args }) + '\\n');`,
+      `  process.exit(0);`,
+      `}`,
       `console.log(JSON.stringify({`,
       `  message: ${JSON.stringify(message)},`,
-      `  args: process.argv.slice(2),`,
+      `  args,`,
       `  stack: process.env.HAPPIER_STACK_STACK || null,`,
       `  envFile: process.env.HAPPIER_STACK_ENV_FILE || null,`,
       `  homeDir: process.env.HAPPIER_HOME_DIR || null,`,
@@ -201,7 +209,7 @@ test('hstack stack happier <name> ignores stale cloud settings defaults and keep
   assert.equal(out.webappUrl, 'http://localhost:44123');
 });
 
-test('hstack stack happier <name> seeds stack server profile in CLI settings for env-hardened subcommands', async (t) => {
+test('hstack stack happier <name> refreshes its named server profile through the CLI contract', async (t) => {
   const fixture = await createHappyStackFixture(t, {
     prefix: 'happier-stack-stack-happy-seed-settings-',
     message: 'seed-settings',
@@ -224,7 +232,7 @@ test('hstack stack happier <name> seeds stack server profile in CLI settings for
     },
   });
 
-  const settingsPath = join(fixture.storageDir, fixture.stackName, 'cli', 'settings.json');
+  const serverSetCapturePath = join(fixture.storageDir, fixture.stackName, 'cli', '.hstack-test-server-set-calls.ndjson');
 
   const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName], {
     cwd: rootDir,
@@ -236,12 +244,20 @@ test('hstack stack happier <name> seeds stack server profile in CLI settings for
   assert.equal(out.message, 'seed-settings');
   assert.ok(out.activeServerId, 'expected wrapper to export HAPPIER_ACTIVE_SERVER_ID');
 
-  const settings = JSON.parse(await readFile(settingsPath, 'utf-8'));
-  assert.equal(settings.schemaVersion, 6);
-  assert.equal(settings.activeServerId, out.activeServerId);
-  assert.ok(settings.servers?.[out.activeServerId], `expected settings.servers[${out.activeServerId}] to exist`);
-  assert.equal(settings.servers[out.activeServerId].serverUrl, 'http://127.0.0.1:45123');
-  assert.equal(settings.servers[out.activeServerId].webappUrl, 'http://localhost:45123');
+  const captured = JSON.parse(await readFile(serverSetCapturePath, 'utf-8'));
+  assert.deepEqual(captured.args, [
+    'server',
+    'set',
+    '--server-id',
+    out.activeServerId,
+    '--server-url',
+    'http://127.0.0.1:45123',
+    '--local-server-url',
+    'http://127.0.0.1:45123',
+    '--webapp-url',
+    'http://localhost:45123',
+    '--json',
+  ]);
 });
 
 test('hstack stack happier <name> migrates an equivalent loopback profile into the stable stack scope', async (t) => {

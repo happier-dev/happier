@@ -16,6 +16,10 @@ import { inspectDevTargetSync, runDevTargetDependencyBootstrap } from '../dev_ta
 
 const CANDIDATE_SYNC_OWNER = 'execution-host-candidate';
 
+function candidateSyncOwner(workspaceId = '') {
+  return workspaceId ? `${CANDIDATE_SYNC_OWNER}-${workspaceId}` : CANDIDATE_SYNC_OWNER;
+}
+
 function requireSuccess(result, description) {
   if (result?.exitCode === 0 || result?.code === 0) return result;
   const detail = String(result?.err ?? '').trim();
@@ -302,10 +306,27 @@ async function atomicWriteJson(path, value) {
   }
 }
 
-export function resolveExecutionHostCandidatePaths(profile, env = process.env) {
-  const root = join(getHappyStacksHomeDir(env), 'execution-host-candidate');
+export function resolveExecutionHostCandidatePaths(profile, env = process.env, workspaceId = '') {
+  const baseRoot = join(getHappyStacksHomeDir(env), 'execution-host-candidate');
+  if (profile.version === 2) {
+    const id = String(workspaceId ?? '').trim();
+    const workspace = profile.workspaces.find((entry) => entry.id === id);
+    if (!workspace) throw new Error(`[execution-host] unknown execution-host workspace: ${JSON.stringify(id)}`);
+    const root = join(baseRoot, 'workspaces', id);
+    return {
+      root,
+      workspaceId: id,
+      guestRepositoryDir: workspace.guestDir,
+      syncBaseDir: join(root, 'sync'),
+      stateFile: join(root, 'state.v1.json'),
+      sshConfigFile: join(root, 'ssh', 'lima.conf'),
+      transferRoot: join(root, 'transfer'),
+    };
+  }
+  const root = baseRoot;
   return {
     root,
+    workspaceId: '',
     guestRepositoryDir: join(profile.guestWorkspaceDir, 'dev'),
     syncBaseDir: join(root, 'sync'),
     stateFile: join(root, 'state.v1.json'),
@@ -314,9 +335,9 @@ export function resolveExecutionHostCandidatePaths(profile, env = process.env) {
   };
 }
 
-export async function readExecutionHostCandidateState(profile, env = process.env) {
+export async function readExecutionHostCandidateState(profile, env = process.env, workspaceId = '') {
   if (!profile) return null;
-  const { stateFile } = resolveExecutionHostCandidatePaths(profile, env);
+  const { stateFile } = resolveExecutionHostCandidatePaths(profile, env, workspaceId);
   const raw = await readFile(stateFile, 'utf8').catch(() => null);
   if (!raw) return null;
   try {
@@ -341,8 +362,9 @@ function requireCandidateState(state) {
 }
 
 function candidateSyncTarget(profile, paths, ssh = {}) {
+  const ownerId = candidateSyncOwner(paths.workspaceId);
   return {
-    name: CANDIDATE_SYNC_OWNER,
+    name: ownerId,
     platform: 'posix',
     ssh: ssh.ssh ?? 'happier-execution-host-candidate',
     sshConfigFile: ssh.sshConfigFile ?? paths.sshConfigFile,
@@ -352,11 +374,11 @@ function candidateSyncTarget(profile, paths, ssh = {}) {
 }
 
 export async function inspectExecutionHostCandidateMirror(
-  { profile, env = process.env },
+  { profile, workspaceId = '', env = process.env },
   { inspectSync = inspectDevTargetSync } = {},
 ) {
-  const state = requireCandidateState(await readExecutionHostCandidateState(profile, env));
-  const paths = resolveExecutionHostCandidatePaths(profile, env);
+  const state = requireCandidateState(await readExecutionHostCandidateState(profile, env, workspaceId));
+  const paths = resolveExecutionHostCandidatePaths(profile, env, workspaceId);
   const target = candidateSyncTarget(profile, paths);
   return {
     ...state,
@@ -365,7 +387,7 @@ export async function inspectExecutionHostCandidateMirror(
 }
 
 export async function syncExecutionHostCandidateMirror(
-  { profile, env = process.env, executor },
+  { profile, workspaceId = '', env = process.env, executor },
   {
     startRuntime = startManagedLimaInstance,
     getInstanceStatus = getManagedLimaStatus,
@@ -376,8 +398,8 @@ export async function syncExecutionHostCandidateMirror(
     inspectSync = inspectDevTargetSync,
   } = {},
 ) {
-  const state = requireCandidateState(await readExecutionHostCandidateState(profile, env));
-  const paths = resolveExecutionHostCandidatePaths(profile, env);
+  const state = requireCandidateState(await readExecutionHostCandidateState(profile, env, workspaceId));
+  const paths = resolveExecutionHostCandidatePaths(profile, env, workspaceId);
   await startRuntime({ executor, instance: profile.instance });
   const runtime = await getInstanceStatus({ executor, instance: profile.instance });
   const ssh = await publishSshConfig({
@@ -390,7 +412,7 @@ export async function syncExecutionHostCandidateMirror(
     stackBaseDir: paths.syncBaseDir,
     sourceDir: state.sourceDir,
     targets: [target],
-    ownerId: CANDIDATE_SYNC_OWNER,
+    ownerId: candidateSyncOwner(paths.workspaceId),
     allowIndependentBorrow: false,
     env,
   });
@@ -403,15 +425,15 @@ export async function syncExecutionHostCandidateMirror(
 }
 
 export async function pauseExecutionHostCandidateMirror(
-  { profile, env = process.env },
+  { profile, workspaceId = '', env = process.env },
   { pauseProject = pauseOwnedDevTargetSyncProject } = {},
 ) {
-  requireCandidateState(await readExecutionHostCandidateState(profile, env));
-  const paths = resolveExecutionHostCandidatePaths(profile, env);
+  requireCandidateState(await readExecutionHostCandidateState(profile, env, workspaceId));
+  const paths = resolveExecutionHostCandidatePaths(profile, env, workspaceId);
   return {
     paused: await pauseProject({
       stackBaseDir: paths.syncBaseDir,
-      ownerId: CANDIDATE_SYNC_OWNER,
+      ownerId: candidateSyncOwner(paths.workspaceId),
       env,
     }),
   };
@@ -419,6 +441,7 @@ export async function pauseExecutionHostCandidateMirror(
 
 async function updateCandidateRepository({
   profile,
+  workspaceId,
   sourceDir,
   env,
   executor,
@@ -433,7 +456,8 @@ async function updateCandidateRepository({
   flushSync,
   bootstrapDependencies,
 }) {
-  const paths = resolveExecutionHostCandidatePaths(profile, env);
+  const paths = resolveExecutionHostCandidatePaths(profile, env, workspaceId);
+  const ownerId = candidateSyncOwner(paths.workspaceId);
   await mkdir(paths.transferRoot, { recursive: true, mode: 0o700 });
   const transferDir = await mkdtemp(join(paths.transferRoot, transferPrefix));
   const bundlePath = join(transferDir, 'repository.bundle');
@@ -466,7 +490,7 @@ async function updateCandidateRepository({
       alias: 'happier-execution-host-candidate',
     });
     const target = {
-      name: 'execution-host-candidate',
+      name: ownerId,
       platform: 'posix',
       ssh: ssh.ssh,
       sshConfigFile: ssh.sshConfigFile,
@@ -477,7 +501,7 @@ async function updateCandidateRepository({
       stackBaseDir: paths.syncBaseDir,
       sourceDir,
       targets: [target],
-      ownerId: CANDIDATE_SYNC_OWNER,
+      ownerId,
       allowIndependentBorrow: false,
       env,
     });
@@ -493,6 +517,7 @@ async function updateCandidateRepository({
     }), 'candidate dependency bootstrap');
     const state = {
       version: 1,
+      ...(paths.workspaceId ? { workspaceId: paths.workspaceId } : {}),
       activation: 'candidate',
       authoritative: false,
       sourceDir,
@@ -518,7 +543,7 @@ async function updateCandidateRepository({
 }
 
 export async function prepareExecutionHostCandidateRepository(
-  { profile, sourceDir, env = process.env, executor },
+  { profile, workspaceId = '', sourceDir, env = process.env, executor },
   {
     captureGitBasis = defaultCaptureGitBasis,
     exportGitBundle = defaultExportGitBundle,
@@ -536,6 +561,7 @@ export async function prepareExecutionHostCandidateRepository(
   }
   return await updateCandidateRepository({
     profile,
+    workspaceId,
     sourceDir,
     env,
     executor,
@@ -553,7 +579,7 @@ export async function prepareExecutionHostCandidateRepository(
 }
 
 export async function refreshExecutionHostCandidateRepository(
-  { profile, sourceDir, env = process.env, executor },
+  { profile, workspaceId = '', sourceDir, env = process.env, executor },
   {
     captureGitBasis = defaultCaptureGitBasis,
     exportGitBundle = defaultExportGitBundle,
@@ -569,7 +595,7 @@ export async function refreshExecutionHostCandidateRepository(
   if (profile?.activation !== 'candidate') {
     throw new Error('[execution-host] candidate repository refresh requires activation=candidate');
   }
-  const previous = await readExecutionHostCandidateState(profile, env);
+  const previous = await readExecutionHostCandidateState(profile, env, workspaceId);
   if (!previous) {
     throw new Error('[execution-host] candidate repository is not prepared; run `hstack host mirror` first');
   }
@@ -578,6 +604,7 @@ export async function refreshExecutionHostCandidateRepository(
   }
   return await updateCandidateRepository({
     profile,
+    workspaceId,
     sourceDir,
     env,
     executor,

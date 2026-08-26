@@ -11,8 +11,8 @@ const BASE_PROFILE = Object.freeze({
   mountNone: true,
   rosetta: false,
   portForwards: Object.freeze([
-    Object.freeze({ guestStart: 13000, guestEnd: 13999, hostStart: 13000, hostEnd: 13999 }),
-    Object.freeze({ guestStart: 18000, guestEnd: 19099, hostStart: 18000, hostEnd: 19099 }),
+    Object.freeze({ guestStart: 52005, guestEnd: 54004, hostStart: 52005, hostEnd: 54004 }),
+    Object.freeze({ guestStart: 18081, guestEnd: 20080, hostStart: 18081, hostEnd: 20080 }),
   ]),
 });
 

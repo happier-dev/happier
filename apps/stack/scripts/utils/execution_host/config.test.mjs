@@ -25,6 +25,36 @@ function candidate(overrides = {}) {
   };
 }
 
+function namedCandidate(overrides = {}) {
+  return {
+    version: 2,
+    mode: 'managed-lima',
+    activation: 'candidate',
+    instance: 'happier-agent-primary',
+    limaHome: '/Users/example/.happier-stack/lima',
+    profile: 'balanced',
+    pressureProfile: 'none',
+    guestWorkspaceDir: '/home/example/.happier-stack/workspace',
+    mirrorWorkspaceDir: '/Users/example/.happier-stack/workspace-mirror',
+    controllerEntrypoint: '/Users/example/happier/dev/apps/stack/scripts/execution_host_bridge.mjs',
+    workspaces: [
+      {
+        id: '0.2',
+        hostSourceDir: '/Users/example/happier/remote-dev',
+        hostMirrorDir: '/Users/example/.happier-stack/workspace-mirror/0.2',
+        guestDir: '/home/example/.happier-stack/workspace/0.2',
+      },
+      {
+        id: '0.3',
+        hostSourceDir: '/Users/example/happier/dev',
+        hostMirrorDir: '/Users/example/.happier-stack/workspace-mirror/0.3',
+        guestDir: '/home/example/.happier-stack/workspace/0.3',
+      },
+    ],
+    ...overrides,
+  };
+}
+
 test('legacy execution host profiles default to the no-swap pressure baseline', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'execution-host-legacy-pressure-' });
   const env = { HAPPIER_STACK_HOME_DIR: fixture.path('stack-home') };
@@ -83,4 +113,44 @@ test('execution host reader rejects malformed or over-authoritative persisted pr
 
   assert.throws(() => readExecutionHostProfile(env), /unknown field: serverId/);
   assert.match(await readFile(path, 'utf8'), /split-brain/);
+});
+
+test('named execution host profiles preserve two explicit workspace mappings', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'execution-host-named-' });
+  const env = { HAPPIER_STACK_HOME_DIR: fixture.path('stack-home') };
+  const profile = namedCandidate();
+
+  await writeCandidateExecutionHostProfile(profile, env);
+
+  assert.deepEqual(readExecutionHostProfile(env), profile);
+});
+
+test('named execution host profiles reject ambiguous, unsafe, and relative workspace mappings', async () => {
+  await assert.rejects(
+    writeCandidateExecutionHostProfile(namedCandidate({
+      workspaces: [namedCandidate().workspaces[0], { ...namedCandidate().workspaces[1], id: '0.2' }],
+    }), {}),
+    /duplicate workspace id/,
+  );
+  await assert.rejects(
+    writeCandidateExecutionHostProfile(namedCandidate({
+      workspaces: [
+        namedCandidate().workspaces[0],
+        { ...namedCandidate().workspaces[1], hostSourceDir: '/Users/example/happier/remote-dev/nested' },
+      ],
+    }), {}),
+    /overlapping host workspace paths/,
+  );
+  await assert.rejects(
+    writeCandidateExecutionHostProfile(namedCandidate({
+      workspaces: [{ ...namedCandidate().workspaces[0], id: '../escape' }],
+    }), {}),
+    /invalid workspace id/,
+  );
+  await assert.rejects(
+    writeCandidateExecutionHostProfile(namedCandidate({
+      workspaces: [{ ...namedCandidate().workspaces[0], guestDir: 'relative/0.2' }],
+    }), {}),
+    /guestDir must be an absolute path/,
+  );
 });

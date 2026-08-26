@@ -28,6 +28,26 @@ const profile = {
   mirrorWorkspaceDir: '/Users/dev/.happier-stack/workspace-mirror',
 };
 
+const namedProfile = {
+  ...profile,
+  version: 2,
+  controllerEntrypoint: '/Users/dev/happier/dev/apps/stack/scripts/execution_host_bridge.mjs',
+  workspaces: [
+    {
+      id: '0.2',
+      hostSourceDir: '/Users/dev/happier/remote-dev',
+      hostMirrorDir: '/Users/dev/.happier-stack/workspace-mirror/0.2',
+      guestDir: '/home/dev/.happier-stack/workspace/0.2',
+    },
+    {
+      id: '0.3',
+      hostSourceDir: '/Users/dev/happier/dev',
+      hostMirrorDir: '/Users/dev/.happier-stack/workspace-mirror/0.3',
+      guestDir: '/home/dev/.happier-stack/workspace/0.3',
+    },
+  ],
+};
+
 test('candidate paths isolate the Git bootstrap and continuous sync from the authoritative checkout', () => {
   const paths = resolveExecutionHostCandidatePaths(profile, {
     HAPPIER_STACK_HOME_DIR: '/Users/dev/.happier-stack',
@@ -37,6 +57,22 @@ test('candidate paths isolate the Git bootstrap and continuous sync from the aut
   assert.equal(paths.syncBaseDir, '/Users/dev/.happier-stack/execution-host-candidate/sync');
   assert.equal(paths.stateFile, '/Users/dev/.happier-stack/execution-host-candidate/state.v1.json');
   assert.equal(paths.sshConfigFile, '/Users/dev/.happier-stack/execution-host-candidate/ssh/lima.conf');
+});
+
+test('named candidate paths isolate each workspace state, transport, and guest checkout', () => {
+  const env = { HAPPIER_STACK_HOME_DIR: '/Users/dev/.happier-stack' };
+  const zeroTwo = resolveExecutionHostCandidatePaths(namedProfile, env, '0.2');
+  const zeroThree = resolveExecutionHostCandidatePaths(namedProfile, env, '0.3');
+
+  assert.equal(zeroTwo.guestRepositoryDir, '/home/dev/.happier-stack/workspace/0.2');
+  assert.equal(zeroThree.guestRepositoryDir, '/home/dev/.happier-stack/workspace/0.3');
+  assert.equal(zeroTwo.stateFile, '/Users/dev/.happier-stack/execution-host-candidate/workspaces/0.2/state.v1.json');
+  assert.equal(zeroThree.stateFile, '/Users/dev/.happier-stack/execution-host-candidate/workspaces/0.3/state.v1.json');
+  assert.notEqual(zeroTwo.syncBaseDir, zeroThree.syncBaseDir);
+  assert.throws(
+    () => resolveExecutionHostCandidatePaths(namedProfile, env, 'missing'),
+    /unknown execution-host workspace/,
+  );
 });
 
 test('candidate preparation bootstraps Git before starting the canonical continuous one-way sync', async (t) => {
