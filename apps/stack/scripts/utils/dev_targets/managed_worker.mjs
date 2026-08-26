@@ -42,6 +42,7 @@ function renderGuestSshConfig({
   return [
     `Host ${alias}`,
     '  HostName 127.0.0.1',
+    `  HostKeyAlias ${alias}`,
     `  Port ${port}`,
     `  User ${user}`,
     `  IdentityFile ${sshConfigQuote(privateKeyPath)}`,
@@ -59,6 +60,14 @@ function renderGuestSshConfig({
     `  ProxyCommand ssh -T -F ${sshConfigQuote(outerSshConfigFile)} ${outerSsh} -W %h:%p`,
     '',
   ].join('\n');
+}
+
+function replaceSshConfigDirective(contents, directive, value) {
+  const expression = new RegExp(`^(\\s*)${directive}\\s+.*$`, 'm');
+  if (!expression.test(contents)) {
+    throw new Error(`[dev-targets] managed guest SSH config is missing ${directive}`);
+  }
+  return contents.replace(expression, `$1${directive} ${value}`);
 }
 
 async function writePrivateFile(path, contents) {
@@ -92,6 +101,42 @@ const INSTALL_CONTROLLER_KEY_SCRIPT = [
   'chmod 600 "$authorized"',
   'grep -qxF "$key" "$authorized" || printf "%s\\n" "$key" >>"$authorized"',
 ].join('\n');
+
+export async function reconcileManagedLimaDevTargetSshPublication(
+  { target, sshLocalPort, env = process.env },
+  { runSshProbe = defaultRunSshProbe } = {},
+) {
+  if (target?.managedRuntime?.kind !== 'lima') {
+    throw new Error(`[dev-targets] target ${String(target?.name ?? 'unknown')} has no managed Lima runtime`);
+  }
+  const port = guestSshPort({ sshLocalPort });
+  const configPath = String(target.sshConfigFile ?? '').trim();
+  const alias = String(target.ssh ?? '').trim();
+  if (!configPath || !alias) throw new Error('[dev-targets] managed guest SSH publication is incomplete');
+
+  const original = await readFile(configPath, 'utf8');
+  let next = replaceSshConfigDirective(original, 'Port', String(port));
+  const hostKeyAliasAdded = !/^\s*HostKeyAlias\s+/m.test(next);
+  if (hostKeyAliasAdded) {
+    next = next.replace(/^(\s*HostName\s+.*)$/m, `$1\n  HostKeyAlias ${alias}`);
+  }
+  const changed = next !== original;
+  if (!changed) return { changed: false, port, hostKeyAliasAdded: false };
+
+  if (hostKeyAliasAdded) {
+    await writePrivateFile(configPath, replaceSshConfigDirective(next, 'StrictHostKeyChecking', 'accept-new'));
+    requireProbe(
+      await runSshProbe({ configPath, alias, env }),
+      'managed guest host-key alias enrollment failed',
+    );
+  }
+  await writePrivateFile(configPath, replaceSshConfigDirective(next, 'StrictHostKeyChecking', 'yes'));
+  requireProbe(
+    await runSshProbe({ configPath, alias, env }),
+    'managed guest refreshed SSH verification failed',
+  );
+  return { changed: true, port, hostKeyAliasAdded };
+}
 
 export async function provisionManagedLimaDevTarget(
   {
