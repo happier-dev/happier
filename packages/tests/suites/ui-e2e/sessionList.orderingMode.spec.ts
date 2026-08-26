@@ -6,7 +6,7 @@ import { createTestAuthMtls } from '../../src/testkit/auth';
 import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
@@ -125,7 +125,7 @@ test.describe('ui e2e: session list ordering mode', () => {
   let uiServerUrl: string | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 

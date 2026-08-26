@@ -184,6 +184,8 @@ export async function setSessionFolderDragSettings(params: Readonly<{
     page: params.page,
     settingsPatch: {
       sessionFolderViewModeV1: params.folderViewMode ?? 'tree',
+      sessionListActiveGroupingV1: 'project',
+      sessionListInactiveGroupingV1: 'project',
       sessionListOrderingModeV1: 'custom',
     },
   });
