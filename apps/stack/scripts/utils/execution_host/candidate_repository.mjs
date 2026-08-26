@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { getManagedLimaStatus, startManagedLimaInstance } from '../managed_lima/lifecycle.mjs';
 import { publishManagedLimaLocalSshConfig } from '../managed_lima/ssh_publication.mjs';
@@ -91,6 +91,17 @@ async function defaultCaptureGitBasis({ sourceDir }) {
         .map((line) => line.slice('HEAD '.length)),
     ),
   ];
+  const commonDirRaw = String((await git(['rev-parse', '--git-common-dir'])).out ?? '').trim();
+  const commonDir = isAbsolute(commonDirRaw) ? commonDirRaw : resolve(sourceDir, commonDirRaw);
+  const stackId = String(await readFile(join(commonDir, 'happier-stack-stackless-id'), 'utf8').catch(() => '')).trim().toLowerCase();
+  const persistedBase = String(await readFile(join(commonDir, 'happier-stack-stackless-base'), 'utf8').catch(() => '')).trim().toLowerCase();
+  const inferredBase = basename(sourceDir).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '') || 'repo';
+  const stackIdentity = /^[a-f0-9]{8,}$/.test(stackId)
+    ? {
+        id: stackId.slice(0, 20),
+        base: persistedBase && /^[a-z0-9][a-z0-9-]*$/.test(persistedBase) ? persistedBase : inferredBase,
+      }
+    : null;
   return {
     capturedAt: new Date().toISOString(),
     repositoryRoot,
@@ -102,7 +113,26 @@ async function defaultCaptureGitBasis({ sourceDir }) {
     worktreeCount: worktrees.split(/\r?\n/).filter((line) => line.startsWith('worktree ')).length,
     detachedWorktreeCount: worktrees.split(/\r?\n/).filter((line) => line === 'detached').length,
     worktreeHeads,
+    ...(stackIdentity ? { stackIdentity } : {}),
   };
+}
+
+async function defaultApplyGuestStackIdentity({ executor, profile, guestRepositoryDir, stackIdentity }) {
+  if (!stackIdentity) return;
+  requireSuccess(await executor.capture('limactl', [
+    'shell', profile.instance, '--', 'sh', '-ceu', [
+      'repo=$1',
+      'id=$2',
+      'base=$3',
+      'git_dir=$(git -C "$repo" rev-parse --absolute-git-dir)',
+      'printf "%s\\n" "$id" >"$git_dir/happier-stack-stackless-id"',
+      'printf "%s\\n" "$base" >"$git_dir/happier-stack-stackless-base"',
+    ].join('\n'),
+    'hstack-candidate-stack-identity',
+    guestRepositoryDir,
+    stackIdentity.id,
+    stackIdentity.base,
+  ]), 'candidate repo Stack identity materialization');
 }
 
 async function defaultExportGitBundle({ sourceDir, bundlePath, basis }) {
@@ -439,6 +469,56 @@ export async function pauseExecutionHostCandidateMirror(
   };
 }
 
+export async function adoptLegacyExecutionHostCandidate(
+  { profile, workspaceId, env = process.env, executor },
+  { pauseProject = pauseOwnedDevTargetSyncProject } = {},
+) {
+  if (profile?.version !== 2 || profile.activation !== 'candidate') {
+    throw new Error('[execution-host] legacy candidate adoption requires a named candidate profile');
+  }
+  const workspace = profile.workspaces.find((entry) => entry.id === workspaceId);
+  if (!workspace) throw new Error(`[execution-host] unknown execution-host workspace: ${workspaceId}`);
+  const legacyProfile = { ...profile, version: 1 };
+  const legacyPaths = resolveExecutionHostCandidatePaths(legacyProfile, env);
+  const legacy = requireCandidateState(await readExecutionHostCandidateState(legacyProfile, env));
+  if (resolve(legacy.sourceDir) !== resolve(workspace.hostSourceDir)) {
+    throw new Error(`[execution-host] legacy candidate source does not match workspace ${workspaceId}`);
+  }
+  const namedPaths = resolveExecutionHostCandidatePaths(profile, env, workspaceId);
+  if (await readFile(namedPaths.stateFile, 'utf8').catch(() => null)) {
+    throw new Error(`[execution-host] workspace ${workspaceId} candidate state already exists`);
+  }
+  await pauseProject({
+    stackBaseDir: legacyPaths.syncBaseDir,
+    ownerId: CANDIDATE_SYNC_OWNER,
+    env,
+  });
+  requireSuccess(await executor.run('limactl', [
+    'shell', profile.instance, '--', 'sh', '-ceu', [
+      'source_repo=$1',
+      'target_repo=$2',
+      '[ -d "$source_repo/.git" ]',
+      '[ ! -e "$target_repo" ]',
+      'mkdir -p "$(dirname "$target_repo")"',
+      'mv -- "$source_repo" "$target_repo"',
+    ].join('\n'),
+    'hstack-adopt-legacy-candidate',
+    legacyPaths.guestRepositoryDir,
+    namedPaths.guestRepositoryDir,
+  ]), 'legacy candidate move');
+  const adopted = {
+    ...legacy,
+    workspaceId,
+    guestRepositoryDir: namedPaths.guestRepositoryDir,
+    adoptedFrom: {
+      guestRepositoryDir: legacyPaths.guestRepositoryDir,
+      stateFile: legacyPaths.stateFile,
+    },
+  };
+  await atomicWriteJson(namedPaths.stateFile, adopted);
+  return { ...adopted, stateFile: namedPaths.stateFile };
+}
+
 async function updateCandidateRepository({
   profile,
   workspaceId,
@@ -447,6 +527,7 @@ async function updateCandidateRepository({
   executor,
   transferPrefix,
   applyGitState,
+  applyGuestStackIdentity,
   captureGitBasis,
   exportGitBundle,
   getInstanceStatus,
@@ -482,6 +563,12 @@ async function updateCandidateRepository({
       bundlePath,
       manifestPath,
       basis: normalizedBasis,
+    });
+    await applyGuestStackIdentity({
+      executor,
+      profile,
+      guestRepositoryDir: paths.guestRepositoryDir,
+      stackIdentity: normalizedBasis.stackIdentity,
     });
     const status = await getInstanceStatus({ executor, instance: profile.instance });
     const ssh = await publishSshConfig({
@@ -548,6 +635,7 @@ export async function prepareExecutionHostCandidateRepository(
     captureGitBasis = defaultCaptureGitBasis,
     exportGitBundle = defaultExportGitBundle,
     bootstrapGuestRepository = defaultBootstrapGuestRepository,
+    applyGuestStackIdentity = defaultApplyGuestStackIdentity,
     getInstanceStatus = getManagedLimaStatus,
     publishSshConfig = publishManagedLimaLocalSshConfig,
     ensureSyncProject = ensureDevTargetSyncProject,
@@ -567,6 +655,7 @@ export async function prepareExecutionHostCandidateRepository(
     executor,
     transferPrefix: 'capture-',
     applyGitState: bootstrapGuestRepository,
+    applyGuestStackIdentity,
     captureGitBasis,
     exportGitBundle,
     getInstanceStatus,
@@ -584,6 +673,7 @@ export async function refreshExecutionHostCandidateRepository(
     captureGitBasis = defaultCaptureGitBasis,
     exportGitBundle = defaultExportGitBundle,
     refreshGuestRepository = defaultRefreshGuestRepository,
+    applyGuestStackIdentity = defaultApplyGuestStackIdentity,
     getInstanceStatus = getManagedLimaStatus,
     publishSshConfig = publishManagedLimaLocalSshConfig,
     ensureSyncProject = ensureDevTargetSyncProject,
@@ -610,6 +700,7 @@ export async function refreshExecutionHostCandidateRepository(
     executor,
     transferPrefix: 'refresh-',
     applyGitState: refreshGuestRepository,
+    applyGuestStackIdentity,
     captureGitBasis,
     exportGitBundle,
     getInstanceStatus,

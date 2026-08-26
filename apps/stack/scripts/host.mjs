@@ -12,6 +12,7 @@ import {
 } from './utils/execution_host/config.mjs';
 import { executeCandidateHostCommand, inspectExecutionHost } from './utils/execution_host/controller.mjs';
 import {
+  adoptLegacyExecutionHostCandidate,
   inspectExecutionHostCandidateMirror,
   pauseExecutionHostCandidateMirror,
   prepareExecutionHostCandidateRepository,
@@ -41,7 +42,7 @@ function usage(json) {
       '[host] usage:',
       '  hstack host setup [--instance=happier-agent-primary] [--profile=balanced] [--workspace=ID=/absolute/source ...] [--json]',
       '  hstack host mirror [--workspace-id=ID] [--source-dir=/absolute/path/to/repo] [--json]',
-      '  hstack host mirror status|sync|stop [--workspace-id=ID] [--json]',
+      '  hstack host mirror status|sync|stop|adopt-legacy [--workspace-id=ID] [--json]',
       '  hstack host status|doctor|start|stop [--json]',
       '  hstack host shell [--guest-cwd=/absolute/path] [-- COMMAND...]',
       '  hstack host exec [--guest-cwd=/absolute/path] -- COMMAND [ARG...]',
@@ -193,6 +194,19 @@ async function main() {
         json,
         data: result,
         text: `[host] candidate synchronization: ${result.paused ? 'paused' : 'not owned'}`,
+      });
+    }
+    if (mirrorAction === 'adopt-legacy') {
+      const result = await adoptLegacyExecutionHostCandidate({
+        profile,
+        workspaceId,
+        env: process.env,
+        executor,
+      });
+      return printResult({
+        json,
+        data: result,
+        text: `[host] legacy candidate adopted as workspace ${workspaceId}`,
       });
     }
     if (mirrorAction) throw new Error(`[host] unknown mirror command: ${mirrorAction}`);

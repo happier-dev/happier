@@ -6,6 +6,7 @@ import test from 'node:test';
 import { execFileSync } from 'node:child_process';
 
 import {
+  adoptLegacyExecutionHostCandidate,
   inspectExecutionHostCandidateMirror,
   pauseExecutionHostCandidateMirror,
   prepareExecutionHostCandidateRepository,
@@ -73,6 +74,46 @@ test('named candidate paths isolate each workspace state, transport, and guest c
     () => resolveExecutionHostCandidatePaths(namedProfile, env, 'missing'),
     /unknown execution-host workspace/,
   );
+});
+
+test('legacy candidate adoption moves only the disposable guest candidate and retains legacy state for recovery', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'happier-candidate-adopt-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const legacyPaths = resolveExecutionHostCandidatePaths(profile, { HAPPIER_STACK_HOME_DIR: home });
+  await mkdir(legacyPaths.root, { recursive: true });
+  await writeFile(legacyPaths.stateFile, JSON.stringify({
+    version: 1,
+    activation: 'candidate',
+    authoritative: false,
+    sourceDir: '/Users/dev/happier/dev',
+    guestRepositoryDir: legacyPaths.guestRepositoryDir,
+    capture: { head: 'a'.repeat(40) },
+  }));
+  const calls = [];
+
+  const result = await adoptLegacyExecutionHostCandidate({
+    profile: namedProfile,
+    workspaceId: '0.3',
+    env: { HAPPIER_STACK_HOME_DIR: home },
+    executor: {
+      async run(command, args) {
+        calls.push(['move', command, args]);
+        return { exitCode: 0 };
+      },
+    },
+  }, {
+    pauseProject: async (input) => {
+      calls.push(['pause', input.ownerId]);
+      return true;
+    },
+  });
+
+  assert.equal(result.workspaceId, '0.3');
+  assert.equal(result.guestRepositoryDir, '/home/dev/.happier-stack/workspace/0.3');
+  assert.deepEqual(calls.map(([kind]) => kind), ['pause', 'move']);
+  assert.equal((await readFile(legacyPaths.stateFile, 'utf8')).includes('/workspace/dev'), true);
+  const adopted = await readExecutionHostCandidateState(namedProfile, { HAPPIER_STACK_HOME_DIR: home }, '0.3');
+  assert.equal(adopted.guestRepositoryDir, '/home/dev/.happier-stack/workspace/0.3');
 });
 
 test('candidate preparation bootstraps Git before starting the canonical continuous one-way sync', async (t) => {
@@ -148,6 +189,41 @@ test('candidate preparation bootstraps Git before starting the canonical continu
   assert.equal('worktreeHeads' in state.capture, false);
   assert.equal(state.dependencies.ready, true);
   assert.equal(state.sync.perCommandFlush, false);
+});
+
+test('candidate preparation carries the Git-owned repo Stack identity into the guest Git directory', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'happier-candidate-identity-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const calls = [];
+  const stackIdentity = { id: 'a1cc5e0671abcdef', base: 'dev' };
+
+  await prepareExecutionHostCandidateRepository({
+    profile,
+    sourceDir: '/Users/dev/happier/dev',
+    env: { HAPPIER_STACK_HOME_DIR: home },
+  }, {
+    captureGitBasis: async () => ({
+      repositoryRoot: '/Users/dev/happier/dev',
+      head: 'a'.repeat(40),
+      headRef: 'refs/heads/dev',
+      refs: [{ name: 'refs/heads/dev', object: 'a'.repeat(40) }],
+      worktreeHeads: [],
+      stackIdentity,
+    }),
+    exportGitBundle: async () => {},
+    bootstrapGuestRepository: async () => ({ created: true }),
+    applyGuestStackIdentity: async (input) => calls.push(input),
+    getInstanceStatus: async () => ({ instance: {} }),
+    publishSshConfig: async ({ destination }) => ({ ssh: 'candidate', sshConfigFile: destination }),
+    ensureSyncProject: async () => ({ env: {}, ownership: 'owned' }),
+    resumeSync: async () => {},
+    flushSync: async () => {},
+    bootstrapDependencies: async () => ({ code: 0 }),
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].stackIdentity, stackIdentity);
+  assert.equal(calls[0].guestRepositoryDir, '/home/dev/.happier-stack/workspace/dev');
 });
 
 test('candidate state reader projects legacy unbounded capture arrays to counts and digests', async (t) => {
