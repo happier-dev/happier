@@ -43,7 +43,7 @@ Use `skills/happier-compatibility` when documentation claims depend on released/
 
 ## 4. Choose the edit contract
 
-Use the narrowest mode that serves the reader:
+Use the narrowest mode that serves the reader. Every added section or sentence must improve a decision, action, mental model, evidence boundary, or material caveat; prose that only restates another canonical owner does not earn its place:
 
 - **Patch:** add or correct bounded material and preserve every unaffected claim, example, link, caveat, and structural choice.
 - **Polish:** improve clarity and flow while preserving structure, information density, factual scope, and recognizable voice.

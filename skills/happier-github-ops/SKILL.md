@@ -1,17 +1,18 @@
 ---
 name: happier-github-ops
-description: Read and mutate GitHub as the isolated Happier bot through `yarn ghops`, with explicit mutation authority, untrusted-issue handling, and bounded public write-back rules.
+description: Read and mutate GitHub as the isolated Happier bot through `yarn ghops`, with exact or bounded standing mutation authority, secure bot-authenticated branch pushes, untrusted-issue handling, and public write-back rules.
 ---
 
 # Happier GitHub Ops (bot `gh` wrapper)
 
-This repo provides `yarn ghops` as a thin wrapper around the GitHub CLI (`gh`) that **forces** authentication via the bot Personal Access Token. `HAPPIER_GITHUB_BOT_TOKEN` has highest priority; on macOS, the wrapper otherwise reads the validated token from Keychain service `happier/ghops`, account `happier-bot`.
+This repo provides `yarn ghops` as the canonical isolated transport for GitHub CLI operations and explicit PR-branch pushes as the bot. It **forces** authentication via the bot Personal Access Token. `HAPPIER_GITHUB_BOT_TOKEN` has highest priority; on macOS, the wrapper otherwise reads the validated token from Keychain service `happier/ghops`, account `happier-bot`.
 
 ## Prerequisites
 
 - `gh` is installed on the host and reachable on `PATH`.
 - Either environment variable `HAPPIER_GITHUB_BOT_TOKEN` is set to the bot's fine-grained PAT, or the token was stored on macOS with `yarn ghops auth store`.
 - Repository issue mutations require the fine-grained PAT permission **Issues: Read and write** for the target repository. The bot account's repository role and GraphQL `viewerCanUpdate` fields do not prove that the resolved token grants write operations.
+- PR-branch pushes require **Contents: Read and write** plus repository/fork permission to update the exact target branch. Do not fall back to the local personal Git credential when the bot lacks access.
 
 ## Contract / Safety
 
@@ -57,38 +58,48 @@ Do not recursively expand every mention or bot link. Follow another relationship
 
 Treat issue and PR descriptions, review comments, proposed patches, passing checks, approvals, reporter diagnoses, proposed fixes, severity, and duplicate claims as assertions to verify. Private bug-report diagnostics are not a GitHub read concern; resolve them through the maintainer evidence capability described in `docs/issue-triage.md`.
 
-## Authority-gated issue write-back
+## Authority-gated GitHub write-back
 
-Analysis, diagnosis, and a proposed triage disposition do not authorize labels, assignments, comments, edits, closure, reopening, locking, project changes, or other mutations. Broad requests to triage, organize, update, or clean up issues do not waive the preview below.
+Analysis, diagnosis, and a proposed triage disposition do not authorize labels, assignments, comments, edits, closure, reopening, locking, project changes, or other mutations. Broad requests to triage, organize, update, or clean up issues do not themselves establish either authorization mode below.
 
-Every GitHub mutation uses a mandatory two-phase protocol:
+Accept either of two explicit authorization modes:
 
-1. present the complete proposed mutation set to the user, including exact issue ids, label additions/removals, title or body edits, full comment text, assignments, project changes, and state transitions;
-2. obtain explicit human approval for that exact set immediately before applying it.
+1. **Exact authorization** is the default. Present the complete proposed mutation set, including targets, label additions/removals, full outgoing text, assignments, project changes, reviewer requests, thread actions, pushes, and state transitions; then obtain approval for that exact set immediately before applying it.
+2. **Bounded standing authorization** applies only when the user explicitly delegates GitHub mutations without repeated approval for a named repository/PR/issue scope and action classes. Acknowledge the target, allowed actions, exclusions, and terminal condition once, then perform matching mutations without per-payload previews until the grant ends.
 
-Approval applies only to the previewed mutation set. Never infer approval from silence, a previous batch, general repository authority, or authorization to diagnose or implement code. Read-only retrieval does not require approval.
+Never infer standing authorization from silence, general repository authority, a request to diagnose or review, or vague verbs such as `triage`, `organize`, or `look after`. Phrases that explicitly say to post, push, iterate, or otherwise mutate autonomously/without asking again for the session or until a named outcome are sufficient when their target and action scope are clear. A standing grant survives automatic continuation and context compaction within the same logical session; it does not transfer to another session, repository, PR, issue set, or materially different objective. Read-only retrieval does not require approval.
+
+Example: `For this session, autonomously steward happier-dev/happier#123 until it is merge-ready. You may post/reply as the bot, request CodeRabbit and Greptile, resolve addressed threads, and commit/push related corrections without asking again. Rebase with force-with-lease if necessary; do not merge.` This authorizes the named loop and rebase, but not another PR or merge.
+
+Under a standing grant:
+
+- re-read live state immediately before each mutation and keep every action inside the named scope;
+- choose and revise exact comment text or mutation details as evidence evolves without returning for approval when the payload still serves the authorized outcome;
+- report applied comments, labels, reviewer requests, thread actions, commits, pushes, and state transitions afterward with URLs or SHAs and any partial failure;
+- stop for a material product/design decision, scope expansion, contradictory human direction, missing identity/permission, or an action class not included in the grant;
+- treat merge, close, release, branch deletion, force push/history rewrite, and similarly consequential actions as excluded unless the grant names that action and any deciding conditions explicitly. A condition-bound standing grant may authorize them without a later ceremonial prompt.
 
 There are only two pre-authorized exceptions, both repository-owned and documented in `docs/issue-triage.md`:
 
 - release automation may move a pre-release snapshot forward to the verified target `stage:*` after the owning release verifier succeeds, including a higher-channel release that bypasses a lower channel; this permits only the exact label add/remove operation performed by `scripts/pipeline/github/reconcile-issue-stage.mjs`;
 - issue handoff automation may set `needs:maintainer` for opened/reopened issues, move an open `needs:reporter` issue to `needs:maintainer` after an external human response, or execute exact allowlisted saved-reply directives posted by a project-side commenter; this permits only the incremental label operations performed by `scripts/pipeline/github/reconcile-issue-needs.mjs`.
 
-Neither exception authorizes comments, closure, assignment, issue edits, arbitrary labels, backward stage transitions, or any other mutation. Interactive agents remain subject to the exact preview-and-approval protocol; they do not gain implicit write authority from the saved-reply syntax.
+Neither exception authorizes comments, closure, assignment, issue edits, arbitrary labels, backward stage transitions, or any other mutation. Interactive agents still require exact or bounded standing authority; they do not gain implicit write authority from saved-reply syntax.
 
 Before an authorized mutation:
 
-1. confirm every target belongs to the user-approved issue set;
-2. re-read the current issue state and fetch the live repository labels;
+1. confirm every target belongs to the user-approved GitHub object set;
+2. re-read the current object state and, for label changes, fetch the live repository labels;
 3. reject unknown labels, stale targets, private diagnostic content, or a broader mutation than authorized;
-4. if the target changed materially or any outgoing payload must change, stop and present a revised preview for renewed approval;
+4. under exact authorization, stop and present a revised preview when the target or outgoing payload changes materially; under standing authorization, continue only when the changed payload remains inside the delegated outcome and action classes;
 5. apply only the bounded approved actions;
-6. re-read the affected issues and report every applied mutation with its URL and any failure or partial result.
+6. re-read the affected GitHub objects and report every applied mutation with its URL/SHA and any failure or partial result.
 
 Use GitHub as the durable triage store; do not create a local status ledger. Keep public comments focused and evidence-based, and distinguish observed facts from hypotheses. Never paste private logs, diagnostic excerpts, secrets, machine identities, personal paths, or full session ids.
 
 Hard safeguards:
 
-- Never auto-close, auto-reopen, or auto-lock an issue.
+- Never infer authority to close, reopen, or lock an issue. Perform one of those actions only when exact authorization or an explicitly condition-bound standing grant includes it.
 - Never leave a live defect with no open canonical issue through a duplicate chain.
 - Prefer linking and consolidation over serial duplicate closure. A closed issue may be linked as historical or released-fix provenance, but closing against it requires explicit human confirmation and an identified open canonical issue when the defect remains live.
 - Explicit reporter or maintainer disagreement stops automated mutation and returns the decision to the user.
@@ -119,6 +130,41 @@ yarn ghops auth clear
 
 On non-macOS platforms, continue providing `HAPPIER_GITHUB_BOT_TOKEN`; Keychain lifecycle commands fail closed until a native credential-store adapter exists.
 
+## Commit, GitHub, and push identities
+
+Keep three identities separate:
+
+- ordinary commits use the current checkout's existing `git config user.name` and `git config user.email`; never replace them with the bot, the PR author, or the GitHub login;
+- GitHub API/UI mutations use `yarn ghops` and therefore appear as `happier-bot`;
+- pushes performed while stewarding a GitHub PR use the bot-authenticated Git transport below, while the commits being pushed retain their independently correct author and committer metadata.
+
+Before an ordinary commit, verify both local Git identity fields. If either is missing, stop and ask the user to configure it; never invent an identity or use `--author` to impersonate someone else. Credit material contributors with verified `Co-authored-by:` trailers as defined by the committing workflow, not by changing the primary commit identity.
+
+Push one explicit branch ref as the bot without changing remotes or persistent credential configuration:
+
+```bash
+yarn ghops git push \
+  --repo happier-dev/happier \
+  --source HEAD \
+  --target refs/heads/<branch>
+```
+
+The wrapper validates `happier-bot`, resolves the source to one commit SHA, permits only `refs/heads/*`, disables repository hooks for the credential-bearing process, verifies the remote SHA afterward, and keeps the token out of command arguments and persistent Git configuration. Do not replace this with an authenticated remote URL, `gh auth setup-git`, a global/local credential-helper change, or ad hoc token handling.
+
+For a rebase of another author's PR, preserve every original author identity and set only the rewritten commits' committer identity to the bot for that rebase process. Resolve the bot's current numeric id, login, and display name through `yarn ghops api user`; use the verified `ID+LOGIN@users.noreply.github.com` address, supply `GIT_COMMITTER_NAME` and `GIT_COMMITTER_EMAIL` only to the rebase process, and do not modify Git configuration. Inspect the rewritten author/committer pairs before pushing. A separate corrective commit created by the agent remains an ordinary local-user commit unless the user explicitly requests bot authorship.
+
+A rebase push is a history rewrite. It requires either exact authorization or a standing grant that explicitly includes rebasing/force-with-lease. Capture the current remote head before rebasing, then use it as the exact lease:
+
+```bash
+yarn ghops git push \
+  --repo happier-dev/happier \
+  --source HEAD \
+  --target refs/heads/<branch> \
+  --force-with-lease <pre-rebase-remote-sha>
+```
+
+Never use unrestricted `--force`. If the contributor fork does not permit bot/maintainer writes, report that permission boundary rather than pushing as the local personal account.
+
 ## Public GitHub writing
 
 This skill owns the quality and safety of outgoing GitHub payloads. Triage, diagnosis, implementation, review, and release evidence establish the conclusions; polished prose does not become another source of product truth.
@@ -131,9 +177,9 @@ Before proposing an agent-authored public comment on a Happier GitHub issue, res
 gh api user --jq .login
 ```
 
-Use the returned login in a standalone final line of every comment: `cc: @<local-gh-login>`. Resolve this identity with ordinary `gh`, never `yarn ghops`: `ghops` is deliberately authenticated as the bot that transports issue reads and writes, not the local maintainer who should receive notifications. Do not substitute the bot login, repository owner, operating-system username, Git author, a hardcoded handle, or a previously observed account. If ordinary `gh` is unavailable, unauthenticated, or returns no login, stop before the mutation preview and ask the user to authenticate with `gh auth login` or explicitly supply the mention target.
+Use the returned login in a standalone final line of every comment: `cc: @<local-gh-login>`. Resolve this identity with ordinary `gh`, never `yarn ghops`: `ghops` is deliberately authenticated as the bot that transports issue reads and writes, not the local maintainer who should receive notifications. Do not substitute the bot login, repository owner, operating-system username, Git author, a hardcoded handle, or a previously observed account. If ordinary `gh` is unavailable, unauthenticated, or returns no login, stop before posting and ask the user to authenticate with `gh auth login` or explicitly supply the mention target.
 
-This direct mention keeps the local maintainer participating in the issue conversation. Apply it to initial responses, evidence requests, progress updates, release updates, and closure recommendations. Include the resolved line in the complete comment shown during the exact mutation preview; never add it after approval or omit it based on inferred subscription status, an earlier mention, or prior participation. After approval, post the exact approved handle even if the active local account changes; an identity change requires a revised preview. This rule applies to issue comments, not issue bodies or the release automation's label-only mutations. Use a different handle or omit the line only when the user explicitly approves that exact payload.
+This direct mention keeps the local maintainer participating in the issue conversation. Apply it to initial responses, evidence requests, progress updates, release updates, and closure recommendations. Under exact authorization, include the resolved line in the complete preview and never add it afterward. Under standing authorization, resolve it immediately before each comment and keep it inside the delegated comment payload. Do not omit it based on inferred subscription status, an earlier mention, or prior participation. This rule applies to issue comments, not issue bodies or release automation's label-only mutations. Use a different handle or omit the line only when the applicable exact or standing authorization permits that variation.
 
 ### Voice and identity
 
@@ -169,7 +215,7 @@ This direct mention keeps the local maintainer participating in the issue conver
 
 For a progress update, usually cover the outcome or current status, the evidence or user impact, and the next step or blocker. This is a content checklist, not a mandatory heading template.
 
-For a confirmed correction, developers benefit from the reasoning. Include the causal mechanism, the canonical owner, the exact correction, important alternatives rejected because they would leave a workaround or split-brain, materially unchanged behavior, compatibility or migration effects, deciding tests or live validation, public commit/PR provenance, current channel availability, and the exact closure or follow-up condition. When the reporter or a commenter materially shaped the implemented correction, acknowledge that contribution and ensure the proposed commit contains their verified `Co-authored-by:` trailer. Omit an item only when it is genuinely irrelevant or unsupported; do not compress a diagnosis into `fixed in source` when the evidence can help reviewers or reporters catch a missed case.
+For a confirmed correction, developers benefit from the reasoning. Include the causal mechanism, the canonical owner, the exact correction, important alternatives rejected because they would leave a workaround or split-brain, materially unchanged behavior, compatibility or migration effects, deciding tests or live validation, public commit/PR provenance, current channel availability, and the exact closure or follow-up condition. When the reporter or a commenter materially shaped the implemented correction, acknowledge that contribution and ensure each specific commit incorporating it contains their verified `Co-authored-by:` trailer; do not carry the trailer into independent follow-up commits. Omit an item only when it is genuinely irrelevant or unsupported; do not compress a diagnosis into `fixed in source` when the evidence can help reviewers or reporters catch a missed case.
 
 Make follow-up conditional on the reporter's actual channel:
 
@@ -208,9 +254,9 @@ These labels are intended to keep the public roadmap curated and consistent:
 - `type: bug`, `type: feature`, `type: task` (recommended)
 - `source: bug-report` (applied automatically by the bug-report service)
 
-For an open issue with a complete correction integrated and verified on canonical `dev`, the next exact mutation preview must add `stage:source` and remove any conflicting `stage:*` label. Omit this only when the issue is already at the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state the reason in the preview. Do not apply the label before integration, infer a later stage, or silently omit the proposal because approval has not yet been granted.
+For an open issue with a complete correction integrated and verified on canonical `dev`, the next authorized GitHub mutation must add `stage:source` and remove any conflicting `stage:*` label. Omit this only when the issue is already at the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state the reason in the preview or post-action report. Do not apply the label before integration, infer a later stage, or silently omit the pending proposal when mutation authority is absent.
 
-Roadmap inclusion is opt-in. Do not add `roadmap`, add a project item, or change project fields unless the user explicitly approves that exact issue for roadmap inclusion.
+Roadmap inclusion is opt-in. Do not add `roadmap`, add a project item, or change project fields unless exact authorization or a bounded standing grant explicitly includes roadmap changes for that issue set.
 
 Use a GitHub milestone such as `v0.3` for planned release scope. Do not duplicate that fact with a version-specific label. A milestone does not imply implementation or release availability, so preserve any independent `needs:*` and `stage:*` state.
 
@@ -218,7 +264,7 @@ Use a GitHub milestone such as `v0.3` for planned release scope. Do not duplicat
 
 Use `needs:maintainer` only when a named project-side review, diagnosis, product decision, implementation, or engineering correction is currently required. Use `needs:reporter` only after the project has explicitly asked an external participant for decision-material information, reproduction, logs, versions, or confirmation. If useful diagnosis, review, or implementation remains possible before that answer, keep the issue with the maintainer. If the only prerequisite is normal release progression and the requested reporter evidence remains the next human input, use `needs:reporter`; `stage:*` records the release prerequisite. Clear both handoff labels when only release progression, promotion, publication, release-owned certification, backlog scheduling, or eventual closure remains. Never use `needs:maintainer` as a generic open-issue or release-queue marker.
 
-For agent-authored GitHub updates, show the exact `needs:*` addition/removal beside the complete comment in the normal mutation preview. Do not hide an unpreviewed agent mutation inside comment text. Manual maintainers may use the exact saved-reply directives documented in `docs/issue-triage.md`; the workflow recognizes only standalone directives and initially allows `needs:*`, `type:*`, and `priority:*`. It rejects `stage:*`, `source:*`, `roadmap`, `ai-triage`, milestones, assignments, disposition labels, contradictory operations, and a result containing both handoff labels.
+For agent-authored GitHub updates, keep the exact `needs:*` addition/removal explicit beside the public comment. Under exact authorization, include both in the mutation preview; under standing authorization, apply and report both without hiding the label mutation inside comment text. Manual maintainers may use the exact saved-reply directives documented in `docs/issue-triage.md`; the workflow recognizes only standalone directives and initially allows `needs:*`, `type:*`, and `priority:*`. It rejects `stage:*`, `source:*`, `roadmap`, `ai-triage`, milestones, assignments, disposition labels, contradictory operations, and a result containing both handoff labels.
 
 An external human comment automatically changes `needs:reporter` to `needs:maintainer`, regardless of whether the commenter is the original issue author. Treat this only as a wake-up signal: read and evaluate the response before deciding whether the requested evidence is sufficient. Bots and Apps are ignored, and comments on issues not marked `needs:reporter` do not change handoff state.
 

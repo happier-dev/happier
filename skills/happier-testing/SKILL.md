@@ -57,7 +57,7 @@ Apply strict RED-GREEN-REFACTOR while following Happier-specific lane, fixture, 
 - TDD proves an observable contract; it does not require a new test for every changed function, branch, helper, or file.
 - Prefer strengthening or consolidating the canonical owner-level test over adding overlapping coverage.
 - One discriminating test is more valuable than many shallow permutations. Add cases only for materially different contracts, boundaries, or failure modes.
-- A useful test distinguishes the intended implementation from at least one plausible incorrect implementation. If it would pass both, strengthen or remove it.
+- A useful test distinguishes the intended implementation from at least one plausible incorrect implementation. If it would pass both, passes too easily, or contradicts visible behavior, challenge the fixture, instrument, harness, and observed branch before trusting the system; strengthen or remove the check.
 - Do not add runtime tests that merely restate TypeScript types, mirror implementation structure, assert pass-through wiring or incidental call counts, or police wording, formatting, raw styles, or example values.
 - Exercise real internal behavior through the canonical/public owner boundary whenever practical.
 - Remove or consolidate redundant tests introduced or exposed by the change.

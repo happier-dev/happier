@@ -50,7 +50,7 @@ Dirty or concurrently edited files are normal and do not establish ownership. In
 
 ## 4. Select the smallest coherent systemic change
 
-When we talk about overengineering during implementation, the target is not the feature; it is the underlying logic. Start from the feature's real intent and requirements, preserve those outcomes, and implement the simplest logic that satisfies them. Do not invent disproportionate machinery for unreal, assumed, speculative, or unreachable requirements. Before adding logic, inspect whether the behavior can be satisfied by or folded into existing canonical logic through reuse, extraction, refinement, extension, consolidation, or refactoring; do not create a split-brain, similar-but-different, or parallel path when an existing owner can satisfy the need.
+Apply root **Scope-preserving solution economy** at implementation time: preserve the complete feature outcome, challenge unsupported machinery rather than the feature itself, and fold behavior into the canonical owner through reuse, refinement, consolidation, or refactoring before adding another path.
 
 Prefer, in order, to add nothing when the complete outcome already holds; correct/reuse/refine/consolidate the canonical owner; use the language or platform; use an existing package-owned dependency; or add the smallest clear consumed implementation.
 
@@ -60,7 +60,7 @@ Before adding a protocol, registry, table, state machine, gate, lease, generatio
 
 ## 5. Shape execution for throughput
 
-Use direct implementation for tightly coupled work. Use `skills/decompose-gates` when the work contains meaningful independent responsibilities, then keep the critical path supplied with ready implementation, QA preparation, deterministic migration, and validation work.
+Use direct implementation for tightly coupled work and `skills/decompose-gates` for meaningful independent responsibilities. For repeated units with an unproven shared assumption, apply that skill's concurrency ramp: gate only dependent replication, keep independent work moving, and skip the ramp when prior evidence or a deterministic tool already proves the unit shape.
 
 Delegate complete responsibilities rather than tiny edits. A lane owns its discovery, implementation, focused RED/GREEN proof, relevant validation, compact self-review, and concise result. Briefs name the goal, intent, corridor, evidence, dependencies, collision surfaces, completion and negative criteria, validation, permissions, and stop conditions. Do not reserve files or duplicate generic doctrine in every brief.
 
@@ -77,9 +77,7 @@ Preview broad transformations, establish their match set, inspect representative
 
 ## 6. Resolve uncertainty with evidence
 
-Uncertainty is an investigation task, not a reason to skip in-scope work. Name the missing fact and the observation that would decide it, then inspect the smallest useful combination of source, history, tests, schemas, logs, runtime state, artifacts, or current primary documentation.
-
-Ask only when safe investigation cannot resolve a decision-material ambiguity, user authority is required, external state is unavailable, or the requested outcome would need material expansion or redesign. Continue independent work that cannot prejudge that decision.
+Uncertainty is an investigation task, not a reason to skip in-scope work. Classify the missing answer first: if source, history, a focused prototype, test, schema, log, measurement, runtime state, artifact, or current primary documentation can decide it safely, retrieve that evidence. Ask only for a genuine product, preference, authority, or tradeoff decision evidence cannot settle, unavailable external state, or material expansion/redesign. Continue independent work that cannot prejudge that decision.
 
 ## 7. Implement through a valid test and real path
 
@@ -116,16 +114,17 @@ For work linked to a GitHub issue, keep the source correction, commit relationsh
 
 - preserve unrelated work and form one coherent correction per commit; one correction may resolve several issues, while one issue may legitimately require several commits;
 - select exact paths or hunks when committing in a dirty worktree, and keep the defining regression test with the behavior it proves;
+- use the checkout's existing current-user Git identity for ordinary commits; never replace it with the bot or a contributor identity, and keep contributor credit in commit-specific verified trailers;
 - use `Refs #N` for partial fixes, mitigations, release-gated corrections, or work that should leave the issue open;
 - use `Fixes #N` only when integration into the default branch satisfies the issue's actual closure gate; because `dev` is the default branch, a closing keyword can close an issue before preview or stable users receive the correction;
 - inspect the issue author and comments for material contributions embodied in the correction. A supplied causal insight, decisive reproduction, design, patch, or substantially adopted solution earns a verified `Co-authored-by: Name <email>` trailer on each commit that incorporates it; a routine report, requested log, confirmation, or generic suggestion does not automatically earn code co-authorship;
 - resolve the contributor's GitHub-associated email or GitHub-provided noreply identity before committing. Never put an `@handle` in the trailer, guess or expose a private email, silently drop an unresolved attribution candidate, or let attribution change the independently selected `Refs`/`Fixes` relationship;
 - after implementation, propose a Conventional Commit message and a detailed GitHub response grounded in the verified cause, owner-level correction, choices, tests, public provenance, current stage, and reporter-channel follow-up;
-- do not apply labels, post comments, or close the issue without the separate exact mutation preview and approval required by `skills/happier-github-ops`.
+- do not apply labels, post comments, or close the issue without the exact or bounded standing mutation authority required by `skills/happier-github-ops`.
 
-When the complete correction is integrated and verified on canonical `dev`, include `stage:source` for every affected open issue in the next exact GitHub mutation preview. Omit it only when the issue already has the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state that reason explicitly. If mutation authority is absent, report the pending proposal instead of applying it or silently leaving the issue outside the release queue. Local work, `remote-dev`, an open pull request, or an unmerged commit does not qualify. Normal release workflows advance later labels; implementation agents do not predict or pre-advance channels.
+When the complete correction is integrated and verified on canonical `dev`, include `stage:source` for every affected open issue in the next authorized GitHub mutation. Omit it only when the issue already has the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state that reason explicitly. Under exact authorization, include it in the preview; under a standing grant that covers issue labels, apply and report it without another prompt. If mutation authority is absent, report the pending proposal instead of applying it or silently leaving the issue outside the release queue. Local work, `remote-dev`, an open pull request, or an unmerged commit does not qualify. Normal release workflows advance later labels; implementation agents do not predict or pre-advance channels.
 
-Keep human handoff separate from availability. After a source correction, choose among three states: retain `needs:maintainer` only when a named project-side review, diagnosis, implementation, or engineering correction remains; use `needs:reporter` when an approved public request makes external confirmation or diagnostics the next decision-material human input, even if the reporter must first wait for a named release stage; or clear both when only merge/release progression, promotion, publication, release-owned certification, backlog scheduling, or eventual closure remains. `stage:*` records the release prerequisite. Do not use `needs:maintainer` as a generic release-queue marker, and do not use hidden saved-reply directives in an agent-authored comment to bypass the exact mutation preview.
+Keep human handoff separate from availability. After a source correction, choose among three states: retain `needs:maintainer` only when a named project-side review, diagnosis, implementation, or engineering correction remains; use `needs:reporter` when an authorized public request makes external confirmation or diagnostics the next decision-material human input, even if the reporter must first wait for a named release stage; or clear both when only merge/release progression, promotion, publication, release-owned certification, backlog scheduling, or eventual closure remains. `stage:*` records the release prerequisite. Do not use `needs:maintainer` as a generic release-queue marker, and do not use hidden saved-reply directives to manufacture mutation authority.
 
 Use these outcomes:
 

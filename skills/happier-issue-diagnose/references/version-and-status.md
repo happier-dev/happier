@@ -46,7 +46,7 @@ Map a verified correction to the issue lifecycle without overstating it:
 - no stage label means no correction boundary has been proven;
 - a stage label is the highest verified channel containing the correction, not proof that the reporter uses that channel or that the issue can close.
 
-Once a complete correction for an open issue is integrated and verified on canonical `dev`, propose `stage:source` in the exact GitHub mutation preview. Omit it only when the issue already has the same or a higher verified stage, or no correction exists to release; state that reason explicitly. Lack of mutation approval delays application, not the obligation to surface the proposal.
+Once a complete correction for an open issue is integrated and verified on canonical `dev`, include `stage:source` in the next authorized GitHub mutation. Under exact authorization, put it in the complete preview; under a standing grant that covers issue labels, apply and report it without another prompt. Omit it only when the issue already has the same or a higher verified stage, or no correction exists to release; state that reason explicitly. Lack of mutation authority delays application, not the obligation to surface the proposal.
 
 ## Release response
 

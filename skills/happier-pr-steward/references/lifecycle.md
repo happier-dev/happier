@@ -9,7 +9,7 @@ Capture:
 - repository and PR number;
 - base branch and SHA;
 - head branch, repository, and SHA;
-- PR author and verified commit identity;
+- PR author plus every verified material contributor and the exact commits their contribution could justify;
 - issue or product context;
 - current review decision, review threads, comments, and check runs;
 - dirty-state acknowledgement for every checkout used.
@@ -38,8 +38,8 @@ For each batch:
 2. implement and validate on the PR branch;
 3. inspect the full base-to-head diff and related-only commit contents;
 4. run the required validation and commit without consuming unrelated bytes;
-5. preview any GitHub mutation exactly and obtain approval;
-6. push or post only the authorized payload;
+5. resolve whether the active GitHub authority is exact or bounded standing authorization;
+6. under exact authority, preview and obtain approval; under standing authority, re-read live state and push/post covered payloads without another prompt;
 7. record the new head and commit SHAs.
 
 If the source head changes concurrently, rebase the reasoning on the current bytes without discarding work or force-updating history. Ask when the concurrent change conflicts with the approved intent.
@@ -62,13 +62,13 @@ For each finding, record the claim, observed evidence, impact, chosen response, 
 
 Require a human decision for:
 
-- the initial refinement proposal;
+- the initial refinement proposal when the user's request did not already grant autonomous evidence-driven implementation authority for that scope;
 - any material amendment or expanded product/design scope;
-- destructive operations, force pushes, branch replacement, or conflict resolution that could discard work;
-- every exact public GitHub mutation under `happier-github-ops`;
-- merge, close, label, assignment, or other repository-state transitions.
+- any GitHub action outside the active exact or bounded standing authorization;
+- destructive operations, force pushes, branch replacement, or conflict resolution that could discard work unless the standing grant explicitly names the action and its safety condition;
+- merge, close, label, assignment, or other repository-state transitions unless exact authorization or a condition-bound standing grant includes them.
 
-An approved implementation batch may include its described code commits and push. New material findings require a renewed implementation decision; narrow fixes that directly satisfy the approved correctness outcome may proceed when the user explicitly asked for an evidence-driven fix loop.
+An approved implementation batch may include its described code commits and push. A bounded standing authorization may additionally cover evolving comment text, reviewer requests, thread actions, related fix commits/pushes, and expressly named conditional repository-state actions for the same PR without repeated previews. New material findings require a renewed implementation decision; narrow fixes that directly satisfy the approved correctness outcome may proceed when the user explicitly asked for an evidence-driven fix loop.
 
 ## 6. Exit audit
 
@@ -77,6 +77,6 @@ Re-fetch the live PR. Verify:
 - reported head equals the reviewed and tested head;
 - no unresolved material thread was omitted;
 - check results belong to that head;
-- commits contain only related changes and required co-authorship;
+- commits contain only related changes, use the current local Git identity except for an expressly authorized foreign-PR rebase, and include co-authorship only for material contributions embodied in each commit;
 - rejected suggestions have concise factual reasons;
-- merge has not occurred without exact authorization.
+- merge has not occurred without exact authorization or a condition-bound standing grant that included it.
