@@ -1251,6 +1251,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
             sessionId: request.sessionId,
             sourceMachineId: request.sourceMachineId,
             targetMachineId: request.targetMachineId,
+            ...(request.targetPath ? { targetPath: request.targetPath } : {}),
             sessionStorageMode: request.sessionStorageMode,
             ...(request.targetSessionStorageMode ? { targetSessionStorageMode: request.targetSessionStorageMode } : {}),
             ...(request.workspaceTransfer ? { workspaceTransfer: request.workspaceTransfer } : {}),

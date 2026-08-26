@@ -6,6 +6,8 @@ import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelp
 import type { CustomModalChromeConfig } from '@/modal';
 
 const refreshMachinesThrottledMock = vi.fn(async () => {});
+const openMachinePathBrowserModalMock = vi.fn<(params: unknown) => Promise<string>>(async () => '/home/leeroy.guest/.happier-stack/workspace/0.2');
+const pathBrowserModuleLoadedMock = vi.fn();
 let credentialsReady = true;
 
 
@@ -146,9 +148,17 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
+vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => {
+    pathBrowserModuleLoadedMock();
+    return {
+        openMachinePathBrowserModal: (params: unknown) => openMachinePathBrowserModalMock(params),
+    };
+});
+
 describe('SessionHandoffPickerModal', () => {
     beforeEach(() => {
         refreshMachinesThrottledMock.mockClear();
+        openMachinePathBrowserModalMock.mockClear();
         credentialsReady = true;
         machineListByServerIdState = {
             server_a: [
@@ -194,6 +204,12 @@ describe('SessionHandoffPickerModal', () => {
             ignoredIncludeGlobs: ['dist/**'],
             directTargetMode: 'convert_to_persisted',
         };
+    });
+
+    it('does not load the target path browser until the user asks to choose a directory', async () => {
+        await import('./SessionHandoffPickerModal');
+
+        expect(pathBrowserModuleLoadedMock).not.toHaveBeenCalled();
     });
 
     it('returns the selected machine and default handoff options', async () => {
@@ -250,6 +266,48 @@ describe('SessionHandoffPickerModal', () => {
             },
         });
         expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('lets the user choose an existing directory on the target machine', async () => {
+        const onResolve = vi.fn();
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        let chrome: CustomModalChromeConfig | null = null;
+        const setChrome = vi.fn((next: CustomModalChromeConfig | null) => {
+            chrome = next;
+        });
+
+        const { tree } = await renderScreen(<SessionHandoffPickerModal
+            onClose={vi.fn()}
+            setChrome={setChrome}
+            onResolve={onResolve}
+            sessionId="sess_1"
+            sourceMachineId="machine_source"
+            serverId="server_a"
+        />);
+
+        await act(async () => {
+            invokeTestInstanceHandler(tree.findByType('MachineSelector' as any), 'onSelect', makeReadyTargetMachine());
+        });
+        await act(async () => {
+            invokeTestInstanceHandler(tree.findByProps({ testID: 'session-handoff-target-path' }), 'onPress');
+        });
+
+        expect(openMachinePathBrowserModalMock).toHaveBeenCalledWith({
+            machineId: 'machine_target',
+            serverId: 'server_a',
+            initialPath: undefined,
+            selectionMode: 'directory',
+            title: 'machine.launchNewSessionInDirectory',
+        });
+
+        const startButton = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start');
+        await act(async () => {
+            await (startButton!.props as { onPress: () => unknown }).onPress();
+        });
+        expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({
+            targetMachineId: 'machine_target',
+            targetPath: '/home/leeroy.guest/.happier-stack/workspace/0.2',
+        }));
     });
 
     it('allows handoff to an online storage machine before exact readiness is known', async () => {

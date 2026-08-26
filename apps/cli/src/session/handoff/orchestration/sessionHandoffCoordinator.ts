@@ -17,6 +17,7 @@ export type SessionHandoffCoordinatorInput = Readonly<{
   sessionId: string;
   sourceMachineId: string;
   targetMachineId: string;
+  targetPath?: string;
   sessionStorageMode: 'direct' | 'persisted';
   targetSessionStorageMode?: 'direct' | 'persisted';
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
@@ -231,7 +232,7 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
             allowServerRoutedFallback: false,
             sourceSessionStorageMode: input.sessionStorageMode,
             ...(input.targetSessionStorageMode ? { targetSessionStorageMode: input.targetSessionStorageMode } : {}),
-            targetPath: started.targetPath,
+            targetPath: input.targetPath ?? started.targetPath,
             endpointCandidates: started.endpointCandidates,
             ...(started.handoffMetadataV2 ? { handoffMetadataV2: started.handoffMetadataV2 } : {}),
             ...(input.workspaceTransfer ? { workspaceTransfer: input.workspaceTransfer } : {}),

@@ -47,6 +47,7 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
         execute: args.execute,
         sessionId: args.sessionId,
         targetMachineId: selection.targetMachineId,
+        ...(selection.targetPath ? { targetPath: selection.targetPath } : {}),
         targetSessionStorageMode: selection.targetSessionStorageMode,
         workspaceTransfer: selection.workspaceTransfer,
         context: {

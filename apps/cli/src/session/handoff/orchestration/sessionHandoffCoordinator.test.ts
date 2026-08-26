@@ -81,6 +81,19 @@ describe('sessionHandoffCoordinator', () => {
     ]);
   });
 
+  it('uses an explicitly selected target directory instead of the source-derived path', async () => {
+    const { coordinator, port, update } = createHarness();
+
+    await (await coordinator.admit({ ...baseInput, targetPath: '/home/guest/workspace' })).execute({ update });
+
+    expect(port.prepareTarget).toHaveBeenCalledWith(expect.objectContaining({
+      targetPath: '/home/guest/workspace',
+    }));
+    expect(port.startSource).toHaveBeenCalledWith(expect.not.objectContaining({
+      targetPath: expect.anything(),
+    }));
+  });
+
   it('aborts the admitted handoff when target preparation fails and normalizes the domain failure', async () => {
     const { coordinator, port, update } = createHarness({
       prepareTarget: vi.fn(async () => ({ ok: false, errorCode: 'target_prepare_failed', error: { message: 'nested detail' } })),

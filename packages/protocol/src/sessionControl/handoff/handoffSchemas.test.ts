@@ -57,6 +57,7 @@ describe('session handoff schemas', () => {
       targetMachineId: 'machine_target',
       sessionStorageMode: 'persisted',
       targetSessionStorageMode: 'direct',
+      targetPath: '/home/guest/workspace',
       preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
       workspaceTransfer: {
         enabled: true,
@@ -69,6 +70,7 @@ describe('session handoff schemas', () => {
     if (!startParsed.success) return;
     expect(startParsed.data.requestId).toBe('action-request-1');
     expect(startParsed.data.targetSessionStorageMode).toBe('direct');
+    expect(startParsed.data.targetPath).toBe('/home/guest/workspace');
     expect(startParsed.data.workspaceTransfer).toEqual({
       enabled: true,
       strategy: 'transfer_snapshot',
