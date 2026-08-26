@@ -47,11 +47,10 @@ async function withTempServerDir(t, fn) {
   return await fn(dir);
 }
 
-test('startDevServer normalizes full providers before dependency or process side effects', async (t) => {
+test('startDevServer normalizes providers independently of the full preset', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
     const sideEffects = [];
-    await assert.rejects(
-      () => startDevServer(
+    const sqliteOut = await startDevServer(
         {
           serverComponentName: 'happier-server',
           serverDir,
@@ -67,7 +66,7 @@ test('startDevServer normalizes full providers before dependency or process side
           envPath: join(serverDir, 'env'),
           stackMode: true,
           runtimeStatePath: join(serverDir, 'stack.runtime.json'),
-          serverAlreadyRunning: false,
+          serverAlreadyRunning: true,
           restart: false,
           children: [],
           quiet: true,
@@ -83,10 +82,11 @@ test('startDevServer normalizes full providers before dependency or process side
           getProcessGroupIdImpl: async () => 201,
           recordStackRuntimeUpdateImpl: async () => {},
         },
-      ),
-      /unsupported DB provider/i,
-    );
-    assert.deepEqual(sideEffects, []);
+      );
+    assert.equal(sqliteOut.serverEnv.HAPPIER_DB_PROVIDER, 'sqlite');
+    assert.equal(sqliteOut.serverEnv.HAPPIER_SERVER_FLAVOR, 'full');
+    assert.equal(sqliteOut.serverEnv.HAPPIER_SERVER_LIGHT_DATA_DIR, join(serverDir, 'server-light'));
+    assert.deepEqual(sideEffects, ['deps']);
 
     const out = await startDevServer(
       {
@@ -94,6 +94,9 @@ test('startDevServer normalizes full providers before dependency or process side
         serverDir,
         autostart: { stackName: 'watch-test', baseDir: serverDir },
         baseEnv: {
+          HAPPIER_SERVER_FLAVOR: 'light',
+          HAPPY_SERVER_FLAVOR: 'light',
+          DATABASE_URL: 'postgresql://operator:secret@db.example.test/happier',
           HAPPIER_STACK_MANAGED_INFRA: '0',
           HAPPIER_STACK_PRISMA_MIGRATE: '0',
         },
@@ -111,6 +114,8 @@ test('startDevServer normalizes full providers before dependency or process side
       { ensureDepsInstalledImpl: async () => {} },
     );
     assert.equal(out.serverEnv.HAPPIER_DB_PROVIDER, 'postgres');
+    assert.equal(out.serverEnv.HAPPIER_SERVER_FLAVOR, 'full');
+    assert.equal(out.serverEnv.HAPPY_SERVER_FLAVOR, 'full');
   });
 });
 
@@ -143,7 +148,7 @@ test('startDevServer prepares dependencies before full-server infrastructure and
           sideEffects.push('infrastructure');
           return { env: {} };
         },
-        applyHappyServerMigrationsImpl: async () => sideEffects.push('migration'),
+        applyServerMigrationsImpl: async () => sideEffects.push('migration'),
       },
     );
 
@@ -183,7 +188,7 @@ test('startDevServer keeps explicit mysql database authority through managed inf
             REDIS_URL: 'redis://managed-sidecar',
           },
         }),
-        applyHappyServerMigrationsImpl: async (input) => {
+        applyServerMigrationsImpl: async (input) => {
           migrationInput = input;
         },
         ensureDepsInstalledImpl: async () => {},
@@ -198,6 +203,44 @@ test('startDevServer keeps explicit mysql database authority through managed inf
   });
 });
 
+test('startDevServer applies provider migrations under the light preset without full managed infrastructure', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const postgresUrl = 'postgresql://operator:secret@db.example/happier';
+    const sideEffects = [];
+    await startDevServer(
+      {
+        serverComponentName: 'happier-server-light',
+        serverDir,
+        autostart: { stackName: 'watch-test', baseDir: serverDir },
+        baseEnv: {
+          HAPPIER_DB_PROVIDER: 'postgres',
+          DATABASE_URL: postgresUrl,
+          HAPPIER_STACK_PRISMA_MIGRATE: '1',
+        },
+        serverPort: 34567,
+        internalServerUrl: 'http://127.0.0.1:34567',
+        publicServerUrl: 'http://127.0.0.1:34567',
+        envPath: join(serverDir, 'env'),
+        stackMode: true,
+        runtimeStatePath: join(serverDir, 'stack.runtime.json'),
+        serverAlreadyRunning: true,
+        restart: false,
+        children: [],
+        quiet: true,
+      },
+      {
+        ensureDepsInstalledImpl: async () => sideEffects.push('dependencies'),
+        ensureHappyServerManagedInfraImpl: async () => sideEffects.push('unexpected-infrastructure'),
+        applyServerMigrationsImpl: async ({ dbProvider, env }) => {
+          sideEffects.push(`migration:${dbProvider}:${env.DATABASE_URL}`);
+        },
+      },
+    );
+
+    assert.deepEqual(sideEffects, ['dependencies', `migration:postgres:${postgresUrl}`]);
+  });
+});
+
 test('startDevServer clears an inherited DATABASE_URL for a light server', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
     const out = await startDevServer(
@@ -206,6 +249,8 @@ test('startDevServer clears an inherited DATABASE_URL for a light server', async
         serverDir,
         autostart: { stackName: 'watch-test', baseDir: serverDir },
         baseEnv: {
+          HAPPIER_SERVER_FLAVOR: 'full',
+          HAPPY_SERVER_FLAVOR: 'full',
           HAPPIER_DB_PROVIDER: 'sqlite',
           DATABASE_URL: 'mysql://exported-shell/db',
           HAPPIER_STACK_MANAGED_INFRA: '0',
@@ -225,6 +270,8 @@ test('startDevServer clears an inherited DATABASE_URL for a light server', async
       { ensureDepsInstalledImpl: async () => {} },
     );
     assert.equal(Object.hasOwn(out.serverEnv, 'DATABASE_URL'), false);
+    assert.equal(out.serverEnv.HAPPIER_SERVER_FLAVOR, 'light');
+    assert.equal(out.serverEnv.HAPPY_SERVER_FLAVOR, 'light');
   });
 });
 
@@ -1055,7 +1102,7 @@ test('stack restart admits source declarations once when runtime preflight has n
         serverComponentName: 'happier-server-light',
         serverDir,
         autostart: { stackName: 'watch-test', baseDir: serverDir },
-        baseEnv: { HAPPIER_STACK_PRISMA_PUSH: '0' },
+        baseEnv: { HAPPIER_STACK_PRISMA_PUSH: '0', HAPPIER_STACK_PRISMA_MIGRATE: '0' },
         serverPort: 34567,
         internalServerUrl: 'http://127.0.0.1:34567',
         publicServerUrl: 'http://127.0.0.1:34567',

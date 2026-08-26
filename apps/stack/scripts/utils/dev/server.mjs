@@ -8,10 +8,11 @@ import {
   readDevReloadWatchChangeSignature,
   readDevReloadWatchChangeSignatureAsync,
 } from './devReloadCoordinator.mjs';
-import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
-import { applyServerLightEnvDefaults } from '../server/apply_server_light_env_defaults.mjs';
+import { ensureHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
+import { applyServerMigrations } from '../server/server_migrations.mjs';
+import { applyServerPresetEnvDefaults } from '../server/apply_server_preset_env_defaults.mjs';
 import { applyEffectiveDbProviderEnv, resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs';
-import { resolveServerDevScript } from '../server/flavor_scripts.mjs';
+import { applyServerComponentFlavorEnv, resolveServerDevScript } from '../server/flavor_scripts.mjs';
 import { applyStackServerLoggingDefaults } from '../server/logging_env.mjs';
 import { DEV_SERVER_SHARED_RUNTIME_PACKAGE_IDS } from './devReloadTargets.mjs';
 import { resolveServerShutdownGraceMs } from '../server/shutdown_grace.mjs';
@@ -847,7 +848,7 @@ export async function startDevServer({
   ensureDepsInstalledImpl = ensureDepsInstalled,
   ensureSourceServerWorkspacePackagesBuiltImpl = ensureSourceServerWorkspacePackagesBuilt,
   ensureHappyServerManagedInfraImpl = ensureHappyServerManagedInfra,
-  applyHappyServerMigrationsImpl = applyHappyServerMigrations,
+  applyServerMigrationsImpl = applyServerMigrations,
   preflightDevServerRestartImpl = preflightDevServerRestart,
   stopStackOwnedServerForRestartImpl = stopStackOwnedServerForRestart,
   pmSpawnScriptImpl = pmSpawnScript,
@@ -873,25 +874,28 @@ export async function startDevServer({
     // Avoid noisy failures if a previous run left the metrics port busy.
     METRICS_ENABLED: baseEnv.METRICS_ENABLED ?? 'false',
   };
+  applyServerComponentFlavorEnv({ serverComponentName, targetEnv: serverEnv });
   delete baseEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE;
   const dbProvider = applyEffectiveDbProviderEnv({ serverComponentName, env: baseEnv, targetEnv: serverEnv });
   const explicitDatabaseUrl = serverEnv.DATABASE_URL;
   if (dbProvider === 'mysql' && !String(explicitDatabaseUrl ?? '').trim()) {
     throw new Error('[local] mysql requires an explicit DATABASE_URL before managed infra startup');
   }
+  const usesFullManagedInfra = serverComponentName === 'happier-server'
+    && (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
+  if (dbProvider === 'postgres' && !usesFullManagedInfra && !String(explicitDatabaseUrl ?? '').trim()) {
+    throw new Error('[local] postgres requires DATABASE_URL when the selected preset does not manage Postgres');
+  }
   applyStackServerLoggingDefaults({ baseEnv, serverEnv });
 
-  if (serverComponentName === 'happier-server-light') {
-    applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir });
-  }
+  applyServerPresetEnvDefaults({ serverComponentName, baseEnv, serverEnv, baseDir: autostart.baseDir });
 
   // Dependency preparation owns the tools used by infrastructure and migrations.
   // Keep it after provider/topology admission so invalid configurations remain side-effect free.
   await ensureDepsInstalledImpl(serverDir, serverComponentName, { quiet, env: serverEnv });
 
   if (serverComponentName === 'happier-server') {
-    const managed = (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
-    if (managed) {
+    if (usesFullManagedInfra) {
       const infra = await ensureHappyServerManagedInfraImpl({
         stackName: autostart.stackName,
         baseDir: autostart.baseDir,
@@ -905,10 +909,10 @@ export async function startDevServer({
       if (dbProvider === 'mysql') serverEnv.DATABASE_URL = explicitDatabaseUrl;
     }
 
-    const autoMigrate = (baseEnv.HAPPIER_STACK_PRISMA_MIGRATE ?? '1') !== '0';
-    if (autoMigrate) {
-      await applyHappyServerMigrationsImpl({ serverDir, env: serverEnv, dbProvider });
-    }
+  }
+  const autoMigrate = (baseEnv.HAPPIER_STACK_PRISMA_MIGRATE ?? '1') !== '0';
+  if (autoMigrate) {
+    await applyServerMigrationsImpl({ serverDir, env: serverEnv, dbProvider });
   }
 
   const prismaPush = (baseEnv.HAPPIER_STACK_PRISMA_PUSH ?? '1').toString().trim() !== '0';

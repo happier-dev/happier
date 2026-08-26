@@ -46,6 +46,7 @@ import {
 import {
   parseEnvText as parseEnvTextShared,
   renderSelfHostServerEnvText as renderSelfHostServerEnvTextShared,
+  resolveSelfHostServerMigrationPlan,
 } from '@happier-dev/cli-common/firstPartyRuntime/selfHostServerEnv';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
 import {
@@ -340,12 +341,18 @@ export function pickReleaseAsset({ assets, product, os, arch }) {
   };
 }
 
-export async function applySelfHostSqliteMigrationsAtInstallTime({
+export async function applySelfHostServerMigrationsAtInstallTime({
   config,
   env,
   runCommandImpl = runCommand,
 }) {
-  return runCommandImpl(config.serverBinaryPath, ['--migrate-only'], {
+  const plan = resolveSelfHostServerMigrationPlan({
+    serverBinaryPath: config.serverBinaryPath,
+    env,
+    platform: config.platform ?? process.platform,
+  });
+  if (!plan) return null;
+  return runCommandImpl(plan.command, [...plan.args], {
     cwd: config.installRoot,
     env,
     stdio: 'pipe',
@@ -1917,11 +1924,9 @@ async function performSelfHostPostPromoteSteps({
   await writeFile(config.configEnvPath, envTextWithOverrides, 'utf-8');
   const installEnv = parseEnvText(envTextWithOverrides);
   const healthPort = resolveSelfHostEffectiveServerPort({ config, env: installEnv });
-  if (!parseBoolean(installEnv.HAPPIER_SQLITE_AUTO_MIGRATE ?? installEnv.HAPPY_SQLITE_AUTO_MIGRATE, true)) {
-    await applySelfHostSqliteMigrationsAtInstallTime({ config, env: installEnv }).catch((e) => {
-      throw new Error(`[self-host] failed to apply sqlite migrations at install time: ${String(e?.message ?? e)}`);
-    });
-  }
+  await applySelfHostServerMigrationsAtInstallTime({ config, env: installEnv }).catch((e) => {
+    throw new Error(`[self-host] failed to apply database migrations at install time: ${String(e?.message ?? e)}`);
+  });
 
   const serverShimPath = join(config.binDir, config.serverBinaryName);
   await mkdir(config.binDir, { recursive: true });

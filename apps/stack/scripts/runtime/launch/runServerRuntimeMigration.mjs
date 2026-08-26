@@ -68,6 +68,7 @@ export async function runServerRuntimeMigration({
   spawnProcImpl = spawnProc,
 }) {
   throwIfStartupCancelled(isCancellationRequested, serverLaunchSpec?.migration);
+  if (serverLaunchSpec?.migration?.mode === 'in-process') return;
   const migration = await validateRuntimeServerMigration(serverLaunchSpec);
   throwIfStartupCancelled(isCancellationRequested, migration);
   let child;

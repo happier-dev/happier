@@ -326,9 +326,7 @@ async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, t
       : []),
     { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: serverComponent },
     { key: 'HAPPIER_DB_PROVIDER', value: dbTransition.provider },
-    ...(dbTransition.provider === 'mysql'
-      ? [{ key: 'DATABASE_URL', value: dbTransition.databaseUrl }]
-      : []),
+    ...(dbTransition.databaseUrl ? [{ key: 'DATABASE_URL', value: dbTransition.databaseUrl }] : []),
     // Default for selfhost:
     // - monorepo: upstream (Happier)
     // - server-light: fork-only today (handled in bootstrap)

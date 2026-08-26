@@ -160,8 +160,8 @@ test('relay-host forwarding maps legacy HStack update onto the canonical idempot
   );
 });
 
-test('self-host install-time SQLite migration delegates to the installed canonical server-light binary', async () => {
-  assert.equal(typeof selfHostRuntimeModule.applySelfHostSqliteMigrationsAtInstallTime, 'function');
+test('self-host install-time migration delegates to the canonical provider plan', async () => {
+  assert.equal(typeof selfHostRuntimeModule.applySelfHostServerMigrationsAtInstallTime, 'function');
   const calls = [];
   const env = {
     HAPPIER_SQLITE_AUTO_MIGRATE: '0',
@@ -173,7 +173,7 @@ test('self-host install-time SQLite migration delegates to the installed canonic
     serverBinaryPath: '/opt/happier/bin/happier-server',
   };
 
-  await selfHostRuntimeModule.applySelfHostSqliteMigrationsAtInstallTime({
+  await selfHostRuntimeModule.applySelfHostServerMigrationsAtInstallTime({
     config,
     env,
     runCommandImpl: (cmd, args, options) => {
@@ -193,12 +193,24 @@ test('self-host install-time SQLite migration delegates to the installed canonic
       },
     },
   ]);
+
+  calls.length = 0;
+  await selfHostRuntimeModule.applySelfHostServerMigrationsAtInstallTime({
+    config,
+    env: { HAPPIER_DB_PROVIDER: 'postgres', DATABASE_URL: 'postgresql://db/happier' },
+    runCommandImpl: (cmd, args, options) => {
+      calls.push({ cmd, args, options });
+      return { status: 0 };
+    },
+  });
+  assert.equal(calls[0].cmd, '/opt/happier/bin/happier-server-migrate');
+  assert.deepEqual(calls[0].args, []);
 });
 
 test('self-host install-time SQLite migration preserves canonical binary failure', async () => {
   const failure = new Error('canonical migration exit 23');
   await assert.rejects(
-    selfHostRuntimeModule.applySelfHostSqliteMigrationsAtInstallTime({
+    selfHostRuntimeModule.applySelfHostServerMigrationsAtInstallTime({
       config: {
         installRoot: '/opt/happier',
         serverBinaryPath: '/opt/happier/bin/happier-server',

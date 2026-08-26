@@ -47,20 +47,21 @@ function resolveAdmittedServerComponent({ serverComponent, snapshot }) {
   return admittedServerComponent;
 }
 
-export function resolveServerRuntimeLaunchSpec({ serverComponent, snapshot }) {
-  const admittedServerComponent = resolveAdmittedServerComponent({ serverComponent, snapshot });
+export function resolveServerRuntimeLaunchSpec({ serverComponent, dbProvider, snapshot }) {
+  resolveAdmittedServerComponent({ serverComponent, snapshot });
   const runtimeRoot = snapshot.launchPath ?? snapshot.snapshotPath;
   const serverDir = join(runtimeRoot, 'server');
   const entrypoint =
     resolveRuntimeManifestEntrypoint({ snapshotPath: runtimeRoot, manifest: snapshot?.manifest, component: 'server' }) ||
     join(serverDir, 'happier-server');
-  const migration = admittedServerComponent === 'happier-server'
+  const migration = dbProvider === 'postgres' || dbProvider === 'mysql' || dbProvider === 'pglite'
     ? {
+        mode: 'packaged',
         command: join(serverDir, `happier-server-migrate${entrypoint.toLowerCase().endsWith('.exe') ? '.exe' : ''}`),
         args: [],
         cwd: serverDir,
       }
-    : undefined;
+    : { mode: 'in-process' };
 
   return {
     source: 'runtime',
@@ -68,6 +69,6 @@ export function resolveServerRuntimeLaunchSpec({ serverComponent, snapshot }) {
     entrypoint,
     command: entrypoint,
     args: [],
-    ...(migration ? { migration } : {}),
+    migration,
   };
 }

@@ -5,17 +5,17 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ensureServerLightSchemaReady } from './startup.mjs';
+import { ensureServerSchemaReady } from './startup.mjs';
 import { buildServerLightEnv, createServerLightFixture } from './startup_server_light_testkit.mjs';
 import { writeWorkspacePackageBuildOwnerProxy } from '../../testkit/core/workspace_package_build_owner.mjs';
 
-test('ensureServerLightSchemaReady runs migrate:sqlite:deploy by default when not best-effort', async (t) => {
+test('ensureServerSchemaReady runs migrate:sqlite:deploy by default when not best-effort', async (t) => {
   const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
     prefix: 'hs-startup-light-migrate-',
     socketPort: 54322,
   });
   const env = buildServerLightEnv({ binDir, root });
-  const res = await ensureServerLightSchemaReady({ serverDir, env });
+  const res = await ensureServerSchemaReady({ serverComponentName: 'happier-server-light', serverDir, env });
   assert.equal(res.ok, true);
   assert.equal(res.migrated, true);
   assert.equal(res.accountCount, 0);
@@ -47,7 +47,7 @@ export class PrismaClient {
   });
 }
 
-test('ensureServerLightSchemaReady builds source server internal workspace deps before migration', async (t) => {
+test('ensureServerSchemaReady builds source server internal workspace deps before migration', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-startup-light-workspace-deps-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
@@ -116,7 +116,7 @@ test('ensureServerLightSchemaReady builds source server internal workspace deps 
   await chmod(join(binDir, 'yarn'), 0o755);
 
   const env = buildServerLightEnv({ binDir, root });
-  const res = await ensureServerLightSchemaReady({ serverDir, env });
+  const res = await ensureServerSchemaReady({ serverComponentName: 'happier-server-light', serverDir, env });
 
   assert.equal(res.ok, true);
   assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to run after workspace deps build`);

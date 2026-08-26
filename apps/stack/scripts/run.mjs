@@ -14,9 +14,10 @@ import { maybeResetTailscaleServe } from './tailscale.mjs';
 import { checkDaemonStatePingAware, daemonStateHasLiveProcess, getDaemonEnv, startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { assertServerComponentDirMatches, assertServerPrismaProviderMatches } from './utils/server/validate.mjs';
-import { resolveServerStartScript } from './utils/server/flavor_scripts.mjs';
-import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
-import { applyServerLightEnvDefaults } from './utils/server/apply_server_light_env_defaults.mjs';
+import { applyServerComponentFlavorEnv, resolveServerStartScript } from './utils/server/flavor_scripts.mjs';
+import { ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
+import { applyServerMigrations } from './utils/server/server_migrations.mjs';
+import { applyServerPresetEnvDefaults } from './utils/server/apply_server_preset_env_defaults.mjs';
 import { applyStackServerLoggingDefaults } from './utils/server/logging_env.mjs';
 import {
   getAccountCountForServerComponent,
@@ -61,7 +62,7 @@ import {
 } from './utils/server/listener_ownership.mjs';
 import { findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
 import { createServiceDaemonAutostarter } from './utils/service/daemon_autostart.mjs';
-import { applyRuntimeServerLightSqliteEnv } from './utils/server/apply_runtime_server_light_sqlite_env.mjs';
+import { applyRuntimeServerSqliteEnv } from './utils/server/apply_runtime_server_sqlite_env.mjs';
 import { spawnSourceServerScript } from './utils/server/source_server_workspace_deps.mjs';
 import { applyEffectiveDbProviderEnv } from './utils/server/effective_db_provider.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
@@ -183,12 +184,17 @@ async function main() {
   const runtimeBackedStart = Boolean(runtimeSnapshot);
   const cliLaunchSpec = runtimeSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null;
   const cliRuntimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
-  const serverLaunchSpec = runtimeSnapshot
-    ? resolveServerRuntimeLaunchSpec({ serverComponent: serverComponentName, snapshot: runtimeSnapshot })
-    : null;
   const dbProvider = applyEffectiveDbProviderEnv({ serverComponentName, env: process.env });
+  const serverLaunchSpec = runtimeSnapshot
+    ? resolveServerRuntimeLaunchSpec({ serverComponent: serverComponentName, dbProvider, snapshot: runtimeSnapshot })
+    : null;
   if (dbProvider === 'mysql' && !String(process.env.DATABASE_URL ?? '').trim()) {
     throw new Error('[local] mysql requires an explicit DATABASE_URL before startup');
+  }
+  const usesFullManagedInfra = serverComponentName === 'happier-server'
+    && (process.env.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
+  if (dbProvider === 'postgres' && !usesFullManagedInfra && !String(process.env.DATABASE_URL ?? '').trim()) {
+    throw new Error('[local] postgres requires DATABASE_URL when the selected preset does not manage Postgres');
   }
 
   const startDaemon = !flags.has('--no-daemon') && (process.env.HAPPIER_STACK_DAEMON ?? '1') !== '0';
@@ -455,15 +461,15 @@ async function main() {
     ...(serveUi ? { HAPPIER_SERVER_UI_REQUIRED: uiRequired ? '1' : '0' } : {}),
     ...resolveServerUiEnv({ serveUi, uiBuildDir, uiPrefix, uiBuildDirExists: Boolean(serveUi && uiBuildDirExists && uiIndexExists) }),
   };
+  applyServerComponentFlavorEnv({ serverComponentName, targetEnv: serverEnv });
   applyStackServerLoggingDefaults({ baseEnv, serverEnv });
   let serverLightAccountCount = null;
   let happierServerAccountCount = null;
+  applyServerPresetEnvDefaults({ serverComponentName, baseEnv, serverEnv, baseDir: autostart.baseDir });
+  if (runtimeBackedStart && dbProvider === 'sqlite') {
+    applyRuntimeServerSqliteEnv({ env: serverEnv, serverDir });
+  }
   if (serverComponentName === 'happier-server-light') {
-    applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir });
-    if (runtimeBackedStart) {
-      applyRuntimeServerLightSqliteEnv({ env: serverEnv, serverDir });
-    }
-
     if (!runtimeBackedStart && !startupDecision.adoptedServer) {
       // Source-backed starts ensure the light DB schema exists before daemon startup.
       const acct = await getAccountCountForServerComponent({
@@ -510,7 +516,7 @@ async function main() {
       if (!runtimeBackedStart) {
         const autoMigrate = (baseEnv.HAPPIER_STACK_PRISMA_MIGRATE ?? '1') !== '0';
         if (autoMigrate) {
-          await applyHappyServerMigrations({ serverDir: sourceServerDir, env: backendEnv, dbProvider });
+          await applyServerMigrations({ serverDir: sourceServerDir, env: backendEnv, dbProvider });
         }
         // Account probe should use the *actual* DATABASE_URL/infra env (ephemeral stacks do not persist it in env files).
         const accountProbeImpl = startupDecision.adoptedServer
@@ -578,17 +584,15 @@ async function main() {
   // Default server start (happier-server-light, or happier-server without managed infra).
   if (!(serverComponentName === 'happier-server' && (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0')) {
     if (startupDecision.startServer) {
-      const server = runtimeSnapshot && serverComponentName === 'happier-server'
+      const server = runtimeSnapshot
         ? await spawnRuntimeServerAfterMigration({
             serverLaunchSpec,
             env: serverEnv,
             children,
             isCancellationRequested: () => pendingShutdownSignal !== null,
           })
-        : runtimeSnapshot
-          ? spawnProc('server', serverLaunchSpec.command, serverLaunchSpec.args, serverEnv, { cwd: serverDir })
-          : await spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env: serverEnv });
-      if (!(runtimeSnapshot && serverComponentName === 'happier-server')) children.push(server);
+        : await spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env: serverEnv });
+      if (!runtimeSnapshot) children.push(server);
       activeServerProcess = server;
       await waitForServerReady(internalServerUrl, { childProcess: server });
       if (stackMode && runtimeStatePath) {

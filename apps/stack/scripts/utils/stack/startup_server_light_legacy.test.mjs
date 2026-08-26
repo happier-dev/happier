@@ -3,24 +3,24 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { ensureServerLightSchemaReady } from './startup.mjs';
+import { ensureServerSchemaReady } from './startup.mjs';
 import { buildServerLightEnv, createServerLightFixture } from './startup_server_light_testkit.mjs';
 
-test('ensureServerLightSchemaReady bestEffort=true skips migrate:sqlite:deploy by default', async (t) => {
+test('ensureServerSchemaReady bestEffort=true skips migrate:sqlite:deploy by default', async (t) => {
   const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
     prefix: 'hs-startup-light-best-effort-',
     socketPort: 54323,
   });
   const env = buildServerLightEnv({ binDir, root });
 
-  const res = await ensureServerLightSchemaReady({ serverDir, env, bestEffort: true });
+  const res = await ensureServerSchemaReady({ serverComponentName: 'happier-server-light', serverDir, env, bestEffort: true });
   assert.equal(res.ok, true);
-  assert.equal(res.migrated, true);
+  assert.equal(res.migrated, false);
   assert.equal(res.accountCount, 0);
   assert.equal(existsSync(markerPath), false, `expected bestEffort to skip migrate:sqlite:deploy (${markerPath})`);
 });
 
-test('ensureServerLightSchemaReady honors HAPPY_SERVER_LIGHT_DATA_DIR legacy fallback', async (t) => {
+test('ensureServerSchemaReady honors HAPPY_SERVER_LIGHT_DATA_DIR legacy fallback', async (t) => {
   const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
     prefix: 'hs-startup-light-legacy-data-dir-',
     socketPort: 54324,
@@ -44,14 +44,14 @@ test('ensureServerLightSchemaReady honors HAPPY_SERVER_LIGHT_DATA_DIR legacy fal
   assert.equal(existsSync(dataDir), false);
   assert.equal(Boolean(env.DATABASE_URL), false);
 
-  const res = await ensureServerLightSchemaReady({ serverDir, env });
+  const res = await ensureServerSchemaReady({ serverComponentName: 'happier-server-light', serverDir, env });
   assert.equal(res.ok, true);
   assert.equal(existsSync(dataDir), true);
   assert.equal(Object.hasOwn(env, 'DATABASE_URL'), false, 'schema readiness must not pollute the env reused by dev reloads');
   assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
 });
 
-test('ensureServerLightSchemaReady falls back to HAPPY_SERVER_LIGHT_DATA_DIR when HAPPIER value is empty', async (t) => {
+test('ensureServerSchemaReady falls back to HAPPY_SERVER_LIGHT_DATA_DIR when HAPPIER value is empty', async (t) => {
   const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
     prefix: 'hs-startup-light-empty-prefers-legacy-',
     socketPort: 54325,
@@ -73,7 +73,7 @@ test('ensureServerLightSchemaReady falls back to HAPPY_SERVER_LIGHT_DATA_DIR whe
   assert.equal(existsSync(dataDir), false);
   assert.equal(Boolean(env.DATABASE_URL), false);
 
-  const res = await ensureServerLightSchemaReady({ serverDir, env });
+  const res = await ensureServerSchemaReady({ serverComponentName: 'happier-server-light', serverDir, env });
   assert.equal(res.ok, true);
   assert.equal(existsSync(dataDir), true);
   assert.equal(Object.hasOwn(env, 'DATABASE_URL'), false, 'schema readiness must not pollute the env reused by dev reloads');

@@ -127,6 +127,7 @@ export async function createStartableRuntimeSnapshotFixture(t, {
   serverPort,
   listenerDiscoveryMode = null,
   serverComponent = 'happier-server-light',
+  dbProvider = serverComponent === 'happier-server' ? 'postgres' : 'sqlite',
   runtimeMigration = 'success',
 } = {}) {
   const preserveFixture = (process.env.HAPPIER_TEST_PRESERVE_RUNTIME_FIXTURE ?? '').toString().trim() === '1';
@@ -166,11 +167,13 @@ const uiDir = String(process.env.HAPPIER_SERVER_UI_DIR || '').trim();
 const marker = String(process.env.HAPPIER_RUNTIME_SNAPSHOT_MARKER || 'runtime-snapshot');
 const envCapturePath = String(process.env.HAPPIER_RUNTIME_SERVER_ENV_CAPTURE_PATH || '').trim();
 const pidCapturePath = String(process.env.HAPPIER_TEST_SERVER_PID_CAPTURE_PATH || '').trim();
-const eventLogPath = String(process.env.HAPPIER_TEST_RUNTIME_SERVER_EVENT_LOG || ${JSON.stringify(serverComponent === 'happier-server' ? runtimeServerEventLogPath : '')}).trim();
+const eventLogPath = String(process.env.HAPPIER_TEST_RUNTIME_SERVER_EVENT_LOG || '').trim();
 if (eventLogPath) appendFileSync(eventLogPath, 'server\\n', 'utf8');
 if (envCapturePath) {
   writeFileSync(envCapturePath, JSON.stringify({
     DATABASE_URL: process.env.DATABASE_URL ?? null,
+    HAPPIER_SERVER_FLAVOR: process.env.HAPPIER_SERVER_FLAVOR ?? null,
+    HAPPY_SERVER_FLAVOR: process.env.HAPPY_SERVER_FLAVOR ?? null,
     HAPPIER_SQLITE_AUTO_MIGRATE: process.env.HAPPIER_SQLITE_AUTO_MIGRATE ?? null,
     HAPPIER_SQLITE_MIGRATIONS_DIR: process.env.HAPPIER_SQLITE_MIGRATIONS_DIR ?? null,
     HAPPIER_SERVER_LIGHT_DATA_DIR: process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? null,
@@ -235,7 +238,7 @@ process.on('SIGINT', shutdown);
     source: {
       repoDir: root,
       serverComponent,
-      dbProvider: serverComponent === 'happier-server' ? 'postgresql' : 'sqlite',
+      dbProvider,
       commitSha: 'fixture',
       dirtyHash: 'clean',
       sourceFingerprint: 'src-startable',
@@ -257,7 +260,7 @@ process.on('SIGINT', shutdown);
       distClosureFingerprint: daemonDistClosureFingerprint,
     },
   });
-  if (serverComponent === 'happier-server' && runtimeMigration !== 'missing') {
+  if (['postgres', 'mysql', 'pglite'].includes(dbProvider) && runtimeMigration !== 'missing') {
     const migrationScript = `#!/usr/bin/env node
 import { appendFileSync } from 'node:fs';
 appendFileSync(${JSON.stringify(runtimeServerEventLogPath)}, 'migration:' + process.cwd() + ':' + process.env.HAPPIER_DB_PROVIDER + ':' + process.env.DATABASE_URL + '\\n', 'utf8');
@@ -290,13 +293,11 @@ appendFileSync(${JSON.stringify(runtimeServerEventLogPath)}, 'migration:' + proc
       'HAPPIER_STACK_SERVICE_MODE=0',
       'HAPPIER_RUNTIME_SNAPSHOT_MARKER=snap-startable',
       `HAPPIER_RUNTIME_SERVER_ENV_CAPTURE_PATH=${serverEnvCapturePath}`,
-      ...(serverComponent === 'happier-server' ? [`HAPPIER_TEST_RUNTIME_SERVER_EVENT_LOG=${runtimeServerEventLogPath}`] : []),
-      ...(serverComponent === 'happier-server'
-        ? [
-            'HAPPIER_STACK_MANAGED_INFRA=0',
-            'HAPPIER_DB_PROVIDER=postgresql',
-            'DATABASE_URL=postgresql://runtime-fixture.invalid/happier',
-          ]
+      `HAPPIER_TEST_RUNTIME_SERVER_EVENT_LOG=${runtimeServerEventLogPath}`,
+      `HAPPIER_DB_PROVIDER=${dbProvider}`,
+      ...(serverComponent === 'happier-server' ? ['HAPPIER_STACK_MANAGED_INFRA=0'] : []),
+      ...(['postgres', 'mysql'].includes(dbProvider)
+        ? [`DATABASE_URL=${dbProvider}://runtime-fixture.invalid/happier`]
         : []),
       '',
     ].join('\n'),

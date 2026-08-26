@@ -66,6 +66,7 @@ import { ensureDevExpoServer } from './utils/dev/expo_dev.mjs';
 import { requireDir } from './utils/proc/pm.mjs';
 import { waitForHttpOk } from './utils/server/server.mjs';
 import {
+  resolveDbProviderDatabaseUrl,
   resolveEffectiveDbProvider,
   resolveEffectiveDbProviderTransition,
 } from './utils/server/effective_db_provider.mjs';
@@ -206,13 +207,24 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     );
   }
   const effectiveDbProvider = dbProviderResolution.provider;
-  if (serverComponent === 'happier-server' && effectiveDbProvider === 'mysql' && !databaseUrlOverride) {
+  const databaseAuthority = resolveDbProviderDatabaseUrl({
+    provider: effectiveDbProvider,
+    databaseUrl: databaseUrlOverride,
+  });
+  if (databaseUrlOverride && databaseAuthority.removeDatabaseUrl) {
+    throw new Error(`[stack] --database-url is not valid for --db-provider=${effectiveDbProvider}`);
+  }
+  if (effectiveDbProvider === 'mysql' && !databaseUrlOverride) {
+    const presetDefaultProvider = resolveEffectiveDbProvider({ serverComponentName: serverComponent, env: {} }).provider;
     throw new Error(
       `[stack] mysql support requires an explicit DATABASE_URL.\n` +
         `Fix:\n` +
         `- re-run with: --database-url=mysql://...\n` +
-        `- or use the default: --db-provider=postgres\n`
+        `- or omit --db-provider to use the ${presetDefaultProvider} preset default\n`
     );
+  }
+  if (serverComponent === 'happier-server-light' && effectiveDbProvider === 'postgres' && !databaseUrlOverride) {
+    throw new Error('[stack] the light preset requires --database-url when --db-provider=postgres');
   }
 
   const baseDir = resolveStackEnvPath(stackName).baseDir;
@@ -263,9 +275,6 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   stackEnv.HAPPIER_DB_PROVIDER = effectiveDbProvider;
   // Power user knob: override DATABASE_URL (required for mysql today, useful for external DBs).
   if (databaseUrlOverride) {
-    if (serverComponent === 'happier-server-light') {
-      throw new Error('[stack] --database-url is not supported for happier-server-light');
-    }
     stackEnv.DATABASE_URL = databaseUrlOverride;
   }
   if (port != null) {
@@ -274,11 +283,13 @@ async function cmdNew({ rootDir, argv, emit = true }) {
 
   // Server-light storage isolation: ensure stacks have their own light data dir.
   // (This prevents a dev stack from mutating main stack's data when schema changes.)
-  if (serverComponent === 'happier-server-light') {
+  if (serverComponent === 'happier-server-light' || effectiveDbProvider === 'sqlite' || effectiveDbProvider === 'pglite') {
     const dataDir = join(baseDir, 'server-light');
     stackEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
-    stackEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-    if (effectiveDbProvider !== 'sqlite') {
+    if (serverComponent === 'happier-server-light') {
+      stackEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
+    }
+    if (effectiveDbProvider === 'pglite') {
       stackEnv.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
     }
   }
@@ -493,16 +504,19 @@ async function cmdEdit({ rootDir, argv }) {
     next.HAPPIER_STACK_SERVER_PORT = String(port);
   }
 
-  if (serverComponent === 'happier-server-light') {
+  if (serverComponent === 'happier-server-light' || effectiveDbProvider === 'sqlite' || effectiveDbProvider === 'pglite') {
     const dataDir = join(baseDir, 'server-light');
     next.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
-    next.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
+    if (serverComponent === 'happier-server-light') {
+      next.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
+    }
     if (effectiveDbProvider === 'pglite') {
       next.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
     }
-    // Light flavor manages its own embedded pglite connection string at runtime.
-    // Do not persist DATABASE_URL in the stack env.
-    delete next.DATABASE_URL;
+    if (dbTransition.removeDatabaseUrl) delete next.DATABASE_URL;
+  }
+  if (dbTransition.databaseUrl) {
+    next.DATABASE_URL = dbTransition.databaseUrl;
   }
   if (serverComponent === 'happier-server') {
     // Persist stable infra credentials. Ports are ephemeral unless explicitly pinned.
@@ -516,7 +530,8 @@ async function cmdEdit({ rootDir, argv }) {
     const s3SecretKey = (existingEnv.S3_SECRET_KEY ?? '').trim() || randomToken(24);
 
     next.HAPPIER_STACK_MANAGED_INFRA = (existingEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').trim() || '1';
-    if (effectiveDbProvider === 'postgres') {
+    const usesManagedPostgres = effectiveDbProvider === 'postgres' && !dbTransition.databaseUrl;
+    if (usesManagedPostgres) {
       next.HAPPIER_STACK_PG_USER = pgUser;
       next.HAPPIER_STACK_PG_PASSWORD = pgPassword;
       next.HAPPIER_STACK_PG_DATABASE = pgDb;
@@ -526,10 +541,6 @@ async function cmdEdit({ rootDir, argv }) {
     next.S3_ACCESS_KEY = s3AccessKey;
     next.S3_SECRET_KEY = s3SecretKey;
     next.S3_BUCKET = s3Bucket;
-    if (effectiveDbProvider === 'mysql') {
-      next.DATABASE_URL = dbTransition.databaseUrl;
-    }
-
     if (port != null) {
       // If user pinned the server port, keep ports + derived URLs stable as well.
       const reservedPorts = await collectReservedStackPorts({ excludeStackName: stackName });
@@ -538,7 +549,7 @@ async function cmdEdit({ rootDir, argv }) {
         ? Number(existingEnv.HAPPIER_STACK_SERVER_BACKEND_PORT.trim())
         : await pickNextFreePort(port + 10, { reservedPorts });
       reservedPorts.add(backendPort);
-      const pgPort = effectiveDbProvider === 'postgres'
+      const pgPort = usesManagedPostgres
         ? (existingEnv.HAPPIER_STACK_PG_PORT?.trim()
           ? Number(existingEnv.HAPPIER_STACK_PG_PORT.trim())
           : await pickNextFreePort(port + 1000, { reservedPorts }))
@@ -564,9 +575,11 @@ async function cmdEdit({ rootDir, argv }) {
       next.HAPPIER_STACK_MINIO_PORT = String(minioPort);
       next.HAPPIER_STACK_MINIO_CONSOLE_PORT = String(minioConsolePort);
 
-      next.DATABASE_URL = effectiveDbProvider === 'mysql'
-        ? dbTransition.databaseUrl
-        : `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${pgPort}/${encodeURIComponent(pgDb)}`;
+      if (dbTransition.databaseUrl) {
+        next.DATABASE_URL = dbTransition.databaseUrl;
+      } else if (usesManagedPostgres) {
+        next.DATABASE_URL = `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${pgPort}/${encodeURIComponent(pgDb)}`;
+      }
       next.REDIS_URL = `redis://127.0.0.1:${redisPort}`;
       next.S3_HOST = '127.0.0.1';
       next.S3_PORT = String(minioPort);

@@ -85,6 +85,40 @@ test('hstack stack new server flavor defaults and explicit full flavor pin coher
         assert.doesNotMatch(contents, /^HAPPIER_STACK_PG_/m);
       },
     },
+    {
+      name: 'light preset with external postgres',
+      stackName: 'exp-flavors-light-postgres',
+      args: [
+        '--server=happier-server-light',
+        '--db-provider=postgres',
+        '--database-url=postgresql://operator:secret@db.example.test:5432/happier',
+        '--no-copy-auth',
+        '--json',
+      ],
+      assertEnv(contents) {
+        assert.match(contents, /^HAPPIER_STACK_SERVER_COMPONENT=happier-server-light$/m);
+        assert.match(contents, /^HAPPIER_DB_PROVIDER=postgres$/m);
+        assert.match(contents, /^DATABASE_URL=postgresql:\/\/operator:secret@db\.example\.test:5432\/happier$/m);
+        assert.doesNotMatch(contents, /^HAPPIER_STACK_MANAGED_INFRA=/m);
+      },
+    },
+    {
+      name: 'full preset with sqlite',
+      stackName: 'exp-flavors-full-sqlite',
+      args: [
+        '--server=happier-server',
+        '--db-provider=sqlite',
+        '--no-copy-auth',
+        '--json',
+      ],
+      assertEnv(contents) {
+        assert.match(contents, /^HAPPIER_STACK_SERVER_COMPONENT=happier-server$/m);
+        assert.match(contents, /^HAPPIER_DB_PROVIDER=sqlite$/m);
+        assert.match(contents, /^HAPPIER_STACK_MANAGED_INFRA=1$/m);
+        assert.match(contents, /^HAPPIER_SERVER_LIGHT_DATA_DIR=/m);
+        assert.doesNotMatch(contents, /^HAPPIER_STACK_PG_/m);
+      },
+    },
   ];
 
   for (const testCase of cases) {

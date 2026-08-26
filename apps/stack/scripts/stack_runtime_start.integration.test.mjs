@@ -94,6 +94,8 @@ test('hstack stack start --runtime --background launches the active runtime snap
     assert.equal(runtimeState.runtimeSnapshotId, 'snap-startable');
 
     const serverRuntimeEnv = JSON.parse(await readFile(fixture.serverEnvCapturePath, 'utf8'));
+    assert.equal(serverRuntimeEnv.HAPPIER_SERVER_FLAVOR, 'light');
+    assert.equal(serverRuntimeEnv.HAPPY_SERVER_FLAVOR, 'light');
     assert.equal(serverRuntimeEnv.HAPPIER_SQLITE_AUTO_MIGRATE, '1');
     assert.equal(
       serverRuntimeEnv.HAPPIER_SQLITE_MIGRATIONS_DIR,
@@ -148,8 +150,75 @@ test('unmanaged full runtime migrates from the admitted immutable server directo
     assert.equal(events[1], 'server');
     assert.equal(
       events[0],
-      `migration:${await realpath(join(fixture.snapshotDir, 'server'))}:postgres:postgresql://runtime-fixture.invalid/happier`,
+      `migration:${await realpath(join(fixture.snapshotDir, 'server'))}:postgres:postgres://runtime-fixture.invalid/happier`,
     );
+  } finally {
+    await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], { cwd: rootDir, env });
+  }
+});
+
+test('light preset with postgres uses the same packaged provider migration path', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createStartableRuntimeSnapshotFixture(t, {
+    stackName: 'runtime-light-postgres',
+    serverComponent: 'happier-server-light',
+    dbProvider: 'postgres',
+  });
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+  };
+  const startRes = await runNode([
+    join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'start', fixture.stackName,
+    '--background', '--runtime', '--no-daemon', '--no-ui', '--no-browser',
+  ], { cwd: rootDir, env });
+
+  try {
+    assert.equal(startRes.code, 0, `stdout:\n${startRes.stdout}\nstderr:\n${startRes.stderr}`);
+    await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
+    assert.deepEqual(
+      (await readFile(fixture.runtimeServerEventLogPath, 'utf8')).trim().split('\n'),
+      [
+        `migration:${await realpath(join(fixture.snapshotDir, 'server'))}:postgres:postgres://runtime-fixture.invalid/happier`,
+        'server',
+      ],
+    );
+  } finally {
+    await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], { cwd: rootDir, env });
+  }
+});
+
+test('full preset with sqlite uses the canonical in-process migration path', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createStartableRuntimeSnapshotFixture(t, {
+    stackName: 'runtime-full-sqlite',
+    serverComponent: 'happier-server',
+    dbProvider: 'sqlite',
+  });
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+    HAPPIER_RUNTIME_SERVER_ENV_CAPTURE_PATH: fixture.serverEnvCapturePath,
+  };
+  const startRes = await runNode([
+    join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'start', fixture.stackName,
+    '--background', '--runtime', '--no-daemon', '--no-ui', '--no-browser',
+  ], { cwd: rootDir, env });
+
+  try {
+    assert.equal(startRes.code, 0, `stdout:\n${startRes.stdout}\nstderr:\n${startRes.stderr}`);
+    await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
+    const serverEnv = JSON.parse(await readFile(fixture.serverEnvCapturePath, 'utf8'));
+    assert.equal(serverEnv.HAPPIER_SERVER_FLAVOR, 'full');
+    assert.equal(serverEnv.HAPPIER_SQLITE_AUTO_MIGRATE, '1');
+    assert.equal(serverEnv.HAPPIER_SERVER_LIGHT_DATA_DIR, join(fixture.stackDir, 'server-light'));
+    assert.equal((await readFile(fixture.runtimeServerEventLogPath, 'utf8')).trim(), 'server');
   } finally {
     await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], { cwd: rootDir, env });
   }

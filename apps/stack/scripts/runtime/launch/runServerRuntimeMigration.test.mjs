@@ -46,6 +46,30 @@ test('migration terminal success precedes exactly one normal server spawn and th
   assert.deepEqual(children, [server]);
 });
 
+test('an explicit in-process migration contract starts the server without requiring an artifact sidecar', async (t) => {
+  const { spec, serverDir } = await fixture(t);
+  const inProcessSpec = { ...spec, migration: { mode: 'in-process' } };
+  const events = [];
+  const server = { pid: 303 };
+
+  assert.equal(await spawnRuntimeServerAfterMigration({
+    serverLaunchSpec: inProcessSpec,
+    env: { HAPPIER_DB_PROVIDER: 'sqlite' },
+    children: [],
+    spawnProcImpl: (label, command, args, env, options) => {
+      events.push({ label, command, args, env, cwd: options.cwd });
+      return server;
+    },
+  }), server);
+  assert.deepEqual(events, [{
+    label: 'server',
+    command: spec.command,
+    args: [],
+    env: { HAPPIER_DB_PROVIDER: 'sqlite' },
+    cwd: serverDir,
+  }]);
+});
+
 test('migration admission failures are typed and never spawn the normal server', async (t) => {
   const { spec, serverDir, command } = await fixture(t);
   const outside = join(serverDir, '..', 'happier-server-migrate');
