@@ -13,6 +13,17 @@
 
 Use this protocol only after explicit commit authorization and coherent grouping. Never use plain shared-index `git add` or `git commit` for a moving shared worktree.
 
+Resolve the ordinary commit identity from the checkout before preparing the private index:
+
+```bash
+git config --get user.name
+git config --get user.email
+git var GIT_AUTHOR_IDENT
+git var GIT_COMMITTER_IDENT
+```
+
+Both configured fields must be present and the resolved author/committer must be the current local Git user. Do not set `GIT_AUTHOR_*`, `GIT_COMMITTER_*`, `--author`, or temporary `user.*` overrides to impersonate a bot, PR author, issue author, or co-author. Contributor credit belongs in verified `Co-authored-by:` trailers. The foreign-PR rebase exception is owned by `skills/happier-github-ops` and does not apply to `commit-tree` packets.
+
 Capture the basis and inspect inherited staging:
 
 ```bash
@@ -57,8 +68,11 @@ Confirm the diff contains exactly the intended paths and bytes. Then create the 
 ```bash
 tree=$(GIT_INDEX_FILE="$idx" git write-tree)
 commit=$(git commit-tree "$tree" -p "$head" < /tmp/happier-commit-message.txt)
+git show --no-patch --format=fuller "$commit"
 git update-ref HEAD "$commit" "$head"
 ```
+
+Before advancing, confirm the displayed author and committer match the previously verified current-user identity and inspect the full message with `git show --no-patch --format=fuller "$commit"` to verify exactly the commit-specific co-authors.
 
 The message file contains the complete subject, blank line, and body. Remove it after use if it contains no information worth retaining; do not create message files inside the repository.
 
