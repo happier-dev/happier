@@ -531,6 +531,39 @@ describe('AgentInput structured input persistence', () => {
         await screen.unmount();
     });
 
+    it('carries the live new-session text in the send event even when controlled props match', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onSend = vi.fn();
+        const onChangeText = vi.fn();
+        const liveText = 'first prompt owned by the send event';
+        multiTextInputMockState.liveText = liveText;
+        const screen = await renderScreen(React.createElement(AgentInput, {
+            value: liveText,
+            onChangeText,
+            placeholder: 'p',
+            onSend,
+            autocompleteKinds: [],
+            autocompleteSuggestions: async () => [],
+            metadata: null,
+            disabled: false,
+            showAbortButton: false,
+        }));
+
+        const input = findMultiTextInput(screen);
+        await act(async () => {
+            expect(input.props.onKeyPress?.({
+                key: 'Enter',
+                inputState: {
+                    text: liveText,
+                    selection: { start: liveText.length, end: liveText.length },
+                },
+            })).toBe(true);
+        });
+
+        expect(onSend).toHaveBeenCalledWith({ inputTextOverride: liveText });
+        await screen.unmount();
+    });
+
     it('restores the persisted selection at open', async () => {
         const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(React.createElement(AgentInput, {

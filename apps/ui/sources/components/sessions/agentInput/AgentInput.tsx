@@ -1586,15 +1586,16 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             text: liveInputText,
         });
         const hasStructuredInputMeta = Object.keys(structuredInputMetaOverrides).length > 0;
+        const shouldCarryLiveInputText = !props.sessionId || liveInputText !== props.value;
         props.onSend(
             options?.forceImmediate === true || options?.deliveryIntent != null || hasStructuredInputMeta
                 ? {
                     ...(options?.forceImmediate === true ? { forceImmediate: true } : {}),
                     ...(options?.deliveryIntent != null ? { deliveryIntent: options.deliveryIntent } : {}),
                     ...(hasStructuredInputMeta ? { structuredInputMetaOverrides } : {}),
-                    ...(liveInputText !== props.value ? { inputTextOverride: liveInputText } : {}),
+                    ...(shouldCarryLiveInputText ? { inputTextOverride: liveInputText } : {}),
                 }
-                : (liveInputText !== props.value ? { inputTextOverride: liveInputText } : undefined),
+                : (shouldCarryLiveInputText ? { inputTextOverride: liveInputText } : undefined),
         );
     }, [
         messageHistory,
