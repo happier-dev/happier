@@ -163,7 +163,7 @@ export function StorySheetFrame(props: StorySheetFrameProps) {
         <Animated.View
             style={[
                 isPhoneSheet ? styles.sheetPhone : styles.sheetCentered,
-                { width: sheetWidth, maxHeight: sheetMaxHeight },
+                { width: sheetWidth, height: sheetMaxHeight, maxHeight: sheetMaxHeight },
                 isPhoneSheet ? animatedSheetStyle : null,
                 props.style,
             ]}

@@ -4,7 +4,7 @@ import { renderScreen } from '@/dev/testkit';
 
 const runtime = vi.hoisted(() => ({
     height: 740,
-    platform: 'web' as 'web' | 'ios',
+    platform: 'web' as 'web' | 'ios' | 'android',
     width: 390,
 }));
 
@@ -168,6 +168,26 @@ describe('StorySheetFrame', () => {
         const style = flattenStyle(sheet.props.style);
         expect(style.opacity).toBeUndefined();
         expect(style.transform).toBeUndefined();
+    });
+
+    it('gives native phone story decks a concrete bounded height', async () => {
+        runtime.platform = 'android';
+        runtime.width = 390;
+        runtime.height = 740;
+        const { StorySheetFrame } = await import('./StorySheetFrame');
+
+        const screen = await renderScreen(
+            <StorySheetFrame testID="story-sheet" onDismiss={() => {}}>
+                <></>
+            </StorySheetFrame>,
+        );
+
+        const sheet = screen.findByType('AnimatedView' as never);
+        expect(flattenStyle(sheet.props.style)).toEqual(expect.objectContaining({
+            height: 629,
+            maxHeight: 629,
+            width: 390,
+        }));
     });
 
     it('uses a standard opaque surface without an inner blur layer', async () => {
