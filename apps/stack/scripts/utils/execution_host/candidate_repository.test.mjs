@@ -69,6 +69,8 @@ test('named candidate paths isolate each workspace state, transport, and guest c
   assert.equal(zeroThree.guestRepositoryDir, '/home/dev/.happier-stack/workspace/0.3');
   assert.equal(zeroTwo.stateFile, '/Users/dev/.happier-stack/execution-host-candidate/workspaces/0.2/state.v1.json');
   assert.equal(zeroThree.stateFile, '/Users/dev/.happier-stack/execution-host-candidate/workspaces/0.3/state.v1.json');
+  assert.equal(zeroTwo.syncBaseDir, '/Users/dev/.happier-stack/eh-sync/0.2');
+  assert.ok(join(zeroTwo.syncBaseDir, 'mutagen/data/daemon/daemon.sock').length <= 103);
   assert.notEqual(zeroTwo.syncBaseDir, zeroThree.syncBaseDir);
   assert.throws(
     () => resolveExecutionHostCandidatePaths(namedProfile, env, 'missing'),

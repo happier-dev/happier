@@ -347,7 +347,7 @@ export function resolveExecutionHostCandidatePaths(profile, env = process.env, w
       root,
       workspaceId: id,
       guestRepositoryDir: workspace.guestDir,
-      syncBaseDir: join(root, 'sync'),
+      syncBaseDir: join(getHappyStacksHomeDir(env), 'eh-sync', id),
       stateFile: join(root, 'state.v1.json'),
       sshConfigFile: join(root, 'ssh', 'lima.conf'),
       transferRoot: join(root, 'transfer'),
