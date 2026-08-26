@@ -10,7 +10,7 @@ export type CodexCliSessionExtraOptions = Readonly<{
 export type CodexCliSessionParsedArgs = Readonly<{
   startingMode?: string;
   directory?: string;
-  providerArgs: readonly string[];
+  agentArgs: readonly string[];
 }>;
 
 export type CodexCliSessionExtraOptionsResult =
@@ -18,8 +18,8 @@ export type CodexCliSessionExtraOptionsResult =
   | Readonly<{ ok: false; errorMessage: string }>;
 
 export const codexCliSessionCommandConfig = {
-  backendIdForSessionRuntime: 'codex',
-  agentIdForAccountSettings: 'codex',
+  sessionRuntimeId: 'codex',
+  accountSettingsAgentId: 'codex',
   directoryFlags: ['-C', '--cd'],
   forwardModelFlag: true,
   versionFlags: ['-V', '--version'],
@@ -57,7 +57,7 @@ export function resolveCodexCliSessionExtraOptions(
         ? { startingMode: codexRuntimeModeToHostStartingMode(startingRuntimeMode) }
         : {}),
       ...(parsed.directory ? { directory: parsed.directory } : {}),
-      ...(parsed.providerArgs.length > 0 ? { codexArgs: [...parsed.providerArgs] } : {}),
+      ...(parsed.agentArgs.length > 0 ? { codexArgs: [...parsed.agentArgs] } : {}),
     },
   };
 }

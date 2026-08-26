@@ -32,8 +32,16 @@
             "delivery": "native_mcp"
           }
         },
+        "catalog": {
+          "vendorResume": {
+            "support": "supported"
+          }
+        },
         "cli": {
           "auth": {
+            "environmentVariables": [
+              "XAI_API_KEY"
+            ],
             "loginLaunches": [
               {
                 "args": [
@@ -49,14 +57,7 @@
                 "kind": "device_code"
               }
             ],
-            "probe": {
-              "backgroundChecks": "safe",
-              "envVars": [
-                "XAI_API_KEY"
-              ],
-              "parser": "unknown",
-              "statusArgs": null
-            },
+            "missingCredentialState": "unknown",
             "support": "login_terminal"
           },
           "executable": {

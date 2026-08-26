@@ -24,22 +24,22 @@
             "delivery": "native_mcp"
           }
         },
+        "catalog": {
+          "vendorResume": {
+            "support": "supported"
+          }
+        },
         "cli": {
           "auth": {
+            "environmentVariables": [
+              "OPENAI_CODEX_OAUTH_TOKEN",
+              "OPENAI_API_KEY",
+              "ANTHROPIC_OAUTH_TOKEN",
+              "ANTHROPIC_API_KEY",
+              "GEMINI_API_KEY"
+            ],
             "loginLaunches": [],
             "machineLoginKey": "oh-my-pi",
-            "probe": {
-              "backgroundChecks": "safe",
-              "envVars": [
-                "OPENAI_CODEX_OAUTH_TOKEN",
-                "OPENAI_API_KEY",
-                "ANTHROPIC_OAUTH_TOKEN",
-                "ANTHROPIC_API_KEY",
-                "GEMINI_API_KEY"
-              ],
-              "parser": "piEnvOnly",
-              "statusArgs": null
-            },
             "support": "manual_only"
           },
           "displayName": "oh-my-pi CLI",

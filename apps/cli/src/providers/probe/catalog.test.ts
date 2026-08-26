@@ -96,6 +96,7 @@ const managedSource = {
   purposeBindings: { v: 1, bindings: [] },
   endpointTemplateId: 'cliproxyapi-openai-responses',
   protocol: 'openai-responses',
+  sourceRegistryVersion: 'cliproxyapi-sdk:v7.2.95',
   publicHeaders: {},
 } satisfies ProviderManagedCatalogSource;
 
@@ -758,6 +759,90 @@ describe('provider catalog service', () => {
     expect(state.endpointHealth).toEqual([]);
   });
 
+  it('runs ordered managed probes and the declared fallback through one launch-local service', async () => {
+    const close = vi.fn(async () => {});
+    const managedRequest = vi.fn(async (request: Readonly<{
+      pathAndQuery: string;
+      headers: Readonly<Record<string, string>>;
+      timeoutMs: number;
+    }>) => ({
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+      body: new Response('{"error":"temporarily unavailable"}').body,
+    }));
+    const launch = vi.fn(async () => ({
+      ok: true as const,
+      endpointUrl: 'http://127.0.0.1:45123/v1',
+      access: { request: managedRequest },
+      isCurrent: () => true,
+      close,
+    }));
+    const fallback = vi.fn(async () => ({
+      status: 'success' as const,
+      models: [{ id: 'local-model', name: 'Local model' }],
+    }));
+    const transport = vi.fn<ProviderProbeTransport>(async () => {
+      throw new Error('managed catalog must not use the raw HTTP transport');
+    });
+    const runtimeStore = await store();
+    const service = createProviderCatalogService({
+      client: createProviderProbeHttpClient({
+        resolveAddresses: async () => ['127.0.0.1'],
+        transport,
+      }),
+      authorization: authPort(),
+      managedCatalogRuntime: { launch },
+      localCatalogFallback: { run: fallback },
+      runtimeStore,
+      now: () => 10_000,
+      createObservationId: () => 'managed-fallback-observation',
+    });
+    const probes: readonly ProviderCatalogProbeV1[] = [
+      {
+        endpointTemplateId: 'cliproxyapi-openai-responses',
+        path: '/v1/models-primary',
+        parser: 'openai-models',
+      },
+      {
+        endpointTemplateId: 'cliproxyapi-openai-responses',
+        path: '/v1/models-secondary',
+        parser: 'openai-models',
+      },
+    ];
+    const catalogFallback = {
+      endpointTemplateId: 'cliproxyapi-openai-responses',
+      lookupNames: ['gateway'],
+      fixedArgs: ['models'],
+      parser: 'ollama-list-table' as const,
+      endpointEnvName: 'GATEWAY_HOST',
+    };
+
+    await expect(service.refresh({
+      connectionId,
+      machineId,
+      endpoints: [],
+      probes,
+      catalogFallback,
+      managedSource,
+    })).resolves.toMatchObject({
+      status: 'success',
+      models: [{ id: 'local-model', name: 'Local model' }],
+    });
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(managedRequest).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      pathAndQuery: '/v1/models-primary',
+    }));
+    expect(managedRequest).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      pathAndQuery: '/v1/models-secondary',
+    }));
+    expect(fallback).toHaveBeenCalledWith({
+      descriptor: catalogFallback,
+      endpointUrl: 'http://127.0.0.1:45123/v1',
+    });
+    expect(transport).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it('discards a managed result when source authority changes and still closes the runtime', async () => {
     const close = vi.fn(async () => {});
     let revalidations = 0;
@@ -901,22 +986,36 @@ describe('managed provider catalog refresh fingerprint', () => {
     parser: 'openai-models',
   };
 
-  it('fingerprints the single declared managed catalog probe', () => {
+  it('fingerprints ordered managed probes and fallback without a transient endpoint', () => {
+    const probes = [
+      managedProbe,
+      { ...managedProbe, path: '/v1/models-secondary' },
+    ] as const;
+    const catalogFallback = {
+      endpointTemplateId: managedSource.endpointTemplateId,
+      lookupNames: ['gateway'],
+      fixedArgs: ['models'],
+      parser: 'ollama-list-table' as const,
+      endpointEnvName: 'GATEWAY_HOST',
+    };
+    const fingerprint = createProviderCatalogRefreshFingerprint({
+      endpoints,
+      probes,
+      catalogFallback,
+      managedSource,
+    });
+    expect(fingerprint).toEqual(expect.any(String));
     expect(createProviderCatalogRefreshFingerprint({
       endpoints,
-      probes: [managedProbe],
+      probes,
+      catalogFallback: { ...catalogFallback, fixedArgs: ['alternate-models'] },
       managedSource,
-    })).toEqual(expect.any(String));
-  });
-
-  it('rejects a managed provider that declares more than one catalog probe', () => {
-    expect(() => createProviderCatalogRefreshFingerprint({
+    })).not.toBe(fingerprint);
+    expect(createProviderCatalogRefreshFingerprint({
       endpoints,
-      probes: [
-        managedProbe,
-        { ...managedProbe, endpointTemplateId: 'cliproxyapi-openai-chat' },
-      ],
-      managedSource,
-    })).toThrow(TypeError);
+      probes,
+      catalogFallback,
+      managedSource: { ...managedSource, sourceRegistryVersion: 'cliproxyapi-sdk:v7.2.96' },
+    })).not.toBe(fingerprint);
   });
 });

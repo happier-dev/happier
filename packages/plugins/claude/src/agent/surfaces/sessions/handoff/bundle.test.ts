@@ -31,6 +31,68 @@ describe('Claude handoff bundle leaf', () => {
         ));
     });
 
+    it('projects a direct Claude source from bounded identity and its canonical descriptor only', async () => {
+        const result = await claudeHandoffSurface.buildRuntimeLocalMetadata?.({
+            identity: {
+                machineId: 'machine-1',
+                workingDirectory: '/repo/project',
+                transcriptStorage: 'direct',
+                vendorResumeId: 'claude-session-1',
+            },
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'claude',
+                agent: {
+                    configDir: '/tmp/native-claude',
+                },
+            },
+        }, handoffContext());
+
+        expect(result).toEqual({
+            externalSessionSource: {
+                kind: 'claudeConfig',
+                configDir: '/tmp/native-claude',
+                projectId: '-repo-project',
+            },
+        });
+    });
+
+    it.each([
+        {
+            name: 'persisted transcript storage',
+            identity: {
+                machineId: 'machine-1',
+                workingDirectory: '/repo/project',
+                transcriptStorage: 'persisted' as const,
+                vendorResumeId: 'claude-session-1',
+            },
+            runtimeDescriptorV1: {
+                v: 1 as const,
+                agentId: 'claude',
+                agent: { configDir: '/tmp/native-claude' },
+            },
+        },
+        {
+            name: 'a descriptor for another Agent',
+            identity: {
+                machineId: 'machine-1',
+                workingDirectory: '/repo/project',
+                transcriptStorage: 'direct' as const,
+                vendorResumeId: 'claude-session-1',
+            },
+            runtimeDescriptorV1: {
+                v: 1 as const,
+                agentId: 'codex',
+                agent: { configDir: '/tmp/native-claude' },
+            },
+        },
+    ])('does not project a source for $name', async ({ identity, runtimeDescriptorV1 }) => {
+        await expect(claudeHandoffSurface.buildRuntimeLocalMetadata?.({
+            identity,
+            runtimeDescriptorV1,
+        }, handoffContext())).resolves.toBeNull();
+    });
+
     it('exports the exact host-admitted Session id instead of a stale generic metadata id', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-handoff-provider-export-id-'));
         const workspace = join(root, 'workspace');

@@ -5,6 +5,7 @@ import type {
     PluginProcessHandle,
     PluginProcessResult,
 } from '@happier-dev/plugin-sdk/exec';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
     createManagedServiceProcessSupervisorHost as createProductionManagedServiceProcessSupervisorHost,
@@ -1080,6 +1081,58 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         expect(process.dispose).toHaveBeenCalledTimes(1);
         expect(disposeA).toBeUndefined();
         expect(disposeB).toBeUndefined();
+        expect(handle.snapshot().state).toBe('stopped');
+    });
+
+    it('retains managed process custody when disposal cannot prove termination', async () => {
+        const terminal = deferred<PluginProcessResult>();
+        let processIsTerminal = false;
+        const process: PluginProcessHandle = Object.freeze({
+            write: vi.fn(async () => undefined),
+            closeStdin: vi.fn(async () => undefined),
+            wait: vi.fn(async () => await terminal.promise),
+            onOutput: vi.fn(() => Object.freeze({ dispose: () => undefined })),
+            dispose: vi.fn(async () => {
+                if (!processIsTerminal) {
+                    throw new PluginError({
+                        code: 'plugin_exec_termination_incomplete',
+                        message: 'Process tree remained live',
+                    });
+                }
+            }),
+        });
+        associateSupervisedPluginProcessHandleForHost(process, { pid: 42 });
+        const durability = createDurability();
+        const host = createManagedServiceProcessSupervisorHost({
+            createInstanceId: () => 'opaque-incomplete-termination',
+            durability,
+            captureProcessStartIdentity: async () => 'start-42',
+        });
+        const servers = host.bind({
+            generation: 'generation-incomplete-termination',
+            pluginId: 'fixture.plugin',
+            contributionId: 'fixture.agent',
+            sessionId: 'session-incomplete-termination',
+            isGenerationCurrent: () => true,
+            exec: createExec([process]),
+        });
+        const handle = await servers.supervise(managedSpec('server'));
+
+        await expect(handle.stop()).resolves.toEqual({
+            status: 'termination_incomplete',
+        });
+        expect(handle.snapshot().state).not.toBe('stopped');
+        expect(durability.releaseEndpointProjection).not.toHaveBeenCalled();
+        await expect(handle.dispose()).rejects.toMatchObject({
+            code: 'plugin_managed_server_termination_incomplete',
+        });
+
+        processIsTerminal = true;
+        terminal.resolve(CLEAN_EXIT);
+        await vi.waitFor(() => {
+            expect(durability.releaseEndpointProjection).toHaveBeenCalledOnce();
+        });
+        await expect(handle.dispose()).resolves.toBeUndefined();
         expect(handle.snapshot().state).toBe('stopped');
     });
 

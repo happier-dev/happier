@@ -2,6 +2,7 @@ import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sd
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { GROK_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { createGrokAgentRuntime } from './agent/runtime/factory.js';
 import { GROK_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
@@ -35,6 +36,9 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         },
         runtime: { kind: 'custom' },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+        },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           sessions: {
             open: ['create', 'resume'],
@@ -79,12 +83,8 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           },
           auth: {
             support: 'login_terminal',
-            probe: {
-              parser: 'unknown',
-              backgroundChecks: 'safe',
-              statusArgs: null,
-              envVars: ['XAI_API_KEY'],
-            },
+            environmentVariables: ['XAI_API_KEY'],
+            missingCredentialState: 'unknown',
             loginLaunches: [
               { kind: 'primary', args: ['login'] },
               { kind: 'device_code', args: ['login', '--device-auth'] },
@@ -93,6 +93,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         },
       },
       factory: createGrokAgentRuntime,
+      preflightSessionControls: GROK_PREFLIGHT_SESSION_CONTROLS,
       sessionRunnerFactory: {
         module: './agent/runtime/factory',
         export: 'createGrokAgentRuntime',

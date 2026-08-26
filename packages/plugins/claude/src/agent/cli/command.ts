@@ -4,7 +4,7 @@ export type ClaudeCliSessionParsedArgs = Readonly<{
   startingMode?: string;
   directory?: string;
   resume?: string;
-  providerArgs: readonly string[];
+  agentArgs: readonly string[];
 }>;
 
 export type ClaudeCliSessionOptions = Readonly<{
@@ -21,14 +21,14 @@ export type ClaudeCliSessionOptionsResult =
   | Readonly<{ ok: false; errorMessage: string }>;
 
 export const claudeCliSessionCommandConfig = {
-  backendIdForSessionRuntime: 'claude',
-  agentIdForAccountSettings: 'claude',
+  sessionRuntimeId: 'claude',
+  accountSettingsAgentId: 'claude',
   implicitResumeDelegation: {
     resumeFlags: ['--resume', '-r'],
   },
   directoryFlags: ['-C', '--cd'],
   forwardModelFlag: true,
-  yoloProviderArgs: ['--dangerously-skip-permissions'],
+  yoloAgentArgs: ['--dangerously-skip-permissions'],
   versionFlags: ['-v', '--version'],
 } as const;
 
@@ -39,16 +39,12 @@ function normalizeStartingMode(value: string | undefined): 'terminal' | 'remote'
   return undefined;
 }
 
-function isExplicitClaudeInvocation(args: readonly string[]): boolean {
-  return args[0] === 'claude';
-}
-
 function appendExplicitResumeArg(params: Readonly<{
   claudeArgs: string[];
-  args: readonly string[];
+  isExplicitCliSubcommand: boolean;
   resume?: string;
 }>): boolean {
-  if (!isExplicitClaudeInvocation(params.args)) return false;
+  if (!params.isExplicitCliSubcommand) return false;
   if (!params.resume) return false;
   params.claudeArgs.push('--resume', params.resume);
   return true;
@@ -64,7 +60,7 @@ function normalizeJsRuntime(value: string | undefined): 'node' | 'bun' | null {
   return null;
 }
 
-function consumeClaudeProviderArgs(providerArgs: readonly string[]): Readonly<{
+function consumeClaudeAgentArgs(agentArgs: readonly string[]): Readonly<{
   claudeArgs: string[];
   jsRuntime?: 'node' | 'bun';
   errorMessage?: string;
@@ -72,8 +68,8 @@ function consumeClaudeProviderArgs(providerArgs: readonly string[]): Readonly<{
   const claudeArgs: string[] = [];
   let jsRuntime: 'node' | 'bun' | undefined;
 
-  for (let index = 0; index < providerArgs.length; index += 1) {
-    const arg = providerArgs[index];
+  for (let index = 0; index < agentArgs.length; index += 1) {
+    const arg = agentArgs[index];
 
     const inlineJsRuntime = readInlineFlagValue(arg, '--js-runtime');
     if (inlineJsRuntime !== undefined) {
@@ -86,7 +82,7 @@ function consumeClaudeProviderArgs(providerArgs: readonly string[]): Readonly<{
     }
 
     if (arg === '--js-runtime') {
-      const raw = providerArgs[index + 1];
+      const raw = agentArgs[index + 1];
       if (raw !== 'node' && raw !== 'bun') {
         return { claudeArgs, errorMessage: "Missing value for --js-runtime. Must be 'node' or 'bun'." };
       }
@@ -96,7 +92,7 @@ function consumeClaudeProviderArgs(providerArgs: readonly string[]): Readonly<{
     }
 
     if (arg === '--settings') {
-      const next = providerArgs[index + 1];
+      const next = agentArgs[index + 1];
       if (typeof next === 'string' && !next.startsWith('-')) {
         index += 1;
       }
@@ -113,7 +109,7 @@ function consumeClaudeProviderArgs(providerArgs: readonly string[]): Readonly<{
 }
 
 export function resolveClaudeCliSessionOptions(input: Readonly<{
-  args: readonly string[];
+  isExplicitCliSubcommand: boolean;
   parsed: ClaudeCliSessionParsedArgs;
 }>): ClaudeCliSessionOptionsResult {
   const startingMode = normalizeStartingMode(input.parsed.startingMode);
@@ -124,7 +120,7 @@ export function resolveClaudeCliSessionOptions(input: Readonly<{
     };
   }
 
-  const consumed = consumeClaudeProviderArgs(input.parsed.providerArgs);
+  const consumed = consumeClaudeAgentArgs(input.parsed.agentArgs);
   if (consumed.errorMessage) {
     return {
       ok: false,
@@ -134,7 +130,7 @@ export function resolveClaudeCliSessionOptions(input: Readonly<{
 
   const forwardedExplicitResume = appendExplicitResumeArg({
     claudeArgs: consumed.claudeArgs,
-    args: input.args,
+    isExplicitCliSubcommand: input.isExplicitCliSubcommand,
     resume: input.parsed.resume,
   });
   const inferredPermissionMode = inferPermissionIntentFromClaudeArgs(consumed.claudeArgs);

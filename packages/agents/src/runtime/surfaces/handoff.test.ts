@@ -3,62 +3,48 @@ import { describe, expect, it } from 'vitest';
 import { projectSessionMetadataForAgentHandoff } from './handoff.js';
 
 describe('projectSessionMetadataForAgentHandoff', () => {
-  it('projects the canonical provider Session id instead of raw metadata aliases', () => {
+  it('forwards the bounded canonical runtime descriptor without Agent-specific fields', () => {
+    const runtimeDescriptorV1 = {
+      v: 1 as const,
+      agentId: 'codex',
+      agent: {
+        backendMode: 'appServer',
+        providerSessionId: 'canonical-provider-id',
+        home: 'connectedService',
+        connectedServiceId: 'openai-codex',
+        connectedServiceProfileId: 'profile-1',
+        connectedServiceGroupId: 'group-1',
+        homePath: '/private/source-machine/codex-home',
+      },
+    };
     const projected = projectSessionMetadataForAgentHandoff({
       providerSessionId: 'stale-direct-id',
       codexSessionId: 'stale-legacy-id',
-      agentRuntimeDescriptorV1: {
-        v: 1,
-        agentId: 'codex',
-        provider: {
-          backendMode: 'appServer',
-          providerSessionId: 'canonical-provider-id',
-          home: 'connectedService',
-          connectedServiceId: 'openai-codex',
-          connectedServiceProfileId: 'profile-1',
-          connectedServiceGroupId: 'group-1',
-          homePath: '/private/source-machine/codex-home',
-        },
-      },
+      runtimeDescriptorV1,
     });
 
-    expect(projected.providerSessionId).toBe('canonical-provider-id');
-    expect(projected.codexSessionId).toBe('canonical-provider-id');
-    expect(projected.codexBackendMode).toBe('appServer');
-    expect(projected.externalSessionSource).toEqual({
-      kind: 'codexHome',
-      home: 'connectedService',
-      connectedServiceId: 'openai-codex',
-      connectedServiceProfileId: 'profile-1',
-      connectedServiceGroupId: 'group-1',
-    });
-    expect(JSON.stringify(projected)).not.toContain('/private/source-machine/codex-home');
-    expect(projectSessionMetadataForAgentHandoff({
-      codexSessionId: ' legacy-provider-id ',
-    }).providerSessionId).toBe('legacy-provider-id');
-    expect(projectSessionMetadataForAgentHandoff({
-      codexBackendMode: 'acp',
-    })).toEqual({ codexBackendMode: 'acp' });
+    expect(projected).toEqual({ runtimeDescriptorV1 });
+    expect('providerSessionId' in projected).toBe(false);
+    expect('codexSessionId' in projected).toBe(false);
+    expect('codexBackendMode' in projected).toBe(false);
+    expect(JSON.stringify(projected)).toContain('/private/source-machine/codex-home');
   });
 
-  it('projects OpenCode-safe fields from the canonical runtime descriptor without exposing its envelope', () => {
-    expect(projectSessionMetadataForAgentHandoff({
-      runtimeDescriptorV1: {
-        v: 1,
-        agentId: 'opencode',
-        agent: {
-          backendMode: 'acp',
-          providerSessionId: ' opencode-canonical-1 ',
-          serverBaseUrl: 'http://127.0.0.1:49196',
-          serverBaseUrlExplicit: true,
-        },
+  it('forwards an OpenCode runtime descriptor without reconstructing a second owner view', () => {
+    const runtimeDescriptorV1 = {
+      v: 1 as const,
+      agentId: 'opencode',
+      agent: {
+        backendMode: 'acp',
+        providerSessionId: ' opencode-canonical-1 ',
+        serverBaseUrl: 'http://127.0.0.1:49196',
+        serverBaseUrlExplicit: true,
       },
+    };
+    expect(projectSessionMetadataForAgentHandoff({
+      runtimeDescriptorV1,
     })).toEqual({
-      providerSessionId: 'opencode-canonical-1',
-      opencodeSessionId: 'opencode-canonical-1',
-      opencodeBackendMode: 'acp',
-      opencodeServerBaseUrl: 'http://127.0.0.1:49196/',
-      opencodeServerBaseUrlExplicit: true,
+      runtimeDescriptorV1,
     });
   });
 
@@ -91,7 +77,7 @@ describe('projectSessionMetadataForAgentHandoff', () => {
     });
   });
 
-  it('projects linked Codex source data and derives its safe backend mode at the host', () => {
+  it('projects linked Codex source data without interpreting its runtime descriptor at the host', () => {
     const source = {
       kind: 'codexHome',
       home: 'connectedService',
@@ -110,10 +96,7 @@ describe('projectSessionMetadataForAgentHandoff', () => {
         linkedAtMs: 123,
         codexBackendMode: 'appServer',
       },
-    })).toEqual({
-      codexBackendMode: 'appServer',
-      externalSessionSource: source,
-    });
+    })).toEqual({ externalSessionSource: source });
   });
 
   it('projects the same typed source from current and released linked metadata', () => {
@@ -139,10 +122,7 @@ describe('projectSessionMetadataForAgentHandoff', () => {
       directSessionV1: { ...sharedLink, providerId: 'codex' },
     });
 
-    expect(current).toEqual({
-      codexBackendMode: 'appServer',
-      externalSessionSource: source,
-    });
+    expect(current).toEqual({ externalSessionSource: source });
     expect(released).toEqual(current);
   });
 
@@ -170,7 +150,13 @@ describe('projectSessionMetadataForAgentHandoff', () => {
       machineId: 'machine-top-level',
       linkedAtMs: 789,
       ownerProjection: { custody: 'private' },
-    })).toEqual({ codexBackendMode: 'appServer' });
+    })).toEqual({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
+    });
 
     expect(projectSessionMetadataForAgentHandoff({
       externalSessionV1: {

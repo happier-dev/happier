@@ -1,16 +1,18 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type {
   AgentRuntimeContext,
   AgentRuntimeFactoryContext,
+  AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createCodexAgentRuntime } from './engine.js';
+import { buildCodexAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescriptorV1.js';
 
 function createSession(): AgentSessionRuntime {
   return {
@@ -92,9 +94,16 @@ describe('createCodexAgentRuntime', () => {
       sessionId: 'terminal-1',
       cwd: '/repo',
       metadata: {
-        resumeId: 'provider-1',
-        permissionMode: 'read-only',
-        codexArgs: ['--search'],
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptorV1({
+          backendMode: 'acp',
+          providerSessionId: 'provider-1',
+        }),
+      },
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 },
+        model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'read-only', updatedAtMs: 1 },
+        options: {},
       },
       modelSelection: null,
     }))).resolves.toMatchObject({
@@ -107,7 +116,6 @@ describe('createCodexAgentRuntime', () => {
         'never',
         '--sandbox',
         'read-only',
-        '--search',
       ],
       process: { stdio: 'inherit', windowsHide: true },
     });
@@ -240,21 +248,43 @@ describe('createCodexAgentRuntime', () => {
     });
   });
 
-  it('materializes the qualified primary Codex account before opening the actual ACP session', async () => {
+  it('materializes the qualified primary Codex account while preserving the selected non-secret home projection', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-qualified-primary-'));
+    const persistentAuth = '{"auth_mode":"personal","tokens":{"access_token":"keep-me"}}\n';
+    const persistentAccounts = '{"personal-account":"keep-me-out-of-the-qualified-root"}\n';
+    const persistentConfig = [
+      'model = "gpt-5.3-codex"',
+      'cli_auth_credentials_store = "keyring"',
+      '',
+      '[features]',
+      'multi_agent = true',
+      '',
+    ].join('\n');
+    await writeFile(join(root, 'auth.json'), persistentAuth, 'utf8');
+    await writeFile(join(root, 'accounts'), persistentAccounts, 'utf8');
+    await writeFile(join(root, 'config.toml'), persistentConfig, 'utf8');
+    await mkdir(join(root, 'sessions'), { recursive: true });
+    await writeFile(join(root, 'sessions', 'current.jsonl'), '{"status":"before"}\n', 'utf8');
     const lifecycle: string[] = [];
     const nativeDispose = vi.fn();
     const nativeSession = { ...createSession(), dispose: nativeDispose };
-    const open = vi.fn(async () => {
+    let isolatedRoot = '';
+    const open = vi.fn(async (request: AgentSessionOpenRequest) => {
       lifecycle.push('open');
+      isolatedRoot = request.launchEnvironment?.values.CODEX_HOME ?? '';
       return nativeSession;
     });
+    const account = {
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      accountId: 'account-qualified-primary',
+    };
     const getBinding = vi.fn(async (purpose: string) => {
       lifecycle.push(`binding:${purpose}`);
       return purpose === 'primary'
         ? {
             purpose,
             service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            account,
             target: { kind: 'account' as const, displayName: 'Codex work' },
           }
         : null;
@@ -271,11 +301,9 @@ describe('createCodexAgentRuntime', () => {
         },
       };
     });
-    let resync: (() => void) | null = null;
     const disposeSubscription = vi.fn();
     const watch = vi.fn((_purpose: string, listener: () => void) => {
       lifecycle.push('watch:primary');
-      resync = listener;
       queueMicrotask(listener);
       return { dispose: disposeSubscription };
     });
@@ -304,26 +332,48 @@ describe('createCodexAgentRuntime', () => {
           },
           unset: [],
         },
+        stateSharing: { configMode: 'copied', stateMode: 'shared' },
       }, context);
 
       expect(getBinding).toHaveBeenCalledWith('primary', { signal: context.signal });
       expect(materialize).toHaveBeenCalledWith(
         'primary',
         { kind: 'files', fileIds: ['auth.json'] },
-        { signal: context.signal },
+        { signal: context.signal, expectedAccount: account },
       );
       expect(open).toHaveBeenCalledWith(
         expect.objectContaining({
           launchEnvironment: {
-            values: expect.objectContaining({ CODEX_HOME: root }),
+            values: expect.objectContaining({ CODEX_HOME: expect.any(String) }),
             unset: [],
           },
         }),
         expect.any(Object),
       );
-      await expect(readFile(join(root, 'auth.json'), 'utf8')).resolves.toContain(
+      expect(isolatedRoot).not.toBe('');
+      expect(isolatedRoot).not.toBe(root);
+      await expect(readFile(join(isolatedRoot, 'auth.json'), 'utf8')).resolves.toContain(
         'qualified-access',
       );
+      await expect(readFile(join(isolatedRoot, 'accounts'), 'utf8')).rejects.toThrow();
+      await expect(readFile(join(isolatedRoot, 'config.toml'), 'utf8')).resolves.toContain(
+        'model = "gpt-5.3-codex"',
+      );
+      await expect(readFile(join(isolatedRoot, 'config.toml'), 'utf8')).resolves.toContain(
+        'cli_auth_credentials_store = "file"',
+      );
+      await expect(readFile(join(isolatedRoot, 'config.toml'), 'utf8')).resolves.not.toContain(
+        'cli_auth_credentials_store = "keyring"',
+      );
+      await expect(readFile(join(isolatedRoot, 'sessions', 'current.jsonl'), 'utf8')).resolves.toBe(
+        '{"status":"before"}\n',
+      );
+      await writeFile(join(root, 'sessions', 'current.jsonl'), '{"status":"after"}\n', 'utf8');
+      await expect(readFile(join(isolatedRoot, 'sessions', 'current.jsonl'), 'utf8')).resolves.toBe(
+        '{"status":"after"}\n',
+      );
+      await expect(readFile(join(root, 'auth.json'), 'utf8')).resolves.toBe(persistentAuth);
+      await expect(readFile(join(root, 'accounts'), 'utf8')).resolves.toBe(persistentAccounts);
       expect(watch).toHaveBeenCalledWith('primary', expect.any(Function));
       expect(lifecycle).toEqual([
         'watch:primary',
@@ -331,17 +381,11 @@ describe('createCodexAgentRuntime', () => {
         'materialize:primary',
         'open',
       ]);
-      expect(resync).not.toBeNull();
-      resync?.();
-      resync?.();
-      await vi.waitFor(() => {
-        expect(nativeDispose).toHaveBeenCalledWith('runtime_recovery');
-      });
-      expect(nativeDispose).toHaveBeenCalledTimes(1);
-      expect(disposeSubscription).toHaveBeenCalledTimes(1);
       await session?.dispose();
       expect(nativeDispose).toHaveBeenCalledTimes(1);
       expect(disposeSubscription).toHaveBeenCalledTimes(1);
+      await expect(readFile(join(isolatedRoot, 'auth.json'), 'utf8')).rejects.toThrow();
+      await expect(readFile(join(root, 'auth.json'), 'utf8')).resolves.toBe(persistentAuth);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -438,10 +482,9 @@ describe('createCodexAgentRuntime', () => {
     await session?.dispose();
   });
 
-  it('disposes the opened session once when a later resync arrives during the binding read', async () => {
+  it('does not open ACP when a later primary-purpose resync arrives during an unbound binding read', async () => {
     let resync: (() => void) | null = null;
-    const nativeDispose = vi.fn();
-    const open = vi.fn(async () => ({ ...createSession(), dispose: nativeDispose }));
+    const open = vi.fn(async () => createSession());
     const connectedAccounts = {
       getBinding: vi.fn(async () => {
         resync?.();
@@ -461,7 +504,7 @@ describe('createCodexAgentRuntime', () => {
       signal: new AbortController().signal,
     } as unknown as AgentSessionRuntimeContext;
 
-    const session = await runtime.sessions?.open({
+    await expect(runtime.sessions?.open({
       kind: 'create',
       sessionId: 'session-resync-during-binding-read',
       cwd: '/repo',
@@ -469,14 +512,215 @@ describe('createCodexAgentRuntime', () => {
         values: { HAPPIER_CODEX_BACKEND_MODE: 'acp' },
         unset: [],
       },
-    }, context);
+    }, context)).rejects.toThrow();
 
-    await vi.waitFor(() => {
-      expect(nativeDispose).toHaveBeenCalledWith('runtime_recovery');
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the selected primary account changes from A to B', 'account'],
+    ['the active account in a primary group changes', 'group'],
+  ] as const)('does not open ACP when %s after qualified materialization begins', async (
+    _caseName,
+    targetKind,
+  ) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-qualified-transition-'));
+    const persistentAuth = '{"auth_mode":"personal","tokens":{"access_token":"keep-me"}}\n';
+    await writeFile(join(root, 'auth.json'), persistentAuth, 'utf8');
+    const accountA = {
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      accountId: 'account-a',
+    };
+    const accountB = { ...accountA, accountId: 'account-b' };
+    let selectedAccount = accountA;
+    let resync: (() => void) | null = null;
+    const open = vi.fn(async () => createSession());
+    const materialize = vi.fn(async () => {
+      selectedAccount = accountB;
+      resync?.();
+      return {
+        kind: 'files' as const,
+        files: { 'auth.json': new TextEncoder().encode('{"qualified":true}\n') },
+      };
     });
-    expect(nativeDispose).toHaveBeenCalledTimes(1);
-    await session?.dispose();
-    expect(nativeDispose).toHaveBeenCalledTimes(1);
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => ({
+        purpose: 'primary',
+        service: accountA.service,
+        account: accountA,
+        target: { kind: targetKind, displayName: 'Codex work' },
+      })),
+      materialize,
+      watch: vi.fn((_purpose: string, listener: () => void) => {
+        resync = listener;
+        queueMicrotask(listener);
+        return { dispose() {} };
+      }),
+    };
+    const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
+    const context = {
+      protocols: { acp: { open } },
+      services: { connectedAccounts },
+      signal: new AbortController().signal,
+    } as unknown as AgentSessionRuntimeContext;
+
+    try {
+      await expect(runtime.sessions?.open({
+        kind: 'create',
+        sessionId: `session-qualified-${targetKind}-transition`,
+        cwd: '/repo',
+        launchEnvironment: {
+          values: { HAPPIER_CODEX_BACKEND_MODE: 'acp', CODEX_HOME: root },
+          unset: [],
+        },
+      }, context)).rejects.toThrow();
+
+      expect(selectedAccount).toEqual(accountB);
+      expect(materialize).toHaveBeenCalledWith(
+        'primary',
+        { kind: 'files', fileIds: ['auth.json'] },
+        { signal: context.signal, expectedAccount: accountA },
+      );
+      expect(open).not.toHaveBeenCalled();
+      await expect(readFile(join(root, 'auth.json'), 'utf8')).resolves.toBe(persistentAuth);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not open ACP or change caller CODEX_HOME when cancellation arrives after materialization begins', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-qualified-cancelled-'));
+    const persistentAuth = '{"auth_mode":"personal","tokens":{"access_token":"keep-me"}}\n';
+    await writeFile(join(root, 'auth.json'), persistentAuth, 'utf8');
+    let cancelled = false;
+    const signal = {
+      get aborted() { return cancelled; },
+      reason: new Error('caller cancelled qualified Codex launch'),
+      addEventListener() {},
+      removeEventListener() {},
+    } as unknown as AbortSignal;
+    const account = {
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      accountId: 'account-cancelled',
+    };
+    const open = vi.fn(async () => createSession());
+    const materialize = vi.fn(async () => {
+      cancelled = true;
+      return {
+        kind: 'files' as const,
+        files: { 'auth.json': new TextEncoder().encode('{"qualified":true}\n') },
+      };
+    });
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => ({
+        purpose: 'primary',
+        service: account.service,
+        account,
+        target: { kind: 'account' as const, displayName: 'Codex work' },
+      })),
+      materialize,
+      watch: vi.fn((_purpose: string, listener: () => void) => {
+        queueMicrotask(listener);
+        return { dispose() {} };
+      }),
+    };
+    const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
+    const context = {
+      protocols: { acp: { open } },
+      services: { connectedAccounts },
+      signal,
+    } as unknown as AgentSessionRuntimeContext;
+
+    try {
+      await expect(runtime.sessions?.open({
+        kind: 'create',
+        sessionId: 'session-qualified-cancelled',
+        cwd: '/repo',
+        launchEnvironment: {
+          values: { HAPPIER_CODEX_BACKEND_MODE: 'acp', CODEX_HOME: root },
+          unset: [],
+        },
+      }, context)).rejects.toThrow();
+
+      expect(materialize).toHaveBeenCalledWith(
+        'primary',
+        { kind: 'files', fileIds: ['auth.json'] },
+        { signal: context.signal, expectedAccount: account },
+      );
+      expect(open).not.toHaveBeenCalled();
+      await expect(readFile(join(root, 'auth.json'), 'utf8')).resolves.toBe(persistentAuth);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not begin app-server opening after qualified-account invalidation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-qualified-app-server-'));
+    const persistentAuth = '{"auth_mode":"personal","tokens":{"access_token":"keep-me"}}\n';
+    await writeFile(join(root, 'auth.json'), persistentAuth, 'utf8');
+    const account = {
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      accountId: 'account-app-server',
+    };
+    let resync: (() => void) | null = null;
+    const resolveSystemTool = vi.fn(async () => {
+      throw new Error('app-server should not open after invalidation');
+    });
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => ({
+        purpose: 'primary',
+        service: account.service,
+        account,
+        target: { kind: 'account' as const, displayName: 'Codex work' },
+      })),
+      materialize: vi.fn(async () => {
+        resync?.();
+        return {
+          kind: 'files' as const,
+          files: { 'auth.json': new TextEncoder().encode('{"qualified":true}\n') },
+        };
+      }),
+      watch: vi.fn((_purpose: string, listener: () => void) => {
+        resync = listener;
+        queueMicrotask(listener);
+        return { dispose() {} };
+      }),
+    };
+    const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
+    const context = {
+      protocols: { acp: { open: vi.fn() } },
+      services: {
+        connectedAccounts,
+        exec: { systemTools: { resolve: resolveSystemTool } },
+        logger: { debug: vi.fn() },
+        sessions: { current: { media: { registerSourceRoot: vi.fn() } } },
+      },
+      ui: { title: { set: vi.fn(async () => undefined) } },
+      signal: new AbortController().signal,
+    } as unknown as AgentSessionRuntimeContext;
+
+    try {
+      await expect(runtime.sessions?.open({
+        kind: 'create',
+        sessionId: 'session-qualified-app-server-invalidated',
+        cwd: '/repo',
+        startupInstructions: {
+          v: 1,
+          id: 'happier.global_voice_agent',
+          revision: 1,
+          instructions: 'Do not launch after account invalidation.',
+        },
+        launchEnvironment: {
+          values: { HAPPIER_CODEX_BACKEND_MODE: 'appServer', CODEX_HOME: root },
+          unset: [],
+        },
+      }, context)).rejects.toThrow();
+
+      expect(resolveSystemTool).not.toHaveBeenCalled();
+      await expect(readFile(join(root, 'auth.json'), 'utf8')).resolves.toBe(persistentAuth);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('disposes the primary-purpose watch when preparation fails', async () => {
@@ -518,13 +762,30 @@ describe('createCodexAgentRuntime', () => {
   });
 
   it('disposes the primary-purpose watch when native session open fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-qualified-open-failure-'));
+    const persistentAuth = '{"auth_mode":"personal","tokens":{"access_token":"keep-me"}}\n';
+    await writeFile(join(root, 'auth.json'), persistentAuth, 'utf8');
     const disposeSubscription = vi.fn();
-    const open = vi.fn(async () => {
+    let isolatedRoot = '';
+    const open = vi.fn(async (request: AgentSessionOpenRequest) => {
+      isolatedRoot = request.launchEnvironment?.values.CODEX_HOME ?? '';
       throw new Error('native session open failed');
     });
+    const account = {
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      accountId: 'account-open-failure',
+    };
     const connectedAccounts = {
-      getBinding: vi.fn(async () => null),
-      materialize: vi.fn(),
+      getBinding: vi.fn(async () => ({
+        purpose: 'primary',
+        service: account.service,
+        account,
+        target: { kind: 'account' as const, displayName: 'Codex work' },
+      })),
+      materialize: vi.fn(async () => ({
+        kind: 'files' as const,
+        files: { 'auth.json': new TextEncoder().encode('{"qualified":true}\n') },
+      })),
       watch: vi.fn((_purpose: string, listener: () => void) => {
         queueMicrotask(listener);
         return { dispose: disposeSubscription };
@@ -537,17 +798,25 @@ describe('createCodexAgentRuntime', () => {
       signal: new AbortController().signal,
     } as unknown as AgentSessionRuntimeContext;
 
-    await expect(runtime.sessions?.open({
-      kind: 'create',
-      sessionId: 'session-open-failure',
-      cwd: '/repo',
-      launchEnvironment: {
-        values: { HAPPIER_CODEX_BACKEND_MODE: 'acp' },
-        unset: [],
-      },
-    }, context)).rejects.toThrow('native session open failed');
+    try {
+      await expect(runtime.sessions?.open({
+        kind: 'create',
+        sessionId: 'session-open-failure',
+        cwd: '/repo',
+        launchEnvironment: {
+          values: { HAPPIER_CODEX_BACKEND_MODE: 'acp', CODEX_HOME: root },
+          unset: [],
+        },
+      }, context)).rejects.toThrow('native session open failed');
 
-    expect(disposeSubscription).toHaveBeenCalledTimes(1);
+      expect(isolatedRoot).not.toBe('');
+      expect(isolatedRoot).not.toBe(root);
+      await expect(readFile(join(isolatedRoot, 'auth.json'), 'utf8')).rejects.toThrow();
+      await expect(readFile(join(root, 'auth.json'), 'utf8')).resolves.toBe(persistentAuth);
+      expect(disposeSubscription).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('refuses a Provider-bound session in ACP mode before opening the ACP runtime', async () => {

@@ -1,6 +1,7 @@
 import {
   normalizeOpenCodeServerBaseUrl,
   normalizeOpenCodeServerBaseUrlExplicit,
+  readCanonicalOpenCodeAgentRuntimeDescriptorV1,
   type CanonicalOpenCodeAgentRuntimeDescriptorV1,
   type OpenCodeBackendMode,
 } from '../../protocol/runtimeDescriptorV1.js';
@@ -86,6 +87,22 @@ function toOpenCodeRuntimeDescriptor(
   };
 }
 
+function readCanonicalOpenCodeRuntimeDescriptor(
+  metadata: Readonly<Record<string, unknown>>,
+): OpenCodeRuntimeDescriptor | null {
+  const canonical = metadata.runtimeDescriptorV1
+    ? readCanonicalOpenCodeAgentRuntimeDescriptorV1(metadata.runtimeDescriptorV1)
+    : null;
+  return canonical ? toOpenCodeRuntimeDescriptor(canonical) : null;
+}
+
+/**
+ * Persisted-session ingress for the `remote-dev` predecessor
+ * `ec4d3a29defa7fb094f4eb92909ddc74f172461b`, which still writes these flat
+ * OpenCode fields. Current host surface writers carry `runtimeDescriptorV1`.
+ * Remove this adapter when the supported released predecessor no longer
+ * produces the flat shape.
+ */
 function readLegacyOpenCodeRuntimeDescriptor(
   metadata: Readonly<Record<string, unknown>>,
 ): OpenCodeRuntimeDescriptor | null {
@@ -112,7 +129,8 @@ export function readOpenCodeSessionMetadataRuntimeDescriptor(
 ): OpenCodeRuntimeDescriptor | null {
   const metadataRecord = asRecord(metadata);
   if (!metadataRecord) return null;
-  return readLegacyOpenCodeRuntimeDescriptor(metadataRecord);
+  return readCanonicalOpenCodeRuntimeDescriptor(metadataRecord)
+    ?? readLegacyOpenCodeRuntimeDescriptor(metadataRecord);
 }
 
 export function readOpenCodeSessionAffinityFromMetadata(metadata: unknown): OpenCodeSessionAffinity {

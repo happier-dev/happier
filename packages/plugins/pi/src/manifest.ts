@@ -11,10 +11,15 @@ import {
   PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES,
 } from './agent/auth/services/qualifiedPurposes.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { PI_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { piExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { piExternalSessionObservationContribution } from './agent/externalSessions/observation.js';
 import { piExternalSessionTakeoverContribution } from './agent/externalSessions/takeover.js';
-import { PI_DIRECT_AUTH_ENV_KEYS, PI_LAUNCH_ENV_KEYS } from './agent/launchEnvironment.js';
+import {
+  PI_DIRECT_AUTH_ENV_KEYS,
+  PI_LAUNCH_ENV_KEYS,
+  resolvePiSessionRuntimePreferences,
+} from './agent/launchEnvironment.js';
 import { createPiAgentRuntime } from './agent/runtime/engine.js';
 import { PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { PI_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
@@ -81,16 +86,15 @@ export const PI_PLUGIN = definePlugin({
           },
           auth: {
             support: 'status_only',
-            probe: {
-              parser: 'piEnvOnly',
-              backgroundChecks: 'safe',
-              statusArgs: null,
-              envVars: [...PI_DIRECT_AUTH_ENV_KEYS],
-            },
+            environmentVariables: [...PI_DIRECT_AUTH_ENV_KEYS],
             loginLaunches: [],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+          agentCliSystemTool: { toolId: 'pi-cli' },
+        },
         connectedAccounts: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map((declaration) => ({
           ...declaration,
           service: { ...declaration.service },
@@ -145,6 +149,18 @@ export const PI_PLUGIN = definePlugin({
         },
       },
       factory: createPiAgentRuntime,
+      preflightSessionControls: PI_PREFLIGHT_SESSION_CONTROLS,
+      cliSessionCommand: {
+        sessionRuntimeId: 'pi',
+        accountSettingsAgentId: 'pi',
+        buildSessionOptions: (input) => ({
+          ok: true,
+          options: resolvePiSessionRuntimePreferences({
+            settings: input.settings,
+            environment: input.environment,
+          }),
+        }),
+      },
       sessionRunnerFactory: {
         module: './agent/runtime/engine',
         export: 'createPiAgentRuntime',

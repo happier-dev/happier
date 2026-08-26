@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeCodexHandoffBundleRelativePath } from './bundle.js';
 import { exportCodexSessionBundle } from './export.js';
 import { importCodexSessionBundle } from './import.js';
+import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
 
 function nativeRolloutContent(params: Readonly<{
   sessionId: string;
@@ -54,8 +55,10 @@ describe('codex session handoff bundle', () => {
     const result = await exportCodexSessionBundle({
       metadata: {
         path: '/repo',
-        codexSessionId: 'thread_1',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+          backendMode: 'appServer',
+          providerSessionId: 'thread_1',
+        }),
       },
       remoteSessionId: 'thread_1',
       env: {
@@ -100,8 +103,10 @@ describe('codex session handoff bundle', () => {
     const result = await exportCodexSessionBundle({
       metadata: {
         path: '/repo',
-        codexSessionId: 'thread_bytes',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+          backendMode: 'appServer',
+          providerSessionId: 'thread_bytes',
+        }),
       },
       remoteSessionId: 'thread_bytes',
       env: {
@@ -136,8 +141,10 @@ describe('codex session handoff bundle', () => {
     await expect(exportCodexSessionBundle({
       metadata: {
         path: '/repo',
-        codexSessionId: 'thread-root',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+          backendMode: 'appServer',
+          providerSessionId: 'thread-root',
+        }),
       },
       remoteSessionId: 'thread-root',
       env: { CODEX_HOME: codexHome },
@@ -162,8 +169,6 @@ describe('codex session handoff bundle', () => {
     const result = await exportCodexSessionBundle({
       metadata: {
         path: '/repo',
-        codexSessionId: 'thread_mcp',
-        codexBackendMode: 'mcp',
       },
       remoteSessionId: 'thread_mcp',
       env: {
@@ -202,8 +207,12 @@ describe('codex session handoff bundle', () => {
     const result = await exportCodexSessionBundle({
       metadata: {
         path: '/repo',
-        codexSessionId: 'thread_connected',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+          backendMode: 'appServer',
+          providerSessionId: 'thread_connected',
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+        }),
         externalSessionSource: {
           kind: 'codexHome',
           home: 'connectedService',
@@ -253,19 +262,10 @@ describe('codex session handoff bundle', () => {
     const result = await exportCodexSessionBundle({
       metadata: {
         path: '/repo',
-        codexSessionId: 'thread_runtime',
-        codexBackendMode: 'appServer',
-        agentRuntimeDescriptorV1: {
-          v: 1,
-          agentId: 'codex',
-          agent: {
-            backendMode: 'appServer',
-            providerSessionId: 'thread_runtime',
-            home: 'connectedService',
-            connectedServiceId: 'openai-codex',
-            connectedServiceGroupId: 'group-1',
-          },
-        },
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+          backendMode: 'appServer',
+          providerSessionId: 'thread_runtime',
+        }),
       },
       remoteSessionId: 'thread_runtime',
       env: {
@@ -289,7 +289,7 @@ describe('codex session handoff bundle', () => {
     });
   });
 
-  it('ignores cast-injected raw runtime descriptor metadata at the plugin boundary', async () => {
+  it('does not interpret legacy descriptor metadata at the plugin boundary', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-export-runtime-source-'));
     const userCodexHome = join(root, 'user-codex-home');
     const connectedCodexHome = join(
@@ -315,8 +315,6 @@ describe('codex session handoff bundle', () => {
     const result = await exportCodexSessionBundle({
       metadata: {
         path: '/repo',
-        codexSessionId: 'thread_runtime_only',
-        codexBackendMode: 'appServer',
         agentRuntimeDescriptorV1: {
           v: 1,
           agentId: 'codex',
@@ -339,15 +337,7 @@ describe('codex session handoff bundle', () => {
     });
 
     expect(result.affinity?.source).toBeUndefined();
-    expect(result.affinity?.runtimeDescriptor).toMatchObject({
-      agent: {
-        backendMode: 'appServer',
-        providerSessionId: 'thread_runtime_only',
-      },
-    });
-    expect(result.affinity?.runtimeDescriptor).not.toMatchObject({
-      agent: { home: 'connectedService' },
-    });
+    expect(result.affinity?.runtimeDescriptor).toBeUndefined();
   });
 
   it('does not export machine-specific typed Codex source home paths', async () => {
@@ -365,8 +355,10 @@ describe('codex session handoff bundle', () => {
     const result = await exportCodexSessionBundle({
       metadata: {
         path: '/repo',
-        codexSessionId: 'thread_homepath',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+          backendMode: 'appServer',
+          providerSessionId: 'thread_homepath',
+        }),
         externalSessionSource: {
           kind: 'codexHome',
           home: 'user',
@@ -404,8 +396,10 @@ describe('codex session handoff bundle', () => {
     await expect(exportCodexSessionBundle({
       metadata: {
         path: '/repo',
-        codexSessionId: 'thread_exclusive',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+          backendMode: 'appServer',
+          providerSessionId: 'thread_exclusive',
+        }),
         externalSessionSource: {
           kind: 'codexHome',
           home: 'user',
@@ -434,8 +428,10 @@ describe('codex session handoff bundle', () => {
     await expect(exportCodexSessionBundle({
       metadata: {
         path: '/repo',
-        codexSessionId: 'thread_unresolvable',
-        codexBackendMode: 'appServer',
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+          backendMode: 'appServer',
+          providerSessionId: 'thread_unresolvable',
+        }),
         externalSessionSource: {
           kind: 'codexHome',
           home: 'connectedService',

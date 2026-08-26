@@ -6,8 +6,8 @@ describe('resolveCodexSessionRuntimePreferences', () => {
   it('keeps Codex app-server Pending rows claimed until exact provider acceptance', () => {
     expect(resolveCodexSessionRuntimePreferences({
       settings: { codexBackendMode: 'appServer' },
-      processEnv: {},
-      startedBy: 'terminal',
+      environment: {},
+      startOrigin: 'terminal',
     })).toEqual({
       codexBackendMode: 'appServer',
     });
@@ -16,8 +16,8 @@ describe('resolveCodexSessionRuntimePreferences', () => {
   it('keeps ACP provider acceptance on the default pending delivery path', () => {
     expect(resolveCodexSessionRuntimePreferences({
       settings: { codexBackendMode: 'acp' },
-      processEnv: {},
-      startedBy: 'terminal',
+      environment: {},
+      startOrigin: 'terminal',
     })).toEqual({
       codexBackendMode: 'acp',
     });

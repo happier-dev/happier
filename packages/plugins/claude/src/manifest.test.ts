@@ -1,7 +1,7 @@
 import { ingestPluginManifestV2 } from '@happier-dev/protocol';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { PLUGIN_MANIFEST } from './manifest.js';
+import { CLAUDE_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 import { CLAUDE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 describe('Claude plugin manifest', () => {
@@ -90,6 +90,24 @@ describe('Claude plugin manifest', () => {
     expect(agent?.cli?.executable.binaryName).toBe('claude');
   });
 
+  it('declares Claude coding-prompt behavior as ordered manifest data', () => {
+    const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'claude');
+
+    expect(agent?.catalog?.codingPromptBehavior).toEqual({
+      blocks: [{
+        id: 'provider.claude.ask_user_question_isolation',
+        text: [
+          'RELIABILITY RULES (IMPORTANT):',
+          "- Tool-use sequencing is strict. If you use \"AskUserQuestion\", do NOT include any other tool_use in the same assistant turn. Wait for the user's answer before calling other tools.",
+        ].join('\n'),
+      }, {
+        id: 'provider.claude.disable_todos',
+        when: 'disableTodos',
+        text: 'Do not create TODO items, TODO lists, or task lists in your output. If you would normally create TODOs, instead proceed with the work directly or ask the user for clarification.',
+      }],
+    });
+  });
+
   it('declares the process, terminal, and session host access consumed by the Claude runtime', () => {
     expect(PLUGIN_MANIFEST.hostAccess.required).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -119,5 +137,39 @@ describe('Claude plugin manifest', () => {
         methods: ['POST'],
       },
     }));
+  });
+
+  it('registers focused deferred-startup and terminal prompt-recognition callbacks', async () => {
+    const register = vi.fn();
+    const ignoreRegistration = vi.fn();
+    const agents = new Proxy({ register }, {
+      get(target, property) {
+        return Reflect.get(target, property) ?? ignoreRegistration;
+      },
+    });
+    const api = new Proxy({ agents }, {
+      get(target, property) {
+        return Reflect.get(target, property) ?? new Proxy({}, {
+          get: () => ignoreRegistration,
+        });
+      },
+    });
+
+    await CLAUDE_PLUGIN.activate(api as never);
+
+    expect(register).toHaveBeenCalledTimes(1);
+    const [agentId, factory, options] = register.mock.calls[0] ?? [];
+    expect(agentId).toBe('claude');
+    expect(factory).toBeTypeOf('function');
+    expect(options.sessionStartup.shouldUseDeferredBootstrap).toBeTypeOf('function');
+    expect(options.terminalPromptSubmitVerification.shouldVerifyAfterSubmit).toBeTypeOf('function');
+    expect(options.terminalPromptSubmitVerification.verifyAfterSubmit).toBeTypeOf('function');
+    expect(options).not.toHaveProperty('releasedOverridesCacheV1');
+    expect(options.sessionStartup).not.toHaveProperty('releasedOverridesCacheV1');
+    expect(options.terminalPromptSubmitVerification.shouldVerifyAfterSubmit('continue')).toBe(true);
+    expect(options.terminalPromptSubmitVerification.verifyAfterSubmit({
+      promptText: 'continue',
+      screenText: '❯ continue',
+    })).toBe(true);
   });
 });

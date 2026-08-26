@@ -193,7 +193,6 @@ describe('daemon contribution registry projection adapters', () => {
                         install: { manual: { kind: 'none' } },
                         auth: {
                             support: 'login_terminal',
-                            probe: { parser: 'unknown', backgroundChecks: 'safe' },
                             loginLaunches: [
                                 { kind: 'primary', args: ['login'] },
                                 { kind: 'device_code', args: ['login', '--device-code'] },

@@ -10,6 +10,7 @@ describe('Cursor plugin manifest', () => {
       id: 'cursor', runtime: { kind: 'custom' }, primary: 'sessions',
       capabilities: { sessions: { open: ['create', 'resume'], cancel: true } },
     });
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli.auth.nonInteractiveStatusProbe).toBe(true);
     expect(PLUGIN_MANIFEST.hostAccess.required).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'cursor-api-key', capability: 'environment', scope: { keys: ['CURSOR_API_KEY'] } }),
       expect.objectContaining({

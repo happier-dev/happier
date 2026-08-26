@@ -187,6 +187,24 @@ export type PluginUiBehaviorDescriptor = Readonly<{
         promptProtocol?: PermissionPromptProtocol;
         footer?: Partial<AgentPermissionFooterBehavior>;
     }>;
+    askUserQuestion?: Readonly<{
+        dialogs?: readonly Readonly<{
+            dialogId?: string;
+            settingMutation?: Readonly<{
+                settingId?: string;
+                allowedValues?: readonly string[];
+            }>;
+            terminalNotice?: Readonly<{
+                headerKey?: string;
+                questionKey?: string;
+            }>;
+            terminalSecondaryAction?: Readonly<{
+                kind?: string;
+                labelKey?: string;
+                descriptionKey?: string;
+            }>;
+        }>[];
+    }>;
     workState?: Readonly<{
         editableGoals?: Readonly<{
             providerId?: string;
@@ -1136,6 +1154,11 @@ function mergeDescriptorBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentU
                 },
             }
             : {}),
+        ...(b.askUserQuestion
+            ? { askUserQuestion: b.askUserQuestion }
+            : a.askUserQuestion
+                ? { askUserQuestion: a.askUserQuestion }
+                : {}),
         ...(a.resume || b.resume ? { resume: { ...(a.resume ?? {}), ...(b.resume ?? {}) } } : {}),
         ...(a.workState || b.workState ? { workState: { ...(a.workState ?? {}), ...(b.workState ?? {}) } } : {}),
         ...(a.sessionComposer || b.sessionComposer
@@ -1392,6 +1415,136 @@ function createPermissionsBehavior(
     };
 }
 
+/**
+ * Decode the closed AskUserQuestion declaration from the transport carrier.
+ * The public author grammar rejects malformed entries earlier; this boundary
+ * repeats the minimum checks because older clients can receive newer or bad
+ * projected JSON. A rejected item never gains an implicit action.
+ */
+function createAskUserQuestionBehavior(
+    descriptor: PluginUiBehaviorDescriptor,
+    diagnostics: UiProjectionDiagnostic[],
+): AgentUiBehavior['askUserQuestion'] | undefined {
+    const declared = descriptor.askUserQuestion;
+    if (!declared) return undefined;
+    if (!Array.isArray(declared.dialogs) || declared.dialogs.length === 0) {
+        diagnostics.push(createUiProjectionDiagnostic(
+            'A16X1_MALFORMED_DESCRIPTOR',
+            'askUserQuestion.dialogs',
+            'AskUserQuestion declarations require at least one dialog.',
+        ));
+        return undefined;
+    }
+
+    const seenDialogIds = new Set<string>();
+    const dialogs: NonNullable<AgentUiBehavior['askUserQuestion']>['dialogs'][number][] = [];
+    declared.dialogs.forEach((rawDialog, index) => {
+        if (!isRecord(rawDialog)) {
+            diagnostics.push(createUiProjectionDiagnostic(
+                'A16X1_MALFORMED_DESCRIPTOR',
+                `askUserQuestion.dialogs.${index}`,
+                'AskUserQuestion dialogs must be objects.',
+            ));
+            return;
+        }
+        const dialogId = readString(rawDialog.dialogId);
+        if (!dialogId) {
+            diagnostics.push(createUiProjectionDiagnostic(
+                'A16X1_MALFORMED_DESCRIPTOR',
+                `askUserQuestion.dialogs.${index}.dialogId`,
+                'AskUserQuestion dialogs require a non-empty dialog id.',
+            ));
+            return;
+        }
+        if (seenDialogIds.has(dialogId)) {
+            diagnostics.push(createUiProjectionDiagnostic(
+                'A16X1_MALFORMED_DESCRIPTOR',
+                `askUserQuestion.dialogs.${index}.dialogId`,
+                'AskUserQuestion dialog ids must be unique.',
+            ));
+            return;
+        }
+        seenDialogIds.add(dialogId);
+
+        let settingMutation: NonNullable<AgentUiBehavior['askUserQuestion']>['dialogs'][number]['settingMutation'];
+        if (rawDialog.settingMutation !== undefined) {
+            const rawMutation = rawDialog.settingMutation;
+            const settingId = isRecord(rawMutation) ? readString(rawMutation.settingId) : null;
+            const rawAllowedValues = isRecord(rawMutation) ? rawMutation.allowedValues : undefined;
+            const allowedValues = Array.isArray(rawAllowedValues)
+                && rawAllowedValues.length > 0
+                && rawAllowedValues.every((value) => typeof value === 'string' && value.trim().length > 0)
+                ? readStringArray(rawAllowedValues)
+                : [];
+            if (!settingId || allowedValues.length === 0) {
+                diagnostics.push(createUiProjectionDiagnostic(
+                    'A16X1_MALFORMED_DESCRIPTOR',
+                    `askUserQuestion.dialogs.${index}.settingMutation`,
+                    'AskUserQuestion setting mutations require a setting id and allowed values.',
+                ));
+            } else {
+                settingMutation = { settingId, allowedValues };
+            }
+        }
+
+        let terminalNotice: NonNullable<AgentUiBehavior['askUserQuestion']>['dialogs'][number]['terminalNotice'];
+        if (rawDialog.terminalNotice !== undefined) {
+            const rawNotice = rawDialog.terminalNotice;
+            const headerKey = isRecord(rawNotice) ? readString(rawNotice.headerKey) : null;
+            const questionKey = isRecord(rawNotice) ? readString(rawNotice.questionKey) : null;
+            if (!headerKey || !questionKey) {
+                diagnostics.push(createUiProjectionDiagnostic(
+                    'A16X1_MALFORMED_DESCRIPTOR',
+                    `askUserQuestion.dialogs.${index}.terminalNotice`,
+                    'AskUserQuestion terminal notices require header and question translation keys.',
+                ));
+            } else {
+                terminalNotice = {
+                    headerKey: headerKey as TranslationKey,
+                    questionKey: questionKey as TranslationKey,
+                };
+            }
+        }
+
+        let terminalSecondaryAction: NonNullable<AgentUiBehavior['askUserQuestion']>['dialogs'][number]['terminalSecondaryAction'];
+        if (rawDialog.terminalSecondaryAction !== undefined) {
+            const rawAction = rawDialog.terminalSecondaryAction;
+            const labelKey = isRecord(rawAction) ? readString(rawAction.labelKey) : null;
+            const descriptionKey = isRecord(rawAction) ? readString(rawAction.descriptionKey) : null;
+            if (!isRecord(rawAction) || rawAction.kind !== 'openAttachedTerminal' || !labelKey || !descriptionKey) {
+                diagnostics.push(createUiProjectionDiagnostic(
+                    'A16X1_MALFORMED_DESCRIPTOR',
+                    `askUserQuestion.dialogs.${index}.terminalSecondaryAction`,
+                    'AskUserQuestion terminal actions must declare openAttachedTerminal and translation keys.',
+                ));
+            } else {
+                terminalSecondaryAction = {
+                    kind: 'openAttachedTerminal',
+                    labelKey: labelKey as TranslationKey,
+                    descriptionKey: descriptionKey as TranslationKey,
+                };
+            }
+        }
+
+        if (!settingMutation && !terminalNotice && !terminalSecondaryAction) {
+            diagnostics.push(createUiProjectionDiagnostic(
+                'A16X1_MALFORMED_DESCRIPTOR',
+                `askUserQuestion.dialogs.${index}`,
+                'AskUserQuestion dialogs require a declared host-owned behavior.',
+            ));
+            return;
+        }
+        dialogs.push({
+            dialogId,
+            ...(settingMutation ? { settingMutation } : {}),
+            ...(terminalNotice ? { terminalNotice } : {}),
+            ...(terminalSecondaryAction ? { terminalSecondaryAction } : {}),
+        });
+    });
+
+    return dialogs.length > 0 ? { dialogs } : undefined;
+}
+
 function createAgentUiBehaviorFromBehaviorDescriptor(
     descriptor: PluginUiBehaviorDescriptor,
     agentId: string,
@@ -1408,6 +1561,7 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
     const agentOptions = readAgentOptionDescriptors(descriptor.newSession?.agentOptions, diagnostics);
     const payload = createPayloadBehavior(descriptor, agentId, diagnostics, agentOptions);
     const permissions = createPermissionsBehavior(descriptor, diagnostics);
+    const askUserQuestion = createAskUserQuestionBehavior(descriptor, diagnostics);
     const workState = createWorkStateBehavior(descriptor, agentId, diagnostics);
     const sessionSubagents = createSessionSubagentsBehaviorFromComponents(
         descriptor.components,
@@ -1469,6 +1623,7 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
         ...(pendingDelivery ? { pendingDelivery } : {}),
         ...(descriptor.guidance ? { guidance: { ...descriptor.guidance } } : {}),
         ...(permissions ? { permissions } : {}),
+        ...(askUserQuestion ? { askUserQuestion } : {}),
         ...(workState ? { workState } : {}),
         ...(experimentSwitches.length > 0
             ? {

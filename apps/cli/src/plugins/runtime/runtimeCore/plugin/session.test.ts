@@ -18,13 +18,15 @@ import { buildPluginHostSessionRuntimeOptions, buildPluginSessionBindingInput } 
 import { decorateRuntimeTurnOperationsWithMetadata } from './sessionMetadata';
 
 const releasedCacheMocks = vi.hoisted(() => ({
-  read: vi.fn(),
-  write: vi.fn(),
+  resolve: vi.fn(),
+  compatibility: {
+    read: vi.fn(),
+    write: vi.fn(),
+  },
 }));
 
 vi.mock('@/agent/runtime/startup/releasedStartupOverridesCacheV1', () => ({
-  readReleasedStartupOverridesCacheV1: releasedCacheMocks.read,
-  writeReleasedStartupOverridesCacheV1: releasedCacheMocks.write,
+  resolveReleasedCodexStartupOverridesCacheV1Compatibility: releasedCacheMocks.resolve,
 }));
 
 vi.mock('@/persistence', async (importOriginal) => ({
@@ -391,11 +393,11 @@ describe('plugin session runtime adapters', () => {
     expect(shouldUseDeferredBootstrap).toHaveBeenCalledWith({
       startedBy: 'terminal',
       startingMode: 'terminal',
-      existingSessionId: 'happy-session',
-      sessionAttachFilePath: '/tmp/session-attach.json',
-      providerResumeId: 'vendor-session',
+      hasExistingSession: true,
+      hasSessionAttachFile: true,
+      hasProviderResumeId: true,
       hasExplicitPermissionMode: true,
-      permissionModeSeedSource: 'explicit',
+      hasPersistedPermissionModeSeed: false,
       hasTerminalTty: expect.any(Boolean),
     });
     expect(legacyPlan.config.startupBootstrap).toBeUndefined();
@@ -488,7 +490,10 @@ describe('plugin session runtime adapters', () => {
   });
 
   it('adopts the deployed Codex V1 cache only as a lowest-priority provider-resume seed', async () => {
-    releasedCacheMocks.read.mockReturnValue({
+    releasedCacheMocks.resolve.mockImplementation((backendId: string) => (
+      backendId === 'codex' ? releasedCacheMocks.compatibility : null
+    ));
+    releasedCacheMocks.compatibility.read.mockReturnValue({
       permissionMode: 'safe-yolo',
       permissionModeUpdatedAt: 101,
       modelId: 'cached-codex-model',
@@ -496,17 +501,21 @@ describe('plugin session runtime adapters', () => {
       updatedAt: 103,
     });
     const baseAgent = createAgentFixture() as unknown as Record<string, unknown>;
+    const backend = {
+      ...createBackendFixture(),
+      id: 'codex',
+      agentId: 'codex',
+    } as never;
     const agent = {
       ...baseAgent,
       catalogEntry: {
-        id: 'acme.sample.provider',
-        cliSubcommand: 'acme.sample.provider',
-        releasedStartupOverridesCacheV1: true,
+        id: 'codex',
+        cliSubcommand: 'codex',
         shouldUseDeferredSessionStartup: () => true,
       },
     } as never;
     const plan = await createPublicPluginSessionRuntimePlan({
-      backend: createBackendFixture(),
+      backend,
       agent,
       createSessionRuntime: async () => createRuntimeTurnOperations(),
       sessionInput: buildPluginSessionBindingInput({
@@ -563,7 +572,9 @@ describe('plugin session runtime adapters', () => {
       },
     });
 
-    releasedCacheMocks.read.mockClear();
+    expect(releasedCacheMocks.resolve).toHaveBeenCalledWith('codex');
+
+    releasedCacheMocks.compatibility.read.mockClear();
     expect(await resolveSeed({
       opts: { ...plan.opts, permissionMode: 'yolo' },
       seed: {
@@ -577,9 +588,9 @@ describe('plugin session runtime adapters', () => {
       permissionModeUpdatedAt: 105,
       permissionModeSource: 'explicit',
     });
-    expect(releasedCacheMocks.read).not.toHaveBeenCalled();
+    expect(releasedCacheMocks.compatibility.read).not.toHaveBeenCalled();
 
-    releasedCacheMocks.read.mockReturnValue({
+    releasedCacheMocks.compatibility.read.mockReturnValue({
       permissionMode: 'safe-yolo',
       permissionModeUpdatedAt: 106,
       modelId: 'cached-codex-model',
@@ -609,7 +620,7 @@ describe('plugin session runtime adapters', () => {
       modelSelection: providerBoundModelSelection,
     });
 
-    releasedCacheMocks.read.mockReturnValue({
+    releasedCacheMocks.compatibility.read.mockReturnValue({
       permissionMode: 'safe-yolo',
       permissionModeUpdatedAt: 110,
       modelId: null,
@@ -644,8 +655,7 @@ describe('plugin session runtime adapters', () => {
       permissionModeUpdatedAt: 113,
       modelSelection: currentModelSelection,
     });
-    expect(releasedCacheMocks.write).toHaveBeenCalledWith(expect.objectContaining({
-      backendId: 'acme.sample.backend',
+    expect(releasedCacheMocks.compatibility.write).toHaveBeenCalledWith(expect.objectContaining({
       permissionMode: 'yolo',
       permissionModeUpdatedAt: 113,
       modelId: 'current-model',

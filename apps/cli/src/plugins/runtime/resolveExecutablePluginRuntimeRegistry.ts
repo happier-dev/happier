@@ -12,7 +12,15 @@ import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/ty
 import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
 import { resolveMergedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
 import {
+    projectAgentCliAuthCatalogEntry,
+    projectAgentCliSessionCommandCatalogEntry,
+    projectAgentConnectedAccountLaunchCatalogEntry,
     projectAgentDaemonSpawnHooksCatalogEntry,
+    projectAgentExperimentalVendorResumeSupportCatalogEntry,
+    projectAgentPreflightSessionControlsCatalogEntry,
+    projectAgentProviderCliAttachCatalogEntry,
+    projectAgentSessionStartupCatalogEntry,
+    projectAgentTerminalPromptSubmitVerificationCatalogEntry,
 } from '../projection/registry/agentCatalogEntryHooks';
 import {
     dropTargetedContributionAdmissionDiagnostics,
@@ -1154,12 +1162,29 @@ function mergeActivatedContributes(
         ),
     });
     const providers = projectedProviders.providers;
-    let registeredAgentSpawnHooksProjected = false;
+    const systemToolsByPluginId = new Map<
+        string,
+        Array<NonNullable<typeof base.systemTools>[number]['definition']>
+    >();
+    for (const systemTool of base.systemTools ?? []) {
+        if (!systemTool.pluginId) continue;
+        const existing = systemToolsByPluginId.get(systemTool.pluginId) ?? [];
+        systemToolsByPluginId.set(systemTool.pluginId, [...existing, systemTool.definition]);
+    }
+    let registeredAgentRuntimeCatalogHooksProjected = false;
     const agents = base.agents.map((agent) => {
         const runtime = activated.agentRuntimesByAgentId.get(agent.id);
         const agentPluginId = agent.identity?.pluginId ?? agent.pluginId;
         if (
-            !runtime?.daemonSpawnHooks
+            (!runtime?.daemonSpawnHooks
+                && !runtime?.providerCliAttach
+                && !runtime?.cliSessionCommand
+                && !runtime?.cliAuth
+                && !runtime?.connectedAccountLaunch
+                && !runtime?.preflightSessionControls
+                && !runtime?.terminalPromptSubmitVerification
+                && !runtime?.sessionStartup
+                && !runtime?.vendorResumeSupport)
             || !agent.catalogEntry
             || agentPluginId !== runtime.pluginId
             || runtime.generation !== String(activated.generation)
@@ -1169,17 +1194,114 @@ function mergeActivatedContributes(
         ) {
             return agent;
         }
-        if (agent.catalogEntry.getDaemonSpawnHooks) {
+        if (runtime.daemonSpawnHooks && agent.catalogEntry.getDaemonSpawnHooks) {
             throw new Error(
                 `Agent '${agent.id}' has competing declarative and activation-registered daemon spawn hook owners`,
             );
         }
-        registeredAgentSpawnHooksProjected = true;
+        if (runtime.providerCliAttach && agent.catalogEntry.resolveHostAgentRuntimeSurfaces) {
+            throw new Error(
+                `Agent '${agent.id}' has competing declarative and activation-registered provider CLI attach owners`,
+            );
+        }
+        if (runtime.sessionStartup && agent.catalogEntry.shouldUseDeferredSessionStartup) {
+            throw new Error(
+                `Agent '${agent.id}' has competing declarative and activation-registered deferred startup owners`,
+            );
+        }
+        if (runtime.vendorResumeSupport && agent.catalogEntry.getVendorResumeSupport) {
+            throw new Error(
+                `Agent '${agent.id}' has competing declarative and activation-registered vendor resume owners`,
+            );
+        }
+        if (
+            runtime.connectedAccountLaunch
+            && (
+                agent.catalogEntry.connectedAccountRequestAuthUses
+                || agent.catalogEntry.getConnectedServiceStateSharingDescriptor
+            )
+        ) {
+            throw new Error(
+                `Agent '${agent.id}' has competing private and activation-registered connected-account launch owners`,
+            );
+        }
+        if (runtime.preflightSessionControls && agent.catalogEntry.getPreflightSessionControlsProbeAdapter) {
+            throw new Error(
+                `Agent '${agent.id}' has competing declarative and activation-registered preflight probe owners`,
+            );
+        }
+        if (
+            runtime.terminalPromptSubmitVerification
+            && agent.catalogEntry.getTerminalPromptSubmitVerificationPolicy
+        ) {
+            throw new Error(
+                `Agent '${agent.id}' has competing private and activation-registered terminal prompt owners`,
+            );
+        }
+        registeredAgentRuntimeCatalogHooksProjected = true;
         return Object.freeze({
             ...agent,
             catalogEntry: Object.freeze({
                 ...agent.catalogEntry,
-                ...projectAgentDaemonSpawnHooksCatalogEntry(runtime.daemonSpawnHooks),
+                ...(runtime.daemonSpawnHooks
+                    ? projectAgentDaemonSpawnHooksCatalogEntry(runtime.daemonSpawnHooks)
+                    : {}),
+                ...(runtime.providerCliAttach
+                    ? projectAgentProviderCliAttachCatalogEntry({
+                        agentId: agent.id,
+                        providerCliAttach: runtime.providerCliAttach,
+                    })
+                    : {}),
+                ...(runtime.cliSessionCommand
+                    ? projectAgentCliSessionCommandCatalogEntry({
+                        agentId: agent.id,
+                        cliSessionCommand: runtime.cliSessionCommand,
+                    })
+                    : {}),
+                ...(runtime.cliAuth
+                    ? projectAgentCliAuthCatalogEntry({
+                        agentId: agent.id,
+                        cliAuth: runtime.cliAuth,
+                        cli: agent.cliMetadata ?? null,
+                        systemTools: systemToolsByPluginId.get(runtime.pluginId) ?? [],
+                        agentCliSystemTool: agent.catalogEntry.agentCliSystemTool,
+                        hostAccess: agent.hostAccess,
+                        isCurrent: runtime.isCurrent,
+                    })
+                    : {}),
+                ...(runtime.connectedAccountLaunch
+                    ? projectAgentConnectedAccountLaunchCatalogEntry({
+                        agentId: agent.id,
+                        connectedAccountLaunch: runtime.connectedAccountLaunch,
+                    })
+                    : {}),
+                ...(runtime.preflightSessionControls
+                    ? projectAgentPreflightSessionControlsCatalogEntry({
+                        agentId: agent.id,
+                        preflightSessionControls: runtime.preflightSessionControls,
+                        systemTools: systemToolsByPluginId.get(runtime.pluginId) ?? [],
+                        agentCliSystemTool: agent.catalogEntry.agentCliSystemTool,
+                        retirementSignal: runtime.retirementSignal,
+                        isCurrent: runtime.isCurrent,
+                    })
+                    : {}),
+                ...(runtime.terminalPromptSubmitVerification
+                    ? projectAgentTerminalPromptSubmitVerificationCatalogEntry({
+                        terminalPromptSubmitVerification: runtime.terminalPromptSubmitVerification,
+                    })
+                    : {}),
+                ...(runtime.sessionStartup
+                    ? projectAgentSessionStartupCatalogEntry({
+                        sessionStartup: runtime.sessionStartup,
+                        isCurrent: runtime.isCurrent,
+                    })
+                    : {}),
+                ...(runtime.vendorResumeSupport
+                    ? projectAgentExperimentalVendorResumeSupportCatalogEntry({
+                        vendorResumeSupport: runtime.vendorResumeSupport,
+                        isCurrent: runtime.isCurrent,
+                    })
+                    : {}),
             }),
         });
     });
@@ -1189,7 +1311,7 @@ function mergeActivatedContributes(
         && activatedTools.length === 0
         && activatedCommands.length === 0
         && providerRuntimeRegistrations.length === 0
-        && !registeredAgentSpawnHooksProjected
+        && !registeredAgentRuntimeCatalogHooksProjected
     ) {
         return base.activationTargets === activationTargets
             ? base
@@ -1211,7 +1333,7 @@ function mergeActivatedContributes(
             ...(base.commands ?? []),
             ...activatedCommands,
         ]),
-        agents: registeredAgentSpawnHooksProjected
+        agents: registeredAgentRuntimeCatalogHooksProjected
             ? Object.freeze(agents)
             : base.agents,
         providers,

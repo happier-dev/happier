@@ -8,8 +8,10 @@ import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime
 import type {
     AgentExternalSessionsContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';
-import type { PluginAgentAcpTransport } from '@happier-dev/protocol';
 
+import {
+    normalizePluginDeclarativeAcpRuntime,
+} from '@/agent/acp/runtime/definition/plugin';
 import {
     BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS,
 } from '@/plugins/projection/registry/sources/generatedBundledPluginArtifacts';
@@ -55,7 +57,7 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
     if (attested.bindingKind === 'host_declarative_acp_v1') {
         return Object.freeze({
             factory: createHostDeclarativeAcpAgentRuntimeFactory(
-                attested.transport,
+                normalizePluginDeclarativeAcpRuntime(attested.runtime),
             ),
         });
     }
@@ -172,7 +174,7 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
     }>
     | Readonly<{
         bindingKind: 'host_declarative_acp_v1';
-        transport: PluginAgentAcpTransport;
+        runtime: unknown;
     }>
 )>> {
     const binding = verifyAgentSessionRunnerBindingV1(params.binding);
@@ -295,7 +297,7 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
             manifest: manifest.manifest,
             manifestAuthority,
             declaredAgent,
-            transport: runtime.transport,
+            runtime,
         });
     }
     const fact = validated?.factories.find(

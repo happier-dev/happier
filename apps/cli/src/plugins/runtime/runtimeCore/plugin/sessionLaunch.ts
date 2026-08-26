@@ -2,6 +2,7 @@ import type { PermissionMode } from '@/api/types';
 import type { StoredCredentials } from '@/persistence';
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
+import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
     ResolvedAgentRuntimeContribution,
     ResolvedAgentContribution,
@@ -75,6 +76,12 @@ export type HostPrivateLateSessionEnvironmentResolver = (
     environmentVariables: Readonly<Record<string, string>>;
     unsetEnvironmentVariables: readonly string[];
     sensitiveEnvironmentVariableNames: readonly string[];
+    /**
+     * Host-selected Connected Account references for this exact Session.
+     * They remain data-only: the late resolver cannot select, materialize, or
+     * expose account credentials.
+     */
+    sessionConnectedAccounts?: NonNullable<AgentSessionOpenRequest['connectedAccounts']>;
   }>
 >;
 

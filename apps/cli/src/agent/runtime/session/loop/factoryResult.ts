@@ -2,6 +2,8 @@ import {
   isRuntimeTurnOperations,
   type RuntimeTurnOperations,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type { AgentSessionConfigurationSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { ProviderBindingLaunchHandoffV1 } from '@/plugins/runtime/providerBindings/handoff';
 import type { HostSessionTerminalRemoteModeLoop } from './terminalRemoteModeRuntime';
 
@@ -9,6 +11,10 @@ export type HostSessionRuntimeFactoryResult<TNativeRuntime extends RuntimeTurnOp
   operations: RuntimeTurnOperations;
   nativeRuntime?: TNativeRuntime | null;
   terminalRemoteModeLoop?: HostSessionTerminalRemoteModeLoop | null;
+  /** Exact startup configuration admitted while the runtime was constructed. */
+  configuration?: AgentSessionConfigurationSnapshot | null;
+  /** Bounded Agent-owned identity resolved during Session open. */
+  runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
   /** Exact non-secret facts admitted while the runtime was constructed. */
   admittedProviderBindingHandoff?: ProviderBindingLaunchHandoffV1 | null;
 }>;
@@ -19,6 +25,8 @@ export function resolveHostSessionRuntimeFactoryResult<TNativeRuntime extends Ru
   runtime: RuntimeTurnOperations;
   nativeRuntime: TNativeRuntime | null;
   terminalRemoteModeLoop: HostSessionTerminalRemoteModeLoop | null;
+  configuration: AgentSessionConfigurationSnapshot | null;
+  runtimeDescriptorV1: RuntimeDescriptorV1 | null;
   admittedProviderBindingHandoff: ProviderBindingLaunchHandoffV1 | null;
 }> {
   if (!createdRuntime || typeof createdRuntime !== 'object' || !('operations' in createdRuntime)) {
@@ -31,6 +39,8 @@ export function resolveHostSessionRuntimeFactoryResult<TNativeRuntime extends Ru
     runtime: createdRuntime.operations,
     nativeRuntime: createdRuntime.nativeRuntime ?? null,
     terminalRemoteModeLoop: createdRuntime.terminalRemoteModeLoop ?? null,
+    configuration: createdRuntime.configuration ?? null,
+    runtimeDescriptorV1: createdRuntime.runtimeDescriptorV1 ?? null,
     admittedProviderBindingHandoff:
       createdRuntime.admittedProviderBindingHandoff ?? null,
   };

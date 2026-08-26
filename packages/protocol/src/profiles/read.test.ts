@@ -64,6 +64,36 @@ describe('readAiLaunchProfileCollection', () => {
     })]);
   });
 
+  it('projects the moving predecessor legacy coding-prompt override onto the canonical V2 override shape', () => {
+    // Exact persisted shape written by remote-dev's legacy ProfileEditForm.
+    const result = readAiLaunchProfileCollection([{
+      id: 'remote-dev-profile',
+      name: 'Remote Dev Profile',
+      environmentVariables: [],
+      envVarRequirements: [],
+      defaultPermissionModeByTargetKey: {},
+      defaultPermissionModeByAgent: {},
+      defaultPersistenceModeByTargetKey: {},
+      defaultPersistenceModeByAgent: {},
+      compatibilityByTargetKey: {},
+      compatibility: {},
+      isBuiltIn: false,
+      defaultEnabled: true,
+      createdAt: 1,
+      updatedAt: 1,
+      version: '1.0.0',
+      codingPromptBehaviorV1: { v: 1, responseOptions: 'disabled' },
+    }]);
+
+    const entry = result.entries[0];
+    expect(entry?.kind).toBe('legacy');
+    if (entry?.kind !== 'legacy') throw new Error('expected a legacy profile');
+    expect(entry.profile).toMatchObject({
+      codingPromptBehaviorOverrides: { responseOptions: 'disabled' },
+    });
+    expect(entry.profile.codingPromptBehaviorV1).toEqual({ v: 1, responseOptions: 'disabled' });
+  });
+
   it('preserves bindings for persisted, opaque, pending, and historical built-in profiles without treating completion as a UI pruning signal', () => {
     const collection = readAiLaunchProfileCollection([
       { id: 'persisted', name: 'Persisted', environmentVariables: [], createdAt: 1, updatedAt: 1 },

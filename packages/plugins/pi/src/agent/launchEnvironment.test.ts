@@ -6,7 +6,7 @@ describe('resolvePiSessionRuntimePreferences', () => {
   it('lets the Pi Agent setting override the shared ambient vendor key', () => {
     expect(resolvePiSessionRuntimePreferences({
       settings: { piAgentDir: '~/isolated/pi' },
-      processEnv: {
+      environment: {
         HOME: '/home/alice',
         PI_CODING_AGENT_DIR: '/ambient/shared',
       },

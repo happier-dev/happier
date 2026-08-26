@@ -3,7 +3,6 @@ import { basename, join } from 'node:path';
 
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import {
-    CLAUDE_SUBSCRIPTION_OAUTH_PROFILE,
     parseCredentialRecord,
     type OauthCredentialRecord,
     type TokenCredentialRecord,
@@ -14,8 +13,6 @@ import {
   diagnoseClaudeCodeNativeAuthMaterialization,
   materializeClaudeCodeNativeAuth,
 } from '../auth/services/native/materialize.js';
-import { detectClaudeCliAuthStatus } from '../auth/services/cliAuth.js';
-import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE } from '../auth/services/native/scopes.js';
 import { sanitizeRetainedClaudeMaterializedHome } from '../auth/services/native/retainedHomeHygiene.js';
 import { materializeClaudeApiKeyAuth } from '../auth/services/apiKey.js';
 import { createClaudeConnectedServiceRuntimeAuthAdapter } from '../auth/services/runtime/failure.js';
@@ -30,14 +27,7 @@ import {
   resolveClaudeCodeCredentialsFilePath,
 } from '../auth/services/native/credentials.js';
 import { claudeAuthStateSharingDescriptor } from '../auth/services/stateSharing.js';
-import {
-  claudeCliSessionCommandConfig,
-  resolveClaudeCliSessionOptions,
-} from '../cli/command.js';
-import { resolveClaudeSessionRuntimePreferences } from '../preferences/session.js';
 import { mapClaudeProviderFailureToUsageDetails } from '../runtime/issues/runtimeIssues.js';
-import { resolveClaudeCodingPromptBehaviorBlocks } from '../prompting/behavior.js';
-import { createClaudePromptSubmitVerificationPolicy } from '../runtime/terminal/unified/promptSubmitVerification.js';
 import { claudeSubscriptionQuotaFetcherDescriptor } from '../auth/services/quota/subscriptionFetcher.js';
 import {
   buildClaudeRuntimeLocalHandoffMetadata,
@@ -109,36 +99,6 @@ export function resolveClaudeVendorResumeIdFromImportedFile(detail: Readonly<{
     return candidate;
   }
   return null;
-}
-
-export function normalizeClaudeSessionControlPermissionMode(mode: string): string {
-  if (mode === 'yolo') return 'bypassPermissions';
-  if (mode === 'safe-yolo') return 'acceptEdits';
-  return mode;
-}
-
-export function ensureClaudeHeadlessTmuxRemoteStartingModeArgs(argv: string[]): string[] {
-  const modeFlagIndexes: number[] = [];
-  for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] === '--happy-starting-mode') {
-      modeFlagIndexes.push(index);
-    }
-  }
-
-  if (modeFlagIndexes.length === 0) {
-    return [...argv, '--happy-starting-mode', 'remote'];
-  }
-
-  for (const index of modeFlagIndexes) {
-    const value = argv[index + 1];
-    if (!value || value.startsWith('--')) {
-      throw new Error('Missing value for --happy-starting-mode (expected "remote" or "local" for terminal mode)');
-    }
-    if (value === 'remote') continue;
-    throw new Error('Headless tmux sessions require remote mode; terminal mode is not supported.');
-  }
-
-  return argv;
 }
 
 function readString(value: unknown): string | null {
@@ -398,53 +358,6 @@ export async function verifyClaudeResumeReachability(input: Readonly<{
 // entry's `runtimeActivityApplicability`.
 export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'claude',
-  cliAuth: {
-    detectAuthStatus: ({ env }: Readonly<{ env: NodeJS.ProcessEnv }>) =>
-      detectClaudeCliAuthStatus({ env }),
-  },
-  cloudConnect: {
-    displayName: 'Claude',
-    vendorDisplayName: 'Anthropic Claude',
-    vendorKey: AGENT_DEFINITION.core.cloudConnect.vendorKey,
-    status: AGENT_DEFINITION.core.cloudConnect.status,
-    oauthAuthorizationCode: {
-      clientId: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.clientId,
-      authorizeUrl: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.authorizeUrl,
-      tokenUrl: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.tokenUrl,
-      redirectUri: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.callbackUrl,
-      scope: CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
-    },
-  },
-  sessionControls: {
-    normalizePermissionMode: normalizeClaudeSessionControlPermissionMode,
-  },
-  sessionRuntimePreferences: {
-    resolve: resolveClaudeSessionRuntimePreferences,
-  },
-  sessionStartup: {
-    shouldUseDeferredBootstrap: (params: Readonly<{
-      startedBy: 'terminal' | 'daemon';
-      startingMode: 'terminal' | 'remote' | 'local' | null;
-      existingSessionId: string | null;
-      sessionAttachFilePath: string | null;
-      providerResumeId: string | null;
-      hasExplicitPermissionMode: boolean;
-      permissionModeSeedSource: 'explicit' | 'inferred' | 'account_default' | 'fallback' | 'released_cache_v1';
-      hasTerminalTty: boolean;
-    }>) => {
-      const terminalLocal = params.startingMode === null
-        || params.startingMode === 'terminal'
-        || params.startingMode === 'local';
-      const eligibleAttach = Boolean(
-        params.existingSessionId
-        && params.sessionAttachFilePath
-        && params.hasExplicitPermissionMode,
-      );
-      return params.startedBy === 'terminal'
-        && terminalLocal
-        && (!params.existingSessionId || eligibleAttach);
-    },
-  },
   sessionHandoff: {
     runtimeLocalMetadata: {
       build: (params: Readonly<{
@@ -468,26 +381,6 @@ export const CLAUDE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
         vendorResumeId: params.vendorResumeId,
       }),
     },
-  },
-  codingPromptBehavior: {
-    resolve: resolveClaudeCodingPromptBehaviorBlocks,
-  },
-  terminal: {
-    transformHeadlessTmuxArgv: ensureClaudeHeadlessTmuxRemoteStartingModeArgs,
-    promptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
-    retainsSessionHookArtifacts: true,
-  },
-  cliSessionCommand: {
-    ...claudeCliSessionCommandConfig,
-    buildSessionOptions: (input: Readonly<{
-      args: readonly string[];
-      parsed: Readonly<{
-        startingMode?: string;
-        directory?: string;
-        resume?: string;
-        providerArgs: readonly string[];
-      }>;
-    }>) => resolveClaudeCliSessionOptions(input),
   },
   connectedServices: {
     serviceIds: CLAUDE_SUPPORTED_AUTH_SERVICE_IDS,

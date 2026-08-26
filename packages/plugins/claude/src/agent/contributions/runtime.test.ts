@@ -10,41 +10,11 @@ import {
   materializeClaudeAuthEnvironment,
   verifyClaudeResumeReachability,
 } from './runtime.js';
+import { shouldUseClaudeDeferredBootstrap } from '../lifecycle/deferredStartup.js';
 import {
   CLAUDE_AGENT_RUNTIME_CONTRIBUTION as CATALOG_CLAUDE_AGENT_RUNTIME_CONTRIBUTION,
   materializeClaudeAuthEnvironment as materializeCatalogClaudeAuthEnvironment,
 } from './catalog.js';
-
-type CliSessionCommandContribution = Readonly<{
-  backendIdForSessionRuntime: string;
-  agentIdForAccountSettings?: string;
-  implicitResumeDelegation?: Readonly<{
-    resumeFlags: readonly string[];
-  }>;
-  directoryFlags?: readonly string[];
-  forwardModelFlag?: boolean;
-  yoloProviderArgs?: readonly string[];
-  versionFlags?: readonly string[];
-  buildSessionOptions?: (input: Readonly<{
-    args: readonly string[];
-    parsed: Readonly<{
-      startingMode?: string;
-      directory?: string;
-      resume?: string;
-      providerArgs: readonly string[];
-    }>;
-  }>) => unknown;
-}>;
-
-function readCliSessionCommand(): CliSessionCommandContribution {
-  const command = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
-    cliSessionCommand?: CliSessionCommandContribution;
-  }>).cliSessionCommand;
-  if (!command) {
-    throw new Error('Expected Claude to contribute CLI session command options');
-  }
-  return command;
-}
 
 function currentClaudeTranscriptStart(sessionId: string): string {
   return `${[
@@ -99,16 +69,10 @@ function legacyClaudeTranscriptStart(sessionId: string): string {
   })}\n`;
 }
 
-describe('Claude runtime contribution CLI command options', () => {
-  it('keeps the legacy runtime entrypoint aligned with the static catalog leaf', async () => {
+describe('Claude runtime contribution', () => {
+  it('keeps the legacy runtime entrypoint aligned with the static catalog leaf', () => {
     expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION).toBe(CATALOG_CLAUDE_AGENT_RUNTIME_CONTRIBUTION);
     expect(materializeClaudeAuthEnvironment).toBe(materializeCatalogClaudeAuthEnvironment);
-    await expect(Promise.resolve(CATALOG_CLAUDE_AGENT_RUNTIME_CONTRIBUTION
-      .sessionRuntimePreferences.resolve({
-        settings: { claudeUnifiedTerminalResumeChoice: 'resume_full_session' },
-        processEnv: {},
-        startedBy: 'terminal',
-      }))).resolves.toEqual({ claudeUnifiedTerminalResumeChoice: 'resume_full_session' });
   });
 
   it.each([
@@ -117,11 +81,11 @@ describe('Claude runtime contribution CLI command options', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: 'terminal' as const,
-        existingSessionId: null,
-        sessionAttachFilePath: null,
-        providerResumeId: null,
+        hasExistingSession: false,
+        hasSessionAttachFile: false,
+        hasProviderResumeId: false,
         hasExplicitPermissionMode: false,
-        permissionModeSeedSource: 'fallback' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: false,
       },
       expected: true,
@@ -131,11 +95,11 @@ describe('Claude runtime contribution CLI command options', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: 'terminal' as const,
-        existingSessionId: 'happy-session',
-        sessionAttachFilePath: '/tmp/session-attach.json',
-        providerResumeId: 'claude-session',
+        hasExistingSession: true,
+        hasSessionAttachFile: true,
+        hasProviderResumeId: true,
         hasExplicitPermissionMode: true,
-        permissionModeSeedSource: 'explicit' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: false,
       },
       expected: true,
@@ -145,11 +109,11 @@ describe('Claude runtime contribution CLI command options', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: 'terminal' as const,
-        existingSessionId: 'happy-session',
-        sessionAttachFilePath: '/tmp/session-attach.json',
-        providerResumeId: 'claude-session',
+        hasExistingSession: true,
+        hasSessionAttachFile: true,
+        hasProviderResumeId: true,
         hasExplicitPermissionMode: false,
-        permissionModeSeedSource: 'fallback' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: true,
       },
       expected: false,
@@ -159,11 +123,11 @@ describe('Claude runtime contribution CLI command options', () => {
       input: {
         startedBy: 'daemon' as const,
         startingMode: 'terminal' as const,
-        existingSessionId: null,
-        sessionAttachFilePath: null,
-        providerResumeId: null,
+        hasExistingSession: false,
+        hasSessionAttachFile: false,
+        hasProviderResumeId: false,
         hasExplicitPermissionMode: true,
-        permissionModeSeedSource: 'explicit' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: true,
       },
       expected: false,
@@ -173,23 +137,18 @@ describe('Claude runtime contribution CLI command options', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: 'remote' as const,
-        existingSessionId: null,
-        sessionAttachFilePath: null,
-        providerResumeId: null,
+        hasExistingSession: false,
+        hasSessionAttachFile: false,
+        hasProviderResumeId: false,
         hasExplicitPermissionMode: true,
-        permissionModeSeedSource: 'explicit' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: true,
       },
       expected: false,
     },
-  ])('owns deferred startup eligibility for $name', ({ input, expected }) => {
-    const policy = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
-      sessionStartup?: Readonly<{
-        shouldUseDeferredBootstrap?: (params: typeof input) => boolean;
-      }>;
-    }>).sessionStartup;
-
-    expect(policy?.shouldUseDeferredBootstrap?.(input)).toBe(expected);
+  ])('keeps deferred startup eligibility at the public manifest leaf for $name', ({ input, expected }) => {
+    expect(shouldUseClaudeDeferredBootstrap(input)).toBe(expected);
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('sessionStartup');
   });
 
   it('keeps only handoff metadata in the catalog contribution and has no predecessor goal adapter', () => {
@@ -209,69 +168,12 @@ describe('Claude runtime contribution CLI command options', () => {
     expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('runtimeActivityApplicability');
   });
 
-  it('uses the canonical current Claude OAuth endpoints', () => {
-    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION.cloudConnect?.oauthAuthorizationCode).toMatchObject({
-      authorizeUrl: 'https://claude.com/cai/oauth/authorize',
-      tokenUrl: 'https://platform.claude.com/v1/oauth/token',
-    });
+  it('does not retain the terminal overlay after prompt recognition moved to the manifest', () => {
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('terminal');
   });
 
-  it('contributes Claude-owned terminal prompt submit verification policy', () => {
-    const terminal = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
-      terminal?: Readonly<{
-        promptSubmitVerification?: Readonly<{
-          shouldVerifyAfterSubmit(promptText: string): boolean;
-          verifyAfterSubmit(params: Readonly<{ promptText: string; screenText: string }>): boolean;
-        }>;
-      }>;
-    }>).terminal;
-    const prompt = Array.from({ length: 41 }, (_, index) => `line ${index}`).join('\n');
-
-    expect(terminal?.promptSubmitVerification?.shouldVerifyAfterSubmit(prompt)).toBe(true);
-    expect(terminal?.promptSubmitVerification?.verifyAfterSubmit({
-      promptText: prompt,
-      screenText: '❯ [Pasted text #1 +40 lines]',
-    })).toBe(true);
-  });
-
-  it('projects the unified resume-choice setting into session runtime preferences', async () => {
-    const sessionRuntimePreferences = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
-      sessionRuntimePreferences?: Readonly<{
-        resolve?: (params: Readonly<{
-          settings: Readonly<Record<string, unknown>>;
-          processEnv: NodeJS.ProcessEnv;
-          startedBy?: 'terminal' | 'daemon';
-        }>) => Readonly<Record<string, unknown>> | Promise<Readonly<Record<string, unknown>>>;
-      }>;
-    }>).sessionRuntimePreferences;
-
-    await expect(Promise.resolve(sessionRuntimePreferences?.resolve?.({
-      settings: { claudeUnifiedTerminalResumeChoice: 'resume_full_session' },
-      processEnv: {},
-      startedBy: 'terminal',
-    }))).resolves.toEqual({
-      claudeUnifiedTerminalResumeChoice: 'resume_full_session',
-    });
-  });
-
-  it('defaults malformed unified resume-choice runtime preferences to ask every time', async () => {
-    const sessionRuntimePreferences = (CLAUDE_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
-      sessionRuntimePreferences?: Readonly<{
-        resolve?: (params: Readonly<{
-          settings: Readonly<Record<string, unknown>>;
-          processEnv: NodeJS.ProcessEnv;
-          startedBy?: 'terminal' | 'daemon';
-        }>) => Readonly<Record<string, unknown>> | Promise<Readonly<Record<string, unknown>>>;
-      }>;
-    }>).sessionRuntimePreferences;
-
-    await expect(Promise.resolve(sessionRuntimePreferences?.resolve?.({
-      settings: { claudeUnifiedTerminalResumeChoice: 'skip_dialog' },
-      processEnv: {},
-      startedBy: 'terminal',
-    }))).resolves.toEqual({
-      claudeUnifiedTerminalResumeChoice: 'ask_every_time',
-    });
+  it('does not retain session preferences in the private runtime contribution', () => {
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('sessionRuntimePreferences');
   });
 
   it('contributes the provider-owned connected-services runtime auth adapter', () => {
@@ -351,21 +253,8 @@ describe('Claude runtime contribution CLI command options', () => {
     });
   });
 
-  it('declares provider-owned session command parsing through the runtime contribution', () => {
-    const command = readCliSessionCommand();
-
-    expect(command).toMatchObject({
-      backendIdForSessionRuntime: 'claude',
-      agentIdForAccountSettings: 'claude',
-      implicitResumeDelegation: {
-        resumeFlags: ['--resume', '-r'],
-      },
-      directoryFlags: ['-C', '--cd'],
-      forwardModelFlag: true,
-      yoloProviderArgs: ['--dangerously-skip-permissions'],
-      versionFlags: ['-v', '--version'],
-    });
-    expect(command.buildSessionOptions).toBeTypeOf('function');
+  it('does not duplicate static CLI command parsing in the runtime catalog contribution', () => {
+    expect(CLAUDE_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('cliSessionCommand');
   });
 
   it('prepares qualified-purpose state without writing legacy credential bytes', async () => {
@@ -488,62 +377,6 @@ describe('Claude runtime contribution CLI command options', () => {
     }
   });
 
-  it('maps Claude CLI-only args into session runtime options without host command code', () => {
-    const command = readCliSessionCommand();
-
-    expect(command.buildSessionOptions?.({
-      args: ['claude', '--js-runtime', 'bun', '--resume', 'vendor-session-1'],
-      parsed: {
-        startingMode: 'terminal',
-        directory: '/workspace',
-        resume: 'vendor-session-1',
-        providerArgs: ['--model', 'claude-opus-4-6', '--js-runtime', 'bun'],
-      },
-    })).toEqual({
-      ok: true,
-      options: {
-        startingMode: 'terminal',
-        directory: '/workspace',
-        jsRuntime: 'bun',
-        resume: undefined,
-        claudeArgs: ['--model', 'claude-opus-4-6', '--resume', 'vendor-session-1'],
-      },
-    });
-  });
-
-  it('canonicalizes native Claude permission args before deferred attach eligibility is decided', () => {
-    const command = readCliSessionCommand();
-
-    expect(command.buildSessionOptions?.({
-      args: ['claude'],
-      parsed: {
-        providerArgs: ['--permission-mode', 'acceptEdits'],
-      },
-    })).toEqual({
-      ok: true,
-      options: {
-        permissionMode: 'safe-yolo',
-        claudeArgs: ['--permission-mode', 'acceptEdits'],
-      },
-    });
-  });
-
-  it('keeps implicit default resume as a Happier session id instead of forwarding it to Claude', () => {
-    const command = readCliSessionCommand();
-
-    expect(command.buildSessionOptions?.({
-      args: ['--resume', 'session_happy_123'],
-      parsed: {
-        resume: 'session_happy_123',
-        providerArgs: ['--model', 'claude-opus-4-6'],
-      },
-    })).toEqual({
-      ok: true,
-      options: {
-        claudeArgs: ['--model', 'claude-opus-4-6'],
-      },
-    });
-  });
 });
 
 describe('verifyClaudeResumeReachability', () => {

@@ -851,7 +851,10 @@ describe('plugin UI projection family', () => {
                 contributionKind: 'surfacePlacement',
                 descriptorId: 'overview',
                 binding: expect.objectContaining({
+                    kind: 'inline',
                     container: 'sessionInfoSection',
+                    role: 'sessionInfoSection',
+                    surface: { pluginId: 'acme.preview', localId: 'overview' },
                     target: { kind: 'session' },
                     targetKind: 'session',
                 }),

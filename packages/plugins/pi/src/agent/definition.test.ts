@@ -4,7 +4,6 @@ import { AGENT_DEFINITION } from './definition.js';
 import { PI_DIRECT_AUTH_ENV_KEYS } from './launchEnvironment.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { PI_AGENT_RUNTIME_CONTRIBUTION as CATALOG_CONTRIBUTION } from './contributions/catalog.js';
-import { PI_AGENT_RUNTIME_CONTRIBUTION as LEGACY_RUNTIME_CONTRIBUTION } from './contributions/runtime.js';
 
 describe('Pi AGENT_DEFINITION', () => {
   it('declares native-extension Happier tool delivery', () => {
@@ -18,7 +17,7 @@ describe('Pi AGENT_DEFINITION', () => {
   });
 
   it('probes every direct Pi provider credential admitted by the launch environment', () => {
-    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli?.auth.probe.envVars).toEqual(PI_DIRECT_AUTH_ENV_KEYS);
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli?.auth.environmentVariables).toEqual(PI_DIRECT_AUTH_ENV_KEYS);
     expect(AGENT_DEFINITION).not.toHaveProperty('authProbeConfig');
   });
 
@@ -29,11 +28,7 @@ describe('Pi AGENT_DEFINITION', () => {
     });
   });
 
-  it('preserves runtime contribution behavior through the catalog leaf', () => {
-    expect(CATALOG_CONTRIBUTION).toBe(LEGACY_RUNTIME_CONTRIBUTION);
-    expect(CATALOG_CONTRIBUTION.sessionRuntimePreferences.resolve({
-      settings: {},
-      processEnv: {},
-    })).toEqual({});
+  it('does not retain Session preferences in the catalog contribution', () => {
+    expect(CATALOG_CONTRIBUTION).not.toHaveProperty('sessionRuntimePreferences');
   });
 });

@@ -1,4 +1,7 @@
-import type { BackendSurfaceAvailabilityV1 } from '@happier-dev/protocol';
+import type {
+  BackendSurfaceAvailabilityV1,
+  RuntimeDescriptorV1,
+} from '@happier-dev/protocol';
 
 import type {
   BackendSessionLaunchHintsV1,
@@ -15,18 +18,8 @@ export type ForkAvailabilityOperationV1 =
   | 'resolveReplayChildLaunch';
 
 export type ForkSessionMetadataV1 = Readonly<Partial<{
-  providerSessionId: string;
-  codexSessionId: string;
-  codexBackendMode: string;
-  codexHome: 'user' | 'connectedService';
-  codexConnectedServiceId: string;
-  codexConnectedServiceProfileId: string;
-  codexConnectedServiceGroupId: string;
-  codexHomePath: string;
-  opencodeSessionId: string;
-  opencodeBackendMode: string;
-  opencodeServerBaseUrl: string;
-  opencodeServerBaseUrlExplicit: boolean;
+  /** Bounded Session runtime identity, interpreted only by the target Agent. */
+  runtimeDescriptorV1: RuntimeDescriptorV1;
 }>>;
 
 export type ForkAvailabilityRequestV1 = Readonly<{

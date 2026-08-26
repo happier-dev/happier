@@ -7,20 +7,74 @@ import type {
 import { buildHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/runtime/buildHappierToolsShellBridgeCommand';
 import {
   createAcpBackendFromDefinition,
+  createAcpRuntimeDefinition,
   createAcpTransportHandlerFromDefinition,
   createAcpRuntimeCoreFromDefinition,
   normalizeBuiltInAcpDefinition,
   normalizeConfiguredAcpDefinition,
-  normalizePluginAcpDefinition,
   normalizePluginBackendContributionAcpDefinition,
+  normalizePluginDeclarativeAcpRuntime,
 } from '../index';
+import type { AcpRuntimeDefinitionInit } from '../index';
 import type { ResolvedConfiguredAcpBackend } from '../../../catalog/configured/resolveBackend';
 import type { AcpPermissionHandler } from '../../../permissions/acpPermissionHandler';
 import type { HostAcpBackendSpec } from '../_types';
 
+function optionalString(value: string | undefined): string | undefined {
+  return value && value.trim().length > 0 ? value : undefined;
+}
+
+/**
+ * Keeps generic host ACP behavior under test without treating a public plugin
+ * declaration as a rich host-owned runtime bag.
+ */
+function createHostAcpDefinitionForTest(params: Readonly<{
+  pluginId?: string;
+  spec: HostAcpBackendSpec;
+}>) {
+  const name = optionalString(params.spec.ux?.name);
+  const title = optionalString(params.spec.ux?.title) ?? name ?? params.spec.backendId;
+  const description = optionalString(params.spec.ux?.description);
+  const defaultMode = optionalString(params.spec.ux?.defaultMode);
+  const defaultModel = optionalString(params.spec.ux?.defaultModel);
+  const init: AcpRuntimeDefinitionInit = {
+    backendId: params.spec.backendId,
+    source: {
+      kind: 'plugin_contributed',
+      ...(params.pluginId ? { pluginId: params.pluginId } : {}),
+    },
+    identity: {
+      backendId: params.spec.backendId,
+    },
+    ux: {
+      ...(name ? { name } : {}),
+      title,
+      ...(description ? { description } : {}),
+      ...(defaultMode ? { defaultMode } : {}),
+      ...(defaultModel ? { defaultModel } : {}),
+    },
+    transport: params.spec.transport,
+    launchEnv: params.spec.launchEnv ?? {},
+    capabilities: params.spec.capabilities ?? {},
+    ...(params.spec.transport.timeouts ? { timeouts: params.spec.transport.timeouts } : {}),
+    ...(params.spec.auth ? { auth: params.spec.auth } : {}),
+    ...(typeof params.spec.fsEnabled === 'boolean' ? { fsEnabled: params.spec.fsEnabled } : {}),
+    ...(params.spec.transportLifecycle ? { transportLifecycle: params.spec.transportLifecycle } : {}),
+    ...(params.spec.permissionModeArgv ? { permissionModeArgv: params.spec.permissionModeArgv } : {}),
+    ...(params.spec.sessionIdHeaderName ? { sessionIdHeaderName: params.spec.sessionIdHeaderName } : {}),
+    ...(params.spec.toolNameInference ? { toolNameInference: params.spec.toolNameInference } : {}),
+    ...(params.spec.stderrRules ? { stderrRules: params.spec.stderrRules } : {}),
+    ...(params.spec.permissionOptionSelection ? { permissionOptionSelection: params.spec.permissionOptionSelection } : {}),
+    ...(params.spec.messageMeta ? { messageMeta: params.spec.messageMeta } : {}),
+    mcp: params.spec.mcp ?? { policy: 'pass_through' },
+    callbacks: params.spec.callbacks ?? {},
+  };
+  return createAcpRuntimeDefinition(init);
+}
+
 describe('ACP runtime definitions', () => {
   it('threads canonical unset keys into the final ACP backend spawn owner', async () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.env',
@@ -160,7 +214,7 @@ describe('ACP runtime definitions', () => {
   });
 
   it('adapts ACP message meta hooks to the provider message meta contract', () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.acp',
@@ -189,7 +243,7 @@ describe('ACP runtime definitions', () => {
   });
 
   it('uses the backend id as plugin ACP title when ux metadata is omitted', () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.minimal',
@@ -209,7 +263,7 @@ describe('ACP runtime definitions', () => {
   });
 
   it('uses ux.name as plugin ACP title fallback when title is omitted', () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.named',
@@ -233,7 +287,7 @@ describe('ACP runtime definitions', () => {
   });
 
   it('fails closed when ACP outgoing message meta hooks return a promise', () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.async-meta',
@@ -261,7 +315,7 @@ describe('ACP runtime definitions', () => {
   });
 
   it('normalizes plugin ACP specs and preserves plugin-owned MCP policy', () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.acp',
@@ -317,12 +371,68 @@ describe('ACP runtime definitions', () => {
     expect('runtimeKind' in definition).toBe(false);
   });
 
-  it('normalizes final plugin manifest ACP contributions through the full runtime definition path', () => {
+  it('normalizes strict declarative ACP runtime data for the composer and configured-plugin consumer', () => {
+    const runtime = normalizePluginDeclarativeAcpRuntime({
+      kind: 'acp',
+      transport: {
+        kind: 'tcp',
+        host: '127.0.0.1',
+        port: 4242,
+      },
+      definition: {
+        modelConfigOptionId: 'model',
+        stderrRules: {
+          suppress: [{
+            includes: ['known harmless ACP notification'],
+          }],
+        },
+        mcp: {
+          policy: 'pass_through',
+        },
+      },
+    });
+
+    expect(runtime).toEqual({
+      transport: {
+        kind: 'tcp',
+        host: '127.0.0.1',
+        port: 4242,
+      },
+      definition: {
+        modelConfigOptionId: 'model',
+        stderrRules: {
+          suppress: [{
+            includes: ['known harmless ACP notification'],
+          }],
+        },
+        mcp: {
+          policy: 'pass_through',
+        },
+      },
+    });
+    expect(normalizePluginDeclarativeAcpRuntime({
+      kind: 'acp',
+      transport: {
+        kind: 'tcp',
+        host: '127.0.0.1',
+        port: 4242,
+      },
+      definition: {
+        modelConfigOptionId: 'model',
+      },
+    }).definition).toEqual({
+      modelConfigOptionId: 'model',
+      mcp: {
+        policy: 'drop',
+      },
+    });
+
     const definition = normalizePluginBackendContributionAcpDefinition({
       pluginId: 'acme.plugin',
       backend: {
-        id: 'acme.plugin.full',
-        agentId: 'acme.plugin.provider',
+        id: 'acme-full',
+        title: 'Acme Full Agent',
+        description: 'A strict declarative ACP Agent.',
         runtime: {
           kind: 'acp',
           transport: {
@@ -336,84 +446,63 @@ describe('ACP runtime definitions', () => {
               initializeMs: 5000,
             },
           },
-          launchEnv: {
-            ENGINE_TOKEN: 'engine-token',
-          },
-          ux: {
-            name: 'acme-full',
-            title: 'Acme Full Agent',
-            defaultMode: 'review',
-          },
-          capabilities: {
-            supportsResume: true,
-            supportsStreaming: true,
-            supportsToolUse: true,
-            supportsPermissionRequests: true,
-            supportsInFlightSteer: true,
-            supportsModelSwitch: true,
-            customMessageKinds: ['acme.delta'],
-            promptImageSupport: 'yes',
-          },
-          auth: {
-            config: {
-              support: 'manual_only',
-              docsUrl: 'https://example.com/acp-auth',
+          definition: {
+            stderrRules: {
+              suppress: [{
+                includes: ['noise'],
+              }],
             },
-        },
-          fsEnabled: false,
-          mcp: {
-            policy: 'drop',
+            mcp: {
+              policy: 'drop',
+            },
           },
-          callbacks: {
-            permissionDecision: () => ({ kind: 'defer' }),
+        },
+        primary: 'sessions',
+        capabilities: {
+          sessions: {
+            open: ['create', 'resume'],
+            delivery: ['newTurn'],
+            cancel: true,
           },
         },
       },
     });
 
     expect(definition).toMatchObject({
-      backendId: 'acme.plugin.full',
+      backendId: 'acme-full',
       source: {
         kind: 'plugin_contributed',
         pluginId: 'acme.plugin',
       },
-      launchEnv: {
-        ENGINE_TOKEN: 'engine-token',
+      ux: {
+        title: 'Acme Full Agent',
+        description: 'A strict declarative ACP Agent.',
       },
-      auth: {
-        config: {
-          support: 'manual_only',
-        },
-      },
-      fsEnabled: false,
+      launchEnv: {},
       mcp: {
         policy: 'drop',
+      },
+      stderrRules: {
+        suppress: [{
+          includes: ['noise'],
+        }],
       },
       transport: {
         kind: 'stdio',
         launch: {
           kind: 'system-tool',
           toolId: 'acme-agent',
-          purpose: 'Launch ACP backend acme.plugin.full',
+          purpose: 'Launch ACP backend acme-full',
           args: ['acp'],
           env: { TRANSPORT_TOKEN: 'transport-token' },
         },
-        timeouts: { initMs: 5000 },
+        timeouts: {
+          initMs: 5000,
+        },
       },
     });
-    expect(definition.capabilities).toMatchObject({
-      supportsStreaming: true,
-      customMessageKinds: ['acme.delta'],
-      promptImageSupport: 'yes',
-    });
-    expect(definition.callbacks.permissionDecision?.({
-      toolCallId: 'tool-1',
-      toolName: 'read',
-      input: {},
-    })).toEqual({ kind: 'defer' });
-    expect(definition.timeouts).toEqual({
-      initMs: 5000,
-    });
+    expect(definition.capabilities.supportsResume).toBe(true);
+    expect(definition.callbacks).toEqual({});
   });
 
   it('resolves same-plugin system-tool references and rejects cross-plugin ACP executable references', () => {
@@ -428,6 +517,14 @@ describe('ACP runtime definitions', () => {
             kind: 'systemTool',
             id: { pluginId: 'acme.plugin', localId: 'acme-cli' },
           },
+        },
+      },
+      primary: 'sessions',
+      capabilities: {
+        sessions: {
+          open: ['create'],
+          delivery: ['newTurn'],
+          cancel: true,
         },
       },
     };
@@ -472,7 +569,7 @@ describe('ACP runtime definitions', () => {
         },
       },
     };
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.system-tool',
@@ -518,7 +615,7 @@ describe('ACP runtime definitions', () => {
   });
 
   it('passes plugin ACP auth method ids into the created ACP backend', async () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.auth',
@@ -549,7 +646,7 @@ describe('ACP runtime definitions', () => {
     const createTransport = (runtimeCore as Record<string, unknown>).createAcpTransportHandlerFromDefinition;
     expect(createTransport).toEqual(expect.any(Function));
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.tools',
@@ -610,7 +707,7 @@ describe('ACP runtime definitions', () => {
     const createTransport = (runtimeCore as Record<string, unknown>).createAcpTransportHandlerFromDefinition;
     expect(createTransport).toEqual(expect.any(Function));
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.timeouts',
@@ -666,7 +763,7 @@ describe('ACP runtime definitions', () => {
     const createTransport = (runtimeCore as Record<string, unknown>).createAcpTransportHandlerFromDefinition;
     expect(createTransport).toEqual(expect.any(Function));
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.transport-rules',
@@ -803,7 +900,7 @@ describe('ACP runtime definitions', () => {
     const resolveLaunch = (runtimeCore as Record<string, unknown>).resolveAcpRuntimeLaunch;
     expect(resolveLaunch).toEqual(expect.any(Function));
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.permissions',
@@ -847,7 +944,7 @@ describe('ACP runtime definitions', () => {
     const assertSupported = (runtimeCore as Record<string, unknown>).assertAcpRuntimeDefinitionSupported;
     expect(assertSupported).toEqual(expect.any(Function));
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.tier2',
@@ -879,7 +976,7 @@ describe('ACP runtime definitions', () => {
     expect(resolveLaunch).toEqual(expect.any(Function));
     const observed: unknown[] = [];
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.argv',
@@ -954,7 +1051,7 @@ describe('ACP runtime definitions', () => {
     expect(resolveLaunch).toEqual(expect.any(Function));
     const observed: unknown[] = [];
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.env-argv',
@@ -1018,7 +1115,7 @@ describe('ACP runtime definitions', () => {
     const resolveLaunch = (runtimeCore as Record<string, unknown>).resolveAcpRuntimeLaunch;
     expect(resolveLaunch).toEqual(expect.any(Function));
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.empty-argv',
@@ -1054,7 +1151,7 @@ describe('ACP runtime definitions', () => {
     const resolveLaunch = (runtimeCore as Record<string, unknown>).resolveAcpRuntimeLaunch;
     expect(resolveLaunch).toEqual(expect.any(Function));
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.throw-argv',
@@ -1092,7 +1189,7 @@ describe('ACP runtime definitions', () => {
     const resolveLaunch = (runtimeCore as Record<string, unknown>).resolveAcpRuntimeLaunch;
     expect(resolveLaunch).toEqual(expect.any(Function));
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.async-argv',
@@ -1127,7 +1224,7 @@ describe('ACP runtime definitions', () => {
     expect(resolveLaunch).toEqual(expect.any(Function));
     const observedEnv: Array<Readonly<Record<string, string>>> = [];
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.env',
@@ -1184,7 +1281,7 @@ describe('ACP runtime definitions', () => {
     const resolveLaunch = (runtimeCore as Record<string, unknown>).resolveAcpRuntimeLaunch;
     expect(resolveLaunch).toEqual(expect.any(Function));
 
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.permission-env',
@@ -1219,7 +1316,7 @@ describe('ACP runtime definitions', () => {
   });
 
   it('lets plugin ACP definitions prefer session-scoped approval options without provider branches', () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.permissions',
@@ -1249,7 +1346,7 @@ describe('ACP runtime definitions', () => {
   });
 
   it('runs preflight immediately before backend creation and blocks startup on failure', async () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.preflight',
@@ -1305,8 +1402,8 @@ describe('ACP runtime definitions', () => {
         return { kind: 'defer' };
       }
       return { kind: 'invalid' };
-    }) as unknown as NonNullable<ReturnType<typeof normalizePluginAcpDefinition>['callbacks']['permissionDecision']>;
-    const definition = normalizePluginAcpDefinition({
+    }) as unknown as NonNullable<ReturnType<typeof createHostAcpDefinitionForTest>['callbacks']['permissionDecision']>;
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.permissions',
@@ -1402,8 +1499,8 @@ describe('ACP runtime definitions', () => {
   it('fails closed when permissionDecision returns invalid output without a fallback permission handler', async () => {
     const permissionDecision = (
       (() => ({ kind: 'invalid' }))
-    ) as unknown as NonNullable<ReturnType<typeof normalizePluginAcpDefinition>['callbacks']['permissionDecision']>;
-    const definition = normalizePluginAcpDefinition({
+    ) as unknown as NonNullable<ReturnType<typeof createHostAcpDefinitionForTest>['callbacks']['permissionDecision']>;
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.invalid-permission-no-fallback',
@@ -1438,7 +1535,7 @@ describe('ACP runtime definitions', () => {
   });
 
   it('fails closed when permissionDecision throws without a fallback permission handler', async () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin.throw-permission-no-fallback',
@@ -1475,7 +1572,7 @@ describe('ACP runtime definitions', () => {
   });
 
   it('publishes configured ACP session metadata from runtime plans launched as configured targets', async () => {
-    const definition = normalizePluginAcpDefinition({
+    const definition = createHostAcpDefinitionForTest({
       pluginId: 'acme.plugin',
       spec: {
         backendId: 'acme.plugin-backed-acp.backend',

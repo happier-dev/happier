@@ -103,13 +103,13 @@ function readAntigravityRuntimeModeSelection(event: unknown): Readonly<{
 }> {
   const payload = readHookPayload(event);
   const runtimeSelection = readRuntimeSelectionRecord(event);
-  const providerRuntimeSelection = readRecord(runtimeSelection.providerRuntimeSelection);
+  const agentRuntimeSelection = readRecord(runtimeSelection.agentRuntimeSelection);
   const env = readStringRecord(runtimeSelection.env)
     ?? readStringRecord(payload?.env)
     ?? {};
   const accountSettings = readRecord(runtimeSelection.accountSettings) ?? readRecord(payload?.accountSettings);
   const request = resolveAntigravityRuntimeModeRequest({
-    persistedRuntimeMode: providerRuntimeSelection?.antigravityRuntimeMode,
+    persistedRuntimeMode: agentRuntimeSelection?.antigravityRuntimeMode,
     accountSettings,
     env,
   });

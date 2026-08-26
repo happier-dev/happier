@@ -12,11 +12,8 @@ describe('Kilo agent catalog contribution', () => {
     expect(catalogSource).not.toContain("from './runtime");
   });
 
-  it('preserves the legacy runtime contribution identity and preflight policy', () => {
+  it('preserves the legacy runtime contribution identity after public preflight migration', () => {
     expect(catalogContribution).toBe(legacyRuntimeContribution);
-    expect(catalogContribution.preflightSessionControls).toEqual({
-      failureCacheStrategy: 'cooldown',
-      cliModelsCommandArgs: ['models'],
-    });
+    expect(catalogContribution).toEqual({ agentId: 'kilo' });
   });
 });

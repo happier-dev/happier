@@ -49,21 +49,24 @@
             "delivery": "native_extension"
           }
         },
+        "catalog": {
+          "agentCliSystemTool": {
+            "toolId": "pi-cli"
+          },
+          "vendorResume": {
+            "support": "supported"
+          }
+        },
         "cli": {
           "auth": {
+            "environmentVariables": [
+              "OPENAI_API_KEY",
+              "ANTHROPIC_API_KEY",
+              "GEMINI_API_KEY",
+              "OPENROUTER_API_KEY",
+              "KIMI_API_KEY"
+            ],
             "loginLaunches": [],
-            "probe": {
-              "backgroundChecks": "safe",
-              "envVars": [
-                "OPENAI_API_KEY",
-                "ANTHROPIC_API_KEY",
-                "GEMINI_API_KEY",
-                "OPENROUTER_API_KEY",
-                "KIMI_API_KEY"
-              ],
-              "parser": "piEnvOnly",
-              "statusArgs": null
-            },
             "support": "status_only"
           },
           "displayName": "Pi Coding Agent CLI",

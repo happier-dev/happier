@@ -329,7 +329,7 @@ describe('targeted contribution cold admission', () => {
         }, { policy: 'additive-open/drop' });
         const detail = defineProtocolObject({
             providerId: defineProtocolString({ minLength: 1 }),
-        }, { policy: 'closed' });
+        }, { policy: 'additive-open/drop' });
         const activate = vi.fn();
         const target = definePlugin({
             id: targetPluginId,
@@ -385,6 +385,10 @@ describe('targeted contribution cold admission', () => {
         const admitted = catalog.readAdmittedTargetedContributions?.({ targetPluginId, pointId, protocol });
         expect(admitted?.contributions[0]?.descriptor).toEqual({ providerId: 'github' });
         expect(admitted?.contributions[0]?.surfaces.map((surface) => surface.role)).toEqual(['detail']);
+        expect(admitted?.contributions[0]?.surfaces[0]?.targetProtocol.inputSchema.safeParse({
+            providerId: 'github',
+            futureSurfaceField: 'ignored',
+        })).toEqual({ success: true, data: { providerId: 'github' } });
         expect(activate).not.toHaveBeenCalled();
     });
 

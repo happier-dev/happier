@@ -14,11 +14,6 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
-    "./ui/behavior": {
-      "types": "./dist/ui/uiBehavior.d.ts",
-      "react-native": "./dist/ui/uiBehavior.js",
-      "default": "./dist/ui/uiBehavior.js"
-    },
     "./ui/voice": {
       "types": "./dist/ui/voice/index.d.ts",
       "react-native": "./dist/ui/voice/index.native.js",
@@ -159,10 +154,6 @@
     "./agent/cli/auth/spec": {
       "types": "./dist/agent/cli/auth/spec.d.ts",
       "default": "./dist/agent/cli/auth/spec.js"
-    },
-    "./agent/cli/checklists": {
-      "types": "./dist/agent/cli/checklists.d.ts",
-      "default": "./dist/agent/cli/checklists.js"
     },
     "./agent/cli/detect": {
       "types": "./dist/agent/cli/detect.d.ts",
@@ -344,10 +335,6 @@
       "types": "./dist/agent/auth/services/runtime/auth/accountId.d.ts",
       "default": "./dist/agent/auth/services/runtime/auth/accountId.js"
     },
-    "./agent/auth/services/openai/cloud/authenticator": {
-      "types": "./dist/agent/auth/services/openai/cloud/authenticator.d.ts",
-      "default": "./dist/agent/auth/services/openai/cloud/authenticator.js"
-    },
     "./agent/auth/services/openai/cloud/device": {
       "types": "./dist/agent/auth/services/openai/cloud/device.d.ts",
       "default": "./dist/agent/auth/services/openai/cloud/device.js"
@@ -371,10 +358,6 @@
     "./agent/auth/services/openai/cloud/types": {
       "types": "./dist/agent/auth/services/openai/cloud/types.d.ts",
       "default": "./dist/agent/auth/services/openai/cloud/types.js"
-    },
-    "./agent/auth/services/openai/cloud/connect": {
-      "types": "./dist/agent/auth/services/openai/cloud/connect.d.ts",
-      "default": "./dist/agent/auth/services/openai/cloud/connect.js"
     },
     "./agent/auth/services/home/sync/sessionFiles": {
       "types": "./dist/agent/auth/services/home/sync/sessionFiles.d.ts",

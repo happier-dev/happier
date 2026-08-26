@@ -6,7 +6,6 @@ import {
 } from '../sessionModes.js';
 import { CANONICAL_AGENT_MODEL_CONFIG } from '../models.js';
 import { CANONICAL_AGENT_LOCAL_CLI_CONFIG } from '../localCli.js';
-import { CANONICAL_AGENT_AUTH_PROBE_CONFIG } from '../auth.js';
 import { BUILT_IN_ACP_CONFIG } from '../acp.js';
 import {
   getAgentCliSetupRecommendedIds,
@@ -78,7 +77,6 @@ export type AgentArtifacts = Readonly<{
   sessionModes: typeof CANONICAL_AGENT_SESSION_MODES;
   modelConfig: typeof CANONICAL_AGENT_MODEL_CONFIG;
   localCliConfig: typeof CANONICAL_AGENT_LOCAL_CLI_CONFIG;
-  authProbeConfig: typeof CANONICAL_AGENT_AUTH_PROBE_CONFIG;
   builtInAcpConfig: typeof BUILT_IN_ACP_CONFIG;
 }>;
 
@@ -97,7 +95,6 @@ export function buildAgentArtifacts(): AgentArtifacts {
     sessionModes: CANONICAL_AGENT_SESSION_MODES,
     modelConfig: CANONICAL_AGENT_MODEL_CONFIG,
     localCliConfig: CANONICAL_AGENT_LOCAL_CLI_CONFIG,
-    authProbeConfig: CANONICAL_AGENT_AUTH_PROBE_CONFIG,
     builtInAcpConfig: BUILT_IN_ACP_CONFIG,
   };
 }

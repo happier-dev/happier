@@ -81,7 +81,10 @@ describe('Ollama public managed Provider runtime', () => {
           inject: { baseUrlEnvironmentKey: 'OLLAMA_HOST' },
         },
       },
-      healthCheck: { kind: 'none' },
+      healthCheck: {
+        kind: 'http',
+        target: { kind: 'servicePath', path: '/api/tags' },
+      },
     }, { signal });
     expect(result).toEqual({
       service,

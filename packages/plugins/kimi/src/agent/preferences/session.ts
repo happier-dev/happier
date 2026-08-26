@@ -31,9 +31,9 @@ function readExplicitKimiAcpPythonSelectorFromEnv(
 
 export function resolveKimiSessionRuntimePreferences(params: Readonly<{
   settings: Readonly<Record<string, unknown>>;
-  processEnv: Readonly<Record<string, string | undefined>>;
+  environment: Readonly<Record<string, string | undefined>>;
 }>): KimiSessionRuntimePreferences {
-  const explicitKimiAcpPythonSelector = readExplicitKimiAcpPythonSelectorFromEnv(params.processEnv);
+  const explicitKimiAcpPythonSelector = readExplicitKimiAcpPythonSelectorFromEnv(params.environment);
   if (explicitKimiAcpPythonSelector) {
     return buildKimiAcpSelectorEnvironment(explicitKimiAcpPythonSelector);
   }

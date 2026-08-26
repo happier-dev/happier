@@ -31,7 +31,11 @@ export function withCursorEmptyResponseFailure(runtime: AgentSessionRuntime): Ag
         if (event.kind === 'turn-start') {
           turnStartObserved = true;
           messageDeltaObserved = false;
-        } else if (turnStartObserved && event.kind === 'message-delta') {
+        } else if (
+          turnStartObserved
+          && event.kind === 'message-delta'
+          && event.channel === 'assistant'
+        ) {
           messageDeltaObserved = true;
         }
 

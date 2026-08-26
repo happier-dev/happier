@@ -79,6 +79,7 @@ function buildConfiguredDefinitionInit(params: Readonly<{
     ...(params.backend.transportLifecycle ? { transportLifecycle: params.backend.transportLifecycle } : {}),
     ...(params.backend.permissionModeArgv ? { permissionModeArgv: params.backend.permissionModeArgv } : {}),
     ...(params.backend.sessionIdHeaderName ? { sessionIdHeaderName: params.backend.sessionIdHeaderName } : {}),
+    ...(params.backend.stderrRules ? { stderrRules: params.backend.stderrRules } : {}),
     ...(params.backend.messageMeta ? { messageMeta: params.backend.messageMeta } : {}),
     mcp: {
       policy: params.backend.mcp?.policy ?? 'pass_through',

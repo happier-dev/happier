@@ -8,6 +8,7 @@ import {
   CredentialAccessSelectedAuthorityDigestSchema,
   CredentialAccessSelectedRawAccessDigestSchema,
   ConnectedAccountMaterializationRequestSchema,
+  ConnectedServiceCredentialRevisionV1Schema,
   PluginCredentialAccessSlotIdSchema,
   PluginPermissionInstalledGenerationIdSchema,
   PluginPermissionGrantListActionInputV1Schema,
@@ -31,7 +32,6 @@ import {
 } from '@happier-dev/protocol';
 
 import type {
-  ConnectedAccountMaterializationCredentialRevisionBasis,
   StablePluginConnectedAccountsOwner,
 } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
@@ -49,11 +49,21 @@ type VoiceRawCredentialMaterializationRequest = Parameters<
 >[0];
 type VoiceRawCredentialMaterialization = PluginConnectedAccountMaterialization;
 
+/**
+ * Host-private receipt bridge for one raw-credential callback. The receipt is
+ * opaque to the callback consumer and may come from any selected source.
+ */
+type RawCredentialCallbackRevisionBasis = Readonly<{
+  expectedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null;
+  captureCredentialRevision(credentialRevision: ConnectedServiceCredentialRevisionV1): void;
+}>;
+
 const RAW_CREDENTIAL_CAPABILITY = 'credentials.materialize.raw' as const;
 const ACCOUNT_TARGET_SCOPE = Object.freeze({ kind: 'account' as const });
 const DECLARATION_DIGEST_DOMAIN = 'happier.plugin.credential-access-disclosure.v1\0';
 const SELECTED_AUTHORITY_DIGEST_DOMAIN = 'happier.plugin.credential-access-selected-authority.v1\0';
 const SELECTED_RAW_ACCESS_DIGEST_DOMAIN = 'happier.plugin.credential-access-selected-raw-access.v1\0';
+const RAW_CREDENTIAL_CALLBACK_REVISION_DOMAIN = 'happier.plugin.raw-credential-callback-revision.v1\0';
 
 export type { PluginPermissionGrantListReader } from '@/plugins/runtime/lifecycle/permissions/pluginPermissionGrantListReader';
 
@@ -104,7 +114,7 @@ export type PluginRawCredentialMaterializer = Readonly<{
 /** Host-only options; plugin-facing raw access retains exactly `{ materialize }`. */
 export type PluginRawCredentialMaterializationOptions = Readonly<{
   signal?: AbortSignal;
-  credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
+  credentialRevisionBasis?: RawCredentialCallbackRevisionBasis;
 }>;
 
 export type PluginRawCredentialAuthorizationInspection = Readonly<{
@@ -156,6 +166,8 @@ type SelectedSource = Readonly<{
   savedSecretCustody: Readonly<{
     snapshot: ActiveAccountSettingsSnapshot;
     secretId: string;
+    /** Opaque, source-neutral callback receipt; never carries secret material. */
+    callbackCredentialRevision: ConnectedServiceCredentialRevisionV1;
   }> | null;
   selectedAuthorityDigest: ReturnType<typeof CredentialAccessSelectedAuthorityDigestSchema.parse>;
   selectedRawAccessDigest: ReturnType<typeof CredentialAccessSelectedRawAccessDigestSchema.parse>;
@@ -227,16 +239,12 @@ export function createInvocationVoiceRawCredentialAccess(input: Readonly<{
         });
         assertInvocationCurrent();
         options.signal?.throwIfAborted();
+        if (capturedCredentialRevision === null) throw unavailable();
         if (
           expectedCredentialRevision !== null
-          && capturedCredentialRevision !== null
           && capturedCredentialRevision !== expectedCredentialRevision
-        ) {
-          throw unavailable();
-        }
-        if (capturedCredentialRevision !== null) {
-          expectedCredentialRevision = capturedCredentialRevision;
-        }
+        ) throw unavailable();
+        expectedCredentialRevision = capturedCredentialRevision;
         return result;
       } catch (error) {
         assertInvocationCurrent();
@@ -460,6 +468,19 @@ function selectedAuthorityDigest(
   ));
 }
 
+function savedSecretCallbackCredentialRevision(input: Readonly<{
+  selectedAuthorityDigest: ReturnType<typeof CredentialAccessSelectedAuthorityDigestSchema.parse>;
+  selectedRawAccessDigest: ReturnType<typeof CredentialAccessSelectedRawAccessDigestSchema.parse>;
+  updatedAt: number;
+}>): ConnectedServiceCredentialRevisionV1 {
+  // Callback callers must be able to fence a reused raw-access object without
+  // learning the selected source, secret id, timestamp, or secret bytes.
+  return ConnectedServiceCredentialRevisionV1Schema.parse(`csr_${digest(
+    RAW_CREDENTIAL_CALLBACK_REVISION_DOMAIN,
+    Object.freeze({ v: 1, ...input }),
+  )}`);
+}
+
 async function selectedSourceFromSnapshot(
   binding: PluginRawCredentialMaterializerBinding,
   authority: DeclarationAuthority,
@@ -502,6 +523,13 @@ async function selectedSourceFromSnapshot(
       : undefined;
     if (!savedSecret || !source.secretKinds.includes(savedSecret.kind)) throw unavailable();
     const selectedRawAccess = selectedRawAccessDigest(source);
+    const selectedAuthority = selectedAuthorityDigest({
+      source: 'savedSecret',
+      accountSettingsScopeKey: snapshot.scopeKey ?? null,
+      bindingSource: resolved.savedSecret.source,
+      secretId: resolved.savedSecret.secretId,
+      secretKind: savedSecret.kind,
+    });
     return Object.freeze({
       source,
       qualifiedConnectedAccountService: null,
@@ -509,14 +537,13 @@ async function selectedSourceFromSnapshot(
       savedSecretCustody: Object.freeze({
         snapshot,
         secretId: resolved.savedSecret.secretId,
+        callbackCredentialRevision: savedSecretCallbackCredentialRevision({
+          selectedAuthorityDigest: selectedAuthority,
+          selectedRawAccessDigest: selectedRawAccess,
+          updatedAt: savedSecret.updatedAt,
+        }),
       }),
-      selectedAuthorityDigest: selectedAuthorityDigest({
-        source: 'savedSecret',
-        accountSettingsScopeKey: snapshot.scopeKey ?? null,
-        bindingSource: resolved.savedSecret.source,
-        secretId: resolved.savedSecret.secretId,
-        secretKind: savedSecret.kind,
-      }),
+      selectedAuthorityDigest: selectedAuthority,
       selectedRawAccessDigest: selectedRawAccess,
       fingerprint: [
         accountSettingsLifetimeToken,
@@ -1005,7 +1032,16 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
       let result: VoiceRawCredentialMaterialization | null = null;
       let connectedAccountResultInvalid = false;
       let capturedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
+      let callbackCredentialRevision: ConnectedServiceCredentialRevisionV1 | null = null;
       if (before.selected.source.kind === 'savedSecret') {
+        const custody = before.selected.savedSecretCustody;
+        if (!custody) throw unavailable();
+        callbackCredentialRevision = custody.callbackCredentialRevision;
+        if (
+          options.credentialRevisionBasis?.expectedCredentialRevision !== null
+          && options.credentialRevisionBasis?.expectedCredentialRevision !== undefined
+          && callbackCredentialRevision !== options.credentialRevisionBasis.expectedCredentialRevision
+        ) throw unavailable();
         result = await materializeCurrentSavedSecret({
           binding: input.binding,
           authority,
@@ -1056,6 +1092,7 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
         signal.throwIfAborted();
         try {
           result = exactConnectedMaterialization(request, produced);
+          callbackCredentialRevision = capturedCredentialRevision;
         } catch {
           signal.throwIfAborted();
           connectedAccountResultInvalid = true;
@@ -1071,20 +1108,17 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
       if (!sameAuthorization(before, after)) throw unavailable();
       if (connectedAccountResultInvalid) throw invalidRequest();
       if (!result) throw providerOperationFailed();
-      if (
-        before.selected.source.kind === 'connectedAccount'
-        && options.credentialRevisionBasis
-      ) {
-        if (capturedCredentialRevision === null) throw unavailable();
+      if (options.credentialRevisionBasis) {
+        if (callbackCredentialRevision === null) throw unavailable();
         if (
           options.credentialRevisionBasis.expectedCredentialRevision !== null
-          && capturedCredentialRevision
+          && callbackCredentialRevision
             !== options.credentialRevisionBasis.expectedCredentialRevision
         ) {
           throw unavailable();
         }
         options.credentialRevisionBasis.captureCredentialRevision(
-          capturedCredentialRevision,
+          callbackCredentialRevision,
         );
       }
       return result;

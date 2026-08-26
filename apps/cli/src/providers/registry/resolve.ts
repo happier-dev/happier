@@ -300,7 +300,7 @@ function resolveManagedPurposeBindingIntents(
 }
 
 function resolveProviderConnectionFromSettings(
-  input: ResolveProviderConnectionForMachineInput,
+  input: Omit<ResolveProviderConnectionForMachineInput, 'accountSettings'>,
   settingsRead: ReturnType<typeof readProviderSettingsForCli>,
 ): ProviderConnectionResolution {
   const connectionIdResult = ProviderConnectionIdSchema.safeParse(input.connectionId);
@@ -538,4 +538,17 @@ export function resolveProviderConnectionForMachine(
   input: ResolveProviderConnectionForMachineInput,
 ): ProviderConnectionResolution {
   return resolveProviderConnectionFromSettings(input, readProviderSettingsForCli(input.accountSettings));
+}
+
+/**
+ * Reuses the canonical connection resolver with one already-parsed settings
+ * snapshot. Bulk consumers use this to avoid repeatedly parsing the same
+ * Account settings while preserving the resolver's endpoint, grant, and
+ * deployment decisions in one owner.
+ */
+export function resolveProviderConnectionForMachineFromSettingsRead(
+  input: Omit<ResolveProviderConnectionForMachineInput, 'accountSettings'>,
+  settingsRead: ReturnType<typeof readProviderSettingsForCli>,
+): ProviderConnectionResolution {
+  return resolveProviderConnectionFromSettings(input, settingsRead);
 }

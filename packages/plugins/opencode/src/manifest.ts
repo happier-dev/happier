@@ -5,6 +5,8 @@ import type {
 } from '@happier-dev/plugin-sdk/mcp';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { detectOpenCodeCliAuthStatus } from './agent/cli/auth.js';
+import { OPENCODE_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { readOpenCodeMcpConfigServers } from './agent/mcp/discovery.js';
 import {
   OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
@@ -19,7 +21,13 @@ import {
   OPENCODE_PROVIDER_BINDING_ADAPTER_V1,
   OPENCODE_PROVIDER_OWNED_ENV_KEYS,
 } from './agent/providerBinding/adapter.js';
+import { resolveOpenCodeSessionRuntimePreferences } from './agent/preferences/session.js';
 import { createOpenCodeAgentRuntime } from './agent/runtime/nativeRuntime.js';
+import {
+  buildOpenCodeAttachHealthUrl,
+  createOpenCodeAttachArgs,
+  resolveOpenCodeAttachTarget,
+} from './agent/surfaces/sessions/attach/descriptor.js';
 import { openCodeExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
 import { openCodeExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
 import { openCodeExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/provider.js';
@@ -114,15 +122,15 @@ export const OPENCODE_PLUGIN = definePlugin({
           },
           auth: {
             support: 'login_terminal',
-            probe: {
-              parser: 'opencodeAuthList',
-              backgroundChecks: 'safe',
-              statusArgs: ['auth', 'list'],
-            },
+            nonInteractiveStatusProbe: true,
             loginLaunches: [{ kind: 'primary', args: ['auth', 'login'] }],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+          agentCliSystemTool: { toolId: OPEN_CODE_SYSTEM_TOOL_ID },
+        },
         connectedAccounts: [{
           purpose: OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
           service: {
@@ -231,7 +239,35 @@ export const OPENCODE_PLUGIN = definePlugin({
         } },
       },
       factory: createOpenCodeAgentRuntime,
+      preflightSessionControls: OPENCODE_PREFLIGHT_SESSION_CONTROLS,
+      cliAuth: {
+        detectAuthStatus: async ({ runDeclaredSystemToolCommand }) =>
+          await detectOpenCodeCliAuthStatus({
+            runAuthList: async () => await runDeclaredSystemToolCommand({
+              toolId: OPEN_CODE_SYSTEM_TOOL_ID,
+              args: ['auth', 'list'],
+              timeoutMs: 6_000,
+            }),
+          }),
+      },
+      cliSessionCommand: {
+        sessionRuntimeId: 'opencode',
+        accountSettingsAgentId: 'opencode',
+        infoCommandPrefixes: [['providers', 'list']],
+        buildSessionOptions: (input) => ({
+          ok: true,
+          options: resolveOpenCodeSessionRuntimePreferences({
+            settings: input.settings,
+            environment: input.environment,
+          }),
+        }),
+      },
       providerBinding: OPENCODE_PROVIDER_BINDING_ADAPTER_V1,
+      providerCliAttach: {
+        resolveTarget: resolveOpenCodeAttachTarget,
+        createArgs: createOpenCodeAttachArgs,
+        buildHealthUrl: buildOpenCodeAttachHealthUrl,
+      },
       sessionRunnerFactory: {
         module: './agent/runtime/nativeRuntime',
         export: 'createOpenCodeAgentRuntime',

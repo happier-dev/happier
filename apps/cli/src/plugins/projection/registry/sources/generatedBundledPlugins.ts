@@ -10,7 +10,6 @@ import { GEMINI_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-gemini/a
 import { GROK_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-grok/agent/contributions/catalog';
 import { KILO_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-kilo/agent/contributions/catalog';
 import { KIMI_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-kimi/agent/contributions/catalog';
-import { KIRO_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-kiro/agent/contributions/catalog';
 import { OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-ohmypi/agent/contributions/catalog';
 import { OPENCODE_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-opencode/agent/contributions/catalog';
 import { PI_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-pi/agent/contributions/catalog';
@@ -147,20 +146,6 @@ export const BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS: readonly BundledFirstP
       packageName: '@happier-dev/plugins-kimi',
       contribution: KIMI_AGENT_RUNTIME_CONTRIBUTION,
       systemTools: [{"executableNames":["kimi","kimi-cli"],"id":"kimi-cli","title":"Kimi CLI"}],
-    }),
-  }),
-  Object.freeze({
-    identity: createPluginContributionIdentity({
-      pluginId: "happier.agent.kiro",
-      localId: "kiro",
-    }),
-    implementationOwnerId: "kiro",
-    registrationFamily: 'agents',
-    implementation: createAgentRuntimeCatalogEntryHooks({
-      agentId: 'kiro',
-      packageName: '@happier-dev/plugins-kiro',
-      contribution: KIRO_AGENT_RUNTIME_CONTRIBUTION,
-      systemTools: [{"executableNames":["kiro-cli"],"id":"kiro-cli","title":"Kiro CLI"}],
     }),
   }),
   Object.freeze({

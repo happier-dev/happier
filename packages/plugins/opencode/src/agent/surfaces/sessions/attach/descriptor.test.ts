@@ -1,16 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildOpenCodeAttachHealthUrl,
   createOpenCodeAttachArgs,
   resolveOpenCodeAttachTarget,
 } from './descriptor.js';
 
 const metadata = {
   path: '/repo',
-  opencodeSessionId: 'oc-session-1',
-  opencodeBackendMode: 'server',
-  opencodeServerBaseUrl: 'http://127.0.0.1:49196/',
-  opencodeServerBaseUrlExplicit: true,
+  runtimeDescriptorV1: {
+    v: 1 as const,
+    agentId: 'opencode',
+    agent: {
+      backendMode: 'server',
+      providerSessionId: 'oc-session-1',
+      serverBaseUrl: 'http://127.0.0.1:49196/',
+      serverBaseUrlExplicit: true,
+    },
+  },
 };
 
 describe('OpenCode attach descriptor', () => {
@@ -19,12 +26,14 @@ describe('OpenCode attach descriptor', () => {
 
     expect(target).toEqual({
       ok: true,
-      providerSessionId: 'oc-session-1',
-      directory: '/repo',
-      baseUrl: 'http://127.0.0.1:49196/',
+      value: {
+        providerSessionId: 'oc-session-1',
+        directory: '/repo',
+        baseUrl: 'http://127.0.0.1:49196/',
+      },
     });
     if (!target.ok) throw new Error('expected attach target');
-    expect(createOpenCodeAttachArgs(target)).toEqual([
+    expect(createOpenCodeAttachArgs(target.value)).toEqual([
       'attach',
       'http://127.0.0.1:49196/',
       '--dir',
@@ -32,5 +41,8 @@ describe('OpenCode attach descriptor', () => {
       '--session',
       'oc-session-1',
     ]);
+    expect(buildOpenCodeAttachHealthUrl(target.value)).toBe(
+      'http://127.0.0.1:49196/global/health',
+    );
   });
 });

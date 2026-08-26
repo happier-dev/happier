@@ -157,6 +157,47 @@ describe('createAntigravityNativeRuntime', () => {
     expect(events).toEqual(expect.arrayContaining(['run-start', 'output-delta']));
   });
 
+  it('terminalizes a rejected initial execution-run admission before disposing its session', async () => {
+    const disposeSession = vi.fn();
+    const disposeSubscription = vi.fn();
+    const cancel = vi.fn(async () => ({ status: 'requested' as const, turnId: 'unexpected-turn' }));
+    const rejectedSession: AgentSessionRuntime = {
+      send: vi.fn(async () => ({
+        status: 'rejected' as const,
+        retryable: false,
+        diagnostic: {
+          code: 'antigravity_initial_admission_rejected',
+          severity: 'error' as const,
+        },
+      })),
+      cancel,
+      watch: vi.fn(() => ({ dispose: disposeSubscription })),
+      dispose: disposeSession,
+    };
+    const runtime = createAntigravityNativeRuntime({
+      openSession: ({ request }) => createNativeSession(request.sessionId),
+      openExecutionRun: vi.fn(async () => rejectedSession),
+    });
+
+    const execution = await runtime.executionRuns?.open({
+      kind: 'create',
+      runId: 'rejected-execution-run',
+      cwd: '/repo',
+      profile: { pluginId: 'happier.agent.antigravity', localId: 'default' },
+      input: { text: 'Reject this initial prompt.' },
+    }, createContext());
+    if (!execution) throw new Error('Expected an execution run');
+
+    const events: string[] = [];
+    execution.watch((event) => events.push(event.kind));
+
+    expect(events).toEqual(['run-start', 'run-failed']);
+    await expect(execution.stop()).resolves.toEqual({ status: 'notRunning' });
+    expect(cancel).not.toHaveBeenCalled();
+    expect(disposeSubscription).toHaveBeenCalledOnce();
+    expect(disposeSession).toHaveBeenCalledOnce();
+  });
+
   it('keeps exact vendor resume on cliPrint even when account configuration selects SDK mode', async () => {
     const openSession = vi.fn<AntigravityNativeSessionFactory>(({ request }) => (
       createNativeSession(request.sessionId)

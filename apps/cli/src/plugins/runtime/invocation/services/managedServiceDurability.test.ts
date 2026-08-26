@@ -66,7 +66,7 @@ describe('managed server durability owner', () => {
     // with its port, listener and injected credential. The projection already records the exact pid
     // and process birthday, which is what lets the daemon retire the real child and refuse to
     // signal a recycled pid.
-    it('terminates the exact managed children an exited Session runner owned', async () => {
+    it('retains exact managed-child custody when termination cannot be verified', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-managed-orphan-'));
         const terminated: number[] = [];
         const owner = createManagedServiceDurabilityOwner({
@@ -78,6 +78,7 @@ describe('managed server durability owner', () => {
             ),
             terminateProcessTree: async ({ pid }) => {
                 terminated.push(pid);
+                throw new Error('tree termination returned without proof');
             },
         });
         const live = endpointProjection(record('live-child', 41));
@@ -101,11 +102,12 @@ describe('managed server durability owner', () => {
 
         await expect(owner.retireSessionRunnerOwnedProjections({
             sessionId: 'session-one',
-        })).resolves.toEqual([41]);
+        })).resolves.toEqual([]);
 
-        // The recycled pid belongs to somebody else now, and an attached server belongs to the
-        // operator: neither is signalled. Both records still go, because the runner that published
-        // them can no longer release them.
+        // The reaper must not report PID 41 retired or forget its exact birthday merely because
+        // the terminator returned: this observer still proves the same child is live. The recycled
+        // PID belongs to someone else and is safe to forget; the attached server has no child
+        // custody to retain.
         expect(terminated).toEqual([41]);
         const remaining = (await readdir(join(root, 'endpoint-projections')))
             .filter((entry) => entry.endsWith('.json'));
@@ -114,7 +116,32 @@ describe('managed server durability owner', () => {
                 instanceId: string;
             }
         ).instanceId));
-        expect(remainingInstanceIds.sort()).toEqual(['daemon-owned', 'other-session']);
+        expect(remainingInstanceIds.sort()).toEqual([
+            'daemon-owned',
+            'live-child',
+            'other-session',
+        ]);
+    });
+
+    it('forgets a managed child only after post-termination identity proves absence', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-managed-orphan-confirmed-'));
+        let observed: string | null = 'start-41';
+        const owner = createManagedServiceDurabilityOwner({
+            rootDir: root,
+            observeProcessStartIdentity: async () => observed,
+            terminateProcessTree: async () => {
+                observed = null;
+            },
+        });
+        await owner.publishEndpointProjection(endpointProjection(record('confirmed-child', 41)));
+
+        await expect(owner.retireSessionRunnerOwnedProjections({
+            sessionId: 'session-one',
+        })).resolves.toEqual([41]);
+        expect(
+            (await readdir(join(root, 'endpoint-projections')))
+                .filter((entry) => entry.endsWith('.json')),
+        ).toEqual([]);
     });
 
     it('leaves a projection alone when the process birthday cannot be observed', async () => {

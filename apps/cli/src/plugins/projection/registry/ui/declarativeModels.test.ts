@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     PluginSettingsContributionV2Schema,
     preparePluginJsonSchema,
+    rehydrateCanonicalProtocolComposableSchema,
 } from '@happier-dev/protocol';
 
 import type { ResolvedContributionRegistry, ResolvedSettingsContribution } from '../types';
@@ -137,6 +138,8 @@ describe('declarative projection models', () => {
             required: ['reviewId'],
             additionalProperties: false,
         });
+        const inputNormalizer = rehydrateCanonicalProtocolComposableSchema(inputValidation.jsonSchema);
+        if (!inputNormalizer) throw new Error('Expected canonical Surface schema to rehydrate');
         const models = resolveDeclarativeProjectionModels({
             registry: {
                 uiRenderersV2: [{
@@ -173,6 +176,7 @@ describe('declarative projection models', () => {
                     },
                     inputSchema: inputValidation.jsonSchema,
                     inputValidation,
+                    inputNormalizer,
                 }],
             },
         });

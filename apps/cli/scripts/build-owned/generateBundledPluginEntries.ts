@@ -439,7 +439,7 @@ type BundledPluginPackage = Readonly<{
   agentId?: string;
   agentDefinition?: JsonValue;
   agentUiDescriptor?: AgentUiDescriptor;
-  agentUiBehaviorOverride?: AgentUiBehaviorOverrideImportSource;
+  agentPredecessorMessageMetaWriter?: AgentPredecessorMessageMetaWriterImportSource;
   agentRuntimeContributions?: AgentRuntimeContributionsDescriptor;
   promptAssetContributions?: PromptAssetContributionSource;
   builtInLegacyConnectedAccountCompatibility?:
@@ -454,7 +454,7 @@ type BundledPluginSourceProjectionFacts = Readonly<{
   agentId?: string;
   agentDefinition?: JsonValue;
   agentUiDescriptor?: AgentUiDescriptor;
-  agentUiBehaviorOverride?: AgentUiBehaviorOverrideImportSource;
+  agentPredecessorMessageMetaWriter?: AgentPredecessorMessageMetaWriterImportSource;
   agentRuntimeContributions?: AgentRuntimeContributionsDescriptor;
   promptAssetContributions?: PromptAssetContributionSource;
   builtInLegacyConnectedAccountCompatibility?:
@@ -857,12 +857,12 @@ type DescriptorGeneratedSvgIconSource = Readonly<{
   viewBox: string;
   paths: readonly DescriptorGeneratedSvgIconPathSource[];
 }>;
-type AgentUiBehaviorOverrideSource = Readonly<{
+type AgentUiBehaviorDescriptorSource = Readonly<{
   agentId: string;
   descriptor: JsonObject;
-  behaviorOverride?: AgentUiBehaviorOverrideImportSource;
+  predecessorMessageMetaWriter?: AgentPredecessorMessageMetaWriterImportSource;
 }>;
-type AgentUiBehaviorOverrideImportSource = Readonly<{
+type AgentPredecessorMessageMetaWriterImportSource = Readonly<{
   importName: string;
   importPath: string;
 }>;
@@ -2356,22 +2356,31 @@ async function loadPluginAgentUiDescriptor(
   return normalizeAgentUiDescriptor(readAgentUiDescriptorExport(mod, descriptorPath), descriptorPath);
 }
 
-async function loadPluginAgentUiBehaviorOverride(
+async function loadPluginAgentPredecessorMessageMetaWriter(
   repoRoot: string,
   pluginPackageId: string,
   packageName: string,
   agentId: string,
-): Promise<AgentUiBehaviorOverrideImportSource | undefined> {
-  const behaviorPath = resolve(repoRoot, 'packages/plugins', pluginPackageId, 'src/ui/uiBehavior.ts');
-  if (!existsSync(behaviorPath)) return undefined;
+): Promise<AgentPredecessorMessageMetaWriterImportSource | undefined> {
+  // This is not an extension convention. Claude is the sole observed
+  // predecessor metadata consumer; adding another writer needs its own
+  // provenance and generator change instead of silently widening this bridge.
+  if (pluginPackageId !== 'claude' || agentId !== 'claude') return undefined;
+  const predecessorMessageMetaPath = resolve(
+    repoRoot,
+    'packages/plugins',
+    pluginPackageId,
+    'src/ui/predecessorMessageMeta.ts',
+  );
+  if (!existsSync(predecessorMessageMetaPath)) return undefined;
 
-  const exportName = `${toAgentConstPrefix(agentId)}_UI_BEHAVIOR_OVERRIDE`;
-  const source = readFileSync(behaviorPath, 'utf8');
+  const exportName = `${toAgentConstPrefix(agentId)}_PREDECESSOR_MESSAGE_META_WRITER`;
+  const source = readFileSync(predecessorMessageMetaPath, 'utf8');
   const exportPattern = new RegExp(`\\bexport\\s+const\\s+${exportName}\\b`);
   if (!exportPattern.test(source)) return undefined;
   return {
     importName: exportName,
-    importPath: `${packageName}/ui/behavior`,
+    importPath: `${packageName}/ui/predecessor-message-meta`,
   };
 }
 
@@ -3417,8 +3426,8 @@ async function readSourceProjectionFacts(params: Readonly<{
   const agentUiDescriptor = agentDefinition
     ? await loadPluginAgentUiDescriptor(params.repoRoot, params.pluginPackageId)
     : undefined;
-  const agentUiBehaviorOverride = agentUiDescriptor
-    ? await loadPluginAgentUiBehaviorOverride(
+  const agentPredecessorMessageMetaWriter = agentUiDescriptor
+    ? await loadPluginAgentPredecessorMessageMetaWriter(
       params.repoRoot,
       params.pluginPackageId,
       params.packageName,
@@ -3456,7 +3465,7 @@ async function readSourceProjectionFacts(params: Readonly<{
   return Object.freeze({
     ...(agentDefinition ? { agentDefinition, agentId: agentDefinition.id } : {}),
     ...(agentUiDescriptor ? { agentUiDescriptor } : {}),
-    ...(agentUiBehaviorOverride ? { agentUiBehaviorOverride } : {}),
+    ...(agentPredecessorMessageMetaWriter ? { agentPredecessorMessageMetaWriter } : {}),
     ...(agentRuntimeContributions ? { agentRuntimeContributions } : {}),
     ...(promptAssetContributions ? { promptAssetContributions } : {}),
     ...(builtInLegacyConnectedAccountCompatibility
@@ -3590,8 +3599,8 @@ async function collectBundledPluginPackages(
         ...(sourceProjectionFacts.agentUiDescriptor
           ? { agentUiDescriptor: sourceProjectionFacts.agentUiDescriptor }
           : {}),
-        ...(sourceProjectionFacts.agentUiBehaviorOverride
-          ? { agentUiBehaviorOverride: sourceProjectionFacts.agentUiBehaviorOverride }
+        ...(sourceProjectionFacts.agentPredecessorMessageMetaWriter
+          ? { agentPredecessorMessageMetaWriter: sourceProjectionFacts.agentPredecessorMessageMetaWriter }
           : {}),
         ...(sourceProjectionFacts.agentRuntimeContributions
           ? { agentRuntimeContributions: sourceProjectionFacts.agentRuntimeContributions }
@@ -6575,8 +6584,8 @@ function createDescriptorAgentUiProjectionSource(
  * runs on is what keeps the screen from offering a scan the daemon has no
  * source for, or hiding one it does.
  */
-function collectAgentUiBehaviorOverrideSources(pluginPackages: readonly BundledPluginPackage[]): readonly AgentUiBehaviorOverrideSource[] {
-  return pluginPackages.flatMap((pluginPackage): AgentUiBehaviorOverrideSource[] => {
+function collectAgentUiBehaviorDescriptorSources(pluginPackages: readonly BundledPluginPackage[]): readonly AgentUiBehaviorDescriptorSource[] {
+  return pluginPackages.flatMap((pluginPackage): AgentUiBehaviorDescriptorSource[] => {
     const behavior = pluginPackage.agentUiDescriptor?.behavior;
     const components = pluginPackage.agentUiDescriptor?.components;
     const message = pluginPackage.agentUiDescriptor?.message;
@@ -6588,7 +6597,7 @@ function collectAgentUiBehaviorOverrideSources(pluginPackages: readonly BundledP
     };
     if (
       !hasDescriptorFields(projection)
-      && !pluginPackage.agentUiBehaviorOverride
+      && !pluginPackage.agentPredecessorMessageMetaWriter
     ) {
       return [];
     }
@@ -6596,8 +6605,8 @@ function collectAgentUiBehaviorOverrideSources(pluginPackages: readonly BundledP
     return [{
       agentId,
       descriptor: projection,
-      ...(pluginPackage.agentUiBehaviorOverride
-        ? { behaviorOverride: pluginPackage.agentUiBehaviorOverride }
+      ...(pluginPackage.agentPredecessorMessageMetaWriter
+        ? { predecessorMessageMetaWriter: pluginPackage.agentPredecessorMessageMetaWriter }
         : {}),
     }];
   });
@@ -6962,28 +6971,27 @@ function renderUiBundledPluginEntriesTs(params: Readonly<{
   return lines.join('\n');
 }
 
-function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBehaviorOverrideSource[]): string {
+function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBehaviorDescriptorSource[]): string {
   const lines: string[] = [];
   lines.push('/* eslint-disable @typescript-eslint/naming-convention */');
   lines.push('/**');
   lines.push(' * GENERATED FILE CONTRACT (PS-04)');
   lines.push(' *');
   lines.push(' * This file is the UI-side generated bundled entry map for first-party bundled');
-  lines.push(' * agent UI behavior overrides.');
+  lines.push(' * Agent UI descriptors and predecessor-scoped message metadata writers.');
   lines.push(' *');
   lines.push(' * It is split out from `generatedBundledPluginEntries.ts` to avoid import cycles');
-  lines.push(' * between agent UI behavior graphs and the core registry maps.');
+  lines.push(' * between agent UI behavior graphs, message compatibility, and registry maps.');
   lines.push(' *');
   lines.push(' * This file is emitted by:');
   lines.push(' * - `scripts/migrations/extensions/generateBundledPluginEntries.ts`');
   lines.push(' */');
   lines.push('');
   lines.push('import type { CanonicalAgentId } from \'./registryCore\';');
-  lines.push('import type { AgentUiBehavior } from \'./registryUiBehavior\';');
-  const behaviorOverrideSources = sources.flatMap((source) => (
-    source.behaviorOverride ? [source.behaviorOverride] : []
+  const predecessorMessageMetaWriterSources = sources.flatMap((source) => (
+    source.predecessorMessageMetaWriter ? [source.predecessorMessageMetaWriter] : []
   ));
-  for (const source of behaviorOverrideSources) {
+  for (const source of predecessorMessageMetaWriterSources) {
     lines.push(`import { ${source.importName} } from ${renderTsStringLiteral(source.importPath)};`);
   }
   lines.push('');
@@ -7003,12 +7011,17 @@ function renderBundledUiBehaviorOverridesTs(sources: readonly AgentUiBehaviorOve
   }
   lines.push('});');
   lines.push('');
-  lines.push('export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: Readonly<');
-  lines.push('    Partial<Record<CanonicalAgentId, AgentUiBehavior>>');
+  lines.push('export type BundledAgentPredecessorMessageMetaWriter = Readonly<{');
+  lines.push('    buildPredecessorMessageMeta(settings: Readonly<Record<string, unknown>>):');
+  lines.push('        Readonly<Record<string, string | number | boolean | null | readonly string[]>>;');
+  lines.push('}>;');
+  lines.push('');
+  lines.push('export const BUNDLED_CANONICAL_AGENT_PREDECESSOR_MESSAGE_META_WRITERS: Readonly<');
+  lines.push('    Partial<Record<CanonicalAgentId, BundledAgentPredecessorMessageMetaWriter>>');
   lines.push('> = Object.freeze({');
   for (const source of sources) {
-    if (!source.behaviorOverride) continue;
-    lines.push(`    ${source.agentId}: ${source.behaviorOverride.importName},`);
+    if (!source.predecessorMessageMetaWriter) continue;
+    lines.push(`    ${source.agentId}: ${source.predecessorMessageMetaWriter.importName},`);
   }
   lines.push('});');
   lines.push('');
@@ -7613,7 +7626,7 @@ async function generateBundledPluginEntries(
     'apps/cli/src/prompts/assets/generated/pluginDescriptors.ts',
   );
 
-  const uiBehaviorOverrideSources = collectAgentUiBehaviorOverrideSources(pluginPackages);
+  const agentUiBehaviorDescriptorSources = collectAgentUiBehaviorDescriptorSources(pluginPackages);
   const sessionAgentBehaviorSources = collectAgentSessionBehaviorSources(pluginPackages);
   const visibleMessageResolverSources = collectVisibleMessageResolverSources(pluginPackages);
   const promptAssetContributionSources = collectPromptAssetContributionSources(pluginPackages);
@@ -7666,7 +7679,7 @@ async function generateBundledPluginEntries(
   );
   const uiOut = renderUiBundledPluginEntriesTs({ packageNames, pluginPackages });
   const uiTranslationsOut = renderBundledPluginTranslationsTs(bundledPluginUiTranslations);
-  const uiBehaviorOverridesOut = renderBundledUiBehaviorOverridesTs(uiBehaviorOverrideSources);
+  const uiBehaviorOverridesOut = renderBundledUiBehaviorOverridesTs(agentUiBehaviorDescriptorSources);
   const sessionAgentBehaviorsOut = renderBundledSessionAgentBehaviorsTs(sessionAgentBehaviorSources);
   const visibleMessageResolversOut = renderBundledVisibleMessageResolversTs(visibleMessageResolverSources);
   const promptAssetPluginDescriptorsOut = renderCliPromptAssetPluginDescriptorsTs(promptAssetContributionSources);

@@ -1,5 +1,4 @@
 import {
-  AcpBackendAuthConfigV1Schema,
   AcpBackendCapabilitiesV1Schema,
   AcpCatalogTransportProfileV1Schema,
 } from '@happier-dev/protocol';
@@ -20,6 +19,7 @@ import type {
   HostAcpMcpInputPolicy,
   HostAcpMessageMetaHooks,
   HostAcpPermissionModeArgvSpec,
+  HostAcpStderrRules,
   HostAcpTimeouts,
   HostAcpTransportLifecycle,
 } from '../../runtime/definition/_types';
@@ -65,6 +65,7 @@ export type ResolvedConfiguredAcpBackend = Readonly<{
   permissionModeArgv?: HostAcpPermissionModeArgvSpec;
   sessionIdHeaderName?: string;
   messageMeta?: HostAcpMessageMetaHooks;
+  stderrRules?: HostAcpStderrRules;
   mcp?: HostAcpMcpInputPolicy;
 }>;
 
@@ -132,59 +133,13 @@ function parseLaunchLiteralEnv(launchEnv: unknown): Record<string, McpValueRefV1
   return out;
 }
 
-function resolvePluginAcpAuth(definition: AcpRuntimeDefinition): AcpBackendAuthConfigV1 | undefined | null {
-  if (!definition.auth?.config) {
-    return undefined;
-  }
-  const parsed = AcpBackendAuthConfigV1Schema.safeParse(definition.auth.config);
-  return parsed.success ? parsed.data : null;
-}
-
-function coerceSupportHintFromFinalFlag(value: unknown): AcpBackendCapabilitiesV1['supportsModes'] | undefined {
-  if (typeof value === 'boolean') {
-    return value ? 'yes' : 'no';
-  }
-  if (value === 'yes' || value === 'no') {
-    return value;
-  }
-  if (value === 'unknown') {
-    return 'unknown';
-  }
-  return undefined;
-}
-
-function resolveFinalPluginAcpCapabilities(
+function resolvePluginAcpCapabilities(
   definition: AcpRuntimeDefinition,
 ): AcpBackendCapabilitiesV1 {
-  const capabilities = definition.capabilities;
-
   return {
-    supportsLoadSession: typeof capabilities.supportsLoadSession === 'boolean'
-      ? capabilities.supportsLoadSession
-      : typeof capabilities.supportsResume === 'boolean'
-        ? capabilities.supportsResume
-        : DEFAULT_ACP_CAPABILITIES.supportsLoadSession,
-    supportsModes: coerceSupportHintFromFinalFlag(capabilities.supportsModes) ?? DEFAULT_ACP_CAPABILITIES.supportsModes,
-    supportsModels: coerceSupportHintFromFinalFlag(capabilities.supportsModels) ?? DEFAULT_ACP_CAPABILITIES.supportsModels,
-    supportsConfigOptions: coerceSupportHintFromFinalFlag(capabilities.supportsConfigOptions) ?? DEFAULT_ACP_CAPABILITIES.supportsConfigOptions,
-    promptImageSupport: coerceSupportHintFromFinalFlag(capabilities.promptImageSupport)
-      ?? coerceSupportHintFromFinalFlag(capabilities.supportsPromptImages)
-      ?? DEFAULT_ACP_CAPABILITIES.promptImageSupport,
+    ...DEFAULT_ACP_CAPABILITIES,
+    supportsLoadSession: definition.capabilities.supportsResume === true,
   };
-}
-
-function mergePluginFinalAcpEnv(
-  definitionEnv: Readonly<Record<string, string>>,
-  launchEnv: Readonly<Record<string, string>> | undefined,
-): Record<string, McpValueRefV1> | null {
-  const merged: Record<string, McpValueRefV1> = {};
-  for (const source of [definitionEnv, launchEnv]) {
-    if (source === undefined) continue;
-    const parsed = parseLaunchLiteralEnv(source);
-    if (!parsed) return null;
-    Object.assign(merged, parsed);
-  }
-  return merged;
 }
 
 function resolveFinalPluginAcpLaunch(
@@ -234,14 +189,12 @@ function resolveFinalPluginAcpBackendDefinition(
   if (!launch) return null;
   const transport = definition.transport;
   if (transport.kind !== 'stdio') return null;
-  const env = mergePluginFinalAcpEnv(definition.launchEnv, transport.launch.env);
+  const env = parseLaunchLiteralEnv(transport.launch.env ?? {});
   if (!env) return null;
 
   const title = readOptionalString(definition.ux.title) ?? backendId;
   const name = readOptionalString(definition.ux.name) ?? backendId;
-  const auth = resolvePluginAcpAuth(definition);
-  if (auth === null) return null;
-  const capabilities = resolveFinalPluginAcpCapabilities(definition);
+  const capabilities = resolvePluginAcpCapabilities(definition);
 
   return {
     backendId,
@@ -259,18 +212,11 @@ function resolveFinalPluginAcpBackendDefinition(
     args: [...launch.args],
     launch,
     env,
-    ...(auth ? { auth } : {}),
     transportProfile: DEFAULT_ACP_TRANSPORT_PROFILE,
     capabilities,
-    defaultMode: readOptionalString(definition.ux.defaultMode),
-    defaultModel: readOptionalString(definition.ux.defaultModel),
     ...(definition.timeouts ? { timeouts: definition.timeouts } : {}),
-    ...(typeof definition.fsEnabled === 'boolean' ? { fsEnabled: definition.fsEnabled } : {}),
-    ...(definition.transportLifecycle ? { transportLifecycle: definition.transportLifecycle } : {}),
-    ...(definition.permissionModeArgv ? { permissionModeArgv: definition.permissionModeArgv } : {}),
-    ...(definition.sessionIdHeaderName ? { sessionIdHeaderName: definition.sessionIdHeaderName } : {}),
-    ...(definition.messageMeta ? { messageMeta: definition.messageMeta } : {}),
-    ...(definition.mcp ? { mcp: definition.mcp } : {}),
+    ...(definition.stderrRules ? { stderrRules: definition.stderrRules } : {}),
+    mcp: definition.mcp,
   };
 }
 

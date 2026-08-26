@@ -1,19 +1,12 @@
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { AgentSessionModel } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { selectPiLaunchEnvironment } from '../launchEnvironment.js';
+import { PI_LAUNCH_ENV_KEYS } from '../launchEnvironment.js';
 import { createPiModelCatalogEntry } from '../models/catalog.js';
 
 export type PiPreflightModel = AgentSessionModel;
 
 const PI_CLI_MODELS_COMMAND_ARGS = ['--list-models'] as const;
-const MIN_PREFLIGHT_MODELS_TIMEOUT_MS = 250;
-const PREFLIGHT_OUTPUT_MAX_BYTES = 256 * 1024;
-
-function buildPiPreflightEnvironment(env: NodeJS.ProcessEnv | undefined): Readonly<Record<string, string>> {
-  return { ...selectPiLaunchEnvironment(env).values, CI: '1' };
-}
-
 function readThinkingSupport(value: string | undefined): boolean | null {
   const normalized = value?.trim().toLowerCase();
   if (normalized === 'yes') return true;
@@ -51,34 +44,15 @@ export function buildPiPreflightModelsFromListModelsOutput(outputRaw: string): r
   return models.length > 0 ? models : null;
 }
 
-export async function probePiPreflightModelsRaw(params: Readonly<{
-  exec: ExecService;
-  cwd: string;
-  timeoutMs: number;
-  env?: NodeJS.ProcessEnv;
-}>): Promise<readonly PiPreflightModel[] | null> {
-  const resolved = await params.exec.systemTools.resolve({
-    toolId: 'pi-cli',
-    purpose: 'Probe Pi models',
-    cwd: params.cwd,
-  });
-  const result = await params.exec.run({
-    executable: resolved.executable,
-    args: PI_CLI_MODELS_COMMAND_ARGS,
-    cwd: { root: 'workspace', relativePath: '' },
-    env: buildPiPreflightEnvironment(params.env),
-    maxStderrBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
-    maxStdoutBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
-    timeoutMs: Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs),
-  });
-  if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0) return null;
-  const decoder = new TextDecoder();
-  return buildPiPreflightModelsFromListModelsOutput(decoder.decode(result.stdout))
-    ?? buildPiPreflightModelsFromListModelsOutput(decoder.decode(result.stderr));
-}
-
 export const PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
-  connectedServiceAuth: 'materialized-env',
-  failureCacheStrategy: 'cooldown',
-  probeModelsRaw: probePiPreflightModelsRaw,
-} as const);
+  models: Object.freeze({
+    command: Object.freeze({
+      toolId: 'pi-cli',
+      args: PI_CLI_MODELS_COMMAND_ARGS,
+      environmentKeys: PI_LAUNCH_ENV_KEYS,
+    }),
+    parseOutput: ({ stdout, stderr }) =>
+      buildPiPreflightModelsFromListModelsOutput(stdout)
+      ?? buildPiPreflightModelsFromListModelsOutput(stderr),
+  }),
+} satisfies AgentPreflightSessionControlsContributionV1);

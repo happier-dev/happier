@@ -104,7 +104,6 @@ const EXTERNAL_AGENT_CLI_METADATA = {
     },
     auth: {
         support: 'unsupported',
-        probe: { parser: 'none', backgroundChecks: 'safe' },
         loginLaunches: [],
     },
 } as const;

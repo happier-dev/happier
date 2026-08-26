@@ -21,14 +21,6 @@
     "./agent/auth/status": {
       "types": "./dist/agent/auth/status.d.ts",
       "default": "./dist/agent/auth/status.js"
-    },
-    "./agent/contributions/runtime": {
-      "types": "./dist/agent/contributions/runtime.d.ts",
-      "default": "./dist/agent/contributions/runtime.js"
-    },
-    "./agent/contributions/catalog": {
-      "types": "./dist/agent/contributions/catalog.d.ts",
-      "default": "./dist/agent/contributions/catalog.js"
     }
   },
   "files": [

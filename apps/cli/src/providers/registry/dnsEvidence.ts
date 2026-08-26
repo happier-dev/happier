@@ -34,6 +34,11 @@ export async function collectProviderConnectionDnsEvidence(input: Readonly<{
 }>): Promise<ProviderEndpointDnsEvidence> {
   const connection = input.providerSettings.connections.find((candidate) => candidate.id === input.connectionId);
   if (!connection) return new Map();
+  // Managed-local catalog dispatch receives its endpoint only after SVC09
+  // starts the exact local run. Declaration URLs are not durable destinations
+  // for that flow, so resolving them would spend the existing operation budget
+  // on irrelevant external DNS before the canonical launch-local endpoint exists.
+  if (connection.deployment.kind === 'managedLocal') return new Map();
   const urls = new Set<string>();
   for (const override of connection.endpointOverrides ?? []) urls.add(override.baseUrl);
   for (const override of readOwnRecordValue(connection.endpointOverridesByMachineId, input.machineId) ?? []) {

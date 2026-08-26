@@ -14,6 +14,59 @@ function readObjectField(value: unknown, key: string): unknown {
 }
 
 describe('createAgentUiBehaviorFromDescriptor', () => {
+    it('materializes a closed AskUserQuestion dialog declaration without an Agent-specific adapter', () => {
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
+            kind: 'plugin.ui.v1',
+            pluginId: 'acme.review',
+            agentId: 'review',
+            version: 1,
+            display: {},
+            behavior: {
+                askUserQuestion: {
+                    dialogs: [{
+                        dialogId: 'review_scope_confirmation',
+                        settingMutation: {
+                            settingId: 'reviewScopePreference',
+                            allowedValues: ['ask_every_time', 'always_include'],
+                        },
+                        terminalNotice: {
+                            headerKey: 'tools.askUserQuestion.reviewScope.header',
+                            questionKey: 'tools.askUserQuestion.reviewScope.question',
+                        },
+                        terminalSecondaryAction: {
+                            kind: 'openAttachedTerminal',
+                            labelKey: 'tools.askUserQuestion.reviewScope.openTerminal',
+                            descriptionKey: 'tools.askUserQuestion.reviewScope.description',
+                        },
+                    }],
+                },
+            },
+            session: {},
+            message: {},
+            components: { slots: [] },
+        });
+
+        expect(diagnostics).toEqual([]);
+        expect(behavior.askUserQuestion).toEqual({
+            dialogs: [{
+                dialogId: 'review_scope_confirmation',
+                settingMutation: {
+                    settingId: 'reviewScopePreference',
+                    allowedValues: ['ask_every_time', 'always_include'],
+                },
+                terminalNotice: {
+                    headerKey: 'tools.askUserQuestion.reviewScope.header',
+                    questionKey: 'tools.askUserQuestion.reviewScope.question',
+                },
+                terminalSecondaryAction: {
+                    kind: 'openAttachedTerminal',
+                    labelKey: 'tools.askUserQuestion.reviewScope.openTerminal',
+                    descriptionKey: 'tools.askUserQuestion.reviewScope.description',
+                },
+            }],
+        });
+    });
+
     it('materializes declarative context-window behavior without a provider adapter branch', () => {
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
             contextWindow: {

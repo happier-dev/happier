@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -11,11 +11,16 @@ import { projectManifestAgentContribution } from '@/plugins/projection/registry/
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/generationStore';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 import { loadRetainedAgentRuntimeLeaf } from './runner/loadRetainedAgentRuntimeLeaf';
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 const AGENT_ID = 'runner-agent';
+const pluginSdkEntryUrl = new URL(
+    '../../../../../packages/plugin-sdk/dist/index.js',
+    import.meta.url,
+).href;
 
 type PublicRunnerFixtureState = {
     activationCalls: number;
@@ -76,6 +81,25 @@ async function createDevelopmentRunnerFixture(input: Readonly<{
     await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
     await mkdir(join(pluginRoot, 'dist'), { recursive: true });
     await mkdir(join(pluginRoot, 'src', 'runner'), { recursive: true });
+    // Immutable generations accept only regular files. This tiny test package
+    // makes the external fixture resolve the real public SDK entry without
+    // injecting a host API or recreating definePlugin locally.
+    const publicSdkRoot = join(pluginRoot, 'node_modules', '@happier-dev', 'plugin-sdk');
+    await mkdir(publicSdkRoot, { recursive: true });
+    await writeFile(
+        join(publicSdkRoot, 'package.json'),
+        JSON.stringify({
+            name: '@happier-dev/plugin-sdk',
+            type: 'module',
+            exports: './index.mjs',
+        }),
+        'utf8',
+    );
+    await writeFile(
+        join(publicSdkRoot, 'index.mjs'),
+        `export { definePlugin } from ${JSON.stringify(pluginSdkEntryUrl)};\n`,
+        'utf8',
+    );
     await writeFile(
         join(pluginRoot, '.happier-plugin', 'plugin.json'),
         JSON.stringify({
@@ -148,17 +172,36 @@ async function createDevelopmentRunnerFixture(input: Readonly<{
     await writeFile(
         join(pluginRoot, 'src', 'dev-daemon.mjs'),
         [
-            'import { runnerFactory, runnerState } from "./runner/index.mjs";',
-            'export function activate(api) {',
-            '  runnerState.activationCalls += 1;',
-            `  api.agents.register("${AGENT_ID}", runnerFactory, {`,
-            '    sessionRunnerFactory: {',
-            `      module: ${JSON.stringify(input.locatorModule)},`,
-            `      export: ${JSON.stringify(input.locatorExport)},`,
-            '      runtimeApiVersion: 1',
+            "import { definePlugin } from '@happier-dev/plugin-sdk';",
+            "import { runnerFactory, runnerState } from './runner/index.mjs';",
+            'runnerState.activationCalls += 1;',
+            'export const { manifest, activate } = definePlugin({',
+            `  id: ${JSON.stringify(input.pluginId)},`,
+            "  version: '1.0.0',",
+            "  entrypoints: { daemon: './dist/daemon.mjs' },",
+            '  agents: {',
+            `    ${JSON.stringify(AGENT_ID)}: {`,
+            '      declaration: {',
+            "        title: 'Runner Agent',",
+            "        runtime: { kind: 'custom' },",
+            "        primary: 'sessions',",
+            '        capabilities: {',
+            '          sessions: {',
+            "            open: ['create'],",
+            "            delivery: ['newTurn'],",
+            '            cancel: true',
+            '          }',
+            '        }',
+            '      },',
+            '      factory: runnerFactory,',
+            '      sessionRunnerFactory: {',
+            `        module: ${JSON.stringify(input.locatorModule)},`,
+            `        export: ${JSON.stringify(input.locatorExport)},`,
+            '        runtimeApiVersion: 1',
+            '      }',
             '    }',
-            '  });',
-            '}',
+            '  }',
+            '});',
             '',
         ].join('\n'),
         'utf8',
@@ -233,6 +276,13 @@ describe('production registry session runner factory resolution', () => {
             locatorModule: './runner',
             locatorExport: 'runnerFactory',
         });
+        const activationSource = await readFile(
+            join(fixture.pluginRoot, 'src', 'dev-daemon.mjs'),
+            'utf8',
+        );
+        expect(activationSource).toContain("from '@happier-dev/plugin-sdk'");
+        expect(activationSource).toContain('definePlugin({');
+        expect(activationSource).not.toContain('api.agents.register');
         const sessionId = 'session-public-runner';
         const paths = resolvePluginStorePaths({
             happyHomeDir: fixture.happyHomeDir,
@@ -409,7 +459,8 @@ describe('production registry session runner factory resolution', () => {
                         isCurrent: () => true,
                     },
                     createRuntime: runnerCreateRuntime,
-                    createInvocationServices: () => ({}) as never,
+                    createInvocationServices: () =>
+                        createUnavailablePluginServices(),
                     authorizeNewTurn: async () => ({
                         status: 'admitted' as const,
                     }),

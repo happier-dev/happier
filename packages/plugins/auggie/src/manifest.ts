@@ -2,6 +2,7 @@ import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sd
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { AUGGIE_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { createAuggieAgentRuntime } from './agent/runtime/factory.js';
 import { AUGGIE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
@@ -48,11 +49,13 @@ export const AUGGIE_PLUGIN = definePlugin({
           },
           auth: {
             support: 'login_terminal',
-            probe: { parser: 'unknown', backgroundChecks: 'safe', statusArgs: null },
             loginLaunches: [{ kind: 'primary', args: ['login'] }],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+        },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           sessions: {
             open: ['create', 'resume'],
@@ -62,6 +65,7 @@ export const AUGGIE_PLUGIN = definePlugin({
         }),
       },
       factory: createAuggieAgentRuntime,
+      preflightSessionControls: AUGGIE_PREFLIGHT_SESSION_CONTROLS,
       sessionRunnerFactory: {
         module: './agent/runtime/factory',
         export: 'createAuggieAgentRuntime',

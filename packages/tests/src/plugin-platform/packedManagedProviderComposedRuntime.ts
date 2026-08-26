@@ -233,11 +233,6 @@ const candidateHandoffAgentDeclaration = Object.freeze({
     install: { managed: null, manual: { kind: 'none' } },
     auth: {
       support: 'unsupported',
-      probe: {
-        parser: 'none',
-        backgroundChecks: 'safe',
-        statusArgs: null,
-      },
       loginLaunches: [],
     },
   },

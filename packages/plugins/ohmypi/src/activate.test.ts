@@ -9,6 +9,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/catalog.js';
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
@@ -102,6 +103,44 @@ describe('OhMyPi plugin activation', () => {
       reasonCode: 'ohmypi_models_unavailable',
     });
     await fixture.dispose();
+  });
+
+  it('registers only the data-only Connected Account state-sharing descriptor before open', async () => {
+    const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const launch = fixture.registration('agents', 'ohmypi')?.connectedAccountLaunch;
+
+      expect(Object.keys(launch ?? {}).sort()).toEqual(['stateSharingDescriptor']);
+      expect(launch?.stateSharingDescriptor).toEqual({
+        providerSupportStatus: 'unsupported',
+        config: {
+          supported: false,
+          modes: ['isolated'],
+          entries: [],
+          unavailableReason: 'not_implemented',
+        },
+        state: {
+          supported: false,
+          modes: ['isolated'],
+          entries: [],
+          symlinkUnavailableDegradePolicy: 'block_continuity',
+          unavailableReason: 'not_implemented',
+        },
+        authIsolation: {
+          mode: 'process_env',
+          secretEntries: [
+            'OPENAI_CODEX_OAUTH_TOKEN',
+            'OPENAI_API_KEY',
+            'ANTHROPIC_OAUTH_TOKEN',
+            'ANTHROPIC_API_KEY',
+            'GEMINI_API_KEY',
+          ],
+        },
+      });
+      expect(OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('connectedServices');
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it.each([

@@ -12,9 +12,9 @@ export type OpenCodeSessionRuntimePreferences = Readonly<{
 
 export function resolveOpenCodeSessionRuntimePreferences(params: Readonly<{
   settings: Readonly<Record<string, unknown>>;
-  processEnv: NodeJS.ProcessEnv;
+  environment: Readonly<Record<string, string | undefined>>;
 }>): OpenCodeSessionRuntimePreferences {
-  void params.processEnv;
+  void params.environment;
   const backendMode = normalizeOpenCodeBackendMode(params.settings.opencodeBackendMode);
   const settingsServerBaseUrl = normalizeOpenCodeServerBaseUrl(params.settings.opencodeServerBaseUrl);
 

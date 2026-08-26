@@ -5,7 +5,10 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 import { canonicalizePathSync } from '@happier-dev/plugin-sdk/fs';
 
-import { readStrictCanonicalPiAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescriptorV1.js';
+import {
+  buildPiAgentRuntimeDescriptorV1,
+  readStrictCanonicalPiAgentRuntimeDescriptorV1,
+} from '../../protocol/runtimeDescriptorV1.js';
 
 type PiExternalSessionTakeoverIdentity = Pick<
   AgentExternalSessionTakeoverResolveLaunchRequest,
@@ -45,6 +48,11 @@ export function resolvePiExternalSessionTakeoverPlan(
 
   return Object.freeze({
     directory,
+    runtimeDescriptorV1: buildPiAgentRuntimeDescriptorV1({
+      resumeStrategy: descriptor.resumeStrategy,
+      providerSessionId: descriptor.providerSessionId,
+      sessionFile: descriptor.sessionFile,
+    }),
     environmentVariables: Object.freeze({
       PI_CODING_AGENT_DIR: agentDir,
     }),
@@ -61,11 +69,9 @@ export const piExternalSessionTakeoverContribution:
         return { ok: false, code: 'timeout', retryable: true };
       }
       const plan = resolvePiExternalSessionTakeoverPlan(request);
-      const nativeResumeReference = readNonEmptyString(request.source.sessionFile);
-      if (!plan || !nativeResumeReference) {
+      if (!plan) {
         return { ok: false, code: 'source_invalid' };
       }
-      const result = { ok: true as const, value: plan, nativeResumeReference };
-      return result;
+      return { ok: true as const, value: plan };
     },
   });

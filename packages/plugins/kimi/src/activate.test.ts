@@ -45,6 +45,26 @@ describe('activate', () => {
     await activation.dispose();
   });
 
+  it('builds Kimi Session preferences through the public CLI command declaration', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const buildSessionOptions = activation.registration('agents', 'kimi')?.cliSessionCommand?.buildSessionOptions;
+      expect(buildSessionOptions).toBeTypeOf('function');
+      expect(buildSessionOptions?.({
+        isExplicitCliSubcommand: true,
+        parsed: { agentArgs: [] },
+        settings: { kimiAcpPythonSelector: 'poll' },
+        environment: { HAPPIER_KIMI_ACP_SELECTOR: 'auto' },
+        startOrigin: 'terminal',
+      })).toEqual({
+        ok: true,
+        options: { environmentVariables: { HAPPIER_KIMI_ACP_SELECTOR: 'auto' } },
+      });
+    } finally {
+      await activation.dispose();
+    }
+  });
+
   it('opens Kimi through the native ACP composer without a V1 fallback', async () => {
     const runtime = await createKimiRuntime();
     const session = {

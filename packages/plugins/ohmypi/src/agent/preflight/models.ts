@@ -1,4 +1,4 @@
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 type OhMyPiPreflightModelOption = Readonly<{
   id: string;
@@ -16,8 +16,6 @@ export type OhMyPiPreflightModel = Readonly<{
 }>;
 
 const OH_MY_PI_CLI_MODELS_COMMAND_ARGS = ['--list-models'] as const;
-const MIN_PREFLIGHT_MODELS_TIMEOUT_MS = 250;
-const PREFLIGHT_OUTPUT_MAX_BYTES = 256 * 1024;
 
 const OH_MY_PI_THINKING_MODEL_OPTION: OhMyPiPreflightModelOption = Object.freeze({
   id: 'reasoning_effort',
@@ -31,15 +29,6 @@ const OH_MY_PI_THINKING_MODEL_OPTION: OhMyPiPreflightModelOption = Object.freeze
     Object.freeze({ value: 'xhigh', name: 'Max' }),
   ]),
 });
-
-function buildOhMyPiPreflightEnv(env: NodeJS.ProcessEnv | undefined): Readonly<Record<string, string>> {
-  const output: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env ?? {})) {
-    if (typeof value === 'string') output[key] = value;
-  }
-  output.CI = '1';
-  return output;
-}
 
 function readThinkingSupport(value: string | undefined): boolean | null {
   const normalized = value?.trim().toLowerCase();
@@ -90,34 +79,11 @@ export function buildOhMyPiPreflightModelsFromListModelsOutput(
   return models.length > 0 ? models : null;
 }
 
-export async function probeOhMyPiPreflightModelsRaw(params: Readonly<{
-  exec: ExecService;
-  cwd: string;
-  timeoutMs: number;
-  env?: NodeJS.ProcessEnv;
-}>): Promise<readonly OhMyPiPreflightModel[] | null> {
-  const resolved = await params.exec.systemTools.resolve({
-    toolId: 'ohmypi-cli',
-    purpose: 'Probe Oh My Pi models',
-    cwd: params.cwd,
-  });
-  const result = await params.exec.run({
-    executable: resolved.executable,
-    args: OH_MY_PI_CLI_MODELS_COMMAND_ARGS,
-    cwd: { root: 'workspace', relativePath: '' },
-    env: buildOhMyPiPreflightEnv(params.env),
-    maxStderrBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
-    maxStdoutBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
-    timeoutMs: Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs),
-  });
-  if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0) return null;
-  const decoder = new TextDecoder();
-  return buildOhMyPiPreflightModelsFromListModelsOutput(decoder.decode(result.stdout))
-    ?? buildOhMyPiPreflightModelsFromListModelsOutput(decoder.decode(result.stderr));
-}
-
 export const OH_MY_PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
-  failureCacheStrategy: 'cooldown',
-  probeModelsRaw: probeOhMyPiPreflightModelsRaw,
-  cliModelsCommandArgs: OH_MY_PI_CLI_MODELS_COMMAND_ARGS,
-} as const);
+  models: Object.freeze({
+    command: Object.freeze({ toolId: 'ohmypi-cli', args: OH_MY_PI_CLI_MODELS_COMMAND_ARGS }),
+    parseOutput: ({ stdout, stderr }) =>
+      buildOhMyPiPreflightModelsFromListModelsOutput(stdout)
+      ?? buildOhMyPiPreflightModelsFromListModelsOutput(stderr),
+  }),
+} satisfies AgentPreflightSessionControlsContributionV1);

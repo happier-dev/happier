@@ -77,6 +77,39 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
       }),
       behavior: expect.objectContaining({
         descriptorId: 'claude.uiBehavior.v1',
+        askUserQuestion: {
+          dialogs: expect.arrayContaining([
+            {
+              dialogId: 'trust_folder',
+              settingMutation: {
+                settingId: 'claudeUnifiedTerminalWorkspaceTrust',
+                allowedValues: [
+                  'always_trust_happier_workspaces',
+                  'always_reject_happier_workspaces',
+                ],
+              },
+              terminalSecondaryAction: {
+                kind: 'openAttachedTerminal',
+                labelKey: 'tools.askUserQuestion.claudeDialogNotice.openTerminal',
+                descriptionKey: 'tools.askUserQuestion.claudeDialogNotice.description',
+              },
+            },
+            {
+              dialogId: 'resume_choice',
+              settingMutation: {
+                settingId: 'claudeUnifiedTerminalResumeChoice',
+                allowedValues: ['resume_from_summary', 'resume_full_session'],
+              },
+            },
+            {
+              dialogId: 'unrecognized_confirmation',
+              terminalNotice: {
+                headerKey: 'tools.askUserQuestion.claudeDialogNotice.header',
+                questionKey: 'tools.askUserQuestion.claudeDialogNotice.question',
+              },
+            },
+          ]),
+        },
         externalSessions: expect.objectContaining({
           browse: {
             order: 20,

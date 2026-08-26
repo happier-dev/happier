@@ -10,7 +10,7 @@ export const AGENT_DEFINITION = Object.freeze({
     flavorAliases: ['github-copilot', 'copilot-cli'],
     cloudConnect: null,
     connectedServices: null,
-    resume: { vendorResume: 'supported', vendorResumeIdField: 'copilotSessionId' },
+    resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'copilotSessionId' },
     sessionStorage: { direct: false, persisted: true },
     sessionCapabilities: {
       sessionListing: 'unsupported',

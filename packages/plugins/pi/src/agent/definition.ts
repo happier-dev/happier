@@ -37,7 +37,7 @@ export const AGENT_DEFINITION = Object.freeze({
         anthropic: ['token'],
       },
     },
-    resume: { vendorResume: 'supported', vendorResumeIdField: 'piSessionId' },
+    resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'piSessionId' },
     sessionStorage: { direct: false, persisted: true },
     sessionCapabilities: {
       sessionListing: 'unsupported',

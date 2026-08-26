@@ -731,6 +731,50 @@ describe('plugin raw credential materializer', () => {
     });
   });
 
+  it('pins one opaque SavedSecret callback revision across same-id secret updates', async () => {
+    const firstSecret = 'saved-secret-raw-a';
+    const replacementSecret = 'saved-secret-raw-b';
+    const harness = createHarness({
+      initialSnapshot: snapshot({
+        source: 'savedSecret',
+        secret: firstSecret,
+        secretUpdatedAt: 1,
+      }),
+    });
+    let capturedCredentialRevision: string | null = null;
+
+    await expect(harness.materializer.materialize(connectedHeaderRequest, {
+      credentialRevisionBasis: {
+        expectedCredentialRevision: null,
+        captureCredentialRevision(credentialRevision) {
+          capturedCredentialRevision = credentialRevision;
+        },
+      },
+    })).resolves.toEqual({
+      kind: 'httpHeaders',
+      headers: { authorization: firstSecret },
+    });
+
+    expect(capturedCredentialRevision).toMatch(/^csr_[a-f0-9]{64}$/u);
+    expect(capturedCredentialRevision).not.toContain(firstSecret);
+    expect(capturedCredentialRevision).not.toContain('saved-secret');
+
+    harness.setSnapshot(snapshot({
+      source: 'savedSecret',
+      secret: replacementSecret,
+      secretUpdatedAt: 2,
+    }));
+
+    await expect(harness.materializer.materialize(connectedHeaderRequest, {
+      credentialRevisionBasis: {
+        expectedCredentialRevision: capturedCredentialRevision,
+        captureCredentialRevision() {},
+      },
+    })).rejects.toMatchObject({
+      code: 'plugin_voice_credential_access_unavailable',
+    });
+  });
+
   it('does not follow a changed credential source while its host invocation remains live', async () => {
     const materializeAccount = vi.fn(async ({ credentialRevisionBasis }) => {
       credentialRevisionBasis?.captureCredentialRevision(

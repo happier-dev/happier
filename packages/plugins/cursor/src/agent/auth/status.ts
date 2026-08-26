@@ -32,6 +32,14 @@ function readUserLikeRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function readCursorAccountLabel(record: Record<string, unknown> | null): string | null {
+  for (const key of ['email', 'emailAddress', 'username', 'displayName', 'name', 'id']) {
+    const value = record?.[key];
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+  }
+  return null;
+}
+
 export function materializeCursorAuthEnv(
   env: CursorEnvironmentReader,
 ): Readonly<Record<typeof CURSOR_API_KEY_ENV, string>> | Readonly<Record<string, never>> {
@@ -61,6 +69,37 @@ export function resolveCursorAuthStatus(params: Readonly<{
     return { status: 'logged_out', source: 'about_json' };
   } catch {
     return { status: 'unknown', source: 'probe_failed' };
+  }
+}
+
+/** Interprets only the bounded result of the declared Cursor CLI tool. */
+export function interpretCursorCliAuthCommand(params: Readonly<{
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+}>) {
+  if (!params.ok) {
+    return params.exitCode === null
+      ? { state: 'unknown' as const, reason: 'probe_failed' as const, source: 'command' as const }
+      : { state: 'logged_out' as const, reason: 'missing_credentials' as const, source: 'command' as const };
+  }
+
+  try {
+    const parsed = JSON.parse(params.stdout) as unknown;
+    const record = readUserLikeRecord(parsed);
+    const user = readUserLikeRecord(record?.user ?? record?.userInfo);
+    const accountLabel = readCursorAccountLabel(user) ?? readCursorAccountLabel(record);
+    return accountLabel
+      ? {
+        state: 'logged_in' as const,
+        method: 'oauth_cli' as const,
+        source: 'command' as const,
+        accountLabel,
+      }
+      : { state: 'logged_out' as const, reason: 'missing_credentials' as const, source: 'command' as const };
+  } catch {
+    return { state: 'unknown' as const, reason: 'probe_failed' as const, source: 'command' as const };
   }
 }
 

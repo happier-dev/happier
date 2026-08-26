@@ -144,6 +144,30 @@ describe('withCursorEmptyResponseFailure', () => {
     });
   });
 
+  it('does not treat reasoning deltas as visible assistant output', () => {
+    const fixture = createRuntimeFixture();
+    const runtime = withCursorEmptyResponseFailure(fixture.runtime);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+    const complete = turnComplete(3);
+
+    fixture.emit(turnStart());
+    fixture.emit({
+      ...eventBase(2),
+      kind: 'message-delta',
+      turnId: 'host-turn-1',
+      channel: 'reasoning',
+      text: 'Working through the request.',
+    });
+    fixture.emit(complete);
+
+    expect(events.at(-1)).toEqual({
+      ...complete,
+      kind: 'turn-failed',
+      diagnostic: expect.objectContaining({ code: 'cursor_empty_provider_response' }),
+    });
+  });
+
   it('does not treat tool-only activity as visible output', () => {
     const fixture = createRuntimeFixture();
     const runtime = withCursorEmptyResponseFailure(fixture.runtime);

@@ -4,6 +4,7 @@ import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/
 import { describe, expect, it, vi } from 'vitest';
 
 import { GEMINI_ACP_RUNTIME_DEFINITION } from './agent/acp/definition.js';
+import { GEMINI_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/catalog.js';
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
@@ -53,6 +54,44 @@ describe('Gemini native runtime migration', () => {
       required: false,
       materializationKinds: ['files', 'environment'],
     }]);
+  });
+
+  it('registers only the data-only Connected Account state-sharing descriptor before open', async () => {
+    const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const launch = fixture.registration('agents', 'gemini')?.connectedAccountLaunch;
+
+      expect(Object.keys(launch ?? {}).sort()).toEqual(['stateSharingDescriptor']);
+      expect(launch?.stateSharingDescriptor).toEqual({
+        providerSupportStatus: 'unsupported',
+        config: {
+          supported: false,
+          modes: ['isolated'],
+          entries: [],
+          unavailableReason: 'not_implemented',
+        },
+        state: {
+          supported: false,
+          modes: ['isolated'],
+          entries: [],
+          symlinkUnavailableDegradePolicy: 'block_continuity',
+          unavailableReason: 'not_implemented',
+        },
+        authIsolation: {
+          mode: 'process_env',
+          secretEntries: [
+            'GEMINI_API_KEY',
+            'GOOGLE_API_KEY',
+            'GOOGLE_GENAI_USE_VERTEXAI',
+            'GOOGLE_CLOUD_PROJECT',
+            'GOOGLE_CLOUD_LOCATION',
+          ],
+        },
+      });
+      expect(GEMINI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('connectedServices');
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('does not leak ambient daemon environment into the bounded native launch projection', async () => {
@@ -206,6 +245,7 @@ describe('Gemini native runtime migration', () => {
     } as never);
     publishSessionEvent?.({
       kind: 'message-delta',
+      turnId: 'gemini-native-run-turn-1',
       channel: 'assistant',
       text: 'Looks good',
       emittedAtMs: 11,

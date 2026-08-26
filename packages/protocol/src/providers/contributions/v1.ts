@@ -396,6 +396,19 @@ export const ProviderContributionV1Schema = z.object({
       ctx.addIssue({ code: 'custom', path: ['discovery', 'catalogFallback', 'endpointTemplateId'], message: 'Discovery catalog fallback requires an authorized catalog probe on the same endpoint' });
     }
   }
+  // A managed dynamic catalog has no durable endpoint URL to carry accidental
+  // source drift. Its declared semantic source version is therefore part of
+  // every managed request/catalog fingerprint. External endpoint catalogs do
+  // not have a host-owned source registry to version here.
+  if (value.managedRuntime && 'probes' in value.catalog) {
+    if (value.catalog.sourceRegistryVersion === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['catalog', 'sourceRegistryVersion'],
+        message: 'Managed Provider dynamic catalog requires a semantic source registry version',
+      });
+    }
+  }
   value.compatibilityOverrides?.forEach((override, index) => {
     if (!protocols.has(override.protocol)) {
       ctx.addIssue({

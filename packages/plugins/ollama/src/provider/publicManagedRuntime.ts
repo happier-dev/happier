@@ -26,7 +26,16 @@ const OLLAMA_MANAGED_SERVICE_SPEC = Object.freeze({
       inject: Object.freeze({ baseUrlEnvironmentKey: 'OLLAMA_HOST' }),
     }),
   }),
-  healthCheck: Object.freeze({ kind: 'none' as const }),
+  // `/api/tags` is Ollama's declared availability and catalog endpoint. SVC09
+  // owns the retry, timeout, cancellation, and readiness lifecycle around this
+  // one provider-native HTTP check.
+  healthCheck: Object.freeze({
+    kind: 'http' as const,
+    target: Object.freeze({
+      kind: 'servicePath' as const,
+      path: '/api/tags',
+    }),
+  }),
 }) satisfies ManagedServiceSpec;
 
 const start: ManagedProviderRuntime['start'] = async (request, context) => {

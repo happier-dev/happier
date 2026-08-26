@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { OPENCODE_AGENT_RUNTIME_CONTRIBUTION } from './catalog.js';
 import { OPENCODE_AGENT_RUNTIME_CONTRIBUTION as LEGACY_RUNTIME_CONTRIBUTION } from './runtime.js';
+import { PLUGIN_MANIFEST } from '../../manifest.js';
 
 type SessionControlAdapter = Readonly<{
   normalizeRuntimeKindOverride?: (value: unknown) => 'server' | 'acp' | null;
@@ -15,7 +16,6 @@ type SessionControlAdapter = Readonly<{
 }>;
 
 type RuntimeContributionWithSessionControl = Readonly<{
-  agentCliSystemTool?: Readonly<{ toolId: string }>;
   runtimeActivityApplicability?: 'supported' | 'unavailable' | 'not_applicable';
   sessionControlAdapter?: SessionControlAdapter;
   connectedServices?: Readonly<{
@@ -29,21 +29,15 @@ type RuntimeContributionWithSessionControl = Readonly<{
 }>;
 
 describe('OPENCODE_AGENT_RUNTIME_CONTRIBUTION', () => {
-  it('preserves the legacy runtime entrypoint through the static catalog leaf', () => {
+  it('preserves the legacy runtime entrypoint without private Session preferences', () => {
     expect(OPENCODE_AGENT_RUNTIME_CONTRIBUTION).toBe(LEGACY_RUNTIME_CONTRIBUTION);
-    expect(OPENCODE_AGENT_RUNTIME_CONTRIBUTION.sessionRuntimePreferences.resolve({
-      settings: { opencodeBackendMode: 'server' },
-      processEnv: {},
-    })).toEqual({
-      opencodeBackendMode: 'server',
-      opencodeServerBaseUrlExplicit: false,
-    });
+    expect(OPENCODE_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('sessionRuntimePreferences');
   });
 
-  it('binds native OpenCode launches to the declared CLI system tool', () => {
-    const contribution: RuntimeContributionWithSessionControl = OPENCODE_AGENT_RUNTIME_CONTRIBUTION;
+  it('declares the OpenCode CLI system tool in the manifest catalog', () => {
+    const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'opencode');
 
-    expect(contribution.agentCliSystemTool).toEqual({
+    expect(agent?.catalog?.agentCliSystemTool).toEqual({
       toolId: 'opencode-cli',
     });
   });
@@ -89,15 +83,7 @@ describe('OPENCODE_AGENT_RUNTIME_CONTRIBUTION', () => {
     expect(adapter).toBe(false);
   });
 
-  it('keeps only provider-bundle metadata in the catalog contribution', () => {
-    const handoff = OPENCODE_AGENT_RUNTIME_CONTRIBUTION.sessionHandoff;
-
-    expect(handoff).toEqual({
-      agentBundleRecords: {
-        extract: expect.any(Function),
-      },
-    });
-    expect(handoff).not.toHaveProperty('surface');
-    expect(handoff).not.toHaveProperty('resolveReplayChildLaunch');
+  it('leaves handoff media extraction to the Agent-native HandoffSurface', () => {
+    expect(OPENCODE_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('sessionHandoff');
   });
 });

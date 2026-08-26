@@ -3,16 +3,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
+import { ANTIGRAVITY_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
 
 describe('Antigravity agent runtime contribution', () => {
-  it('exports provider-owned model preflight controls and Gemini connected-service materialization', () => {
+  it('keeps Gemini connected-service materialization in the legacy catalog contribution', () => {
     expect(ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION).toMatchObject({
       agentId: 'antigravity',
-      preflightSessionControls: {
-        failureCacheStrategy: 'cooldown',
-        probeModelsRaw: expect.any(Function),
-        cliModelsCommandArgs: ['models'],
-      },
       connectedServices: {
         serviceIds: ['gemini'],
         materializedHomeCredentialEntries: [
@@ -46,6 +42,10 @@ describe('Antigravity agent runtime contribution', () => {
         shouldRestartForServiceSwitch: expect.any(Function),
         restartRematerializeRequiredReason: 'antigravity_auth_environment_rematerialization_required',
       },
+    });
+    expect(ANTIGRAVITY_PREFLIGHT_SESSION_CONTROLS.models?.command).toMatchObject({
+      toolId: 'antigravity-cli',
+      args: ['models'],
     });
   });
 

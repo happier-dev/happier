@@ -51,6 +51,33 @@ describe('resolveEffectiveCodingPromptBehaviorV1', () => {
     })).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
   });
 
+  it('applies the moving predecessor legacy profile override through the canonical collection reader', () => {
+    expect(resolveEffectiveCodingPromptBehaviorV1({
+      settings: {
+        codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'initial', responseOptions: 'agent' },
+        profiles: [{
+          id: 'remote-dev-profile',
+          name: 'Remote Dev Profile',
+          environmentVariables: [],
+          envVarRequirements: [],
+          defaultPermissionModeByTargetKey: {},
+          defaultPermissionModeByAgent: {},
+          defaultPersistenceModeByTargetKey: {},
+          defaultPersistenceModeByAgent: {},
+          compatibilityByTargetKey: {},
+          compatibility: {},
+          isBuiltIn: false,
+          defaultEnabled: true,
+          createdAt: 1,
+          updatedAt: 1,
+          version: '1.0.0',
+          codingPromptBehaviorV1: { v: 1, responseOptions: 'disabled' },
+        }],
+      },
+      profileId: 'remote-dev-profile',
+    })).toEqual({ v: 1, sessionTitleUpdates: 'initial', responseOptions: 'disabled' });
+  });
+
   it('ignores an unknown profile id and a profile that expresses no override', () => {
     const settings = {
       codingPromptBehaviorV1: { v: 1, sessionTitleUpdates: 'ongoing', responseOptions: 'agent' },

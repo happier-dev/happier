@@ -320,6 +320,7 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
     const engineEntry = runtimeRegistry
         ? readRuntimeRegistryBackendEngineEntry(runtimeRegistry, backend)
         : undefined;
+    const entry = agent.catalogEntry ?? null;
     const runtimeOwner = resolveBackendRuntimeOwner({
         backend,
         agent,
@@ -330,7 +331,12 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
     const leasedRuntime = shouldLeaseDaemonRuntime
         && runtimeOwner.selected?.kind === 'plugin_engine'
         && engineEntry
-        ? await resolveLeasedAgentRuntime({ lease: engineEntry })
+        ? await resolveLeasedAgentRuntime({
+            lease: engineEntry,
+            ...(entry?.resolveHostAgentRuntimeSurfaces
+                ? { resolveHostSurfaces: entry.resolveHostAgentRuntimeSurfaces }
+                : {}),
+        })
         : null;
     const pluginRuntimeDiagnostics = runtimeRegistry
         ? await resolvePluginBackendSurfaceHandlers({

@@ -88,6 +88,19 @@ export const ProviderCatalogProbeV1Schema = z.object({
 export type ProviderCatalogProbeV1 = z.infer<typeof ProviderCatalogProbeV1Schema>;
 
 /**
+ * Stable semantic identity for a Provider's dynamic catalog source. This is
+ * intentionally declaration-owned: it changes when the source registry or
+ * generated adapter can produce different model rows, not on process restart,
+ * credential refresh, or plugin reload.
+ */
+export const ProviderCatalogSourceRegistryVersionV1Schema = z.string()
+  .trim()
+  .min(1);
+export type ProviderCatalogSourceRegistryVersionV1 = z.infer<
+  typeof ProviderCatalogSourceRegistryVersionV1Schema
+>;
+
+/**
  * Canonical owner for "does this catalog probe report model load state".
  * An explicit declaration wins; otherwise the bundled fact answers, and an
  * unknown contributed format reports `false` rather than being guessed.
@@ -124,6 +137,7 @@ const ProbeCatalogSchema = z.object({
   source: z.literal('probe'),
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
   probes: z.array(ProviderCatalogProbeV1Schema).min(1).max(PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes),
+  sourceRegistryVersion: ProviderCatalogSourceRegistryVersionV1Schema.optional(),
 }).strict();
 const StaticProbeCatalogSchema = z.object({
   source: z.literal('static+probe'),
@@ -131,6 +145,7 @@ const StaticProbeCatalogSchema = z.object({
   membershipPolicy: ProviderCatalogMembershipPolicyV1Schema.optional(),
   staticModels: z.array(ProviderModelDescriptorV1Schema).min(1).max(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection),
   probes: z.array(ProviderCatalogProbeV1Schema).min(1).max(PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes),
+  sourceRegistryVersion: ProviderCatalogSourceRegistryVersionV1Schema.optional(),
 }).strict();
 
 export const ProviderCatalogDeclarationV1Schema = z.discriminatedUnion('source', [

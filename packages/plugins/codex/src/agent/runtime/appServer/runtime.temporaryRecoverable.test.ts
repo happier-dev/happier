@@ -711,6 +711,39 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     ]);
   });
 
+  it('publishes the effective Codex home in its runtime descriptor with the provider session id', async () => {
+    const appServerRuntime = createRuntime({
+      processEnv: { CODEX_HOME: '/runtime/codex-home' },
+    });
+    const runtime = createCodexNativeAppServerSessionRuntime(appServerRuntime, 'session-1');
+    const descriptors: unknown[] = [];
+    const unsubscribe = appServerRuntime.events.subscribe((event) => {
+      if (event.kind === 'descriptor-update') descriptors.push(event.descriptor);
+    });
+
+    try {
+      await expect(runtime.send({
+        inputIds: ['input-first'],
+        input: { text: 'first prompt' },
+        delivery: { kind: 'newTurn', turnId: 'turn-first' },
+      })).resolves.toEqual({ status: 'admitted' });
+
+      expect(descriptors).toEqual([
+        expect.objectContaining({
+          agentId: 'codex',
+          agent: expect.objectContaining({
+            backendMode: 'appServer',
+            providerSessionId: 'thread-1',
+            homePath: '/runtime/codex-home',
+          }),
+        }),
+      ]);
+    } finally {
+      unsubscribe();
+      await runtime.dispose();
+    }
+  });
+
   it.each([
     ['thread/start', undefined],
     ['thread/resume', 'thread-existing'],

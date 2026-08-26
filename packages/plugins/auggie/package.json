@@ -14,10 +14,6 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
-    "./ui/behavior": {
-      "types": "./dist/ui/uiBehavior.d.ts",
-      "default": "./dist/ui/uiBehavior.js"
-    },
     "./agent/acp/definition": {
       "types": "./dist/agent/acp/definition.d.ts",
       "default": "./dist/agent/acp/definition.js"

@@ -6,13 +6,6 @@ import { expandHomePath } from '@happier-dev/plugin-sdk/fs';
 
 type CodexEnvironmentEnv = Readonly<Record<string, string | undefined>>;
 
-export type CodexEnvironmentAuthMethod = 'api_key_env' | 'credentials_file';
-
-export type CodexEnvironmentAuthState = Readonly<{
-  method: CodexEnvironmentAuthMethod | null;
-  accountLabel: string | null;
-}>;
-
 export type CodexEnvironmentAuthTokens = Readonly<{
   idToken: string | null;
   accessToken: string | null;
@@ -161,22 +154,4 @@ function readCodexAuthFileTokens(env: CodexEnvironmentEnv): Readonly<{
 
 export function readCodexEnvironmentAuthTokens(env: CodexEnvironmentEnv = process.env): CodexEnvironmentAuthTokens {
   return readCodexAuthFileTokens(env);
-}
-
-export function readCodexEnvironmentAuthState(env: CodexEnvironmentEnv = process.env): CodexEnvironmentAuthState {
-  const authFileTokens = readCodexAuthFileTokens(env);
-  const apiKey = readCodexApiKey(env);
-
-  if (apiKey) {
-    return { method: 'api_key_env', accountLabel: null };
-  }
-
-  if (authFileTokens.idToken || authFileTokens.accessToken) {
-    return {
-      method: 'credentials_file',
-      accountLabel: authFileTokens.accountLabel,
-    };
-  }
-
-  return { method: null, accountLabel: null };
 }

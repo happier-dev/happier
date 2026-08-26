@@ -50,6 +50,7 @@ export type ProviderManagedProbeAuthorizationRequest = Readonly<{
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
   endpointTemplateId: string;
   protocol: ProviderWireProtocol;
+  sourceRegistryVersion?: string;
   path: string;
   parser: ProviderCatalogParserV1;
   probeRequestFingerprint: ProviderProbeRequestFingerprintV1;

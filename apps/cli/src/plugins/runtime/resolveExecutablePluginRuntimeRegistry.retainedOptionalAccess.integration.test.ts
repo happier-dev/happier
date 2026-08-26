@@ -70,6 +70,7 @@ async function writePluginSource(input: Readonly<{
     pluginRoot: string;
     version: 'G' | 'H';
     accountServiceId: string;
+    requestAuthPurpose: string;
 }>): Promise<void> {
     const manifestVersion = input.version === 'G' ? '1.0.0' : '2.0.0';
     await mkdir(join(input.pluginRoot, '.happier-plugin'), {
@@ -183,6 +184,16 @@ async function writePluginSource(input: Readonly<{
             '      module: "./agentRuntime.mjs",',
             '      export: "retainedOptionalAgentFactory",',
             '      runtimeApiVersion: 1',
+            '    },',
+            '    connectedAccountLaunch: {',
+            '      requestAuthUses: [{',
+            `        purpose: ${JSON.stringify(input.requestAuthPurpose)},`,
+            '        materialization: {',
+            '          kind: "httpHeaders",',
+            `          origin: ${JSON.stringify(`https://${input.version.toLowerCase()}.example.test`)},`,
+            '          headerNames: ["authorization"]',
+            '        }',
+            '      }]',
             '    }',
             '  });',
             '}',
@@ -298,6 +309,7 @@ describe('retained Agent optional HostAccess', () => {
                 pluginRoot,
                 version: 'G',
                 accountServiceId: 'account-g',
+                requestAuthPurpose: 'request-auth-g',
             });
             const selectedGOptionalAccess = createSelectedPluginOptionalAccess({
                 pluginId: PLUGIN_ID,
@@ -365,6 +377,7 @@ describe('retained Agent optional HostAccess', () => {
                 pluginRoot,
                 version: 'H',
                 accountServiceId: 'account-h',
+                requestAuthPurpose: 'request-auth-h',
             });
             const selectedHNarrowerOptionalAccess =
                 createSelectedPluginOptionalAccess({
@@ -401,6 +414,41 @@ describe('retained Agent optional HostAccess', () => {
                 family: 'agents',
                 localId: AGENT_ID,
             }]);
+            expect(
+                hRegistry.contributes.agentDefinitionsById
+                    .get(AGENT_ID)
+                    ?.catalogEntry
+                    .connectedAccountRequestAuthUses,
+            ).toMatchObject([{
+                purpose: 'request-auth-h',
+            }]);
+            const acquireRetainedGContributions =
+                hRegistry.acquireRetainedRunnerAgentPurposeContributions;
+            expect(acquireRetainedGContributions).toBeTypeOf('function');
+            if (!acquireRetainedGContributions) {
+                throw new Error('Expected exact retained G Agent purpose contributions');
+            }
+            const retainedGContributions = await acquireRetainedGContributions({
+                binding,
+                pluginHardRevocationRevision: 0,
+            });
+            expect(retainedGContributions).not.toBeNull();
+            if (!retainedGContributions) {
+                throw new Error('Expected retained G Agent purpose contributions');
+            }
+            expect(
+                retainedGContributions.contributes.agentDefinitionsById
+                    .get(AGENT_ID)
+                    ?.catalogEntry
+                    .connectedAccountRequestAuthUses,
+            ).toMatchObject([{
+                purpose: 'request-auth-g',
+            }]);
+            expect(retainedGContributions.contributes.actions).toEqual([]);
+            expect(retainedGContributions.contributes.agents).toHaveLength(1);
+            expect(retainedGContributions.isCurrent()).toBe(true);
+            await retainedGContributions.release();
+            expect(retainedGContributions.isCurrent()).toBe(false);
             const createRetainedThroughH =
                 hRegistry.createRetainedRunnerAgentInvocationServices;
             if (!createRetainedThroughH) {

@@ -2,19 +2,34 @@ import type { ManagedDependencyDescriptor } from '@happier-dev/plugin-sdk/manage
 import { ManagedDependencyDescriptorSchema } from '@happier-dev/plugin-sdk/managed-services';
 
 import {
-  CODEX_ACP_RUNTIME_INSTALLABLE_ADAPTER_POLICY,
-  type CodexAcpRuntimeInstallableDescriptor,
-} from './runtimeAdapter.js';
+  resolveCodexAcpSpawnWithOptions,
+  type ResolveCodexAcpSpawnDeps,
+  type ResolveCodexAcpSpawnOptions,
+} from '../acp/command.js';
+import {
+  validateCodexAcpSpawnAvailability,
+  type CodexAcpAvailabilityResult,
+  type CodexAcpSpawnSpec,
+} from '../acp/availability.js';
 
-export {
-  CODEX_ACP_RUNTIME_INSTALLABLE_ADAPTER_POLICY,
-  CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS,
-  hasCodexAcpRuntimeInstallableAdapterPolicy,
-} from './runtimeAdapter.js';
-export type {
-  CodexAcpRuntimeInstallableAdapterPolicy,
-  CodexAcpRuntimeInstallableDescriptor,
-} from './runtimeAdapter.js';
+/**
+ * Codex owns the Agent-specific launch semantics. The host-owned Codex ACP
+ * installable adapter calls these helpers for the one `codex-acp` installable.
+ */
+export const CODEX_ACP_RUNTIME_LAUNCH_HELPERS = Object.freeze({
+  resolveSpawnSpec: (
+    opts: ResolveCodexAcpSpawnOptions = {},
+    deps: ResolveCodexAcpSpawnDeps = {},
+  ): CodexAcpSpawnSpec => resolveCodexAcpSpawnWithOptions(opts, deps),
+  validateAvailability: (
+    spec: CodexAcpSpawnSpec,
+    opts?: Readonly<{
+      env?: NodeJS.ProcessEnv;
+      existsSyncFn?: typeof import('node:fs').existsSync;
+      accessSyncFn?: typeof import('node:fs').accessSync;
+    }>,
+  ): CodexAcpAvailabilityResult => validateCodexAcpSpawnAvailability(spec, opts),
+});
 
 const codexAcpInstallableDescriptorBase = ManagedDependencyDescriptorSchema.parse({
   id: 'codex-acp',
@@ -53,7 +68,5 @@ const codexAcpInstallableDescriptorBase = ManagedDependencyDescriptorSchema.pars
   },
 });
 
-export const CODEX_ACP_INSTALLABLE_DESCRIPTOR: CodexAcpRuntimeInstallableDescriptor = Object.freeze({
-  ...codexAcpInstallableDescriptorBase,
-  runtimeInstallableAdapterPolicy: CODEX_ACP_RUNTIME_INSTALLABLE_ADAPTER_POLICY,
-});
+export const CODEX_ACP_INSTALLABLE_DESCRIPTOR: ManagedDependencyDescriptor =
+  codexAcpInstallableDescriptorBase;

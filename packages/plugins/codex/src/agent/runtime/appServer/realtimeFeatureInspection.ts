@@ -1,10 +1,15 @@
-import type { DisposableCodexAppServerClient } from './client.js';
-
 const REALTIME_FEATURE = 'realtime_conversation';
 const FEATURE_PAGE_LIMIT = 100;
 const MAX_FEATURE_PAGES = 100;
 
 export const CODEX_OPERATION_ABORTED = Symbol('codex_operation_aborted');
+
+type CodexRealtimeFeatureRequestClient = Readonly<{
+  request(method: string, params?: unknown): Promise<unknown>;
+  launchFeatures?: Readonly<{
+    realtimeConversationAdvertised: boolean;
+  }>;
+}>;
 
 export type CodexRealtimeFeatureInspection =
   | Readonly<{ status: 'enabled' }>
@@ -80,13 +85,13 @@ function readFeaturePage(value: unknown): Readonly<{
  * a thread or realtime session.
  */
 export async function inspectCodexRealtimeFeature(params: Readonly<{
-  client: DisposableCodexAppServerClient;
+  client: CodexRealtimeFeatureRequestClient;
   threadId?: string;
   isCurrent?: () => boolean;
   isAuthenticationError?: (error: unknown) => boolean;
   signal?: AbortSignal;
 }>): Promise<CodexRealtimeFeatureInspection> {
-  if (!params.client.launchFeatures.realtimeConversationAdvertised) {
+  if (params.client.launchFeatures?.realtimeConversationAdvertised === false) {
     return { status: 'unavailable', code: 'feature_not_advertised' };
   }
 
@@ -109,7 +114,7 @@ export async function inspectCodexRealtimeFeature(params: Readonly<{
           ...(typeof params.threadId === 'string' ? { threadId: params.threadId } : {}),
           cursor,
           limit: FEATURE_PAGE_LIMIT,
-        }, ...(params.signal ? [{ signal: params.signal }] : [])),
+        }),
         params.signal,
       );
       if (pageOutcome === CODEX_OPERATION_ABORTED) {

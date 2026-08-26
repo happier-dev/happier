@@ -5,9 +5,21 @@ import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
 import {
+  codexCliSessionCommandConfig,
+  resolveCodexCliSessionExtraOptions,
+} from './agent/cli/command.js';
+import {
+  CODEX_CLI_AUTH_STATUS_ARGS,
+  DEFAULT_CODEX_CLI_AUTH_PROBE_TIMEOUT_MS,
+  resolveCodexCliAuthStatus,
+} from './agent/cli/auth/spec.js';
+import { resolveCodexSessionRuntimePreferences } from './agent/lifecycle/runtimePreferences.js';
+import {
   augmentCodexDaemonSpawnEnv,
   resolveCodexDaemonSpawnPrerequisites,
 } from './agent/lifecycle/spawnHooks.js';
+import { CODEX_PREFLIGHT_SESSION_CONTROLS } from './agent/lifecycle/preflight/sessionControls.js';
+import { shouldUseCodexDeferredBootstrap } from './agent/lifecycle/deferredStartup.js';
 import { readCodexMcpConfigServers } from './agent/mcp/configServers.js';
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 import { createCodexAgentRuntime } from './agent/runtime/engine.js';
@@ -15,6 +27,7 @@ import { codexExternalSessionsContribution } from './agent/surfaces/sessions/ext
 import { codexExternalSessionHooksContribution } from './agent/surfaces/sessions/external/externalSessionHooks.js';
 import { codexExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
 import { codexExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/takeover.js';
+import { supportsCodexVendorResume } from './agent/surfaces/sessions/resume/support.js';
 import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { CODEX_VOICE_PROVIDER_CONTRIBUTION_ID } from './constants.js';
 import { openAiCodexConnectedAccountRuntime } from './connectedAccounts/openAiCodexRuntime.js';
@@ -183,17 +196,29 @@ export const CODEX_PLUGIN = definePlugin({
           },
           auth: {
             support: 'login_terminal',
-            probe: {
-              parser: 'codexLoginStatus',
-              backgroundChecks: 'safe',
-              statusArgs: ['login', 'status'],
-              envVars: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
-              credentialPaths: ['~/.codex/auth.json'],
-            },
+            environmentVariables: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
+            nonInteractiveStatusProbe: true,
             loginLaunches: [{ kind: 'primary', args: ['login'] }],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+          agentCliSystemTool: { toolId: 'codex-cli' },
+          codingPromptBehavior: {
+            blocks: [{
+              id: 'provider.codex.exec_sequencing',
+              text: [
+                'Tool execution ordering:',
+                '- When you need to run multiple `exec_command` calls, run them sequentially.',
+                '- Do not enqueue multiple `exec_command` calls at once.',
+                '- If any command may require user approval (especially writes), wait for the user decision and the command result before issuing the next command.',
+                '- If a dependent read runs before its prerequisite write and fails, rerun the read after the write succeeds.',
+              ].join('\n'),
+            }],
+          },
+          resumeChecklist: { includeLoginStatus: true },
+        },
         connectedAccounts: [{
           purpose: 'primary',
           service: 'openai-codex',
@@ -204,7 +229,7 @@ export const CODEX_PLUGIN = definePlugin({
           surfaces: ['externalSessions'],
           sessions: {
             open: ['create', 'resume'],
-            delivery: ['newTurn', 'steer', 'followUp'],
+            delivery: ['newTurn', 'steer'],
             cancel: true,
             configuration: true,
             goals: {
@@ -299,6 +324,41 @@ export const CODEX_PLUGIN = definePlugin({
         } },
       },
       factory: createCodexAgentRuntime,
+      preflightSessionControls: CODEX_PREFLIGHT_SESSION_CONTROLS,
+      cliAuth: {
+        detectAuthStatus: async ({ runDeclaredSystemToolCommand }) =>
+          resolveCodexCliAuthStatus({
+            commandStatus: await runDeclaredSystemToolCommand({
+              toolId: 'codex-cli',
+              args: CODEX_CLI_AUTH_STATUS_ARGS,
+              timeoutMs: DEFAULT_CODEX_CLI_AUTH_PROBE_TIMEOUT_MS,
+            }),
+          }),
+      },
+      cliSessionCommand: {
+        ...codexCliSessionCommandConfig,
+        buildSessionOptions: (input) => {
+          const command = resolveCodexCliSessionExtraOptions(input.parsed);
+          if (!command.ok) return command;
+          return {
+            ok: true,
+            options: {
+              ...command.options,
+              ...resolveCodexSessionRuntimePreferences({
+                settings: input.settings,
+                environment: input.environment,
+                startOrigin: input.startOrigin,
+              }),
+            },
+          };
+        },
+      },
+      sessionStartup: {
+        shouldUseDeferredBootstrap: shouldUseCodexDeferredBootstrap,
+      },
+      vendorResumeSupport: {
+        supportsVendorResume: supportsCodexVendorResume,
+      },
       providerBinding: CODEX_PROVIDER_BINDING_ADAPTER_V1,
       sessionRunnerFactory: {
         module: './agent/runtime/engine',

@@ -47,7 +47,7 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
       },
     },
     resume: {
-      vendorResume: 'supported',
+      vendorResume: 'supported' as const,
       vendorResumeIdField: 'claudeSessionId',
       vendorResumeContinuityProofField: 'claudeTranscriptPath',
     },

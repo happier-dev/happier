@@ -75,12 +75,7 @@ function loadedAgentPlugin(): LoadedPlugin {
                         },
                         auth: {
                             support: 'login_terminal',
-                            probe: {
-                                parser: 'unknown',
-                                backgroundChecks: 'safe',
-                                statusArgs: null,
-                                envVars: ['ACME_API_KEY'],
-                            },
+                            environmentVariables: ['ACME_API_KEY'],
                             loginLaunches: [
                                 { kind: 'primary', args: ['login'] },
                                 { kind: 'device_code', args: ['login', '--device-code'] },

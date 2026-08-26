@@ -5,6 +5,7 @@ import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { resolveKimiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 import { HAPPIER_KIMI_ACP_SELECTOR_ENV } from './agent/preferences/pythonSelector.js';
+import { resolveKimiSessionRuntimePreferences } from './agent/preferences/session.js';
 import { createKimiAgentRuntime } from './agent/runtime/factory.js';
 import { KIMI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
@@ -69,11 +70,13 @@ export const KIMI_PLUGIN = definePlugin({
           },
           auth: {
             support: 'login_terminal',
-            probe: { parser: 'unknown', backgroundChecks: 'safe', statusArgs: null },
             loginLaunches: [{ kind: 'primary', args: ['login'] }],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+        },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           sessions: {
             open: ['create', 'resume'],
@@ -83,6 +86,17 @@ export const KIMI_PLUGIN = definePlugin({
         }),
       },
       factory: createKimiAgentRuntime,
+      cliSessionCommand: {
+        sessionRuntimeId: 'kimi',
+        accountSettingsAgentId: 'kimi',
+        buildSessionOptions: (input) => ({
+          ok: true,
+          options: resolveKimiSessionRuntimePreferences({
+            settings: input.settings,
+            environment: input.environment,
+          }),
+        }),
+      },
       sessionRunnerFactory: {
         module: './agent/runtime/factory',
         export: 'createKimiAgentRuntime',

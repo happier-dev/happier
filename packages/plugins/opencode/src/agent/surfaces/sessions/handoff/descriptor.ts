@@ -18,7 +18,10 @@ import {
 import { buildOpenCodeAgentRuntimeDescriptorV1 } from '../../../identity/runtimeDescriptor.js';
 import { OPEN_CODE_SYSTEM_TOOL_ID } from '../../../systemTool.js';
 import type { OpenCodeExternalSessionSource } from '../external/client.js';
-import { normalizeOpenCodeSessionExportForHandoffComparison } from './exportRecords.js';
+import {
+  extractOpenCodeSessionHandoffAgentBundleRecords,
+  normalizeOpenCodeSessionExportForHandoffComparison,
+} from './exportRecords.js';
 
 const OPEN_CODE_IMPORT_EXPORT_JSON_MAX_BYTES = 8 * 1024 * 1024;
 const OPEN_CODE_EXPORT_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
@@ -145,6 +148,8 @@ async function resolveOpenCodeExecutable(
 }
 
 export const openCodeHandoffSurface = {
+    extractMediaScannableRecords: ({ bundle }) =>
+      extractOpenCodeSessionHandoffAgentBundleRecords(bundle),
     exportBundle: async (params, context) => {
       const exec = context.services.exec;
       const providerSessionId = readOpenCodeProviderSessionIdFromMetadata(params.metadata);

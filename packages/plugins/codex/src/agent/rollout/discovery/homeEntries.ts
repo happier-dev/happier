@@ -153,8 +153,10 @@ async function resolveVerifiedCodexHomePath(params: Readonly<{
  * The external-session host resolves a connected account profile through the
  * catalog's materialized-home hook before calling the Codex leaf. Once that
  * admission has stamped the exact home, this leaf only verifies that the
- * target remains a real directory; it deliberately does not reconstruct a
- * daemon root from the source path and become a second custody owner.
+ * target remains a real directory. It uses the physical path only for file
+ * access and preserves the admitted source path as the returned identity; it
+ * deliberately does not reconstruct a daemon root from the source path and
+ * become a second custody owner.
  */
 async function resolveAdmittedCodexHomePath(params: Readonly<{
   exactHomePath: string;
@@ -280,7 +282,7 @@ export async function homeEntries(params: Readonly<{
         ...(connectedServiceGroupId
           ? { connectedServiceGroupId }
           : {}),
-        homePath: admittedHome,
+        homePath: exactHomePath,
       },
     }];
   }

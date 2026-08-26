@@ -8,8 +8,8 @@ import {
 describe('Codex CLI command policy', () => {
   it('declares Codex-owned session command parsing options', () => {
     expect(codexCliSessionCommandConfig).toEqual({
-      backendIdForSessionRuntime: 'codex',
-      agentIdForAccountSettings: 'codex',
+      sessionRuntimeId: 'codex',
+      accountSettingsAgentId: 'codex',
       directoryFlags: ['-C', '--cd'],
       forwardModelFlag: true,
       versionFlags: ['-V', '--version'],
@@ -21,7 +21,7 @@ describe('Codex CLI command policy', () => {
       resolveCodexCliSessionExtraOptions({
         startingMode: 'terminal',
         directory: '/tmp/codex',
-        providerArgs: [],
+        agentArgs: [],
       }),
     ).toEqual({
       ok: true,
@@ -34,7 +34,7 @@ describe('Codex CLI command policy', () => {
     expect(
       resolveCodexCliSessionExtraOptions({
         startingMode: 'remote',
-        providerArgs: ['exec', '--sandbox', 'workspace-write'],
+        agentArgs: ['exec', '--sandbox', 'workspace-write'],
       }),
     ).toEqual({
       ok: true,
@@ -49,7 +49,7 @@ describe('Codex CLI command policy', () => {
     expect(
       resolveCodexCliSessionExtraOptions({
         startingMode: 'nope',
-        providerArgs: [],
+        agentArgs: [],
       }),
     ).toEqual({
       ok: false,

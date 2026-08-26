@@ -250,7 +250,7 @@ export function createCodexV3ControlDecoder(input: Readonly<{
       pendingToolCalls.delete(responseId);
       completedToolResponses.add(responseId);
       while (completedToolResponses.size > MAX_COMPLETED_TOOL_RESPONSES) deleteOldest(completedToolResponses);
-      if (!calls?.size) return Object.freeze([]);
+      if (status !== 'completed' || !calls?.size) return Object.freeze([]);
       return Object.freeze([{
         type: 'tool_calls',
         responseId,

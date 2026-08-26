@@ -1,7 +1,7 @@
 import {
-    PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES,
-    projectPluginActionFailureMessage,
-    redactBugReportSensitiveText,
+    PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
+    projectPluginFailureMessage,
+    projectPluginFailureText,
     trimBugReportTextHeadToMaxBytes,
 } from '@happier-dev/protocol';
 
@@ -24,191 +24,11 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object';
 }
 
-export const PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES = PLUGIN_ACTION_FAILURE_MESSAGE_MAX_UTF8_BYTES;
-const NEUTRAL_PLUGIN_FAILURE_TEXT = 'Plugin operation failed';
-const REDACTED_PLUGIN_FAILURE_PATH = '[REDACTED_PATH]';
-
-/**
- * Lifecycle failures can include host filesystem errors. Preserve the error
- * shape while removing POSIX, Windows-drive, UNC, and local file-URL paths
- * before the text reaches generic logger and diagnostics sinks. The Protocol
- * redactor owns credentials; this boundary owns local path privacy. A small
- * scanner keeps spaces and trailing source locations inside one redaction
- * without interpreting a web URL or a path-looking substring as local data.
- */
-function isPluginFailurePathBoundary(value: string, index: number): boolean {
-    if (index === 0) return true;
-    const previous = value[index - 1] ?? '';
-    return previous.trim().length === 0
-        || previous === '"'
-        || previous === "'"
-        || previous === String.fromCharCode(96)
-        || previous === '='
-        || previous === '('
-        || previous === ','
-        || previous === '['
-        || previous === '{'
-        || previous === ';'
-        || previous === '|'
-        || previous === '&'
-        || previous === '<'
-        || previous === '>'
-        || previous === ':';
-}
-
-function isPluginFailurePathSeparator(character: string | undefined): boolean {
-    return character === '/' || character === '\\';
-}
-
-function isPluginFailurePathTerminator(character: string | undefined): boolean {
-    return character === '"'
-        || character === "'"
-        || character === String.fromCharCode(96)
-        || character === ';'
-        || character === '|'
-        || character === '&'
-        || character === '<'
-        || character === '>'
-        || character === '('
-        || character === ')'
-        || character === '['
-        || character === ']'
-        || character === '{'
-        || character === '}';
-}
-
-function isPluginFailureAsciiLetter(character: string | undefined): boolean {
-    const code = character?.charCodeAt(0) ?? 0;
-    return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
-}
-
-function readPluginFailureAbsolutePathRootEnd(value: string, index: number): number | null {
-    if (!isPluginFailurePathBoundary(value, index)) return null;
-    if (
-        value.slice(index, index + 'file:'.length).toLowerCase() === 'file:'
-        && isPluginFailurePathSeparator(value[index + 'file:'.length])
-    ) {
-        return index + 'file:'.length + 1;
-    }
-    const character = value[index];
-    const next = value[index + 1];
-    if (
-        isPluginFailureAsciiLetter(character)
-        && next === ':'
-        && isPluginFailurePathSeparator(value[index + 2])
-    ) {
-        return index + 3;
-    }
-    if (character === '\\') {
-        return next === '\\' ? index + 2 : index + 1;
-    }
-    if (character === '/') {
-        if (next !== '/') return index + 1;
-        return value[index - 1] === ':' ? null : index + 2;
-    }
-    return null;
-}
-
-function readPluginFailureNextTokenStartsField(value: string, index: number): boolean {
-    let cursor = index;
-    while (
-        cursor < value.length
-        && (value[cursor] ?? '').trim().length > 0
-        && !isPluginFailurePathTerminator(value[cursor])
-    ) {
-        if (value[cursor] === '=') return true;
-        cursor += 1;
-    }
-    return false;
-}
-
-function readPluginFailureAbsolutePathEnd(value: string, index: number): number {
-    let cursor = index;
-    while (cursor < value.length) {
-        const character = value[cursor];
-        if (isPluginFailurePathTerminator(character)) return cursor;
-        if ((character ?? '').trim().length > 0) {
-            cursor += 1;
-            continue;
-        }
-
-        let next = cursor;
-        while (next < value.length && (value[next] ?? '').trim().length === 0) {
-            next += 1;
-        }
-        if (
-            next >= value.length
-            || isPluginFailurePathTerminator(value[next])
-            || readPluginFailureNextTokenStartsField(value, next)
-        ) {
-            return cursor;
-        }
-        cursor = next;
-    }
-    return cursor;
-}
-
-function redactPluginFailureAbsolutePaths(value: string): string {
-    let redacted = '';
-    let copyFrom = 0;
-    let index = 0;
-    while (index < value.length) {
-        const rootEnd = readPluginFailureAbsolutePathRootEnd(value, index);
-        if (rootEnd === null) {
-            index += 1;
-            continue;
-        }
-        const end = readPluginFailureAbsolutePathEnd(value, rootEnd);
-        if (end <= rootEnd) {
-            index += 1;
-            continue;
-        }
-        redacted += value.slice(copyFrom, index) + REDACTED_PLUGIN_FAILURE_PATH;
-        copyFrom = end;
-        index = end;
-    }
-    return redacted + value.slice(copyFrom);
-}
-
-/**
- * The sole host lifecycle boundary for a plugin-supplied failure. It admits
- * only an Error's message (never stack, cause, name, or object coercion),
- * redacts it through the canonical diagnostic redactor, and retains its head
- * within the published byte ceiling. Every catch must be safe: a hostile
- * `message` getter or a redactor failure falls back to neutral text.
- */
-export function projectPluginFailureText(error: unknown): string {
-    try {
-        return projectPluginFailureMessage(error instanceof Error ? error.message : '');
-    } catch {
-        return NEUTRAL_PLUGIN_FAILURE_TEXT;
-    }
-}
-
-/**
- * The same boundary for plugin-supplied failure prose that already arrived as a
- * string rather than as a thrown Error — a public runtime outcome `reason`, for
- * example. A caller whose published contract has a narrower ceiling than the
- * host default supplies it here rather than trimming afterwards, so the
- * redaction and the byte bound stay with this one owner.
- */
-export function projectPluginFailureMessage(
-    message: unknown,
-    options: Readonly<{ maxUtf8Bytes?: number }> = {},
-): string {
-    try {
-        if (typeof message !== 'string' || message.trim().length === 0) {
-            return NEUTRAL_PLUGIN_FAILURE_TEXT;
-        }
-        const redacted = redactPluginFailureAbsolutePaths(
-            redactBugReportSensitiveText(message),
-        ).trim();
-        if (!redacted) return NEUTRAL_PLUGIN_FAILURE_TEXT;
-        return projectPluginActionFailureMessage(redacted, options);
-    } catch {
-        return NEUTRAL_PLUGIN_FAILURE_TEXT;
-    }
-}
+export {
+    PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
+    projectPluginFailureMessage,
+    projectPluginFailureText,
+} from '@happier-dev/protocol';
 
 /**
  * The local-development realm marker. A caller supplies the author's
@@ -291,9 +111,7 @@ function projectLocalDevelopmentStack(
         const rebased = stack
             .replaceAll(`${normalizedRoot}/`, '')
             .replaceAll(normalizedRoot, '.');
-        const redacted = redactPluginFailureAbsolutePaths(
-            redactBugReportSensitiveText(rebased),
-        ).trim();
+        const redacted = projectPluginFailureMessage(rebased).trim();
         if (!redacted) return undefined;
         const bounded = trimBugReportTextHeadToMaxBytes(
             redacted,

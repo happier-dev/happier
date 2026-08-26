@@ -50,6 +50,14 @@
             "delivery": "native_mcp"
           }
         },
+        "catalog": {
+          "agentCliSystemTool": {
+            "toolId": "opencode-cli"
+          },
+          "vendorResume": {
+            "support": "supported"
+          }
+        },
         "cli": {
           "auth": {
             "loginLaunches": [
@@ -61,14 +69,6 @@
                 "kind": "primary"
               }
             ],
-            "probe": {
-              "backgroundChecks": "safe",
-              "parser": "opencodeAuthList",
-              "statusArgs": [
-                "auth",
-                "list"
-              ]
-            },
             "support": "login_terminal"
           },
           "displayName": "OpenCode CLI",

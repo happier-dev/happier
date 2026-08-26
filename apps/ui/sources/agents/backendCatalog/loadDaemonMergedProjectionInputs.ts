@@ -32,8 +32,8 @@ import type {
     PluginProjectionV2,
 } from '@happier-dev/protocol';
 import {
-    normalizePluginJsonSchema,
     preparePluginJsonSchema,
+    rehydrateCanonicalProtocolComposableSchema,
 } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -41,15 +41,17 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 /**
  * One exact target/contributor mount plus the sole generation-retained input
- * validator. This is host-private executable state, never an RPC projection:
- * the response remains raw JSON-schema data and this cache owns the one
- * prepared pair for its exact target snapshot.
+ * validator and Protocol parser. This is host-private executable state, never
+ * an RPC projection: the response remains raw JSON-schema data and this cache
+ * owns the one prepared semantic pair for its exact target snapshot.
  */
 export type PreparedDaemonPluginUiTargetedSurfaceMountV1 = Readonly<
     Omit<DaemonPluginUiTargetedSurfaceMountV1, 'inputSchema'> & {
         /** The canonical schema identity paired with `inputValidation`. */
         inputSchema: PreparedPluginJsonSchema['jsonSchema'];
         inputValidation: PreparedPluginJsonSchema;
+        /** The sole Protocol rehydrator restores this target-owned normalizer. */
+        inputNormalizer: NonNullable<ReturnType<typeof rehydrateCanonicalProtocolComposableSchema>>;
     }
 >;
 
@@ -263,6 +265,7 @@ type TargetedSurfaceMountCandidate = Readonly<{
     authorityKey: string;
     inputSchema: PreparedPluginJsonSchema['jsonSchema'];
     inputSchemaKey: string;
+    inputNormalizer: NonNullable<ReturnType<typeof rehydrateCanonicalProtocolComposableSchema>>;
 }>;
 
 type PreparedTargetedSurfaceMountPreparation = Readonly<{
@@ -326,12 +329,15 @@ function prepareTargetedSurfaceMounts(input: Readonly<{
         const authorityKey = targetMountAuthorityKey(mount);
         seenAuthorities.add(authorityKey);
         try {
-            const inputSchema = normalizePluginJsonSchema(mount.inputSchema);
+            const inputNormalizer = rehydrateCanonicalProtocolComposableSchema(mount.inputSchema);
+            if (!inputNormalizer) throw new Error('Targeted Surface schema is not Protocol-canonical');
+            const inputSchema = inputNormalizer.jsonSchema;
             const candidate: TargetedSurfaceMountCandidate = Object.freeze({
                 mount,
                 authorityKey,
                 inputSchema,
                 inputSchemaKey: stableJsonStringify(inputSchema),
+                inputNormalizer,
             });
             const priorCandidate = candidateByAuthority.get(authorityKey);
             if (priorCandidate && !sameTargetedSurfaceMountCandidateBinding(priorCandidate, candidate)) {
@@ -380,6 +386,7 @@ function prepareTargetedSurfaceMounts(input: Readonly<{
                 ...candidate.mount,
                 inputSchema: inputValidation.jsonSchema,
                 inputValidation,
+                inputNormalizer: candidate.inputNormalizer,
             }));
         } catch {
             rejectedAuthorities.add(authorityKey);
@@ -403,6 +410,7 @@ function prepareTargetedSurfaceMounts(input: Readonly<{
             ...candidate.mount,
             inputSchema: retained.inputValidation.jsonSchema,
             inputValidation: retained.inputValidation,
+            inputNormalizer: retained.inputNormalizer,
         }));
     }
     return Object.freeze({

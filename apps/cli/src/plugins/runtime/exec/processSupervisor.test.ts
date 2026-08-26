@@ -196,7 +196,7 @@ describe('spawnSupervisedPluginProcess', () => {
         });
     });
 
-    it('bounds disposal when process-tree termination never produces a terminal event', async () => {
+    it('reports incomplete termination without manufacturing a terminal process fact', async () => {
         const supervised = spawnSupervisedPluginProcess({
             command: process.execPath,
             args: ['-e', 'setInterval(() => {}, 1000)'],
@@ -205,18 +205,21 @@ describe('spawnSupervisedPluginProcess', () => {
             terminateProcessTree: async () => undefined,
         });
         try {
-            await expect(supervised.dispose('hostShutdown')).resolves.toBeUndefined();
-            await expect(supervised.handle.wait()).resolves.toMatchObject({
-                termination: {
-                    observed: {
-                        kind: 'failed',
-                        diagnostic: { code: 'PLUGIN_EXEC_TERMINATION_TIMEOUT' },
-                    },
-                    requestedBy: { kind: 'dispose', reason: 'hostShutdown' },
-                },
+            await expect(supervised.dispose('hostShutdown')).rejects.toMatchObject({
+                code: 'plugin_exec_termination_incomplete',
             });
+            await expect(Promise.race([
+                supervised.handle.wait().then(() => 'terminal' as const),
+                new Promise<'pending'>((resolve) => {
+                    setTimeout(() => resolve('pending'), 30);
+                }),
+            ])).resolves.toBe('pending');
+            expect(readSupervisedPluginProcessIdForHost(supervised.handle))
+                .toBe(supervised.child.pid);
         } finally {
             supervised.child.kill('SIGKILL');
+            await supervised.handle.wait();
+            await expect(supervised.dispose('hostShutdown')).resolves.toBeUndefined();
         }
     });
 });

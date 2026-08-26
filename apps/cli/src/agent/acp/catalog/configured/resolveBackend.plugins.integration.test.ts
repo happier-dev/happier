@@ -23,11 +23,11 @@ async function writePluginFixture(rootDir: string): Promise<void> {
         id: 'acme.integration.plugin',
         displayName: 'Acme Integration Plugin',
         description: 'Contributes an ACP backend via local-path plugin state',
-        uses: ['agents'],
         contributes: {
-          agents: [
-          {
-            id: 'acme.integration.backend',
+          agents: [{
+            id: 'acme-integration-backend',
+            title: 'Integration ACP Backend',
+            description: 'Runs ACP through plugin declarative metadata',
             runtime: {
               kind: 'acp',
               transport: {
@@ -41,39 +41,31 @@ async function writePluginFixture(rootDir: string): Promise<void> {
                   ACP_REGION: 'eu',
                 },
               },
-              ux: {
-                title: 'Integration ACP Backend',
-                description: 'Runs ACP through plugin declarative metadata',
-                defaultMode: 'plan',
-                defaultModel: 'plugin-pro',
-              },
-              capabilities: {
-                supportsResume: true,
-                supportsStreaming: true,
-                supportsModes: true,
-                supportsModels: true,
-                supportsConfigOptions: 'unknown',
-                supportsPromptImages: false,
-                customMessageKinds: ['acme.delta'],
-              },
-              auth: {
-                config: {
-                  support: 'manual_only',
-                  docsUrl: 'https://example.com/acp-auth',
+              definition: {
+                modelConfigOptionId: 'model',
+                stderrRules: {
+                  suppress: [{
+                    includes: ['known harmless ACP notification'],
+                  }],
+                },
+                mcp: {
+                  policy: 'pass_through',
                 },
               },
             },
+            primary: 'sessions',
             capabilities: {
-              externalSessions: true,
+              sessions: {
+                open: ['create', 'resume'],
+                delivery: ['newTurn'],
+                cancel: true,
+              },
             },
-          },
-          ],
+          }],
           systemTools: [{
-            toolId: 'plugin-acp-cli',
-            displayName: 'Plugin ACP CLI',
-            source: 'system',
-            lookupNames: ['plugin-acp-cli'],
-            defaultArgs: [],
+            id: 'plugin-acp-cli',
+            title: 'Plugin ACP CLI',
+            executableNames: ['plugin-acp-cli'],
           }],
         },
       }),
@@ -85,7 +77,7 @@ async function writePluginFixture(rootDir: string): Promise<void> {
 }
 
 describe('resolveConfiguredAcpBackendFromAccountSettingsOrPlugins (integration)', () => {
-  it('resolves a configured ACP backend from enabled local-path plugin contributions when account settings do not define it', async () => {
+  it('resolves a strict declarative ACP backend from enabled local-path plugin contributions when account settings do not define it', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-configured-acp-plugin-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-configured-acp-plugin-root-'));
     const store = createPluginStateStore({ happyHomeDir });
@@ -122,13 +114,13 @@ describe('resolveConfiguredAcpBackendFromAccountSettingsOrPlugins (integration)'
 
     const resolved = await resolveConfiguredAcpBackendFromAccountSettingsOrPlugins({
       settings: {},
-      backendId: 'acme.integration.backend',
+      backendId: 'acme-integration-backend',
       happyHomeDir,
     });
 
     expect(resolved).toMatchObject({
-      backendId: 'acme.integration.backend',
-      name: 'acme.integration.backend',
+      backendId: 'acme-integration-backend',
+      name: 'acme-integration-backend',
       title: 'Integration ACP Backend',
       description: 'Runs ACP through plugin declarative metadata',
       command: 'plugin-acp-cli',
@@ -143,10 +135,13 @@ describe('resolveConfiguredAcpBackendFromAccountSettingsOrPlugins (integration)'
         args: ['acp', '--session'],
       },
       transportProfile: 'generic',
-      defaultMode: 'plan',
-      defaultModel: 'plugin-pro',
-      auth: {
-        support: 'manual_only',
+      stderrRules: {
+        suppress: [{
+          includes: ['known harmless ACP notification'],
+        }],
+      },
+      mcp: {
+        policy: 'pass_through',
       },
     });
     expect(resolved?.env).toEqual({
@@ -154,10 +149,10 @@ describe('resolveConfiguredAcpBackendFromAccountSettingsOrPlugins (integration)'
     });
     expect(resolved?.capabilities).toEqual({
       supportsLoadSession: true,
-      supportsModes: 'yes',
-      supportsModels: 'yes',
+      supportsModes: 'unknown',
+      supportsModels: 'unknown',
       supportsConfigOptions: 'unknown',
-      promptImageSupport: 'no',
+      promptImageSupport: 'unknown',
     });
 
     await expect(listConfiguredAcpBackendsFromAccountSettingsOrPlugins({
@@ -165,7 +160,7 @@ describe('resolveConfiguredAcpBackendFromAccountSettingsOrPlugins (integration)'
       happyHomeDir,
     })).resolves.toEqual([
       expect.objectContaining({
-        backendId: 'acme.integration.backend',
+        backendId: 'acme-integration-backend',
         source: expect.objectContaining({
           kind: 'plugin_contributed',
           pluginId: 'acme.integration.plugin',
@@ -219,8 +214,8 @@ describe('resolveConfiguredAcpBackendFromAccountSettingsOrPlugins (integration)'
           v: 2,
           backends: [
             {
-              id: 'acme.integration.backend',
-              name: 'acme.integration.backend',
+              id: 'acme-integration-backend',
+              name: 'acme-integration-backend',
               title: 'Account Settings Backend',
               command: 'settings-acp-cli',
               args: ['acp', '--from-settings'],
@@ -239,16 +234,15 @@ describe('resolveConfiguredAcpBackendFromAccountSettingsOrPlugins (integration)'
           ],
         },
       },
-      backendId: 'acme.integration.backend',
+      backendId: 'acme-integration-backend',
       happyHomeDir,
     });
 
     expect(resolved).toMatchObject({
-      backendId: 'acme.integration.backend',
+      backendId: 'acme-integration-backend',
       title: 'Account Settings Backend',
       command: 'settings-acp-cli',
       args: ['acp', '--from-settings'],
     });
   });
-
 });

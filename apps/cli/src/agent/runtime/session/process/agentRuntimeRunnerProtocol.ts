@@ -30,7 +30,8 @@ import {
   ProviderConnectionIdSchema,
   ProviderModelDescriptorV1Schema,
   ProviderModelIdSchema,
-  ProviderRuntimeBindingBasisV1Schema,
+    ProviderRuntimeBindingBasisV1Schema,
+    RuntimeDescriptorV1Schema,
   SessionProviderBindingMetadataV1Schema,
   SessionExecutionTargetV1Schema,
   PluginSourceKindV1Schema,
@@ -453,6 +454,7 @@ const AgentSessionOpenBaseSchema = z.object({
   sessionId: BoundedIdSchema,
   cwd: BoundedPathSchema,
   launchEnvironment: AgentLaunchEnvironmentV1Schema.optional(),
+  runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
   configuration: AgentSessionConfigurationSnapshotV1Schema.optional(),
   connectedAccounts: z.array(ConnectedAccountSchema).max(256).optional(),
   mcpServers:

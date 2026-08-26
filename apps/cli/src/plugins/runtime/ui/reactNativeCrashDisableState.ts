@@ -102,6 +102,13 @@ function cloneMount(mount: DaemonPluginReactNativeCrashMountV1): DaemonPluginRea
             destination: { ...mount.destination },
         };
     }
+    if (mount.kind === 'inline') {
+        return {
+            kind: 'inline',
+            surface: { ...mount.surface },
+            role: mount.role,
+        };
+    }
     if (mount.kind === 'composer') {
         return {
             kind: 'composer',
@@ -130,6 +137,10 @@ function sameMount(
     if (left.kind !== right.kind) return false;
     if (left.kind === 'destination' && right.kind === 'destination') {
         return sameQualifiedIdentity(left.destination, right.destination);
+    }
+    if (left.kind === 'inline' && right.kind === 'inline') {
+        return sameQualifiedIdentity(left.surface, right.surface)
+            && left.role === right.role;
     }
     if (left.kind === 'composer' && right.kind === 'composer') {
         return sameQualifiedIdentity(left.contribution, right.contribution)

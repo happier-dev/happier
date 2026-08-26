@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { readCodexEnvironmentAuthState, readCodexEnvironmentAuthTokens } from './environment.js';
+import { readCodexEnvironmentAuthTokens } from './environment.js';
 
 function buildJwt(payload: Record<string, unknown>): string {
   return [
@@ -14,7 +14,7 @@ function buildJwt(payload: Record<string, unknown>): string {
   ].join('.');
 }
 
-describe('readCodexEnvironmentAuthState', () => {
+describe('readCodexEnvironmentAuthTokens', () => {
   const tempDirs: string[] = [];
 
   afterEach(async () => {
@@ -27,37 +27,15 @@ describe('readCodexEnvironmentAuthState', () => {
     await mkdir(join(dir, '.codex'), { recursive: true });
     await writeFile(
       join(dir, '.codex', 'auth.json'),
-      JSON.stringify({
-        tokens: {
-          id_token: buildJwt({ email: 'expired@example.test', exp: 1 }),
-        },
-      }),
+      JSON.stringify({ tokens: { id_token: buildJwt({ email: 'expired@example.test', exp: 1 }) } }),
       'utf8',
     );
 
-    expect(readCodexEnvironmentAuthState({ HOME: dir, USERPROFILE: dir })).toEqual({
-      method: null,
+    expect(readCodexEnvironmentAuthTokens({ HOME: dir, USERPROFILE: dir })).toEqual({
+      idToken: null,
+      accessToken: null,
+      accountId: null,
       accountLabel: null,
-    });
-  });
-
-  it('accepts unexpired credentials-file tokens', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'happier-codex-auth-state-'));
-    tempDirs.push(dir);
-    await mkdir(join(dir, '.codex'), { recursive: true });
-    await writeFile(
-      join(dir, '.codex', 'auth.json'),
-      JSON.stringify({
-        tokens: {
-          id_token: buildJwt({ email: 'valid@example.test', exp: 4_102_444_800 }),
-        },
-      }),
-      'utf8',
-    );
-
-    expect(readCodexEnvironmentAuthState({ HOME: dir, USERPROFILE: dir })).toEqual({
-      method: 'credentials_file',
-      accountLabel: 'valid@example.test',
     });
   });
 
@@ -88,7 +66,7 @@ describe('readCodexEnvironmentAuthState', () => {
     });
   });
 
-  it('reads exact ChatGPT account ids from Codex auth store tokens', async () => {
+  it('reads an exact account id from the Codex auth store', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-codex-auth-state-'));
     tempDirs.push(dir);
     await mkdir(join(dir, '.codex'), { recursive: true });
@@ -96,10 +74,7 @@ describe('readCodexEnvironmentAuthState', () => {
       join(dir, '.codex', 'auth.json'),
       JSON.stringify({
         tokens: {
-          id_token: buildJwt({
-            email: 'valid@example.test',
-            exp: 4_102_444_800,
-          }),
+          id_token: buildJwt({ email: 'valid@example.test', exp: 4_102_444_800 }),
           access_token: buildJwt({ exp: 4_102_444_800 }),
           account_id: 'acct-from-store',
         },
@@ -115,41 +90,20 @@ describe('readCodexEnvironmentAuthState', () => {
     });
   });
 
-  it('expands CODEX_HOME from the caller environment home when reading credentials-file tokens', async () => {
+  it('expands CODEX_HOME from the caller environment home', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-codex-auth-home-'));
     tempDirs.push(dir);
     await mkdir(join(dir, 'custom-codex'), { recursive: true });
     await writeFile(
       join(dir, 'custom-codex', 'auth.json'),
-      JSON.stringify({
-        tokens: {
-          id_token: buildJwt({ email: 'tilde@example.test', exp: 4_102_444_800 }),
-        },
-      }),
+      JSON.stringify({ tokens: { id_token: buildJwt({ email: 'tilde@example.test', exp: 4_102_444_800 }) } }),
       'utf8',
     );
 
-    expect(readCodexEnvironmentAuthState({
+    expect(readCodexEnvironmentAuthTokens({
       HOME: dir,
       USERPROFILE: dir,
       CODEX_HOME: '~/custom-codex',
-    })).toEqual({
-      method: 'credentials_file',
-      accountLabel: 'tilde@example.test',
-    });
-  });
-
-  it('accepts CODEX_API_KEY env auth without an auth file', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'happier-codex-auth-state-'));
-    tempDirs.push(dir);
-
-    expect(readCodexEnvironmentAuthState({
-      HOME: dir,
-      USERPROFILE: dir,
-      CODEX_API_KEY: 'codex-test-key',
-    })).toEqual({
-      method: 'api_key_env',
-      accountLabel: null,
-    });
+    })).toMatchObject({ accountLabel: 'tilde@example.test' });
   });
 });

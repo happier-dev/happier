@@ -139,7 +139,7 @@ export const AGENT_DEFINITION = Object.freeze({
         openai: ['token'],
       },
     },
-    resume: { vendorResume: 'experimental', vendorResumeIdField: 'codexSessionId' },
+    resume: { vendorResume: 'experimental' as const, vendorResumeIdField: 'codexSessionId' },
     sessionStorage: { direct: true, persisted: true },
     sessionCapabilities: {
       sessionListing: 'supported',
@@ -153,7 +153,7 @@ export const AGENT_DEFINITION = Object.freeze({
         mcp: {
           kind: 'mcp',
           overrides: {
-            resume: { vendorResume: 'unsupported' },
+            resume: { vendorResume: 'unsupported' as const },
             sessionCapabilities: {
               sessionFork: { conversation: 'unsupported' },
               sessionRollback: { conversation: 'unsupported' },

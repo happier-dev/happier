@@ -5,7 +5,7 @@ import {
 import type { AgentCatalogDefinition } from '@happier-dev/agents/definitions';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
-import { createAgentRuntimeCatalogEntryHooks } from '../agentCatalogEntryHooks';
+import { projectAgentCliSessionCommandCatalogEntry } from '../agentCatalogEntryHooks';
 import type {
     ResolvedAgentContribution,
     ResolvedCatalogEntry,
@@ -118,18 +118,13 @@ export function projectBuiltInAgents(params: Readonly<{
             ...(manifestContribution.catalogEntry ?? {}),
             id: definition.id,
             cliSubcommand: catalogDefinition.core.cliSubcommand,
+            vendorResumeSupport: catalogDefinition.core.resume.vendorResume,
             // Host-owned canonical identity for `happy <agent>`: the bundled
             // manifest may declare the Agent under a differently cased local id,
-            // and the review Agents declare no session capability at all, so the
-            // manifest projection alone would drop or mis-key their command. The
-            // command itself is still built by the one catalog-entry hook owner,
-            // and a plugin runtime contribution below still overrides it.
-            ...createAgentRuntimeCatalogEntryHooks({
-                agentId: definition.id,
-                packageName: manifestContribution.pluginId ?? definition.id,
-                contribution: { cliSessionCommand: {} },
-            })(),
-            vendorResumeSupport: catalogDefinition.core.resume.vendorResume,
+            // and review Agents declare no Session capability at all. The one
+            // command projector supplies the generic handler; an active Agent
+            // registration can replace only this focused declaration.
+            ...projectAgentCliSessionCommandCatalogEntry({ agentId: definition.id }),
             ...(implementation ? implementation.createHooks() : {}),
         });
         const providerRequirements = manifestContribution.richDefinition?.definition.providerRequirements;

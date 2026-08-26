@@ -1,7 +1,8 @@
+import type { AgentConnectedAccountStateSharingDescriptorV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+
 import { ANTIGRAVITY_AUTH_ISOLATION_ENV_KEYS } from './auth.js';
 
 export const antigravityConnectedServiceStateSharingDescriptor = Object.freeze({
-  providerId: 'antigravity',
   providerSupportStatus: 'unsupported',
   config: {
     supported: false,
@@ -20,4 +21,4 @@ export const antigravityConnectedServiceStateSharingDescriptor = Object.freeze({
     mode: 'process_env',
     secretEntries: ANTIGRAVITY_AUTH_ISOLATION_ENV_KEYS,
   },
-} as const);
+} satisfies AgentConnectedAccountStateSharingDescriptorV1);

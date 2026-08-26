@@ -1,4 +1,4 @@
-import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import type { AcpCatalogSettingsV1, PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import { AGENT_IDS, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
@@ -24,6 +24,11 @@ import {
 
 export type ResolvedAgentCatalogEntry = Readonly<{
     agentId: string;
+    /**
+     * Exact daemon-projected identity for an external Agent. Consumers that
+     * need an Agent route must retain this instead of parsing `agentId`.
+     */
+    identity: PluginContributionIdentityV1 | null;
     catalogAgentId: AgentId | null;
     iconAgentId: AgentId | null;
     backendTargetKey: string | null;
@@ -327,6 +332,7 @@ export function getResolvedAgentCatalogEntries(params: Readonly<{
         const backendTargetKey = resolveProviderTargetKeyFromSettingsBackend(agentId, isBuiltIn, settingsBackendProjection);
         return {
             agentId,
+            identity: mergedProviderProjection?.identity ?? null,
             catalogAgentId: behaviorProviderId,
             iconAgentId,
             backendTargetKey,
@@ -373,6 +379,7 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
     const backendTargetKey = resolveProviderTargetKeyFromSettingsBackend(normalizedProviderId, isBuiltIn, settingsBackendProjection);
     return {
         agentId: normalizedProviderId,
+        identity: mergedProviderProjection?.identity ?? null,
         catalogAgentId: behaviorProviderId,
         iconAgentId,
         backendTargetKey,

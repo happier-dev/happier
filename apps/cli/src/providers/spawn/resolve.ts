@@ -44,6 +44,7 @@ import {
 
 import {
   resolveProviderConnectionForMachine,
+  resolveProviderConnectionForMachineFromSettingsRead,
 } from '../registry/resolve';
 import type {
   ProviderConnectionEndpointUnresolvedReason,
@@ -155,6 +156,7 @@ export type ProviderManagedProbeHostAuthorizationTicket = Readonly<{
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
   endpointTemplateId: string;
   protocol: ProviderProbeAuthorizationRequest['protocol'];
+  sourceRegistryVersion?: string;
   path: string;
   parser: Extract<ProviderProbeAuthorizationRequest, { deployment: 'managedLocal' }>['parser'];
   probeRequestFingerprint: ProviderProbeRequestFingerprintV1;
@@ -287,23 +289,25 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
   request: ProviderProbeAuthorizationRequest;
   accountSettings: unknown;
   providerSettings?: ProviderSettingsV1;
+  /** A caller-owned point-in-time parse for one bulk Provider projection. */
+  settingsRead?: ReturnType<typeof readProviderSettingsFromAccountSettingsV1>;
   registry: ProviderContributionRegistryView;
   dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
   localCandidateUrlsByConnectionId?: ResolveProviderSpawnAuthorizationInput['localCandidateUrlsByConnectionId'];
   managedPurposeBindingSnapshot?: QualifiedConnectedAccountPurposeBindingsV1;
 }>): ProviderProbeHostAuthorizationResult {
-  const providerSettings = input.providerSettings
-    ?? readProviderSettingsFromAccountSettingsV1(input.accountSettings).settings;
-  const resolution = resolveProviderConnectionForMachine({
+  const settingsRead = input.settingsRead
+    ?? readProviderSettingsFromAccountSettingsV1(input.accountSettings);
+  const providerSettings = input.providerSettings ?? settingsRead.settings;
+  const resolution = resolveProviderConnectionForMachineFromSettingsRead({
     connectionId: input.request.connectionId,
     machineId: input.request.machineId,
-    accountSettings: input.accountSettings,
     registry: input.registry,
     dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
     ...(input.localCandidateUrlsByConnectionId
       ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
       : {}),
-  });
+  }, settingsRead);
   if (resolution.status !== 'resolved') {
     return { ok: false, error: providerConnectionResolutionError(resolution, input.request.machineId) };
   }
@@ -317,6 +321,10 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
       input.managedPurposeBindingSnapshot;
     const contribution = record.source.kind === 'contribution'
       ? input.registry.providersByContributionKey.get(record.source.contributionKey)
+      : undefined;
+    const sourceRegistryVersion = contribution
+      && 'sourceRegistryVersion' in contribution.definition.catalog
+      ? contribution.definition.catalog.sourceRegistryVersion
       : undefined;
     const endpointTemplate = record.source.kind === 'contribution'
       ? record.source.definition.endpointTemplates.find(
@@ -346,6 +354,7 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
       || !contributionManagedRuntime
       || !endpointTemplate
       || !declaredProbe
+      || input.request.sourceRegistryVersion !== sourceRegistryVersion
       || endpointTemplate.protocol !== input.request.protocol
       || !record.deployment.managedRuntime.endpointTemplateIds.includes(
         endpointTemplate.id,
@@ -403,6 +412,7 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
       purposeBindings: input.request.purposeBindings,
       endpointTemplateId: endpointTemplate.id,
       protocol: endpointTemplate.protocol,
+      sourceRegistryVersion,
       method: 'GET',
       path: declaredProbe.path,
       parser: declaredProbe.parser,
@@ -431,6 +441,7 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
         purposeBindings: input.request.purposeBindings,
         endpointTemplateId: endpointTemplate.id,
         protocol: endpointTemplate.protocol,
+        sourceRegistryVersion,
         path: declaredProbe.path,
         parser: declaredProbe.parser,
         probeRequestFingerprint: expectedProbeRequestFingerprint,

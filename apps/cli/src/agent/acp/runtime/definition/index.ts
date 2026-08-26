@@ -14,8 +14,11 @@ export {
   withAcpLaunchEnvDefaults,
 } from './env';
 export {
-  normalizePluginAcpDefinition,
+  normalizePluginDeclarativeAcpRuntime,
   normalizePluginBackendContributionAcpDefinition,
+} from './plugin';
+export type {
+  NormalizedPluginDeclarativeAcpRuntime,
 } from './plugin';
 export {
   createAcpBackendFromDefinition,

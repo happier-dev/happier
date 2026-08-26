@@ -17,15 +17,15 @@ describe('agent UI behavior provider leaf ownership', () => {
         expect(registryUiBehaviorSource).not.toContain('resolveProviderSessionArtifactPath');
     });
 
-    it('uses plugin-owned UI behavior overrides through the generated contribution map', () => {
-        expect(generatedOverridesSource).toMatch(/@happier-dev\/plugins-auggie\/ui/u);
-        expect(generatedOverridesSource).toMatch(/@happier-dev\/plugins-claude\/ui/u);
-        expect(generatedOverridesSource).toMatch(/@happier-dev\/plugins-codex\/ui/u);
-        expect(generatedOverridesSource).not.toMatch(/@happier-dev\/plugins-pi\/ui\/behavior/u);
-        expect(generatedOverridesSource).toMatch(/auggie:\s*AUGGIE_UI_BEHAVIOR_OVERRIDE/u);
-        expect(generatedOverridesSource).toMatch(/claude:\s*CLAUDE_UI_BEHAVIOR_OVERRIDE/u);
-        expect(generatedOverridesSource).toMatch(/codex:\s*CODEX_UI_BEHAVIOR_OVERRIDE/u);
-        expect(generatedOverridesSource).not.toContain('PI_UI_BEHAVIOR_OVERRIDE');
+    it('keeps the generated private bridge scoped to Claude predecessor message metadata', () => {
+        expect(generatedOverridesSource).toMatch(/@happier-dev\/plugins-claude\/ui\/predecessor-message-meta/u);
+        expect(generatedOverridesSource).not.toMatch(/@happier-dev\/plugins-auggie\/ui/u);
+        expect(generatedOverridesSource).not.toMatch(/@happier-dev\/plugins-codex\/ui/u);
+        expect(generatedOverridesSource).not.toMatch(/@happier-dev\/plugins-pi\/ui/u);
+        expect(generatedOverridesSource).toMatch(
+            /claude:\s*CLAUDE_PREDECESSOR_MESSAGE_META_WRITER/u,
+        );
+        expect(generatedOverridesSource).not.toContain('UI_BEHAVIOR_OVERRIDE');
     });
 
     it('does not special-case provider descriptor ids in the generic descriptor adapter', () => {

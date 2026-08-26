@@ -263,4 +263,27 @@ describe('readPersistedProviderResumeState', () => {
       binding: null,
     });
   });
+
+  it('refuses every present-invalid canonical intent instead of falling back to native launch', () => {
+    for (const modelSelectionIntentV1 of [
+      'malformed-intent',
+      { v: 1, updatedAt: 123 },
+      {
+        v: 1,
+        updatedAt: 123,
+        selection: {
+          agentTargetKey: 'backend:codex',
+          modelId: 'vendor/model',
+        },
+      },
+    ]) {
+      expect(() => readPersistedProviderResumeState({ modelSelectionIntentV1 }))
+        .toThrowError(expect.objectContaining({
+          providerError: expect.objectContaining({
+            code: 'provider_binding_changed',
+            action: 'review_and_restart',
+          }),
+        }));
+    }
+  });
 });

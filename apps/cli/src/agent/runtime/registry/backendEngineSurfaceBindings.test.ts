@@ -203,6 +203,139 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
     });
   });
 
+  it('binds focused Agent-owned handoff overlays through the current invocation boundary', async () => {
+    const services = { exec: { source: 'host-approved' } };
+    const createAgentRuntimeSurfaceInvocationContext = vi.fn(async () => ({
+      plugin: { id: 'acme.runtime', version: '1.0.0' },
+      contribution: {
+        id: 'acme.runtime.provider',
+        qualifiedId: 'acme.runtime/agents/acme.runtime.provider',
+      },
+      surface: 'agent' as const,
+      signal: new AbortController().signal,
+      services,
+    } as unknown as import('@happier-dev/plugin-sdk').PluginInvocationContext));
+    const extractMediaScannableRecords = vi.fn(async (
+      request: Readonly<{ bundle: Readonly<Record<string, unknown>> }>,
+      context: import('@happier-dev/plugin-sdk').PluginInvocationContext,
+    ) => {
+      expect(context.services).toBe(services);
+      expect(request).toEqual({ bundle: { agentId: 'opaque' } });
+      return [{ path: '/media/image.png' }];
+    });
+    const buildRuntimeLocalMetadata = vi.fn(async (
+      request: Readonly<Record<string, unknown>>,
+      context: import('@happier-dev/plugin-sdk').PluginInvocationContext,
+    ) => {
+      expect(context.services).toBe(services);
+      expect(request).toMatchObject({
+        identity: { vendorResumeId: 'vendor-session-1' },
+        runtimeDescriptorV1: { agentId: 'acme.runtime.provider' },
+      });
+      return { externalSessionSource: { kind: 'acmeConfig' } };
+    });
+    const resolveNativeTranscriptPathCandidate = vi.fn(async (
+      request: Readonly<Record<string, unknown>>,
+      context: import('@happier-dev/plugin-sdk').PluginInvocationContext,
+    ) => {
+      expect(context.services).toBe(services);
+      expect(request).toMatchObject({
+        identity: { vendorResumeId: 'vendor-session-1' },
+        runtimeDescriptorV1: { agentId: 'acme.runtime.provider' },
+      });
+      return { path: '/codex/sessions/rollout.jsonl', containmentRoot: '/codex' };
+    });
+    const runtime = {
+      executionRuns: {
+        open: async () => ({
+          send: async () => ({ status: 'admitted' as const }),
+          stop: async () => ({ status: 'requested' as const }),
+          watch: () => ({ dispose: () => undefined }),
+          dispose: async () => undefined,
+        }),
+      },
+      surfaces: {
+        handoff: {
+          exportBundle: async () => ({ ok: false as const, code: 'bundle_invalid' as const }),
+          importBundle: async () => ({ ok: false as const, code: 'bundle_invalid' as const }),
+          extractMediaScannableRecords,
+          buildRuntimeLocalMetadata,
+          resolveNativeTranscriptPathCandidate,
+        },
+      },
+    } as unknown as AgentRuntime;
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime,
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => true,
+      declaredAgentSurfaceFamilies: new Set(),
+      diagnostics: [],
+      createAgentRuntimeSurfaceInvocationContext,
+    });
+    const handoff = surfaces.handoff as unknown as Readonly<{
+      extractMediaScannableRecords(request: Readonly<{ bundle: Readonly<Record<string, unknown>> }>): Promise<readonly unknown[]>;
+      buildRuntimeLocalMetadata(request: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>> | null>;
+      resolveNativeTranscriptPathCandidate(request: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>> | null>;
+    }>;
+
+    await expect(handoff.extractMediaScannableRecords({ bundle: { agentId: 'opaque' } }))
+      .resolves.toEqual([{ path: '/media/image.png' }]);
+    await expect(handoff.buildRuntimeLocalMetadata({
+      identity: { vendorResumeId: 'vendor-session-1' },
+      runtimeDescriptorV1: { v: 1, agentId: 'acme.runtime.provider', agent: {} },
+    })).resolves.toEqual({ externalSessionSource: { kind: 'acmeConfig' } });
+    await expect(handoff.resolveNativeTranscriptPathCandidate({
+      identity: { v: 1, vendorResumeId: 'vendor-session-1' },
+      runtimeDescriptorV1: { v: 1, agentId: 'acme.runtime.provider', agent: {} },
+    })).resolves.toEqual({ path: '/codex/sessions/rollout.jsonl', containmentRoot: '/codex' });
+    expect(createAgentRuntimeSurfaceInvocationContext).toHaveBeenCalledTimes(3);
+    expect(createAgentRuntimeSurfaceInvocationContext).toHaveBeenCalledWith({ cwd: process.cwd() });
+  });
+
+  it('rejects a focused handoff overlay result after its runtime generation retires', async () => {
+    let isCurrent = true;
+    let resolveExtraction!: (value: readonly unknown[]) => void;
+    const pendingExtraction = new Promise<readonly unknown[]>((resolve) => {
+      resolveExtraction = resolve;
+    });
+    const runtime = {
+      executionRuns: {
+        open: async () => ({
+          send: async () => ({ status: 'admitted' as const }),
+          stop: async () => ({ status: 'requested' as const }),
+          watch: () => ({ dispose: () => undefined }),
+          dispose: async () => undefined,
+        }),
+      },
+      surfaces: {
+        handoff: {
+          exportBundle: async () => ({ ok: false as const, code: 'bundle_invalid' as const }),
+          importBundle: async () => ({ ok: false as const, code: 'bundle_invalid' as const }),
+          extractMediaScannableRecords: async () => await pendingExtraction,
+        },
+      },
+    } as unknown as AgentRuntime;
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime,
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => isCurrent,
+      declaredAgentSurfaceFamilies: new Set(),
+      diagnostics: [],
+      createAgentRuntimeSurfaceInvocationContext: async () => ({} as never),
+    });
+    const handoff = surfaces.handoff as unknown as Readonly<{
+      extractMediaScannableRecords(request: Readonly<{ bundle: Readonly<Record<string, unknown>> }>): Promise<readonly unknown[]>;
+    }>;
+
+    const extraction = handoff.extractMediaScannableRecords({ bundle: { agentId: 'opaque' } });
+    isCurrent = false;
+    resolveExtraction([]);
+
+    await expect(extraction).rejects.toThrow(/retired runtime generation/i);
+  });
+
   it('projects host ACP fork operations through the author-owned fork boundary', async () => {
     const signal = new AbortController().signal;
     const fork = vi.fn(async (request: AgentRuntimeForkRequest) => {
@@ -527,7 +660,23 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
       diagnostics,
     });
     const signal = new AbortController().signal;
+    const terminalConfiguration = {
+      mode: { value: null, updatedAtMs: 0 },
+      model: { value: 'fast', updatedAtMs: 1 },
+      permissionIntent: { value: 'safe-yolo' as const, updatedAtMs: 2 },
+      options: {},
+    };
     const terminalLaunchMetadata = {
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'acme.runtime.provider',
+        agent: { providerSessionId: 'provider-session-1' },
+      },
+      permissionMode: 'read-only',
+      codexArgs: ['--dangerous-raw-argument'],
+      claudeArgs: ['--dangerous-raw-argument'],
+      terminalRuntime: { print: true },
+      antigravity: { print: true },
       model: 'fast',
       externalSessionOperation: { operationClaimId: 'legacy-private-claim' },
       externalSessionOperationV1: {
@@ -559,6 +708,7 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
     await expect(surfaces.terminalRuntime?.launch?.({
       sessionId: 'session-1',
       metadata: terminalLaunchMetadata,
+      configuration: terminalConfiguration,
       modelSelection: {
         agentTargetKey: 'backend:acme.runtime.provider',
         providerConnectionId: null,
@@ -582,7 +732,14 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
     expect(resolveLaunch).toHaveBeenCalledWith({
       sessionId: 'session-1',
       cwd: '/repo',
-      metadata: {},
+      metadata: {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'acme.runtime.provider',
+          agent: { providerSessionId: 'provider-session-1' },
+        },
+      },
+      configuration: terminalConfiguration,
       modelSelection: {
         agentTargetKey: 'backend:acme.runtime.provider',
         providerConnectionId: null,
@@ -590,6 +747,16 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
       },
     });
     expect(terminalLaunchMetadata).toEqual({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'acme.runtime.provider',
+        agent: { providerSessionId: 'provider-session-1' },
+      },
+      permissionMode: 'read-only',
+      codexArgs: ['--dangerous-raw-argument'],
+      claudeArgs: ['--dangerous-raw-argument'],
+      terminalRuntime: { print: true },
+      antigravity: { print: true },
       model: 'fast',
       externalSessionOperation: { operationClaimId: 'legacy-private-claim' },
       externalSessionOperationV1: {

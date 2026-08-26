@@ -109,6 +109,17 @@ level resolves to `experimental` without a catalog-owned resume hook fails close
 `apps/cli/src/session/runtime/catalogHooks.ts#getVendorResumeSupport` and therefore at
 the daemon spawn resume gate.
 
+The current plugin-preview source contract also keeps two narrowly data-only
+facts in that same `catalog` declaration without routing them through a runtime
+aggregate or catalog-entry hook. `codingPromptBehavior.blocks` is an ordered,
+strictly validated list of bounded prompt text; the only conditional form is
+`when: 'disableTodos'`, which the canonical coding prompt composer evaluates.
+`resumeChecklist` is equally closed: its sole allowed declaration is
+`{ includeLoginStatus: true }`, which the existing checklist merger translates
+into that Agent's `cli.<agentId>` resume probe. An Agent cannot declare an
+arbitrary callback, prompt hook, checklist id, or host capability list through
+either field.
+
 Runtime Activity is declared the same way, through the Agent's own Session
 capability rather than the `catalog` block: `capabilities.sessions.runtimeActivitySnapshots`
 projects to the catalog entry's `runtimeActivityApplicability`, and the host binds a
@@ -117,6 +128,22 @@ it only for an Agent whose runtime actually emits `runtime-activity-snapshot` ru
 events — an Agent that claims the slot and never emits one leaves `runtime.activity`
 pinned at `unknown` for the whole Session instead of settling at `idle`. Claude is
 currently the only bundled Agent that emits them.
+
+Externally authored plugins bind executable Agent behavior through one
+`definePlugin({ agents: { <localId>: ... } })` entry. Current public fields on
+a custom Agent entry include `providerCliAttach`, `cliSessionCommand`,
+`preflightSessionControls`, `terminalPromptSubmitVerification`,
+`sessionStartup`, and `vendorResumeSupport`; generated activation registers the
+selected fields together with the factory. `cliSessionCommand` is the public
+owner for Agent-native `happy <agent>` argument projection: its optional
+builder receives parsed Agent arguments plus host-resolved settings,
+environment, and start origin, and returns bounded JSON Session options.
+
+The remaining `*_AGENT_RUNTIME_CONTRIBUTION` modules and
+`runtimeContributions` locators in the bundled-Agent generator are still active
+private first-party machinery. Do not present them as a public plugin authoring
+alternative, and do not remove their documentation or generated contracts
+until that aggregate has actually been retired from source.
 
 Do not add a second builder for a contributed Agent's catalog entry. Manifest-only
 facts (id, CLI subcommand, CLI detect/auth spec, Connected Service ids) stay in
@@ -308,7 +335,13 @@ Instead:
 
 External Sessions is an optional Agent auxiliary registered through the same manifest Agent identity and plugin generation as the primary runtime. The canonical public SDK owner is `@happier-dev/plugin-sdk/sessions/external`.
 
-`api.agents.registerExternalSessions(localId, contribution)` registers exactly six bounded source operations: `resolveSource`, `listCandidates`, `resolveLinkIdentity`, `resolveLinkedIdentity`, `pageTranscript`, and `readAfterTranscript`. It provides discovery, linking, and transcript source semantics; it does not own hosted runtime lifecycle, follow demand, materialization, or takeover admission.
+An ordinary author places `externalSessions: contribution` on the matching
+`definePlugin` Agent entry. Generated activation registers exactly six bounded
+source operations: `resolveSource`, `listCandidates`, `resolveLinkIdentity`,
+`resolveLinkedIdentity`, `pageTranscript`, and `readAfterTranscript`. The
+contribution provides discovery, linking, and transcript source semantics; it
+does not own hosted runtime lifecycle, follow demand, materialization, or
+takeover admission.
 
 Each of those six callbacks receives the host's bounded invocation controls
 (`signal`, `deadlineAtMs`, and `maxSerializedBytes`) plus the existing
@@ -337,9 +370,9 @@ invocation input, not a seventh method or service operation.
 
 Three optional same-Agent siblings add narrower capabilities without creating another Agent or Provider catalog:
 
-- `registerExternalSessionObservation` supplies resource-scoped status evidence and content-free transcript-change signals. `watch_file_changes` and `observe_resource` can support live follow through the host owner; `reconcile_only` cannot.
-- `registerExternalSessionHooks` supplies installation variants plus bounded installation resolution and event mapping. The host owns consent, configuration mutation, durable cleanup custody, target resolution, and linking policy.
-- `registerExternalSessionTakeover` supplies only bounded launch hints after current linked-identity resolution. The host retains target selection, authority transfer, admission, environment authorization, and spawn.
+- `externalSessionObservation` supplies resource-scoped status evidence and content-free transcript-change signals. `watch_file_changes` and `observe_resource` can support live follow through the host owner; `reconcile_only` cannot.
+- `externalSessionHooks` supplies installation variants plus bounded installation resolution and event mapping. The host owns consent, configuration mutation, durable cleanup custody, target resolution, and linking policy.
+- `externalSessionTakeover` supplies only bounded launch data after current linked-identity resolution. Its optional `runtimeDescriptorV1` is the strict Agent-owned runtime identity transported to the target Session opener; it is not a private resume carrier or generic metadata bag. The host retains target selection, authority transfer, admission, environment authorization, and spawn.
 
 `services.sessions.external` is the opposite direction: an authorized plugin-to-host mapping to the canonical product operations. It is not an Agent capability declaration or a second source registry.
 

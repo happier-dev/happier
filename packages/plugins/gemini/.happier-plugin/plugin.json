@@ -28,21 +28,21 @@
             "delivery": "native_mcp"
           }
         },
+        "catalog": {
+          "vendorResume": {
+            "support": "supported"
+          }
+        },
         "cli": {
           "auth": {
+            "environmentVariables": [
+              "GEMINI_API_KEY",
+              "GOOGLE_API_KEY",
+              "GOOGLE_GENAI_USE_VERTEXAI",
+              "GOOGLE_CLOUD_PROJECT",
+              "GOOGLE_CLOUD_LOCATION"
+            ],
             "loginLaunches": [],
-            "probe": {
-              "backgroundChecks": "safe",
-              "envVars": [
-                "GEMINI_API_KEY",
-                "GOOGLE_API_KEY",
-                "GOOGLE_GENAI_USE_VERTEXAI",
-                "GOOGLE_CLOUD_PROJECT",
-                "GOOGLE_CLOUD_LOCATION"
-              ],
-              "parser": "envOnly",
-              "statusArgs": null
-            },
             "support": "unsupported"
           },
           "displayName": "Google Gemini CLI",

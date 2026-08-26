@@ -1,11 +1,51 @@
 import { join } from 'node:path';
 
+import type {
+  HandoffNativeTranscriptPathCandidateRequestV1,
+  HandoffNativeTranscriptPathCandidateV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+
 import {
   normalizeCodexVendorResumeId,
   resolveCodexMaterializedSessionsRoot,
 } from '../../auth/services/home/sync/sessionFiles.js';
+import { readCanonicalCodexAgentRuntimeDescriptorV1 } from '../../../protocol/runtimeDescriptorV1.js';
 import { resolveConfiguredCodexHomePath } from './homeEntries.js';
 import { findCodexRolloutFileById } from './sessionFileSearch.js';
+
+async function findCodexNativeSessionLogPath(params: Readonly<{
+  vendorResumeId: string;
+  codexHome: string;
+}>): Promise<string | null> {
+  for (const sessionsRoot of [
+    resolveCodexMaterializedSessionsRoot(params.codexHome),
+    join(params.codexHome, 'archived_sessions'),
+  ]) {
+    const found = await findCodexRolloutFileById({
+      sessionsRoot,
+      vendorResumeId: params.vendorResumeId,
+    });
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Resolves the Agent-owned Codex rollout layout from the exact Session
+ * descriptor already published for this runtime. The host retains all path
+ * containment, realpath, stat, and file-copy authority.
+ */
+export async function resolveCodexNativeTranscriptPathCandidate(
+  input: HandoffNativeTranscriptPathCandidateRequestV1,
+): Promise<HandoffNativeTranscriptPathCandidateV1 | null> {
+  const vendorResumeId = normalizeCodexVendorResumeId(input.identity.vendorResumeId);
+  const runtimeDescriptor = readCanonicalCodexAgentRuntimeDescriptorV1(input.runtimeDescriptorV1);
+  const codexHome = runtimeDescriptor?.homePath;
+  if (!vendorResumeId || !codexHome) return null;
+
+  const path = await findCodexNativeSessionLogPath({ vendorResumeId, codexHome });
+  return path ? { path, containmentRoot: codexHome } : null;
+}
 
 /**
  * Where Codex's own log for a given thread lives on THIS machine.
@@ -38,12 +78,5 @@ export async function resolveCodexNativeSessionLogPath(input: Readonly<{
   const vendorResumeId = normalizeCodexVendorResumeId(input.vendorResumeId);
   if (!vendorResumeId) return null;
   const codexHome = resolveConfiguredCodexHomePath(input.env ?? process.env);
-  for (const sessionsRoot of [
-    resolveCodexMaterializedSessionsRoot(codexHome),
-    join(codexHome, 'archived_sessions'),
-  ]) {
-    const found = await findCodexRolloutFileById({ sessionsRoot, vendorResumeId });
-    if (found) return found;
-  }
-  return null;
+  return await findCodexNativeSessionLogPath({ vendorResumeId, codexHome });
 }

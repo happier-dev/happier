@@ -27,6 +27,7 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtim
 import { resolveProviderContributionRegistryView } from '@/providers/registry/contributions';
 import {
   resolveProviderConnectionForMachine,
+  resolveProviderConnectionForMachineFromSettingsRead,
   type ProviderContributionRegistryView,
   type ResolvedProviderConnectionRecord,
 } from '@/providers/registry';
@@ -124,6 +125,12 @@ export type RuntimeProviderOperationScope = Readonly<{
   lifetime: ProviderOperationLifetime;
 }>;
 
+/** Exact Account settings basis for one bulk presentation pass. */
+export type RuntimeProviderPresentationResolutionBasis = Readonly<{
+  accountSettings: unknown;
+  settingsRead: ReturnType<typeof readProviderSettingsForCli>;
+}>;
+
 type RuntimeProviderSummaryInput =
   | RuntimeProviderIdentity
   | ProviderConnectionRuntimeSummaryInput;
@@ -174,6 +181,7 @@ export type RuntimeProviderServices = Readonly<{
     identity: RuntimeProviderIdentity,
     runtimeStateOverride?: ProviderRuntimeStateFileV1,
     scope?: RuntimeProviderOperationScope,
+    settingsBasis?: RuntimeProviderPresentationResolutionBasis,
   ): Promise<RuntimeProviderCatalogContext>;
   scheduleDemandRefresh(
     identity: RuntimeProviderIdentity,
@@ -404,18 +412,22 @@ export function createRuntimeProviderServices(input: Readonly<{
   async function resolveConnectionContext(
     identity: Readonly<{ connectionId: string; machineId: string }>,
     scope: RuntimeProviderOperationScope,
+    settingsBasis?: RuntimeProviderPresentationResolutionBasis,
   ) {
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
     }
-    const snapshot = getSnapshot();
+    const snapshot = settingsBasis ? null : getSnapshot();
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
     }
-    if (!snapshot) {
+    if (!settingsBasis && !snapshot) {
       return { ok: false as const, error: createProviderErrorV1('provider_connection_not_found', identity) };
     }
-    const providerSettings = readProviderSettingsForCli(snapshot.settings).settings;
+    const accountSettings = settingsBasis?.accountSettings ?? snapshot!.settings;
+    const settingsRead = settingsBasis?.settingsRead
+      ?? readProviderSettingsForCli(accountSettings);
+    const providerSettings = settingsRead.settings;
     const registry = scope?.registry ?? await resolveRegistry();
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
@@ -442,15 +454,14 @@ export function createRuntimeProviderServices(input: Readonly<{
     if (!isProviderFeatureEnabled()) {
       return { ok: false as const, error: providerFeatureDisabled(identity).error };
     }
-    const resolution = resolveProviderConnectionForMachine({
+    const resolution = resolveProviderConnectionForMachineFromSettingsRead({
       ...identity,
-      accountSettings: snapshot.settings,
       registry,
       dnsEvidenceByEndpointUrl,
       ...(input.localCandidateUrlsByConnectionId
         ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
         : {}),
-    });
+    }, settingsRead);
     if (resolution.status !== 'resolved') {
       return { ok: false as const, error: providerConnectionResolutionError(resolution, identity.machineId) };
     }
@@ -459,7 +470,8 @@ export function createRuntimeProviderServices(input: Readonly<{
       value: {
         connection: resolution.record,
         providerSettings,
-        accountSettings: snapshot.settings,
+        settingsRead,
+        accountSettings,
         registry,
         dnsEvidenceByEndpointUrl,
       },
@@ -474,6 +486,7 @@ export function createRuntimeProviderServices(input: Readonly<{
     const {
       connection,
       providerSettings,
+      settingsRead,
       accountSettings,
       registry,
       dnsEvidenceByEndpointUrl,
@@ -550,6 +563,9 @@ export function createRuntimeProviderServices(input: Readonly<{
         ? registry.providersByContributionKey.get(connection.source.contributionKey)
         : undefined;
       const probe = probes.length === 1 ? probes[0] : undefined;
+      const sourceRegistryVersion = 'sourceRegistryVersion' in catalog
+        ? catalog.sourceRegistryVersion
+        : undefined;
       const endpointTemplate = probe && connection.source.kind === 'contribution'
         ? connection.source.definition.endpointTemplates.find(
             (candidate) => candidate.id === probe.endpointTemplateId,
@@ -625,6 +641,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         purposeBindings: purposeBindingResolution,
         endpointTemplateId: endpointTemplate.id,
         protocol: endpointTemplate.protocol,
+        sourceRegistryVersion,
         publicHeaders: endpointTemplate.publicHeaders ?? {},
       } as const;
       const probeRequestFingerprint = createProviderManagedProbeRequestFingerprintV1({
@@ -642,6 +659,7 @@ export function createRuntimeProviderServices(input: Readonly<{
           purposeBindings: managedSource.purposeBindings,
           endpointTemplateId: managedSource.endpointTemplateId,
           protocol: managedSource.protocol,
+          sourceRegistryVersion: managedSource.sourceRegistryVersion,
           path: probe.path,
           parser: probe.parser,
           probeRequestFingerprint,
@@ -650,6 +668,7 @@ export function createRuntimeProviderServices(input: Readonly<{
           purposeBindingResolution,
         accountSettings,
         providerSettings,
+        settingsRead,
         registry,
         dnsEvidenceByEndpointUrl,
         ...(input.localCandidateUrlsByConnectionId
@@ -718,6 +737,7 @@ export function createRuntimeProviderServices(input: Readonly<{
         },
         accountSettings,
         providerSettings,
+        settingsRead,
         registry,
         dnsEvidenceByEndpointUrl,
         ...(input.localCandidateUrlsByConnectionId
@@ -812,9 +832,14 @@ export function createRuntimeProviderServices(input: Readonly<{
     identity: Readonly<{ connectionId: string; machineId: string }>,
     runtimeStateOverride?: Awaited<ReturnType<ProviderRuntimeStateStore['read']>>,
     scope?: RuntimeProviderOperationScope,
+    settingsBasis?: RuntimeProviderPresentationResolutionBasis,
   ) => {
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
-    const connectionContext = await resolveConnectionContext(identity, withOperationLifetime(scope));
+    const connectionContext = await resolveConnectionContext(
+      identity,
+      withOperationLifetime(scope),
+      settingsBasis,
+    );
     if (!connectionContext.ok) {
       return { status: 'error' as const, error: connectionContext.error };
     }
@@ -1151,13 +1176,17 @@ export function createRuntimeProviderServices(input: Readonly<{
         }
       : withOperationLifetime(undefined);
     const resolved = 'resolution' in input
-      ? await resolveSavedFromConnectionContext(identity, {
-          connection: input.resolution.record,
-          providerSettings: readProviderSettingsForCli(input.accountSettings).settings,
-          accountSettings: input.accountSettings,
-          registry: input.registry,
-          dnsEvidenceByEndpointUrl: input.dnsEvidence,
-        }, 'catalog')
+      ? await (() => {
+          const settingsRead = readProviderSettingsForCli(input.accountSettings);
+          return resolveSavedFromConnectionContext(identity, {
+            connection: input.resolution.record,
+            providerSettings: settingsRead.settings,
+            settingsRead,
+            accountSettings: input.accountSettings,
+            registry: input.registry,
+            dnsEvidenceByEndpointUrl: input.dnsEvidence,
+          }, 'catalog');
+        })()
       : await resolveSaved(identity, 'catalog', operationScope);
     if (!resolved.ok) return { status: 'error' as const, error: resolved.error };
     if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);

@@ -1,6 +1,7 @@
 import type { ProviderContribution as ProviderContributionV1 } from '@happier-dev/plugin-sdk/providers';
 import {
   CLIPROXYAPI_MANAGED_CONNECTED_ACCOUNTS,
+  CLIPROXYAPI_MANAGED_CATALOG_SOURCE_REGISTRY_VERSION,
   CLIPROXYAPI_MANAGED_ENDPOINT_TEMPLATE_IDS,
   CLIPROXYAPI_MANAGED_REQUEST_AUTH_USES,
 } from './managedContract.js';
@@ -76,6 +77,7 @@ export const CLIPROXYAPI_PROVIDER_CONTRIBUTION = {
   catalog: {
     source: 'probe',
     manualModelPolicy: 'allowed',
+    sourceRegistryVersion: CLIPROXYAPI_MANAGED_CATALOG_SOURCE_REGISTRY_VERSION,
     probes: [{
       endpointTemplateId: 'cliproxyapi-openai-responses',
       path: '/v1/models',

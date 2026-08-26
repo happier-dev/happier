@@ -32,13 +32,8 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
         agentId: 'codex',
         targetRef: { kind: 'backend', backendId: 'codex-acp-proxy', sourceKind: 'plugin' },
         runtimeSelection: {
-          providerRuntimeSelection: { codexBackendMode: 'appServer' },
-          providerBinding: {
-            v: 1,
-            agentTargetKey: 'backend:codex-acp-proxy',
-            connectionId: 'pc_gateway',
-            modelId: 'model-a',
-          },
+          agentRuntimeSelection: { codexBackendMode: 'appServer' },
+          hasExternalModelBinding: true,
         },
       },
     }, {
@@ -59,13 +54,8 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
         agentId: 'codex',
         targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         runtimeSelection: {
-          providerRuntimeSelection: { codexBackendMode: 'appServer' },
-          providerBinding: {
-            v: 1,
-            agentTargetKey: 'backend:codex',
-            connectionId: 'pc_gateway',
-            modelId: 'model-a',
-          },
+          agentRuntimeSelection: { codexBackendMode: 'appServer' },
+          hasExternalModelBinding: true,
         },
       },
     }, {
@@ -81,7 +71,7 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
       payload: {
         agentId: 'codex',
         targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-        runtimeSelection: { providerBinding: { v: 1, agentTargetKey: 'backend:codex', connectionId: 'pc_gateway', modelId: 'model-a' } },
+        runtimeSelection: { hasExternalModelBinding: true },
       },
     }, {
       tools: { resolveManagedInstallable: vi.fn(), runSystemTool },
@@ -92,25 +82,22 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
       payload: {
         agentId: 'codex',
         targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-        runtimeSelection: { providerBinding: { v: 1, agentTargetKey: 'backend:codex', connectionId: 'pc_gateway', modelId: 'model-a' } },
+        runtimeSelection: { hasExternalModelBinding: true },
       },
     }, {
       tools: { resolveManagedInstallable: vi.fn(), runSystemTool },
     })).resolves.toEqual({ decision: 'allow' });
 
-    runSystemTool.mockResolvedValueOnce({ ok: true, stdout: 'codex-cli 0.146.1', stderr: '' });
+    runSystemTool.mockResolvedValueOnce({ ok: true, stdout: 'codex-cli 0.147.0', stderr: '' });
     await expect(resolveCodexDaemonSpawnPrerequisites({
       payload: {
         agentId: 'codex',
         targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-        runtimeSelection: { providerBinding: { v: 1, agentTargetKey: 'backend:codex', connectionId: 'pc_gateway', modelId: 'model-a' } },
+        runtimeSelection: { hasExternalModelBinding: true },
       },
     }, {
       tools: { resolveManagedInstallable: vi.fn(), runSystemTool },
-    })).resolves.toMatchObject({
-      decision: 'deny',
-      reasonCode: 'codex_provider_runtime_unsupported',
-    });
+    })).resolves.toEqual({ decision: 'allow' });
   });
 
   it('requests Codex ACP through the daemon tool-resolution context', async () => {
@@ -124,7 +111,7 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
       await expect(resolveCodexDaemonSpawnPrerequisites({
         payload: {
           runtimeSelection: {
-            providerRuntimeSelection: { codexBackendMode: 'acp' },
+            agentRuntimeSelection: { codexBackendMode: 'acp' },
           },
         },
       }, {
@@ -144,7 +131,7 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
     await expect(resolveCodexDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { codexBackendMode: 'acp' },
+          agentRuntimeSelection: { codexBackendMode: 'acp' },
         },
       },
     })).resolves.toMatchObject({
@@ -157,7 +144,7 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
     await expect(resolveCodexDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { codexBackendMode: 'acp' },
+          agentRuntimeSelection: { codexBackendMode: 'acp' },
         },
       },
     }, {
@@ -183,7 +170,7 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
     await expect(resolveCodexDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { codexBackendMode: 'appServer' },
+          agentRuntimeSelection: { codexBackendMode: 'appServer' },
         },
       },
     }, {
@@ -198,7 +185,7 @@ describe('augmentCodexDaemonSpawnEnv', () => {
     expect(augmentCodexDaemonSpawnEnv({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { codexBackendMode: 'acp' },
+          agentRuntimeSelection: { codexBackendMode: 'acp' },
         },
       },
     })).toEqual({ HAPPIER_CODEX_BACKEND_MODE: 'acp' });
@@ -206,7 +193,7 @@ describe('augmentCodexDaemonSpawnEnv', () => {
     expect(augmentCodexDaemonSpawnEnv({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { codexBackendMode: 'appServer' },
+          agentRuntimeSelection: { codexBackendMode: 'appServer' },
         },
       },
     })).toEqual({ HAPPIER_CODEX_BACKEND_MODE: 'appServer' });

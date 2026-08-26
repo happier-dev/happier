@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/runtime';
+import {
+  AgentSessionRuntimeEventSchema,
+  type AgentSessionProviderBinding,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime';
 
 import type { OpenCodeRuntimeTurnOperations } from './operations.js';
@@ -48,6 +51,7 @@ function createOperationsFixture() {
 }
 
 function createRuntime(options: Readonly<{
+  providerBinding?: AgentSessionProviderBinding;
   models?: Readonly<{
     bind(source: Readonly<{
       read(): Readonly<{
@@ -73,6 +77,7 @@ function createRuntime(options: Readonly<{
       kind: 'create',
       sessionId: 'happier-session-child',
       cwd: '/repo',
+      ...(options.providerBinding ? { providerBinding: options.providerBinding } : {}),
     },
     disposeOperations,
     ...(options.models ? { models: options.models } : {}),
@@ -365,6 +370,24 @@ describe('createOpenCodeSessionRuntime', () => {
     expect(disposeOperations).toHaveBeenCalledTimes(1);
   });
 
+  it('does not cancel a different active OpenCode turn than the requested turn', async () => {
+    const { runtime, operations, publish } = createRuntime();
+    runtime.watch(() => undefined);
+    publish({
+      kind: 'turn-start',
+      sessionId: 'happier-session-child',
+      turnId: 'turn-current',
+      emittedAtMs: 10,
+    });
+
+    await expect(runtime.cancel?.({
+      turnId: 'turn-stale',
+      reason: 'user',
+    })).resolves.toEqual({ status: 'notRunning' });
+
+    expect(operations.cancelTurn).not.toHaveBeenCalled();
+  });
+
   it('binds the private active skills reader to the host session and releases it on dispose', async () => {
     let readSkills: (() => Promise<unknown>) | null = null;
     const disposeBinding = vi.fn();
@@ -448,6 +471,56 @@ describe('createOpenCodeSessionRuntime', () => {
     });
     await runtime.dispose();
     expect(disposeModels).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the private OpenCode dispatch provider out of the public effective model for a Provider binding', async () => {
+    let modelSource: {
+      read(): Readonly<{
+        models: readonly Readonly<{ id: string; name: string }>[];
+        currentModelId?: string | null;
+      }>;
+      subscribe(listener: (snapshot: Readonly<{
+        models: readonly Readonly<{ id: string; name: string }>[];
+        currentModelId?: string | null;
+      }>) => void): Readonly<{ dispose(): void }>;
+    } | null = null;
+    const models = {
+      bind: vi.fn((source) => {
+        modelSource = source;
+        return { dispose() {} };
+      }),
+    };
+    const providerBinding: AgentSessionProviderBinding = {
+      connectionId: 'pc_opencode_provider',
+      model: { id: 'vendor/gateway-model', name: 'Gateway model' },
+      upstream: {
+        protocol: 'openai-chat',
+        normalizedUrl: 'https://gateway.example.test/v1',
+        credential: 'none',
+      },
+      materialization: {
+        v: 1,
+        kind: 'configFile',
+        rootPath: '/tmp/opencode-provider-binding',
+        relativePaths: ['opencode/opencode.json'],
+      },
+    };
+    const { runtime, operations } = createRuntime({ models, providerBinding });
+    operations.sendTurnPrompt.mockResolvedValueOnce({
+      providerUserMessageId: 'provider-user-message-private-model',
+      effectiveModelId: 'happier_0123456789abcdef0123456789abcdef/vendor/gateway-model',
+    });
+
+    await runtime.send({
+      inputIds: ['input-provider-model'],
+      input: { text: 'Use the configured provider model' },
+      delivery: { kind: 'newTurn', turnId: 'turn-provider-model' },
+    });
+
+    expect(modelSource?.read()).toEqual({
+      models: [{ id: 'vendor/gateway-model', name: 'vendor/gateway-model' }],
+      currentModelId: 'vendor/gateway-model',
+    });
   });
 
   it('fails closed when manual compaction instructions cannot be represented by OpenCode', async () => {

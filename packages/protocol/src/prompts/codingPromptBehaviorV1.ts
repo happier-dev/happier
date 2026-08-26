@@ -40,6 +40,39 @@ export const CodingPromptBehaviorOverridesV1Schema = z
 
 export type CodingPromptBehaviorOverridesV1 = z.infer<typeof CodingPromptBehaviorOverridesV1Schema>;
 
+/**
+ * Reader-only shape persisted on legacy AI launch profiles by the moving
+ * remote-dev predecessor. New V2 profiles write
+ * `codingPromptBehaviorOverrides` instead. Keep this while supported stored
+ * legacy profiles can carry the predecessor field.
+ */
+export const HistoricalCodingPromptBehaviorProfileOverrideV1Schema = z
+  .object({
+    v: z.literal(1).default(1),
+    sessionTitleUpdates: CodingPromptSessionTitleUpdatesInputV1Schema.optional(),
+    responseOptions: CodingPromptBehaviorModeV1Schema.optional(),
+  })
+  .catch({ v: 1 });
+
+export type HistoricalCodingPromptBehaviorProfileOverrideV1 = z.infer<
+  typeof HistoricalCodingPromptBehaviorProfileOverrideV1Schema
+>;
+
+/** Projects the legacy persisted shape onto the canonical sparse V2 semantics. */
+export function projectHistoricalCodingPromptBehaviorProfileOverrideV1(
+  override: HistoricalCodingPromptBehaviorProfileOverrideV1 | null | undefined,
+): CodingPromptBehaviorOverridesV1 | undefined {
+  if (!override) return undefined;
+  const projected: CodingPromptBehaviorOverridesV1 = {};
+  if (override.sessionTitleUpdates !== undefined) {
+    projected.sessionTitleUpdates = override.sessionTitleUpdates;
+  }
+  if (override.responseOptions !== undefined) {
+    projected.responseOptions = override.responseOptions;
+  }
+  return Object.keys(projected).length > 0 ? projected : undefined;
+}
+
 /** Applies a sparse override onto a fully resolved Account behavior. */
 export function applyCodingPromptBehaviorOverridesV1(
   base: CodingPromptBehaviorV1,

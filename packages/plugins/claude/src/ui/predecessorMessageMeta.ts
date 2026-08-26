@@ -2,36 +2,47 @@ import {
     CLAUDE_REMOTE_DEBUG_CATEGORIES,
     CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS,
     CLAUDE_SETTING_SOURCES_V2,
+    normalizeClaudeRemoteAdvancedOptionsJson,
     normalizeClaudeUnifiedTerminalHost,
     normalizeClaudeUnifiedTerminalResumeChoice,
-    normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy,
 } from '../protocol/remoteSettings.js';
 
 type ClaudeSettingKey = keyof typeof CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS;
 type ClaudeSettingSourcesV2 = readonly (typeof CLAUDE_SETTING_SOURCES_V2)[number][];
 type ClaudeDebugCategories = readonly (typeof CLAUDE_REMOTE_DEBUG_CATEGORIES)[number][];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
+/**
+ * Current UI -> predecessor Claude CLI message metadata compatibility writer.
+ *
+ * Provenance: `remote-dev` `9b097966a35e643b51e84af987a1f30869696416`
+ * writes this exact metadata family in
+ * `packages/agents/src/providerSettings/definitions/claudeRemote.ts` and its
+ * Claude CLI reads it through
+ * `apps/cli/src/backends/claude/remote/claudeRemoteMetaState.ts`.
+ *
+ * This private bundled bridge exists only while a supported release or the
+ * moving predecessor reads these fields from persisted outbound user-message
+ * metadata. Remove it, its generated entry, and its package export once that
+ * consumer frontier no longer requires the shape. It is intentionally not an
+ * Agent UI behavior override or public SDK capability.
+ */
 
-function readSetting(settings: Record<string, unknown>, key: ClaudeSettingKey): unknown {
+function readSetting(settings: Readonly<Record<string, unknown>>, key: ClaudeSettingKey): unknown {
     const value = settings[key];
-    if (value === undefined) return CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS[key];
-    return value;
+    return value === undefined ? CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS[key] : value;
 }
 
-function readBoolean(settings: Record<string, unknown>, key: ClaudeSettingKey): boolean {
+function readBoolean(settings: Readonly<Record<string, unknown>>, key: ClaudeSettingKey): boolean {
     const value = readSetting(settings, key);
     return typeof value === 'boolean' ? value : Boolean(CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS[key]);
 }
 
-function readNumber(settings: Record<string, unknown>, key: ClaudeSettingKey): number {
+function readNumber(settings: Readonly<Record<string, unknown>>, key: ClaudeSettingKey): number {
     const value = readSetting(settings, key);
     return typeof value === 'number' && Number.isFinite(value) ? value : Number(CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS[key]);
 }
 
-function readNullableNumber(settings: Record<string, unknown>, key: ClaudeSettingKey): number | null {
+function readNullableNumber(settings: Readonly<Record<string, unknown>>, key: ClaudeSettingKey): number | null {
     const value = readSetting(settings, key);
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
@@ -65,7 +76,7 @@ function readEnumArray<TValue extends string>(
     return out;
 }
 
-function readClaudeSettingSourcesV2(settings: Record<string, unknown>): ClaudeSettingSourcesV2 {
+function readClaudeSettingSourcesV2(settings: Readonly<Record<string, unknown>>): ClaudeSettingSourcesV2 {
     const parsed = readEnumArray(settings.claudeRemoteSettingSourcesV2, CLAUDE_SETTING_SOURCES_V2, 3);
     if (parsed) return parsed;
     if (typeof settings.claudeRemoteSettingSources === 'string') {
@@ -75,14 +86,16 @@ function readClaudeSettingSourcesV2(settings: Record<string, unknown>): ClaudeSe
     return CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2 as ClaudeSettingSourcesV2;
 }
 
-function readClaudeDebugCategories(settings: Record<string, unknown>): ClaudeDebugCategories {
+function readClaudeDebugCategories(settings: Readonly<Record<string, unknown>>): ClaudeDebugCategories {
     return (
         readEnumArray(settings.claudeRemoteDebugCategories, CLAUDE_REMOTE_DEBUG_CATEGORIES, 5)
         ?? CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeRemoteDebugCategories
     ) as ClaudeDebugCategories;
 }
 
-function buildClaudeUiSettingsMessageMeta(settings: Record<string, unknown>): Record<string, unknown> {
+export function buildClaudePredecessorMessageMeta(
+    settings: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, string | number | boolean | null | readonly string[]>> {
     const settingSourcesV2 = readClaudeSettingSourcesV2(settings);
     const legacySettingSources = tryMapSettingSourcesV2ToLegacy(settingSourcesV2);
     return {
@@ -94,11 +107,9 @@ function buildClaudeUiSettingsMessageMeta(settings: Record<string, unknown>): Re
         claudeUnifiedTerminalResumeChoice:
             normalizeClaudeUnifiedTerminalResumeChoice(readSetting(settings, 'claudeUnifiedTerminalResumeChoice'))
             ?? CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeUnifiedTerminalResumeChoice,
-        claudeUnifiedTerminalWorkspaceTrust:
-            normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy(readSetting(settings, 'claudeUnifiedTerminalWorkspaceTrust'))
-            ?? CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeUnifiedTerminalWorkspaceTrust,
         claudeRemoteSettingSourcesV2: settingSourcesV2,
         ...(legacySettingSources ? { claudeRemoteSettingSources: legacySettingSources } : {}),
+        claudeCodeExperimentalAgentTeamsEnabled: readBoolean(settings, 'claudeCodeExperimentalAgentTeamsEnabled'),
         claudeLocalPermissionBridgeEnabled: readBoolean(settings, 'claudeLocalPermissionBridgeEnabled'),
         claudeLocalPermissionBridgeWaitIndefinitely: readBoolean(settings, 'claudeLocalPermissionBridgeWaitIndefinitely'),
         claudeLocalPermissionBridgeTimeoutSeconds: readNumber(settings, 'claudeLocalPermissionBridgeTimeoutSeconds'),
@@ -109,46 +120,12 @@ function buildClaudeUiSettingsMessageMeta(settings: Record<string, unknown>): Re
         claudeRemoteDebugEnabled: readBoolean(settings, 'claudeRemoteDebugEnabled'),
         claudeRemoteVerboseEnabled: readBoolean(settings, 'claudeRemoteVerboseEnabled'),
         claudeRemoteDebugCategories: readClaudeDebugCategories(settings),
+        claudeRemoteAdvancedOptionsJson: normalizeClaudeRemoteAdvancedOptionsJson(
+            readSetting(settings, 'claudeRemoteAdvancedOptionsJson'),
+        ),
     };
 }
 
-function canPersistMessageMetaValue(value: unknown): boolean {
-    return typeof value === 'string'
-        || typeof value === 'number'
-        || typeof value === 'boolean'
-        || value === null
-        || (
-            Array.isArray(value)
-            && value.length <= 16
-            && value.every((entry) => typeof entry === 'string')
-        );
-}
-
-function mergeProviderExtras(
-    metaOverrides: Record<string, unknown> | undefined,
-    extras: Record<string, unknown>,
-): Record<string, unknown> | undefined {
-    const merged = isRecord(metaOverrides) ? { ...metaOverrides } : {};
-    for (const [key, value] of Object.entries(extras)) {
-        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
-        if (Object.prototype.hasOwnProperty.call(merged, key)) continue;
-        if (!canPersistMessageMetaValue(value)) continue;
-        merged[key] = value;
-    }
-    return Object.keys(merged).length > 0 ? merged : metaOverrides;
-}
-
-export const CLAUDE_UI_BEHAVIOR_OVERRIDE = {
-    message: {
-        buildOverrides: ({
-            settings,
-            metaOverrides,
-        }: {
-            settings?: Record<string, unknown>;
-            metaOverrides?: Record<string, unknown>;
-        }) => mergeProviderExtras(
-            metaOverrides,
-            buildClaudeUiSettingsMessageMeta(isRecord(settings) ? settings : {}),
-        ),
-    },
+export const CLAUDE_PREDECESSOR_MESSAGE_META_WRITER = {
+    buildPredecessorMessageMeta: buildClaudePredecessorMessageMeta,
 } as const;

@@ -3,6 +3,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { geminiConnectedServiceStateSharingDescriptor } from './agent/connectedServices/descriptor.js';
 import { resolveGeminiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 import { createGeminiAgentRuntime } from './agent/runtime/factory.js';
 import { geminiConnectedAccountRuntime } from './connectedAccounts/runtime.js';
@@ -100,22 +101,20 @@ export const GEMINI_PLUGIN = definePlugin({
           },
           auth: {
             support: 'unsupported',
-            probe: {
-              parser: 'envOnly',
-              backgroundChecks: 'safe',
-              statusArgs: null,
-              envVars: [
+            environmentVariables: [
                 'GEMINI_API_KEY',
                 'GOOGLE_API_KEY',
                 'GOOGLE_GENAI_USE_VERTEXAI',
                 'GOOGLE_CLOUD_PROJECT',
                 'GOOGLE_CLOUD_LOCATION',
-              ],
-            },
+            ],
             loginLaunches: [],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+        },
         connectedAccounts: [{
           purpose: 'model_upstream',
           service: 'gemini-account',
@@ -128,6 +127,13 @@ export const GEMINI_PLUGIN = definePlugin({
         }),
       },
       factory: createGeminiAgentRuntime,
+      connectedAccountLaunch: {
+        stateSharingDescriptor: geminiConnectedServiceStateSharingDescriptor,
+      },
+      cliSessionCommand: {
+        sessionRuntimeId: 'gemini',
+        accountSettingsAgentId: 'gemini',
+      },
       sessionRunnerFactory: {
         module: './agent/runtime/factory',
         export: 'createGeminiAgentRuntime',

@@ -15,7 +15,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
           env: { GEMINI_API_KEY: 'sdk-key' },
         },
       },
@@ -37,7 +37,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
           env: { GEMINI_API_KEY: 'sdk-key' },
         },
       },
@@ -61,7 +61,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'cliPrint' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'cliPrint' },
           cwd: '/repo',
           env: {
             GEMINI_API_KEY: 'sdk-secret',
@@ -108,7 +108,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'cliPrint' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'cliPrint' },
         },
       },
     }, {
@@ -133,7 +133,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'cliPrint' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'cliPrint' },
         },
       },
     }, {
@@ -171,7 +171,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'auto' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'auto' },
           env: { GEMINI_API_KEY: 'sdk-key', HAPPIER_ANTIGRAVITY_RUNTIME_MODE: 'auto' },
         },
       },
@@ -198,7 +198,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'auto' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'auto' },
           env: { GEMINI_API_KEY: 'sdk-key' },
         },
       },
@@ -225,7 +225,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'auto' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'auto' },
         },
       },
     }, {
@@ -238,7 +238,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'auto' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'auto' },
         },
       },
     }, {
@@ -262,7 +262,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
           env: { GEMINI_API_KEY: 'sdk-key' },
           runtimeDescriptorV1: {
             v: 1,
@@ -304,7 +304,7 @@ describe('Antigravity daemon spawn prerequisites', () => {
     await expect(resolveAntigravityDaemonSpawnPrerequisites({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'auto' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'auto' },
           env: {},
         },
       },

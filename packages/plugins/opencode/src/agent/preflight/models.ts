@@ -1,4 +1,7 @@
-import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type {
+  AgentPreflightSessionControlsCommandResultV1,
+  AgentPreflightSessionControlsContributionV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { buildOpenCodeThinkingModelOptionsFromVariants } from '../config/thinking.js';
 import { asRecord, normalizeString } from '../runtime/server/openCodeParsing.js';
@@ -18,17 +21,6 @@ type KnownUnavailableOpenCodeModel = Readonly<{
 
 const OPENCODE_CLI_MODELS_COMMAND_ARGS = ['models'] as const;
 const OPENCODE_VERBOSE_MODELS_COMMAND_ARGS = ['models', '--verbose'] as const;
-const MIN_PREFLIGHT_MODELS_TIMEOUT_MS = 120_000;
-
-function buildOpenCodePreflightEnv(env: NodeJS.ProcessEnv | undefined): Readonly<Record<string, string>> {
-  const output: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env ?? {})) {
-    if (typeof value === 'string') output[key] = value;
-  }
-  output.CI = '1';
-  return output;
-}
-
 /**
  * OpenCode's own replacement pin for Anthropic's retired flagship models.
  *
@@ -225,53 +217,21 @@ function buildOpenCodePreflightModelsFromPlainOutput(outputRaw: string): readonl
   return models.length > 0 ? models : null;
 }
 
-export async function probeOpenCodePreflightModelsRaw(params: Readonly<{
-  exec: ExecService;
-  cwd: string;
-  timeoutMs: number;
-  env?: NodeJS.ProcessEnv;
-}>): Promise<readonly OpenCodePreflightModel[] | null> {
-  const env = buildOpenCodePreflightEnv(params.env);
-  const timeoutMs = Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs);
-  const resolved = await params.exec.systemTools.resolve({
-    toolId: OPEN_CODE_SYSTEM_TOOL_ID,
-    purpose: 'Probe OpenCode models',
-    cwd: params.cwd,
-  });
-  const decodeStdout = (result: PluginProcessResult): string => new TextDecoder().decode(result.stdout);
-  const succeeded = (result: PluginProcessResult): boolean => (
-    result.termination.observed.kind === 'exit'
-    && result.termination.observed.exitCode === 0
-  );
-  const verboseResult = await params.exec.run({
-    executable: resolved.executable,
-    args: OPENCODE_VERBOSE_MODELS_COMMAND_ARGS,
-    cwd: { root: 'workspace', relativePath: '' },
-    env,
-    timeoutMs,
-  });
-
-  if (succeeded(verboseResult)) {
-    const verboseModels = buildOpenCodePreflightModelsFromVerboseOutput(decodeStdout(verboseResult));
-    if (verboseModels) return verboseModels;
-  }
-
-  const plainResult = await params.exec.run({
-    executable: resolved.executable,
-    args: OPENCODE_CLI_MODELS_COMMAND_ARGS,
-    cwd: { root: 'workspace', relativePath: '' },
-    env,
-    timeoutMs,
-  });
-
-  if (!succeeded(plainResult)) return null;
-  return buildOpenCodePreflightModelsFromPlainOutput(decodeStdout(plainResult));
-}
-
 export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
-  connectedServiceAuth: 'materialized-env',
-  failureCacheStrategy: 'cooldown',
-  probeModelsRaw: probeOpenCodePreflightModelsRaw,
-  cliModelsCommandArgs: OPENCODE_CLI_MODELS_COMMAND_ARGS,
-  verboseModelsCommandArgs: OPENCODE_VERBOSE_MODELS_COMMAND_ARGS,
-} as const);
+  models: Object.freeze({
+    command: Object.freeze({
+      toolId: OPEN_CODE_SYSTEM_TOOL_ID,
+      args: OPENCODE_VERBOSE_MODELS_COMMAND_ARGS,
+    }),
+    parseOutput: ({ stdout }: AgentPreflightSessionControlsCommandResultV1) =>
+      buildOpenCodePreflightModelsFromVerboseOutput(stdout),
+    fallback: Object.freeze({
+      command: Object.freeze({
+        toolId: OPEN_CODE_SYSTEM_TOOL_ID,
+        args: OPENCODE_CLI_MODELS_COMMAND_ARGS,
+      }),
+      parseOutput: ({ stdout }: AgentPreflightSessionControlsCommandResultV1) =>
+        buildOpenCodePreflightModelsFromPlainOutput(stdout),
+    }),
+  }),
+} satisfies AgentPreflightSessionControlsContributionV1);

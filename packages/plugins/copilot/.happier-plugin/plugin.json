@@ -21,8 +21,18 @@
             "delivery": "shell_bridge"
           }
         },
+        "catalog": {
+          "vendorResume": {
+            "support": "supported"
+          }
+        },
         "cli": {
           "auth": {
+            "environmentVariables": [
+              "COPILOT_GITHUB_TOKEN",
+              "GH_TOKEN",
+              "GITHUB_TOKEN"
+            ],
             "loginLaunches": [
               {
                 "args": [
@@ -31,16 +41,6 @@
                 "kind": "primary"
               }
             ],
-            "probe": {
-              "backgroundChecks": "safe",
-              "envVars": [
-                "COPILOT_GITHUB_TOKEN",
-                "GH_TOKEN",
-                "GITHUB_TOKEN"
-              ],
-              "parser": "copilotGhAuth",
-              "statusArgs": null
-            },
             "support": "login_terminal"
           },
           "displayName": "GitHub Copilot CLI",
@@ -135,6 +135,13 @@
         ],
         "id": "copilot-cli",
         "title": "GitHub Copilot CLI"
+      },
+      {
+        "executableNames": [
+          "gh"
+        ],
+        "id": "github-cli",
+        "title": "GitHub CLI"
       }
     ],
     "targetedPluginContributions": [],
@@ -241,6 +248,10 @@
           "executables": [
             {
               "id": "copilot-cli",
+              "kind": "systemTool"
+            },
+            {
+              "id": "github-cli",
               "kind": "systemTool"
             }
           ]

@@ -3,7 +3,7 @@ import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { PluginInlineSurfaceHost, type PluginInlineSurfaceMountV1 } from '@/components/plugins/surfaces';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
-import { selectPluginSurfacePlacementsByDestination } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import { selectPluginInlineSurfacePlacementsBySurface } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 
 export function AgentInlineSurface(props: Readonly<{
     pluginId: string;
@@ -16,13 +16,10 @@ export function AgentInlineSurface(props: Readonly<{
 }>): React.ReactElement | null {
     const current = useScopedPluginUiProjection({ machineId: props.machineId });
     const placements = current.pluginUiProjection
-        ? selectPluginSurfacePlacementsByDestination(current.pluginUiProjection, {
+        ? selectPluginInlineSurfacePlacementsBySurface(current.pluginUiProjection, {
             pluginId: props.pluginId,
             localId: props.surfaceId,
-        }).filter((placement) => (
-            placement.binding.container === props.inlineMount.role
-            && placement.binding.targetKind === 'session'
-        ))
+        }, props.inlineMount.role)
         : [];
     const placement = placements.length === 1 ? placements[0] : null;
     if (!placement) return null;

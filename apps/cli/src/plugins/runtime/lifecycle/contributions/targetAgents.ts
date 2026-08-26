@@ -2,11 +2,18 @@ import { randomUUID } from 'node:crypto';
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type {
+    AgentCliAuthContributionV1,
+    AgentCliSessionCommandDeclarationV1,
+    AgentConnectedAccountLaunchContributionV1,
     AgentDaemonSpawnHooks,
     AgentDaemonSpawnRuntimeSelectionV1,
+    AgentExperimentalVendorResumeSupportContributionV1,
+    AgentPreflightSessionControlsContributionV1,
+    AgentProviderCliAttachDeclarationV1,
     AgentProviderBindingAdapter,
     AgentRuntime,
     AgentRuntimeFactoryContext,
+    AgentSessionStartupContributionV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
@@ -51,6 +58,9 @@ import {
 import {
     createHostDeclarativeAcpAgentRuntimeFactory,
 } from '../../runner/createHostDeclarativeAcpAgentRuntimeFactory';
+import {
+    normalizePluginDeclarativeAcpRuntime,
+} from '@/agent/acp/runtime/definition/plugin';
 import type { ResolvedAgentContribution } from '../../../projection/registry/types';
 import {
     indexAgentRoutingIdsByContributionIdentity,
@@ -126,55 +136,7 @@ type GenerationBoundExternalSessionTakeover = Readonly<{
  * the daemon-owned spawn and respawn path that owns its use.
  */
 type GenerationBoundExternalSessionTakeoverResolveLaunchResult =
-    | Extract<AgentExternalSessionTakeoverResolveLaunchResult, { ok: false }>
-    | Readonly<{
-        ok: true;
-        value: AgentExternalSessionTakeoverLaunchPlan;
-        nativeResumeReference?: string;
-    }>;
-
-const HOST_PRIVATE_NATIVE_RESUME_REFERENCE_KEY = 'nativeResumeReference';
-
-function extractHostPrivateNativeResumeReference(rawResult: unknown): Readonly<{
-    publicResult: unknown;
-    nativeResumeReference?: string;
-}> {
-    if (rawResult === null
-        || typeof rawResult !== 'object'
-        || Array.isArray(rawResult)) {
-        return { publicResult: rawResult };
-    }
-
-    const descriptor = Object.getOwnPropertyDescriptor(
-        rawResult,
-        HOST_PRIVATE_NATIVE_RESUME_REFERENCE_KEY,
-    );
-    if (!descriptor) {
-        return { publicResult: rawResult };
-    }
-    if (!descriptor.enumerable || !('value' in descriptor)) {
-        throw new TypeError(
-            'Agent External Session takeover native resume reference must be an enumerable data property',
-        );
-    }
-    const nativeResumeReference = descriptor.value;
-    if (typeof nativeResumeReference !== 'string'
-        || nativeResumeReference.length === 0
-        || nativeResumeReference.length
-            > AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxDirectoryCodeUnits) {
-        throw new TypeError(
-            'Agent External Session takeover native resume reference must contain 1-10000 code units',
-        );
-    }
-
-    const publicResult = Object.create(Object.getPrototypeOf(rawResult));
-    for (const key of Reflect.ownKeys(rawResult)) {
-        if (key === HOST_PRIVATE_NATIVE_RESUME_REFERENCE_KEY) continue;
-        const property = Object.getOwnPropertyDescriptor(rawResult, key);
-        if (property) Object.defineProperty(publicResult, key, property);
-    }
-    return { publicResult, nativeResumeReference };
-}
+    AgentExternalSessionTakeoverResolveLaunchResult;
 
 export type GenerationBoundExternalSessionObservation = Readonly<{
     describeResource:
@@ -212,6 +174,13 @@ type AgentRuntimeRegistrationLeaseBase = Readonly<{
     externalSessionObservation?: GenerationBoundExternalSessionObservation;
     externalSessionTakeover?: GenerationBoundExternalSessionTakeover;
     daemonSpawnHooks?: AgentDaemonSpawnHooks;
+    providerCliAttach?: AgentProviderCliAttachDeclarationV1;
+    cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
+    cliAuth?: AgentCliAuthContributionV1;
+    connectedAccountLaunch?: AgentConnectedAccountLaunchContributionV1;
+    preflightSessionControls?: AgentPreflightSessionControlsContributionV1;
+    sessionStartup?: AgentSessionStartupContributionV1;
+    vendorResumeSupport?: AgentExperimentalVendorResumeSupportContributionV1;
     retirementSignal: AbortSignal;
     isCurrent(): boolean;
     createAgentRuntimeSurfaceInvocationContext(params: Readonly<{
@@ -1207,11 +1176,9 @@ function createGenerationBoundExternalSessionTakeover(params: Readonly<{
                     }),
                 ]);
                 assertAdmissible(request.signal);
-                const privateCarrier =
-                    extractHostPrivateNativeResumeReference(rawResult);
                 const result =
                     validateAgentExternalSessionTakeoverResolveLaunchResult(
-                        privateCarrier.publicResult,
+                        rawResult,
                     );
                 if (serializedBytes(rawResult) > maxSerializedBytes) {
                     throw new TypeError(
@@ -1219,18 +1186,6 @@ function createGenerationBoundExternalSessionTakeover(params: Readonly<{
                     );
                 }
                 assertAdmissible(request.signal);
-                if (privateCarrier.nativeResumeReference !== undefined) {
-                    if (!result.ok) {
-                        throw new TypeError(
-                            'Agent External Session takeover native resume reference requires a successful launch result',
-                        );
-                    }
-                    return Object.freeze({
-                        ...result,
-                        nativeResumeReference:
-                            privateCarrier.nativeResumeReference,
-                    });
-                }
                 return result;
             } finally {
                 if (timeout) clearTimeout(timeout);
@@ -1467,6 +1422,27 @@ function createLease(params: Readonly<{
         ...(daemonSpawnHooks
             ? { daemonSpawnHooks }
             : {}),
+        ...(params.registration.providerCliAttach
+            ? { providerCliAttach: params.registration.providerCliAttach }
+            : {}),
+        ...(params.registration.cliSessionCommand
+            ? { cliSessionCommand: params.registration.cliSessionCommand }
+            : {}),
+        ...(params.registration.cliAuth
+            ? { cliAuth: params.registration.cliAuth }
+            : {}),
+        ...(params.registration.connectedAccountLaunch
+            ? { connectedAccountLaunch: params.registration.connectedAccountLaunch }
+            : {}),
+        ...(params.registration.preflightSessionControls
+            ? { preflightSessionControls: params.registration.preflightSessionControls }
+            : {}),
+        ...(params.registration.sessionStartup
+            ? { sessionStartup: params.registration.sessionStartup }
+            : {}),
+        ...(params.registration.vendorResumeSupport
+            ? { vendorResumeSupport: params.registration.vendorResumeSupport }
+            : {}),
         retirementSignal: params.retirementSignal,
         isCurrent: params.isGenerationActive,
         createAgentRuntimeSurfaceInvocationContext: async (
@@ -1671,9 +1647,11 @@ export function createDeclarativeAcpAgentRuntimeRegistry(params: Readonly<{
                 `Declarative ACP Agent '${declaration.agent.id}' from plugin '${declaration.pluginId}' conflicts with runtime owner '${existing.pluginId}'`,
             );
         }
-        const transport = declaration.runtime.transport;
+        const runtime = normalizePluginDeclarativeAcpRuntime(
+            declaration.runtime,
+        );
         const registration: AgentContributionRuntimeRegistration = Object.freeze({
-            factory: createHostDeclarativeAcpAgentRuntimeFactory(transport),
+            factory: createHostDeclarativeAcpAgentRuntimeFactory(runtime),
             ...(existing?.externalSessions ? { externalSessions: existing.externalSessions } : {}),
             ...(existing?.externalSessionHooks
                 ? { externalSessionHooks: existing.externalSessionHooks }

@@ -46,6 +46,7 @@ import {
 } from '@happier-dev/protocol';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import type {
+  AgentSessionConfigurationSnapshot,
   AgentSessionHostServices,
   AgentSessionModelsSnapshot,
   AgentSessionModelsSource,
@@ -54,8 +55,7 @@ import type { NativeForkSource } from '@/session/shared/spawnSessionContract';
 import type { ProviderBindingLaunchHandoffV1 } from '@/plugins/runtime/providerBindings/handoff';
 import { logger } from '@/ui/logger';
 import {
-    readReleasedStartupOverridesCacheV1,
-    writeReleasedStartupOverridesCacheV1,
+    resolveReleasedCodexStartupOverridesCacheV1Compatibility,
 } from '@/agent/runtime/startup/releasedStartupOverridesCacheV1';
 import { configuration } from '@/configuration';
 import type { PermissionMode } from '@/api/types';
@@ -92,6 +92,7 @@ type NativeAgentSessionOpenIntent =
 
 type NativeAgentSessionRuntimeCreation = Readonly<{
     operations: PluginRuntimeHookOperations;
+    configuration?: AgentSessionConfigurationSnapshot | null;
     admittedProviderBindingHandoff?: ProviderBindingLaunchHandoffV1 | null;
 }>;
 
@@ -639,11 +640,13 @@ function createNativeAgentDeferredStartupConfig(params: Readonly<{
 
     const uiLogPrefix = `[${params.displayName}]`;
     const timingLogPrefix = `[${params.backend.id}-startup]`;
-    const releasedCachePolicy = params.agent.catalogEntry?.releasedStartupOverridesCacheV1;
+    const releasedCodexCache = resolveReleasedCodexStartupOverridesCacheV1Compatibility(
+        params.backend.id,
+    );
     let lastReleasedCacheWriteAt = 0;
     return {
         startupBootstrap: {
-            ...(releasedCachePolicy
+            ...(releasedCodexCache
                 ? {
                     resolveSeed: ({
                         opts,
@@ -654,8 +657,7 @@ function createNativeAgentDeferredStartupConfig(params: Readonly<{
                     }>) => {
                         const providerResumeId = normalizeOptionalString(opts.resume);
                         if (!providerResumeId || typeof opts.permissionMode === 'string') return seed;
-                        const cached = readReleasedStartupOverridesCacheV1({
-                            backendId: params.backend.id,
+                        const cached = releasedCodexCache.read({
                             nowMs: Date.now(),
                             maxAgeMs: configuration.startupOverridesCacheMaxAgeMs,
                         });
@@ -703,8 +705,7 @@ function createNativeAgentDeferredStartupConfig(params: Readonly<{
                             Date.now(),
                             lastReleasedCacheWriteAt + 1,
                         );
-                        writeReleasedStartupOverridesCacheV1({
-                            backendId: params.backend.id,
+                        releasedCodexCache.write({
                             permissionMode: overrides.permissionMode,
                             permissionModeUpdatedAt: overrides.permissionModeUpdatedAt,
                             modelId: overrides.modelSelection?.ref.modelId ?? null,
@@ -724,11 +725,12 @@ function createNativeAgentDeferredStartupConfig(params: Readonly<{
                         || opts.startingMode === 'local'
                             ? opts.startingMode
                             : null,
-                    existingSessionId: normalizeOptionalString(opts.existingSessionId),
-                    sessionAttachFilePath: normalizeOptionalString(opts.sessionAttachFilePath),
-                    providerResumeId: normalizeOptionalString(opts.resume),
+                    hasExistingSession: normalizeOptionalString(opts.existingSessionId) !== null,
+                    hasSessionAttachFile: normalizeOptionalString(opts.sessionAttachFilePath) !== null,
+                    hasProviderResumeId: normalizeOptionalString(opts.resume) !== null,
                     hasExplicitPermissionMode: typeof opts.permissionMode === 'string',
-                    permissionModeSeedSource: seed.permissionModeSource,
+                    hasPersistedPermissionModeSeed:
+                        seed.permissionModeSource === 'released_cache_v1',
                     hasTerminalTty: process.stdin.isTTY === true && process.stdout.isTTY === true,
                 });
             },
@@ -984,6 +986,9 @@ export async function createNativeAgentHostSessionRuntimePlan(params: Readonly<{
                     return {
                         operations,
                         nativeRuntime: operations,
+                        ...(initialRuntime.configuration
+                            ? { configuration: initialRuntime.configuration }
+                            : {}),
                         ...(initialRuntime.admittedProviderBindingHandoff
                             ? {
                                 admittedProviderBindingHandoff:

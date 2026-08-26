@@ -552,17 +552,21 @@ function adaptContinuedRequest(params: Readonly<{
     privateCredentialHeaderNames: ReadonlySet<string>;
 }>): PluginHttpRequest {
     const returned = params.result.request;
-    // A Connected Account credential is authorized for one exact target. Once
-    // the host has attached that secret, an interceptor may still refine the
-    // ordinary headers it can see, but it may not move the request: the
-    // credential owner never authorized the rewritten URL or method, and the
-    // secret is reinjected into whatever request leaves this owner.
-    if (params.privateCredentialHeaderNames.size > 0
+    // A protected header is withheld from public interceptors and restored
+    // from this exact request after they return. Its recipient and method are
+    // therefore part of the protected request authority: an interceptor may
+    // still refine ordinary headers, but may not carry that header onto a
+    // rewritten endpoint or method. This covers both host-injected names and
+    // the closed standard set, including raw Connected Account Authorization.
+    const carriesProtectedHeader = Object.keys(params.effectiveRequest.headers ?? {}).some((name) => (
+        isProtectedInterceptorHeader(name, params.privateCredentialHeaderNames)
+    ));
+    if (carriesProtectedHeader
         && (returned.url !== params.publicRequest.url
             || normalizeRequestMethod(returned.method) !== params.publicRequest.method)) {
         throw new PluginError({
             code: 'plugin_fetch_interceptor_failed',
-            message: `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted to retarget a credential-bearing request`,
+            message: `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted to retarget a protected-header request`,
         });
     }
     let nextUrl = params.effectiveRequest.url;

@@ -71,22 +71,6 @@ describe('GEMINI_AGENT_RUNTIME_CONTRIBUTION connected services', () => {
     expect(GEMINI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('daemonSpawnHooks');
   });
 
-  it('exports a token-only cloud connect target for registry projection', async () => {
-    expect(GEMINI_AGENT_RUNTIME_CONTRIBUTION.cloudConnect).toMatchObject({
-      displayName: 'Gemini',
-      vendorDisplayName: 'Google Gemini',
-      vendorKey: 'gemini',
-      status: 'wired',
-    });
-
-    await expect(
-      GEMINI_AGENT_RUNTIME_CONTRIBUTION.cloudConnect.customAuthenticator.authenticate(),
-    ).resolves.toMatchObject({
-      ok: false,
-      code: 'unsupported',
-    });
-  });
-
   it('exports API-key and Vertex connected-service materialization without OAuth closure', async () => {
     const connectedServices = GEMINI_AGENT_RUNTIME_CONTRIBUTION.connectedServices;
     const now = 1_700_000_000_000;

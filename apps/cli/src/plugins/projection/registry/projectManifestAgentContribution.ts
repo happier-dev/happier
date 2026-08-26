@@ -8,9 +8,8 @@ import {
     createManifestAgentCatalogEntry,
     projectNativeAgentCliRuntimeDescriptor,
 } from './agentCliMetadata';
-import { createAgentRuntimeCatalogEntryHooks } from './agentCatalogEntryHooks';
+import { projectAgentCliSessionCommandCatalogEntry } from './agentCatalogEntryHooks';
 import { resolveContributedAgentRoutingId } from './agentRoutingIdentity';
-import type { AgentRuntimeContribution } from './agentRuntimeContribution';
 import type {
     ResolvedAgentContribution,
     ResolvedCatalogEntry,
@@ -21,10 +20,10 @@ import type {
 const EMPTY_SYSTEM_TOOLS: readonly PluginSystemToolContributionV1[] = Object.freeze([]);
 
 /**
- * Adapts the Agent's declared catalog facts to the one host Agent runtime
- * contribution shape. A bundled Agent supplies that contribution as a first-party
- * module; a contributed Agent declares its facts in the manifest, and both reach
- * the catalog through `createAgentRuntimeCatalogEntryHooks`.
+ * Adapts the Agent's declared catalog facts to the host catalog. A bundled
+ * Agent supplies its host hooks as a first-party module; a contributed Agent
+ * declares its static catalog facts in the manifest, and both reach the catalog
+ * through their canonical projection owners.
  *
  * `cliSessionCommand` is always present so the Agent's `happy <agent>` session
  * subcommand has exactly one builder. The declared block stays optional, so an
@@ -38,35 +37,33 @@ const EMPTY_SYSTEM_TOOLS: readonly PluginSystemToolContributionV1[] = Object.fre
  * runner's non-authoritative bootstrap view and the retained external-session
  * view — carry no binding and build no exec service from one.
  *
- * Runtime Activity is projected from the Agent's declared Session capability.
- * The host binds a Session's agent-runtime Activity slot only when the catalog
- * entry says `supported`, so without this the public
+ * Static catalog facts are projected directly from the Agent's declared
+ * `catalog` block. They do not pass through a bundled runtime aggregate.
+ *
+ * Runtime Activity is projected directly from the Agent's declared Session
+ * capability. The host binds a Session's agent-runtime Activity slot only when
+ * the catalog entry says `supported`, so without this the public
  * `capabilities.sessions.runtimeActivitySnapshots` declaration would have no
  * reader and an Agent emitting `runtime-activity-snapshot` runtime events would
  * never be subscribed to. An Agent that declares nothing keeps the key absent,
  * which the catalog-entry hook owner reads as `not_applicable`.
  */
-function readManifestAgentRuntimeContribution(
-    definition: PluginAgentContributionV2,
-    systemTools: readonly PluginSystemToolContributionV1[],
-): AgentRuntimeContribution {
-    const catalog = definition.catalog;
+function projectManifestAgentStaticCatalogEntry(params: Readonly<{
+    definition: PluginAgentContributionV2;
+    systemTools: readonly PluginSystemToolContributionV1[];
+}>): Partial<Pick<ResolvedCatalogEntry, 'agentCliSystemTool' | 'vendorResumeSupport'>> {
+    const catalog = params.definition.catalog;
     const declaredCliSystemToolId = catalog?.agentCliSystemTool?.toolId;
     const boundCliSystemToolId = declaredCliSystemToolId
-        && systemTools.some((tool) => tool.id === declaredCliSystemToolId)
+        && params.systemTools.some((tool) => tool.id === declaredCliSystemToolId)
         ? declaredCliSystemToolId
         : null;
     return Object.freeze({
-        cliSessionCommand: Object.freeze({}),
         ...(catalog?.vendorResume
-            ? { vendorResumeSupport: Object.freeze({ support: catalog.vendorResume.support }) }
+            ? { vendorResumeSupport: catalog.vendorResume.support }
             : {}),
         ...(boundCliSystemToolId
             ? { agentCliSystemTool: Object.freeze({ toolId: boundCliSystemToolId }) }
-            : {}),
-        ...(('sessions' in definition.capabilities
-            && definition.capabilities.sessions?.runtimeActivitySnapshots)
-            ? { runtimeActivityApplicability: 'supported' as const }
             : {}),
     });
 }
@@ -87,16 +84,18 @@ function projectManifestAgentCatalogEntry(params: Readonly<{
         provenance: params.provenance,
     });
     if (!base) return null;
-    const createHooks = createAgentRuntimeCatalogEntryHooks({
+    const cliSessionCommand = projectAgentCliSessionCommandCatalogEntry({
         agentId: params.agentId,
-        packageName: params.pluginId,
-        contribution: readManifestAgentRuntimeContribution(
-            params.definition,
-            params.systemTools,
-        ),
+    });
+    const staticCatalog = projectManifestAgentStaticCatalogEntry({
+        definition: params.definition,
         systemTools: params.systemTools,
     });
-    return Object.freeze({ ...base, ...createHooks() });
+    const runtimeActivity = ('sessions' in params.definition.capabilities
+        && params.definition.capabilities.sessions?.runtimeActivitySnapshots)
+        ? { runtimeActivityApplicability: 'supported' as const }
+        : {};
+    return Object.freeze({ ...base, ...cliSessionCommand, ...staticCatalog, ...runtimeActivity });
 }
 
 /**
@@ -112,7 +111,7 @@ export function projectManifestAgentContribution(params: Readonly<{
     /**
      * System tools the same plugin declares. The Agent's declared
      * `catalog.agentCliSystemTool` binding is validated against this list by
-     * the one catalog-entry hook owner.
+     * the canonical manifest projection.
      */
     systemTools?: readonly PluginSystemToolContributionV1[];
     sourceSpec?: PluginSourceSpecV1;

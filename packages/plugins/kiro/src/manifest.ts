@@ -1,8 +1,9 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
+import { KIRO_ACP_RUNTIME_DEFINITION } from './agent/acp/runtimeDefinition.js';
+import { detectKiroCliAuthStatus } from './agent/auth/status.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
-import { createKiroAgentRuntime } from './agent/runtime/factory.js';
 import { KIRO_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 const {
@@ -29,7 +30,15 @@ export const KIRO_PLUGIN = definePlugin({
     kiro: {
       declaration: {
         title: 'Kiro',
-        runtime: { kind: 'custom' },
+        runtime: {
+          kind: 'acp',
+          transport: {
+            kind: 'stdio',
+            executable: { kind: 'systemTool', id: 'kiro-cli' },
+            args: ['acp'],
+          },
+          definition: KIRO_ACP_RUNTIME_DEFINITION,
+        },
         cli: {
           displayName: 'Kiro CLI',
           executable: {
@@ -44,15 +53,13 @@ export const KIRO_PLUGIN = definePlugin({
           },
           auth: {
             support: 'login_terminal',
-            probe: {
-              parser: 'kiroWhoamiJson',
-              backgroundChecks: 'manual_only',
-              statusArgs: ['whoami', '--format', 'json'],
-            },
             loginLaunches: [{ kind: 'primary', args: ['login'] }],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+        },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           sessions: {
             open: ['create', 'resume'],
@@ -61,11 +68,15 @@ export const KIRO_PLUGIN = definePlugin({
           },
         }),
       },
-      factory: createKiroAgentRuntime,
-      sessionRunnerFactory: {
-        module: './agent/runtime/factory',
-        export: 'createKiroAgentRuntime',
-        runtimeApiVersion: 1,
+      cliAuth: {
+        detectAuthStatus: async ({ runDeclaredSystemToolCommand }) =>
+          await detectKiroCliAuthStatus({
+            runCommand: async (args, options) => await runDeclaredSystemToolCommand({
+              toolId: 'kiro-cli',
+              args,
+              ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+            }),
+          }),
       },
     },
   },

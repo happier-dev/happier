@@ -8,6 +8,7 @@ import {
   CodexSessionHandoffBundleSchema,
   CodexSessionHandoffBundleValidationError,
 } from './bundle.js';
+import { resolveCodexNativeTranscriptPathCandidate } from '../../../rollout/discovery/nativeSessionLog.js';
 import { exportCodexSessionBundle } from './export.js';
 import { importCodexSessionBundle } from './import.js';
 
@@ -95,4 +96,6 @@ export const codexHandoffSurface = {
       };
     }
   },
+  resolveNativeTranscriptPathCandidate: async (params) =>
+    await resolveCodexNativeTranscriptPathCandidate(params),
 } satisfies AgentRuntimeHandoffSurface;

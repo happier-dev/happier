@@ -10,7 +10,7 @@ export const AGENT_DEFINITION = Object.freeze({
     flavorAliases: ['qwen-code'],
     cloudConnect: null,
     connectedServices: null,
-    resume: { vendorResume: 'supported', vendorResumeIdField: 'qwenSessionId' },
+    resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'qwenSessionId' },
     sessionStorage: { direct: false, persisted: true },
     sessionCapabilities: {
       sessionListing: 'unsupported',

@@ -29,7 +29,7 @@ export function resolveEffectiveCodingPromptBehaviorV1(params: Readonly<{
     : null;
   if (!record) return base;
   for (const entry of readAiLaunchProfileCollection(record.profiles).entries) {
-    if (entry.kind !== 'slim' || entry.profile.id !== profileId) continue;
+    if (entry.kind === 'opaque' || entry.profile.id !== profileId) continue;
     return applyCodingPromptBehaviorOverridesV1(base, entry.profile.codingPromptBehaviorOverrides);
   }
   return base;

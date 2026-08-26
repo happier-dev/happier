@@ -2,9 +2,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resolveCodexNativeSessionLogPath } from './nativeSessionLog.js';
+import {
+  resolveCodexNativeSessionLogPath,
+  resolveCodexNativeTranscriptPathCandidate,
+} from './nativeSessionLog.js';
+import { buildCodexAgentRuntimeDescriptorV1 } from '../../../protocol/runtimeDescriptorV1.js';
 
 const VENDOR_RESUME_ID = '019e7cfd-2e3d-74f0-be76-b7459424f0a8';
 
@@ -33,6 +37,50 @@ afterEach(async () => {
  * rather than in a host branch.
  */
 describe('resolveCodexNativeSessionLogPath', () => {
+  it('derives a native transcript candidate only from the canonical descriptor home path', async () => {
+    const environmentCodexHome = join(root, 'environment-codex-home');
+    const environmentRolloutDir = join(environmentCodexHome, 'sessions', '2026', '08', '17');
+    const environmentRolloutPath = join(
+      environmentRolloutDir,
+      `rollout-2026-08-17T10-00-00-${VENDOR_RESUME_ID}.jsonl`,
+    );
+    await mkdir(environmentRolloutDir, { recursive: true });
+    await writeFile(environmentRolloutPath, '{}\n');
+    vi.stubEnv('CODEX_HOME', environmentCodexHome);
+
+    try {
+      await expect(resolveCodexNativeTranscriptPathCandidate({
+        identity: { v: 1, vendorResumeId: VENDOR_RESUME_ID },
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptorV1({
+          backendMode: 'appServer',
+          providerSessionId: VENDOR_RESUME_ID,
+          homePath: codexHome,
+        }),
+      })).resolves.toEqual({
+        path: rolloutPath,
+        containmentRoot: codexHome,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does not fall back to the process environment when the descriptor omits its home path', async () => {
+    vi.stubEnv('CODEX_HOME', codexHome);
+
+    try {
+      await expect(resolveCodexNativeTranscriptPathCandidate({
+        identity: { v: 1, vendorResumeId: VENDOR_RESUME_ID },
+        runtimeDescriptorV1: buildCodexAgentRuntimeDescriptorV1({
+          backendMode: 'appServer',
+          providerSessionId: VENDOR_RESUME_ID,
+        }),
+      })).resolves.toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('finds the rollout file the vendor resume id names under the configured Codex home', async () => {
     await expect(resolveCodexNativeSessionLogPath({
       vendorResumeId: VENDOR_RESUME_ID,

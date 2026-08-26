@@ -211,7 +211,14 @@ describe('ProviderContributionV1Schema', () => {
       connectedAccounts: [],
       endpointTemplateIds: ['responses'],
     } as const;
-    const value = { ...validContribution(), managedRuntime };
+    const value = {
+      ...validContribution(),
+      catalog: {
+        ...validContribution().catalog,
+        sourceRegistryVersion: 'gateway-model-registry/v1',
+      },
+      managedRuntime,
+    };
     expect(ProviderContributionV1Schema.safeParse(value).success).toBe(true);
     expect(ProviderContributionV1Schema.safeParse({
       ...value, managedRuntime: { ...managedRuntime, endpointTemplateIds: [] },
@@ -225,6 +232,54 @@ describe('ProviderContributionV1Schema', () => {
         ...managedRuntime,
         dependencies: Array.from({ length: 17 }, (_, index) => `dep-${index}`),
       },
+    }).success).toBe(false);
+  });
+
+  it('requires a managed dynamic source version while preserving ordered probes and fallback', () => {
+    const managed = {
+      ...validContribution(),
+      managedRuntime: {
+        kind: 'managed',
+        endpointTemplateIds: ['responses'],
+      },
+    } as const;
+
+    // Managed catalog identity cannot silently collapse to a declaration with
+    // no semantic source version, even though external endpoint catalogs do
+    // not need that managed-source fact.
+    expect(ProviderContributionV1Schema.safeParse(managed).success).toBe(false);
+    const versioned = {
+      ...managed,
+      catalog: {
+        ...managed.catalog,
+        sourceRegistryVersion: 'gateway-model-registry/v1',
+        probes: [
+          ...managed.catalog.probes,
+          { endpointTemplateId: 'responses', path: '/v1/models-alt', parser: 'openai-models' },
+        ],
+      },
+    } as const;
+    expect(ProviderContributionV1Schema.safeParse(versioned).success).toBe(true);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...versioned,
+      discovery: {
+        v: 1,
+        listener: {
+          executableBasenames: ['gateway'],
+          defaultPorts: [443],
+        },
+        availabilityProbe: versioned.catalog.probes[0],
+        catalogFallback: {
+          endpointTemplateId: 'responses',
+          lookupNames: ['gateway'],
+          fixedArgs: ['models'],
+          parser: 'ollama-list-table',
+        },
+      },
+    }).success).toBe(true);
+    expect(ProviderContributionV1Schema.safeParse({
+      ...versioned,
+      catalog: { ...versioned.catalog, sourceRegistryVersion: '   ' },
     }).success).toBe(false);
   });
 

@@ -63,7 +63,7 @@ describe('agent catalog registry read API', () => {
     expect(piEntry.getCliAuthSpec).toBeTypeOf('function');
     expect(piEntry.getCliDetect).toBeTypeOf('function');
     expect(piEntry.getCliCapabilityOverride).toBeUndefined();
-    expect(piEntry.checklists).toEqual({});
+    expect(piEntry).not.toHaveProperty('checklists');
     expect(piEntry.vendorResumeSupport).toBe('supported');
     await expect(piEntry.getCliDetect?.()).resolves.toMatchObject({
       versionArgsToTry: [['--version'], ['version'], ['-v']],
@@ -77,14 +77,6 @@ describe('agent catalog registry read API', () => {
       const entry = requireCatalogEntry(id);
 
       expect(entry.vendorResumeSupport).toBe(core.resume.vendorResume);
-      if (core.cloudConnect) {
-        expect(entry.getCloudConnectTarget).toBeTruthy();
-        const target = await entry.getCloudConnectTarget!();
-        expect(target.vendorKey).toBe(core.cloudConnect.vendorKey);
-        expect(target.status).toBe(core.cloudConnect.status);
-      } else {
-        expect(entry.getCloudConnectTarget).toBeFalsy();
-      }
     }
   });
 
@@ -92,13 +84,8 @@ describe('agent catalog registry read API', () => {
     const claudeEntry = requireCatalogEntry('claude');
     const opencodeEntry = requireCatalogEntry('opencode');
 
-    await expect(claudeEntry.getHeadlessTmuxArgvTransform?.()).resolves.toEqual(expect.any(Function));
-    const transform = await claudeEntry.getHeadlessTmuxArgvTransform!();
-    expect(transform(['--foo'])).toEqual(['--foo', '--happy-starting-mode', 'remote']);
-    expect(requireCatalogEntry('codex').getHeadlessTmuxArgvTransform).toBeUndefined();
-
-    const promptSubmitVerification = await claudeEntry.getTerminalPromptSubmitVerificationPolicy?.();
-    expect(promptSubmitVerification?.shouldVerifyAfterSubmit('first\nsecond')).toBe(true);
+    expect(claudeEntry).not.toHaveProperty('getHeadlessTmuxArgvTransform');
+    expect(claudeEntry.getTerminalPromptSubmitVerificationPolicy).toBeUndefined();
     expect(requireCatalogEntry('codex').getTerminalPromptSubmitVerificationPolicy).toBeUndefined();
 
     expect(claudeEntry.getPreflightSessionControlsProbeAdapter).toBeUndefined();

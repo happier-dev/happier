@@ -19,7 +19,7 @@ const OPENCODE_AGENT_CORE = Object.freeze({
       anthropic: ['token'],
     },
   },
-  resume: { vendorResume: 'supported', vendorResumeIdField: 'opencodeSessionId' },
+  resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'opencodeSessionId' },
   sessionStorage: { direct: true, persisted: true },
   sessionCapabilities: {
     sessionListing: 'supported',

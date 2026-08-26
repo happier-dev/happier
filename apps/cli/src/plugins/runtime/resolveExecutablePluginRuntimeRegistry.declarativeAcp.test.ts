@@ -6,7 +6,10 @@ import { describe, expect, it } from 'vitest';
 import type {
     AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { PluginAgentContributionV2 } from '@happier-dev/protocol';
+import {
+    buildQualifiedPluginContributionKey,
+    type PluginAgentContributionV2,
+} from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
@@ -48,19 +51,6 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
                 devWatch: true,
             },
         },
-        {
-            label: 'bundled trusted',
-            pluginId: 'happier.agent.declarative-acp-bundled',
-            provenance: 'first_party' as const,
-            sourceKind: 'bundled' as const,
-            sourceSpec: {
-                kind: 'bundled' as const,
-                locator: '@happier-dev/declarative-acp-bundled',
-                trustPolicy: 'local_trusted' as const,
-                installPolicy: 'copy' as const,
-                resolvedVersion: '1.0.0',
-            },
-        },
     ])('retains an immutable host ACP runner binding for $label without activation or a plugin factory', async ({
         pluginId,
         provenance,
@@ -69,11 +59,17 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
     }) => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-declarative-runner-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-declarative-runner-plugin-'));
-        const agentId = 'declarative-agent';
+        const localAgentId = 'declarative-agent';
+        const agentId = provenance === 'first_party'
+            ? localAgentId
+            : buildQualifiedPluginContributionKey({
+                pluginId,
+                localId: localAgentId,
+            });
         let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
         try {
             const agentDefinition = {
-                id: agentId,
+                id: localAgentId,
                 title: 'Declarative Agent',
                 runtime: {
                     kind: 'acp',
@@ -81,6 +77,15 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
                         kind: 'tcp',
                         host: '127.0.0.1',
                         port: 4242,
+                    },
+                    definition: {
+                        modelConfigOptionId: 'model',
+                        stderrRules: {
+                            suppress: [{
+                                includes: ['known harmless ACP notification'],
+                            }],
+                        },
+                        mcp: { policy: 'pass_through' },
                     },
                 },
                 primary: 'sessions',
@@ -126,7 +131,7 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
             const contributes = createResolvedContributionRegistry({
                 agents: [{
                     id: agentId,
-                    identity: { pluginId, localId: agentId },
+                    identity: { pluginId, localId: localAgentId },
                     provenance,
                     source: { kind: sourceKind },
                     definition: {
@@ -172,8 +177,8 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
                 pluginId,
                 pluginVersion: '1.0.0',
                 agentId,
-                qualifiedAgentId: `${pluginId}/agents/${agentId}`,
-                localAgentId: agentId,
+                qualifiedAgentId: `${pluginId}/agents/${localAgentId}`,
+                localAgentId,
                 immutableGenerationId: record.immutableGenerationId,
             });
             expect(binding).not.toHaveProperty('manifestDigest');
@@ -220,6 +225,15 @@ describe('resolveExecutablePluginRuntimeRegistry declarative ACP admission', () 
                                         kind: 'tcp',
                                         host: '127.0.0.1',
                                         port: 4242,
+                                    },
+                                    definition: {
+                                        modelConfigOptionId: 'model',
+                                        stderrRules: {
+                                            suppress: [{
+                                                includes: ['known harmless ACP notification'],
+                                            }],
+                                        },
+                                        mcp: { policy: 'pass_through' },
                                     },
                                 });
                                 return {

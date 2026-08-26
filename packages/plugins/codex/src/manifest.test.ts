@@ -3,10 +3,10 @@ import {
   ingestPluginManifestV2,
   resolvePluginManifestSetReferencesV2,
 } from '@happier-dev/protocol';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PLUGIN_MANIFEST as OPENAI_PLUGIN_MANIFEST } from '../../openai/src/manifest.js';
 import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
-import { PLUGIN_MANIFEST } from './manifest.js';
+import { CODEX_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Codex plugin manifest', () => {
   it('is canonical data and preserves declared runtime prerequisites', () => {
@@ -103,6 +103,22 @@ describe('Codex plugin manifest', () => {
     expect(result.manifest.contributes.agents[0]?.capabilities.sessions.startupInstructions).toEqual({
       versions: [1],
     });
+    expect(result.manifest.contributes.agents[0]?.catalog?.codingPromptBehavior).toEqual({
+      blocks: [{
+        id: 'provider.codex.exec_sequencing',
+        text: [
+          'Tool execution ordering:',
+          '- When you need to run multiple `exec_command` calls, run them sequentially.',
+          '- Do not enqueue multiple `exec_command` calls at once.',
+          '- If any command may require user approval (especially writes), wait for the user decision and the command result before issuing the next command.',
+          '- If a dependent read runs before its prerequisite write and fails, rerun the read after the write succeeds.',
+        ].join('\n'),
+      }],
+    });
+    expect(result.manifest.contributes.agents[0]?.catalog?.resumeChecklist).toEqual({
+      includeLoginStatus: true,
+    });
+    expect(result.manifest.contributes.agents[0]?.cli.auth.nonInteractiveStatusProbe).toBe(true);
     expect(PLUGIN_MANIFEST.contributes.voiceProviders).toEqual([{
       id: 'realtime-codex',
       title: 'Codex Realtime Voice — Experimental',
@@ -149,5 +165,36 @@ describe('Codex plugin manifest', () => {
     expect(fallback).toMatch(/provider-native runtime storage/iu);
     expect(fallback).toMatch(/may retain/iu);
     expect(fallback).toMatch(/does not delete or rewrite/iu);
+  });
+
+  it('registers focused startup and experimental resume callbacks without a cache flag', async () => {
+    const register = vi.fn();
+    const ignoreRegistration = vi.fn();
+    const agents = new Proxy({ register }, {
+      get(target, property) {
+        return Reflect.get(target, property) ?? ignoreRegistration;
+      },
+    });
+    const api = new Proxy({ agents }, {
+      get(target, property) {
+        return Reflect.get(target, property) ?? new Proxy({}, {
+          get: () => ignoreRegistration,
+        });
+      },
+    });
+
+    await CODEX_PLUGIN.activate(api as never);
+
+    expect(register).toHaveBeenCalledWith('codex', expect.any(Function), expect.objectContaining({
+      sessionStartup: {
+        shouldUseDeferredBootstrap: expect.any(Function),
+      },
+      vendorResumeSupport: {
+        supportsVendorResume: expect.any(Function),
+      },
+    }));
+    const [, , options] = register.mock.calls[0] ?? [];
+    expect(options).not.toHaveProperty('releasedOverridesCacheV1');
+    expect(options.sessionStartup).not.toHaveProperty('releasedOverridesCacheV1');
   });
 });

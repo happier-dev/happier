@@ -11,6 +11,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { activate } from './activate.js';
+import { OPENCODE_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/catalog.js';
 import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
@@ -39,6 +40,68 @@ describe('activate', () => {
     expect(await import('./manifest.js')).toEqual(expect.objectContaining({
       OPENCODE_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
     }));
+  });
+
+  it('registers the static Connected Account launch facts without retaining a private aggregate', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      expect(activation.registration('agents', 'opencode')?.connectedAccountLaunch).toEqual({
+        requestAuthUses: [{
+          purpose: 'anthropic-model-request',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.anthropic.com',
+            headerNames: ['authorization'],
+          },
+        }, {
+          purpose: 'openai-codex-model-request',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://chatgpt.com',
+            headerNames: ['authorization', 'chatgpt-account-id'],
+          },
+        }],
+        stateSharingDescriptor: expect.objectContaining({
+          providerSupportStatus: 'unsupported',
+          authIsolation: {
+            mode: 'process_env',
+            secretEntries: ['OPENCODE_AUTH_CONTENT', 'auth.json'],
+          },
+        }),
+      });
+      expect(activation.registration('agents', 'opencode')?.connectedAccountLaunch?.stateSharingDescriptor)
+        .not.toHaveProperty('providerId');
+      expect(OPENCODE_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('connectedServices');
+    } finally {
+      await activation.dispose();
+    }
+  });
+
+  it('builds OpenCode Session preferences through the public CLI command declaration', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const buildSessionOptions = activation.registration('agents', 'opencode')?.cliSessionCommand?.buildSessionOptions;
+      expect(buildSessionOptions).toBeTypeOf('function');
+      expect(buildSessionOptions?.({
+        isExplicitCliSubcommand: true,
+        parsed: { agentArgs: [] },
+        settings: {
+          opencodeBackendMode: 'server',
+          opencodeServerBaseUrl: 'https://opencode.example.test',
+        },
+        environment: {},
+        startOrigin: 'terminal',
+      })).toEqual({
+        ok: true,
+        options: {
+          opencodeBackendMode: 'server',
+          opencodeServerBaseUrl: 'https://opencode.example.test/',
+          opencodeServerBaseUrlExplicit: true,
+        },
+      });
+    } finally {
+      await activation.dispose();
+    }
   });
 
   afterEach(() => {

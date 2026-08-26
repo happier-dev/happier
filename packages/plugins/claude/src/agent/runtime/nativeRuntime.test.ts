@@ -155,6 +155,52 @@ describe('createClaudeNativeRuntime', () => {
     expect(runtime.surfaces?.handoff).toBe(claudeHandoffSurface);
   });
 
+  it('publishes the effective Claude config directory in a merged runtime descriptor', async () => {
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: () => createNativeOperations('descriptor-session').runtime,
+      prepareLaunchEnvironment: async () => ({
+        launchEnvironment: {
+          values: {
+            CLAUDE_CONFIG_DIR: '/effective/claude',
+            ANTHROPIC_API_KEY: 'must-not-be-described',
+          },
+          unset: [],
+        },
+        isInvalidated: () => false,
+        armInvalidation() {},
+        async dispose() {},
+      }),
+    });
+
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'descriptor-session',
+      cwd: '/repo/project',
+      launchEnvironment: {
+        values: { CLAUDE_CONFIG_DIR: '/stale/claude' },
+        unset: [],
+      },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'claude',
+        agent: {
+          providerSessionId: 'host-provider-session',
+          backendMode: 'host-generic',
+        },
+      },
+    }, context as unknown as AgentSessionRuntimeContext);
+
+    expect(session.runtimeDescriptorV1).toEqual({
+      v: 1,
+      agentId: 'claude',
+      agent: {
+        providerSessionId: 'host-provider-session',
+        backendMode: 'host-generic',
+        configDir: '/effective/claude',
+      },
+    });
+  });
+
   it('declares a real pre-effect Agent tool interception boundary', () => {
     const runtime = createTestClaudeNativeRuntime({
       openSession: async () => createNativeOperations('session-tool-lifecycle').runtime,
@@ -633,7 +679,7 @@ describe('createClaudeNativeRuntime', () => {
     await session.dispose();
   });
 
-  it('pins an isolated shared-config root when a credential-less Provider binding redirects Claude Code', async () => {
+  it('pins an isolated shared-config root when a credential-less Provider binding keeps Claude Code on Anthropic', async () => {
     const openSession = vi.fn<ClaudeNativeSessionFactory>(
       ({ request }) => createNativeOperations(request.sessionId).runtime,
     );
@@ -660,7 +706,7 @@ describe('createClaudeNativeRuntime', () => {
       model: { id: 'local-claude', name: 'Local Claude' },
       upstream: {
         protocol: 'anthropic',
-        normalizedUrl: 'http://localhost:1234',
+        normalizedUrl: 'https://api.anthropic.com',
         credential: 'none',
       },
       materialization: { v: 1, kind: 'spawnEnv' },
@@ -679,7 +725,7 @@ describe('createClaudeNativeRuntime', () => {
         providerBinding,
         launchEnvironment: {
           values: {
-            ANTHROPIC_BASE_URL: 'http://localhost:1234',
+            ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
             CLAUDE_CONFIG_DIR: userConfigDir,
             KEEP: 'yes',
           },
@@ -695,7 +741,7 @@ describe('createClaudeNativeRuntime', () => {
       pinnedRootDir = launched?.values.CLAUDE_CONFIG_DIR ?? '';
       expect(pinnedRootDir).not.toBe('');
       expect(pinnedRootDir).not.toBe(userConfigDir);
-      expect(launched?.values.ANTHROPIC_BASE_URL).toBe('http://localhost:1234');
+      expect(launched?.values.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
       expect(launched?.values.KEEP).toBe('yes');
       // The pinned root carries no account identity...
       await expect(stat(join(pinnedRootDir, '.credentials.json'))).rejects.toThrow();
@@ -2206,7 +2252,7 @@ describe('createClaudeNativeRuntime', () => {
     }), expect.anything());
   });
 
-  it('declares a host-owned terminal launch plan without launching a process in the plugin', async () => {
+  it('declares a host-owned terminal launch plan from the current configuration snapshot', async () => {
     const runtime = createTestClaudeNativeRuntime({
       openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
     });
@@ -2214,26 +2260,12 @@ describe('createClaudeNativeRuntime', () => {
     await expect(Promise.resolve(runtime.surfaces?.terminal?.resolveLaunch({
       sessionId: 'session-1',
       cwd: '/repo',
-      metadata: {
-        claudeArgs: [
-          '--model',
-          'stale',
-          '--fallback-model',
-          'raw-fallback-must-not-win',
-          '--permission-mode=acceptEdits',
-          'prompt',
-        ],
-        model: 'claude-opus-4-8',
-        fallbackModel: 'metadata-fallback-must-not-win',
-        modelSelectionIntentV1: {
-          v: 1,
-          updatedAt: 41,
-          selection: {
-            agentTargetKey: 'backend:claude',
-            providerConnectionId: 'pc_next',
-            modelId: 'proposed-provider-model',
-          },
-        },
+      metadata: {},
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 },
+        model: { value: 'claude-sonnet-4-6', updatedAtMs: 1 },
+        permissionIntent: { value: 'acceptEdits', updatedAtMs: 1 },
+        options: {},
       },
       modelSelection: {
         agentTargetKey: 'backend:claude',
@@ -2244,7 +2276,6 @@ describe('createClaudeNativeRuntime', () => {
       argv: [
         '--model',
         'claude-sonnet-4-6',
-        'prompt',
         '--permission-mode',
         'acceptEdits',
       ],
@@ -2264,21 +2295,25 @@ describe('createClaudeNativeRuntime', () => {
     const plan = await Promise.resolve(runtime.surfaces?.terminal?.resolveLaunch({
       sessionId: 'session-yolo',
       cwd: '/repo',
-      metadata: {
-        claudeArgs: ['--permission-mode=bypassPermissions'],
+      metadata: {},
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 },
+        model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'yolo', updatedAtMs: 1 },
+        options: {},
       },
       modelSelection: null,
     }));
 
     expect(plan?.argv).toEqual([
-      '--settings',
-      JSON.stringify({ skipDangerousModePermissionPrompt: true }),
       '--permission-mode',
       'bypassPermissions',
+      '--settings',
+      JSON.stringify({ skipDangerousModePermissionPrompt: true }),
     ]);
   });
 
-  it('does not promote raw Claude model arguments without exact active proof', async () => {
+  it('does not launch a model when the host has no active selection', async () => {
     const runtime = createTestClaudeNativeRuntime({
       openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
     });
@@ -2286,34 +2321,18 @@ describe('createClaudeNativeRuntime', () => {
     await expect(Promise.resolve(runtime.surfaces?.terminal?.resolveLaunch({
       sessionId: 'session-1',
       cwd: '/repo',
-      metadata: {
-        claudeArgs: [
-          '--model',
-          'stale',
-          '--fallback-model',
-          'claude-haiku-4-5',
-          '--permission-mode=acceptEdits',
-          'prompt',
-        ],
-        model: 'also-stale',
-        modelSelectionIntentV1: {
-          v: 1,
-          updatedAt: 41,
-          selection: {
-            agentTargetKey: 'backend:claude',
-            providerConnectionId: 'pc_next',
-            modelId: 'proposed-provider-model',
-          },
-        },
+      metadata: {},
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 },
+        model: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'default', updatedAtMs: 1 },
+        options: {},
       },
       modelSelection: null,
     }))).resolves.toMatchObject({
       argv: [
-        '--fallback-model',
-        'claude-haiku-4-5',
-        'prompt',
         '--permission-mode',
-        'acceptEdits',
+        'default',
       ],
     });
   });
@@ -2599,6 +2618,101 @@ describe('createClaudeNativeRuntime', () => {
       || event.kind === 'tool-progress'
       || event.kind === 'tool-result'
     ))).toBe(false);
+  });
+
+  it('keeps a Unified terminal draft rejection nonterminal and isolates it to the affected input', async () => {
+    const native = createNativeOperations('session-unified-draft-rejection');
+    let publishProviderAcceptance: (() => void) | null = null;
+    let publishProviderRejection: (() => void) | null = null;
+    const runtime = createTestClaudeNativeRuntime({
+      openSession: () => ({
+        ...native.runtime,
+        promptCustody: 'unified_terminal' as const,
+        async sendProviderTurnPrompt() {
+          return { kind: 'custody_observed' as const };
+        },
+        setOnPromptAcceptedByProvider(handler) {
+          publishProviderAcceptance = () => handler({
+            localIds: ['input-unified-draft-later'],
+          });
+        },
+        setOnPromptTerminallyRejectedBeforeProvider(handler) {
+          publishProviderRejection = () => handler({
+            localIds: ['input-unified-draft-rejected'],
+            userMessageSeq: null,
+          });
+        },
+        setOnPromptDeliveryOutcome() {},
+      }),
+    });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-unified-draft-rejection',
+      cwd: '/repo',
+    }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    session.watch((event) => events.push(event));
+
+    await expect(session.send({
+      inputIds: ['input-unified-draft-rejected'],
+      input: { text: 'blocked by terminal draft' },
+      delivery: { kind: 'newTurn', turnId: 'turn-unified-draft-rejected' },
+    })).resolves.toEqual({ status: 'admitted' });
+
+    native.publish({
+      kind: 'backend-error',
+      sessionId: 'session-unified-draft-rejection',
+      emittedAtMs: 10,
+      error: {
+        code: 'claude_unified_terminal_user_draft_blocking',
+        message: 'Terminal draft blocks this queued input.',
+      },
+    });
+    publishProviderRejection?.();
+
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'input-rejected',
+      inputIds: ['input-unified-draft-rejected'],
+      diagnostic: expect.objectContaining({ code: 'claude_send_rejected' }),
+      retryable: true,
+    }));
+    expect(events.some((event) => event.kind === 'runtime-ended')).toBe(false);
+
+    await expect(session.send({
+      inputIds: ['input-unified-draft-later'],
+      input: { text: 'continue after draft rejection' },
+      delivery: { kind: 'newTurn', turnId: 'turn-unified-draft-later' },
+    })).resolves.toEqual({ status: 'admitted' });
+    publishProviderAcceptance?.();
+
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'input-accepted',
+      inputIds: ['input-unified-draft-later'],
+    }));
+  });
+
+  it('projects an actual Claude session-ended event as runtime-ended', async () => {
+    const native = createNativeOperations('session-actual-ended');
+    const runtime = createTestClaudeNativeRuntime({ openSession: () => native.runtime });
+    const session = await runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'session-actual-ended',
+      cwd: '/repo',
+    }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    session.watch((event) => events.push(event));
+
+    native.publish({
+      kind: 'session-ended',
+      sessionId: 'session-actual-ended',
+      emittedAtMs: 10,
+      reason: 'Claude process exited.',
+    });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'runtime-ended',
+      cause: 'providerEnded',
+    }));
   });
 
   it('projects a provider session identity published after native session startup', async () => {

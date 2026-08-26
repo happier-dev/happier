@@ -1,9 +1,10 @@
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { AgentPassiveRealtimeSetupResultV1 } from '@happier-dev/plugin-sdk/agents';
+import type {
+  AgentPreflightSessionControlsContributionV1,
+  AgentPreflightSessionControlsProbeContextV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { readCodexEnvironmentAuthState, type CodexEnvironmentAuthMethod } from '../../cli/auth/environment.js';
 import { classifyCodexConnectedServiceAuthFailure } from '../../auth/services/runtime/auth/failure.js';
-import { createCodexNativeAppServerClient } from '../../runtime/appServer/client.js';
 import {
   CODEX_OPERATION_ABORTED,
   inspectCodexRealtimeFeature,
@@ -15,41 +16,17 @@ import {
 } from '../../runtime/appServer/state/controls.js';
 import { resolveCodexSessionBackendMode } from '../backendMode.js';
 
-export type CodexPreflightSessionControlsPolicy = Readonly<{
-  processEnv: Readonly<{
-    HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: string;
-  }>;
-  authMethod: CodexEnvironmentAuthMethod | null;
-}>;
-
-export type CodexPreflightSessionControlsProbeParams = Readonly<{
-  exec: ExecService;
-  cwd: string;
-  timeoutMs: number;
-  accountSettings?: Readonly<Record<string, unknown>> | null;
-  env?: NodeJS.ProcessEnv;
-  signal?: AbortSignal;
-}>;
-
-const CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS = [
+export const CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS = Object.freeze([
   'HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH',
   'HAPPIER_CODEX_APP_SERVER_RPC_LOG_MAX_BYTES',
   'HAPPIER_CODEX_APP_SERVER_RPC_LOG_ROTATE_COUNT',
-] as const;
+] as const);
 
-function buildCodexPreflightProcessEnv(
-  env: NodeJS.ProcessEnv,
-  policy: CodexPreflightSessionControlsPolicy,
-): NodeJS.ProcessEnv {
-  const processEnv: NodeJS.ProcessEnv = {
-    ...env,
-    ...policy.processEnv,
-  };
-  for (const key of CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS) {
-    delete processEnv[key];
-  }
-  return processEnv;
-}
+const CODEX_PREFLIGHT_JSON_RPC_COMMAND = Object.freeze({
+  toolId: 'codex-cli',
+  args: Object.freeze(['app-server', '--listen', 'stdio://']),
+  environmentExcludeKeys: CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS,
+});
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -89,164 +66,93 @@ function passiveRealtimeResult(
   return { v: 1, status };
 }
 
+function usesCodexAppServer(context: AgentPreflightSessionControlsProbeContextV1): boolean {
+  const backendMode = resolveCodexSessionBackendMode({
+    accountSettings: context.accountSettings,
+  }) ?? 'appServer';
+  return backendMode === 'appServer';
+}
+
+function readCodexPreflightAuthMethod(
+  context: AgentPreflightSessionControlsProbeContextV1,
+): 'api_key_env' | null {
+  return context.environment.OPENAI_API_KEY === true || context.environment.CODEX_API_KEY === true
+    ? 'api_key_env'
+    : null;
+}
+
 async function readCodexPreflightSessionControls(
-  params: CodexPreflightSessionControlsProbeParams,
+  context: AgentPreflightSessionControlsProbeContextV1,
 ): Promise<CodexAppServerSessionControlsSnapshot | null> {
-  const env = params.env ?? process.env;
-  const policy = resolveCodexPreflightSessionControlsPolicy({
-    accountSettings: params.accountSettings ?? null,
-    timeoutMs: params.timeoutMs,
-    env,
-  });
-  if (!policy) return null;
-
-  const client = await createCodexNativeAppServerClient({
-    exec: params.exec,
-    processEnv: buildCodexPreflightProcessEnv(env, policy),
-    cwd: params.cwd,
-    ...(params.signal ? { signal: params.signal } : {}),
-  });
-  try {
-    return await readCodexAppServerSessionControls({
+  if (!usesCodexAppServer(context)) return null;
+  return await context.withDeclaredJsonRpcClient(
+    CODEX_PREFLIGHT_JSON_RPC_COMMAND,
+    async (client) => await readCodexAppServerSessionControls({
       client,
-      authMethod: policy.authMethod,
-    });
-  } finally {
-    await client.dispose();
-  }
+      authMethod: readCodexPreflightAuthMethod(context),
+    }),
+  );
 }
 
-/**
- * Cold, bounded readiness inspection for Settings. This owns no thread or
- * realtime session; normal Voice Start still owns thread-scoped admission.
- */
-export async function probeCodexPassiveRealtimeSetupRaw(
-  params: CodexPreflightSessionControlsProbeParams,
+async function probeCodexPassiveRealtimeSetup(
+  context: AgentPreflightSessionControlsProbeContextV1,
 ): Promise<AgentPassiveRealtimeSetupResultV1> {
-  const env = params.env ?? process.env;
-  const policy = resolveCodexPreflightSessionControlsPolicy({
-    accountSettings: params.accountSettings ?? null,
-    timeoutMs: params.timeoutMs,
-    env,
-  });
-  if (!policy) return passiveRealtimeResult('unavailable');
-
-  let client: Awaited<ReturnType<typeof createCodexNativeAppServerClient>>;
+  if (!usesCodexAppServer(context)) return passiveRealtimeResult('unavailable');
   try {
-    client = await createCodexNativeAppServerClient({
-      exec: params.exec,
-      processEnv: buildCodexPreflightProcessEnv(env, policy),
-      cwd: params.cwd,
-      ...(params.signal ? { signal: params.signal } : {}),
-    });
+    return await context.withDeclaredJsonRpcClient(
+      CODEX_PREFLIGHT_JSON_RPC_COMMAND,
+      async (client, signal) => {
+        const accountOutcome = await waitForCodexOperationOrAbort(
+          client.request('account/read', { refreshToken: false }),
+          signal,
+        );
+        if (accountOutcome === CODEX_OPERATION_ABORTED) return passiveRealtimeResult('unavailable');
+        const accountAuthentication = readPassiveCodexAccountAuthentication(accountOutcome);
+        if (accountAuthentication !== 'authenticated') {
+          return passiveRealtimeResult(accountAuthentication);
+        }
+
+        const featureInspection = await inspectCodexRealtimeFeature({
+          client,
+          isAuthenticationError: isCodexAuthenticationError,
+          signal,
+        });
+        if (featureInspection.status === 'enabled') return passiveRealtimeResult('ready');
+        switch (featureInspection.code) {
+          case 'feature_not_advertised':
+          case 'feature_missing':
+            return passiveRealtimeResult('runtime_incompatible');
+          case 'authentication_required':
+            return passiveRealtimeResult('authentication_required');
+          case 'feature_disabled':
+            return passiveRealtimeResult('feature_disabled');
+          case 'inspection_aborted':
+          case 'currentness_lost':
+          case 'feature_list_unavailable':
+          case 'feature_list_invalid':
+          case 'feature_state_invalid':
+          case 'feature_state_ambiguous':
+          case 'feature_pagination_invalid':
+          case 'feature_pagination_incomplete':
+            return passiveRealtimeResult('unavailable');
+        }
+      },
+    );
   } catch (error) {
     return passiveRealtimeResult(
       isCodexAuthenticationError(error) ? 'authentication_required' : 'unavailable',
     );
   }
-
-  try {
-    const accountOutcome = await waitForCodexOperationOrAbort(
-      client.request('account/read', { refreshToken: false }, ...(params.signal ? [{ signal: params.signal }] : [])),
-      params.signal,
-    );
-    if (accountOutcome === CODEX_OPERATION_ABORTED) return passiveRealtimeResult('unavailable');
-    const accountAuthentication = readPassiveCodexAccountAuthentication(accountOutcome);
-    if (accountAuthentication !== 'authenticated') {
-      return passiveRealtimeResult(accountAuthentication);
-    }
-
-    const featureInspection = await inspectCodexRealtimeFeature({
-      client,
-      isAuthenticationError: isCodexAuthenticationError,
-      ...(params.signal ? { signal: params.signal } : {}),
-    });
-    if (featureInspection.status === 'enabled') return passiveRealtimeResult('ready');
-    switch (featureInspection.code) {
-      case 'feature_not_advertised':
-      case 'feature_missing':
-        return passiveRealtimeResult('runtime_incompatible');
-      case 'authentication_required':
-        return passiveRealtimeResult('authentication_required');
-      case 'feature_disabled':
-        return passiveRealtimeResult('feature_disabled');
-      case 'inspection_aborted':
-      case 'currentness_lost':
-      case 'feature_list_unavailable':
-      case 'feature_list_invalid':
-      case 'feature_state_invalid':
-      case 'feature_state_ambiguous':
-      case 'feature_pagination_invalid':
-      case 'feature_pagination_incomplete':
-        return passiveRealtimeResult('unavailable');
-    }
-  } catch (error) {
-    return passiveRealtimeResult(
-      isCodexAuthenticationError(error) ? 'authentication_required' : 'unavailable',
-    );
-  } finally {
-    await client.dispose();
-  }
 }
 
-export function resolveCodexPreflightSessionControlsProbeVariant(params: Readonly<{
-  accountSettings?: Readonly<Record<string, unknown>> | null;
-  env?: NodeJS.ProcessEnv;
-}>): string {
-  const backendMode =
-    resolveCodexSessionBackendMode({ accountSettings: params.accountSettings ?? null }) ?? 'appServer';
-  return `codex:${backendMode}`;
-}
-
-export async function probeCodexPreflightModelsRaw(
-  params: CodexPreflightSessionControlsProbeParams,
-): Promise<unknown | null> {
-  const controls = await readCodexPreflightSessionControls(params);
-  return controls?.availableModels ?? null;
-}
-
-export async function probeCodexPreflightModesRaw(
-  params: CodexPreflightSessionControlsProbeParams,
-): Promise<unknown | null> {
-  const controls = await readCodexPreflightSessionControls(params);
-  return controls?.availableModes ?? null;
-}
-
-export async function probeCodexPreflightConfigOptionsRaw(
-  params: CodexPreflightSessionControlsProbeParams,
-): Promise<unknown | null> {
-  const controls = await readCodexPreflightSessionControls(params);
-  return controls?.configOptions ?? null;
-}
-
-export const codexPreflightSessionControlsProbeConfig = {
-  connectedServiceAuth: 'materialized-env',
-  failureCacheStrategy: 'retry',
-  needsAccountSettings: true,
-  resolveProbeVariant: resolveCodexPreflightSessionControlsProbeVariant,
-  probeModelsRaw: probeCodexPreflightModelsRaw,
-  probeModesRaw: probeCodexPreflightModesRaw,
-  probeConfigOptionsRaw: probeCodexPreflightConfigOptionsRaw,
-  probePassiveRealtimeSetupRaw: probeCodexPassiveRealtimeSetupRaw,
-} as const;
-
-export function resolveCodexPreflightSessionControlsPolicy(params: Readonly<{
-  accountSettings?: Readonly<Record<string, unknown>> | null;
-  timeoutMs: number;
-  env?: NodeJS.ProcessEnv;
-}>): CodexPreflightSessionControlsPolicy | null {
-  const backendMode =
-    resolveCodexSessionBackendMode({ accountSettings: params.accountSettings ?? null }) ?? 'appServer';
-  if (backendMode !== 'appServer') {
-    return null;
-  }
-
-  return {
-    processEnv: {
-      HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: String(
-        Math.max(250, Math.min(60_000, Math.trunc(params.timeoutMs))),
-      ),
-    },
-    authMethod: readCodexEnvironmentAuthState(params.env ?? process.env).method,
-  };
-}
+export const CODEX_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  jsonRpcCommand: CODEX_PREFLIGHT_JSON_RPC_COMMAND,
+  resolveProbeVariant: ({ accountSettings }) => {
+    const backendMode = resolveCodexSessionBackendMode({ accountSettings }) ?? 'appServer';
+    return `codex:${backendMode}`;
+  },
+  probeModels: async (context) => (await readCodexPreflightSessionControls(context))?.availableModels ?? null,
+  probeModes: async (context) => (await readCodexPreflightSessionControls(context))?.availableModes ?? null,
+  probeConfigOptions: async (context) => (await readCodexPreflightSessionControls(context))?.configOptions ?? null,
+  probePassiveRealtimeSetup: probeCodexPassiveRealtimeSetup,
+} satisfies AgentPreflightSessionControlsContributionV1);

@@ -53,66 +53,14 @@ function qualifiedKey(ref: PluginContributionRef): string {
     return buildQualifiedPluginContributionKey(createPluginContributionIdentity(ref));
 }
 
-function snapshotQualifiedRef(value: PluginContributionRef): PluginContributionRef {
-    try {
-        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-            throw new TypeError('reference must be a plain object');
-        }
-        const prototype = Object.getPrototypeOf(value);
-        if (prototype !== Object.prototype && prototype !== null) {
-            throw new TypeError('reference must be a plain object');
-        }
-        const keys = Reflect.ownKeys(value);
-        if (keys.length !== 2 || !keys.includes('pluginId') || !keys.includes('localId')) {
-            throw new TypeError('reference must contain exactly pluginId and localId');
-        }
-        const read = (key: 'pluginId' | 'localId'): string => {
-            const property = Object.getOwnPropertyDescriptor(value, key);
-            if (!property || !property.enumerable || !('value' in property) || typeof property.value !== 'string') {
-                throw new TypeError(`reference field '${key}' must be an own enumerable string`);
-            }
-            return property.value;
-        };
-        const identity = createPluginContributionIdentity({
-            pluginId: read('pluginId'),
-            localId: read('localId'),
-        });
-        return Object.freeze({ pluginId: identity.pluginId, localId: identity.localId });
-    } catch {
-        throw new TypeError('Invalid qualified connected-account reference');
-    }
-}
-
-function assertPlainDataGraph(value: unknown): void {
-    const seen = new Set<object>();
-    const pending: unknown[] = [value];
-    while (pending.length > 0) {
-        const current = pending.pop()!;
-        if (current === null || typeof current !== 'object') continue;
-        if (seen.has(current)) throw new TypeError('Connected-account descriptor must not be cyclic');
-        seen.add(current);
-        const prototype = Object.getPrototypeOf(current);
-        if (Array.isArray(current)) {
-            if (prototype !== Array.prototype) throw new TypeError('Connected-account descriptor arrays must use the built-in prototype');
-        } else if (prototype !== Object.prototype && prototype !== null) {
-            throw new TypeError('Connected-account descriptor records must be plain objects');
-        }
-        for (const key of Reflect.ownKeys(current)) {
-            if (Array.isArray(current) && key === 'length') continue;
-            if (typeof key !== 'string') throw new TypeError('Connected-account descriptor symbol fields are not allowed');
-            const property = Object.getOwnPropertyDescriptor(current, key);
-            if (!property || !property.enumerable || !('value' in property)) {
-                throw new TypeError(`Connected-account descriptor field '${key}' must be an own enumerable data property`);
-            }
-            pending.push(property.value);
-        }
-    }
+function snapshotQualifiedRef(ref: PluginContributionRef): PluginContributionRef {
+    const identity = createPluginContributionIdentity(ref);
+    return Object.freeze({ pluginId: identity.pluginId, localId: identity.localId });
 }
 
 function snapshotDescriptor(
     contribution: ResolvedConnectedAccountDescriptorContribution,
 ): ResolvedConnectedAccountDescriptorContribution['definition'] {
-    assertPlainDataGraph(contribution.definition);
     const parsed = PluginConnectedAccountDescriptorContributionV2Schema.parse(contribution.definition);
     const pending: object[] = [parsed];
     while (pending.length > 0) {
@@ -123,66 +71,6 @@ function snapshotDescriptor(
         Object.freeze(current);
     }
     return parsed;
-}
-
-function guardRuntime(params: Readonly<{
-    runtime: PluginConnectedAccountRuntime;
-    assertCurrent(): void;
-}>): PluginConnectedAccountRuntime {
-    const guardedObjects = new WeakMap<object, object>();
-    const guardedCallbacksByReceiver = new WeakMap<object, WeakMap<Function, Function>>();
-    const guardCall = async (
-        callback: (...args: readonly unknown[]) => unknown,
-        receiver: object,
-        args: readonly unknown[],
-    ): Promise<unknown> => {
-        try {
-            params.assertCurrent();
-        } catch {
-            throw new ConnectedAccountRuntimeInvocationNotStartedError();
-        }
-        try {
-            return await Reflect.apply(callback, receiver, args);
-        } finally {
-            params.assertCurrent();
-        }
-    };
-
-    // Commit owns the callback/static-data snapshot. This lease adds only the
-    // current-generation fence, so it must not rebuild another runtime object
-    // graph or make plain-own enumeration part of the consumer contract.
-    const guardValue = (value: unknown, receiver?: object): unknown => {
-        if (typeof value === 'function') {
-            if (!receiver) return value;
-            let guardedCallbacks = guardedCallbacksByReceiver.get(receiver);
-            if (!guardedCallbacks) {
-                guardedCallbacks = new WeakMap<Function, Function>();
-                guardedCallbacksByReceiver.set(receiver, guardedCallbacks);
-            }
-            const cached = guardedCallbacks.get(value);
-            if (cached) return cached;
-            const guarded = Object.freeze((...args: readonly unknown[]) => guardCall(
-                value as (...args: readonly unknown[]) => unknown,
-                receiver,
-                args,
-            ));
-            guardedCallbacks.set(value, guarded);
-            return guarded;
-        }
-        if (typeof value !== 'object' || value === null) return value;
-        const owner = value as object;
-        const cached = guardedObjects.get(owner);
-        if (cached) return cached;
-        const guarded = new Proxy(Object.freeze({}), {
-            get(_target, property) {
-                return guardValue(Reflect.get(owner, property, owner), owner);
-            },
-        });
-        guardedObjects.set(owner, guarded);
-        return guarded;
-    };
-
-    return guardValue(params.runtime) as PluginConnectedAccountRuntime;
 }
 
 export function createConnectedAccountContributionRegistry(params: Readonly<{
@@ -256,12 +144,6 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
         return !disposed && params.isGenerationCurrent(pluginId);
     }
 
-    function assertCurrent(pluginId: string): void {
-        if (!isCurrentGeneration(pluginId)) {
-            throw new Error(`Connected-account registry generation '${params.generation}' is no longer current`);
-        }
-    }
-
     function readRegistration(ref: PluginContributionRef): ConnectedAccountRuntimeRegistration | null {
         // Registration-scope commit already validated this runtime against the
         // canonical descriptor declaration before the target became current.
@@ -314,16 +196,12 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
                 registration = readRegistration(qualifiedRef);
             }
             if (!registration) return null;
-            const runtime = guardRuntime({
-                runtime: registration.runtime,
-                assertCurrent: () => assertCurrent(qualifiedRef.pluginId),
-            });
             return Object.freeze({
                 ref: declared.ref,
                 generation: registration.generation,
                 immutableGenerationId: declared.immutableGenerationId,
                 descriptor: declared.descriptor,
-                runtime,
+                runtime: registration.runtime,
                 isCurrent: () => isCurrentGeneration(qualifiedRef.pluginId),
             });
         },

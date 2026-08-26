@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { GEMINI_AGENT_RUNTIME_CONTRIBUTION } from './contributions/runtime.js';
-import { GEMINI_AGENT_RUNTIME_CONTRIBUTION as CATALOG_GEMINI_AGENT_RUNTIME_CONTRIBUTION } from './contributions/catalog.js';
 
 describe('Gemini agent definition runtime contributions', () => {
   it('exports a plugin-owned provider catalog runtime contribution', () => {
@@ -13,12 +11,6 @@ describe('Gemini agent definition runtime contributions', () => {
         source: './agent/contributions/catalog',
       },
     });
-  });
-
-  it('keeps the legacy runtime entrypoint aligned with the static catalog leaf', async () => {
-    expect(GEMINI_AGENT_RUNTIME_CONTRIBUTION).toBe(CATALOG_GEMINI_AGENT_RUNTIME_CONTRIBUTION);
-    await expect(CATALOG_GEMINI_AGENT_RUNTIME_CONTRIBUTION.cloudConnect.customAuthenticator.authenticate())
-      .resolves.toMatchObject({ ok: false, code: 'unsupported' });
   });
 
   it('does not advertise deferred OAuth, ADC, or machine-login auth facts', () => {
@@ -38,15 +30,14 @@ describe('Gemini agent definition runtime contributions', () => {
       expect(serializedDefinition).not.toContain(forbiddenFact);
     }
     const cli = PLUGIN_MANIFEST.contributes.agents[0]?.cli;
-    expect(cli?.auth.probe.envVars).toEqual([
+    expect(cli?.auth.environmentVariables).toEqual([
       'GEMINI_API_KEY',
       'GOOGLE_API_KEY',
       'GOOGLE_GENAI_USE_VERTEXAI',
       'GOOGLE_CLOUD_PROJECT',
       'GOOGLE_CLOUD_LOCATION',
     ]);
-    expect(cli?.auth.probe.parser).toBe('envOnly');
-    expect(cli?.auth.probe.credentialPaths ?? []).toEqual([]);
+    expect(cli?.auth.credentialPaths ?? []).toEqual([]);
     expect(cli?.auth).toEqual(expect.objectContaining({
       support: 'unsupported',
       loginLaunches: [],

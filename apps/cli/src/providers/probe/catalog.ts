@@ -4,6 +4,7 @@ import {
   createProviderEndpointFingerprintV1,
   createProviderErrorV1,
   createProviderProbeRequestFingerprintV1,
+  createProviderManagedRuntimeBindingEqualityKeyV1,
   createProviderManagedProbeRequestFingerprintV1,
   ProviderConnectionIdSchema,
   ProviderMachineIdSchema,
@@ -54,6 +55,7 @@ export type ProviderManagedCatalogSource = Readonly<{
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
   endpointTemplateId: string;
   protocol: ProviderWireProtocol;
+  sourceRegistryVersion: string;
   publicHeaders: Readonly<Record<string, string>>;
 }>;
 
@@ -69,7 +71,8 @@ export type ProviderManagedCatalogRuntimePort<TTicket> = Readonly<{
   }>): Promise<
     | Readonly<{
         ok: true;
-        endpointUrl: string;
+        /** A realized endpoint remains launch-local and is never fingerprinted. */
+        endpointUrl(endpointTemplateId: string): string | null;
         access: Readonly<{ request: ProviderProbeManagedServiceRequest }>;
         isCurrent: () => boolean;
         close: () => Promise<void>;
@@ -156,32 +159,91 @@ function resolveProviderProbeRequests(input: Readonly<{
   };
 }
 
+type ManagedCatalogSourceResolution = Readonly<{
+  first: ProviderManagedCatalogSource;
+  byEndpointTemplateId: ReadonlyMap<string, ProviderManagedCatalogSource>;
+}>;
+
+/**
+ * A managed catalog may declare the ordinary ordered probe vocabulary, but all
+ * of its endpoint rows must still describe one managed runtime/binding source.
+ * This keeps one SVC09 launch while allowing distinct declared service paths.
+ */
+function resolveManagedCatalogSources(
+  sources: readonly ProviderManagedCatalogSource[],
+): ManagedCatalogSourceResolution {
+  const first = sources[0];
+  if (!first) throw new TypeError('Managed Provider catalog requires at least one endpoint source');
+  const bindingKey = createProviderManagedRuntimeBindingEqualityKeyV1({
+    implementationIdentity: first.implementationIdentity,
+    managedRuntime: first.managedRuntime,
+    purposeBindings: first.purposeBindings,
+  });
+  const byEndpointTemplateId = new Map<string, ProviderManagedCatalogSource>();
+  for (const source of sources) {
+    if (
+      source.sourceRegistryVersion !== first.sourceRegistryVersion
+      || createProviderManagedRuntimeBindingEqualityKeyV1({
+        implementationIdentity: source.implementationIdentity,
+        managedRuntime: source.managedRuntime,
+        purposeBindings: source.purposeBindings,
+      }) !== bindingKey
+    ) {
+      throw new TypeError('Managed Provider catalog endpoint sources must share one runtime binding');
+    }
+    if (byEndpointTemplateId.has(source.endpointTemplateId)) {
+      throw new TypeError('Managed Provider catalog endpoint sources must be unique');
+    }
+    byEndpointTemplateId.set(source.endpointTemplateId, source);
+  }
+  return { first, byEndpointTemplateId };
+}
+
+function managedSourceForProbe(
+  sources: ManagedCatalogSourceResolution,
+  probe: ProviderCatalogProbeV1,
+): ProviderManagedCatalogSource {
+  const source = sources.byEndpointTemplateId.get(probe.endpointTemplateId);
+  if (!source) throw new TypeError('Managed Provider catalog probe references another endpoint template');
+  return source;
+}
+
+function managedProbeRequestFingerprint(
+  source: ProviderManagedCatalogSource,
+  probe: ProviderCatalogProbeV1,
+) {
+  return createProviderManagedProbeRequestFingerprintV1({
+    implementationIdentity: source.implementationIdentity,
+    managedRuntime: source.managedRuntime,
+    purposeBindings: source.purposeBindings,
+    endpointTemplateId: source.endpointTemplateId,
+    protocol: source.protocol,
+    sourceRegistryVersion: source.sourceRegistryVersion,
+    method: 'GET',
+    path: probe.path,
+    parser: probe.parser,
+    publicHeaders: source.publicHeaders,
+  });
+}
+
 export function createProviderCatalogRefreshFingerprint(input: Readonly<{
   endpoints: readonly ProviderProbeEndpoint[];
   probes: readonly ProviderCatalogProbeV1[];
   catalogFallback?: ProviderCatalogCommandFallbackV1;
-  managedSource?: ProviderManagedCatalogSource;
+  /** One declaration-owned source per managed endpoint used by the catalog. */
+  managedSources?: readonly ProviderManagedCatalogSource[];
 }>): ReturnType<typeof createProviderCatalogFingerprintV1> {
-  if (input.managedSource) {
-    if (input.probes.length !== 1 || input.catalogFallback) {
-      throw new TypeError('Managed Provider catalog requires one declared HTTP probe and no command fallback');
-    }
-    const probe = input.probes[0]!;
-    if (probe.endpointTemplateId !== input.managedSource.endpointTemplateId) {
-      throw new TypeError('Managed Provider catalog probe references another endpoint template');
+  if (input.managedSources) {
+    const sources = resolveManagedCatalogSources(input.managedSources);
+    const probeRequestFingerprints = input.probes.map((probe) =>
+      managedProbeRequestFingerprint(managedSourceForProbe(sources, probe), probe));
+    if (input.catalogFallback
+      && !sources.byEndpointTemplateId.has(input.catalogFallback.endpointTemplateId)) {
+      throw new TypeError('Managed Provider catalog fallback references another endpoint template');
     }
     return createProviderCatalogFingerprintV1({
-      probeRequestFingerprints: [createProviderManagedProbeRequestFingerprintV1({
-        implementationIdentity: input.managedSource.implementationIdentity,
-        managedRuntime: input.managedSource.managedRuntime,
-        purposeBindings: input.managedSource.purposeBindings,
-        endpointTemplateId: input.managedSource.endpointTemplateId,
-        protocol: input.managedSource.protocol,
-        method: 'GET',
-        path: probe.path,
-        parser: probe.parser,
-        publicHeaders: input.managedSource.publicHeaders,
-      })],
+      probeRequestFingerprints,
+      ...(input.catalogFallback ? { managedCatalogFallback: input.catalogFallback } : {}),
     });
   }
   return resolveProviderProbeRequests(input).catalogFingerprint;
@@ -263,7 +325,8 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
       /** Absolute end of the caller's already-started Provider operation budget. */
       wallDeadlineAtMs?: number;
       operationScope?: ProviderProbeOperationScope;
-      managedSource?: ProviderManagedCatalogSource;
+      /** One declaration-owned source per managed endpoint used by the catalog. */
+      managedSources?: readonly ProviderManagedCatalogSource[];
       contributedCatalogParsers?: ContributedProviderCatalogParserBinding;
     }>): Promise<ProviderCatalogRefreshResult> {
       if (input.probes.length === 0) return { status: 'not_supported' };
@@ -290,7 +353,7 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
           machineId,
         }),
       });
-      if (input.managedSource) {
+      if (input.managedSources) {
         if (input.mode === 'health') return { status: 'not_supported' };
         if (!dependencies.managedCatalogRuntime) {
           return {
@@ -301,201 +364,281 @@ export function createProviderCatalogService<TTicket, TCredentialRef>(dependenci
             }),
           };
         }
-        if (input.endpoints.length !== 0 || input.probes.length !== 1 || input.catalogFallback) {
-          throw new TypeError('Managed Provider catalog uses no durable endpoints or command fallback');
+        if (input.endpoints.length !== 0) {
+          throw new TypeError('Managed Provider catalog uses no durable endpoints');
         }
-        const probe = input.probes[0]!;
-        if (probe.endpointTemplateId !== input.managedSource.endpointTemplateId) {
-          throw new TypeError('Managed Provider catalog probe references another endpoint template');
-        }
-        const managedRequestFingerprint = createProviderManagedProbeRequestFingerprintV1({
-          implementationIdentity: input.managedSource.implementationIdentity,
-          managedRuntime: input.managedSource.managedRuntime,
-          purposeBindings: input.managedSource.purposeBindings,
-          endpointTemplateId: input.managedSource.endpointTemplateId,
-          protocol: input.managedSource.protocol,
-          method: 'GET',
-          path: probe.path,
-          parser: probe.parser,
-          publicHeaders: input.managedSource.publicHeaders,
+        const sources = resolveManagedCatalogSources(input.managedSources);
+        const requests = input.probes.map((probe) => {
+          const source = managedSourceForProbe(sources, probe);
+          const probeRequestFingerprint = managedProbeRequestFingerprint(source, probe);
+          const request: Extract<ProviderProbeAuthorizationRequest, { deployment: 'managedLocal' }> = {
+            deployment: 'managedLocal',
+            connectionId,
+            machineId,
+            implementationIdentity: source.implementationIdentity,
+            managedRuntime: source.managedRuntime,
+            purposeBindings: source.purposeBindings,
+            endpointTemplateId: source.endpointTemplateId,
+            protocol: source.protocol,
+            sourceRegistryVersion: source.sourceRegistryVersion,
+            path: probe.path,
+            parser: probe.parser,
+            probeRequestFingerprint,
+          };
+          return { source, probe, request, probeRequestFingerprint };
         });
-        const catalogFingerprint = createProviderCatalogFingerprintV1({
-          probeRequestFingerprints: [managedRequestFingerprint],
+        const catalogFingerprint = createProviderCatalogRefreshFingerprint({
+          endpoints: [],
+          probes: input.probes,
+          ...(input.catalogFallback ? { catalogFallback: input.catalogFallback } : {}),
+          managedSources: input.managedSources,
         });
-        const authorizationRequest: ProviderProbeAuthorizationRequest = {
-          deployment: 'managedLocal',
-          connectionId,
-          machineId,
-          implementationIdentity: input.managedSource.implementationIdentity,
-          managedRuntime: input.managedSource.managedRuntime,
-          purposeBindings: input.managedSource.purposeBindings,
-          endpointTemplateId: input.managedSource.endpointTemplateId,
-          protocol: input.managedSource.protocol,
-          path: probe.path,
-          parser: probe.parser,
-          probeRequestFingerprint: managedRequestFingerprint,
-        };
-        const authorization = await dependencies.authorization.authorize(authorizationRequest, operationScope);
-        if (!authorization.ok) return { status: 'error', error: authorization.error };
-        if (authorization.credentialRef !== null) {
-          throw new TypeError('Managed Provider catalog authorization must be credential-free');
-        }
-        const initialValidation = await dependencies.authorization.revalidate(
-          authorization.ticket,
-          authorizationRequest,
-          operationScope,
-        );
-        if (!initialValidation.ok) return { status: 'error', error: initialValidation.error };
-
-        const launched = await dependencies.managedCatalogRuntime.launch({
-          source: input.managedSource,
-          request: authorizationRequest,
-          ticket: authorization.ticket,
-          ...(input.signal ? { signal: input.signal } : {}),
-          revalidateBeforeEffect: () => dependencies.authorization.revalidate(
+        const authorizations: Array<Readonly<{
+          source: ProviderManagedCatalogSource;
+          probe: ProviderCatalogProbeV1;
+          request: Extract<ProviderProbeAuthorizationRequest, { deployment: 'managedLocal' }>;
+          probeRequestFingerprint: ReturnType<typeof createProviderManagedProbeRequestFingerprintV1>;
+          ticket: TTicket;
+          observationAuthorizationFingerprint: ProviderObservationAuthorizationFingerprintV1;
+        }>> = [];
+        for (const request of requests) {
+          const authorization = await dependencies.authorization.authorize(request.request, operationScope);
+          if (!authorization.ok) return { status: 'error', error: authorization.error };
+          if (authorization.credentialRef !== null) {
+            throw new TypeError('Managed Provider catalog authorization must be credential-free');
+          }
+          const initialValidation = await dependencies.authorization.revalidate(
             authorization.ticket,
-            authorizationRequest,
+            request.request,
             operationScope,
-          ),
+          );
+          if (!initialValidation.ok) return { status: 'error', error: initialValidation.error };
+          authorizations.push({
+            ...request,
+            ticket: authorization.ticket,
+            observationAuthorizationFingerprint: authorization.observationAuthorizationFingerprint,
+          });
+        }
+        const firstAuthorization = authorizations[0];
+        if (!firstAuthorization) {
+          return {
+            status: 'error',
+            error: createProviderErrorV1('provider_probe_response_invalid', {
+              connectionId,
+              machineId,
+            }),
+          };
+        }
+        const revalidateAll = async () => {
+          for (const authorization of authorizations) {
+            const validation = await dependencies.authorization.revalidate(
+              authorization.ticket,
+              authorization.request,
+              operationScope,
+            );
+            if (!validation.ok) return validation;
+          }
+          return { ok: true as const };
+        };
+        const launched = await dependencies.managedCatalogRuntime.launch({
+          source: sources.first,
+          request: firstAuthorization.request,
+          ticket: firstAuthorization.ticket,
+          ...(input.signal ? { signal: input.signal } : {}),
+          revalidateBeforeEffect: revalidateAll,
         });
         if (!launched.ok) return { status: 'error', error: launched.error };
         try {
-          const dispatchValidation = await dependencies.authorization.revalidate(
-            authorization.ticket,
-            authorizationRequest,
-            operationScope,
-          );
-          if (!dispatchValidation.ok) return { status: 'error', error: dispatchValidation.error };
-          if (!launched.isCurrent()) {
-            return {
-              status: 'error',
-              error: createProviderErrorV1('provider_authorization_changed', {
-                connectionId,
-                machineId,
-              }),
-            };
-          }
-          const exactRuntimeFingerprint = createProviderProbeRequestFingerprintV1({
-            method: 'GET',
-            endpointUrl: launched.endpointUrl,
-            path: probe.path,
-            parser: probe.parser,
-            publicHeaders: input.managedSource.publicHeaders,
-          });
-          if (contributionRetired()) return contributionUnavailable();
-          const result = await dependencies.client.getCatalog({
-            endpointUrl: launched.endpointUrl,
-            path: probe.path,
-            parser: probe.parser,
-            ...(contributedParsers
-              ? { contributedCatalogParsers: contributedParsers.parsersByFormat }
-              : {}),
-            publicHeaders: input.managedSource.publicHeaders,
-            credentialPolicy: 'required',
-            managedRequest: launched.access.request,
-            authorizeDestination: async (destination: AssessedProviderEndpoint) => {
-              const expectedOrigin = new URL(launched.endpointUrl).origin;
-              if (
-                !launched.isCurrent()
-                || destination.origin !== expectedOrigin
-                || destination.locality !== 'loopback'
-              ) {
-                throw new ProviderProbeDestinationAuthorizationError(
-                  createProviderErrorV1('provider_authorization_changed', {
-                    connectionId,
-                    machineId,
-                  }),
-                );
-              }
-            },
-            ...(input.signal ? { signal: input.signal } : {}),
-            ...(input.wallDeadlineAtMs !== undefined ? { wallDeadlineAtMs: input.wallDeadlineAtMs } : {}),
-          });
-          if (result.requestFingerprint !== exactRuntimeFingerprint) {
-            throw new TypeError('Managed Provider probe client returned a mismatched realized request fingerprint');
-          }
-          if (contributionRetired()) return contributionUnavailable();
-          const observedAt = now();
-          const catalogObservationId = dependencies.createObservationId();
-          const commitError = await updateAuthorized(
-            [{ ticket: authorization.ticket, request: authorizationRequest }],
-            (state) => {
-              if (!launched.isCurrent()) {
-                throw new ProviderProbeCommitAuthorizationError(
-                  createProviderErrorV1('provider_authorization_changed', {
-                    connectionId,
-                    machineId,
-                  }),
-                );
-              }
-              const catalogKey = {
-                machineId,
-                connectionId,
-                catalogFingerprint,
-                observationAuthorizationFingerprint:
-                  authorization.observationAuthorizationFingerprint,
-              };
-              const serializedCatalogKey = serializeProviderRuntimeStateRecordKey(
-                'catalogs',
-                { key: catalogKey },
-              );
-              const previous = state.catalogs.find((candidate) =>
-                serializeProviderRuntimeStateRecordKey('catalogs', candidate)
-                  === serializedCatalogKey);
-              const transition = applyProviderCatalogRefreshV1(
-                previous?.state.snapshot
-                  ? {
-                      snapshot: previous.state.snapshot,
-                      staleProbeModels: previous.state.staleProbeModels,
-                    }
-                  : { snapshot: null, staleProbeModels: [] },
-                { status: 'success', observedAt, models: result.catalog.models },
-              );
-              return {
-                ...state,
-                catalogs: [...replaceProviderRuntimeStateRecord('catalogs', state.catalogs, {
-                  key: catalogKey,
-                  state: { catalogObservationId, ...transition },
-                  lastAccessedAt: observedAt,
-                })],
-                modelLoadStates: state.modelLoadStates
-                  .filter((row) => !(
-                    row.key.machineId === machineId
-                    && row.key.connectionId === connectionId
-                  ))
-                  .concat(result.catalog.loadStates.map((load) => ({
-                    key: {
-                      machineId,
+          const commitManagedCatalog = async (
+            authorization: typeof authorizations[number],
+            models: ProviderCatalogGetResult['catalog']['models'],
+            loadStates: ProviderCatalogGetResult['catalog']['loadStates'],
+          ): Promise<ProviderCatalogRefreshResult> => {
+            const observedAt = now();
+            const catalogObservationId = dependencies.createObservationId();
+            const commitError = await updateAuthorized(
+              authorizations.map(({ ticket, request }) => ({ ticket, request })),
+              (state) => {
+                if (!launched.isCurrent()) {
+                  throw new ProviderProbeCommitAuthorizationError(
+                    createProviderErrorV1('provider_authorization_changed', {
                       connectionId,
-                      catalogObservationId,
-                      modelId: load.modelId,
-                    },
-                    loadState: load.loadState,
-                    observedAt,
+                      machineId,
+                    }),
+                  );
+                }
+                const catalogKey = {
+                  machineId,
+                  connectionId,
+                  catalogFingerprint,
+                  observationAuthorizationFingerprint:
+                    authorization.observationAuthorizationFingerprint,
+                };
+                const serializedCatalogKey = serializeProviderRuntimeStateRecordKey(
+                  'catalogs',
+                  { key: catalogKey },
+                );
+                const previous = state.catalogs.find((candidate) =>
+                  serializeProviderRuntimeStateRecordKey('catalogs', candidate)
+                    === serializedCatalogKey);
+                const transition = applyProviderCatalogRefreshV1(
+                  previous?.state.snapshot
+                    ? {
+                        snapshot: previous.state.snapshot,
+                        staleProbeModels: previous.state.staleProbeModels,
+                      }
+                    : { snapshot: null, staleProbeModels: [] },
+                  { status: 'success', observedAt, models },
+                );
+                return {
+                  ...state,
+                  catalogs: [...replaceProviderRuntimeStateRecord('catalogs', state.catalogs, {
+                    key: catalogKey,
+                    state: { catalogObservationId, ...transition },
                     lastAccessedAt: observedAt,
-                  }))),
+                  })],
+                  modelLoadStates: state.modelLoadStates
+                    .filter((row) => !(
+                      row.key.machineId === machineId
+                      && row.key.connectionId === connectionId
+                    ))
+                    .concat(loadStates.map((load) => ({
+                      key: {
+                        machineId,
+                        connectionId,
+                        catalogObservationId,
+                        modelId: load.modelId,
+                      },
+                      loadState: load.loadState,
+                      observedAt,
+                      lastAccessedAt: observedAt,
+                    }))),
+                };
+              },
+              operationScope,
+            );
+            if (commitError) return { status: 'error', error: commitError };
+            return {
+              status: 'success',
+              models,
+              requestFingerprint: authorization.probeRequestFingerprint,
+            };
+          };
+          let lastError: ProviderErrorV1 | undefined;
+          const failedAuthorizations: typeof authorizations = [];
+          for (const authorization of authorizations) {
+            const dispatchValidation = await revalidateAll();
+            if (!dispatchValidation.ok) return { status: 'error', error: dispatchValidation.error };
+            if (!launched.isCurrent()) {
+              return {
+                status: 'error',
+                error: createProviderErrorV1('provider_authorization_changed', {
+                  connectionId,
+                  machineId,
+                }),
               };
-            },
-            operationScope,
-          );
-          if (commitError) return { status: 'error', error: commitError };
+            }
+            const endpointUrl = launched.endpointUrl(authorization.source.endpointTemplateId);
+            if (!endpointUrl) {
+              return {
+                status: 'error',
+                error: createProviderErrorV1('provider_endpoint_unavailable', {
+                  connectionId,
+                  machineId,
+                }),
+              };
+            }
+            const exactRuntimeFingerprint = createProviderProbeRequestFingerprintV1({
+              method: 'GET',
+              endpointUrl,
+              path: authorization.probe.path,
+              parser: authorization.probe.parser,
+              publicHeaders: authorization.source.publicHeaders,
+            });
+            if (contributionRetired()) return contributionUnavailable();
+            try {
+              const result = await dependencies.client.getCatalog({
+                endpointUrl,
+                path: authorization.probe.path,
+                parser: authorization.probe.parser,
+                ...(contributedParsers
+                  ? { contributedCatalogParsers: contributedParsers.parsersByFormat }
+                  : {}),
+                publicHeaders: authorization.source.publicHeaders,
+                credentialPolicy: 'required',
+                managedRequest: launched.access.request,
+                authorizeDestination: async (destination: AssessedProviderEndpoint) => {
+                  const expectedOrigin = new URL(endpointUrl).origin;
+                  if (
+                    !launched.isCurrent()
+                    || destination.origin !== expectedOrigin
+                    || destination.locality !== 'loopback'
+                  ) {
+                    throw new ProviderProbeDestinationAuthorizationError(
+                      createProviderErrorV1('provider_authorization_changed', {
+                        connectionId,
+                        machineId,
+                      }),
+                    );
+                  }
+                },
+                ...(input.signal ? { signal: input.signal } : {}),
+                ...(input.wallDeadlineAtMs !== undefined ? { wallDeadlineAtMs: input.wallDeadlineAtMs } : {}),
+              });
+              if (result.requestFingerprint !== exactRuntimeFingerprint) {
+                throw new TypeError('Managed Provider probe client returned a mismatched realized request fingerprint');
+              }
+              if (contributionRetired()) return contributionUnavailable();
+              return await commitManagedCatalog(
+                authorization,
+                result.catalog.models,
+                result.catalog.loadStates,
+              );
+            } catch (error) {
+              if (error instanceof ProviderProbeCredentialResolutionError
+                || error instanceof ProviderProbeDestinationAuthorizationError) {
+                return { status: 'error', error: error.error };
+              }
+              if (error instanceof ProviderProbeCancelledError) throw error;
+              if (!(error instanceof ProviderProbeClientError)) throw error;
+              lastError = providerErrorFromClient(error, { connectionId, machineId });
+              failedAuthorizations.push(authorization);
+            }
+          }
+          if (input.catalogFallback && dependencies.localCatalogFallback) {
+            const fallbackAuthorization = failedAuthorizations.find((candidate) =>
+              candidate.source.endpointTemplateId === input.catalogFallback?.endpointTemplateId);
+            const fallbackEndpointUrl = launched.endpointUrl(
+              input.catalogFallback.endpointTemplateId,
+            );
+            if (fallbackAuthorization && fallbackEndpointUrl) {
+              const fallbackValidation = await revalidateAll();
+              if (!fallbackValidation.ok) {
+                return { status: 'error', error: fallbackValidation.error };
+              }
+              if (contributionRetired()) return contributionUnavailable();
+              const fallback = await dependencies.localCatalogFallback.run({
+                descriptor: input.catalogFallback,
+                endpointUrl: fallbackEndpointUrl,
+                ...(contributedParsers
+                  ? { contributedCatalogParsers: contributedParsers.parsersByFormat }
+                  : {}),
+              });
+              if (contributionRetired()) return contributionUnavailable();
+              if (fallback.status === 'success') {
+                return await commitManagedCatalog(fallbackAuthorization, fallback.models, []);
+              }
+            }
+          }
           return {
-            status: 'success',
-            models: result.catalog.models,
-            requestFingerprint: managedRequestFingerprint,
+            status: 'error',
+            error: lastError ?? createProviderErrorV1('provider_probe_response_invalid', {
+              connectionId,
+              machineId,
+            }),
           };
         } catch (error) {
-          if (error instanceof ProviderProbeCredentialResolutionError
-            || error instanceof ProviderProbeDestinationAuthorizationError) {
-            return { status: 'error', error: error.error };
-          }
           if (error instanceof ProviderProbeCancelledError) throw error;
-          if (error instanceof ProviderProbeClientError) {
-            return {
-              status: 'error',
-              error: providerErrorFromClient(error, { connectionId, machineId }),
-            };
-          }
           throw error;
         } finally {
           await launched.close();

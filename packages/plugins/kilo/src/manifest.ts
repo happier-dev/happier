@@ -53,11 +53,13 @@ export const KILO_PLUGIN = definePlugin({
           },
           auth: {
             support: 'login_terminal',
-            probe: { parser: 'unknown', backgroundChecks: 'safe', statusArgs: null },
             loginLaunches: [{ kind: 'primary', args: [], initialInput: '/connect\r' }],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+        },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           sessions: {
             open: ['create', 'resume'],
@@ -67,6 +69,14 @@ export const KILO_PLUGIN = definePlugin({
         }),
       },
       factory: createKiloAgentRuntime,
+      preflightSessionControls: {
+        models: {
+          command: {
+            toolId: 'kilo-cli',
+            args: ['models'],
+          },
+        },
+      },
       sessionRunnerFactory: {
         module: './agent/runtime/factory',
         export: 'createKiloAgentRuntime',

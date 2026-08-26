@@ -24,12 +24,12 @@ function isUnicodeScalarString(value: string): boolean {
   return true;
 }
 
-const CanonicalStartupInstructionsIdSchema = z.string()
+export const AgentSessionStartupInstructionsIdV1Schema = z.string()
   .min(1)
   .max(AGENT_SESSION_STARTUP_INSTRUCTIONS_V1_MAX_ID_CODE_UNITS)
   .regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u);
 
-const NormalizedStartupInstructionsTextSchema = z.string()
+export const AgentSessionStartupInstructionsTextV1Schema = z.string()
   .refine((value) => value.trim().length > 0, 'Instructions must be nonempty')
   .refine(isUnicodeScalarString, 'Instructions must contain valid Unicode')
   .refine(
@@ -46,7 +46,7 @@ const NormalizedStartupInstructionsTextSchema = z.string()
 
 const AgentSessionStartupInstructionsMarkerV1Shape = {
   v: z.literal(1),
-  id: CanonicalStartupInstructionsIdSchema,
+  id: AgentSessionStartupInstructionsIdV1Schema,
   revision: z.number()
     .int()
     .positive()
@@ -63,7 +63,7 @@ export type AgentSessionStartupInstructionsMarkerV1 = z.infer<
 
 export const AgentSessionStartupInstructionsV1Schema = z.object({
   ...AgentSessionStartupInstructionsMarkerV1Shape,
-  instructions: NormalizedStartupInstructionsTextSchema,
+  instructions: AgentSessionStartupInstructionsTextV1Schema,
 }).strict().readonly();
 
 export type AgentSessionStartupInstructionsV1 = z.infer<

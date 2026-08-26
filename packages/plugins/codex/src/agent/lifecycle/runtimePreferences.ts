@@ -14,11 +14,11 @@ function resolveCodexSettingsBackendMode(settings: Readonly<Record<string, unkno
 
 export function resolveCodexSessionRuntimePreferences(params: Readonly<{
   settings: Readonly<Record<string, unknown>>;
-  processEnv: NodeJS.ProcessEnv;
-  startedBy?: 'terminal' | 'daemon';
+  environment: Readonly<Record<string, string | undefined>>;
+  startOrigin: 'terminal' | 'daemon';
 }>): Readonly<{ codexBackendMode: CodexBackendMode }> {
-  if (params.startedBy === 'daemon') {
-    const daemonSelectedBackendMode = normalizeCodexBackendMode(params.processEnv.HAPPIER_CODEX_BACKEND_MODE);
+  if (params.startOrigin === 'daemon') {
+    const daemonSelectedBackendMode = normalizeCodexBackendMode(params.environment.HAPPIER_CODEX_BACKEND_MODE);
     if (daemonSelectedBackendMode) {
       return { codexBackendMode: daemonSelectedBackendMode };
     }

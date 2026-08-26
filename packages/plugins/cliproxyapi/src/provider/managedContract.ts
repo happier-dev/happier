@@ -29,6 +29,12 @@ export const CLIPROXYAPI_MANAGED_HEALTH_IDENTITY = Object.freeze({
   modelListEnabled: CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED,
 });
 
+// The managed catalog is projected from the pinned CLIProxyAPI SDK registry.
+// This declaration changes only when that semantic model source changes; it is
+// deliberately independent of transient wrapper processes and credentials.
+export const CLIPROXYAPI_MANAGED_CATALOG_SOURCE_REGISTRY_VERSION =
+  CLIPROXYAPI_MANAGED_HEALTH_IDENTITY.sdkVersion;
+
 /**
  * CLIProxyAPI's one private managed-family owner. The manifest projection,
  * managed runtime launch snapshot, and Go wrapper process configuration all

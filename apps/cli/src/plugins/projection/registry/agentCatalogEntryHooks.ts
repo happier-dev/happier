@@ -1,28 +1,40 @@
-import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { rm } from 'node:fs/promises';
 
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
-import type { HttpService } from '@happier-dev/plugin-sdk/http';
-import type { PluginPath } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginPath } from '@happier-dev/plugin-sdk';
+import type {
+    AgentCliAuthContributionV1,
+    AgentCliSessionCommandBuildOptionsResultV1,
+    AgentCliSessionCommandDeclarationV1,
+    AgentConnectedAccountLaunchContributionV1,
+    AgentExperimentalVendorResumeSupportContributionV1,
+    AgentPreflightSessionControlsCommandResultV1,
+    AgentPreflightSessionControlsCommandV1,
+    AgentPreflightSessionControlsContributionV1,
+    AgentPreflightSessionControlsProbeContextV1,
+    AgentProviderCliAttachDeclarationV1,
+    AgentSessionStartupContributionV1,
+    AgentTerminalPromptSubmitVerificationPolicyV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { getAgentCliRuntimeSpec } from '@happier-dev/agents/cli/runtime';
 import { isBundledAgentId } from '@happier-dev/agents/agent-ids';
 import {
     resolveConnectedAccountRequestAuthCapabilityPath,
 } from '@happier-dev/agents/request-auth';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import {
+    isPluginAgentCliAuthBackgroundCheckSafe,
+    StrictJsonValueSchema,
+    type PluginAgentCliMetadata,
+} from '@happier-dev/protocol';
 import { ConnectedAccountRequestAuthUsesV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
 import { type ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
-import { type InstallableDependencyDescriptor } from '@happier-dev/protocol/installables';
 import { type PluginSystemToolContributionV1 } from '@happier-dev/protocol/plugins/contributions/system-tools';
 
-import { resolveRuntimeActivityApplicability } from '@/agent/runtime/session/activity/runtimeActivityApplicability';
-import type {
-    PreflightSessionControlsProbeKind,
-    PreflightSessionControlsProbeParams,
-} from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
+import type { PreflightSessionControlsProbeParams } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
 import {
     hasExactConnectedServiceRestartContinuityContext,
@@ -33,34 +45,13 @@ import {
 } from '@/daemon/connectedServices/switchContinuityContext';
 import type {
     CatalogAgentId,
+    ConnectedServiceStateSharingDescriptor,
     ConnectedServiceSwitchContinuityParams,
     ConnectedServiceSwitchContinuityResult,
-    VendorResumeSupportLevel,
 } from '@/agent/catalog/types';
-import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
-import {
-    isCloudConnectAuthenticateResultV1,
-    type AuthCredentialWriteInput,
-    type AuthCredentialWriteResult,
-    type AuthDiagnostic,
-    type AuthFailureCode,
-    type AuthLoopbackInput,
-    type AuthLoopbackResult,
-    type AuthOpenBrowserResult,
-    type AuthPromptTextInput,
-    type AuthPromptTextResult,
-    type CloudConnectAuthenticateOptions,
-    type AuthenticateResult,
-    type CloudConnectTarget,
-} from '@/cloud/connectTypes';
-import { createCloudAuthCallbackService } from '@/cloud/auth/services/callback';
 import {
     resolveConnectedServiceCredentialResolutions,
 } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
-import { buildSafeOauthProviderFailureMessage } from '@/cloud/safeOauthProviderError';
-import { generatePkceCodes } from '@/cloud/pkce';
-import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
-import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
 import {
     resolveConnectedServiceGroupHomeDir,
     resolveConnectedServiceHomeDir,
@@ -104,28 +95,16 @@ import {
     type AgentCliSystemToolBinding,
 } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
 import { createPluginExecSystemToolResolver } from '@/plugins/runtime/exec/system/tools/resolveGrant';
-import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
-import { openBrowser } from '@/ui/openBrowser';
+import { createNativeAgentCliAuthStaticProbe } from './agentCliMetadata';
 
 import type {
     ResolvedCatalogEntry,
     ResolvedAgentContribution,
 } from './types';
 import type {
-    CliAuthContribution,
-    CloudCustomAuthenticatorContextV1,
-    CloudConnectContribution,
-    DaemonSpawnHooksContribution,
     ConnectedServiceStateSharingDescriptorResult,
     ConnectedServicesContribution,
-    PreflightSessionControlsContribution,
-    ProviderCliSessionCommandContribution,
-    ProviderAttachContribution,
     AgentRuntimeContribution,
-    SessionControlsContribution,
-    SessionRuntimePreferencesContribution,
-    SessionStartupContribution,
-    TerminalContribution,
     VerifyResumeReachable,
 } from './agentRuntimeContribution';
 
@@ -141,20 +120,6 @@ type CliSessionCommandHandlerDeps = Readonly<{
     resolveSessionCommandResumeDelegation?: ResolveSessionCommandResumeDelegation;
     handleResumeCommand?: HandleResumeCommand;
 }>;
-type CatalogVendorResumeSupport = Awaited<ReturnType<NonNullable<ResolvedCatalogEntry['getVendorResumeSupport']>>>;
-type CatalogChecklistContributions = NonNullable<ResolvedCatalogEntry['checklists']>;
-
-const VENDOR_RESUME_SUPPORT_LEVELS: ReadonlySet<string> = new Set<VendorResumeSupportLevel>([
-    'supported',
-    'unsupported',
-    'experimental',
-]);
-
-function readVendorResumeSupportLevel(value: unknown): VendorResumeSupportLevel | null {
-    return typeof value === 'string' && VENDOR_RESUME_SUPPORT_LEVELS.has(value)
-        ? value as VendorResumeSupportLevel
-        : null;
-}
 
 /**
  * Projects the one bounded daemon-spawn hook contract onto a catalog entry.
@@ -169,8 +134,505 @@ export function projectAgentDaemonSpawnHooksCatalogEntry(
     });
 }
 
+/**
+ * Projects a generation-bound deferred-startup eligibility callback through
+ * the sole host-owned Session bootstrap decision seam. A retired generation
+ * fails closed before its Agent callback can influence a later Session.
+ */
+export function projectAgentSessionStartupCatalogEntry(params: Readonly<{
+    sessionStartup: AgentSessionStartupContributionV1;
+    isCurrent(): boolean;
+}>): Pick<ResolvedCatalogEntry, 'shouldUseDeferredSessionStartup'> {
+    return Object.freeze({
+        shouldUseDeferredSessionStartup: (input) => (
+            params.isCurrent() && params.sessionStartup.shouldUseDeferredBootstrap(input)
+        ),
+    });
+}
+
+/**
+ * Projects an Agent-native experimental vendor-resume predicate. The static
+ * manifest support level remains the canonical decision owner; catalogHooks
+ * invokes this only for normalized `experimental` entries.
+ */
+export function projectAgentExperimentalVendorResumeSupportCatalogEntry(params: Readonly<{
+    vendorResumeSupport: AgentExperimentalVendorResumeSupportContributionV1;
+    isCurrent(): boolean;
+}>): Pick<ResolvedCatalogEntry, 'getVendorResumeSupport'> {
+    return Object.freeze({
+        getVendorResumeSupport: async () => (input) => (
+            params.isCurrent() && params.vendorResumeSupport.supportsVendorResume(input)
+        ),
+    });
+}
+
+/**
+ * Projects the static, registration-owned Connected Account launch facts onto
+ * the existing catalog seam. Account selection, grants, materialization,
+ * filesystem custody, refresh, quota recovery, and Session lifecycle remain
+ * with their established host owners.
+ */
+export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<{
+    agentId: CatalogAgentId;
+    connectedAccountLaunch: AgentConnectedAccountLaunchContributionV1;
+}>): Pick<
+    ResolvedCatalogEntry,
+    'connectedAccountRequestAuthUses' | 'getConnectedServiceStateSharingDescriptor'
+> {
+    const requestAuthUses = params.connectedAccountLaunch.requestAuthUses;
+    const stateSharingDescriptor = params.connectedAccountLaunch.stateSharingDescriptor;
+    const descriptor: ConnectedServiceStateSharingDescriptor | undefined = stateSharingDescriptor === undefined
+        ? undefined
+        : Object.freeze({
+            ...stateSharingDescriptor,
+            providerId: params.agentId,
+        });
+    return Object.freeze({
+        ...(requestAuthUses === undefined
+            ? {}
+            : { connectedAccountRequestAuthUses: requestAuthUses }),
+        ...(descriptor === undefined
+            ? {}
+            : { getConnectedServiceStateSharingDescriptor: async () => descriptor }),
+    });
+}
+
+/**
+ * Creates the provider CLI attach surface at the host boundary. The Agent
+ * declaration supplies only static target/argv/health facts; this owner keeps
+ * launch, reachability probing, credentials, and connection custody.
+ */
+export function projectAgentProviderCliAttachCatalogEntry(params: Readonly<{
+    agentId: CatalogAgentId;
+    providerCliAttach: AgentProviderCliAttachDeclarationV1;
+}>): Pick<ResolvedCatalogEntry, 'resolveHostAgentRuntimeSurfaces'> {
+    const providerCliAttach = params.providerCliAttach;
+    return Object.freeze({
+        resolveHostAgentRuntimeSurfaces: async () => {
+            const { createProviderCliAttachSurface } = await import(
+                '@/session/attach/providerCliAttach'
+            );
+            return Object.freeze({
+                attach: createProviderCliAttachSurface({
+                    agentId: params.agentId,
+                    resolveTarget: providerCliAttach.resolveTarget,
+                    createArgs: providerCliAttach.createArgs,
+                    buildHealthUrl: providerCliAttach.buildHealthUrl,
+                }),
+            });
+        },
+    });
+}
+
+/**
+ * Projects Agent-native prompt recognition through the incumbent terminal-host
+ * adapter seam. The policy cannot create or control a terminal; submission,
+ * retry, lifecycle, cancellation, and cleanup stay with that host.
+ */
+export function projectAgentTerminalPromptSubmitVerificationCatalogEntry(params: Readonly<{
+    terminalPromptSubmitVerification: AgentTerminalPromptSubmitVerificationPolicyV1;
+}>): Pick<ResolvedCatalogEntry, 'getTerminalPromptSubmitVerificationPolicy'> {
+    return Object.freeze({
+        getTerminalPromptSubmitVerificationPolicy: async () => (
+            params.terminalPromptSubmitVerification
+        ),
+    });
+}
+
+/**
+ * Projects a generation-bound Agent auth callback through the one catalog auth
+ * seam. The host supplies environment and executes only declared system tools;
+ * the Agent interprets bounded command output into the shared auth result.
+ */
+export function projectAgentCliAuthCatalogEntry(params: Readonly<{
+    agentId: CatalogAgentId;
+    cliAuth: AgentCliAuthContributionV1;
+    cli: PluginAgentCliMetadata | null;
+    systemTools: readonly PluginSystemToolContributionV1[];
+    agentCliSystemTool?: AgentCliSystemToolBinding | null;
+    hostAccess?: ResolvedAgentContribution['hostAccess'];
+    isCurrent(): boolean;
+}>): Pick<ResolvedCatalogEntry, 'getCliAuthSpec'> {
+    const staticProbe = params.cli
+        ? createNativeAgentCliAuthStaticProbe(params.cli)
+        : null;
+    const admittedSystemToolIds = new Set<string>();
+    for (const request of params.hostAccess?.required ?? []) {
+        if (request.capability !== 'process') continue;
+        for (const executable of request.scope.executables) {
+            if (executable.kind === 'systemTool') admittedSystemToolIds.add(executable.id);
+        }
+    }
+    const admittedSystemTools = params.systemTools.filter((tool) => admittedSystemToolIds.has(tool.id));
+    return Object.freeze({
+        getCliAuthSpec: async () => {
+            const { createCatalogCliAuthSpec } = await import(
+                '@/capabilities/cliAuth/createCatalogCliAuthSpec'
+            );
+            return createCatalogCliAuthSpec(params.agentId, {
+                isSafeForBackgroundChecks: params.cli !== null
+                    && isPluginAgentCliAuthBackgroundCheckSafe(params.cli),
+                detectAuthStatus: async () => {
+                    if (!params.isCurrent()) {
+                        return { state: 'unknown', reason: 'probe_failed' };
+                    }
+                    const staticCredential = staticProbe?.readPresentCredential();
+                    if (staticCredential) return staticCredential;
+                    const executableEnvironment = Object.freeze(Object.fromEntries(
+                        Object.entries(process.env).filter(
+                            (entry): entry is [string, string] => typeof entry[1] === 'string',
+                        ),
+                    ));
+                    const systemToolExec = createProviderScopedStableExecService({
+                        cwd: process.cwd(),
+                        environment: executableEnvironment,
+                        systemTools: admittedSystemTools,
+                        agentId: params.agentId,
+                        agentCliSystemTool: params.agentCliSystemTool,
+                    });
+                    const unavailable = () => ({
+                        ok: false,
+                        stdout: '',
+                        stderr: '',
+                        exitCode: null,
+                    });
+                    try {
+                        const status = await params.cliAuth.detectAuthStatus({
+                            runDeclaredSystemToolCommand: async ({ toolId, args, timeoutMs }) => {
+                                try {
+                                    const resolved = await systemToolExec.systemTools.resolve({
+                                        toolId,
+                                        purpose: `Probe ${params.agentId} CLI authentication`,
+                                    });
+                                    const result = await runCliCommandBestEffort({
+                                        resolvedPath: resolved.executablePath,
+                                        args: [...args],
+                                        timeoutMs,
+                                    });
+                                    return params.isCurrent() ? result : unavailable();
+                                } catch {
+                                    return unavailable();
+                                }
+                            },
+                        });
+                        return params.isCurrent()
+                            ? status
+                            : { state: 'unknown', reason: 'probe_failed' };
+                    } catch {
+                        return { state: 'unknown', reason: 'probe_failed' };
+                    }
+                },
+            });
+        },
+    });
+}
+
+const PREFLIGHT_COMMAND_OUTPUT_MAX_BYTES = 256 * 1024;
+const PREFLIGHT_JSON_RPC_MAX_FRAME_BYTES = 32 * 1024 * 1024;
+
+function readPreflightProbeEnvironment(
+    environment: NodeJS.ProcessEnv | undefined,
+): Readonly<Record<string, string>> {
+    return Object.freeze(Object.fromEntries(
+        Object.entries(environment ?? process.env).filter(
+            (entry): entry is [string, string] => typeof entry[1] === 'string',
+        ),
+    ));
+}
+
+function readPreflightProbeInput(params: Readonly<{
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+    environment: Readonly<Record<string, string>>;
+}>): Readonly<{
+    accountSettings: Readonly<Record<string, JsonValue>> | null;
+    environment: Readonly<Record<string, boolean>>;
+}> {
+    const source = params.accountSettings;
+    const settings: Record<string, JsonValue> = {};
+    if (source) {
+        for (const [key, value] of Object.entries(source)) {
+            const parsed = StrictJsonValueSchema.safeParse(value);
+            if (!parsed.success) {
+                return Object.freeze({
+                    accountSettings: null,
+                    environment: Object.freeze(Object.fromEntries(
+                        Object.keys(params.environment).map((key) => [key, true]),
+                    )),
+                });
+            }
+            settings[key] = parsed.data as JsonValue;
+        }
+    }
+    return Object.freeze({
+        accountSettings: source ? Object.freeze(settings) : null,
+        environment: Object.freeze(Object.fromEntries(
+            Object.keys(params.environment).map((key) => [key, true]),
+        )),
+    });
+}
+
+function applyPreflightCommandEnvironment(
+    environment: Readonly<Record<string, string>>,
+    command: AgentPreflightSessionControlsCommandV1,
+): Readonly<Record<string, string>> {
+    const allow = command.environmentKeys ? new Set(command.environmentKeys) : null;
+    const exclude = command.environmentExcludeKeys
+        ? new Set(command.environmentExcludeKeys)
+        : null;
+    const selected = Object.fromEntries(Object.entries(environment).filter(([key]) => (
+        (allow === null || allow.has(key))
+        && (exclude === null || !exclude.has(key))
+    )));
+    if (command.ci === 'omit') {
+        delete selected.CI;
+    } else {
+        selected.CI = '1';
+    }
+    return Object.freeze(selected);
+}
+
+function isExactPreflightCommand(
+    command: AgentPreflightSessionControlsCommandV1,
+    requested: Readonly<{ toolId: string; args: readonly string[] }>,
+): boolean {
+    return command.toolId === requested.toolId
+        && command.args.length === requested.args.length
+        && command.args.every((arg, index) => arg === requested.args[index]);
+}
+
+function resolveDeclaredPreflightCommand(
+    contribution: AgentPreflightSessionControlsContributionV1,
+    requested: Readonly<{ toolId: string; args: readonly string[] }>,
+): AgentPreflightSessionControlsCommandV1 | null {
+    const candidates = [
+        contribution.models?.command,
+        contribution.models?.fallback?.command,
+        contribution.jsonRpcCommand,
+    ];
+    return candidates.find((candidate): candidate is AgentPreflightSessionControlsCommandV1 => (
+        candidate !== undefined && isExactPreflightCommand(candidate, requested)
+    )) ?? null;
+}
+
+function readPreflightCommandResult(
+    result: Awaited<ReturnType<ExecService['run']>>,
+): AgentPreflightSessionControlsCommandResultV1 {
+    const observed = result.termination.observed;
+    return Object.freeze({
+        ok: observed.kind === 'exit' && observed.exitCode === 0,
+        stdout: new TextDecoder().decode(result.stdout),
+        stderr: new TextDecoder().decode(result.stderr),
+        exitCode: observed.kind === 'exit' ? observed.exitCode : null,
+    });
+}
+
+function createPreflightProbeSignal(
+    signal: AbortSignal | undefined,
+    retirementSignal: AbortSignal,
+): AbortSignal {
+    return signal ? AbortSignal.any([signal, retirementSignal]) : retirementSignal;
+}
+
+/**
+ * Projects a public Agent preflight declaration through the incumbent catalog
+ * probe seam. The Agent receives only strict settings JSON, environment
+ * presence, bounded command output, and a request-only JSON-RPC client. This
+ * host remains the sole executor, cancellation/currentness owner, and result
+ * projection owner.
+ */
+export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonly<{
+    agentId: CatalogAgentId;
+    preflightSessionControls: AgentPreflightSessionControlsContributionV1;
+    systemTools: readonly PluginSystemToolContributionV1[];
+    agentCliSystemTool?: AgentCliSystemToolBinding | null;
+    retirementSignal: AbortSignal;
+    isCurrent(): boolean;
+}>): Pick<ResolvedCatalogEntry,
+    | 'needsAccountSettingsForProbes'
+    | 'resolveModelsProbeVariant'
+    | 'resolveSessionControlsProbeVariant'
+    | 'getPreflightSessionControlsProbeAdapter'
+> {
+    const contribution = params.preflightSessionControls;
+    const requiresAccountSettings = contribution.resolveProbeVariant !== undefined
+        || contribution.jsonRpcCommand !== undefined;
+    const resolveVariant = (input: Readonly<{
+        accountSettings?: Readonly<Record<string, unknown>> | null;
+    }>): string | null => {
+        if (!params.isCurrent() || !contribution.resolveProbeVariant) return null;
+        const output = contribution.resolveProbeVariant(readPreflightProbeInput({
+            accountSettings: input.accountSettings,
+            environment: readPreflightProbeEnvironment(undefined),
+        }));
+        return typeof output === 'string' && output.length > 0 ? output : null;
+    };
+    const createContext = (
+        probeParams: PreflightSessionControlsProbeParams,
+    ): AgentPreflightSessionControlsProbeContextV1 => {
+        const signal = createPreflightProbeSignal(probeParams.signal, params.retirementSignal);
+        const environment = readPreflightProbeEnvironment(probeParams.env);
+        const input = readPreflightProbeInput({
+            accountSettings: probeParams.accountSettings,
+            environment,
+        });
+        const exec = createProviderScopedStableExecService({
+            cwd: probeParams.cwd,
+            environment,
+            systemTools: params.systemTools,
+            agentId: params.agentId,
+            agentCliSystemTool: params.agentCliSystemTool,
+            signal,
+            isGenerationCurrent: params.isCurrent,
+        });
+        const assertCurrent = (): void => {
+            if (!params.isCurrent() || signal.aborted) {
+                throw new Error('Agent preflight belongs to a retired or cancelled generation');
+            }
+        };
+        const unavailable = (): AgentPreflightSessionControlsCommandResultV1 => Object.freeze({
+            ok: false,
+            stdout: '',
+            stderr: '',
+            exitCode: null,
+        });
+        const runDeclaredSystemToolCommand: AgentPreflightSessionControlsProbeContextV1['runDeclaredSystemToolCommand'] =
+            async (request) => {
+                const command = resolveDeclaredPreflightCommand(contribution, request);
+                if (!command) return unavailable();
+                try {
+                    assertCurrent();
+                    const resolved = await exec.systemTools.resolve({
+                        toolId: command.toolId,
+                        purpose: `Probe ${params.agentId} Session controls`,
+                        cwd: probeParams.cwd,
+                        signal,
+                    });
+                    const result = await exec.run({
+                        executable: resolved.executable,
+                        args: command.args,
+                        cwd: { root: 'workspace', relativePath: '' },
+                        env: applyPreflightCommandEnvironment(environment, command),
+                        maxStdoutBytes: PREFLIGHT_COMMAND_OUTPUT_MAX_BYTES,
+                        maxStderrBytes: PREFLIGHT_COMMAND_OUTPUT_MAX_BYTES,
+                        timeoutMs: probeParams.timeoutMs,
+                    }, { signal });
+                    assertCurrent();
+                    return readPreflightCommandResult(result);
+                } catch {
+                    return unavailable();
+                }
+            };
+        const withDeclaredJsonRpcClient: AgentPreflightSessionControlsProbeContextV1['withDeclaredJsonRpcClient'] =
+            async (request, inspect) => {
+                const command = contribution.jsonRpcCommand;
+                if (!command || !isExactPreflightCommand(command, request)) {
+                    throw new Error('Agent preflight JSON-RPC command is not declared');
+                }
+                assertCurrent();
+                const resolved = await exec.systemTools.resolve({
+                    toolId: command.toolId,
+                    purpose: `Probe ${params.agentId} Session controls`,
+                    cwd: probeParams.cwd,
+                    signal,
+                });
+                const handle = await exec.clients.spawn({
+                    kind: 'jsonRpc',
+                    launch: {
+                        executable: resolved.executable,
+                        args: command.args,
+                        cwd: { root: 'workspace', relativePath: '' },
+                        env: applyPreflightCommandEnvironment(environment, command),
+                        maxStderrBytes: PREFLIGHT_COMMAND_OUTPUT_MAX_BYTES,
+                    },
+                    framing: 'jsonLines',
+                    maxFrameBytes: PREFLIGHT_JSON_RPC_MAX_FRAME_BYTES,
+                    requestTimeoutMs: probeParams.timeoutMs,
+                }, { signal });
+                try {
+                    const client = Object.freeze({
+                        request: async (method: string, requestParams?: JsonValue): Promise<JsonValue> => (
+                            await handle.client.request(method, requestParams, { signal })
+                        ),
+                    });
+                    const result = await inspect(client, signal);
+                    assertCurrent();
+                    return result;
+                } finally {
+                    await handle.dispose();
+                }
+            };
+        return Object.freeze({
+            ...input,
+            signal,
+            runDeclaredSystemToolCommand,
+            withDeclaredJsonRpcClient,
+        });
+    };
+    const invoke = <T>(
+        callback: ((context: AgentPreflightSessionControlsProbeContextV1) => Promise<T> | T) | undefined,
+        probeParams: PreflightSessionControlsProbeParams,
+    ): Promise<T | null> => callback
+        ? Promise.resolve(callback(createContext(probeParams))).catch(() => null)
+        : Promise.resolve(null);
+    return Object.freeze({
+        ...(requiresAccountSettings ? { needsAccountSettingsForProbes: true } : {}),
+        ...(contribution.resolveProbeVariant
+            ? {
+                resolveSessionControlsProbeVariant: (variantParams) => resolveVariant(variantParams),
+                resolveModelsProbeVariant: (variantParams) => resolveVariant(variantParams),
+            }
+            : {}),
+        getPreflightSessionControlsProbeAdapter: async () => Object.freeze({
+            // JSON-RPC preflight is the existing retryable probe form; static
+            // command parsing uses the incumbent one-shot/cooldown behavior.
+            ...(contribution.jsonRpcCommand ? { failureCacheStrategy: 'retry' as const } : {}),
+            ...(contribution.models
+                ? {
+                    probeModelsRaw: async (probeParams: PreflightSessionControlsProbeParams) => {
+                        const primary = await createContext(probeParams).runDeclaredSystemToolCommand({
+                            toolId: contribution.models!.command.toolId,
+                            args: contribution.models!.command.args,
+                        });
+                        if (primary.ok) {
+                            const parsed = contribution.models!.parseOutput
+                                ? await contribution.models!.parseOutput(primary)
+                                : primary.stdout;
+                            if (parsed !== null) return parsed;
+                        }
+                        const fallback = contribution.models!.fallback;
+                        if (!fallback) return null;
+                        const fallbackResult = await createContext(probeParams).runDeclaredSystemToolCommand({
+                            toolId: fallback.command.toolId,
+                            args: fallback.command.args,
+                        });
+                        if (!fallbackResult.ok) return null;
+                        return fallback.parseOutput
+                            ? await fallback.parseOutput(fallbackResult)
+                            : fallbackResult.stdout;
+                    },
+                }
+                : {}),
+            ...(contribution.probeModels
+                ? { probeModelsRaw: async (probeParams: PreflightSessionControlsProbeParams) =>
+                    await invoke(contribution.probeModels, probeParams) }
+                : {}),
+            ...(contribution.probeModes
+                ? { probeModesRaw: async (probeParams: PreflightSessionControlsProbeParams) =>
+                    await invoke(contribution.probeModes, probeParams) }
+                : {}),
+            ...(contribution.probeConfigOptions
+                ? { probeConfigOptionsRaw: async (probeParams: PreflightSessionControlsProbeParams) =>
+                    await invoke(contribution.probeConfigOptions, probeParams) }
+                : {}),
+            ...(contribution.probePassiveRealtimeSetup
+                ? { probePassiveRealtimeSetupRaw: async (probeParams: PreflightSessionControlsProbeParams) =>
+                    await invoke(contribution.probePassiveRealtimeSetup, probeParams) }
+                : {}),
+        }),
+    });
+}
+
 type MaterializedAuthEnvironmentResult = Awaited<ReturnType<ConnectedServicesContribution['materializeAuthEnvironment']>>;
-type CloudConnectOauthAuthorizationCode = NonNullable<CloudConnectContribution['oauthAuthorizationCode']>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -274,33 +736,6 @@ function readStringFunction(value: unknown): ((input: string) => string) | null 
     return typeof value === 'function' ? value as (input: string) => string : null;
 }
 
-function readStringArrayFunction(value: unknown): ((input: string[]) => string[]) | null {
-    return typeof value === 'function' ? value as (input: string[]) => string[] : null;
-}
-
-function readSessionStartupContribution(value: unknown): SessionStartupContribution | null {
-    if (!isRecord(value)) return null;
-    const shouldUseDeferredBootstrap = readFunction<
-        SessionStartupContribution['shouldUseDeferredBootstrap']
-    >(value.shouldUseDeferredBootstrap);
-    if (!shouldUseDeferredBootstrap) return null;
-    const releasedOverridesCacheV1 = value.releasedOverridesCacheV1 === true;
-    return {
-        shouldUseDeferredBootstrap,
-        ...(releasedOverridesCacheV1 ? { releasedOverridesCacheV1: true as const } : {}),
-    };
-}
-
-function readCloudConnectStatus(value: unknown): CloudConnectContribution['status'] | null {
-    return value === 'wired' || value === 'experimental' ? value : null;
-}
-
-function readCloudVendorKey(value: unknown): CloudConnectContribution['vendorKey'] | null {
-    return value === 'openai' || value === 'anthropic' || value === 'gemini' || value === 'scm'
-        ? value
-        : null;
-}
-
 function readConnectedServiceIdArray(value: unknown): readonly ConnectedServiceId[] {
     if (!Array.isArray(value)) return [];
     return value.flatMap((entry) => {
@@ -382,32 +817,6 @@ function readQuotaFetcherDescriptor(value: unknown): ConnectedServicesContributi
             ...(terminalAuthFailureProviderCodes.length > 0 ? { terminalAuthFailureProviderCodes } : {}),
         }
         : undefined;
-}
-
-function readFailureCacheStrategy(value: unknown): 'cooldown' | 'retry' | undefined {
-    return value === 'cooldown' || value === 'retry' ? value : undefined;
-}
-
-function readProviderAttachContribution(value: unknown): ProviderAttachContribution | null {
-    if (!isRecord(value)) return null;
-    const resolveTarget = readFunction<ProviderAttachContribution['resolveTarget']>(value.resolveTarget);
-    const createArgs = readFunction<ProviderAttachContribution['createArgs']>(value.createArgs);
-    const buildHealthUrl = readFunction<ProviderAttachContribution['buildHealthUrl']>(value.buildHealthUrl);
-    return resolveTarget && createArgs && buildHealthUrl
-        ? { resolveTarget, createArgs, buildHealthUrl }
-        : null;
-}
-
-function readSessionRuntimePreferencesContribution(value: unknown): SessionRuntimePreferencesContribution | null {
-    if (!isRecord(value)) return null;
-    const resolve = readFunction<SessionRuntimePreferencesContribution['resolve']>(value.resolve);
-    return resolve ? { resolve } : null;
-}
-
-function readCliAuthContribution(value: unknown): CliAuthContribution | null {
-    if (!isRecord(value)) return null;
-    const detectAuthStatus = readFunction<CliAuthContribution['detectAuthStatus']>(value.detectAuthStatus);
-    return detectAuthStatus ? { detectAuthStatus } : null;
 }
 
 function resolveProjectedResumeReachability(
@@ -692,198 +1101,107 @@ function readConnectedServicesContribution(value: unknown): ConnectedServicesCon
     };
 }
 
-function readPreflightSessionControlsContribution(value: unknown): PreflightSessionControlsContribution | null {
-    if (!isRecord(value)) return null;
-    const probeModelsCommandArgs = readStringArray(value.probeModelsCommandArgs);
-    const probeModelsFromCommandOutput = readFunction<NonNullable<PreflightSessionControlsContribution['probeModels']>['parseOutput']>(
-        value.probeModelsFromCommandOutput,
-    );
-    const resolveProbeVariant = readFunction<NonNullable<PreflightSessionControlsContribution['resolveProbeVariant']>>(
-        value.resolveProbeVariant,
-    );
-    const probeModelsRaw = readFunction<NonNullable<PreflightSessionControlsContribution['probeModelsRaw']>>(
-        value.probeModelsRaw,
-    );
-    const probeModesRaw = readFunction<NonNullable<PreflightSessionControlsContribution['probeModesRaw']>>(
-        value.probeModesRaw,
-    );
-    const probeConfigOptionsRaw = readFunction<NonNullable<PreflightSessionControlsContribution['probeConfigOptionsRaw']>>(
-        value.probeConfigOptionsRaw,
-    );
-    const probePassiveRealtimeSetupRaw = readFunction<NonNullable<PreflightSessionControlsContribution['probePassiveRealtimeSetupRaw']>>(
-        value.probePassiveRealtimeSetupRaw,
-    );
-    const cliModelsCommandArgs = readStringArray(value.cliModelsCommandArgs);
-    const verboseModelsCommandArgs = readStringArray(value.verboseModelsCommandArgs);
-    return {
-        ...(value.connectedServiceAuth === 'materialized-env'
-            ? { connectedServiceAuth: 'materialized-env' as const }
+type ResolvedAgentCliSessionCommandDeclaration = Readonly<{
+    sessionRuntimeId: string;
+    deprecatedAliasAgentId?: string;
+    accountSettingsAgentId: string;
+    implicitResumeDelegation?: Readonly<{ resumeFlags: readonly string[] }>;
+    directoryFlags?: readonly string[];
+    forwardModelFlag?: boolean;
+    forwardResumeFlag?: boolean;
+    yoloAgentArgs?: readonly string[];
+    versionFlags?: readonly string[];
+    infoCommandPrefixes?: readonly (readonly string[])[];
+    buildSessionOptions?: AgentCliSessionCommandDeclarationV1['buildSessionOptions'];
+}>;
+
+function resolveAgentCliSessionCommandDeclaration(
+    declaration: AgentCliSessionCommandDeclarationV1 | undefined,
+    agentId: CatalogAgentId,
+): ResolvedAgentCliSessionCommandDeclaration {
+    return Object.freeze({
+        sessionRuntimeId: declaration?.sessionRuntimeId ?? agentId,
+        ...(declaration?.deprecatedAliasAgentId
+            ? { deprecatedAliasAgentId: declaration.deprecatedAliasAgentId }
             : {}),
-        failureCacheStrategy: readFailureCacheStrategy(value.failureCacheStrategy),
-        ...(value.needsAccountSettings === true ? { needsAccountSettings: true } : {}),
-        ...(resolveProbeVariant ? { resolveProbeVariant } : {}),
-        cliModelsCommandArgs: cliModelsCommandArgs.length > 0
-            ? cliModelsCommandArgs
-            : verboseModelsCommandArgs,
-        ...(verboseModelsCommandArgs.length > 0 ? { verboseModelsCommandArgs } : {}),
-        ...(probeModelsRaw ? { probeModelsRaw } : {}),
-        ...(probeModelsCommandArgs.length > 0 && probeModelsFromCommandOutput
-            ? {
-                probeModels: {
-                    commandArgs: probeModelsCommandArgs,
-                    parseOutput: probeModelsFromCommandOutput,
-                },
-            }
+        accountSettingsAgentId: declaration?.accountSettingsAgentId ?? agentId,
+        ...(declaration?.implicitResumeDelegation
+            ? { implicitResumeDelegation: declaration.implicitResumeDelegation }
             : {}),
-        ...(probeModesRaw ? { probeModesRaw } : {}),
-        ...(probeConfigOptionsRaw ? { probeConfigOptionsRaw } : {}),
-        ...(probePassiveRealtimeSetupRaw ? { probePassiveRealtimeSetupRaw } : {}),
-    };
+        ...(declaration?.directoryFlags ? { directoryFlags: declaration.directoryFlags } : {}),
+        ...(declaration?.forwardModelFlag !== undefined
+            ? { forwardModelFlag: declaration.forwardModelFlag }
+            : {}),
+        ...(declaration?.forwardResumeFlag !== undefined
+            ? { forwardResumeFlag: declaration.forwardResumeFlag }
+            : {}),
+        ...(declaration?.yoloAgentArgs ? { yoloAgentArgs: declaration.yoloAgentArgs } : {}),
+        ...(declaration?.versionFlags ? { versionFlags: declaration.versionFlags } : {}),
+        ...(declaration?.infoCommandPrefixes
+            ? { infoCommandPrefixes: declaration.infoCommandPrefixes }
+            : {}),
+        ...(declaration?.buildSessionOptions
+            ? { buildSessionOptions: declaration.buildSessionOptions }
+            : {}),
+    });
 }
 
-function readCloudConnectContribution(value: unknown): CloudConnectContribution | null {
-    if (!isRecord(value)) return null;
-    const oauth = isRecord(value.oauthAuthorizationCode) ? value.oauthAuthorizationCode : null;
-    const displayName = readString(value.displayName);
-    const vendorDisplayName = readString(value.vendorDisplayName);
-    const vendorKey = readCloudVendorKey(value.vendorKey);
-    const status = readCloudConnectStatus(value.status);
-    const clientId = readString(oauth?.clientId);
-    const authorizeUrl = readString(oauth?.authorizeUrl);
-    const tokenUrl = readString(oauth?.tokenUrl);
-    const redirectUri = readString(oauth?.redirectUri);
-    const scope = readString(oauth?.scope);
-    const customAuthenticator = isRecord(value.customAuthenticator) ? value.customAuthenticator : null;
-    const authenticate =
-        readFunction<NonNullable<CloudConnectContribution['authenticate']>>(customAuthenticator?.authenticate)
-        ?? readFunction<NonNullable<CloudConnectContribution['authenticate']>>(value.authenticate);
-    const oauthAuthorizationCode = clientId && authorizeUrl && tokenUrl && redirectUri && scope
-        ? {
-            clientId,
-            authorizeUrl,
-            tokenUrl,
-            redirectUri,
-            scope,
-        }
-        : null;
-    if (!displayName || !vendorDisplayName || !vendorKey || !status || (!oauthAuthorizationCode && !authenticate)) {
-        return null;
+function normalizeAgentCliSessionCommandOptions(
+    value: AgentCliSessionCommandBuildOptionsResultV1,
+): Record<string, unknown> {
+    if (!isRecord(value)) {
+        throw new Error('Agent CLI session command returned an invalid result.');
     }
-    return {
-        displayName,
-        vendorDisplayName,
-        vendorKey,
-        status,
-        ...(oauthAuthorizationCode ? { oauthAuthorizationCode } : {}),
-        ...(authenticate ? { authenticate } : {}),
-    };
-}
-
-function readSessionControlsContribution(value: unknown): SessionControlsContribution | null {
-    if (!isRecord(value)) return null;
-    const normalizePermissionMode = readStringFunction(value.normalizePermissionMode);
-    return normalizePermissionMode ? { normalizePermissionMode } : null;
-}
-
-function readDaemonSpawnHooksContribution(value: unknown): DaemonSpawnHooksContribution | null {
-    if (!isRecord(value)) return null;
-    const resolveRuntimePrerequisites = readFunction<NonNullable<DaemonSpawnHooks['resolveRuntimePrerequisites']>>(
-        value.resolveRuntimePrerequisites,
-    );
-    const augmentEnv = readFunction<NonNullable<DaemonSpawnHooks['augmentEnv']>>(value.augmentEnv);
-    const contribution: DaemonSpawnHooksContribution = {
-        ...(resolveRuntimePrerequisites ? { resolveRuntimePrerequisites } : {}),
-        ...(augmentEnv ? { augmentEnv } : {}),
-    };
-    return Object.keys(contribution).length > 0 ? contribution : null;
-}
-
-function readTerminalContribution(value: unknown): TerminalContribution | null {
-    if (!isRecord(value)) return null;
-    const transformHeadlessTmuxArgv = readStringArrayFunction(value.transformHeadlessTmuxArgv);
-    const promptSubmitVerification = readTerminalPromptSubmitVerificationPolicy(value.promptSubmitVerification);
-    const contribution: TerminalContribution = {
-        ...(transformHeadlessTmuxArgv ? { transformHeadlessTmuxArgv } : {}),
-        ...(promptSubmitVerification ? { promptSubmitVerification } : {}),
-        ...(value.retainsSessionHookArtifacts === true ? { retainsSessionHookArtifacts: true } : {}),
-    };
-    return Object.keys(contribution).length > 0 ? contribution : null;
-}
-
-function readTerminalPromptSubmitVerificationPolicy(value: unknown): TerminalPromptSubmitVerificationPolicy | null {
-    if (!isRecord(value)) return null;
-    const shouldVerifyAfterSubmit = readFunction<TerminalPromptSubmitVerificationPolicy['shouldVerifyAfterSubmit']>(
-        value.shouldVerifyAfterSubmit,
-    );
-    const verifyBeforeSubmitStaging = readFunction<NonNullable<TerminalPromptSubmitVerificationPolicy['verifyBeforeSubmitStaging']>>(
-        value.verifyBeforeSubmitStaging,
-    );
-    const verifyAfterSubmit = readFunction<TerminalPromptSubmitVerificationPolicy['verifyAfterSubmit']>(
-        value.verifyAfterSubmit,
-    );
-    if (!shouldVerifyAfterSubmit || !verifyAfterSubmit) {
-        return null;
-    }
-    return {
-        shouldVerifyAfterSubmit,
-        ...(verifyBeforeSubmitStaging ? { verifyBeforeSubmitStaging } : {}),
-        verifyAfterSubmit,
-    };
-}
-
-export function readCliSessionCommandContribution(
-    value: unknown,
-    defaultAgentId: CatalogAgentId,
-): ProviderCliSessionCommandContribution | null {
-    if (!isRecord(value)) return null;
-    const backendIdForSessionRuntime = readString(value.backendIdForSessionRuntime) ?? defaultAgentId;
-    if (!backendIdForSessionRuntime) return null;
-    const agentIdForDeprecatedAliases = readString(value.agentIdForDeprecatedAliases);
-    const agentIdForAccountSettings = readString(value.agentIdForAccountSettings) ?? defaultAgentId;
-    const directoryFlags = readStringArray(value.directoryFlags);
-    const yoloProviderArgs = readStringArray(value.yoloProviderArgs);
-    const versionFlags = readStringArray(value.versionFlags);
-    const providerInfoCommandPrefixes = readNonEmptyStringArrayArray(value.providerInfoCommandPrefixes);
-    const implicitResumeDelegation = isRecord(value.implicitResumeDelegation)
-        ? {
-            resumeFlags: readNonEmptyStringArray(value.implicitResumeDelegation.resumeFlags),
-        }
-        : null;
-    const buildSessionOptions = readFunction<ProviderCliSessionCommandContribution['buildSessionOptions']>(
-        value.buildSessionOptions,
-    );
-
-    return {
-        backendIdForSessionRuntime,
-        ...(agentIdForDeprecatedAliases ? { agentIdForDeprecatedAliases } : {}),
-        agentIdForAccountSettings,
-        ...(implicitResumeDelegation && implicitResumeDelegation.resumeFlags.length > 0
-            ? { implicitResumeDelegation }
-            : {}),
-        ...(directoryFlags.length > 0 ? { directoryFlags } : {}),
-        ...(typeof value.forwardModelFlag === 'boolean' ? { forwardModelFlag: value.forwardModelFlag } : {}),
-        ...(typeof value.forwardResumeFlag === 'boolean' ? { forwardResumeFlag: value.forwardResumeFlag } : {}),
-        ...(yoloProviderArgs.length > 0 ? { yoloProviderArgs } : {}),
-        ...(versionFlags.length > 0 ? { versionFlags } : {}),
-        ...(providerInfoCommandPrefixes.length > 0 ? { providerInfoCommandPrefixes } : {}),
-        ...(buildSessionOptions ? { buildSessionOptions } : {}),
-    };
-}
-
-function normalizeCliSessionCommandOptions(value: unknown): Record<string, unknown> {
-    if (!isRecord(value)) return {};
     if (value.ok === false) {
-        const errorMessage = readString(value.errorMessage) ?? 'Provider CLI session command rejected the request.';
+        const errorMessage = readString(value.errorMessage) ?? 'Agent CLI session command rejected the request.';
         throw new Error(errorMessage);
     }
-    if (value.ok === true && isRecord(value.options)) {
-        return value.options;
+    if (value.ok !== true || !isRecord(value.options)) {
+        throw new Error('Agent CLI session command returned an invalid result.');
     }
-    return value;
+    const options: Record<string, unknown> = {};
+    for (const [key, option] of Object.entries(value.options)) {
+        if (option !== undefined && !StrictJsonValueSchema.safeParse(option).success) {
+            throw new Error(`Agent CLI session command returned a non-JSON Session option '${key}'.`);
+        }
+        options[key] = option;
+    }
+    return options;
+}
+
+/**
+ * Projects a focused Agent command declaration through the one host-owned
+ * parser and dispatcher. Omission intentionally creates the generic command
+ * handler, not a second fallback path.
+ */
+export function projectAgentCliSessionCommandCatalogEntry(params: Readonly<{
+    agentId: CatalogAgentId;
+    cliSessionCommand?: AgentCliSessionCommandDeclarationV1;
+}>): Pick<ResolvedCatalogEntry, 'getCliCommandHandler' | 'resolveSessionRuntimePreferences'> {
+    const cliSessionCommand = resolveAgentCliSessionCommandDeclaration(
+        params.cliSessionCommand,
+        params.agentId,
+    );
+    return Object.freeze({
+        getCliCommandHandler: createCliSessionCommandHandler(
+            cliSessionCommand,
+            {
+                cliSubcommand: params.agentId,
+                runtimeAuthorityAgentId: params.agentId,
+            },
+        ),
+        ...(cliSessionCommand.buildSessionOptions
+            ? {
+                resolveSessionRuntimePreferences: (input) => normalizeAgentCliSessionCommandOptions(
+                    cliSessionCommand.buildSessionOptions!(input),
+                ),
+            }
+            : {}),
+    });
 }
 
 export function createCliSessionCommandHandler(
-    cliSessionCommand: ProviderCliSessionCommandContribution,
+    cliSessionCommand: ResolvedAgentCliSessionCommandDeclaration,
     identity: Readonly<{
         cliSubcommand: string;
         runtimeAuthorityAgentId: string;
@@ -916,16 +1234,17 @@ export function createCliSessionCommandHandler(
 
             await runBackendSessionCliCommand({
                 context,
-                backendIdForSessionRuntime: cliSessionCommand.backendIdForSessionRuntime,
+                backendIdForSessionRuntime: cliSessionCommand.sessionRuntimeId,
                 runtimeAuthorityAgentId: identity.runtimeAuthorityAgentId,
-                ...(cliSessionCommand.agentIdForDeprecatedAliases
+                isExplicitCliSubcommand: context.args[0] === identity.cliSubcommand,
+                ...(cliSessionCommand.deprecatedAliasAgentId
                     ? {
-                        agentIdForDeprecatedAliases: cliSessionCommand.agentIdForDeprecatedAliases as Parameters<typeof runBackendSessionCliCommand>[0]['agentIdForDeprecatedAliases'],
+                        agentIdForDeprecatedAliases: cliSessionCommand.deprecatedAliasAgentId as Parameters<typeof runBackendSessionCliCommand>[0]['agentIdForDeprecatedAliases'],
                     }
                     : {}),
-                ...(cliSessionCommand.agentIdForAccountSettings
+                ...(cliSessionCommand.accountSettingsAgentId
                     ? {
-                        agentIdForAccountSettings: cliSessionCommand.agentIdForAccountSettings as Parameters<typeof runBackendSessionCliCommand>[0]['agentIdForAccountSettings'],
+                        agentIdForAccountSettings: cliSessionCommand.accountSettingsAgentId as Parameters<typeof runBackendSessionCliCommand>[0]['agentIdForAccountSettings'],
                     }
                     : {}),
                 ...(cliSessionCommand.directoryFlags ? { directoryFlags: cliSessionCommand.directoryFlags } : {}),
@@ -935,17 +1254,10 @@ export function createCliSessionCommandHandler(
                 ...(cliSessionCommand.forwardResumeFlag !== undefined
                     ? { forwardResumeFlag: cliSessionCommand.forwardResumeFlag }
                     : {}),
-                ...(cliSessionCommand.yoloProviderArgs ? { yoloProviderArgs: cliSessionCommand.yoloProviderArgs } : {}),
+                ...(cliSessionCommand.yoloAgentArgs ? { yoloProviderArgs: cliSessionCommand.yoloAgentArgs } : {}),
                 ...(cliSessionCommand.versionFlags ? { versionFlags: cliSessionCommand.versionFlags } : {}),
-                ...(cliSessionCommand.providerInfoCommandPrefixes
-                    ? { providerInfoCommandPrefixes: cliSessionCommand.providerInfoCommandPrefixes }
-                    : {}),
-                ...(cliSessionCommand.buildSessionOptions
-                    ? {
-                        resolveExtraOptions: (args, parsed) => normalizeCliSessionCommandOptions(
-                            cliSessionCommand.buildSessionOptions!({ args, parsed }),
-                        ),
-                    }
+                ...(cliSessionCommand.infoCommandPrefixes
+                    ? { providerInfoCommandPrefixes: cliSessionCommand.infoCommandPrefixes }
                     : {}),
             });
         };
@@ -1417,417 +1729,14 @@ function createSwitchContinuityResolver(
     };
 }
 
-function generateOauthState(): string {
-    return randomBytes(32).toString('hex');
-}
-
-function buildAuthorizationCodeUrl(config: CloudConnectOauthAuthorizationCode, state: string, challenge: string): string {
-    const query = new URLSearchParams({
-        code: 'true',
-        client_id: config.clientId,
-        response_type: 'code',
-        redirect_uri: config.redirectUri,
-        scope: config.scope,
-        code_challenge: challenge,
-        code_challenge_method: 'S256',
-        state,
-    });
-    return `${config.authorizeUrl}?${query.toString()}`;
-}
-
-async function exchangeAuthorizationCodeForTokens(params: Readonly<{
-    config: CloudConnectOauthAuthorizationCode;
-    code: string;
-    verifier: string;
-    state: string;
-}>): Promise<unknown> {
-    const response = await fetch(params.config.tokenUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            grant_type: 'authorization_code',
-            code: params.code,
-            redirect_uri: params.config.redirectUri,
-            client_id: params.config.clientId,
-            code_verifier: params.verifier,
-            state: params.state,
-        }),
-    });
-
-    if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(buildSafeOauthProviderFailureMessage({
-            operation: 'Token exchange',
-            status: response.status,
-            statusText: response.statusText,
-            body,
-        }));
-    }
-
-    return await response.json();
-}
-
-async function authenticateAuthorizationCodeConnectTarget(
-    config: CloudConnectOauthAuthorizationCode,
-    opts?: CloudConnectAuthenticateOptions,
-): Promise<unknown> {
-    const timeoutMs =
-        typeof opts?.timeoutSeconds === 'number' && Number.isFinite(opts.timeoutSeconds)
-            ? Math.max(1, Math.trunc(opts.timeoutSeconds)) * 1000
-            : undefined;
-    const pkce = generatePkceCodes();
-    const state = generateOauthState();
-    const authorizationUrl = buildAuthorizationCodeUrl(config, state, pkce.challenge);
-
-    process.stdout.write('\nOpen this URL in a browser to authenticate:\n\n');
-    process.stdout.write(`${authorizationUrl}\n\n`);
-    process.stdout.write('After login, paste the final redirected URL (or the "code#state" string) here.\n\n');
-
-    if (!opts?.noOpen) {
-        await openBrowser(authorizationUrl).catch(() => {
-            // Non-fatal: users can still copy/paste the URL and complete auth manually.
-        });
-    }
-
-    let pasted: string;
-    if (timeoutMs === undefined) {
-        pasted = await promptInput('Paste redirect URL: ');
-    } else {
-        const promptAbortController = new AbortController();
-        let timedOut = false;
-        const timeout = setTimeout(() => {
-            timedOut = true;
-            promptAbortController.abort();
-        }, timeoutMs);
-        try {
-            pasted = await promptInput('Paste redirect URL: ', { signal: promptAbortController.signal });
-        } catch (error) {
-            if (timedOut) throw new Error('Authentication timed out');
-            throw error;
-        } finally {
-            clearTimeout(timeout);
-        }
-    }
-
-    const parsed = parseOauthRedirectPaste({ pasted });
-    if (!parsed.ok) {
-        throw new Error(`Invalid OAuth redirect paste (${parsed.error})`);
-    }
-    if (parsed.state !== state) {
-        throw new Error('OAuth state mismatch');
-    }
-
-    return await exchangeAuthorizationCodeForTokens({
-        config,
-        code: parsed.code,
-        verifier: pkce.verifier,
-        state,
-    });
-}
-
-function sanitizeCloudAuthDiagnostic(value: unknown): AuthDiagnostic | null {
-    if (!isRecord(value)) return null;
-    const code = readString(value.code);
-    if (!code) return null;
-    const message = typeof value.message === 'string'
-        ? sanitizeConnectedServiceDiagnosticString(value.message)
-        : undefined;
-    return {
-        code: sanitizeConnectedServiceDiagnosticString(code, { maxLength: 120 }),
-        ...(message ? { message } : {}),
-    };
-}
-
-function sanitizeCloudAuthDiagnostics(values: unknown): readonly AuthDiagnostic[] {
-    if (!Array.isArray(values)) return [];
-    return values.flatMap((value) => {
-        const diagnostic = sanitizeCloudAuthDiagnostic(value);
-        return diagnostic ? [diagnostic] : [];
-    });
-}
-
-function readCloudAuthFailureCode(value: unknown): AuthFailureCode {
-    return value === 'unsupported'
-        || value === 'cancelled'
-        || value === 'failed'
-        || value === 'invalid_result'
-        || value === 'timeout'
-        || value === 'provider_error'
-        ? value
-        : 'failed';
-}
-
-function mergeCloudAuthDiagnostics(
-    first: readonly AuthDiagnostic[],
-    second: readonly AuthDiagnostic[],
-): readonly AuthDiagnostic[] | undefined {
-    const merged = [...first, ...second];
-    return merged.length > 0 ? merged : undefined;
-}
-
-function sanitizeCloudConnectAuthenticateResult(
-    value: unknown,
-    contextDiagnostics: readonly AuthDiagnostic[],
-): AuthenticateResult {
-    if (!isCloudConnectAuthenticateResultV1(value)) {
-        return {
-            ok: false,
-            code: 'invalid_result',
-            diagnostics: mergeCloudAuthDiagnostics(contextDiagnostics, [
-                {
-                    code: 'invalid_custom_auth_result',
-                    message: 'Custom authenticator returned an unsupported result shape.',
-                },
-            ]),
-        };
-    }
-
-    const record = value as Readonly<Record<string, unknown>>;
-    const diagnostics = mergeCloudAuthDiagnostics(
-        contextDiagnostics,
-        sanitizeCloudAuthDiagnostics(record.diagnostics),
-    );
-    if (value.ok) {
-        const accountRef = readString(record.accountRef);
-        const credentialRef = readString(record.credentialRef);
-        return {
-            ok: true,
-            ...(accountRef ? { accountRef } : {}),
-            ...(credentialRef ? { credentialRef } : {}),
-            ...(diagnostics ? { diagnostics } : {}),
-        };
-    }
-
-    const retryAfterMs = typeof record.retryAfterMs === 'number' && Number.isFinite(record.retryAfterMs)
-        ? Math.max(0, Math.trunc(record.retryAfterMs))
-        : undefined;
-    return {
-        ok: false,
-        code: readCloudAuthFailureCode(record.code),
-        ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-        ...(diagnostics ? { diagnostics } : {}),
-    };
-}
-
-function createUnsupportedCredentialWriteResult(): AuthCredentialWriteResult {
-    return {
-        ok: false,
-        code: 'unsupported',
-        diagnostics: [
-            {
-                code: 'credential_writer_unavailable',
-                message: 'Credential writes are unavailable for this authentication context.',
-            },
-        ],
-    };
-}
-
-function createCancelledPromptResult(): AuthPromptTextResult {
-    return {
-        ok: false,
-        code: 'cancelled',
-        diagnostics: [{ code: 'authentication_cancelled' }],
-    };
-}
-
-function createCloudCustomAuthenticatorContext(
-    opts: CloudConnectAuthenticateOptions,
-): Readonly<{
-    context: CloudCustomAuthenticatorContextV1;
-    diagnostics: readonly AuthDiagnostic[];
-}> {
-    const diagnostics: AuthDiagnostic[] = [];
-    const signal = opts.signal ?? new AbortController().signal;
-    const fetchRuntime = createGlobalFetchRuntime();
-    const credentialWriter = opts.hostServices?.credentials?.write;
-    const pushDiagnostic = (input: AuthDiagnostic) => {
-        const sanitized = sanitizeCloudAuthDiagnostic(input);
-        if (sanitized) diagnostics.push(sanitized);
-    };
-    const cancelled = () => signal.aborted;
-    const requestPromptText = async (
-        input: AuthPromptTextInput,
-        options: Readonly<{ signal?: AbortSignal }> = {},
-    ): Promise<AuthPromptTextResult> => {
-        const promptSignal = options.signal ?? signal;
-        const promptCancelled = () => cancelled() || promptSignal.aborted;
-        if (promptCancelled()) return createCancelledPromptResult();
-        const label = input.label.trim();
-        if (!label) {
-            return {
-                ok: false,
-                code: 'unsupported',
-                diagnostics: [{ code: 'missing_prompt_label' }],
-            };
-        }
-        try {
-            const value = await (input.secret
-                ? promptSecretInput(label)
-                : promptInput(label, { signal: promptSignal }));
-            if (promptCancelled()) return createCancelledPromptResult();
-            return { ok: true, value };
-        } catch (error) {
-            if (promptCancelled()) return createCancelledPromptResult();
-            throw error;
-        }
-    };
-    const callbackService = createCloudAuthCallbackService({
-        signal,
-        promptText: async (label, options) => {
-            const result = await requestPromptText({ label }, options);
-            if (result.ok) return result.value;
-            const diagnostic = result.diagnostics?.[0]?.code ?? result.code;
-            throw new Error(diagnostic);
-        },
-    });
-
-    const context: CloudCustomAuthenticatorContextV1 = Object.freeze({
-        signal,
-        now: () => Date.now(),
-        fetch: Object.freeze({
-            request: async (
-                request: Parameters<HttpService['request']>[0],
-                options: Parameters<HttpService['request']>[1] = {},
-            ) => await fetchRuntime.request(request, {
-                signal: options.signal ?? signal,
-            }),
-        }),
-        browser: Object.freeze({
-            open: async (url: string): Promise<AuthOpenBrowserResult> => {
-                if (cancelled()) return { ok: false, code: 'cancelled' };
-                try {
-                    const opened = await openBrowser(url);
-                    if (!opened) {
-                        return {
-                            ok: false,
-                            code: 'unsupported',
-                            diagnostics: [
-                                {
-                                    code: 'browser_open_unavailable',
-                                    message: 'Browser opening is unavailable in this environment.',
-                                },
-                            ],
-                        };
-                    }
-                    return { ok: true };
-                } catch (error) {
-                    return {
-                        ok: false,
-                        code: 'failed',
-                        diagnostics: [
-                            {
-                                code: 'browser_open_failed',
-                                message: sanitizeConnectedServiceDiagnosticString(
-                                    error instanceof Error ? error.message : String(error),
-                                ),
-                            },
-                        ],
-                    };
-                }
-            },
-        }),
-        prompt: Object.freeze({
-            requestText: requestPromptText,
-        }),
-        oauth: Object.freeze({
-            createPkceChallenge: async () => generatePkceCodes(),
-            callback: callbackService,
-            listenForCallback: async (input: AuthLoopbackInput): Promise<AuthLoopbackResult> => {
-                const created = await callbackService.create({
-                    mode: 'loopback',
-                    ...(input.defaultPort ? { preferredPort: input.defaultPort } : {}),
-                    ...(input.callbackPath?.startsWith('/') ? { callbackPath: input.callbackPath as `/${string}` } : {}),
-                });
-                if (!created.ok) return created;
-                try {
-                    return await created.session.wait();
-                } finally {
-                    await created.session.close();
-                }
-            },
-        }),
-        credentials: Object.freeze({
-            write: async (input: AuthCredentialWriteInput): Promise<AuthCredentialWriteResult> => {
-                if (cancelled()) return { ok: false, code: 'cancelled' };
-                return credentialWriter ? await credentialWriter(input) : createUnsupportedCredentialWriteResult();
-            },
-        }),
-        diagnostics: Object.freeze({
-            info: pushDiagnostic,
-            warn: pushDiagnostic,
-        }),
-    });
-    return { context, diagnostics };
-}
-
-function stripHostOnlyCloudConnectOptions(
-    opts?: CloudConnectAuthenticateOptions,
-): CloudConnectAuthenticateOptions {
-    if (!opts) return {};
-    const {
-        hostServices: _hostServices,
-        ...publicOptions
-    } = opts;
-    return publicOptions;
-}
-
-function createCloudConnectTarget(
-    agentId: CatalogAgentId,
-    cloudConnect: CloudConnectContribution,
-): CloudConnectTarget {
-    const authenticate = cloudConnect.authenticate
-        ? async (opts?: CloudConnectAuthenticateOptions) => {
-            const publicOptions = stripHostOnlyCloudConnectOptions(opts);
-            const { context, diagnostics } = createCloudCustomAuthenticatorContext(opts ?? {});
-            const result = await cloudConnect.authenticate?.(publicOptions, context);
-            return sanitizeCloudConnectAuthenticateResult(result, diagnostics);
-        }
-        : (opts?: CloudConnectAuthenticateOptions) => authenticateAuthorizationCodeConnectTarget(
-            cloudConnect.oauthAuthorizationCode!,
-            opts,
-        );
-    return {
-        id: agentId,
-        displayName: cloudConnect.displayName,
-        vendorDisplayName: cloudConnect.vendorDisplayName,
-        vendorKey: cloudConnect.vendorKey,
-        status: cloudConnect.status,
-        authenticate,
-    };
-}
-
-function createPreflightContributionProbeParams(
-    params: PreflightSessionControlsProbeParams,
-    probeKind: PreflightSessionControlsProbeKind,
-    systemTools: readonly PluginSystemToolContributionV1[],
-    agentId: CatalogAgentId,
-    agentCliSystemTool: AgentCliSystemToolBinding | null,
-): Parameters<NonNullable<PreflightSessionControlsContribution['probeModelsRaw']>>[0] {
-    const environment = Object.freeze(Object.fromEntries(
-        Object.entries(params.env ?? process.env).filter(
-            (entry): entry is [string, string] => typeof entry[1] === 'string',
-        ),
-    ));
-    return {
-        ...params,
-        probeKind,
-        exec: createProviderScopedStableExecService({
-            cwd: params.cwd,
-            environment,
-            systemTools,
-            agentId,
-            agentCliSystemTool,
-        }),
-        env: environment,
-    };
-}
-
 function createProviderScopedStableExecService(params: Readonly<{
     cwd: string;
     environment: Readonly<Record<string, string>>;
     systemTools: readonly PluginSystemToolContributionV1[];
     agentId?: CatalogAgentId;
     agentCliSystemTool?: AgentCliSystemToolBinding | null;
+    signal?: AbortSignal;
+    isGenerationCurrent?: () => boolean;
 }>): ExecService {
     const workspaceRoot = resolve(params.cwd);
     const definitions = projectPluginSystemToolContributions(params.systemTools);
@@ -1866,8 +1775,8 @@ function createProviderScopedStableExecService(params: Readonly<{
             pathPrefix: '',
             access: Object.freeze(['read' as const]),
         }]),
-        signal: new AbortController().signal,
-        isGenerationCurrent: () => true,
+        signal: params.signal ?? new AbortController().signal,
+        isGenerationCurrent: params.isGenerationCurrent ?? (() => true),
         async resolveExecutable() {
             throw new Error('Provider preflight executables must resolve through a declared system tool');
         },
@@ -1913,64 +1822,17 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
     agentId: CatalogAgentId;
     packageName: string;
     contribution: AgentRuntimeContribution;
+    /** Static manifest catalog fact; it is never sourced from the runtime aggregate. */
+    agentCliSystemTool?: AgentCliSystemToolBinding;
     systemTools?: readonly PluginSystemToolContributionV1[];
 }>): AgentCatalogHookFactory {
     const systemTools = params.systemTools ?? Object.freeze([]);
     const agentCliSystemTool = readAgentCliSystemToolBinding(
-        params.contribution.agentCliSystemTool,
+        params.agentCliSystemTool,
         systemTools,
     );
     const connectedServices = readConnectedServicesContribution(params.contribution.connectedServices);
-    const attach = readProviderAttachContribution(params.contribution.attach);
-    const sessionRuntimePreferences = readSessionRuntimePreferencesContribution(
-        params.contribution.sessionRuntimePreferences,
-    );
-    const sessionStartup = readSessionStartupContribution(params.contribution.sessionStartup);
-    const codingPromptBehavior = readFunction<NonNullable<ResolvedCatalogEntry['resolveCodingPromptBehaviorBlocks']>>(
-        params.contribution.codingPromptBehavior?.resolve,
-    );
-    const daemonSpawnHooks = readDaemonSpawnHooksContribution(params.contribution.daemonSpawnHooks);
     const sessionHandoff = readSessionHandoffContribution(params.contribution.sessionHandoff);
-    const cliAuth = readCliAuthContribution(params.contribution.cliAuth);
-    const preflightSessionControls = readPreflightSessionControlsContribution(
-        params.contribution.preflightSessionControls,
-    );
-    const cloudConnect = readCloudConnectContribution(params.contribution.cloudConnect);
-    const sessionControls = readSessionControlsContribution(params.contribution.sessionControls);
-    const terminal = readTerminalContribution(params.contribution.terminal);
-    const cliSessionCommand = readCliSessionCommandContribution(params.contribution.cliSessionCommand, params.agentId);
-    const vendorResumeSupport = readFunction<CatalogVendorResumeSupport>(
-        params.contribution.vendorResumeSupport?.resolve,
-    );
-    const vendorResumeSupportLevel = readVendorResumeSupportLevel(
-        params.contribution.vendorResumeSupport?.support,
-    );
-    const resolvePetDiscoveryHomePath = readFunction<NonNullable<ResolvedCatalogEntry['resolvePetDiscoveryHomePath']>>(
-        params.contribution.petDiscovery?.resolveHomePath,
-    );
-    const resolvePetDiscoveryHomeEntries = readFunction<NonNullable<ResolvedCatalogEntry['resolvePetDiscoveryHomeEntries']>>(
-        params.contribution.petDiscovery?.resolveHomeEntries,
-    );
-    const matchesRuntimeInstallableDescriptor = readFunction<(
-        descriptor: InstallableDependencyDescriptor,
-    ) => boolean>(params.contribution.runtimeInstallableAdapter?.matchesDescriptor);
-    const resolveRuntimeInstallableSpawnSpec = readFunction<(
-        opts?: Readonly<{ env?: NodeJS.ProcessEnv }>,
-        deps?: Readonly<{
-            resolveExistingManagedBinPath?: (env?: NodeJS.ProcessEnv) => string | null;
-        }>,
-    ) => { command: string; args: readonly string[] }>(
-        params.contribution.runtimeInstallableAdapter?.resolveSpawnSpec,
-    );
-    const validateRuntimeInstallableAvailability = readFunction<(
-        spec: Readonly<{ command: string; args: readonly string[] }>,
-        opts?: Readonly<{ env?: NodeJS.ProcessEnv }>,
-    ) => Readonly<{ ok: true } | { ok: false; errorMessage: string }>>(
-        params.contribution.runtimeInstallableAdapter?.validateAvailability,
-    );
-    const checklists = isRecord(params.contribution.checklists)
-        ? params.contribution.checklists as CatalogChecklistContributions
-        : null;
     const rawRuntimeAuthAdapter = connectedServices
         ? createRuntimeAuthAdapter(params.agentId, connectedServices)
         : null;
@@ -1988,16 +1850,6 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
         : null;
     const switchContinuityResolver = connectedServiceSwitchContinuityResolver;
 
-    const runtimeActivityApplicabilityDeclarationPresent = Object.prototype.hasOwnProperty.call(
-        params.contribution,
-        'runtimeActivityApplicability',
-    );
-    const runtimeActivityApplicability = runtimeActivityApplicabilityDeclarationPresent
-        ? resolveRuntimeActivityApplicability(params.contribution.runtimeActivityApplicability, {
-            declarationPresent: true,
-        })
-        : null;
-
     return () => {
         const exec = createProviderScopedExecService(
             systemTools,
@@ -2005,34 +1857,6 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
             agentCliSystemTool,
         );
         return ({
-        ...(agentCliSystemTool ? { agentCliSystemTool } : {}),
-        ...(runtimeActivityApplicability ? { runtimeActivityApplicability } : {}),
-        // An Agent's baseline CLI detect and auth spec are always projected from its
-        // declared manifest CLI metadata by `createManifestAgentCatalogEntry`, for
-        // bundled and installed Agents alike. Only a plugin that owns bespoke probe
-        // logic overrides the spec here, and that override is reachable through the
-        // same declaration seam an external Agent uses.
-        ...(cliAuth
-            ? {
-                getCliAuthSpec: async () => {
-                    const { createCatalogCliAuthSpec } = await import(
-                        '@/capabilities/cliAuth/createCatalogCliAuthSpec'
-                    );
-                    return createCatalogCliAuthSpec(params.agentId, {
-                        detectAuthStatus: async ({ resolvedPath }) => cliAuth.detectAuthStatus({
-                            resolvedPath,
-                            env: process.env,
-                            runCommand: async (args, options) => runCliCommandBestEffort({
-                                resolvedPath,
-                                args: [...args],
-                                timeoutMs: options?.timeoutMs,
-                                env: options?.env,
-                            }),
-                        }),
-                    });
-                },
-            }
-            : {}),
         ...(connectedServices
             ? {
                 getConnectedServicesMaterializer: async () =>
@@ -2127,85 +1951,6 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
                     connectedServices.resolveCandidatePersistedSessionFile,
             }
             : {}),
-        ...(cloudConnect
-            ? { getCloudConnectTarget: async () => createCloudConnectTarget(params.agentId, cloudConnect) }
-            : {}),
-        ...(sessionControls
-            ? { normalizeSessionControlPermissionMode: sessionControls.normalizePermissionMode }
-            : {}),
-        ...(terminal?.transformHeadlessTmuxArgv
-            ? { getHeadlessTmuxArgvTransform: async () => terminal.transformHeadlessTmuxArgv! }
-            : {}),
-        ...(terminal?.promptSubmitVerification
-            ? { getTerminalPromptSubmitVerificationPolicy: async () => terminal.promptSubmitVerification! }
-            : {}),
-        ...(terminal?.retainsSessionHookArtifacts
-            ? {
-                onTerminalAttachmentRetired: async ({ happyHomeDir, sessionId }) => {
-                    const { disposeSessionHookArtifactsForSession } = await import(
-                        '@/plugins/runtime/hooks/session/service'
-                    );
-                    await disposeSessionHookArtifactsForSession({ happyHomeDir, sessionId });
-                },
-            }
-            : {}),
-        ...(cliSessionCommand
-            ? {
-                getCliCommandHandler: createCliSessionCommandHandler(
-                    cliSessionCommand,
-                    {
-                        cliSubcommand: params.agentId,
-                        runtimeAuthorityAgentId: params.agentId,
-                    },
-                ),
-            }
-            : {}),
-        ...(vendorResumeSupportLevel
-            ? { vendorResumeSupport: vendorResumeSupportLevel }
-            : {}),
-        ...(vendorResumeSupport
-            ? { getVendorResumeSupport: async () => vendorResumeSupport }
-            : {}),
-        ...(checklists
-            ? { checklists }
-            : {}),
-        ...(resolvePetDiscoveryHomePath
-            ? { resolvePetDiscoveryHomePath }
-            : {}),
-        ...(resolvePetDiscoveryHomeEntries
-            ? { resolvePetDiscoveryHomeEntries }
-            : {}),
-        ...(matchesRuntimeInstallableDescriptor
-            && resolveRuntimeInstallableSpawnSpec
-            && validateRuntimeInstallableAvailability
-            ? {
-                getRuntimeInstallableAdapter: async (descriptor: InstallableDependencyDescriptor) => {
-                    if (!matchesRuntimeInstallableDescriptor(descriptor)) return null;
-                    const { createCodexAcpRuntimeInstallableAdapter } = await import(
-                        '@/packagedRuntime/installables/sourceAdapters/codexAcpRuntimeInstallable'
-                    );
-                    return createCodexAcpRuntimeInstallableAdapter(descriptor, {
-                        resolveSpawnSpec: resolveRuntimeInstallableSpawnSpec,
-                        validateAvailability: validateRuntimeInstallableAvailability,
-                    });
-                },
-            }
-            : {}),
-        ...(sessionRuntimePreferences
-            ? { resolveSessionRuntimePreferences: sessionRuntimePreferences.resolve }
-            : {}),
-        ...(sessionStartup
-            ? { shouldUseDeferredSessionStartup: sessionStartup.shouldUseDeferredBootstrap }
-            : {}),
-        ...(sessionStartup?.releasedOverridesCacheV1
-            ? { releasedStartupOverridesCacheV1: sessionStartup.releasedOverridesCacheV1 }
-            : {}),
-        ...(codingPromptBehavior
-            ? { resolveCodingPromptBehaviorBlocks: codingPromptBehavior }
-            : {}),
-        ...(daemonSpawnHooks
-            ? projectAgentDaemonSpawnHooksCatalogEntry(daemonSpawnHooks)
-            : {}),
         ...(sessionHandoff?.agentBundleRecords
             ? {
                 getSessionHandoffAgentBundleRecordExtractor: async () =>
@@ -2217,111 +1962,6 @@ export function createAgentRuntimeCatalogEntryHooks(params: Readonly<{
             : {}),
         ...(sessionHandoff?.nativeSessionLog
             ? { resolveAgentNativeSessionLogPath: sessionHandoff.nativeSessionLog.resolvePath }
-            : {}),
-        ...(attach
-            ? {
-                resolveHostAgentRuntimeSurfaces: async () => {
-                    const { createProviderCliAttachSurface } = await import(
-                        '@/session/attach/providerCliAttach'
-                    );
-                    return Object.freeze({
-                        attach: createProviderCliAttachSurface({
-                            agentId: params.agentId,
-                            resolveTarget: ({ metadata, fallbackServerBaseUrl }) => {
-                                const target = attach.resolveTarget({ metadata, fallbackServerBaseUrl });
-                                return isRecord(target) && target.ok === true
-                                    ? { ok: true, value: target }
-                                    : { ok: false, reason: readString(isRecord(target) ? target.reason : null) ?? 'Unable to resolve provider attach target.' };
-                            },
-                            createArgs: (target) => attach.createArgs(target),
-                            buildHealthUrl: (target) => attach.buildHealthUrl(String(target.baseUrl ?? '')),
-                        }),
-                    });
-                },
-            }
-            : {}),
-        ...(preflightSessionControls
-            ? {
-                ...(preflightSessionControls.needsAccountSettings
-                    ? { needsAccountSettingsForProbes: true }
-                    : {}),
-                ...(preflightSessionControls.resolveProbeVariant
-                    ? {
-                        resolveSessionControlsProbeVariant: preflightSessionControls.resolveProbeVariant,
-                        resolveModelsProbeVariant: (variantParams) =>
-                            preflightSessionControls.resolveProbeVariant!({
-                                ...variantParams,
-                                probeKind: variantParams.probeKind ?? 'models',
-                            }),
-                    }
-                    : {}),
-                getPreflightSessionControlsProbeAdapter: async () => ({
-                    ...(preflightSessionControls.connectedServiceAuth
-                        ? { connectedServiceAuth: preflightSessionControls.connectedServiceAuth }
-                        : {}),
-                    failureCacheStrategy: preflightSessionControls.failureCacheStrategy,
-                    cliModelsCommandArgs: preflightSessionControls.cliModelsCommandArgs,
-                    ...(preflightSessionControls.verboseModelsCommandArgs
-                        ? { verboseModelsCommandArgs: preflightSessionControls.verboseModelsCommandArgs }
-                        : {}),
-                    ...(preflightSessionControls.probeModelsRaw
-                        ? {
-                            probeModelsRaw: async (probeParams: PreflightSessionControlsProbeParams) =>
-                                await preflightSessionControls.probeModelsRaw!(
-                                    createPreflightContributionProbeParams(
-                                        probeParams,
-                                        'models',
-                                        systemTools,
-                                        params.agentId,
-                                        agentCliSystemTool,
-                                    ),
-                                ),
-                        }
-                        : {}),
-                    ...(preflightSessionControls.probeModesRaw
-                        ? {
-                            probeModesRaw: async (probeParams: PreflightSessionControlsProbeParams) =>
-                                await preflightSessionControls.probeModesRaw!(
-                                    createPreflightContributionProbeParams(
-                                        probeParams,
-                                        'modes',
-                                        systemTools,
-                                        params.agentId,
-                                        agentCliSystemTool,
-                                    ),
-                                ),
-                        }
-                        : {}),
-                    ...(preflightSessionControls.probeConfigOptionsRaw
-                        ? {
-                            probeConfigOptionsRaw: async (probeParams: PreflightSessionControlsProbeParams) =>
-                                await preflightSessionControls.probeConfigOptionsRaw!(
-                                    createPreflightContributionProbeParams(
-                                        probeParams,
-                                        'configOptions',
-                                        systemTools,
-                                        params.agentId,
-                                        agentCliSystemTool,
-                                    ),
-                                ),
-                        }
-                        : {}),
-                    ...(preflightSessionControls.probePassiveRealtimeSetupRaw
-                        ? {
-                            probePassiveRealtimeSetupRaw: async (probeParams: PreflightSessionControlsProbeParams) =>
-                                await preflightSessionControls.probePassiveRealtimeSetupRaw!(
-                                    createPreflightContributionProbeParams(
-                                        probeParams,
-                                        'passiveRealtimeSetup',
-                                        systemTools,
-                                        params.agentId,
-                                        agentCliSystemTool,
-                                    ),
-                                ),
-                        }
-                        : {}),
-                }),
-            }
             : {}),
         });
     };

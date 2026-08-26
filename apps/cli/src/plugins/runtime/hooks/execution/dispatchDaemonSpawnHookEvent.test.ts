@@ -243,7 +243,7 @@ describe('dispatchDaemonSpawnHookEvent', () => {
           cwd: '/repo',
           directory: '/repo',
           runtimeSelection: {
-            providerRuntimeSelection: { codexBackendMode: 'appServer' },
+            agentRuntimeSelection: { codexBackendMode: 'appServer' },
           },
         },
       },
@@ -335,7 +335,7 @@ describe('dispatchDaemonSpawnHookEvent', () => {
           cwd: '/repo',
           directory: '/repo',
           runtimeSelection: {
-            providerRuntimeSelection: { codexBackendMode: 'appServer' },
+            agentRuntimeSelection: { codexBackendMode: 'appServer' },
           },
         },
       },

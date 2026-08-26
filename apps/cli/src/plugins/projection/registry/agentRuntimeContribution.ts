@@ -4,36 +4,17 @@ import type {
     ConnectedServiceId,
 } from '@happier-dev/protocol';
 import type {
-    CloudConnectTargetStatus,
-    CloudVendorKey,
-} from '@happier-dev/agents';
-import type {
-    AuthenticatorContext as CloudCustomAuthenticatorContextV1,
-    Authenticator as CloudCustomAuthenticatorV1,
-} from '@happier-dev/plugin-sdk/connected-accounts';
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
-
-import type {
-    PreflightSessionControlsProbeKind,
-    PreflightSessionControlsProbeParams,
-} from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
-import type {
     ConnectedServiceSessionFileImportDetail,
     ConnectedServiceSessionFileImportRoot,
 } from '@/daemon/connectedServices/stateSharing/importConnectedServiceSessionFiles';
 import type { parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 import type {
-    CliAuthStatusDraft,
     ConnectedServiceDaemonAuthBridgeRefresh,
     LegacyConnectedServiceRuntimeAuthFailureSourceRevisionResolver,
 } from '@/agent/catalog/types';
-import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import type { ConnectedServiceQuotaFetcherDescriptor } from '@/daemon/connectedServices/quotas/types';
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/types';
 import type { ConnectedServiceMaterializedHomeFreshness } from '@/daemon/connectedServices/materialization/materializedHomeFreshness';
-import type { ProviderSessionArgPartitionResult } from '@/cli/providerSessionArgPartition';
-import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
-import type { RuntimeActivityApplicability } from '@/agent/runtime/session/activity/runtimeActivityApplicability';
 
 import type { ResolvedCatalogEntry } from './types';
 import type { ConnectedServiceStateSharingMode } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
@@ -46,42 +27,6 @@ type RuntimeContributionFunction =
 
 type RuntimeContributionObject = Readonly<Record<string, unknown>>;
 
-type CliAuthContributionSource = Readonly<{
-    detectAuthStatus?: RuntimeContributionFunction;
-}>;
-
-type ProviderAttachContributionSource = Readonly<{
-    resolveTarget?: RuntimeContributionFunction;
-    createArgs?: RuntimeContributionFunction;
-    buildHealthUrl?: RuntimeContributionFunction;
-}>;
-
-type SessionRuntimePreferencesContributionSource = Readonly<{
-    resolve?: RuntimeContributionFunction;
-}>;
-
-type SessionStartupContributionSource = Readonly<{
-    shouldUseDeferredBootstrap?: RuntimeContributionFunction;
-    releasedOverridesCacheV1?: unknown;
-}>;
-
-type CodingPromptBehaviorContributionSource = Readonly<{
-    resolve?: RuntimeContributionFunction;
-}>;
-
-type DaemonSpawnHooksContributionSource = Readonly<{
-    resolveRuntimePrerequisites?: RuntimeContributionFunction;
-    augmentEnv?: RuntimeContributionFunction;
-}>;
-
-type VendorResumeSupportContributionSource = Readonly<{
-    /** Declarative support level; a contributed Agent has no host-owned Agent table to read it from. */
-    support?: unknown;
-    resolve?: RuntimeContributionFunction;
-}>;
-
-type AgentChecklistContributionSource = NonNullable<ResolvedCatalogEntry['checklists']>;
-
 type SessionHandoffContributionSource = Readonly<{
     agentBundleRecords?: Readonly<{
         extract?: RuntimeContributionFunction;
@@ -92,75 +37,6 @@ type SessionHandoffContributionSource = Readonly<{
     nativeSessionLog?: Readonly<{
         resolvePath?: RuntimeContributionFunction;
     }>;
-}>;
-
-type PreflightSessionControlsContributionSource = Readonly<{
-    connectedServiceAuth?: unknown;
-    failureCacheStrategy?: unknown;
-    needsAccountSettings?: unknown;
-    resolveProbeVariant?: RuntimeContributionFunction;
-    verboseModelsCommandArgs?: readonly unknown[];
-    probeModelsCommandArgs?: readonly unknown[];
-    probeModelsFromCommandOutput?: RuntimeContributionFunction;
-    probeModelsRaw?: RuntimeContributionFunction;
-    probeModesRaw?: RuntimeContributionFunction;
-    probeConfigOptionsRaw?: RuntimeContributionFunction;
-    probePassiveRealtimeSetupRaw?: RuntimeContributionFunction;
-}>;
-
-type CloudConnectContributionSource = Readonly<{
-    displayName?: unknown;
-    vendorDisplayName?: unknown;
-    vendorKey?: unknown;
-    status?: unknown;
-    oauthAuthorizationCode?: Readonly<{
-        clientId?: unknown;
-        authorizeUrl?: unknown;
-        tokenUrl?: unknown;
-        redirectUri?: unknown;
-        scope?: unknown;
-    }>;
-    customAuthenticator?: Readonly<{
-        authenticate?: RuntimeContributionFunction;
-    }>;
-    authenticate?: RuntimeContributionFunction;
-}>;
-
-type SessionControlsContributionSource = Readonly<{
-    normalizePermissionMode?: RuntimeContributionFunction;
-}>;
-
-type TerminalContributionSource = Readonly<{
-    transformHeadlessTmuxArgv?: RuntimeContributionFunction;
-    promptSubmitVerification?: RuntimeContributionObject;
-    retainsSessionHookArtifacts?: unknown;
-}>;
-
-type PetDiscoveryContributionSource = Readonly<{
-    resolveHomePath?: RuntimeContributionFunction;
-    resolveHomeEntries?: RuntimeContributionFunction;
-}>;
-
-type RuntimeInstallableAdapterContributionSource = Readonly<{
-    matchesDescriptor?: RuntimeContributionFunction;
-    resolveSpawnSpec?: RuntimeContributionFunction;
-    validateAvailability?: RuntimeContributionFunction;
-}>;
-
-type ProviderCliSessionCommandContributionSource = Readonly<{
-    backendIdForSessionRuntime?: unknown;
-    agentIdForDeprecatedAliases?: unknown;
-    agentIdForAccountSettings?: unknown;
-    implicitResumeDelegation?: Readonly<{
-        resumeFlags?: readonly unknown[];
-    }>;
-    directoryFlags?: readonly unknown[];
-    forwardModelFlag?: unknown;
-    forwardResumeFlag?: unknown;
-    yoloProviderArgs?: readonly unknown[];
-    versionFlags?: readonly unknown[];
-    providerInfoCommandPrefixes?: readonly (readonly unknown[])[];
-    buildSessionOptions?: RuntimeContributionFunction;
 }>;
 
 type ConnectedServicesContributionSource = Readonly<{
@@ -210,45 +86,6 @@ export type ConnectedServiceRecoveryCapabilitiesResult = NonNullable<Awaited<
 
 export type VerifyResumeReachable = NonNullable<ResolvedCatalogEntry['verifyResumeReachable']>;
 
-export type CliAuthContribution = Readonly<{
-    detectAuthStatus: (params: Readonly<{
-        resolvedPath: string;
-        env: NodeJS.ProcessEnv;
-        runCommand: (
-            args: readonly string[],
-            options?: Readonly<{
-                timeoutMs?: number;
-                env?: Readonly<Record<string, string>>;
-            }>,
-        ) => Promise<Readonly<{
-            ok: boolean;
-            stdout: string;
-            stderr: string;
-            exitCode: number | null;
-        }>>;
-    }>) => Promise<CliAuthStatusDraft> | CliAuthStatusDraft;
-}>;
-
-export type ProviderAttachContribution = Readonly<{
-    resolveTarget: (params: Readonly<{
-        metadata: Readonly<Record<string, unknown>>;
-        fallbackServerBaseUrl?: string | null;
-    }>) => unknown;
-    createArgs: (target: Readonly<Record<string, unknown>>) => readonly string[];
-    buildHealthUrl: (baseUrl: string) => string | null;
-}>;
-
-export type SessionRuntimePreferencesContribution = Readonly<{
-    resolve: NonNullable<ResolvedCatalogEntry['resolveSessionRuntimePreferences']>;
-}>;
-
-export type SessionStartupContribution = Readonly<{
-    shouldUseDeferredBootstrap: NonNullable<ResolvedCatalogEntry['shouldUseDeferredSessionStartup']>;
-    releasedOverridesCacheV1?: true;
-}>;
-
-export type DaemonSpawnHooksContribution = DaemonSpawnHooks;
-
 export type SessionHandoffAgentBundleRecordExtractor = NonNullable<
     Awaited<ReturnType<NonNullable<ResolvedCatalogEntry['getSessionHandoffAgentBundleRecordExtractor']>>>
 >;
@@ -263,81 +100,6 @@ export type SessionHandoffContribution = Readonly<{
     nativeSessionLog?: Readonly<{
         resolvePath: NonNullable<ResolvedCatalogEntry['resolveAgentNativeSessionLogPath']>;
     }>;
-}>;
-
-export type PreflightSessionControlsContribution = Readonly<{
-    connectedServiceAuth?: 'materialized-env';
-    failureCacheStrategy?: 'cooldown' | 'retry';
-    needsAccountSettings?: boolean;
-    resolveProbeVariant?: NonNullable<ResolvedCatalogEntry['resolveSessionControlsProbeVariant']>;
-    cliModelsCommandArgs?: readonly string[];
-    verboseModelsCommandArgs?: readonly string[];
-    probeModelsRaw?: (params: PreflightSessionControlsContributionProbeParams) => Promise<unknown | null> | unknown | null;
-    probeModels?: Readonly<{
-        commandArgs: readonly string[];
-        parseOutput: (params: Readonly<{
-            output: string;
-            cwd: string;
-            timeoutMs: number;
-        }>) => Promise<unknown | null> | unknown | null;
-    }>;
-    probeModesRaw?: (params: PreflightSessionControlsContributionProbeParams) => Promise<unknown | null> | unknown | null;
-    probeConfigOptionsRaw?: (params: PreflightSessionControlsContributionProbeParams) => Promise<unknown | null> | unknown | null;
-    probePassiveRealtimeSetupRaw?: (params: PreflightSessionControlsContributionProbeParams) => Promise<unknown | null> | unknown | null;
-}>;
-
-export type PreflightSessionControlsContributionProbeParams = PreflightSessionControlsProbeParams & Readonly<{
-    probeKind: PreflightSessionControlsProbeKind;
-    exec: ExecService;
-    env: NodeJS.ProcessEnv;
-}>;
-
-export type CloudConnectContribution = Readonly<{
-    displayName: string;
-    vendorDisplayName: string;
-    vendorKey: CloudVendorKey | 'scm';
-    status: CloudConnectTargetStatus;
-    oauthAuthorizationCode?: Readonly<{
-        clientId: string;
-        authorizeUrl: string;
-        tokenUrl: string;
-        redirectUri: string;
-        scope: string;
-    }>;
-    authenticate?: CloudCustomAuthenticatorV1;
-}>;
-
-export type { CloudCustomAuthenticatorContextV1, CloudCustomAuthenticatorV1 };
-
-export type SessionControlsContribution = Readonly<{
-    normalizePermissionMode: (permissionMode: string) => string;
-}>;
-
-export type TerminalContribution = Readonly<{
-    transformHeadlessTmuxArgv?: (argv: string[]) => string[];
-    promptSubmitVerification?: TerminalPromptSubmitVerificationPolicy;
-    retainsSessionHookArtifacts?: boolean;
-}>;
-
-export type ProviderCliSessionCommandResumeDelegationV1 = Readonly<{
-    resumeFlags: readonly string[];
-}>;
-
-export type ProviderCliSessionCommandContribution = Readonly<{
-    backendIdForSessionRuntime: string;
-    agentIdForDeprecatedAliases?: string;
-    agentIdForAccountSettings?: string;
-    implicitResumeDelegation?: ProviderCliSessionCommandResumeDelegationV1;
-    directoryFlags?: readonly string[];
-    forwardModelFlag?: boolean;
-    forwardResumeFlag?: boolean;
-    yoloProviderArgs?: readonly string[];
-    versionFlags?: readonly string[];
-    providerInfoCommandPrefixes?: readonly (readonly string[])[];
-    buildSessionOptions?: (input: Readonly<{
-        args: readonly string[];
-        parsed: ProviderSessionArgPartitionResult;
-    }>) => unknown;
 }>;
 
 export type ConnectedServicesContribution = Readonly<{
@@ -424,25 +186,6 @@ export type ConnectedServicesContribution = Readonly<{
 }>;
 
 export type AgentRuntimeContribution = Readonly<{
-    agentCliSystemTool?: Readonly<{
-        toolId?: unknown;
-    }>;
-    runtimeActivityApplicability?: RuntimeActivityApplicability;
-    cliAuth?: CliAuthContributionSource;
-    attach?: ProviderAttachContributionSource;
-    sessionRuntimePreferences?: SessionRuntimePreferencesContributionSource;
-    sessionStartup?: SessionStartupContributionSource;
-    codingPromptBehavior?: CodingPromptBehaviorContributionSource;
-    daemonSpawnHooks?: DaemonSpawnHooksContributionSource;
-    vendorResumeSupport?: VendorResumeSupportContributionSource;
-    checklists?: AgentChecklistContributionSource;
     sessionHandoff?: SessionHandoffContributionSource;
-    preflightSessionControls?: PreflightSessionControlsContributionSource;
-    cloudConnect?: CloudConnectContributionSource;
-    sessionControls?: SessionControlsContributionSource;
-    terminal?: TerminalContributionSource;
-    petDiscovery?: PetDiscoveryContributionSource;
-    runtimeInstallableAdapter?: RuntimeInstallableAdapterContributionSource;
-    cliSessionCommand?: ProviderCliSessionCommandContributionSource;
     connectedServices?: ConnectedServicesContributionSource;
 }>;

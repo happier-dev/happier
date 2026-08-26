@@ -76,6 +76,7 @@ export function isExactManagedCatalogLaunch(input: Readonly<{
       purposeBindings: input.source.purposeBindings,
       endpointTemplateId: input.source.endpointTemplateId,
       protocol: input.source.protocol,
+      sourceRegistryVersion: input.source.sourceRegistryVersion,
       method: 'GET',
       path: request.path,
       parser: request.parser,
@@ -87,6 +88,7 @@ export function isExactManagedCatalogLaunch(input: Readonly<{
       purposeBindings: ticket.purposeBindings,
       endpointTemplateId: ticket.endpointTemplateId,
       protocol: ticket.protocol,
+      sourceRegistryVersion: ticket.sourceRegistryVersion,
       method: 'GET',
       path: ticket.path,
       parser: ticket.parser,
@@ -98,6 +100,7 @@ export function isExactManagedCatalogLaunch(input: Readonly<{
       purposeBindings: request.purposeBindings,
       endpointTemplateId: request.endpointTemplateId,
       protocol: request.protocol,
+      sourceRegistryVersion: request.sourceRegistryVersion,
       method: 'GET',
       path: request.path,
       parser: request.parser,
@@ -108,6 +111,8 @@ export function isExactManagedCatalogLaunch(input: Readonly<{
   }
   return ticket.connectionId === request.connectionId
     && ticket.machineId === request.machineId
+    && ticket.sourceRegistryVersion === input.source.sourceRegistryVersion
+    && request.sourceRegistryVersion === input.source.sourceRegistryVersion
     && ticketProbeRequestFingerprint === expectedProbeRequestFingerprint
     && requestProbeRequestFingerprint === expectedProbeRequestFingerprint
     && ticket.probeRequestFingerprint === expectedProbeRequestFingerprint

@@ -1,6 +1,5 @@
 import type { AgentCoreRuntimeControlSurface } from '../../types.js';
 import type {
-  ProviderAuthAdapter,
   ProviderConnectedServicesAdapter,
   ProviderMessageMetaEnricher,
   RuntimePreferencesAdapter,
@@ -81,7 +80,6 @@ export type EngineAdapter<
   controlSurface?: RuntimeControlSurface;
   facets?: RuntimeFacets;
   runtimePreferences?: RuntimePreferencesAdapter;
-  auth?: ProviderAuthAdapter;
   connectedServices?: ProviderConnectedServicesAdapter;
   messageMeta?: ProviderMessageMetaEnricher;
 }>;

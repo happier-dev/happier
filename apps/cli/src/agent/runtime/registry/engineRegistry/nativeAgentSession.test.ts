@@ -8,6 +8,7 @@ import type {
     AgentRuntime,
     AgentRuntimeFactory,
     AgentSessionCatalogControl,
+    AgentSessionCapabilities,
     AgentSessionContinuationControl,
     AgentSessionOpenRequest,
     AgentSessionConversationRollbackControl,
@@ -63,7 +64,7 @@ import {
 
 import {
     createNativeAgentSessionHostServices,
-    createNativeAgentSessionOperations,
+    createNativeAgentSessionOperations as createNativeAgentSessionOperationsBase,
     createNativeAgentRuntimeSessionPlan,
     type NativeAgentNewTurnAdmissionWitness,
     type NativeAgentSessionHostServiceOwners,
@@ -143,6 +144,98 @@ const credentials: Credentials = {
     token: 'test-token',
     encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
 };
+
+type NativeAgentSessionOperationsTestDirectFacets = Omit<
+    NonNullable<Parameters<typeof createNativeAgentSessionOperationsBase>[7]>,
+    'cancellation'
+>;
+
+type NativeAgentSessionOperationsTestArguments = [
+    disposeRuntimeScope?: Parameters<typeof createNativeAgentSessionOperationsBase>[2],
+    expectedProviderSessionId?: Parameters<typeof createNativeAgentSessionOperationsBase>[3],
+    usagePublisher?: Parameters<typeof createNativeAgentSessionOperationsBase>[4],
+    initialConfiguration?: Parameters<typeof createNativeAgentSessionOperationsBase>[5],
+    abortSessionScope?: Parameters<typeof createNativeAgentSessionOperationsBase>[6],
+    directFacets?: NativeAgentSessionOperationsTestDirectFacets,
+    publications?: Parameters<typeof createNativeAgentSessionOperationsBase>[8],
+    initialRollbackTurns?: Parameters<typeof createNativeAgentSessionOperationsBase>[9],
+    interactionLifecycle?: Parameters<typeof createNativeAgentSessionOperationsBase>[10],
+    sanitizeDisposeError?: Parameters<typeof createNativeAgentSessionOperationsBase>[11],
+    authorizeNewTurn?: Parameters<typeof createNativeAgentSessionOperationsBase>[12],
+    bindActiveTurnAdmissionWitnessReader?: Parameters<typeof createNativeAgentSessionOperationsBase>[13],
+    publishHostEvent?: Parameters<typeof createNativeAgentSessionOperationsBase>[14],
+    toolExecutionLifecycle?: Parameters<typeof createNativeAgentSessionOperationsBase>[15],
+    runtimeIncarnationId?: Parameters<typeof createNativeAgentSessionOperationsBase>[16],
+];
+
+function createNativeAgentSessionOperations(
+    session: AgentSessionRuntime,
+    expectedSessionId: string,
+    ...args: NativeAgentSessionOperationsTestArguments
+): ReturnType<typeof createNativeAgentSessionOperationsBase> {
+    const [
+        disposeRuntimeScope,
+        expectedProviderSessionId,
+        usagePublisher,
+        initialConfiguration,
+        abortSessionScope,
+        suppliedDirectFacets,
+        publications,
+        initialRollbackTurns,
+        interactionLifecycle,
+        sanitizeDisposeError,
+        authorizeNewTurn,
+        bindActiveTurnAdmissionWitnessReader,
+        publishHostEvent,
+        toolExecutionLifecycle,
+        runtimeIncarnationId,
+    ] = args;
+    const capabilities: AgentSessionCapabilities = suppliedDirectFacets?.capabilities ?? {
+        open: ['create'],
+        delivery: ['newTurn'],
+        cancel: typeof session.cancel === 'function',
+    };
+    const cancellation = capabilities.cancel === true
+        ? (() => {
+            const cancel = session.cancel;
+            if (typeof cancel !== 'function') {
+                throw new Error('cancel-capable test session must implement cancel');
+            }
+            return {
+                declared: true as const,
+                cancel: (request: Parameters<typeof cancel>[0], options?: Parameters<typeof cancel>[1]) =>
+                    cancel.call(session, request, options),
+            };
+        })()
+        : { declared: false as const };
+
+    return createNativeAgentSessionOperationsBase(
+        session,
+        expectedSessionId,
+        disposeRuntimeScope,
+        expectedProviderSessionId,
+        usagePublisher,
+        initialConfiguration,
+        abortSessionScope,
+        {
+            ...suppliedDirectFacets,
+            context: suppliedDirectFacets?.context ?? {} as AgentSessionRuntimeContext,
+            cwd: suppliedDirectFacets?.cwd ?? '/repo',
+            connectedAccounts: suppliedDirectFacets?.connectedAccounts ?? [],
+            capabilities,
+            cancellation,
+        },
+        publications,
+        initialRollbackTurns,
+        interactionLifecycle,
+        sanitizeDisposeError,
+        authorizeNewTurn,
+        bindActiveTurnAdmissionWitnessReader,
+        publishHostEvent,
+        toolExecutionLifecycle,
+        runtimeIncarnationId,
+    );
+}
 
 function requireActiveTurnAdmissionWitnessReader(
     reader: (() => NativeAgentNewTurnAdmissionWitness | null) | null,
@@ -384,7 +477,7 @@ function createExternalContributionFixtures(
                         sessions: {
                             open: [...sessionOpenKinds],
                             delivery: new Array<'newTurn' | 'steer' | 'followUp'>('newTurn'),
-                            cancel: true,
+                            cancel: false,
                         },
                     },
                 },
@@ -1108,6 +1201,59 @@ describe('native Agent session host adapter', () => {
         } finally {
             resetActiveAccountSettingsSnapshotForTests();
         }
+    });
+
+    it('carries the canonical bounded runtime descriptor into the native Agent open request', async () => {
+        const agentId = 'acme-native-runtime-descriptor';
+        const contributions = createExternalContributionFixtures(agentId);
+        const runtimeDescriptorV1 = {
+            v: 1 as const,
+            agentId,
+            agent: {
+                providerSessionId: 'provider-session-1',
+                sessionFile: '/agent/sessions/provider-session-1.jsonl',
+            },
+        };
+        const open = vi.fn(async (request: AgentSessionOpenRequest) => {
+            expect(request.runtimeDescriptorV1).toEqual(runtimeDescriptorV1);
+            return {
+                send: vi.fn(async () => ({ status: 'admitted' as const })),
+                watch: () => ({ dispose: () => undefined }),
+                dispose: vi.fn(async () => undefined),
+            };
+        });
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: { sessions: { open } },
+            lease: createLease(agentId),
+            backend: contributions.backend,
+            agent: contributions.agent,
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-native-runtime-descriptor',
+            }),
+        });
+        if (!plan.config.createSessionRuntime) {
+            throw new Error('expected a session runtime factory');
+        }
+
+        await plan.config.createSessionRuntime({
+            directory: '/tmp/acme-native-runtime-descriptor',
+            metadata: { runtimeDescriptorV1 },
+            machineId: 'machine-1',
+            session: createNativeSessionClientTestPort(
+                'session-native-runtime-descriptor',
+            ),
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never);
+
+        expect(open).toHaveBeenCalledOnce();
     });
 
     it('claims and redacts host-private late Profile environment immediately before native open', async () => {
@@ -1943,6 +2089,12 @@ describe('native Agent session host adapter', () => {
                 agentTargetKey: `backend:${agentId}`,
                 providerConnectionId: null,
                 modelId: 'startup-native-model',
+            },
+            configuration: {
+                mode: { value: null, updatedAtMs: 0 },
+                model: { value: 'startup-native-model', updatedAtMs: 7 },
+                permissionIntent: { value: 'default', updatedAtMs: 0 },
+                options: {},
             },
             runWithCurrentPublisherPermit: expect.any(Function),
             signal: expect.any(AbortSignal),
@@ -6151,6 +6303,63 @@ describe('native Agent session host adapter', () => {
         expect(open).not.toHaveBeenCalled();
     });
 
+    it('rejects a cancellation-capable Agent when its opened runtime omits cancel', async () => {
+        const agentId = 'acme-cancellation-contract-mismatch';
+        const contributions = createExternalContributionFixtures(agentId);
+        const sessionDispose = vi.fn(async () => undefined);
+        const open = vi.fn(async () => ({
+            send: vi.fn(async () => ({ status: 'admitted' as const })),
+            watch: () => ({ dispose: () => undefined }),
+            dispose: sessionDispose,
+        }));
+        const agent: ResolvedAgentContribution = {
+            ...contributions.agent,
+            richDefinition: {
+                ...contributions.agent.richDefinition,
+                definition: {
+                    ...contributions.agent.richDefinition.definition,
+                    capabilities: {
+                        ...contributions.agent.richDefinition.definition.capabilities,
+                        sessions: {
+                            ...contributions.agent.richDefinition.definition.capabilities.sessions,
+                            cancel: true,
+                        },
+                    },
+                },
+            },
+        };
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: { sessions: { open } },
+            lease: createLease(agentId),
+            backend: contributions.backend,
+            agent,
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({
+                credentials,
+                directory: '/tmp/acme-cancellation-contract-mismatch',
+            }),
+        });
+        if (!plan.config.createSessionRuntime) throw new Error('expected a session runtime factory');
+
+        await expect(plan.config.createSessionRuntime({
+            directory: '/tmp/acme-cancellation-contract-mismatch',
+            metadata: {},
+            machineId: 'machine-1',
+            session: createNativeSessionClientTestPort('session-cancellation-contract-mismatch'),
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never)).rejects.toMatchObject({
+            name: 'PluginError',
+            code: 'agent_session_cancellation_contract_mismatch',
+        });
+        expect(sessionDispose).toHaveBeenCalledWith('runtime_recovery');
+    });
+
     it('binds the public current-session UI to the live host permission owner', async () => {
         const capturedContext: { current: AgentSessionRuntimeContext | null } = { current: null };
         const nativeEventListeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
@@ -9500,6 +9709,70 @@ describe('native Agent session host adapter', () => {
 
         await expect(runtime.cancelTurn()).resolves.toBeUndefined();
         expect(cancel).toHaveBeenCalledWith({ turnId: 'turn-cancel', reason: 'user' });
+    });
+
+    it('does not offer cancellation when the Agent declaration omits it', async () => {
+        const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+        const send = vi.fn<AgentSessionRuntime['send']>(async (request) => {
+            for (const listener of listeners) {
+                listener({
+                    sequence: 1,
+                    sessionId: 'session-1',
+                    emittedAtMs: 1,
+                    kind: 'input-accepted',
+                    inputIds: request.inputIds,
+                    delivery: request.delivery,
+                });
+                listener({
+                    sequence: 2,
+                    sessionId: 'session-1',
+                    emittedAtMs: 2,
+                    kind: 'turn-start',
+                    turnId: request.delivery.turnId,
+                    startedBy: 'host',
+                });
+            }
+            return { status: 'admitted' };
+        });
+        const cancel = vi.fn<NonNullable<AgentSessionRuntime['cancel']>>(async (request) => ({
+            status: 'requested',
+            turnId: request.turnId,
+        }));
+        const session: AgentSessionRuntime = {
+            send,
+            cancel,
+            watch(listener) {
+                listeners.add(listener);
+                return { dispose: () => { listeners.delete(listener); } };
+            },
+            dispose: vi.fn(),
+        };
+        const runtime = createNativeAgentSessionOperations(
+            session,
+            'session-1',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            {
+                context: {} as AgentSessionRuntimeContext,
+                cwd: '/repo',
+                connectedAccounts: [],
+                capabilities: {
+                    open: ['create'],
+                    delivery: ['newTurn'],
+                    cancel: false,
+                },
+            },
+        );
+        await runtime.sendTurnPrompt(
+            'wait without cancellation',
+            { localId: 'queue-local-no-cancel', turnId: 'turn-no-cancel' },
+        );
+
+        await expect(runtime.cancelTurn()).resolves.toBeUndefined();
+        expect(cancel).not.toHaveBeenCalled();
     });
 
     it('cancels the exact pending new-turn id before provider acknowledgement', async () => {

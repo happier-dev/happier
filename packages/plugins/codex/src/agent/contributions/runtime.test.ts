@@ -7,26 +7,12 @@ import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
+import { shouldUseCodexDeferredBootstrap } from '../lifecycle/deferredStartup.js';
 import * as catalogContribution from './catalog.js';
 import * as runtimeContribution from './runtime.js';
 
 type CodexRuntimeContributionModule = typeof runtimeContribution & Partial<{
   CODEX_AGENT_RUNTIME_CONTRIBUTION: Readonly<{
-    agentCliSystemTool?: Readonly<{
-      toolId?: unknown;
-    }>;
-    sessionStartup?: Readonly<{
-      shouldUseDeferredBootstrap?: (params: Readonly<{
-        startedBy: 'terminal' | 'daemon';
-        startingMode: 'terminal' | 'remote' | 'local' | null;
-        existingSessionId: string | null;
-        sessionAttachFilePath: string | null;
-        providerResumeId: string | null;
-        hasExplicitPermissionMode: boolean;
-        permissionModeSeedSource: 'explicit' | 'inferred' | 'account_default' | 'fallback' | 'released_cache_v1';
-        hasTerminalTty: boolean;
-      }>) => boolean;
-    }>;
     connectedServices?: Readonly<{
       recoveryCapabilities?: unknown;
       resolveLegacyRuntimeAuthFailureSourceRevision?: unknown;
@@ -59,12 +45,12 @@ type CodexRuntimeContributionModule = typeof runtimeContribution & Partial<{
 const moduleWithA16y3Exports = runtimeContribution as CodexRuntimeContributionModule;
 
 describe('Codex runtime contribution leaves', () => {
-  it('keeps the static catalog leaf clear of the legacy runtime and descriptor-heavy installable module', () => {
+  it('keeps the static catalog leaf clear of legacy runtime and host-owned installable wiring', () => {
     const catalogSource = readFileSync(new URL('./catalog.ts', import.meta.url), 'utf8');
 
     expect(catalogSource).not.toMatch(/from ['"]\.\/runtime(?:\.js)?['"]/u);
     expect(catalogSource).not.toMatch(/\.\.\/installables\/codexAcp/u);
-    expect(catalogSource).toMatch(/\.\.\/installables\/runtimeAdapter/u);
+    expect(catalogSource).not.toMatch(/\.\.\/installables\/runtimeAdapter/u);
   });
 
   it('keeps the static catalog leaf and legacy runtime entrypoint behavior-identical', async () => {
@@ -82,13 +68,14 @@ describe('Codex runtime contribution leaves', () => {
     })).toEqual({ env: { CODEX_HOME: '/tmp/happier-codex-catalog-leaf' } });
   });
 
-  it('binds the manifest-declared Codex CLI system tool to the Agent runtime', () => {
+  it('declares the Codex CLI system tool in the manifest catalog', () => {
     const codexCliSystemTool = PLUGIN_MANIFEST.contributes.systemTools?.find(
       (systemTool) => systemTool.id === 'codex-cli',
     );
+    const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'codex');
 
     expect(codexCliSystemTool).toBeDefined();
-    expect(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.agentCliSystemTool).toEqual({
+    expect(agent?.catalog?.agentCliSystemTool).toEqual({
       toolId: codexCliSystemTool?.id,
     });
   });
@@ -99,11 +86,11 @@ describe('Codex runtime contribution leaves', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: null,
-        existingSessionId: null,
-        sessionAttachFilePath: null,
-        providerResumeId: null,
+        hasExistingSession: false,
+        hasSessionAttachFile: false,
+        hasProviderResumeId: false,
         hasExplicitPermissionMode: false,
-        permissionModeSeedSource: 'fallback' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: true,
       },
       expected: true,
@@ -113,11 +100,11 @@ describe('Codex runtime contribution leaves', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: 'local' as const,
-        existingSessionId: null,
-        sessionAttachFilePath: null,
-        providerResumeId: 'codex-thread',
+        hasExistingSession: false,
+        hasSessionAttachFile: false,
+        hasProviderResumeId: true,
         hasExplicitPermissionMode: true,
-        permissionModeSeedSource: 'explicit' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: true,
       },
       expected: true,
@@ -127,11 +114,11 @@ describe('Codex runtime contribution leaves', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: 'terminal' as const,
-        existingSessionId: null,
-        sessionAttachFilePath: null,
-        providerResumeId: 'codex-thread',
+        hasExistingSession: false,
+        hasSessionAttachFile: false,
+        hasProviderResumeId: true,
         hasExplicitPermissionMode: false,
-        permissionModeSeedSource: 'released_cache_v1' as const,
+        hasPersistedPermissionModeSeed: true,
         hasTerminalTty: true,
       },
       expected: true,
@@ -141,11 +128,11 @@ describe('Codex runtime contribution leaves', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: 'terminal' as const,
-        existingSessionId: null,
-        sessionAttachFilePath: null,
-        providerResumeId: 'codex-thread',
+        hasExistingSession: false,
+        hasSessionAttachFile: false,
+        hasProviderResumeId: true,
         hasExplicitPermissionMode: false,
-        permissionModeSeedSource: 'fallback' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: true,
       },
       expected: false,
@@ -155,11 +142,11 @@ describe('Codex runtime contribution leaves', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: 'terminal' as const,
-        existingSessionId: null,
-        sessionAttachFilePath: null,
-        providerResumeId: 'codex-thread',
+        hasExistingSession: false,
+        hasSessionAttachFile: false,
+        hasProviderResumeId: true,
         hasExplicitPermissionMode: false,
-        permissionModeSeedSource: 'account_default' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: true,
       },
       expected: false,
@@ -169,11 +156,11 @@ describe('Codex runtime contribution leaves', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: 'terminal' as const,
-        existingSessionId: 'happy-session',
-        sessionAttachFilePath: '/tmp/session-attach.json',
-        providerResumeId: 'codex-thread',
+        hasExistingSession: true,
+        hasSessionAttachFile: true,
+        hasProviderResumeId: true,
         hasExplicitPermissionMode: true,
-        permissionModeSeedSource: 'explicit' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: true,
       },
       expected: false,
@@ -183,11 +170,11 @@ describe('Codex runtime contribution leaves', () => {
       input: {
         startedBy: 'terminal' as const,
         startingMode: null,
-        existingSessionId: null,
-        sessionAttachFilePath: null,
-        providerResumeId: null,
+        hasExistingSession: false,
+        hasSessionAttachFile: false,
+        hasProviderResumeId: false,
         hasExplicitPermissionMode: true,
-        permissionModeSeedSource: 'explicit' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: false,
       },
       expected: false,
@@ -197,21 +184,21 @@ describe('Codex runtime contribution leaves', () => {
       input: {
         startedBy: 'daemon' as const,
         startingMode: 'terminal' as const,
-        existingSessionId: null,
-        sessionAttachFilePath: null,
-        providerResumeId: null,
+        hasExistingSession: false,
+        hasSessionAttachFile: false,
+        hasProviderResumeId: false,
         hasExplicitPermissionMode: true,
-        permissionModeSeedSource: 'explicit' as const,
+        hasPersistedPermissionModeSeed: false,
         hasTerminalTty: true,
       },
       expected: false,
     },
-  ])('owns deferred startup eligibility for $name', ({ input, expected }) => {
-    expect(
-      moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION
-        ?.sessionStartup
-        ?.shouldUseDeferredBootstrap?.(input),
-    ).toBe(expected);
+  ])('keeps deferred startup eligibility at the public manifest leaf for $name', ({ input, expected }) => {
+    expect(shouldUseCodexDeferredBootstrap(input)).toBe(expected);
+    expect(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION)
+      .not.toHaveProperty('sessionStartup');
+    expect(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION)
+      .not.toHaveProperty('vendorResumeSupport');
   });
 
   it('keeps predecessor failure-source evidence in the Codex provider leaf', () => {

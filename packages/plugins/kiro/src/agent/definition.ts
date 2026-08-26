@@ -9,7 +9,7 @@ export const AGENT_DEFINITION = Object.freeze({
     flavorAliases: ['kiro-cli'],
     cloudConnect: null,
     connectedServices: null,
-    resume: { vendorResume: 'experimental', vendorResumeIdField: 'kiroSessionId' },
+    resume: { vendorResume: 'experimental' as const, vendorResumeIdField: 'kiroSessionId' },
     sessionStorage: { direct: true, persisted: true },
     sessionCapabilities: {
       sessionListing: 'unsupported',
@@ -31,11 +31,5 @@ export const AGENT_DEFINITION = Object.freeze({
     dynamicProbe: 'static-only',
     defaultMode: 'default',
     allowedModes: ['default'],
-  },
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'KIRO_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    },
   },
 });

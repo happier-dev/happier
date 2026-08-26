@@ -553,6 +553,13 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
                                 killProcessTree(target)))({
                             pid: projection.process.pid,
                         }).catch(() => undefined);
+                        // A successful terminator return is not a process-terminal
+                        // fact: it may have signalled only a parent or raced an
+                        // uncooperative child. Forget this projection only after
+                        // the exact pid/birthday is absent or has been recycled.
+                        const postTerminationState =
+                            await observeManagedSpawnProjectionState(projection);
+                        if (postTerminationState !== 'stale') continue;
                         retiredPids.push(projection.process.pid);
                     }
                 }

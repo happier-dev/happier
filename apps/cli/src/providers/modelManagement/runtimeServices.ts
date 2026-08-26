@@ -25,6 +25,7 @@ import { createProviderProbeHttpClient } from '@/providers/probe/client';
 import { createRuntimeProviderServices } from '@/providers/probe/runtimeServices';
 import type {
   RuntimeProviderOperationScope,
+  RuntimeProviderPresentationResolutionBasis,
   RuntimeProviderServices,
 } from '@/providers/probe/runtimeServices';
 import type { ProviderRuntimeStateStore } from '@/providers/runtimeState';
@@ -280,6 +281,14 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
         }),
       };
+      // One picker projection is a point-in-time Account-settings read. Reuse
+      // its already-parsed Provider settings through the canonical resolver;
+      // queued scheduler work still re-derives current settings at its own
+      // admitted operation boundary.
+      const presentationSettingsBasis: RuntimeProviderPresentationResolutionBasis = Object.freeze({
+        accountSettings: snapshot.settings,
+        settingsRead,
+      });
       const assemble = async (runtimeState: ProviderRuntimeStateFileV1) => {
         const catalogs: ProviderConnectionCatalog[] = [];
         const modelLoadProjectionByConnectionId = new Map<string, Readonly<{
@@ -293,7 +302,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
           const context = await sharedRuntime.resolvePresentationCatalogContext({
             connectionId: connection.id,
             machineId: request.machineId,
-          }, runtimeState, operationScope);
+          }, runtimeState, operationScope, presentationSettingsBasis);
           if (context.status === 'error') continue;
           const authorizedForDemand = context.connection.authorization.authorized;
           if (authorizedForDemand) {

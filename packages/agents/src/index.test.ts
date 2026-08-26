@@ -8,13 +8,11 @@ import * as agents from './index.js';
 import {
   AGENTS_CORE,
   AGENT_MODEL_CONFIG,
-  AGENT_AUTH_PROBE_CONFIG,
   AGENT_LOCAL_CLI_CONFIG,
   AGENT_SESSION_MODE_DESCRIPTORS,
   AGENT_SESSION_MODES,
   AGENT_CLI_RUNTIME_SPECS,
   CANONICAL_AGENT_MODEL_CONFIG,
-  CANONICAL_AGENT_AUTH_PROBE_CONFIG,
   CANONICAL_AGENT_LOCAL_CLI_CONFIG,
   CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS,
   CANONICAL_AGENT_SESSION_MODES,
@@ -33,7 +31,6 @@ import {
   getBackendCatalogDefinition,
   getBackendDefinitionContract,
   readNormalizedRuntimeDescriptor,
-  getProviderAuthAdapter,
   getProviderConnectedServicesAdapter,
   getAgentResumeConfig,
   getProviderRuntimePreferencesAdapter,
@@ -46,7 +43,6 @@ import {
   type SessionStateFacet,
   type AgentId,
   type BundledAgentId,
-  type AgentAuthProbeConfig,
   type AgentLocalCliConfig,
   type CanonicalAgentId,
   type AgentCliRuntimeSpec,
@@ -342,14 +338,12 @@ describe('agents package exports', () => {
     expect(agents.AGENT_IDS).not.toContain('customAcp');
     expect(AGENTS_CORE).not.toHaveProperty('customAcp');
     expect(AGENT_MODEL_CONFIG).not.toHaveProperty('customAcp');
-    expect(AGENT_AUTH_PROBE_CONFIG).not.toHaveProperty('customAcp');
     expect(AGENT_LOCAL_CLI_CONFIG).not.toHaveProperty('customAcp');
     expect(AGENT_SESSION_MODE_DESCRIPTORS).not.toHaveProperty('customAcp');
     expect(AGENT_SESSION_MODES).not.toHaveProperty('customAcp');
     expect(AGENT_CLI_RUNTIME_SPECS).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENTS_CORE).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENT_MODEL_CONFIG).not.toHaveProperty('customAcp');
-    expect(CANONICAL_AGENT_AUTH_PROBE_CONFIG).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENT_LOCAL_CLI_CONFIG).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENT_SESSION_MODES).not.toHaveProperty('customAcp');
@@ -366,7 +360,6 @@ describe('agents package exports', () => {
     expect(legacyCustomAcpCompat.LEGACY_COMPAT_AGENT_IDS).toEqual(['customAcp']);
     expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentCore().id).toBe('customAcp');
     expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentModelConfig().defaultMode).toBe('default');
-    expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentAuthProbeConfig().agentId).toBe('customAcp');
     expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentLocalCliConfig().agentId).toBe('customAcp');
     expect(legacyCustomAcpCompat.getLegacyCustomAcpSessionModeDescriptor().runtimeSwitch).toBe('acp-setSessionMode');
     expect(legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec().id).toBe('customAcp');
@@ -411,8 +404,6 @@ describe('agents package exports', () => {
     const invalidCompatCore: AgentCore = legacyCustomAcpCompat.getLegacyCustomAcpAgentCore();
     // @ts-expect-error customAcp compat runtime specs must not satisfy the canonical AgentCliRuntimeSpec contract.
     const invalidCompatRuntimeSpec: AgentCliRuntimeSpec = legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
-    // @ts-expect-error customAcp compat auth metadata must not satisfy the canonical AgentAuthProbeConfig contract.
-    const invalidCompatAuthProbeConfig: AgentAuthProbeConfig = legacyCustomAcpCompat.getLegacyCustomAcpAgentAuthProbeConfig();
     // @ts-expect-error customAcp compat local CLI metadata must not satisfy the canonical AgentLocalCliConfig contract.
     const invalidCompatLocalCliConfig: AgentLocalCliConfig = legacyCustomAcpCompat.getLegacyCustomAcpAgentLocalCliConfig();
 
@@ -422,9 +413,8 @@ describe('agents package exports', () => {
       {} as InvalidPublicLegacyCompatId,
       invalidCompatCore,
       invalidCompatRuntimeSpec,
-      invalidCompatAuthProbeConfig,
       invalidCompatLocalCliConfig,
-    ]).toHaveLength(7);
+    ]).toHaveLength(6);
   });
 
   it('re-exports the canonical runtime identity reader from the package root', () => {
@@ -456,6 +446,20 @@ describe('agents package exports', () => {
     expect(agents.RUNTIME_DESCRIPTOR_PROVIDER_IDS).toEqual(['antigravity', 'codex', 'opencode', 'pi']);
     expect(typeof agents.getRuntimeDescriptorReader).toBe('function');
     expect(agents.getRuntimeDescriptorReader('codex')).toBeDefined();
+  });
+
+  it('re-exports the Agent-surface runtime descriptor reader from the package root', () => {
+    expect(agents.readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { providerSessionId: 'thread_1' },
+      },
+    })).toEqual({
+      v: 1,
+      agentId: 'codex',
+      agent: { providerSessionId: 'thread_1' },
+    });
   });
 
   it('re-exports the canonical runtime-foundation types from the package root', () => {
@@ -517,16 +521,10 @@ describe('agents package exports', () => {
     expect(typeof publishRuntimeCapabilities).toBe('function');
   });
 
-  it('re-exports the canonical provider auth and connected-services adapters from the package root', () => {
-    expect(typeof getProviderAuthAdapter).toBe('function');
+  it('re-exports the canonical connected-services adapters from the package root', () => {
     expect(typeof getProviderConnectedServicesAdapter).toBe('function');
     expect(typeof getAgentResumeConfig).toBe('function');
     expect(typeof getProviderRuntimePreferencesAdapter).toBe('function');
-    expect(getProviderAuthAdapter('claude')).toEqual({
-      supportKind: 'login_terminal',
-      localCliAuth: expect.any(Object),
-      loginLaunch: expect.any(Object),
-    });
     expect(getProviderConnectedServicesAdapter('codex')).toEqual(
       expect.objectContaining({
         cloudConnect: expect.any(Object),

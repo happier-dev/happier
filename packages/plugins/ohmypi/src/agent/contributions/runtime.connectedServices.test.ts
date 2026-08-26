@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
+import { OH_MY_PI_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
 
 function readConnectedServices() {
   return OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION.connectedServices;
@@ -23,11 +24,11 @@ describe('OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION connected-service runtime-control 
     });
   });
 
-  it('exports a provider-owned model preflight contribution for source-real dynamic probing', () => {
-    expect(OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION.preflightSessionControls).toEqual({
-      failureCacheStrategy: 'cooldown',
-      probeModelsRaw: expect.any(Function),
-      cliModelsCommandArgs: ['--list-models'],
+  it('keeps public model preflight declaration separate from connected-service ownership', () => {
+    expect(OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('preflightSessionControls');
+    expect(OH_MY_PI_PREFLIGHT_SESSION_CONTROLS.models?.command).toEqual({
+      toolId: 'ohmypi-cli',
+      args: ['--list-models'],
     });
   });
 

@@ -1334,6 +1334,7 @@ export function createCodexAppServerRuntime(
       descriptor: buildCodexAgentRuntimeDescriptorV1({
         backendMode: 'appServer',
         providerSessionId: normalizedThreadId,
+        homePath: resolveCodexHome(readRuntimeProcessEnv()),
       }),
     });
   };

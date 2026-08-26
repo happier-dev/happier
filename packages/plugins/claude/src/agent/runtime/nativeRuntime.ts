@@ -1,8 +1,6 @@
 import type {
   AgentLaunchEnvironment,
-  AgentExecutionRunEvent,
   AgentExecutionRunOpenRequest,
-  AgentExecutionRunRuntime,
   AgentRuntime,
   AgentRuntimeContext,
   AgentRuntimeFactory,
@@ -24,6 +22,7 @@ import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type { AgentModelDescriptor } from '@happier-dev/plugin-sdk/agents';
 import {
   createAgentSessionPreAdmissionBuffer,
+  createExecutionRunHostBackendFromSessionRuntime,
   type AgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBufferResult,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -97,12 +96,6 @@ export {
 type NativeSessionEventInput = AgentSessionRuntimeEvent extends infer Event
   ? Event extends AgentSessionRuntimeEvent
     ? Omit<Event, 'sequence' | 'sessionId' | 'emittedAtMs'>
-    : never
-  : never;
-
-type NativeExecutionRunEventInput = AgentExecutionRunEvent extends infer Event
-  ? Event extends AgentExecutionRunEvent
-    ? Omit<Event, 'sequence' | 'runId' | 'emittedAtMs'>
     : never
   : never;
 
@@ -299,10 +292,10 @@ export const prepareClaudeQualifiedConnectedAccountLaunch:
           async dispose() {},
         });
       }
-      // The binding sends Claude Code to another upstream and supplies no
-      // credential, so an inherited config root would answer for that route
-      // with the user's personal Anthropic login. Pin an isolated root that
-      // still shares their non-identity Claude configuration.
+      // The binding supplies no credential, so an inherited config root would
+      // answer for this Provider-selected launch with the user's personal
+      // Anthropic login. Pin an isolated root that still shares their
+      // non-identity Claude configuration.
       const isolatedRootDir = await mkdtemp(
         join(tmpdir(), 'happier-claude-provider-binding-'),
       );
@@ -628,12 +621,7 @@ function mapEvent(event: ClaudeProviderEvent): NativeSessionEventInput | null {
         ...(event.reason ? { diagnostic: diagnostic('claude_runtime_ended', event.reason) } : {}),
       };
     case 'backend-error':
-      return {
-        kind: 'runtime-ended',
-        cause: 'protocolError',
-        retryable: false,
-        diagnostic: diagnostic(event.error.code ?? 'claude_backend_error', event.error.message),
-      };
+      return null;
     default:
       return null;
   }
@@ -1258,33 +1246,16 @@ function readStringArray(value: unknown): readonly string[] | null {
 function terminalSurface(): NonNullable<AgentRuntime['surfaces']>['terminal'] {
   return {
     resolveLaunch(request) {
-      const terminal = metadataRecord(request.metadata.terminalRuntime);
-      const rawArgs = readStringArray(request.metadata.claudeArgs)
-        ?? readStringArray(terminal.claudeArgs)
-        ?? [];
-      const partition = partitionClaudeTerminalUserArgs(rawArgs);
-      const overrides = parseClaudeTerminalRawSpawnOptionOverrides(rawArgs);
       const model = request.modelSelection?.modelId.trim() || null;
-      // A Provider-bound fallback needs its own structured authorization; raw
-      // metadata or argv cannot widen the exact host-selected Provider model.
-      const fallbackModel = request.modelSelection?.providerConnectionId
-        ? null
-        : readString(request.metadata.fallbackModel) ?? overrides.fallbackModel;
-      const customSystemPrompt = readString(request.metadata.customSystemPrompt) ?? overrides.customSystemPrompt;
-      const appendSystemPrompt = readString(request.metadata.appendSystemPrompt) ?? overrides.appendSystemPrompt;
+      const permissionMode = request.configuration?.permissionIntent.value ?? null;
       return {
         argv: resolveClaudeLaunchSettingsOverlayArgs({
           args: [
-            ...partition.flagArgs,
             ...(model ? ['--model', model] : []),
-            ...(fallbackModel ? ['--fallback-model', fallbackModel] : []),
-            ...(customSystemPrompt ? ['--system-prompt', customSystemPrompt] : []),
-            ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
-            ...partition.positionalArgs,
-            ...partition.trailingPermissionFlagArgs,
+            ...(permissionMode ? ['--permission-mode', mapToClaudePermissionMode(permissionMode)] : []),
           ],
           interactionKind: 'interactive_terminal',
-          permissionMode: mapToClaudePermissionMode(partition.trailingPermissionFlagArgs[1]),
+          permissionMode: permissionMode ? mapToClaudePermissionMode(permissionMode) : null,
           launchSettings: {},
         }),
         process: { stdio: 'inherit', windowsHide: true },
@@ -1293,75 +1264,6 @@ function terminalSurface(): NonNullable<AgentRuntime['surfaces']>['terminal'] {
           onExit: { target: 'remote', reason: 'claude_terminal_runtime_launcher_exit' },
         },
       };
-    },
-  };
-}
-
-function createExecutionRunRuntime(
-  request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>,
-  session: AgentSessionRuntime,
-): AgentExecutionRunRuntime {
-  const listeners = new Set<(event: AgentExecutionRunEvent) => void>();
-  const history: AgentExecutionRunEvent[] = [];
-  let eventSequence = 0;
-  let turnOrdinal = 0;
-  let activeTurnId: string | null = null;
-  const emit = (event: NativeExecutionRunEventInput, emittedAtMs = Date.now()): void => {
-    const value = Object.freeze({
-      ...event,
-      sequence: ++eventSequence,
-      runId: request.runId,
-      emittedAtMs,
-    }) as AgentExecutionRunEvent;
-    history.push(value);
-    for (const listener of listeners) listener(value);
-  };
-  const subscription = session.watch((event) => {
-    if (event.kind === 'message-delta') {
-      emit({ kind: 'output-delta', channel: event.channel, text: event.text }, event.emittedAtMs);
-    } else if (event.kind === 'provider-session-id') {
-      emit({ kind: 'checkpoint', checkpointId: event.providerSessionId }, event.emittedAtMs);
-    } else if (event.kind === 'turn-progress') {
-      emit({ kind: 'run-progress' }, event.emittedAtMs);
-    } else if (event.kind === 'turn-complete') {
-      activeTurnId = null;
-      emit({ kind: 'run-complete' }, event.emittedAtMs);
-    } else if (event.kind === 'turn-failed') {
-      activeTurnId = null;
-      emit({ kind: 'run-failed', diagnostic: event.diagnostic }, event.emittedAtMs);
-    } else if (event.kind === 'turn-cancelled') {
-      activeTurnId = null;
-      emit({ kind: 'run-cancelled', ...(event.diagnostic ? { diagnostic: event.diagnostic } : {}) }, event.emittedAtMs);
-    }
-  });
-  const send: AgentExecutionRunRuntime['send'] = async (input, options) => {
-    activeTurnId = `${request.runId}-turn-${++turnOrdinal}`;
-    const result = await session.send({
-      inputIds: [`${request.runId}-input-${turnOrdinal}`],
-      input,
-      delivery: { kind: 'newTurn', turnId: activeTurnId },
-    }, options);
-    return result.status === 'admitted'
-      ? { status: 'admitted' as const }
-      : { status: result.status, diagnostic: result.diagnostic };
-  };
-  emit({ kind: 'run-start' });
-  return {
-    send,
-    async stop(options) {
-      if (!activeTurnId) return { status: 'notRunning' };
-      const result = await session.cancel?.({ turnId: activeTurnId, reason: 'user' }, options);
-      return { status: result?.status ?? 'unsupported' };
-    },
-    watch(listener) {
-      listeners.add(listener);
-      for (const event of history) listener(event);
-      return { dispose: () => { listeners.delete(listener); } };
-    },
-    async dispose() {
-      subscription.dispose();
-      listeners.clear();
-      await session.dispose();
     },
   };
 }
@@ -1436,68 +1338,74 @@ export function createClaudeNativeRuntime(
         if (request.kind !== 'create') {
           throw new Error(`Claude execution runs do not support ${request.kind}.`);
         }
-        if (!options.openExecutionSession) {
+        const openExecutionSession = options.openExecutionSession;
+        if (!openExecutionSession) {
           throw new Error('Claude native execution session factory is unavailable.');
         }
-        const sessionRequest: AgentSessionOpenRequest = {
-          kind: 'create',
-          sessionId: request.runId,
-          cwd: request.cwd,
-          ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
-          ...(request.configuration ? { configuration: request.configuration } : {}),
-          ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
-          ...(request.stateSharing ? { stateSharing: request.stateSharing } : {}),
-        };
-        const prepared = options.prepareLaunchEnvironment
-          ? await options.prepareLaunchEnvironment({
-              request: sessionRequest,
-              context,
-            })
-          : null;
-        const effectiveRequest = prepared
-          ? Object.freeze({
-              ...request,
-              launchEnvironment: prepared.launchEnvironment,
-            }) as Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>
-          : request;
-        const effectiveSessionRequest: AgentSessionOpenRequest = prepared
-          ? Object.freeze({
-              ...sessionRequest,
-              launchEnvironment: prepared.launchEnvironment,
-            })
-          : sessionRequest;
-        let operations: ClaudeNativeSessionOperations;
-        try {
-          const supportsEffort = await (options.resolveSupportsEffort
-            ?? resolveClaudeInstalledEffortSupport)({
-              request: effectiveRequest,
-              context,
-            });
-          if (prepared?.isInvalidated()) {
-            throw new Error('Claude qualified Connected Account launch was invalidated before opening the runtime.');
-          }
-          operations = await options.openExecutionSession({
-            request: effectiveRequest,
-            context,
-            supportsEffort,
-          });
-        } catch (error) {
-          await prepared?.dispose();
-          throw error;
-        }
-        const session = createClaudeNativeSessionRuntimeFromOperations(
-          operations,
-          effectiveSessionRequest,
-          undefined,
-          async () => await prepared?.dispose(),
-        );
-        prepared?.armInvalidation(
-          async () => await session.dispose('runtime_recovery'),
-        );
-        const runtime = createExecutionRunRuntime(request, session);
-        const result = await runtime.send(request.input);
-        if (result.status !== 'admitted') await runtime.dispose();
-        return runtime;
+        return await createExecutionRunHostBackendFromSessionRuntime({
+          request,
+          openSession: async () => {
+            const sessionRequest: AgentSessionOpenRequest = {
+              kind: 'create',
+              sessionId: request.runId,
+              cwd: request.cwd,
+              ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
+              ...(request.configuration ? { configuration: request.configuration } : {}),
+              ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
+              ...(request.stateSharing ? { stateSharing: request.stateSharing } : {}),
+            };
+            const prepared = options.prepareLaunchEnvironment
+              ? await options.prepareLaunchEnvironment({
+                  request: sessionRequest,
+                  context,
+                })
+              : null;
+            const effectiveRequest = prepared
+              ? Object.freeze({
+                  ...request,
+                  launchEnvironment: prepared.launchEnvironment,
+                }) as Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>
+              : request;
+            const effectiveSessionRequest: AgentSessionOpenRequest = prepared
+              ? Object.freeze({
+                  ...sessionRequest,
+                  launchEnvironment: prepared.launchEnvironment,
+                })
+              : sessionRequest;
+            let operations: ClaudeNativeSessionOperations;
+            try {
+              const supportsEffort = await (options.resolveSupportsEffort
+                ?? resolveClaudeInstalledEffortSupport)({
+                  request: effectiveRequest,
+                  context,
+                });
+              if (prepared?.isInvalidated()) {
+                throw new Error('Claude qualified Connected Account launch was invalidated before opening the runtime.');
+              }
+              operations = await openExecutionSession({
+                request: effectiveRequest,
+                context,
+                supportsEffort,
+              });
+            } catch (error) {
+              await prepared?.dispose();
+              throw error;
+            }
+            const session = createClaudeNativeSessionRuntimeFromOperations(
+              operations,
+              effectiveSessionRequest,
+              undefined,
+              async () => await prepared?.dispose(),
+            );
+            prepared?.armInvalidation(
+              async () => await session.dispose('runtime_recovery'),
+            );
+            return session;
+          },
+          readCheckpointId: (event) => event.kind === 'provider-session-id'
+            ? event.providerSessionId
+            : null,
+        });
       },
     },
     surfaces: {

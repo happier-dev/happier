@@ -1,8 +1,8 @@
 import {
   ProviderConnectionIdSchema,
   SESSION_PROVIDER_BINDING_METADATA_KEY_V1,
-  SessionModelSelectionIntentV1Schema,
   createProviderErrorV1,
+  readSessionModelSelectionIntentSourceV1,
   readSessionProviderBindingMetadataStateV1,
   type ProviderErrorV1,
   type SessionModelSelectionV1,
@@ -41,15 +41,6 @@ function readRawIntentConnectionIdHint(value: unknown): string | undefined {
   );
 }
 
-function hasRawProviderIntent(value: unknown): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const selection = (value as Readonly<Record<string, unknown>>).selection;
-  if (!selection || typeof selection !== 'object' || Array.isArray(selection)) return false;
-  const selectionRecord = selection as Readonly<Record<string, unknown>>;
-  return Object.prototype.hasOwnProperty.call(selectionRecord, 'providerConnectionId')
-    && selectionRecord.providerConnectionId !== null;
-}
-
 /**
  * Restores the next-launch model intent independently from the previous active
  * Provider binding. A restart-required proposal is expected to differ from the
@@ -65,14 +56,20 @@ export function readPersistedProviderResumeState(
   const rawIntent = metadata?.modelSelectionIntentV1;
   const bindingState = readSessionProviderBindingMetadataStateV1(metadata);
   const binding = bindingState.kind === 'valid' ? bindingState.binding : null;
-  const intent = SessionModelSelectionIntentV1Schema.safeParse(rawIntent);
-  const intentData = intent.success ? intent.data : null;
+  // Protocol owns canonical-carrier presence and invalidity. In particular, a
+  // present malformed value is corrupted state, never an implicit native
+  // selection merely because it lacks a recognizable Provider-shaped field.
+  const intentSource = readSessionModelSelectionIntentSourceV1({
+    canonical: rawIntent,
+    legacy: undefined,
+  });
+  const intentData = intentSource.status === 'canonical' ? intentSource.intent : null;
   const selection = intentData?.selection ?? null;
   if (bindingState.kind === 'invalid') {
     throw new PersistedProviderResumeBindingError(readRawConnectionIdHint(rawBinding));
   }
   const rawIntentConnectionIdHint = readRawIntentConnectionIdHint(rawIntent);
-  if (!intent.success && hasRawProviderIntent(rawIntent)) {
+  if (intentSource.status === 'invalid') {
     throw new PersistedProviderResumeBindingError(rawIntentConnectionIdHint);
   }
   if (!intentData || !selection) {

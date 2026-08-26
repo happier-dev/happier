@@ -96,6 +96,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     expect(runtime.surfaces?.handoff).toEqual({
       exportBundle: expect.any(Function),
       importBundle: expect.any(Function),
+      extractMediaScannableRecords: expect.any(Function),
     });
     await expect(runtime.surfaces?.fork?.resolveReplayChildLaunch?.({
       parentSessionId: 'parent-session',

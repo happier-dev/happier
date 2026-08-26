@@ -26,7 +26,6 @@ import {
     executeTerminalHostDisposition,
     resolveRuntimeTerminalHostDispositionIntent,
 } from '@/terminal/attachment/terminalHostDisposition';
-import { notifyTerminalAttachmentRetiredThroughCatalog } from '@/terminal/attachment/catalogHooks';
 import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
 import {
     requireAgentCliLaunchSpec,
@@ -35,8 +34,6 @@ import {
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { finalizeSessionChildEnvironment } from '@/session/runtime/control/finalizeSessionChildEnvironment';
 import { selectTrustedSessionControlEnvironment } from '@/session/runtime/control/sessionControlEnvironment';
-import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
-import { logger } from '@/ui/logger';
 
 type AgentTerminalHostService = NonNullable<AgentSessionHostServices['terminalHost']>;
 type AgentTerminalHostCreateOrAttachRequest =
@@ -426,19 +423,6 @@ export function createDefaultPluginTerminalHostService(
             if (mustDestroyExactHost && disposition.status !== 'destroyed') {
                 const failure = disposition.status === 'parked' ? disposition.reason : disposition.status;
                 throw new Error(`Exact terminal-host disposal did not complete: ${failure}`);
-            }
-            if (disposition.status === 'destroyed') {
-                await notifyTerminalAttachmentRetiredThroughCatalog({
-                    happyHomeDir: params.happyHomeDir,
-                    sessionId,
-                    attachmentInfo,
-                }).catch((error) => {
-                    // Host retirement is already irreversible; provider cleanup remains advisory.
-                    logger.warn(
-                        '[PLUGIN TERMINAL HOST] Provider artifacts could not be cleaned after exact host retirement',
-                        { error: projectPluginFailureText(error) },
-                    );
-                });
             }
         },
     });

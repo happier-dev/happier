@@ -10,7 +10,7 @@ export const AGENT_DEFINITION = Object.freeze({
     flavorAliases: ['kimi-cli'],
     cloudConnect: null,
     connectedServices: null,
-    resume: { vendorResume: 'supported', vendorResumeIdField: 'kimiSessionId' },
+    resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'kimiSessionId' },
     sessionStorage: { direct: false, persisted: true },
     sessionCapabilities: {
       sessionListing: 'unsupported',
@@ -29,11 +29,5 @@ export const AGENT_DEFINITION = Object.freeze({
     dynamicProbe: 'auto',
     defaultMode: 'default',
     allowedModes: ['default'],
-  },
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'KIMI_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    },
   },
 });

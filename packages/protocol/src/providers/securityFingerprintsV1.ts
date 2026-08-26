@@ -17,6 +17,7 @@ import { CapabilitySupportSchema, ProviderWireProtocolSchema } from './capabilit
 import type { ProviderCatalogProbeV1 } from './catalog/descriptorV1.js';
 import {
   ProviderCatalogParserV1Schema,
+  ProviderCatalogSourceRegistryVersionV1Schema,
   ProviderCatalogProbeV1Schema,
   type ProviderCatalogParserV1,
 } from './catalog/descriptorV1.js';
@@ -127,6 +128,43 @@ function canonicalManagedRequestAuthUsesV1(
     compareProviderCanonicalStringsV1(left.purpose, right.purpose));
 }
 
+/**
+ * Projects the declaration facts shared by every managed security boundary.
+ * Each caller supplies its own domain separator and operation-specific facts;
+ * this is the one place that resolves and canonicalizes the managed runtime
+ * declaration itself.
+ */
+function projectManagedRuntimeDeclarationSecurityFactsV1(input: Readonly<{
+  implementationIdentity: Readonly<{ pluginId: string; localId: string }>;
+  managedRuntime:
+    | ProviderManagedRuntimeDeclarationV1
+    | ResolvedProviderManagedRuntimeDeclarationV1;
+}>) {
+  const implementationIdentity = PluginContributionIdentityV1Schema.parse(
+    input.implementationIdentity,
+  );
+  const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
+    implementationIdentity,
+    managedRuntime: input.managedRuntime,
+  });
+  return {
+    implementationIdentity,
+    managedRuntime: {
+      kind: 'managed' as const,
+      dependencies: [...managedRuntime.dependencies].sort(
+        compareProviderCanonicalStringsV1,
+      ),
+      endpointTemplateIds: [...managedRuntime.endpointTemplateIds],
+      connectedAccounts: canonicalManagedConnectedAccountsV1(
+        managedRuntime.connectedAccounts,
+      ),
+      requestAuthUses: canonicalManagedRequestAuthUsesV1(
+        managedRuntime.requestAuthUses,
+      ),
+    },
+  };
+}
+
 export const PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1 = 1;
 
 function positiveSchemaVersion(value: number, name: string): number {
@@ -220,37 +258,22 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
   if (input.endpoints.length !== 0) {
     throw new TypeError('Managed Provider connection security facts must not contain durable endpoints');
   }
-  const implementationIdentity = PluginContributionIdentityV1Schema.parse(
-    input.managedDeployment.implementationIdentity,
-  );
-  const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
-    implementationIdentity,
+  const managedDeclaration = projectManagedRuntimeDeclarationSecurityFactsV1({
+    implementationIdentity: input.managedDeployment.implementationIdentity,
     managedRuntime: input.managedDeployment.managedRuntime,
   });
   return createProviderFingerprintV1('connection-security', {
     ...normalizedSharedFacts,
     deployment: {
       kind: 'managedLocal',
-      implementationIdentity,
+      implementationIdentity: managedDeclaration.implementationIdentity,
       logicalEndpoints: input.managedDeployment.logicalEndpoints
         .map(normalizeManagedEndpoint)
         .sort((left, right) => compareProviderCanonicalStringsV1(
           left.endpointTemplateId,
           right.endpointTemplateId,
         )),
-      managedRuntime: {
-        kind: 'managed',
-        dependencies: [...managedRuntime.dependencies].sort(
-          compareProviderCanonicalStringsV1,
-        ),
-        endpointTemplateIds: [...managedRuntime.endpointTemplateIds],
-        connectedAccounts: canonicalManagedConnectedAccountsV1(
-          managedRuntime.connectedAccounts,
-        ),
-        requestAuthUses: canonicalManagedRequestAuthUsesV1(
-          managedRuntime.requestAuthUses,
-        ),
-      },
+      managedRuntime: managedDeclaration.managedRuntime,
     },
   });
 }
@@ -338,33 +361,16 @@ export function createProviderBindingSecurityFingerprintV1(
   if ('endpointUrl' in input) {
     throw new TypeError('Managed Provider binding security facts must not contain a realized endpoint URL');
   }
+  const managedDeclaration = projectManagedRuntimeDeclarationSecurityFactsV1({
+    implementationIdentity: input.deployment.implementationIdentity,
+    managedRuntime: input.deployment.managedRuntime,
+  });
   return createProviderFingerprintV1('binding-security', {
     ...normalizedSharedFacts,
     endpointIdentity: {
       kind: 'managedLocal',
-      implementationIdentity: PluginContributionIdentityV1Schema.parse(
-        input.deployment.implementationIdentity,
-      ),
-      managedRuntime: (() => {
-        const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
-          implementationIdentity:
-            input.deployment.implementationIdentity,
-          managedRuntime: input.deployment.managedRuntime,
-        });
-        return {
-          kind: 'managed' as const,
-          dependencies: [...managedRuntime.dependencies].sort(
-            compareProviderCanonicalStringsV1,
-          ),
-          endpointTemplateIds: [...managedRuntime.endpointTemplateIds],
-          connectedAccounts: canonicalManagedConnectedAccountsV1(
-            managedRuntime.connectedAccounts,
-          ),
-          requestAuthUses: canonicalManagedRequestAuthUsesV1(
-            managedRuntime.requestAuthUses,
-          ),
-        };
-      })(),
+      implementationIdentity: managedDeclaration.implementationIdentity,
+      managedRuntime: managedDeclaration.managedRuntime,
       endpointTemplateId: ProviderLocalIdSchema.parse(input.endpointTemplateId),
       protocol: ProviderWireProtocolSchema.parse(input.protocol),
       publicHeaders: normalizeProviderPublicHeaders(input.publicHeaders),
@@ -573,17 +579,16 @@ export function createProviderManagedProbeRequestFingerprintV1(input: Readonly<{
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
   endpointTemplateId: string;
   protocol: ProviderWireProtocol;
+  /** Required for every managed dynamic catalog declaration. */
+  sourceRegistryVersion: string;
   method: 'GET';
   path: string;
   parser: ProviderCatalogParserV1;
   publicHeaders: Readonly<Record<string, string>>;
 }>): ProviderProbeRequestFingerprintV1 {
   if (input.method !== 'GET') throw new TypeError('Provider catalog and availability probes must use GET');
-  const implementationIdentity = PluginContributionIdentityV1Schema.parse(
-    input.implementationIdentity,
-  );
-  const managedRuntime = resolveProviderManagedRuntimeDeclarationV1({
-    implementationIdentity,
+  const managedDeclaration = projectManagedRuntimeDeclarationSecurityFactsV1({
+    implementationIdentity: input.implementationIdentity,
     managedRuntime: input.managedRuntime,
   });
   const purposeBindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(
@@ -596,30 +601,22 @@ export function createProviderManagedProbeRequestFingerprintV1(input: Readonly<{
   const endpointTemplateId = ProviderLocalIdSchema.parse(
     input.endpointTemplateId,
   );
-  if (!managedRuntime.endpointTemplateIds.includes(endpointTemplateId)) {
+  const sourceRegistryVersion = ProviderCatalogSourceRegistryVersionV1Schema.parse(
+    input.sourceRegistryVersion,
+  );
+  if (!managedDeclaration.managedRuntime.endpointTemplateIds.includes(endpointTemplateId)) {
     throw new TypeError(
       'Managed Provider catalog endpoint is outside the public declaration',
     );
   }
   return ProviderProbeRequestFingerprintV1Schema.parse(createProviderFingerprintV1('probe-request', {
     deployment: 'managedLocal',
-    implementationIdentity,
-    managedRuntime: {
-      kind: 'managed',
-      dependencies: [...managedRuntime.dependencies].sort(
-        compareProviderCanonicalStringsV1,
-      ),
-      connectedAccounts: canonicalManagedConnectedAccountsV1(
-        managedRuntime.connectedAccounts,
-      ),
-      requestAuthUses: canonicalManagedRequestAuthUsesV1(
-        managedRuntime.requestAuthUses,
-      ),
-      endpointTemplateIds: [...managedRuntime.endpointTemplateIds],
-    },
+    implementationIdentity: managedDeclaration.implementationIdentity,
+    managedRuntime: managedDeclaration.managedRuntime,
     purposeBindings: { v: 1, bindings: canonicalBindings },
     endpointTemplateId,
     protocol: ProviderWireProtocolSchema.parse(input.protocol),
+    sourceRegistryVersion,
     method: 'GET',
     path,
     parser,
@@ -648,10 +645,18 @@ export function createProviderCatalogFingerprintV1(input: Readonly<{
     descriptor: ProviderCatalogCommandFallbackV1;
     endpointUrl: string;
   }>;
+  /**
+   * A managed fallback is declaration-owned and deliberately excludes the
+   * launch-local URL, which is neither durable catalog identity nor a grant.
+   */
+  managedCatalogFallback?: ProviderCatalogCommandFallbackV1;
 }>): ProviderCatalogFingerprintV1 {
   if (input.probeRequestFingerprints.length < 1
     || input.probeRequestFingerprints.length > PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes) {
     throw new TypeError('Catalog observations require one to three ordered probe requests');
+  }
+  if (input.catalogFallback && input.managedCatalogFallback) {
+    throw new TypeError('Catalog observations cannot mix external and managed command fallback identity');
   }
   const probeRequestFingerprints = input.probeRequestFingerprints.map((fingerprint) =>
     ProviderProbeRequestFingerprintV1Schema.parse(fingerprint));
@@ -662,6 +667,11 @@ export function createProviderCatalogFingerprintV1(input: Readonly<{
         descriptor: ProviderCatalogCommandFallbackV1Schema.parse(input.catalogFallback.descriptor),
         endpointUrl: ProviderEndpointUrlSyntaxSchema.parse(input.catalogFallback.endpointUrl),
       },
+    } : {}),
+    ...(input.managedCatalogFallback ? {
+      managedCatalogFallback: ProviderCatalogCommandFallbackV1Schema.parse(
+        input.managedCatalogFallback,
+      ),
     } : {}),
   }));
 }

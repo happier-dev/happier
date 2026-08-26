@@ -3442,7 +3442,6 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 install: { manual: { kind: 'none' } },
                 auth: {
                     support: 'unsupported',
-                    probe: { parser: 'none', backgroundChecks: 'safe' },
                     loginLaunches: [],
                 },
             };
@@ -3486,6 +3485,36 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                                 };
                             },
                         },
+                        providerCliAttach: {
+                            resolveTarget({ metadata }) {
+                                const providerSessionId = typeof metadata.providerSessionId === 'string'
+                                    ? metadata.providerSessionId
+                                    : null;
+                                return providerSessionId
+                                    ? {
+                                        ok: true,
+                                        value: { providerSessionId },
+                                    }
+                                    : { ok: false, reason: 'Expected provider session metadata.' };
+                            },
+                            createArgs(target) {
+                                return ['attach', '--session', target.providerSessionId];
+                            },
+                            buildHealthUrl(target) {
+                                return 'https://attach.example.test/' + target.providerSessionId;
+                            },
+                        },
+                        terminalPromptSubmitVerification: {
+                            shouldVerifyAfterSubmit(promptText) {
+                                return promptText.trim().length > 0;
+                            },
+                            verifyBeforeSubmitStaging({ promptText, screenText }) {
+                                return screenText.includes(promptText);
+                            },
+                            verifyAfterSubmit({ promptText, screenText }) {
+                                return screenText.includes(promptText);
+                            },
+                        },
                     });
                 }
             `, 'utf8');
@@ -3521,6 +3550,26 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             ).toBeDefined();
             const catalogEntry = runtimeRegistry.contributes.catalogEntriesById[SAMPLE_PLUGIN_PROVIDER_ID];
             expect(catalogEntry?.getDaemonSpawnHooks).toBeTypeOf('function');
+            expect(catalogEntry?.resolveHostAgentRuntimeSurfaces).toBeTypeOf('function');
+            expect(catalogEntry?.getTerminalPromptSubmitVerificationPolicy).toBeTypeOf('function');
+            const terminalPromptSubmitVerification = await catalogEntry
+                ?.getTerminalPromptSubmitVerificationPolicy?.();
+            expect(terminalPromptSubmitVerification?.shouldVerifyAfterSubmit('continue')).toBe(true);
+            expect(terminalPromptSubmitVerification?.verifyBeforeSubmitStaging?.({
+                promptText: 'continue',
+                screenText: 'continue',
+            })).toBe(true);
+            expect(terminalPromptSubmitVerification?.verifyAfterSubmit({
+                promptText: 'continue',
+                screenText: 'continue',
+            })).toBe(true);
+            const attach = (await catalogEntry?.resolveHostAgentRuntimeSurfaces?.())?.attach;
+            await expect(attach?.evaluateAvailability?.({
+                operation: 'attach',
+                sessionId: 'external-agent-session',
+                metadata: { providerSessionId: 'provider-session-1' },
+                depth: 'metadata',
+            })).resolves.toEqual({ available: true });
             if (!catalogEntry?.getDaemonSpawnHooks) return;
             const externalHooks = await catalogEntry.getDaemonSpawnHooks();
             expect(externalHooks).toBeDefined();

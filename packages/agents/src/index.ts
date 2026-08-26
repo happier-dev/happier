@@ -209,13 +209,7 @@ export {
   type AgentLocalCliConfig,
 } from './localCli.js';
 export {
-  AGENT_AUTH_PROBE_CONFIG,
-  CANONICAL_AGENT_AUTH_PROBE_CONFIG,
-  getAgentAuthProbeConfig,
-  isAgentAuthProbeSafeForBackgroundChecks,
-  type AgentAuthProbeConfig,
-  type AgentAuthProbeBackgroundChecks,
-  type AgentAuthProbeParser,
+  isAgentCliAuthBackgroundCheckSafe,
 } from './auth.js';
 export {
   BUILT_IN_ACP_CONFIG,
@@ -416,6 +410,9 @@ export {
   type SessionMetadataConnectedServiceBinding,
 } from './runtime/identity/readSessionMetadataRuntimeDescriptor.js';
 export {
+  readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata,
+} from './runtime/identity/readAgentSurfaceRuntimeDescriptorV1.js';
+export {
   applyAgentRuntimeKindOverrideToAccountSettings,
   normalizeAgentRuntimeKindOverride,
   resolveAgentConfiguredRuntimeKind,
@@ -572,6 +569,13 @@ export type {
   HandoffFailureCodeV1,
   HandoffImportRequestV1,
   HandoffImportResultV1,
+  HandoffMediaScannableRecordsRequestV1,
+  HandoffNativeTranscriptPathCandidateRequestV1,
+  HandoffNativeTranscriptPathCandidateV1,
+  HandoffRuntimeLocalExternalSessionSourceV1,
+  HandoffRuntimeLocalMetadataIdentityV1,
+  HandoffRuntimeLocalMetadataRequestV1,
+  HandoffRuntimeLocalMetadataV1,
   HandoffSurfaceV1,
   ListCheckpointsRequestV1,
   ReplayForkChildLaunchRequestV1,
@@ -657,13 +661,11 @@ export {
   publishRuntimeCapabilities,
 } from './runtime/capabilities/runtimeCapabilitiesPublication.js';
 export type {
-  ProviderAuthAdapter,
   ProviderConnectedServicesAdapter,
   ProviderMessageMetaEnricher,
   RuntimePreferencesAdapter,
 } from './runtime/adjunctAdapters/types.js';
 export {
-  getProviderAuthAdapter,
   getProviderConnectedServicesAdapter,
   getProviderRuntimePreferencesAdapter,
 } from './runtime/adjunctAdapters/index.js';

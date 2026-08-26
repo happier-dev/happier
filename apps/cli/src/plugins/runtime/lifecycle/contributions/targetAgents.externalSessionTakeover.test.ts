@@ -188,26 +188,48 @@ describe('target Agent External Session takeover lease', () => {
         await expect(takeover.resolveLaunch(request())).resolves.toEqual(result);
     });
 
-    it('carries a host-private exact native resume reference alongside the public launch plan', async () => {
+    it('carries a bounded public runtime descriptor and rejects an unrecognized takeover extension', async () => {
         const selectedSessionFile =
             '/home/lee/.pi/agent/sessions/workspace-a/pi-shared.jsonl';
-        const privateResult = Object.freeze({
+        const publicResult = Object.freeze({
             ok: true as const,
-            value: { directory: '/takeover/workspace' },
-            nativeResumeReference: selectedSessionFile,
+            value: {
+                directory: '/takeover/workspace',
+                runtimeDescriptorV1: {
+                    v: 1 as const,
+                    agentId: 'pi',
+                    agent: {
+                        providerSessionId: 'pi-shared',
+                        sessionFile: selectedSessionFile,
+                    },
+                },
+            },
         });
         const takeover = registry({
             takeover: Object.freeze({
-                resolveLaunch: async () => privateResult,
+                resolveLaunch: async () => publicResult as never,
             }),
         }).get('assistant')?.externalSessionTakeover;
         if (!takeover) throw new Error('Expected takeover lease');
 
-        await expect(takeover.resolveLaunch(request())).resolves.toMatchObject({
+        await expect(takeover.resolveLaunch(request())).resolves.toEqual({
             ok: true,
-            value: { directory: '/takeover/workspace' },
-            nativeResumeReference: selectedSessionFile,
+            value: publicResult.value,
         });
+
+        const privateTakeover = registry({
+            takeover: Object.freeze({
+                resolveLaunch: async () => ({
+                    ok: true as const,
+                    value: { directory: '/takeover/workspace' },
+                    unrecognizedHostExtension: selectedSessionFile,
+                }) as never,
+            }),
+        }).get('assistant')?.externalSessionTakeover;
+        if (!privateTakeover) throw new Error('Expected private takeover lease');
+        await expect(privateTakeover.resolveLaunch(request())).rejects.toThrow(
+            /unknown fields/u,
+        );
     });
 
     it('enforces both caller and host serialized-result ceilings', async () => {

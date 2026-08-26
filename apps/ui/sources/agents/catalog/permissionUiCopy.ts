@@ -13,6 +13,14 @@ export type PermissionFooterCopy =
         yesAllowAllEditsKey: TranslationKey;
         yesForToolKey: TranslationKey;
         stopKey: TranslationKey;
+    }>
+    | Readonly<{
+        /**
+         * A missing or unsupported prompt contract must never acquire another
+         * Agent's approval semantics. The footer can only reject it.
+         */
+        protocol: 'unavailable';
+        denyKey: TranslationKey;
     }>;
 
 /**
@@ -22,8 +30,8 @@ export type PermissionFooterCopy =
  * bundled Agent's core, declared by an installed Agent in the same public
  * `permissions` block — so the copy owner never has to know whether this build
  * ships that Agent. It stays total on purpose: a pending request is
- * unanswerable without a footer, so an Agent that declares no protocol (or one
- * this build does not recognise) lands on the neutral Claude-shaped default.
+ * unanswerable without a footer, so an Agent that declares no known protocol
+ * gets only the neutral rejecting action.
  */
 export function getPermissionFooterCopy(
     promptProtocol: PermissionPromptProtocol | null | undefined,
@@ -37,10 +45,17 @@ export function getPermissionFooterCopy(
         };
     }
 
+    if (promptProtocol === 'claude') {
+        return {
+            protocol: promptProtocol,
+            yesAllowAllEditsKey: 'claude.permissions.yesAllowAllEdits',
+            yesForToolKey: 'claude.permissions.yesForTool',
+            stopKey: 'claude.permissions.stop',
+        };
+    }
+
     return {
-        protocol: 'claude',
-        yesAllowAllEditsKey: 'claude.permissions.yesAllowAllEdits',
-        yesForToolKey: 'claude.permissions.yesForTool',
-        stopKey: 'claude.permissions.stop',
+        protocol: 'unavailable',
+        denyKey: 'common.no',
     };
 }

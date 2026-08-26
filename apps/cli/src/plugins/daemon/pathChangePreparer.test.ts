@@ -3,6 +3,25 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const filesystemBoundary = vi.hoisted(() => ({
+  realpathCallsByPath: new Map<string, number>(),
+}));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    realpath: async (...args: Parameters<typeof actual.realpath>) => {
+      const path = String(args[0]);
+      filesystemBoundary.realpathCallsByPath.set(
+        path,
+        (filesystemBoundary.realpathCallsByPath.get(path) ?? 0) + 1,
+      );
+      return await actual.realpath(...args);
+    },
+  };
+});
+
 import { createDaemonPluginChangeService } from './changeService';
 import type {
   PluginChangeDecisionResult,
@@ -39,6 +58,7 @@ const BUNDLED_PLUGIN_ROOT = resolve(import.meta.dirname, '../../../../../package
 const roots: string[] = [];
 
 afterEach(async () => {
+  filesystemBoundary.realpathCallsByPath.clear();
   await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
 });
 
@@ -374,6 +394,41 @@ describe('createDaemonPathPluginChangePreparer', () => {
 
     expect(candidateRoot).toBeDefined();
     await expect(lstat(candidateRoot!)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('does not canonicalize every regular installed dependency file while verifying the contained tree', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-dev-regular-files-'));
+    roots.push(happyHomeDir, pluginRoot);
+    await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ dependencies: { fixture: '1.0.0' } }), 'utf8');
+    await writeFile(join(pluginRoot, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n', 'utf8');
+
+    const dependencyFiles = [
+      join('node_modules', 'fixture', 'index.js'),
+      join('node_modules', 'fixture', 'nested', 'payload.js'),
+      join('node_modules', 'fixture', 'nested', 'metadata.json'),
+    ];
+    filesystemBoundary.realpathCallsByPath.clear();
+
+    const materialized = await materializePluginDevelopmentCandidate({
+      happyHomeDir,
+      sourceRootPath: pluginRoot,
+    }, {
+      runManagedPluginPnpm: async (input) => {
+        await mkdir(join(input.projectRoot, 'node_modules', 'fixture', 'nested'), { recursive: true });
+        await Promise.all(dependencyFiles.map(async (relativePath) => {
+          await writeFile(join(input.projectRoot, relativePath), 'export {};\n', 'utf8');
+        }));
+        return { ok: true, result: { exitCode: 0, signal: null, stdout: '', stderr: '' } };
+      },
+    });
+
+    expect(filesystemBoundary.realpathCallsByPath.get(join(materialized.rootPath, 'node_modules'))).toBe(1);
+    for (const relativePath of dependencyFiles) {
+      expect(filesystemBoundary.realpathCallsByPath.get(join(materialized.rootPath, relativePath)) ?? 0).toBe(0);
+    }
+
+    await materialized.cleanup();
   });
 
   it('removes pnpm executable links that are not part of the daemon runtime closure', async () => {

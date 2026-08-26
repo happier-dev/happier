@@ -194,6 +194,7 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
       purposeBindings,
       endpointTemplateId: endpointTemplate.id,
       protocol: endpointTemplate.protocol,
+      sourceRegistryVersion: catalog.sourceRegistryVersion,
       publicHeaders: endpointTemplate.publicHeaders ?? {},
     } as const;
     const requestFingerprint =
@@ -219,6 +220,7 @@ export async function resolveProviderRuntimeCatalogSelectionObservation(
         purposeBindings,
         endpointTemplateId: endpointTemplate.id,
         protocol: endpointTemplate.protocol,
+        sourceRegistryVersion: managedSource.sourceRegistryVersion,
         path: probe.path,
         parser: probe.parser,
         probeRequestFingerprint: requestFingerprint,

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AGENT_DEFINITION } from './definition.js';
 import { GROK_AGENT_RUNTIME_CONTRIBUTION } from './contributions/runtime.js';
+import { GROK_PREFLIGHT_SESSION_CONTROLS } from './preflight/models.js';
 
 describe('Grok native Agent definition', () => {
   it('keeps dynamic models and leaves CLI/auth authority to the native manifest', () => {
@@ -50,18 +51,12 @@ describe('Grok native Agent definition', () => {
     const { GROK_AGENT_RUNTIME_CONTRIBUTION: catalogContribution } = await import('./contributions/catalog.js');
 
     expect(catalogContribution).toBe(GROK_AGENT_RUNTIME_CONTRIBUTION);
-    const models = await catalogContribution.preflightSessionControls.probeModelsRaw({
-      // This is the process-execution boundary owned by the preflight contribution.
-      exec: {
-        systemTools: { resolve: async () => ({ executable: 'grok' }) },
-        run: async () => ({
-          termination: { observed: { kind: 'exit', exitCode: 0 } },
-          stdout: new TextEncoder().encode('Available models:\ngrok-4\n'),
-          stderr: new Uint8Array(),
-        }),
-      } as unknown as Parameters<typeof catalogContribution.preflightSessionControls.probeModelsRaw>[0]['exec'],
-      cwd: '/workspace',
-      timeoutMs: 250,
+    expect(catalogContribution).toEqual({ agentId: 'grok' });
+    const models = await GROK_PREFLIGHT_SESSION_CONTROLS.models?.parseOutput?.({
+      ok: true,
+      stdout: 'Available models:\ngrok-4\n',
+      stderr: '',
+      exitCode: 0,
     });
 
     expect(models).toEqual([{ id: 'grok-4', name: 'Grok 4' }]);

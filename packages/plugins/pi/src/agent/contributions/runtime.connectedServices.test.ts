@@ -141,14 +141,9 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
     }]);
   });
 
-  it('declares the Pi CLI catalog residuals handled through projection', () => {
-    expect(PI_AGENT_RUNTIME_CONTRIBUTION).toMatchObject({
-      checklists: {},
-      cliSessionCommand: {
-        backendIdForSessionRuntime: 'pi',
-        agentIdForAccountSettings: 'pi',
-      },
-    });
+  it('does not retain Pi CLI command policy in the private runtime aggregate', () => {
+    expect(PI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('checklists');
+    expect(PI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('cliSessionCommand');
   });
 
   it('declares Pi connected-service ids and request-time auth application capabilities', () => {

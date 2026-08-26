@@ -1,28 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  ANTIGRAVITY_PRINT_MODE_SUPPORTED,
   buildAntigravityTerminalLaunchArgs,
   resolveAntigravityTerminalLaunchArgsInput,
 } from './launchArgs.js';
+import { buildAntigravityRuntimeDescriptorV1 } from '../runtime/runtimeDescriptor.js';
 
 describe('Antigravity terminal launch arguments', () => {
-  it('builds only documented interactive TUI flags', () => {
+  it('builds descriptor-derived continuation and host-selected model flags', () => {
     expect(buildAntigravityTerminalLaunchArgs({
-      promptInteractive: true,
       conversationId: 'conv-123',
-      continueLatest: true,
-      sandbox: true,
-      logFile: '/tmp/agy.log',
       modelId: 'Gemini 3.5 Flash (High)',
     })).toEqual([
-      '--prompt-interactive',
       '--conversation',
       'conv-123',
-      '--continue',
-      '--sandbox',
-      '--log-file',
-      '/tmp/agy.log',
       '--model',
       'Gemini 3.5 Flash (High)',
     ]);
@@ -37,9 +28,13 @@ describe('Antigravity terminal launch arguments', () => {
     })).toEqual([]);
   });
 
-  it('uses the canonical provider session identity for terminal continuation', () => {
+  it('uses its bounded runtime descriptor for terminal continuation and ignores raw terminal metadata', () => {
     expect(resolveAntigravityTerminalLaunchArgsInput({
-      providerSessionId: 'conversation-current',
+      runtimeDescriptorV1: buildAntigravityRuntimeDescriptorV1({
+        runtimeMode: 'cliPrint',
+        providerSessionId: 'conversation-current',
+      }),
+      providerSessionId: 'legacy-host-identity',
       terminalRuntime: { conversationId: 'conversation-stale' },
       antigravity: { conversationId: 'conversation-older' },
     }, null)).toMatchObject({
@@ -116,15 +111,5 @@ describe('Antigravity terminal launch arguments', () => {
     }, null)).toMatchObject({
       modelId: null,
     });
-  });
-
-  it('keeps print mode and unsafe permission skipping out of terminal v1', () => {
-    expect(ANTIGRAVITY_PRINT_MODE_SUPPORTED).toBe(false);
-    expect(() => buildAntigravityTerminalLaunchArgs({
-      unsafeSkipPermissions: true,
-    })).toThrow(/unsafe permission/i);
-    expect(() => buildAntigravityTerminalLaunchArgs({
-      print: true,
-    })).toThrow(/print mode/i);
   });
 });

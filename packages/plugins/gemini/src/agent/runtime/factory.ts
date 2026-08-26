@@ -1,13 +1,11 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type {
-  AgentExecutionRunEvent,
-  AgentExecutionRunOpenRequest,
-  AgentExecutionRunRuntime,
-  AgentRuntimeContext,
-  AgentRuntimeFactory,
-  AgentSessionOpenRequest,
-  AgentSessionRuntime,
+import {
+  createExecutionRunHostBackendFromSessionRuntime,
+  type AgentRuntimeContext,
+  type AgentRuntimeFactory,
+  type AgentSessionOpenRequest,
+  type AgentSessionRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { GEMINI_ACP_RUNTIME_DEFINITION } from '../acp/definition.js';
@@ -178,102 +176,6 @@ async function openGeminiSession(
       }
 }
 
-type GeminiExecutionRunEventInput = AgentExecutionRunEvent extends infer Event
-  ? Event extends AgentExecutionRunEvent
-    ? Omit<Event, 'sequence' | 'runId' | 'emittedAtMs'>
-    : never
-  : never;
-
-function createGeminiExecutionRunRuntime(
-  request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>,
-  session: AgentSessionRuntime,
-): AgentExecutionRunRuntime {
-  const listeners = new Set<(event: AgentExecutionRunEvent) => void>();
-  const history: AgentExecutionRunEvent[] = [];
-  let sequence = 0;
-  let turnOrdinal = 0;
-  let activeTurnId: string | null = null;
-  const emit = (
-    input: GeminiExecutionRunEventInput,
-    emittedAtMs = Date.now(),
-  ): void => {
-    const event = Object.freeze({
-      ...input,
-      sequence: ++sequence,
-      runId: request.runId,
-      emittedAtMs,
-    }) as AgentExecutionRunEvent;
-    history.push(event);
-    for (const listener of listeners) listener(event);
-  };
-  const subscription = session.watch((event) => {
-    if (event.kind === 'provider-session-id') {
-      emit({ kind: 'checkpoint', checkpointId: event.providerSessionId }, event.emittedAtMs);
-    } else if (event.kind === 'message-delta') {
-      emit({
-        kind: 'output-delta',
-        channel: event.channel,
-        text: event.text,
-      }, event.emittedAtMs);
-    } else if (event.kind === 'turn-progress') {
-      emit({ kind: 'run-progress' }, event.emittedAtMs);
-    } else if (event.kind === 'turn-complete') {
-      activeTurnId = null;
-      emit({ kind: 'run-complete' }, event.emittedAtMs);
-    } else if (event.kind === 'turn-failed') {
-      activeTurnId = null;
-      emit({ kind: 'run-failed', diagnostic: event.diagnostic }, event.emittedAtMs);
-    } else if (event.kind === 'turn-cancelled') {
-      activeTurnId = null;
-      emit({
-        kind: 'run-cancelled',
-        ...(event.diagnostic ? { diagnostic: event.diagnostic } : {}),
-      }, event.emittedAtMs);
-    }
-  });
-  const send: AgentExecutionRunRuntime['send'] = async (input, options) => {
-    activeTurnId = `${request.runId}-turn-${++turnOrdinal}`;
-    const result = await session.send({
-      inputIds: [`${request.runId}-input-${turnOrdinal}`],
-      input,
-      delivery: { kind: 'newTurn', turnId: activeTurnId },
-    }, options);
-    if (result.status === 'admitted') return { status: 'admitted' };
-    activeTurnId = null;
-    emit({
-      kind: 'run-failed',
-      ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
-    });
-    return { status: result.status, diagnostic: result.diagnostic };
-  };
-  emit({ kind: 'run-start' });
-  return {
-    send,
-    async stop(options) {
-      if (!activeTurnId) return { status: 'notRunning' };
-      const result = await session.cancel?.({
-        turnId: activeTurnId,
-        reason: 'user',
-      }, options);
-      return { status: result?.status ?? 'unsupported' };
-    },
-    watch(listener) {
-      listeners.add(listener);
-      for (const event of history) listener(event);
-      return {
-        dispose: () => {
-          listeners.delete(listener);
-        },
-      };
-    },
-    async dispose() {
-      subscription.dispose();
-      listeners.clear();
-      await session.dispose();
-    },
-  };
-}
-
 export const createGeminiAgentRuntime: AgentRuntimeFactory = () => ({
   sessions: {
     open: openGeminiSession,
@@ -283,16 +185,18 @@ export const createGeminiAgentRuntime: AgentRuntimeFactory = () => ({
       if (request.kind !== 'create') {
         throw new Error(`Gemini execution runs do not support ${request.kind}.`);
       }
-      const session = await openGeminiSession({
-        kind: 'create',
-        sessionId: request.runId,
-        cwd: request.cwd,
-        ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
-      }, context);
-      const execution = createGeminiExecutionRunRuntime(request, session);
-      const result = await execution.send(request.input);
-      if (result.status !== 'admitted') await execution.dispose();
-      return execution;
+      return await createExecutionRunHostBackendFromSessionRuntime({
+        request,
+        openSession: async () => await openGeminiSession({
+          kind: 'create',
+          sessionId: request.runId,
+          cwd: request.cwd,
+          ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
+        }, context),
+        readCheckpointId: (event) => event.kind === 'provider-session-id'
+          ? event.providerSessionId
+          : null,
+      });
     },
   },
 });

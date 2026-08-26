@@ -12,26 +12,12 @@ import { resolvePiConnectedServiceCandidatePersistedSessionFile } from '../conne
 import { verifyResumeReachablePi } from '../connectedServices/reachability.js';
 import { createPiConnectedServiceRuntimeAuthAdapter } from '../connectedServices/runtimeAuthAdapter.js';
 import { piConnectedServiceStateSharingDescriptor } from '../connectedServices/stateSharingDescriptor.js';
-import { PI_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
-import { resolvePiSessionRuntimePreferences } from '../launchEnvironment.js';
 import {
   PI_REQUEST_AUTH_USES,
 } from '../auth/services/requestAuth/purposes.js';
 
 export const PI_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'pi',
-  agentCliSystemTool: {
-    toolId: 'pi-cli',
-  },
-  checklists: {},
-  cliSessionCommand: {
-    backendIdForSessionRuntime: 'pi',
-    agentIdForAccountSettings: 'pi',
-  },
-  sessionRuntimePreferences: {
-    resolve: resolvePiSessionRuntimePreferences,
-  },
-  preflightSessionControls: PI_PREFLIGHT_SESSION_CONTROLS,
   connectedServices: {
     serviceIds: PI_SUPPORTED_CONNECTED_SERVICE_IDS,
     requestAuthUses: PI_REQUEST_AUTH_USES,

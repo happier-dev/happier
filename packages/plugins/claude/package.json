@@ -82,10 +82,10 @@
       "types": "./dist/agent/surfaces/sessions/handoff/providerOps.d.ts",
       "default": "./dist/agent/surfaces/sessions/handoff/providerOps.js"
     },
-    "./ui/behavior": {
-      "types": "./dist/ui/uiBehavior.d.ts",
-      "react-native": "./dist/ui/uiBehavior.js",
-      "default": "./dist/ui/uiBehavior.js"
+    "./ui/predecessor-message-meta": {
+      "types": "./dist/ui/predecessorMessageMeta.d.ts",
+      "react-native": "./dist/ui/predecessorMessageMeta.js",
+      "default": "./dist/ui/predecessorMessageMeta.js"
     }
   },
   "files": [

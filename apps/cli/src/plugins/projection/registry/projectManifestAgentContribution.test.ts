@@ -123,10 +123,6 @@ describe('projectManifestAgentContribution', () => {
                 },
                 auth: {
                     support: 'status_only',
-                    probe: {
-                        parser: 'none',
-                        backgroundChecks: 'safe',
-                    },
                     loginLaunches: [],
                 },
             },

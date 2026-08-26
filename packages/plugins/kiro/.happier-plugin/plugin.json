@@ -21,6 +21,11 @@
             "delivery": "native_mcp"
           }
         },
+        "catalog": {
+          "vendorResume": {
+            "support": "experimental"
+          }
+        },
         "cli": {
           "auth": {
             "loginLaunches": [
@@ -31,15 +36,6 @@
                 "kind": "primary"
               }
             ],
-            "probe": {
-              "backgroundChecks": "manual_only",
-              "parser": "kiroWhoamiJson",
-              "statusArgs": [
-                "whoami",
-                "--format",
-                "json"
-              ]
-            },
             "support": "login_terminal"
           },
           "displayName": "Kiro CLI",
@@ -59,7 +55,34 @@
         "id": "kiro",
         "primary": "sessions",
         "runtime": {
-          "kind": "custom"
+          "definition": {
+            "mcp": {
+              "policy": "pass_through"
+            },
+            "modelConfigOptionId": "model",
+            "stderrRules": {
+              "suppress": [
+                {
+                  "includes": [
+                    "error handling notification",
+                    "_kiro.dev/",
+                    "method not found"
+                  ]
+                }
+              ]
+            }
+          },
+          "kind": "acp",
+          "transport": {
+            "args": [
+              "acp"
+            ],
+            "executable": {
+              "id": "kiro-cli",
+              "kind": "systemTool"
+            },
+            "kind": "stdio"
+          }
         },
         "title": "Kiro"
       }

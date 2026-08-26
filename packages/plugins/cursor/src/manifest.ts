@@ -2,6 +2,8 @@ import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sd
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { interpretCursorCliAuthCommand } from './agent/auth/status.js';
+import { CURSOR_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { createCursorAgentRuntime } from './agent/runtime/engine.js';
 import { CURSOR_AGENT_SETTINGS_CONTRIBUTION } from './agent/settings.js';
 
@@ -58,16 +60,16 @@ export const CURSOR_PLUGIN = definePlugin({
           },
           auth: {
             support: 'status_only',
-            probe: {
-              parser: 'cursorAboutJson',
-              backgroundChecks: 'safe',
-              statusArgs: ['about', '--format', 'json'],
-              envVars: ['CURSOR_API_KEY'],
-            },
+            environmentVariables: ['CURSOR_API_KEY'],
+            nonInteractiveStatusProbe: true,
             loginLaunches: [],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+          agentCliSystemTool: { toolId: 'cursor-agent' },
+        },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           sessions: {
             open: ['create', 'resume'],
@@ -79,6 +81,15 @@ export const CURSOR_PLUGIN = definePlugin({
         }),
       },
       factory: createCursorAgentRuntime,
+      preflightSessionControls: CURSOR_PREFLIGHT_SESSION_CONTROLS,
+      cliAuth: {
+        detectAuthStatus: async ({ runDeclaredSystemToolCommand }) =>
+          interpretCursorCliAuthCommand(await runDeclaredSystemToolCommand({
+            toolId: 'cursor-agent',
+            args: ['about', '--format', 'json'],
+            timeoutMs: 6_000,
+          })),
+      },
       sessionRunnerFactory: {
         module: './agent/runtime/engine',
         export: 'createCursorAgentRuntime',

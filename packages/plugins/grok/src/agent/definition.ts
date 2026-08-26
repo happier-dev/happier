@@ -10,7 +10,7 @@ export const AGENT_DEFINITION = Object.freeze({
     flavorAliases: ['grok-build', 'grok-cli'],
     cloudConnect: null,
     connectedServices: null,
-    resume: { vendorResume: 'supported', vendorResumeIdField: 'grokSessionId' },
+    resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'grokSessionId' },
     sessionStorage: { direct: false, persisted: true },
     sessionCapabilities: {
       sessionListing: 'unsupported',

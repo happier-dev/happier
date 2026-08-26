@@ -27,6 +27,11 @@
             "externalSessions"
           ]
         },
+        "catalog": {
+          "vendorResume": {
+            "support": "supported"
+          }
+        },
         "cli": {
           "auth": {
             "loginLaunches": [
@@ -36,11 +41,6 @@
               }
             ],
             "machineLoginKey": "antigravity-cli",
-            "probe": {
-              "backgroundChecks": "manual_only",
-              "parser": "none",
-              "statusArgs": null
-            },
             "support": "login_terminal"
           },
           "displayName": "Antigravity CLI",

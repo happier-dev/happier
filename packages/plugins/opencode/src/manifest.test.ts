@@ -11,6 +11,7 @@ describe('OpenCode plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
       expect.objectContaining({ id: 'opencode', runtime: { kind: 'custom' } }),
     ]);
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli.auth.nonInteractiveStatusProbe).toBe(true);
     expect(PLUGIN_MANIFEST.contributes.settings).toEqual([
       OPENCODE_AGENT_SETTINGS_CONTRIBUTION,
     ]);

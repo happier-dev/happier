@@ -101,6 +101,27 @@ function processResult(params: Readonly<{
 }
 
 describe('openCodeHandoffSurface', () => {
+  it('extracts media-scannable records from its opaque exported bundle', async () => {
+    const records = await openCodeHandoffSurface.extractMediaScannableRecords({
+      bundle: {
+        agentId: 'opencode',
+        remoteSessionId: 'ses_0199b7a4c3f0AbCdEfGhIjKlMn',
+        exportJsonBase64: encodeExportPayload({
+          id: 'oc-session-1',
+          messages: [{ id: 'message-1' }],
+        }),
+      },
+    });
+
+    expect(records).toEqual([
+      {
+        id: 'oc-session-1',
+        messages: [{ id: 'message-1' }],
+      },
+      { id: 'message-1' },
+    ]);
+  });
+
   it('skips vendor import and returns canonical session-state updates when the target export is semantically identical', async () => {
     const execRun = vi.fn(async () => processResult({
       exitCode: 0,

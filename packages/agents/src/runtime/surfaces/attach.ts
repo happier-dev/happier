@@ -1,14 +1,14 @@
 import type { MaybePromise } from '../engine/contracts.js';
-import type { BackendSurfaceAvailabilityV1 } from '@happier-dev/protocol';
+import type {
+  BackendSurfaceAvailabilityV1,
+  RuntimeDescriptorV1,
+} from '@happier-dev/protocol';
 import type { BackendSurfaceResultV1 } from './primitives.js';
 
 export type AttachSessionMetadataV1 = Readonly<Partial<{
   path: string;
-  providerSessionId: string;
-  opencodeSessionId: string;
-  opencodeBackendMode: string;
-  opencodeServerBaseUrl: string;
-  opencodeServerBaseUrlExplicit: boolean;
+  /** Bounded Session runtime identity, interpreted only by the target Agent. */
+  runtimeDescriptorV1: RuntimeDescriptorV1;
 }>>;
 
 export type AttachAvailabilityDepthV1 = 'metadata' | 'live';

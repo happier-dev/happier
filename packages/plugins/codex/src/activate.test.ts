@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { activate } from './activate.js';
@@ -37,6 +38,26 @@ describe('activate', () => {
       delete process.env.CODEX_HOME;
     } else {
       process.env.CODEX_HOME = previousCodexHome;
+    }
+  });
+
+  it('builds Codex Session preferences through the public CLI command declaration', async () => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const buildSessionOptions = activation.registration('agents', 'codex')?.cliSessionCommand?.buildSessionOptions;
+      expect(buildSessionOptions).toBeTypeOf('function');
+      expect(buildSessionOptions?.({
+        isExplicitCliSubcommand: true,
+        parsed: { agentArgs: [] },
+        settings: { codexBackendMode: 'acp' },
+        environment: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' },
+        startOrigin: 'daemon',
+      })).toEqual({
+        ok: true,
+        options: { codexBackendMode: 'appServer' },
+      });
+    } finally {
+      await activation.dispose();
     }
   });
 
@@ -152,7 +173,7 @@ describe('activate', () => {
 
     await expect(prerequisiteHook?.({
       runtimeSelection: {
-        providerRuntimeSelection: { codexBackendMode: 'acp' },
+        agentRuntimeSelection: { codexBackendMode: 'acp' },
       },
     }, {
       tools: { resolveManagedInstallable },
@@ -166,7 +187,7 @@ describe('activate', () => {
 
     await expect(Promise.resolve(envHook?.({
       runtimeSelection: {
-        providerRuntimeSelection: { codexBackendMode: 'appServer' },
+        agentRuntimeSelection: { codexBackendMode: 'appServer' },
       },
     }))).resolves.toEqual({
       HAPPIER_CODEX_BACKEND_MODE: 'appServer',
@@ -188,5 +209,81 @@ describe('activate', () => {
     expect(runtime.sessions?.open).toBeTypeOf('function');
     expect(runtime.executionRuns?.open).toBeTypeOf('function');
     await activation.dispose();
+  });
+
+  it('captures only its strict pre-open state-sharing declaration through Agent activation', async () => {
+    let registrationOptions: Parameters<PluginApi['agents']['register']>[2];
+    const noop = () => undefined;
+
+    // The host API is the system boundary. Capture the Agent registration
+    // directly so a concurrent manifest-ingestion change cannot mask this
+    // activation contract.
+    await activate({
+      agents: {
+        register: (_localId, _factory, options) => {
+          registrationOptions = options;
+        },
+        registerCliAuth: noop,
+        registerExternalSessions: noop,
+        registerExternalSessionHooks: noop,
+        registerExternalSessionObservation: noop,
+        registerExternalSessionTakeover: noop,
+      },
+      connectedAccounts: { register: noop },
+      hooks: { register: noop },
+      mcp: { registerDiscoverySource: noop, registerServer: noop },
+      voiceProviders: { register: noop },
+    } as unknown as PluginApi);
+
+    const launch = registrationOptions?.connectedAccountLaunch;
+
+    expect(launch).toEqual({
+      stateSharingDescriptor: {
+        providerSupportStatus: 'supported',
+        config: {
+          supported: true,
+          modes: ['linked', 'copied', 'isolated'],
+          entries: [
+            { path: 'config.toml', mode: 'force_copied' },
+            { path: 'environments.toml', mode: 'linked_or_copied' },
+            { path: 'hooks.json', mode: 'linked_or_copied' },
+            { path: 'AGENTS.md', mode: 'linked_or_copied' },
+            { path: 'AGENTS.override.md', mode: 'linked_or_copied' },
+            { path: 'instructions.md', mode: 'linked_or_copied' },
+            { path: 'prompts', mode: 'linked_or_copied' },
+            { path: 'agents', mode: 'linked_or_copied' },
+            { path: 'skills', mode: 'linked_or_copied' },
+            { path: 'rules', mode: 'linked_or_copied' },
+          ],
+        },
+        state: {
+          supported: true,
+          modes: ['isolated', 'shared'],
+          entries: [
+            { path: 'sessions', mode: 'linked' },
+            { path: 'archived_sessions', mode: 'linked' },
+            { path: 'session_index.jsonl', mode: 'linked' },
+            { path: 'history.jsonl', mode: 'linked' },
+            { path: 'memories', mode: 'linked' },
+          ],
+          sharedStatePrivacyRiskAcknowledgementRequired: true,
+          symlinkUnavailableDegradePolicy: 'degrade_to_isolated',
+        },
+        authIsolation: {
+          mode: 'materialized_home',
+          secretEntries: ['auth.json', 'accounts'],
+        },
+        transforms: [{
+          entry: 'config.toml',
+          kind: 'rewrite_toml',
+          spec: {
+            setStringValues: { cli_auth_credentials_store: 'file' },
+          },
+        }],
+      },
+    });
+    expect(launch).not.toHaveProperty('serviceIds');
+    expect(launch).not.toHaveProperty('requestAuthUses');
+    expect(launch?.stateSharingDescriptor).not.toHaveProperty('providerId');
   });
 });

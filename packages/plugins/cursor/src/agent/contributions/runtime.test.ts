@@ -1,67 +1,35 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
-
+import { CURSOR_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
 import { CURSOR_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
 import { CURSOR_AGENT_RUNTIME_CONTRIBUTION as CATALOG_CURSOR_AGENT_RUNTIME_CONTRIBUTION } from './catalog.js';
 
 describe('Cursor agent runtime contribution', () => {
-  it('keeps the legacy runtime entrypoint aligned with the static catalog leaf', () => {
+  it('keeps legacy catalog data free of a competing preflight owner', () => {
     expect(CURSOR_AGENT_RUNTIME_CONTRIBUTION).toBe(CATALOG_CURSOR_AGENT_RUNTIME_CONTRIBUTION);
-    expect(CATALOG_CURSOR_AGENT_RUNTIME_CONTRIBUTION.preflightSessionControls)
-      .toBe(CURSOR_AGENT_RUNTIME_CONTRIBUTION.preflightSessionControls);
+    expect(CATALOG_CURSOR_AGENT_RUNTIME_CONTRIBUTION).toEqual({ agentId: 'cursor' });
   });
 
-  it('probes Cursor models through the provider-owned preflight hook', async () => {
-    const launches: unknown[] = [];
-    const executable = { kind: 'systemTool' as const, id: 'cursor-agent' };
-    const exec = {
-      systemTools: {
-        resolve: async () => ({ executable, executablePath: '/managed/cursor-agent' }),
-      },
-      run: async (launch) => {
-        launches.push(launch);
-        return {
-          termination: {
-            observed: { kind: 'exit' as const, exitCode: 0 },
-            requestedBy: { kind: 'none' as const },
-          },
-          stdout: new TextEncoder().encode([
-            'Available models',
-            '',
-            'auto - Auto',
-            'composer-2.5-fast - Composer 2.5 Fast (current, default)',
-          ].join('\n')),
-          stderr: new Uint8Array(),
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        };
-      },
-      spawn: async () => { throw new Error('spawn should not be used'); },
-      clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
-      agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
-    } satisfies ExecService;
-
-    await expect(CURSOR_AGENT_RUNTIME_CONTRIBUTION.preflightSessionControls.probeModelsRaw?.({
-      exec,
-      cwd: '/repo',
-      timeoutMs: 5000,
-      env: { CURSOR_API_KEY: 'cursor-key' },
+  it('declares Cursor native models parsing without process authority', async () => {
+    const models = CURSOR_PREFLIGHT_SESSION_CONTROLS.models;
+    expect(models?.command).toEqual({
+      toolId: 'cursor-agent',
+      args: ['models'],
+      ci: 'omit',
+    });
+    await expect(models?.parseOutput?.({
+      ok: true,
+      stdout: [
+        'Available models',
+        '',
+        'auto - Auto',
+        'composer-2.5-fast - Composer 2.5 Fast (current, default)',
+      ].join('\n'),
+      stderr: '',
+      exitCode: 0,
     })).resolves.toEqual([
       { id: 'auto', name: 'Auto' },
       { id: 'composer-2.5-fast', name: 'Composer 2.5 Fast' },
-    ]);
-
-    expect(launches).toEqual([
-      {
-        executable: { kind: 'systemTool', id: 'cursor-agent' },
-        args: ['models'],
-        cwd: { root: 'workspace', relativePath: '' },
-        env: { CURSOR_API_KEY: 'cursor-key' },
-        maxStderrBytes: 262_144,
-        maxStdoutBytes: 262_144,
-        timeoutMs: 5_000,
-      },
     ]);
   });
 });

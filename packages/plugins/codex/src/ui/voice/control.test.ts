@@ -228,7 +228,32 @@ describe('Codex V3 oai-events decoder', () => {
     })).toEqual([]);
   });
 
-  it('still closes a Realtime response whose pinned status is omitted', () => {
+  it.each(['cancelled', 'failed', 'incomplete'] as const)(
+    'discards queued Realtime function calls when the terminal response is %s',
+    (status) => {
+      const decode = createCodexV3ControlDecoder({ attemptId: 1 });
+      const responseId = `response-${status}`;
+
+      expect(decode({
+        type: 'response.function_call_arguments.done',
+        response_id: responseId,
+        call_id: 'call-1',
+        name: 'readCurrentUiContext',
+        arguments: '{}',
+        output_index: 0,
+      })).toEqual([]);
+      expect(decode({
+        type: 'response.done',
+        response: { id: responseId, status },
+      })).toEqual([]);
+      expect(decode({
+        type: 'response.done',
+        response: { id: responseId, status: 'completed' },
+      })).toEqual([]);
+    },
+  );
+
+  it('closes a Realtime response whose pinned status is omitted without publishing tools', () => {
     const decode = createCodexV3ControlDecoder({ attemptId: 1 });
 
     expect(decode({
@@ -243,7 +268,7 @@ describe('Codex V3 oai-events decoder', () => {
     expect(decode({
       type: 'response.done',
       response: { id: 'response-3' },
-    })).toContainEqual(expect.objectContaining({ type: 'tool_calls', responseId: 'response-3' }));
+    })).toEqual([]);
     expect(decode({
       type: 'response.done',
       response: { id: 'response-3' },

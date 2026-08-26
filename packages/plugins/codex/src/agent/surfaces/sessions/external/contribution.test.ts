@@ -714,10 +714,7 @@ describe('Codex public Agent External Sessions contribution', () => {
         connectedServiceProfileId: 'profile-1',
         homePath: codexHome,
       } as const;
-      const canonicalSource = {
-        ...source,
-        homePath: await realpath(codexHome),
-      };
+      const admittedSource = source;
 
       const listed = await contribution.listCandidates({
         source,
@@ -730,7 +727,7 @@ describe('Codex public Agent External Sessions contribution', () => {
         value: {
           candidates: [{
             remoteSessionId,
-            linkData: { source: canonicalSource },
+            linkData: { source: admittedSource },
           }],
         },
       });
@@ -745,9 +742,9 @@ describe('Codex public Agent External Sessions contribution', () => {
       expect(linked).toMatchObject({
         ok: true,
         value: {
-          source: canonicalSource,
+          source: admittedSource,
           remoteSessionId,
-          linkData: { source: canonicalSource },
+          linkData: { source: admittedSource },
         },
       });
     } finally {

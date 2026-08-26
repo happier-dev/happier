@@ -13,7 +13,8 @@ import {
 } from '@happier-dev/protocol';
 import {
     normalizePluginUiDestinationBindingV1,
-    isPluginUiDestinationBindingPotentiallySupportedOnPlatformV1,
+    normalizePluginUiInlineSurfaceBindingV1,
+    isPluginUiSurfaceBindingPotentiallySupportedOnPlatformV1,
     normalizePluginSessionHeaderActionDescriptorV1,
     normalizePluginUiSemanticCommandV1,
     normalizePluginUiSettingsPageBindingV1,
@@ -22,8 +23,10 @@ import {
     PluginUiDestinationBindingV1Schema,
     PluginUiPlatformV1Schema,
     selectPluginUiDestinationBindingRendererV1,
+    selectPluginUiInlineSurfaceBindingRendererV1,
     type PluginUiArtifactsManifestEntryV1,
     type PluginUiDestinationBindingV1,
+    type PluginUiSurfaceBindingV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { createPluginSessionInfoSectionRendererIdV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 
@@ -337,15 +340,14 @@ function projectSessionInfoSections(
         const rendererId = createPluginSessionInfoSectionRendererIdV1(definition.id);
         const model = declarativeHostRuntime?.modelsByRendererKey?.[`${pluginId}\0${rendererId}`];
         if (!model?.visible) continue;
-        const binding = normalizePluginUiDestinationBindingV1({
+        const binding = normalizePluginUiInlineSurfaceBindingV1({
             pluginId,
-            destinationId: definition.id,
+            surfaceId: definition.id,
             rendererId,
             fallbackRendererIds: [],
             availableRendererIds: [rendererId],
-            container: 'sessionInfoSection',
+            role: 'sessionInfoSection',
             target: { kind: 'session' },
-            instancePolicy: 'singleton',
         });
         if (!binding) continue;
         const runtime = projectSurfaceResourceRuntime(pluginId, hostRuntime);
@@ -1106,18 +1108,30 @@ function projectGeneratedUiViews(
     for (const view of registry.uiViewsV2 ?? []) {
         const pluginId = view.pluginId;
         const descriptorId = view.definition.id;
-        const binding = normalizePluginUiDestinationBindingV1({
-            pluginId,
-            destinationId: descriptorId,
-            rendererId: view.definition.renderer,
-            fallbackRendererIds: view.definition.fallbackRenderers,
-            availableRendererIds: (registry.uiRenderersV2 ?? [])
-                .filter((renderer) => renderer.pluginId === pluginId)
-                .map((renderer) => renderer.definition.id),
-            container: view.definition.container,
-            target: view.definition.target,
-            instancePolicy: view.definition.instancePolicy,
-        });
+        const availableRendererIds = (registry.uiRenderersV2 ?? [])
+            .filter((renderer) => renderer.pluginId === pluginId)
+            .map((renderer) => renderer.definition.id);
+        const binding = view.definition.container === 'sessionSubagentLaunch'
+            || view.definition.container === 'sessionSubagentDetails'
+            ? normalizePluginUiInlineSurfaceBindingV1({
+                pluginId,
+                surfaceId: descriptorId,
+                rendererId: view.definition.renderer,
+                fallbackRendererIds: view.definition.fallbackRenderers,
+                availableRendererIds,
+                role: view.definition.container,
+                target: view.definition.target,
+            })
+            : normalizePluginUiDestinationBindingV1({
+                pluginId,
+                destinationId: descriptorId,
+                rendererId: view.definition.renderer,
+                fallbackRendererIds: view.definition.fallbackRenderers,
+                availableRendererIds,
+                container: view.definition.container,
+                target: view.definition.target,
+                instancePolicy: view.definition.instancePolicy,
+            });
         if (!binding) continue;
         const destinationPlatformCandidate = hostRuntime?.reactNativeBundles?.hostRuntime?.platform;
         const destinationPlatform = PluginUiPlatformV1Schema.safeParse(destinationPlatformCandidate);
@@ -1130,7 +1144,7 @@ function projectGeneratedUiViews(
             const projectedRenderer = projectPluginUiRendererRef(renderer, declarativeModel);
             const rendererAvailability = destinationPlatformCandidate !== undefined
                 && (!destinationPlatform.success
-                    || !isPluginUiDestinationBindingPotentiallySupportedOnPlatformV1(
+                    || !isPluginUiSurfaceBindingPotentiallySupportedOnPlatformV1(
                         binding,
                         destinationPlatform.data,
                     ))
@@ -1145,9 +1159,15 @@ function projectGeneratedUiViews(
                     declarativeModel,
                     registryRendererRef: projectedRenderer.registryRendererRef,
                     entriesById,
-                });
+            });
             const crashStateProjection = projectPluginUiRendererCrashState({
-                mount: Object.freeze({ kind: 'destination' as const, destination: binding.destination }),
+                mount: binding.kind === 'destination'
+                    ? Object.freeze({ kind: 'destination' as const, destination: binding.destination })
+                    : Object.freeze({
+                        kind: 'inline' as const,
+                        surface: binding.surface,
+                        role: binding.role,
+                    }),
                 renderer,
                 availability: rendererAvailability,
                 hostRuntime,
@@ -1167,18 +1187,22 @@ function projectGeneratedUiViews(
         // order belongs to the Protocol registry. Do not independently choose
         // the first available candidate here: that would turn a projection
         // traversal into a second fallback-chain owner.
-        const selectedBinding = selectPluginUiDestinationBindingRendererV1(
-            binding,
-            candidateRenderers
-                .filter((candidate) => candidate.availability.state === 'available')
-                .map((candidate) => candidate.renderer.definition.id),
-        ) ?? binding;
+        const eligibleRendererIds = candidateRenderers
+            .filter((candidate) => candidate.availability.state === 'available')
+            .map((candidate) => candidate.renderer.definition.id);
+        const selectedBinding = binding.kind === 'destination'
+            ? selectPluginUiDestinationBindingRendererV1(binding, eligibleRendererIds) ?? binding
+            : selectPluginUiInlineSurfaceBindingRendererV1(binding, eligibleRendererIds) ?? binding;
         const effectiveCandidate = candidateRenderers.find((candidate) => (
             candidate.renderer.definition.id === selectedBinding.renderer.localId
         )) ?? primaryCandidate;
         const display = generatedViewDisplay(view);
-        const headerActions = projectGeneratedPageHeaderActions(pluginId, view.definition.headerActions);
-        const rightSidebar = generatedRightSidebarMetadata(selectedBinding);
+        const headerActions = selectedBinding.kind === 'destination'
+            ? projectGeneratedPageHeaderActions(pluginId, view.definition.headerActions)
+            : Object.freeze([]);
+        const rightSidebar = selectedBinding.kind === 'destination'
+            ? generatedRightSidebarMetadata(selectedBinding)
+            : null;
         addEntry(entriesById, {
             id: `surfacePlacement:${pluginId}:${descriptorId}`,
             pluginId,
@@ -1186,7 +1210,9 @@ function projectGeneratedUiViews(
             contributionKind: 'surfacePlacement',
             descriptorId,
             generatedV2: true,
-            container: selectedBinding.container,
+            ...(selectedBinding.kind === 'destination'
+                ? { container: selectedBinding.container }
+                : {}),
             target: selectedBinding.target,
             binding: selectedBinding,
             renderer: effectiveCandidate.projectedRenderer.rendererRef,

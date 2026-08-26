@@ -1,14 +1,4 @@
 import {
-  buildOpenCodeAttachHealthUrl,
-  createOpenCodeAttachArgs,
-  resolveOpenCodeAttachTarget,
-} from '../surfaces/sessions/attach/descriptor.js';
-import { OPENCODE_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
-import {
-  detectOpenCodeCliAuthStatus,
-  resolveOpenCodeCliAuthProbeTimeoutMs,
-} from '../cli/auth.js';
-import {
   createOpenCodeAuthMaterializationInput,
   OPEN_CODE_SUPPORTED_AUTH_SERVICE_IDS,
   readOpenCodeConnectedServiceId,
@@ -24,14 +14,11 @@ import {
   classifyOpenCodeUsageLimitError,
   OPEN_CODE_USAGE_LIMIT_RECOVERY,
 } from '../auth/services/usageLimit.js';
-import { resolveOpenCodeSessionRuntimePreferences } from '../preferences/session.js';
-import { extractOpenCodeSessionHandoffAgentBundleRecords } from '../surfaces/sessions/handoff/exportRecords.js';
 import {
   OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
   OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
   OPEN_CODE_REQUEST_AUTH_TARGET_ORIGINS,
 } from '../auth/services/requestAuth/purposes.js';
-import { OPEN_CODE_SYSTEM_TOOL_ID } from '../systemTool.js';
 
 const OPENCODE_CONNECTED_SERVICE_STATE_SHARING_DESCRIPTOR = Object.freeze({
   providerId: OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR.providerId,
@@ -57,42 +44,6 @@ const OPENCODE_CONNECTED_SERVICE_STATE_SHARING_DESCRIPTOR = Object.freeze({
 
 export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'opencode',
-  agentCliSystemTool: {
-    toolId: OPEN_CODE_SYSTEM_TOOL_ID,
-  },
-  cliSessionCommand: {
-    backendIdForSessionRuntime: 'opencode',
-    agentIdForAccountSettings: 'opencode',
-    providerInfoCommandPrefixes: [['providers', 'list']],
-  },
-  cliAuth: {
-    detectAuthStatus: async (params: Readonly<{
-      env: Readonly<Record<string, string | undefined>>;
-      runCommand: (
-        args: readonly string[],
-        options?: Readonly<{ timeoutMs?: number }>,
-      ) => Promise<Readonly<{ ok: boolean; stdout: string }>>;
-    }>) => detectOpenCodeCliAuthStatus({
-      runAuthList: async () => params.runCommand(['auth', 'list'], {
-        timeoutMs: resolveOpenCodeCliAuthProbeTimeoutMs(params.env),
-      }),
-      readOauthRefreshToken: () => null,
-      probeOauthRefreshToken: async () => 'unknown',
-    }),
-  },
-  sessionRuntimePreferences: {
-    resolve: resolveOpenCodeSessionRuntimePreferences,
-  },
-  sessionHandoff: {
-    agentBundleRecords: {
-      extract: extractOpenCodeSessionHandoffAgentBundleRecords,
-    },
-  },
-  attach: {
-    resolveTarget: resolveOpenCodeAttachTarget,
-    createArgs: createOpenCodeAttachArgs,
-    buildHealthUrl: buildOpenCodeAttachHealthUrl,
-  },
   connectedServices: {
     serviceIds: OPEN_CODE_SUPPORTED_AUTH_SERVICE_IDS,
     requestAuthUses: Object.freeze([Object.freeze({
@@ -125,5 +76,4 @@ export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
     },
     usageLimitRecovery: OPEN_CODE_USAGE_LIMIT_RECOVERY,
   },
-  preflightSessionControls: OPENCODE_PREFLIGHT_SESSION_CONTROLS,
 } as const);

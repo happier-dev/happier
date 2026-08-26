@@ -9,7 +9,7 @@ describe('resolveOpenCodeSessionRuntimePreferences', () => {
         opencodeBackendMode: 'acp',
         opencodeServerBaseUrl: 'http://127.0.0.1:4888/',
       },
-      processEnv: {},
+      environment: {},
     })).toEqual({
       opencodeBackendMode: 'acp',
       opencodeServerBaseUrl: 'http://127.0.0.1:4888/',
@@ -21,7 +21,7 @@ describe('resolveOpenCodeSessionRuntimePreferences', () => {
   it('does not use ambient runtime env when settings omit an explicit server override', () => {
     expect(resolveOpenCodeSessionRuntimePreferences({
       settings: {},
-      processEnv: {
+      environment: {
         HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
         HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4999/',
       },

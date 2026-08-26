@@ -46,6 +46,10 @@ type PendingAdmittedTargetedContributionOperation = Omit<
     AdmittedTargetedContributionOperation,
     'targetProtocol'
 >;
+type PendingAdmittedTargetedContributionSurface = Omit<
+    AdmittedTargetedContributionSurface,
+    'targetProtocol'
+>;
 
 type Candidate = Readonly<{
     declaration: ResolvedTargetedPluginContributionDeclaration;
@@ -608,7 +612,7 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
                 selectedActionInput: selectedActionInputForAction(action),
             }));
         }
-        const surfaces: AdmittedTargetedContributionSurface[] = [];
+        const surfaces: PendingAdmittedTargetedContributionSurface[] = [];
         if (!failure) {
             for (const role of Object.keys(definition.surfaces ?? {}).sort()) {
                 const binding = definition.surfaces![role]!;
@@ -707,9 +711,25 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
             admittedOperations.push(Object.freeze({ ...operation, targetProtocol }));
         }
         if (failure) continue;
-        const semanticSurfaceRoles = semanticProjection === undefined
+        const semanticSurfacesByRole = semanticProjection === undefined
             ? undefined
-            : new Set(semanticProjection.surfaces.map((surface) => surface.role));
+            : new Map(semanticProjection.surfaces.map((surface) => [surface.role, surface]));
+        const admittedSurfaces: AdmittedTargetedContributionSurface[] = [];
+        for (const surface of surfaces) {
+            const targetProtocol = semanticSurfacesByRole?.get(surface.role);
+            if (!targetProtocol) {
+                oneSemanticDiagnostic(
+                    diagnostics,
+                    targetSemanticDiagnosticsSeen,
+                    candidate.declaration,
+                    'target_semantics_unavailable',
+                );
+                failure = 'target_semantics_unavailable';
+                break;
+            }
+            admittedSurfaces.push(Object.freeze({ ...surface, targetProtocol }));
+        }
+        if (failure) continue;
         const admitted: AdmittedTargetedContribution = Object.freeze({
             contributor,
             protocol: Object.freeze({ id: definition.protocol.id, version: definition.protocol.version }),
@@ -717,9 +737,7 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
                 ? {}
                 : { descriptor: semanticProjection.descriptor }),
             operations: Object.freeze(admittedOperations),
-            surfaces: Object.freeze(semanticSurfaceRoles === undefined
-                ? surfaces
-                : surfaces.filter((surface) => semanticSurfaceRoles.has(surface.role))),
+            surfaces: Object.freeze(admittedSurfaces),
         });
         const active = admittedByPoint.get(targetKey) ?? [];
         active.push(admitted);

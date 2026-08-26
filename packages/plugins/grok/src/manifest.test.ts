@@ -30,7 +30,8 @@ describe('Grok plugin manifest', () => {
         executable: { binaryName: 'grok', knownUserBinDirSuffixes: ['.grok/bin', '.local/bin'], sourcePreference: 'system-first' },
         auth: {
           support: 'login_terminal',
-          probe: { parser: 'unknown', backgroundChecks: 'safe', statusArgs: null, envVars: ['XAI_API_KEY'] },
+          environmentVariables: ['XAI_API_KEY'],
+          missingCredentialState: 'unknown',
           loginLaunches: [{ kind: 'primary', args: ['login'] }, { kind: 'device_code', args: ['login', '--device-auth'] }],
         },
       },

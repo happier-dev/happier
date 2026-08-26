@@ -1,14 +1,14 @@
-import { resolveCanonicalCodexBackendModeFromCompatInput } from '../../../lifecycle/backendMode.js';
+import type { AgentExperimentalVendorResumeSupportInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-export type CodexProviderResumeSupportInput = Readonly<{
-  backendMode?: unknown;
-  codexBackendMode?: unknown;
-  experimentalCodexAcp?: boolean;
-  runtimeDescriptorV1?: unknown;
-}>;
+import { resolveCanonicalCodexBackendMode } from '../../../lifecycle/backendMode.js';
+
+export type CodexProviderResumeSupportInput = AgentExperimentalVendorResumeSupportInputV1;
 
 export function supportsCodexProviderResume(params: CodexProviderResumeSupportInput = {}): boolean {
-  return resolveCanonicalCodexBackendModeFromCompatInput(params) !== undefined;
+  return resolveCanonicalCodexBackendMode({
+    codexBackendMode: params.agentRuntimeSelection?.codexBackendMode,
+    runtimeDescriptorV1: params.runtimeDescriptorV1,
+  }) !== undefined;
 }
 
 export const supportsCodexVendorResume = supportsCodexProviderResume;

@@ -21,6 +21,11 @@
             "delivery": "shell_bridge"
           }
         },
+        "catalog": {
+          "vendorResume": {
+            "support": "supported"
+          }
+        },
         "cli": {
           "auth": {
             "loginLaunches": [
@@ -30,11 +35,6 @@
                 "kind": "primary"
               }
             ],
-            "probe": {
-              "backgroundChecks": "safe",
-              "parser": "unknown",
-              "statusArgs": null
-            },
             "support": "login_terminal"
           },
           "displayName": "Kilo CLI",

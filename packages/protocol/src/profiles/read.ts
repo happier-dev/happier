@@ -1,16 +1,19 @@
-import { AIBackendProfileSchema, type AIBackendProfile } from './backendProfileSchema.js';
-import { projectHistoricalBuiltInAiLaunchProfileV1 } from './historicalCompatibilityV1.js';
+import { AIBackendProfileSchema } from './backendProfileSchema.js';
+import {
+  projectHistoricalBuiltInAiLaunchProfileV1,
+  type HistoricalAiBackendProfileV1,
+} from './historicalCompatibilityV1.js';
 import { LaunchProfileV2Schema, type LaunchProfileV2 } from './v2/schema.js';
 import type { ProviderSettingsMigrationStateV1 } from '../providers/settings/v1.js';
 
-export type AiLaunchProfile = AIBackendProfile | LaunchProfileV2;
+export type AiLaunchProfile = HistoricalAiBackendProfileV1 | LaunchProfileV2;
 
 export function isLaunchProfileV2(profile: AiLaunchProfile): profile is LaunchProfileV2 {
   return 'v' in profile && profile.v === 2;
 }
 
 export type AiLaunchProfileCollectionEntry =
-  | Readonly<{ kind: 'legacy'; profile: AIBackendProfile; raw: unknown }>
+  | Readonly<{ kind: 'legacy'; profile: HistoricalAiBackendProfileV1; raw: unknown }>
   | Readonly<{ kind: 'slim'; profile: LaunchProfileV2; raw: unknown }>
   | Readonly<{ kind: 'opaque'; raw: unknown }>;
 

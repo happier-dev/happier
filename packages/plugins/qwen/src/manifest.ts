@@ -43,11 +43,13 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           },
           auth: {
             support: 'login_terminal',
-            probe: { parser: 'unknown', backgroundChecks: 'safe', statusArgs: null },
             loginLaunches: [{ kind: 'primary', args: [], initialInput: '/auth\r' }],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+        },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           sessions: {
             open: ['create', 'resume'],

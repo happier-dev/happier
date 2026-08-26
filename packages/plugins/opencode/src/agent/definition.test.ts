@@ -39,7 +39,7 @@ describe('OpenCode AGENT_DEFINITION', () => {
       },
       auth: {
         support: 'login_terminal',
-        probe: { statusArgs: ['auth', 'list'], parser: 'opencodeAuthList' },
+        loginLaunches: [{ kind: 'primary', args: ['auth', 'login'] }],
       },
     });
     expect(AGENT_DEFINITION).not.toHaveProperty('agentCliRuntime');

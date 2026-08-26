@@ -1,5 +1,6 @@
+import type { AgentConnectedAccountStateSharingDescriptorV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+
 export const geminiConnectedServiceStateSharingDescriptor = Object.freeze({
-  providerId: 'gemini',
   providerSupportStatus: 'unsupported',
   config: {
     supported: false,
@@ -24,4 +25,4 @@ export const geminiConnectedServiceStateSharingDescriptor = Object.freeze({
       'GOOGLE_CLOUD_LOCATION',
     ],
   },
-} as const);
+} satisfies AgentConnectedAccountStateSharingDescriptorV1);

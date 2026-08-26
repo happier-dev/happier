@@ -6,7 +6,7 @@ import {
 import type { AgentModelConfig } from '@happier-dev/plugin-sdk/agents';
 import { ANTIGRAVITY_AGENT_MODEL_CONFIG } from './models.js';
 
-function defineAgentWithPublicModelConfig<TDefinition extends Readonly<Record<string, unknown>>>(
+function defineAgentWithPublicModelConfig<const TDefinition extends Readonly<Record<string, unknown>>>(
   definition: TDefinition,
   modelConfig: AgentModelConfig,
 ): Readonly<TDefinition & { modelConfig: AgentModelConfig }> {
@@ -74,7 +74,7 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
       supportedServiceIds: ['gemini'],
       supportedKindsByServiceId: { gemini: ['token'] },
     },
-    resume: { vendorResume: 'supported', vendorResumeIdField: 'antigravitySessionId' },
+    resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'antigravitySessionId' },
     sessionStorage: { direct: false, persisted: true },
     sessionCapabilities: {
       sessionListing: 'unsupported',

@@ -3,6 +3,30 @@ import { describe, expect, it } from 'vitest';
 import { readOpenCodeSessionMetadataRuntimeDescriptor } from './runtimeDescriptor.js';
 
 describe('OpenCode runtime descriptor metadata reader', () => {
+  it('reads the bounded agent-surface runtime descriptor before legacy metadata', () => {
+    expect(readOpenCodeSessionMetadataRuntimeDescriptor({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'opencode',
+        agent: {
+          backendMode: 'server',
+          providerSessionId: ' opencode-surface-1 ',
+          serverBaseUrl: 'http://127.0.0.1:49196/path?ignored=true',
+          serverBaseUrlExplicit: true,
+        },
+      },
+      opencodeBackendMode: 'acp',
+      opencodeSessionId: 'legacy-session',
+    })).toMatchObject({
+      agentId: 'opencode',
+      runtimeKind: 'server',
+      backendMode: 'server',
+      providerSessionId: 'opencode-surface-1',
+      serverBaseUrl: 'http://127.0.0.1:49196/',
+      serverBaseUrlExplicit: true,
+    });
+  });
+
   it('reads legacy-only OpenCode metadata as a canonical runtime descriptor', () => {
     expect(readOpenCodeSessionMetadataRuntimeDescriptor({
       opencodeBackendMode: ' acp ',

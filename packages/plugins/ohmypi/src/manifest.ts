@@ -1,9 +1,12 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
+import { resolveSessionFileStoreLaunchEnvironment } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from './agent/auth/services/accountPurposes.js';
+import { ohMyPiConnectedServiceStateSharingDescriptor } from './agent/connectedServices/stateSharing.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { OH_MY_PI_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { resolveOhMyPiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 import { createOhMyPiAgentRuntime } from './agent/runtime/engine.js';
 import { ohMyPiExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
@@ -14,6 +17,7 @@ import {
   ohMyPiExternalSessionTakeoverContribution,
 } from './agent/surfaces/sessions/external/semantics.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from './agent/systemTool.js';
+import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from './agent/sessionFileStoreDescriptor.js';
 import { OH_MY_PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { OH_MY_PI_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
 
@@ -84,16 +88,14 @@ export const OH_MY_PI_PLUGIN = definePlugin({
           auth: {
             support: 'manual_only',
             machineLoginKey: 'oh-my-pi',
-            probe: {
-              parser: 'piEnvOnly',
-              backgroundChecks: 'safe',
-              statusArgs: null,
-              envVars: [...OH_MY_PI_AUTH_ENV_KEYS],
-            },
+            environmentVariables: [...OH_MY_PI_AUTH_ENV_KEYS],
             loginLaunches: [],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+        },
         connectedAccounts: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(({ purpose, service }) => ({
           purpose,
           service,
@@ -145,6 +147,27 @@ export const OH_MY_PI_PLUGIN = definePlugin({
         },
       },
       factory: createOhMyPiAgentRuntime,
+      connectedAccountLaunch: {
+        stateSharingDescriptor: ohMyPiConnectedServiceStateSharingDescriptor,
+      },
+      preflightSessionControls: OH_MY_PI_PREFLIGHT_SESSION_CONTROLS,
+      cliSessionCommand: {
+        sessionRuntimeId: 'ohMyPi',
+        accountSettingsAgentId: 'ohMyPi',
+        buildSessionOptions: (input) => {
+          const environmentVariables = resolveSessionFileStoreLaunchEnvironment({
+            product: OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
+            settings: input.settings,
+            env: input.environment,
+          });
+          return {
+            ok: true,
+            options: Object.keys(environmentVariables).length > 0
+              ? { environmentVariables }
+              : {},
+          };
+        },
+      },
       sessionRunnerFactory: {
         module: './agent/runtime/engine',
         export: 'createOhMyPiAgentRuntime',

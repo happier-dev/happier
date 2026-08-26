@@ -31,8 +31,17 @@ const SCM_ACTION_INPUTS = Object.freeze([
     ['scm.reviewWorkspace.materializePrepared', {
         cwd: '/workspace',
         displayName: 'feature-auth',
-        baseRef: 'abc123',
-        branchMode: 'new',
+        sourceTip: {
+            repository: {
+                kind: 'github',
+                deployment: 'https://github.com',
+                repository: 'contributor/repository',
+            },
+            cloneUrl: 'https://github.com/contributor/repository.git',
+            branch: 'feature/auth',
+            sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+            fetchRef: 'refs/heads/feature/auth',
+        },
     }],
     ['scm.pullRequest.runStacked', { cwd: '/workspace', action: 'push' }],
     ['scm.repository.clone', {
@@ -76,13 +85,14 @@ const SCM_ACTION_INPUTS = Object.freeze([
 const scmMaterialization = createPluginActionCallerMaterializationFixture('acme.scm');
 
 describe('plugin invocation SCM actions', () => {
-    it('materializes a prepared review workspace at the exact plugin-selected root', async () => {
+    it('materializes the provider-authorized source tip at the exact plugin-selected root', async () => {
         const selectedRoot = '/selected/workspace';
-        const realizeWorkspaceCheckout = vi.fn(async () => ({
-            kind: 'git_worktree' as const,
-            targetPath: `${selectedRoot}/.dev/worktree/feature-auth`,
-            branchName: 'feature-auth',
+        const prepareReviewWorkspace = vi.fn(async () => ({
+            success: true as const,
+            targetPath: `${selectedRoot}/.dev/worktree/feature/auth`,
+            branchName: 'feature/auth',
             created: true,
+            currentness: { kind: 'currentAtObservedHead' } as const,
         }));
         const registry = createScmBackendRegistry([{
             id: 'git',
@@ -98,7 +108,7 @@ describe('plugin invocation SCM actions', () => {
             }),
             workspaceIntegration: {
                 inspectWorkspaceLocation: async () => null,
-                realizeWorkspaceCheckout,
+                prepareReviewWorkspace,
             },
         } as unknown as ScmBackend]);
         const scmActionExecute = vi.fn<ScmActionExecute>(async ({ actionId, input, context }) => await executeScmActionOperation({
@@ -130,28 +140,45 @@ describe('plugin invocation SCM actions', () => {
 
         await expect(service.execute('scm.reviewWorkspace.materializePrepared', {
             cwd: selectedRoot,
-            displayName: 'feature-auth',
-            baseRef: 'abc123',
-            branchMode: 'new',
+            displayName: 'Pull request 42',
+            sourceTip: {
+                repository: {
+                    kind: 'github',
+                    deployment: 'https://github.com',
+                    repository: 'contributor/repository',
+                },
+                cloneUrl: 'https://github.com/contributor/repository.git',
+                branch: 'feature/auth',
+                sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+                fetchRef: 'refs/heads/feature/auth',
+            },
         })).resolves.toEqual({
             success: true,
-            targetPath: `${selectedRoot}/.dev/worktree/feature-auth`,
-            branchName: 'feature-auth',
+            targetPath: `${selectedRoot}/.dev/worktree/feature/auth`,
+            branchName: 'feature/auth',
             created: true,
+            currentness: { kind: 'currentAtObservedHead' },
         });
         expect(scmActionExecute).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'scm.reviewWorkspace.materializePrepared',
             input: expect.objectContaining({ cwd: selectedRoot }),
         }));
-        expect(realizeWorkspaceCheckout).toHaveBeenCalledWith(expect.objectContaining({
+        expect(prepareReviewWorkspace).toHaveBeenCalledWith(expect.objectContaining({
             context: expect.objectContaining({ cwd: selectedRoot }),
-            workspaceCheckoutRealization: {
-                kind: 'git_worktree',
-                sourcePath: selectedRoot,
-                displayName: 'feature-auth',
-                baseRef: 'abc123',
-                branchMode: 'new',
-                targetPath: null,
+            request: {
+                cwd: selectedRoot,
+                displayName: 'Pull request 42',
+                sourceTip: {
+                    repository: {
+                        kind: 'github',
+                        deployment: 'https://github.com',
+                        repository: 'contributor/repository',
+                    },
+                    cloneUrl: 'https://github.com/contributor/repository.git',
+                    branch: 'feature/auth',
+                    sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+                    fetchRef: 'refs/heads/feature/auth',
+                },
             },
         }));
     });
@@ -159,11 +186,12 @@ describe('plugin invocation SCM actions', () => {
     it('refuses a prepared review workspace outside the caller\'s restricted root before invoking the backend', async () => {
         const selectedRoot = '/selected/workspace';
         const outsideRoot = '/selected-workspace-outside';
-        const realizeWorkspaceCheckout = vi.fn(async () => ({
-            kind: 'git_worktree' as const,
+        const prepareReviewWorkspace = vi.fn(async () => ({
+            success: true as const,
             targetPath: `${outsideRoot}/.dev/worktree/feature-auth`,
             branchName: 'feature-auth',
             created: true,
+            currentness: { kind: 'currentAtObservedHead' } as const,
         }));
         const registry = createScmBackendRegistry([{
             id: 'git',
@@ -179,7 +207,7 @@ describe('plugin invocation SCM actions', () => {
             }),
             workspaceIntegration: {
                 inspectWorkspaceLocation: async () => null,
-                realizeWorkspaceCheckout,
+                prepareReviewWorkspace,
             },
         } as unknown as ScmBackend]);
 
@@ -188,8 +216,17 @@ describe('plugin invocation SCM actions', () => {
             input: {
                 cwd: outsideRoot,
                 displayName: 'feature-auth',
-                baseRef: 'abc123',
-                branchMode: 'new',
+                sourceTip: {
+                    repository: {
+                        kind: 'github',
+                        deployment: 'https://github.com',
+                        repository: 'contributor/repository',
+                    },
+                    cloneUrl: 'https://github.com/contributor/repository.git',
+                    branch: 'feature/auth',
+                    sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+                    fetchRef: 'refs/heads/feature/auth',
+                },
             },
             workingDirectory: selectedRoot,
             accessPolicy: { kind: 'restrictedRoots', roots: [selectedRoot] },
@@ -198,7 +235,7 @@ describe('plugin invocation SCM actions', () => {
             success: false,
             errorCode: 'INVALID_PATH',
         });
-        expect(realizeWorkspaceCheckout).not.toHaveBeenCalled();
+        expect(prepareReviewWorkspace).not.toHaveBeenCalled();
     });
 
     it('dispatches every plugin-visible scm.* ActionSpec through the real ActionsService and ActionExecutor', async () => {

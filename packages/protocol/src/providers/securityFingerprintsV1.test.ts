@@ -686,6 +686,7 @@ describe('typed provider security fingerprints', () => {
       },
       endpointTemplateId: 'cliproxyapi-openai-responses',
       protocol: 'openai-responses',
+      sourceRegistryVersion: 'cliproxyapi-sdk:v7.2.95',
       method: 'GET',
       path: '/v1/models',
       parser: 'openai-models',
@@ -732,6 +733,10 @@ describe('typed provider security fingerprints', () => {
         ...input.managedRuntime,
         dependencies: ['cliproxyapi-runtime-v2'],
       },
+    })).not.toBe(fingerprint);
+    expect(createProviderManagedProbeRequestFingerprintV1({
+      ...input,
+      sourceRegistryVersion: 'cliproxyapi-sdk:v7.2.96',
     })).not.toBe(fingerprint);
     expect(createProviderManagedProbeRequestFingerprintV1({
       ...input,

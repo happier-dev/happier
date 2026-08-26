@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 
 import type {
   AgentExecutionRunEvent,
@@ -18,6 +18,7 @@ import { writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
 
 import { buildCodexNativeAcpRuntimeOptions } from '../acp/backend.js';
 import { resolveCanonicalCodexBackendModeFromCompatInput } from '../lifecycle/backendMode.js';
+import { readCanonicalCodexAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescriptorV1.js';
 import { buildCodexTerminalArgs } from './terminal/invocation.js';
 import { resolveCodexTerminalPermissionPolicy } from './terminal/permissionPolicy.js';
 import { openCodexNativeAppServerSession } from './appServer/native.js';
@@ -70,6 +71,7 @@ const CODEX_AUTH_FILE_ID = 'auth.json';
 
 type PreparedCodexPrimaryAccount = Readonly<{
   request: AgentSessionOpenRequest;
+  isInvalidated(): boolean;
   bind(session: AgentSessionRuntime): AgentSessionRuntime;
   cleanup(): Promise<void>;
 }>;
@@ -101,6 +103,7 @@ async function prepareCodexPrimaryConnectedAccount(
   if (Object.prototype.hasOwnProperty.call(request, 'providerBinding')) {
     return {
       request,
+      isInvalidated: () => context.signal.aborted,
       bind: (session) => session,
       async cleanup() {},
     };
@@ -172,12 +175,17 @@ async function prepareCodexPrimaryConnectedAccount(
       { signal: context.signal },
     );
     if (!binding) {
-      return { request, bind, cleanup };
+      return {
+        request,
+        isInvalidated: () => invalidated || context.signal.aborted,
+        bind,
+        cleanup,
+      };
     }
     const materialized = await context.services.connectedAccounts.materialize(
       CODEX_PRIMARY_ACCOUNT_PURPOSE,
       { kind: 'files', fileIds: [CODEX_AUTH_FILE_ID] },
-      { signal: context.signal },
+      { signal: context.signal, expectedAccount: binding.account },
     );
     if (materialized.kind !== 'files') {
       throw new Error('Codex primary account returned an invalid file materialization.');
@@ -186,18 +194,12 @@ async function prepareCodexPrimaryConnectedAccount(
     if (!authFile) {
       throw new Error('Codex primary account did not materialize auth.json.');
     }
-    const configuredRoot = request.launchEnvironment?.values.CODEX_HOME?.trim() ?? '';
-    const ownsRoot = !isAbsolute(configuredRoot);
-    const root = ownsRoot
-      ? await mkdtemp(join(tmpdir(), 'happier-codex-connected-account-'))
-      : configuredRoot;
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-connected-account-'));
     let rootCleaned = false;
     materializedRootCleanup = async (): Promise<void> => {
       if (rootCleaned) return;
       rootCleaned = true;
-      if (ownsRoot) {
-        await rm(root, { recursive: true, force: true }).catch(() => undefined);
-      }
+      await rm(root, { recursive: true, force: true }).catch(() => undefined);
     };
     await writeAtomicTextFile({
       path: join(root, CODEX_AUTH_FILE_ID),
@@ -216,6 +218,7 @@ async function prepareCodexPrimaryConnectedAccount(
           unset: launchEnvironment.unset.filter((key) => key !== 'CODEX_HOME'),
         },
       } satisfies AgentSessionOpenRequest,
+      isInvalidated: () => invalidated || context.signal.aborted,
       bind,
       cleanup,
     };
@@ -244,6 +247,9 @@ async function openCodexSession(
   }
   const prepared = await prepareCodexPrimaryConnectedAccount(request, context);
   try {
+    if (prepared.isInvalidated()) {
+      throw new Error('Codex Connected Account launch was invalidated before opening the runtime.');
+    }
     const session = backendMode === 'acp'
       ? await context.protocols.acp.open(
           prepared.request,
@@ -370,19 +376,15 @@ async function openCodexExecutionRun(
 function createCodexNativeTerminalSurface(): AgentTerminalSurface {
   return {
     resolveLaunch(request) {
-      const terminal = readRecord(request.metadata.terminalRuntime);
-      const permissionMode = readString(request.metadata.permissionMode)
-        ?? 'default';
-      const resumeId = readString(request.metadata.codexSessionId)
-        ?? readString(request.metadata.providerSessionId)
-        ?? readString(request.metadata.resumeId);
+      const runtimeDescriptor = request.metadata.runtimeDescriptorV1
+        ? readCanonicalCodexAgentRuntimeDescriptorV1(request.metadata.runtimeDescriptorV1)
+        : null;
+      const permissionMode = request.configuration?.permissionIntent.value ?? 'default';
       return {
         argv: buildCodexTerminalArgs({
           cwd: request.cwd,
-          resumeId,
+          resumeId: runtimeDescriptor?.providerSessionId,
           permissionMode,
-          codexArgs: readStringArray(request.metadata.codexArgs)
-            ?? readStringArray(terminal?.codexArgs),
           resolvePermissionPolicy: resolveCodexTerminalPermissionPolicy,
         }),
         process: { stdio: 'inherit', windowsHide: true },

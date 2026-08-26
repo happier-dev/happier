@@ -16,8 +16,8 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
-import { PI_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/runtime.js';
 import { piExternalSessionsContribution } from './agent/externalSessions/contribution.js';
+import { PI_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/catalog.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -217,6 +217,44 @@ describe('activate', () => {
       expect(testkit.registrations()).not.toContainEqual(expect.objectContaining({ family: 'hooks' }));
     } finally {
       await testkit.dispose();
+    }
+  });
+
+  it('registers the static Connected Account launch facts without retaining a private aggregate', async () => {
+    const activation = await createPluginTestkit({
+      manifest: PLUGIN_MANIFEST,
+      module: { activate },
+    });
+    try {
+      expect(activation.registration('agents', 'pi')?.connectedAccountLaunch).toEqual({
+        requestAuthUses: [{
+          purpose: 'anthropic-model-request',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.anthropic.com',
+            headerNames: ['authorization'],
+          },
+        }, {
+          purpose: 'openai-codex-model-request',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://chatgpt.com',
+            headerNames: ['authorization', 'chatgpt-account-id'],
+          },
+        }],
+        stateSharingDescriptor: expect.objectContaining({
+          providerSupportStatus: 'supported',
+          authIsolation: {
+            mode: 'materialized_home',
+            secretEntries: ['auth.json'],
+          },
+        }),
+      });
+      expect(activation.registration('agents', 'pi')?.connectedAccountLaunch?.stateSharingDescriptor)
+        .not.toHaveProperty('providerId');
+      expect(PI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('connectedServices');
+    } finally {
+      await activation.dispose();
     }
   });
 
@@ -1164,22 +1202,16 @@ describe('activate', () => {
   });
 
   it('projects only Pi-declared launch environment values and explicit unsets into the native process', async () => {
-    const resolveRuntimePreferences = (
-      PI_AGENT_RUNTIME_CONTRIBUTION as Readonly<{
-        sessionRuntimePreferences?: Readonly<{
-          resolve?: (params: Readonly<{
-            settings: Readonly<Record<string, unknown>>;
-            processEnv: Readonly<Record<string, string | undefined>>;
-            startedBy?: 'terminal' | 'daemon';
-          }>) => Readonly<Record<string, unknown>> | Promise<Readonly<Record<string, unknown>>>;
-        }>;
-      }>
-    ).sessionRuntimePreferences?.resolve;
-    expect(resolveRuntimePreferences).toBeTypeOf('function');
-
-    const preferences = await resolveRuntimePreferences?.({
-      settings: {},
-      processEnv: {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    let preferences: Readonly<Record<string, unknown>>;
+    try {
+      const buildSessionOptions = activation.registration('agents', 'pi')?.cliSessionCommand?.buildSessionOptions;
+      expect(buildSessionOptions).toBeTypeOf('function');
+      const result = buildSessionOptions?.({
+        isExplicitCliSubcommand: true,
+        parsed: { agentArgs: [] },
+        settings: {},
+        environment: {
         OPENAI_API_KEY: 'fixture-openai-key',
         ANTHROPIC_API_KEY: undefined,
         PI_CODING_AGENT_DIR: '/isolated/pi-agent-dir',
@@ -1188,20 +1220,28 @@ describe('activate', () => {
         USERPROFILE: 'C:\\isolated\\home',
         HAPPIER_PI_THINKING_LEVEL: 'medium',
         UNRELATED_SECRET: 'must-not-reach-pi',
-      },
-      startedBy: 'daemon',
-    });
-    expect(preferences).toEqual({
-      environmentVariables: {
-        HAPPIER_PI_THINKING_LEVEL: 'medium',
-        OPENAI_API_KEY: 'fixture-openai-key',
-        HOME: '/isolated/home',
-        XDG_CONFIG_HOME: '/isolated/xdg',
-        USERPROFILE: 'C:\\isolated\\home',
-        PI_CODING_AGENT_DIR: '/isolated/pi-agent-dir',
-      },
-      unsetEnvironmentVariables: ['ANTHROPIC_API_KEY'],
-    });
+        },
+        startOrigin: 'daemon',
+      });
+      expect(result).toEqual({
+        ok: true,
+        options: {
+          environmentVariables: {
+            HAPPIER_PI_THINKING_LEVEL: 'medium',
+            OPENAI_API_KEY: 'fixture-openai-key',
+            HOME: '/isolated/home',
+            XDG_CONFIG_HOME: '/isolated/xdg',
+            USERPROFILE: 'C:\\isolated\\home',
+            PI_CODING_AGENT_DIR: '/isolated/pi-agent-dir',
+          },
+          unsetEnvironmentVariables: ['ANTHROPIC_API_KEY'],
+        },
+      });
+      if (!result || !result.ok) throw new Error('Expected Pi CLI Session options');
+      preferences = result.options;
+    } finally {
+      await activation.dispose();
+    }
 
     const capture: Capture = { specs: [], written: [] };
     const context = createContext(capture);
@@ -1211,8 +1251,8 @@ describe('activate', () => {
       sessionId: 'pi-host-session-environment',
       cwd: '/tmp/pi-workspace',
       launchEnvironment: {
-        values: preferences?.environmentVariables as Readonly<Record<string, string>>,
-        unset: preferences?.unsetEnvironmentVariables as readonly string[],
+        values: preferences.environmentVariables as Readonly<Record<string, string>>,
+        unset: preferences.unsetEnvironmentVariables as readonly string[],
       },
     }, context.session);
 

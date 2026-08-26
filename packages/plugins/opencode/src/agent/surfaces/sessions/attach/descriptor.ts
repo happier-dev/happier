@@ -1,17 +1,11 @@
 import { readOpenCodeSessionRuntimeHandleFromMetadata } from '../../../identity/runtimeDescriptor.js';
-import type { AttachSessionMetadata as AttachSessionMetadataV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
+  AgentProviderCliAttachTargetResolutionV1,
+  AgentProviderCliAttachTargetV1,
+  AttachSessionMetadata as AttachSessionMetadataV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
-export type OpenCodeAttachTarget =
-  | Readonly<{
-      ok: true;
-      providerSessionId: string;
-      directory: string;
-      baseUrl: string;
-    }>
-  | Readonly<{
-      ok: false;
-      reason: string;
-    }>;
+export type OpenCodeAttachTarget = AgentProviderCliAttachTargetResolutionV1;
 
 export function resolveOpenCodeAttachTarget(params: Readonly<{
   metadata: AttachSessionMetadataV1;
@@ -39,17 +33,15 @@ export function resolveOpenCodeAttachTarget(params: Readonly<{
 
   return {
     ok: true,
-    providerSessionId,
-    directory,
-    baseUrl,
+    value: {
+      providerSessionId,
+      directory,
+      baseUrl,
+    },
   };
 }
 
-export function createOpenCodeAttachArgs(target: Readonly<{
-  baseUrl: string;
-  directory: string;
-  providerSessionId: string;
-}>): string[] {
+export function createOpenCodeAttachArgs(target: AgentProviderCliAttachTargetV1): string[] {
   return [
     'attach',
     target.baseUrl,
@@ -60,9 +52,9 @@ export function createOpenCodeAttachArgs(target: Readonly<{
   ];
 }
 
-export function buildOpenCodeAttachHealthUrl(baseUrl: string): string | null {
+export function buildOpenCodeAttachHealthUrl(target: AgentProviderCliAttachTargetV1): string | null {
   try {
-    const url = new URL(baseUrl);
+    const url = new URL(target.baseUrl);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     url.pathname = `${url.pathname.replace(/\/+$/, '')}/global/health`;
     url.search = '';

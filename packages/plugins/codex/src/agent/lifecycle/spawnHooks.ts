@@ -63,24 +63,24 @@ function readCodexRuntimeSelection(event: unknown): Readonly<Record<string, unkn
 
 function resolveCodexDaemonBackendMode(event: unknown): 'acp' | 'appServer' | null {
   const runtimeSelection = readCodexRuntimeSelection(event);
-  const providerRuntimeSelection = readRecord(runtimeSelection.providerRuntimeSelection);
+  const agentRuntimeSelection = readRecord(runtimeSelection.agentRuntimeSelection);
   return resolveCanonicalCodexBackendMode({
-    codexBackendMode: providerRuntimeSelection?.codexBackendMode,
+    codexBackendMode: agentRuntimeSelection?.codexBackendMode,
     runtimeDescriptorV1: runtimeSelection.runtimeDescriptorV1,
   }) ?? null;
 }
 
-function hasCodexProviderBinding(event: unknown): boolean {
+function hasCodexExternalModelBinding(event: unknown): boolean {
   const payload = readHookPayload(event);
   return payload?.agentId === 'codex'
-    && readRecord(readCodexRuntimeSelection(event).providerBinding) !== null;
+    && readCodexRuntimeSelection(event).hasExternalModelBinding === true;
 }
 
 export async function resolveCodexDaemonSpawnPrerequisites(
   event: unknown,
   context?: CodexDaemonSpawnHookContext,
 ): Promise<CodexDaemonSpawnPrerequisiteResult> {
-  if (hasCodexProviderBinding(event)) {
+  if (hasCodexExternalModelBinding(event)) {
     const runSystemTool = context?.tools?.runSystemTool;
     if (!runSystemTool) {
       return {

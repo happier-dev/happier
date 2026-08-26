@@ -4,6 +4,7 @@ import type {
     ForkRequestV1 as HostForkRequestV1,
     ReplayForkChildLaunchRequestV1 as HostReplayForkChildLaunchRequestV1,
 } from '@happier-dev/agents';
+import { readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata } from '@happier-dev/agents';
 import {
     HostTerminalModelSelectionBlockedError,
     type HostTerminalOrchestration,
@@ -206,69 +207,12 @@ function assertNativeAgentTerminalLaunchPlan(value: unknown): asserts value is A
     }
 }
 
-function readString(value: unknown): string | undefined {
-    return typeof value === 'string' ? value : undefined;
-}
-
-function readBoolean(value: unknown): boolean | undefined {
-    return typeof value === 'boolean' ? value : undefined;
-}
-
-function readStringArray(value: unknown): readonly string[] | undefined {
-    return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? value : undefined;
-}
-
-function projectTerminalRuntimeMetadata(value: unknown): TerminalLaunchMetadata['terminalRuntime'] {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-    assertPlainRecord(value, 'metadata.terminalRuntime');
-    const metadata = value;
-    const projected = {
-        ...(readStringArray(metadata.claudeArgs) ? { claudeArgs: readStringArray(metadata.claudeArgs) } : {}),
-        ...(readStringArray(metadata.codexArgs) ? { codexArgs: readStringArray(metadata.codexArgs) } : {}),
-        ...(readBoolean(metadata.promptInteractive) !== undefined ? { promptInteractive: readBoolean(metadata.promptInteractive) } : {}),
-        ...(readString(metadata.conversationId) !== undefined ? { conversationId: readString(metadata.conversationId) } : {}),
-        ...(readBoolean(metadata.continueLatest) !== undefined ? { continueLatest: readBoolean(metadata.continueLatest) } : {}),
-        ...(readBoolean(metadata.sandbox) !== undefined ? { sandbox: readBoolean(metadata.sandbox) } : {}),
-        ...(readString(metadata.logFile) !== undefined ? { logFile: readString(metadata.logFile) } : {}),
-        ...(readBoolean(metadata.print) !== undefined ? { print: readBoolean(metadata.print) } : {}),
-        ...(readBoolean(metadata.unsafeSkipPermissions) !== undefined ? { unsafeSkipPermissions: readBoolean(metadata.unsafeSkipPermissions) } : {}),
-    };
-    return Object.keys(projected).length > 0 ? Object.freeze(projected) : undefined;
-}
-
-function projectAntigravityTerminalMetadata(value: unknown) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-    assertPlainRecord(value, 'metadata.antigravity');
-    const metadata = value;
-    const projected = {
-        ...(readBoolean(metadata.promptInteractive) !== undefined ? { promptInteractive: readBoolean(metadata.promptInteractive) } : {}),
-        ...(readString(metadata.conversationId) !== undefined ? { conversationId: readString(metadata.conversationId) } : {}),
-        ...(readBoolean(metadata.continueLatest) !== undefined ? { continueLatest: readBoolean(metadata.continueLatest) } : {}),
-        ...(readBoolean(metadata.sandbox) !== undefined ? { sandbox: readBoolean(metadata.sandbox) } : {}),
-        ...(readString(metadata.logFile) !== undefined ? { logFile: readString(metadata.logFile) } : {}),
-        ...(readBoolean(metadata.print) !== undefined ? { print: readBoolean(metadata.print) } : {}),
-        ...(readBoolean(metadata.unsafeSkipPermissions) !== undefined ? { unsafeSkipPermissions: readBoolean(metadata.unsafeSkipPermissions) } : {}),
-    };
-    return Object.keys(projected).length > 0 ? Object.freeze(projected) : undefined;
-}
-
 function projectTerminalAgentLaunchMetadata(
     metadata: Readonly<Record<string, unknown>>,
 ): TerminalLaunchMetadata {
-    const terminalRuntime = projectTerminalRuntimeMetadata(metadata.terminalRuntime);
-    const antigravity = projectAntigravityTerminalMetadata(metadata.antigravity);
+    const runtimeDescriptorV1 = readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(metadata);
     return Object.freeze({
-        ...(terminalRuntime ? { terminalRuntime } : {}),
-        ...(antigravity ? { antigravity } : {}),
-        ...(readString(metadata.providerSessionId) !== undefined ? { providerSessionId: readString(metadata.providerSessionId) } : {}),
-        ...(readString(metadata.codexSessionId) !== undefined ? { codexSessionId: readString(metadata.codexSessionId) } : {}),
-        ...(readString(metadata.resumeId) !== undefined ? { resumeId: readString(metadata.resumeId) } : {}),
-        ...(readString(metadata.permissionMode) !== undefined ? { permissionMode: readString(metadata.permissionMode) } : {}),
-        ...(readStringArray(metadata.codexArgs) ? { codexArgs: readStringArray(metadata.codexArgs) } : {}),
-        ...(readStringArray(metadata.claudeArgs) ? { claudeArgs: readStringArray(metadata.claudeArgs) } : {}),
-        ...(readString(metadata.fallbackModel) !== undefined ? { fallbackModel: readString(metadata.fallbackModel) } : {}),
-        ...(readString(metadata.customSystemPrompt) !== undefined ? { customSystemPrompt: readString(metadata.customSystemPrompt) } : {}),
-        ...(readString(metadata.appendSystemPrompt) !== undefined ? { appendSystemPrompt: readString(metadata.appendSystemPrompt) } : {}),
+        ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
     });
 }
 
@@ -596,6 +540,51 @@ function bindNativeAgentHandoffSurface(params: Readonly<{
             assertCurrentNativeAgentSurfaceGeneration(params);
             return result;
         },
+        ...(handoff.extractMediaScannableRecords
+            ? {
+                extractMediaScannableRecords: async (
+                    request: Parameters<NonNullable<AgentRuntimeHandoffSurface['extractMediaScannableRecords']>>[0],
+                ) => {
+                    const context = await resolveNativeAgentSurfaceInvocationContext({
+                        ...params,
+                        cwd: process.cwd(),
+                    });
+                    const result = await handoff.extractMediaScannableRecords!(request, context);
+                    assertCurrentNativeAgentSurfaceGeneration(params);
+                    return result;
+                },
+            }
+            : {}),
+        ...(handoff.buildRuntimeLocalMetadata
+            ? {
+                buildRuntimeLocalMetadata: async (
+                    request: Parameters<NonNullable<AgentRuntimeHandoffSurface['buildRuntimeLocalMetadata']>>[0],
+                ) => {
+                    const context = await resolveNativeAgentSurfaceInvocationContext({
+                        ...params,
+                        cwd: process.cwd(),
+                    });
+                    const result = await handoff.buildRuntimeLocalMetadata!(request, context);
+                    assertCurrentNativeAgentSurfaceGeneration(params);
+                    return result;
+                },
+            }
+            : {}),
+        ...(handoff.resolveNativeTranscriptPathCandidate
+            ? {
+                resolveNativeTranscriptPathCandidate: async (
+                    request: Parameters<NonNullable<AgentRuntimeHandoffSurface['resolveNativeTranscriptPathCandidate']>>[0],
+                ) => {
+                    const context = await resolveNativeAgentSurfaceInvocationContext({
+                        ...params,
+                        cwd: process.cwd(),
+                    });
+                    const result = await handoff.resolveNativeTranscriptPathCandidate!(request, context);
+                    assertCurrentNativeAgentSurfaceGeneration(params);
+                    return result;
+                },
+            }
+            : {}),
     });
 }
 
@@ -686,6 +675,7 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
             sessionId: request.sessionId,
             cwd: request.directory,
             metadata: projectTerminalAgentLaunchMetadata(request.metadata),
+            ...(request.configuration ? { configuration: request.configuration } : {}),
             modelSelection: request.modelSelection,
         });
         assertNativeAgentTerminalLaunchPlan(plan);

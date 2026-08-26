@@ -147,10 +147,34 @@
         "catalog": {
           "agentCliSystemTool": {
             "toolId": "claude-cli"
+          },
+          "codingPromptBehavior": {
+            "blocks": [
+              {
+                "id": "provider.claude.ask_user_question_isolation",
+                "text": "RELIABILITY RULES (IMPORTANT):\n- Tool-use sequencing is strict. If you use \"AskUserQuestion\", do NOT include any other tool_use in the same assistant turn. Wait for the user's answer before calling other tools."
+              },
+              {
+                "id": "provider.claude.disable_todos",
+                "text": "Do not create TODO items, TODO lists, or task lists in your output. If you would normally create TODOs, instead proceed with the work directly or ask the user for clarification.",
+                "when": "disableTodos"
+              }
+            ]
+          },
+          "vendorResume": {
+            "support": "supported"
           }
         },
         "cli": {
           "auth": {
+            "credentialPaths": [
+              "~/.claude/.credentials.json",
+              "~/.claude/.claude.json"
+            ],
+            "environmentVariables": [
+              "ANTHROPIC_API_KEY",
+              "ANTHROPIC_AUTH_TOKEN"
+            ],
             "loginLaunches": [
               {
                 "args": [],
@@ -159,19 +183,6 @@
               }
             ],
             "machineLoginKey": "claude-code",
-            "probe": {
-              "backgroundChecks": "safe",
-              "credentialPaths": [
-                "~/.claude/.credentials.json",
-                "~/.claude/.claude.json"
-              ],
-              "envVars": [
-                "ANTHROPIC_API_KEY",
-                "ANTHROPIC_AUTH_TOKEN"
-              ],
-              "parser": "claudeCredentialsFile",
-              "statusArgs": null
-            },
             "support": "login_terminal"
           },
           "displayName": "Claude Code CLI",

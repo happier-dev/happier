@@ -3,16 +3,14 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { AUGGIE_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
+import { AUGGIE_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
 
 describe('Auggie agent runtime contribution', () => {
-  it('exports provider-owned model preflight controls', () => {
-    expect(AUGGIE_AGENT_RUNTIME_CONTRIBUTION).toMatchObject({
-      agentId: 'auggie',
-      preflightSessionControls: {
-        failureCacheStrategy: 'cooldown',
-        cliModelsCommandArgs: ['model', 'list', '--json'],
-        probeModelsRaw: expect.any(Function),
-      },
+  it('keeps public preflight command data out of the legacy catalog contribution', () => {
+    expect(AUGGIE_AGENT_RUNTIME_CONTRIBUTION).toEqual({ agentId: 'auggie' });
+    expect(AUGGIE_PREFLIGHT_SESSION_CONTROLS.models?.command).toEqual({
+      toolId: 'auggie-cli',
+      args: ['model', 'list', '--json'],
     });
   });
 
@@ -26,8 +24,6 @@ describe('Auggie agent runtime contribution', () => {
     const { AUGGIE_AGENT_RUNTIME_CONTRIBUTION: catalogContribution } = await import('./catalog.js');
 
     expect(catalogContribution).toBe(AUGGIE_AGENT_RUNTIME_CONTRIBUTION);
-    expect(catalogContribution.preflightSessionControls.cliModelsCommandArgs).toEqual(['model', 'list', '--json']);
-    expect(catalogContribution.preflightSessionControls.probeModelsRaw)
-      .toBe(AUGGIE_AGENT_RUNTIME_CONTRIBUTION.preflightSessionControls.probeModelsRaw);
+    expect(catalogContribution).toEqual({ agentId: 'auggie' });
   });
 });

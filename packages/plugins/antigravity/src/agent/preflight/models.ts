@@ -1,5 +1,6 @@
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
-import { buildAntigravityCliModelsProbeEnv } from '../lifecycle/runtimeEnv.js';
+import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+
+import { ANTIGRAVITY_SDK_ONLY_ENV_KEYS } from '../lifecycle/runtimeEnv.js';
 import { ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS } from '../cliPrint/modelsProbePolicy.js';
 
 export type AntigravityPreflightModel = Readonly<{
@@ -7,8 +8,6 @@ export type AntigravityPreflightModel = Readonly<{
   name: string;
 }>;
 
-const MIN_PREFLIGHT_MODELS_TIMEOUT_MS = 250;
-const PREFLIGHT_OUTPUT_MAX_BYTES = 256 * 1024;
 function normalizeModelLine(line: string): string | null {
   const normalized = line
     .trim()
@@ -34,34 +33,15 @@ export function buildAntigravityPreflightModelsFromModelsOutput(
   return models.length > 0 ? models : null;
 }
 
-export async function probeAntigravityPreflightModelsRaw(params: Readonly<{
-  exec: ExecService;
-  cwd: string;
-  timeoutMs: number;
-  env?: NodeJS.ProcessEnv;
-}>): Promise<readonly AntigravityPreflightModel[] | null> {
-  const resolved = await params.exec.systemTools.resolve({
-    toolId: 'antigravity-cli',
-    purpose: 'Probe Antigravity models',
-    cwd: params.cwd,
-  });
-  const result = await params.exec.run({
-    executable: resolved.executable,
-    args: ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS,
-    cwd: { root: 'workspace', relativePath: '' },
-    env: { ...buildAntigravityCliModelsProbeEnv(params.env), CI: '1' },
-    maxStderrBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
-    maxStdoutBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
-    timeoutMs: Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs),
-  });
-  if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0) return null;
-  const decoder = new TextDecoder();
-  return buildAntigravityPreflightModelsFromModelsOutput(decoder.decode(result.stdout))
-    ?? buildAntigravityPreflightModelsFromModelsOutput(decoder.decode(result.stderr));
-}
-
 export const ANTIGRAVITY_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
-  failureCacheStrategy: 'cooldown',
-  probeModelsRaw: probeAntigravityPreflightModelsRaw,
-  cliModelsCommandArgs: ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS,
-} as const);
+  models: Object.freeze({
+    command: Object.freeze({
+      toolId: 'antigravity-cli',
+      args: ANTIGRAVITY_CLI_MODELS_COMMAND_ARGS,
+      environmentExcludeKeys: ANTIGRAVITY_SDK_ONLY_ENV_KEYS,
+    }),
+    parseOutput: ({ stdout, stderr }) =>
+      buildAntigravityPreflightModelsFromModelsOutput(stdout)
+      ?? buildAntigravityPreflightModelsFromModelsOutput(stderr),
+  }),
+} satisfies AgentPreflightSessionControlsContributionV1);

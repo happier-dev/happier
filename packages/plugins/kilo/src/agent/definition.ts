@@ -10,7 +10,7 @@ export const AGENT_DEFINITION = Object.freeze({
     flavorAliases: ['kilocode'],
     cloudConnect: null,
     connectedServices: null,
-    resume: { vendorResume: 'supported', vendorResumeIdField: 'kiloSessionId' },
+    resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'kiloSessionId' },
     sessionStorage: { direct: false, persisted: true },
     sessionCapabilities: {
       sessionListing: 'unsupported',

@@ -4,16 +4,33 @@ import { supportsCodexProviderResume } from './support.js';
 
 describe('Codex plugin resume support', () => {
   it('supports final app-server and ACP backend modes', () => {
-    expect(supportsCodexProviderResume({ codexBackendMode: 'appServer' })).toBe(true);
-    expect(supportsCodexProviderResume({ codexBackendMode: 'acp' })).toBe(true);
+    expect(supportsCodexProviderResume({
+      agentRuntimeSelection: { codexBackendMode: 'appServer' },
+    })).toBe(true);
+    expect(supportsCodexProviderResume({
+      agentRuntimeSelection: { codexBackendMode: 'acp' },
+    })).toBe(true);
   });
 
   it('normalizes legacy MCP inputs instead of preserving MCP as a final runtime mode', () => {
-    expect(supportsCodexProviderResume({ codexBackendMode: 'mcp' })).toBe(true);
-    expect(supportsCodexProviderResume({ codexBackendMode: 'mcp_resume' })).toBe(true);
+    expect(supportsCodexProviderResume({
+      agentRuntimeSelection: { codexBackendMode: 'mcp' },
+    })).toBe(true);
+    expect(supportsCodexProviderResume({
+      agentRuntimeSelection: { codexBackendMode: 'mcp_resume' },
+    })).toBe(true);
   });
 
-  it('maps the legacy ACP flag only at compatibility ingress', () => {
-    expect(supportsCodexProviderResume({ experimentalCodexAcp: true })).toBe(true);
+  it('accepts a canonical runtime descriptor without a Codex-specific host input', () => {
+    expect(supportsCodexProviderResume({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          backendMode: 'appServer',
+          providerSessionId: 'thread-1',
+        },
+      },
+    })).toBe(true);
   });
 });

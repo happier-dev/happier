@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import * as cursorAuthModule from './status.js';
-import { resolveCursorAuthStatus } from './status.js';
+import {
+  interpretCursorCliAuthCommand,
+  resolveCursorAuthStatus,
+} from './status.js';
 
 type CursorAuthProbeParams = Parameters<typeof cursorAuthModule.checkCursorAuthStatus>[0];
 
@@ -44,6 +47,20 @@ describe('resolveCursorAuthStatus', () => {
     })).toEqual({
       status: 'unknown',
       source: 'probe_failed',
+    });
+  });
+
+  it('interprets the declared cursor-agent about result without receiving environment or executable access', () => {
+    expect(interpretCursorCliAuthCommand({
+      ok: true,
+      stdout: '{"user":{"email":"person@example.com"}}',
+      stderr: '',
+      exitCode: 0,
+    })).toEqual({
+      state: 'logged_in',
+      method: 'oauth_cli',
+      source: 'command',
+      accountLabel: 'person@example.com',
     });
   });
 

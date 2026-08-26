@@ -125,6 +125,12 @@ export function createCatalogHostSessionRuntimePlan<
                     createdNativeRuntime.terminalRemoteModeLoop,
                 }
               : {}),
+            ...(createdNativeRuntime.configuration
+              ? { configuration: createdNativeRuntime.configuration }
+              : {}),
+            ...(createdNativeRuntime.runtimeDescriptorV1
+              ? { runtimeDescriptorV1: createdNativeRuntime.runtimeDescriptorV1 }
+              : {}),
             ...(createdNativeRuntime.admittedProviderBindingHandoff
               ? {
                   admittedProviderBindingHandoff:

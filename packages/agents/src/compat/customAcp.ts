@@ -1,4 +1,3 @@
-import type { AgentAuthProbeConfig, AgentAuthProbeBackgroundChecks, AgentAuthProbeParser } from '../auth.js';
 import type { BuiltInAcpConfig, BuiltInAcpYesNoAuto } from '../acp.js';
 import type { AgentLocalCliConfig, AgentCliLaunchCommand, AgentCliSupportKind } from '../localCli.js';
 import type { AgentModelConfig } from '../models.js';
@@ -30,12 +29,6 @@ export type LegacyCompatAgentCliRuntimeSpec = Readonly<
 
 export type LegacyCompatAgentLocalCliConfig = Readonly<
   Omit<AgentLocalCliConfig, 'agentId'> & {
-    agentId: LegacyCompatAgentId;
-  }
->;
-
-export type LegacyCompatAgentAuthProbeConfig = Readonly<
-  Omit<AgentAuthProbeConfig, 'agentId'> & {
     agentId: LegacyCompatAgentId;
   }
 >;
@@ -157,34 +150,6 @@ function createLegacyCustomAcpAgentLocalCliConfig(params: Readonly<{
 export function getLegacyCustomAcpAgentLocalCliConfig(): LegacyCompatAgentLocalCliConfig {
   return createLegacyCustomAcpAgentLocalCliConfig({
     detectKey: getLegacyCustomAcpAgentCliRuntimeSpec().binaryName,
-  });
-}
-
-export const LEGACY_CUSTOM_ACP_AUTH_PROBE_INPUT = Object.freeze({
-  statusCommand: null,
-  parser: 'unknown',
-  backgroundChecks: 'manual_only',
-} satisfies Readonly<{
-  statusCommand: ReadonlyArray<string> | null;
-  parser: AgentAuthProbeParser;
-  backgroundChecks: AgentAuthProbeBackgroundChecks;
-}>);
-
-function createLegacyCustomAcpAgentAuthProbeConfig(params: Readonly<{
-  binaryName: string;
-}>): LegacyCompatAgentAuthProbeConfig {
-  return {
-    agentId: LEGACY_CUSTOM_ACP_AGENT_ID,
-    binaryNames: [params.binaryName],
-    statusCommand: LEGACY_CUSTOM_ACP_AUTH_PROBE_INPUT.statusCommand,
-    parser: LEGACY_CUSTOM_ACP_AUTH_PROBE_INPUT.parser,
-    backgroundChecks: LEGACY_CUSTOM_ACP_AUTH_PROBE_INPUT.backgroundChecks,
-  };
-}
-
-export function getLegacyCustomAcpAgentAuthProbeConfig(): LegacyCompatAgentAuthProbeConfig {
-  return createLegacyCustomAcpAgentAuthProbeConfig({
-    binaryName: getLegacyCustomAcpAgentCliRuntimeSpec().binaryName,
   });
 }
 

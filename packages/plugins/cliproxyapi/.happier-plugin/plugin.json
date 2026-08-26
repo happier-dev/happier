@@ -37,7 +37,8 @@
               "path": "/v1/models"
             }
           ],
-          "source": "probe"
+          "source": "probe",
+          "sourceRegistryVersion": "v7.2.95"
         },
         "credential": {
           "kind": "apiKey",

@@ -1,7 +1,5 @@
-import type { ChecklistId } from '@/capabilities/checklistIds';
 import type { Capability } from '@/capabilities/service';
 import type { CommandHandler } from '@/cli/commandRegistry';
-import type { CloudConnectTarget } from '@/cloud/connectTypes';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import type {
   BackendTargetRefV1,
@@ -10,8 +8,6 @@ import type {
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceId,
   ConnectedServiceMaterializationIdentityV1,
-  ConnectedServicesProviderConfigSharingModeV1,
-  ConnectedServicesProviderStateSharingModeV1,
   ExternalSessionsAgentId,
   PluginAgentToolsDeliveryV2,
 } from '@happier-dev/protocol';
@@ -24,12 +20,8 @@ import type {
   SessionUsageLimitRecoveryControlAdapter,
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlTypes';
 import type { Metadata } from '@/api/types';
-import type { PromptBlockV1 } from '@happier-dev/protocol';
 import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
-import type { BoundTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import type { RuntimeActivityApplicability } from '@/agent/runtime/session/activity/runtimeActivityApplicability';
-import type { RuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
-import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
 
 export type {
   CatalogAgentId,
@@ -37,8 +29,16 @@ export type {
   VendorResumeSupportLevel,
 } from '@/agent/catalog/ids';
 import type { CatalogAgentId, CatalogAgentLookupId, VendorResumeSupportLevel } from '@/agent/catalog/ids';
-import type { AgentRuntimeSurfaces } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { CodexBackendMode } from '@happier-dev/protocol';
+import type {
+  AgentCliSessionCommandBuildInputV1,
+  AgentConnectedAccountStateSharingDescriptorEntryV1,
+  AgentConnectedAccountStateSharingDescriptorTransformV1,
+  AgentConnectedAccountStateSharingDescriptorV1,
+  AgentConnectedAccountStateSharingDynamicEntryPatternV1,
+  AgentDeferredStartupEligibilityInputV1,
+  AgentExperimentalVendorResumeSupportInputV1,
+  AgentRuntimeSurfaces,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   PreflightSessionControlsProbeAdapter,
   PreflightSessionControlsProbeKind,
@@ -82,30 +82,15 @@ export type { ConnectedServiceMaterializedHomeFreshness };
 export type { ConnectedServiceProviderRuntimeAuthAdapter };
 export type { SessionUsageLimitRecoveryControlAdapter };
 
-export type VendorResumeSupportParams = Readonly<{
-  experimentalCodexAcp?: boolean;
-  codexBackendMode?: CodexBackendMode;
-}>;
+export type VendorResumeSupportParams = AgentExperimentalVendorResumeSupportInputV1;
 
 export type VendorResumeSupportFn = (params: VendorResumeSupportParams) => boolean;
 
-export type HeadlessTmuxArgvTransform = (argv: string[]) => string[];
-
 export type ProviderSessionRuntimePreferences = Readonly<Record<string, unknown>>;
 
-export type ProviderSessionRuntimePreferencesParams = Readonly<{
-  settings: Readonly<Record<string, unknown>>;
-  processEnv: NodeJS.ProcessEnv;
-  startedBy: 'terminal' | 'daemon' | undefined;
-}>;
-
 export type ProviderSessionRuntimePreferencesResolver = (
-  params: ProviderSessionRuntimePreferencesParams,
+  params: AgentCliSessionCommandBuildInputV1,
 ) => ProviderSessionRuntimePreferences | Promise<ProviderSessionRuntimePreferences>;
-
-export type ProviderCodingPromptBehaviorResolver = (params: Readonly<{
-  disableTodos?: boolean;
-}>) => PromptBlockV1[];
 
 export type SessionHandoffAgentBundleRecordExtractor = (
   agentBundle: Readonly<Record<string, unknown>>,
@@ -119,60 +104,22 @@ export type ProviderRuntimeLocalHandoffMetadataBuilder = (params: Readonly<{
   vendorResumeId: string;
 }>) => Partial<Pick<Metadata, 'claudeSessionId' | 'codexSessionId' | 'opencodeSessionId' | 'externalSessionV1'>>;
 
-export type ProviderTerminalAttachmentRetirementHook = (params: Readonly<{
-  happyHomeDir: string;
-  sessionId: string;
-  attachmentInfo: BoundTerminalHostAttachmentInfo;
-}>) => Promise<void>;
+export type ConnectedServiceStateSharingDescriptorEntry =
+  AgentConnectedAccountStateSharingDescriptorEntryV1;
 
-export type ConnectedServiceStateSharingDescriptorEntry = Readonly<{
-  path: string;
-  mode: 'linked' | 'copied' | 'linked_or_copied' | 'env_redirect' | 'force_copied';
-  envVar?: string;
-  allowHardLinkFallback?: boolean;
-  secret?: boolean;
-}>;
+export type ConnectedServiceStateSharingDescriptorTransform =
+  AgentConnectedAccountStateSharingDescriptorTransformV1;
 
-export type ConnectedServiceStateSharingDescriptorTransform = Readonly<{
-  entry: string;
-  kind: 'rewrite_toml';
-  spec: Readonly<{
-    setStringValues: Readonly<Record<string, string>>;
-  }>;
-}>;
+export type ConnectedServiceStateSharingDynamicEntryPattern =
+  AgentConnectedAccountStateSharingDynamicEntryPatternV1;
 
-export type ConnectedServiceStateSharingDynamicEntryPattern = Readonly<{
-  scope: 'config' | 'state';
-  pattern: string;
-  mode?: ConnectedServiceStateSharingDescriptorEntry['mode'];
-  envVar?: string;
-  allowHardLinkFallback?: boolean;
-}>;
-
-export type ConnectedServiceStateSharingDescriptor = Readonly<{
-  providerId: CatalogAgentId;
-  providerSupportStatus: 'supported' | 'unsupported';
-  config: Readonly<{
-    supported: boolean;
-    modes: ReadonlyArray<ConnectedServicesProviderConfigSharingModeV1>;
-    entries: ReadonlyArray<ConnectedServiceStateSharingDescriptorEntry>;
-    unavailableReason?: 'not_implemented' | 'dynamic_diagnostics_required';
-  }>;
-  state: Readonly<{
-    supported: boolean;
-    modes: ReadonlyArray<ConnectedServicesProviderStateSharingModeV1>;
-    entries: ReadonlyArray<ConnectedServiceStateSharingDescriptorEntry>;
-    sharedStatePrivacyRiskAcknowledgementRequired?: boolean;
-    symlinkUnavailableDegradePolicy: 'block_continuity' | 'degrade_to_isolated';
-    unavailableReason?: 'not_implemented' | 'dynamic_diagnostics_required';
-  }>;
-  authIsolation: Readonly<{
-    mode: 'env_only' | 'materialized_home' | 'process_env';
-    secretEntries: ReadonlyArray<string>;
-  }>;
-  transforms?: ReadonlyArray<ConnectedServiceStateSharingDescriptorTransform>;
-  dynamicEntryPatterns?: Readonly<Record<string, ConnectedServiceStateSharingDynamicEntryPattern>>;
-}>;
+/**
+ * The SDK owns the static descriptor grammar. Catalog projection adds only
+ * the host routing identity required by the existing state-sharing owner.
+ */
+export type ConnectedServiceStateSharingDescriptor =
+  Readonly<{ providerId: CatalogAgentId }>
+  & AgentConnectedAccountStateSharingDescriptorV1;
 
 export type ConnectedServicePredictiveSoftSwitchLiveSessionRequirement =
   | Readonly<{ kind: 'none' }>
@@ -300,10 +247,6 @@ export type ConnectedServiceDaemonAuthBridgeRefresh = (input: Readonly<{
   refreshCoordinator: ConnectedServiceRefreshCoordinator;
 }>) => Promise<ConnectedServiceDaemonAuthBridgeRefreshResult> | ConnectedServiceDaemonAuthBridgeRefreshResult;
 
-export type AgentChecklistContributions = Partial<
-  Record<ChecklistId, ReadonlyArray<Readonly<{ id: string; params?: Record<string, unknown> }>>>
->;
-
 export type CliDetectSpec = Readonly<{
   /**
    * Candidate argv lists to try for `--version` probing.
@@ -317,21 +260,7 @@ export type CliDetectSpec = Readonly<{
   loginStatusArgs?: ReadonlyArray<string> | null;
 }>;
 
-export type ProviderDeferredSessionStartupParams = Readonly<{
-  startedBy: 'terminal' | 'daemon';
-  startingMode: 'terminal' | 'remote' | 'local' | null;
-  existingSessionId: string | null;
-  sessionAttachFilePath: string | null;
-  providerResumeId: string | null;
-  hasExplicitPermissionMode: boolean;
-  permissionModeSeedSource:
-    | 'explicit'
-    | 'inferred'
-    | 'account_default'
-    | 'fallback'
-    | 'released_cache_v1';
-  hasTerminalTty: boolean;
-}>;
+export type ProviderDeferredSessionStartupParams = AgentDeferredStartupEligibilityInputV1;
 
 export type AgentCatalogEntry = Readonly<{
   id: CatalogAgentLookupId;
@@ -341,15 +270,6 @@ export type AgentCatalogEntry = Readonly<{
   runtimeActivityApplicability?: RuntimeActivityApplicability;
   /** Host-private binding from this Agent CLI to one same-plugin declared system tool. */
   agentCliSystemTool?: Readonly<{ toolId: string }>;
-  resolvePetDiscoveryHomePath?: (env: NodeJS.ProcessEnv) => string;
-  resolvePetDiscoveryHomeEntries?: (params: Readonly<{
-    source: Readonly<Record<string, unknown>>;
-    activeServerDir: string;
-    env: NodeJS.ProcessEnv;
-  }>) => Promise<readonly Readonly<{ homePath: string }>[]>;
-  getRuntimeInstallableAdapter?: (
-    descriptor: InstallableDependencyDescriptor,
-  ) => Promise<RuntimeInstallableAdapter | null>;
   connectedServiceIds?: readonly ConnectedServiceId[];
   connectedAccountRequestAuthUses?: readonly ConnectedAccountRequestAuthUseV1[];
   cliSubcommand: CatalogAgentLookupId;
@@ -372,10 +292,9 @@ export type AgentCatalogEntry = Readonly<{
   getCliDetect?: () => Promise<CliDetectSpec>;
   getCliAuthSpec?: () => Promise<CliAuthSpec>;
   /**
-   * Optional provider-owned runtime preference resolver for direct CLI starts.
-   *
-   * Shared session command code passes account settings and process env through this
-   * hook instead of importing provider-specific preference modules.
+   * Host projection of the public Agent CLI Session-options composer for
+   * direct CLI starts. The shared Session command supplies only its resolved,
+   * bounded input; it remains the owner of parsing and process launch.
    */
   resolveSessionRuntimePreferences?: ProviderSessionRuntimePreferencesResolver;
   /**
@@ -385,32 +304,12 @@ export type AgentCatalogEntry = Readonly<{
    * The host retains API/session initialization, buffering, attachment, and cleanup.
    */
   shouldUseDeferredSessionStartup?: (params: ProviderDeferredSessionStartupParams) => boolean;
-  /** Exact deployed V1 compatibility cache policy, owned by the contributing provider. */
-  releasedStartupOverridesCacheV1?: true;
-  /**
-   * Optional provider-owned prompt behavior blocks for coding sessions.
-   *
-   * Shared prompt composition owns ordering and rendering; provider-owned runtime
-   * contributions own provider-specific tool sequencing and behavioral caveats.
-   */
-  resolveCodingPromptBehaviorBlocks?: ProviderCodingPromptBehaviorResolver;
-  /**
-   * Optional cloud connect target for this agent.
-   *
-   * When present, `happier connect <agent>` will be available.
-   */
-  getCloudConnectTarget?: () => Promise<CloudConnectTarget>;
   /**
    * Optional daemon spawn hooks for this agent.
    *
    * These are evaluated by the daemon before spawning a child process.
    */
   getDaemonSpawnHooks?: () => Promise<DaemonSpawnHooks>;
-  /**
-   * Provider-declared cleanup invoked only after the host has irreversibly retired the exact
-   * immutable terminal attachment. Cleanup failure is advisory and must not reverse retirement.
-   */
-  onTerminalAttachmentRetired?: ProviderTerminalAttachmentRetirementHook;
   /**
    * Optional provider-owned connected-services materializer used before spawning the backend.
    *
@@ -552,12 +451,6 @@ export type AgentCatalogEntry = Readonly<{
    */
   getVendorResumeSupport?: () => Promise<VendorResumeSupportFn>;
   /**
-   * Optional argv rewrite when launching headless sessions in tmux.
-   *
-   * Used by the CLI `--tmux` launcher before it spawns a child `happy ...` process.
-   */
-  getHeadlessTmuxArgvTransform?: () => Promise<HeadlessTmuxArgvTransform>;
-  /**
    * Optional provider-owned terminal prompt submit verification policy.
    *
    * Generic terminal hosts own the submit orchestration; providers own TUI-specific screen
@@ -594,12 +487,6 @@ export type AgentCatalogEntry = Readonly<{
   resolveAgentNativeSessionLogPath?: (
     input: Readonly<{ vendorResumeId: string }>,
   ) => Promise<string | null> | string | null;
-  /**
-   * Optional provider-owned permission-mode normalization for daemon `happy session` forwarding.
-   *
-   * Use this to keep provider-specific permission-mode alias handling out of shared daemon core.
-   */
-  normalizeSessionControlPermissionMode?: (permissionMode: string) => string;
   /**
    * Whether probe RPC handlers should load account settings before invoking probe methods.
    *
@@ -649,13 +536,6 @@ export type AgentCatalogEntry = Readonly<{
    * Keep provider-specific implementations in the backend folder and expose them via this catalog hook.
    */
   getPreflightSessionControlsProbeAdapter?: () => Promise<PreflightSessionControlsProbeAdapter | null>;
-  /**
-   * Optional capability checklist contributions for agent-specific UX.
-   *
-   * This is intentionally data-only (no self-registration) so the capabilities
-   * engine can stay deterministic and easy to inspect.
-   */
-  checklists?: AgentChecklistContributions;
 }>;
 
 export type {

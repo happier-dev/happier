@@ -7,7 +7,7 @@ import type { NormalizedRuntimeEventPublication } from '@/agent/runtime/events/c
 import { createNormalizedRuntimeEventPublicationHub } from '@/agent/runtime/events/createNormalizedRuntimeEventPublicationHub';
 import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
 import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import { type RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { Metadata } from '@/api/types';
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -52,6 +52,14 @@ function resolveRuntimeIdentityPublication(params: Readonly<{
       readRuntimeSessionId(params.runtime),
     ),
   };
+}
+
+function resolveOpenedRuntimeDescriptorV1(params: Readonly<{
+  agentId: string;
+  descriptor: unknown;
+}>): RuntimeDescriptorV1 | null {
+  const descriptor = readRuntimeDescriptorV1(params.descriptor);
+  return descriptor?.agentId === params.agentId ? descriptor : null;
 }
 
 function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
@@ -157,15 +165,33 @@ export function withHostSessionRuntimeIdentityPublication(params: Readonly<{
           runtime,
           nativeRuntime,
           terminalRemoteModeLoop,
+          configuration,
+          runtimeDescriptorV1,
           admittedProviderBindingHandoff,
         } = resolveHostSessionRuntimeFactoryResult(createdRuntime);
+        const openedRuntimeDescriptor = resolveOpenedRuntimeDescriptorV1({
+          agentId: params.plan.agentId,
+          descriptor: runtimeDescriptorV1,
+        });
+        const identity = openedRuntimeDescriptor
+          ? { ...params.identity, runtimeDescriptor: openedRuntimeDescriptor }
+          : params.identity;
+        if (openedRuntimeDescriptor) {
+          await runtimeParams.session.updateMetadata((metadata) => (
+            applyRuntimeDescriptorSessionMetadata(
+              metadata,
+              openedRuntimeDescriptor,
+            ) as Metadata
+          ));
+        }
         return {
           operations: wrapRuntimeTurnOperationsWithPublication({
             runtime,
-            identity: params.identity,
+            identity,
           }),
           nativeRuntime,
           terminalRemoteModeLoop,
+          ...(configuration ? { configuration } : {}),
           ...(admittedProviderBindingHandoff
             ? { admittedProviderBindingHandoff }
             : {}),

@@ -1,5 +1,6 @@
+import type { AgentConnectedAccountStateSharingDescriptorV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+
 export const ohMyPiConnectedServiceStateSharingDescriptor = Object.freeze({
-  providerId: 'ohMyPi',
   providerSupportStatus: 'unsupported',
   config: {
     supported: false,
@@ -24,4 +25,4 @@ export const ohMyPiConnectedServiceStateSharingDescriptor = Object.freeze({
       'GEMINI_API_KEY',
     ],
   },
-} as const);
+} satisfies AgentConnectedAccountStateSharingDescriptorV1);

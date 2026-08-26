@@ -19,7 +19,7 @@ export const AGENT_DEFINITION = Object.freeze({
         gemini: ['token'],
       },
     },
-    resume: { vendorResume: 'supported', vendorResumeIdField: 'ohMyPiSessionId' },
+    resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'ohMyPiSessionId' },
     sessionStorage: { direct: true, persisted: true },
     sessionCapabilities: {
       sessionListing: 'supported',
@@ -59,4 +59,4 @@ export const AGENT_DEFINITION = Object.freeze({
       source: './agent/contributions/catalog',
     },
   },
-});
+} as const);

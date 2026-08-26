@@ -3,7 +3,9 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import { antigravityExternalSessionObservationContribution } from './agent/cliPrint/observation.js';
+import { antigravityConnectedServiceStateSharingDescriptor } from './agent/connectedServices/descriptor.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { ANTIGRAVITY_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { ANTIGRAVITY_BACKEND_ID } from './agent/install/cliRuntime.js';
 import { resolveAntigravityDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 import {
@@ -89,11 +91,13 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
           auth: {
             support: 'login_terminal',
             machineLoginKey: 'antigravity-cli',
-            probe: { parser: 'none', backgroundChecks: 'manual_only', statusArgs: null },
             loginLaunches: [{ kind: 'primary', args: [] }],
           },
         },
         primary: 'sessions',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+        },
         connectedAccounts: [{
           purpose: 'model_upstream',
           service: {
@@ -133,6 +137,15 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
         },
       },
       factory: createAntigravityAgentRuntime,
+      connectedAccountLaunch: {
+        stateSharingDescriptor: antigravityConnectedServiceStateSharingDescriptor,
+      },
+      preflightSessionControls: ANTIGRAVITY_PREFLIGHT_SESSION_CONTROLS,
+      cliSessionCommand: {
+        sessionRuntimeId: 'antigravity',
+        accountSettingsAgentId: 'antigravity',
+        infoCommandPrefixes: [['models']],
+      },
       sessionRunnerFactory: {
         module: './agent/runtime/factory',
         export: 'createAntigravityAgentRuntime',

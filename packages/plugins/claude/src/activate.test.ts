@@ -34,6 +34,26 @@ describe('activate', () => {
         vi.unstubAllEnvs();
     });
 
+    it('builds Claude Session preferences through the public CLI command declaration', async () => {
+        const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+        try {
+            const buildSessionOptions = activation.registration('agents', 'claude')?.cliSessionCommand?.buildSessionOptions;
+            expect(buildSessionOptions).toBeTypeOf('function');
+            expect(buildSessionOptions?.({
+                isExplicitCliSubcommand: true,
+                parsed: { agentArgs: [] },
+                settings: { claudeUnifiedTerminalResumeChoice: 'resume_most_recent' },
+                environment: {},
+                startOrigin: 'terminal',
+            })).toEqual({
+                ok: true,
+                options: { claudeUnifiedTerminalResumeChoice: 'resume_most_recent' },
+            });
+        } finally {
+            await activation.dispose();
+        }
+    });
+
     it('registers the Claude config MCP discovery source through the plugin API', async () => {
         const root = await mkdtemp(join(tmpdir(), 'claude-plugin-mcp-'));
         const configRoot = join(root, '.claude');
@@ -224,5 +244,65 @@ describe('activate', () => {
                 materializationKinds: ['environment'],
             },
         ]);
+    });
+
+    it('captures only pre-open connected-account launch facts through Agent activation', async () => {
+        const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+        try {
+            const launch = activation.registration('agents', 'claude')?.connectedAccountLaunch;
+
+            expect(launch).toEqual({
+                requestAuthUses: [{
+                    purpose: 'model_upstream',
+                    materialization: {
+                        kind: 'httpHeaders',
+                        origin: 'https://api.anthropic.com',
+                        headerNames: ['authorization'],
+                    },
+                }],
+                stateSharingDescriptor: {
+                    providerSupportStatus: 'supported',
+                    config: {
+                        supported: true,
+                        modes: ['linked', 'copied', 'isolated'],
+                        entries: [
+                            { path: 'settings.json', mode: 'linked_or_copied' },
+                            { path: 'settings.local.json', mode: 'linked_or_copied' },
+                            { path: 'agents', mode: 'linked_or_copied' },
+                            { path: 'commands', mode: 'linked_or_copied' },
+                            { path: 'hooks', mode: 'linked_or_copied' },
+                            { path: 'plugins', mode: 'linked_or_copied' },
+                            { path: 'rules', mode: 'linked_or_copied' },
+                            { path: 'skills', mode: 'linked_or_copied' },
+                        ],
+                    },
+                    state: {
+                        supported: true,
+                        modes: ['isolated', 'shared'],
+                        entries: [{ path: 'projects', mode: 'linked' }],
+                        sharedStatePrivacyRiskAcknowledgementRequired: true,
+                        symlinkUnavailableDegradePolicy: 'block_continuity',
+                    },
+                    authIsolation: {
+                        mode: 'materialized_home',
+                        secretEntries: [
+                            'CLAUDE_CODE_OAUTH_TOKEN',
+                            'CLAUDE_CODE_SETUP_TOKEN',
+                            'CLAUDE_API_KEY',
+                            'ANTHROPIC_API_KEY',
+                            '.claude.json',
+                            '.credentials.json',
+                            'credentials.json',
+                            'auth.json',
+                            'accounts',
+                        ],
+                    },
+                },
+            });
+            expect(launch).not.toHaveProperty('serviceIds');
+            expect(launch?.stateSharingDescriptor).not.toHaveProperty('providerId');
+        } finally {
+            await activation.dispose();
+        }
     });
 });

@@ -52,7 +52,7 @@ export const AGENT_DEFINITION = Object.freeze({
         gemini: ['token'],
       },
     },
-    resume: { vendorResume: 'supported', vendorResumeIdField: 'geminiSessionId' },
+    resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'geminiSessionId' },
     sessionStorage: { direct: false, persisted: true },
     sessionCapabilities: {
       sessionListing: 'unsupported',

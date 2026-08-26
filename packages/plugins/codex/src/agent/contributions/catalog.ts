@@ -12,25 +12,12 @@ import {
 } from '@happier-dev/plugin-sdk/fs';
 import { readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
-import { readCodexEnvironmentAuthState } from '../cli/auth/environment.js';
-import {
-  CODEX_CLI_AUTH_STATUS_ARGS,
-  resolveCodexCliAuthProbeTimeoutMs,
-  resolveCodexCliAuthStatus,
-} from '../cli/auth/spec.js';
-import { codexCloudConnectDescriptor } from '../auth/services/openai/cloud/connect.js';
 import {
   CodexChatGptAuthTokensRefreshSelectionSchema,
   CodexChatGptAuthTokensRefreshResponseSchema,
   type CodexChatGptAuthTokensRefreshSelection,
 } from '../auth/services/openai/cloud/refreshBridge.js';
 import { buildCodexCloudAuthFile } from '../auth/services/openai/cloud/authFile.js';
-import {
-  codexCliSessionCommandConfig,
-  resolveCodexCliSessionExtraOptions,
-} from '../cli/command.js';
-import { codexChecklists } from '../cli/checklists.js';
-import { supportsCodexVendorResume } from '../surfaces/sessions/resume/support.js';
 import { codexStateSharingDescriptor } from '../auth/services/state/sharing/descriptor.js';
 import { resolveCodexConfiguredSqliteHome } from '../auth/services/state/sharing/files.js';
 import {
@@ -38,27 +25,15 @@ import {
   resolveCodexVendorResumeIdFromImportedSessionFile,
 } from '../auth/services/home/sync/sessionFiles.js';
 import { reconcileCodexSharedJsonlState } from '../auth/services/home/sync/fixedJsonlState.js';
-import { codexPreflightSessionControlsProbeConfig } from '../lifecycle/preflight/sessionControls.js';
-import { resolveCodexSessionRuntimePreferences } from '../lifecycle/runtimePreferences.js';
 import { openAiCodexQuotaFetcherDescriptor } from '../auth/services/quota/openaiFetcher.js';
 import { createCodexConnectedServiceRuntimeAuthAdapter } from '../auth/services/runtime/control/runtimeAuthAdapter.js';
 import { verifyResumeReachableCodex } from '../auth/services/runtime/control/verifyResumeReachable.js';
 import {
   resolveCodexConnectedServiceCandidatePersistedSessionFile,
 } from '../auth/services/runtime/control/candidateSessionFile.js';
-import { resolveCodexCodingPromptBehaviorBlocks } from '../prompting/behavior.js';
 import {
   resolveCodexLegacyRuntimeAuthFailureSourceRevision,
 } from '../auth/services/runtime/auth/legacyFailureSource.js';
-import {
-  homeEntries as resolveCodexHomeEntries,
-  resolveConfiguredCodexHomePath,
-} from '../rollout/discovery/homeEntries.js';
-import { resolveCodexNativeSessionLogPath } from '../rollout/discovery/nativeSessionLog.js';
-import {
-  CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS,
-  hasCodexAcpRuntimeInstallableAdapterPolicy,
-} from '../installables/runtimeAdapter.js';
 
 const CODEX_SUPPORTED_AUTH_SERVICE_IDS = Object.freeze([
   'openai-codex',
@@ -159,13 +134,6 @@ function requireOpenAiTokenRecord(value: unknown): TokenCredentialRecord {
   return record;
 }
 
-async function resolveCodexPetDiscoveryHomeEntries(
-  params: Parameters<typeof resolveCodexHomeEntries>[0],
-): Promise<readonly Readonly<{ homePath: string }>[]> {
-  const entries = await resolveCodexHomeEntries(params);
-  return entries.map((entry) => ({ homePath: entry.codexHome }));
-}
-
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeAtomicJsonFile({ path, value, mode: 0o600 });
 }
@@ -247,92 +215,6 @@ export async function materializeCodexAuthEnvironment(input: Readonly<Record<str
 
 export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'codex',
-  agentCliSystemTool: {
-    toolId: 'codex-cli',
-  },
-  cloudConnect: codexCloudConnectDescriptor,
-  cliAuth: {
-    detectAuthStatus: async (params: Readonly<{
-      env: NodeJS.ProcessEnv;
-      runCommand: (
-        args: readonly string[],
-        options?: Readonly<{ timeoutMs?: number }>,
-      ) => Promise<Readonly<{ ok: boolean; exitCode: number | null }>>;
-    }>) => resolveCodexCliAuthStatus({
-      commandStatus: await params.runCommand(CODEX_CLI_AUTH_STATUS_ARGS, {
-        timeoutMs: resolveCodexCliAuthProbeTimeoutMs(params.env),
-      }),
-      environmentAuth: readCodexEnvironmentAuthState(params.env),
-    }),
-  },
-  sessionRuntimePreferences: {
-    resolve: resolveCodexSessionRuntimePreferences,
-  },
-  sessionStartup: {
-    releasedOverridesCacheV1: true,
-    shouldUseDeferredBootstrap: (params: Readonly<{
-      startedBy: 'terminal' | 'daemon';
-      startingMode: 'terminal' | 'remote' | 'local' | null;
-      existingSessionId: string | null;
-      sessionAttachFilePath: string | null;
-      providerResumeId: string | null;
-      hasExplicitPermissionMode: boolean;
-      permissionModeSeedSource: 'explicit' | 'inferred' | 'account_default' | 'fallback' | 'released_cache_v1';
-      hasTerminalTty: boolean;
-    }>) => {
-      const terminalLocal = params.startingMode === null
-        || params.startingMode === 'terminal'
-        || params.startingMode === 'local';
-      return params.startedBy === 'terminal'
-        && params.hasTerminalTty
-        && terminalLocal
-        && !params.existingSessionId
-        && (
-          !params.providerResumeId
-          || params.hasExplicitPermissionMode
-          || params.permissionModeSeedSource === 'released_cache_v1'
-        );
-    },
-  },
-  codingPromptBehavior: {
-    resolve: resolveCodexCodingPromptBehaviorBlocks,
-  },
-  vendorResumeSupport: {
-    resolve: supportsCodexVendorResume,
-  },
-  sessionHandoff: {
-    /**
-     * Codex persists no transcript path, so the handoff brief can only name its
-     * log by deriving it from the vendor resume id the host already resolved.
-     * Declaring the derivation keeps that knowledge here instead of teaching the
-     * transition coordinator what a Codex rollout file is called.
-     */
-    nativeSessionLog: {
-      resolvePath: ({ vendorResumeId }: Readonly<{ vendorResumeId: string }>) =>
-        resolveCodexNativeSessionLogPath({ vendorResumeId }),
-    },
-  },
-  checklists: codexChecklists,
-  petDiscovery: {
-    resolveHomePath: resolveConfiguredCodexHomePath,
-    resolveHomeEntries: resolveCodexPetDiscoveryHomeEntries,
-  },
-  runtimeInstallableAdapter: {
-    matchesDescriptor: hasCodexAcpRuntimeInstallableAdapterPolicy,
-    resolveSpawnSpec: CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS.resolveSpawnSpec,
-    validateAvailability: CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS.validateAvailability,
-  },
-  cliSessionCommand: {
-    ...codexCliSessionCommandConfig,
-    buildSessionOptions: (input: Readonly<{
-      parsed: Readonly<{
-        startingMode?: string;
-        directory?: string;
-        providerArgs: readonly string[];
-      }>;
-    }>) => resolveCodexCliSessionExtraOptions(input.parsed),
-  },
-  preflightSessionControls: codexPreflightSessionControlsProbeConfig,
   connectedServices: {
     serviceIds: CODEX_SUPPORTED_AUTH_SERVICE_IDS,
     stateSharingServiceIds: CODEX_STATE_SHARING_SERVICE_IDS,

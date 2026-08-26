@@ -224,7 +224,7 @@ describe('connected-account contribution registry', () => {
             .toMatchObject({ displayName: 'first' });
     });
 
-    it('fences retained leases after disposal without deleting another plugin identity', async () => {
+    it('marks retained leases stale after disposal without deleting another plugin identity', async () => {
         let current = true;
         const registrations = [
             { pluginId: 'acme.alpha', generation: '9', localId: 'shared', runtime: runtime('alpha') },
@@ -240,8 +240,8 @@ describe('connected-account contribution registry', () => {
 
         current = false;
         registry.dispose();
-        await expect(alpha.runtime.status({} as never)).rejects.toThrow(/no longer current/i);
-        await expect(beta.runtime.status({} as never)).rejects.toThrow(/no longer current/i);
+        expect(alpha.isCurrent()).toBe(false);
+        expect(beta.isCurrent()).toBe(false);
 
         const next = createConnectedAccountContributionRegistry({
             generation: '10', descriptors: [descriptor('acme.beta')], activateOnDemand: async () => {},
@@ -252,100 +252,7 @@ describe('connected-account contribution registry', () => {
             .toMatchObject({ displayName: 'beta-next' });
     });
 
-    it('fences a rejected awaited call when its generation retires while preserving current-generation throws', async () => {
-        let current = true;
-        let rejectStatus!: (error: Error) => void;
-        const pendingStatus = new Promise<never>((_resolve, reject) => {
-            rejectStatus = reject;
-        });
-        const retiringRuntime = {
-            ...runtime('retiring'),
-            status() { return pendingStatus; },
-        } satisfies PluginConnectedAccountRuntime;
-        const registry = createConnectedAccountContributionRegistry({
-            generation: '9', descriptors: [descriptor('acme.alpha')], activateOnDemand: async () => {},
-            readRegistrations: () => [{
-                pluginId: 'acme.alpha', generation: '9', localId: 'shared', runtime: retiringRuntime,
-            }],
-            isGenerationCurrent: () => current,
-        });
-        const lease = await resolveLease(registry, { pluginId: 'acme.alpha', localId: 'shared' });
-        const rejectedAfterRetirement = expect(lease.runtime.status({} as never))
-            .rejects.toThrow(/no longer current/i);
-
-        current = false;
-        rejectStatus(new Error('stale author failure'));
-        await rejectedAfterRetirement;
-
-        const currentRegistry = createConnectedAccountContributionRegistry({
-            generation: '10', descriptors: [descriptor('acme.alpha')], activateOnDemand: async () => {},
-            readRegistrations: () => [{
-                pluginId: 'acme.alpha', generation: '10', localId: 'shared',
-                runtime: {
-                    ...runtime('current'),
-                    status() { throw new Error('current author failure'); },
-                },
-            }],
-            isGenerationCurrent: () => true,
-        });
-        const currentLease = await resolveLease(currentRegistry, { pluginId: 'acme.alpha', localId: 'shared' });
-        await expect(currentLease.runtime.status({} as never)).rejects.toThrow('current author failure');
-    });
-
-    it('fences retained nested authentication-mode leaves before and after provider awaits', async () => {
-        let current = true;
-        let rejectComplete!: (error: Error) => void;
-        const pendingComplete = new Promise<never>((_resolve, reject) => {
-            rejectComplete = reject;
-        });
-        const retiringRuntime = {
-            ...runtime('retiring'),
-            authentication: {
-                modes: {
-                    manual: {
-                        kind: 'manual' as const,
-                        complete: () => pendingComplete,
-                    },
-                },
-            },
-        } satisfies PluginConnectedAccountRuntime;
-        const registry = createConnectedAccountContributionRegistry({
-            generation: '10',
-            descriptors: [descriptor('acme.alpha')],
-            activateOnDemand: async () => {},
-            readRegistrations: () => [{
-                pluginId: 'acme.alpha',
-                generation: '10',
-                localId: 'shared',
-                runtime: retiringRuntime,
-            }],
-            isGenerationCurrent: () => current,
-        });
-        const lease = await resolveLease(registry, { pluginId: 'acme.alpha', localId: 'shared' });
-        const completion = manualMode(lease.runtime).complete(
-            { fields: { token: 'secret' } },
-            {} as never,
-        );
-
-        current = false;
-        rejectComplete(new Error('stale nested author failure'));
-        const postEntryError = await completion.catch((error: unknown) => error);
-        expect(postEntryError).toBeInstanceOf(Error);
-        expect(postEntryError).not.toBeInstanceOf(
-            ConnectedAccountRuntimeInvocationNotStartedError,
-        );
-        expect(postEntryError).toMatchObject({
-            message: expect.stringMatching(/no longer current/i),
-        });
-        await expect(manualMode(lease.runtime).complete(
-            { fields: { token: 'secret' } },
-            {} as never,
-        )).rejects.toBeInstanceOf(
-            ConnectedAccountRuntimeInvocationNotStartedError,
-        );
-    });
-
-    it('keeps the committed account runtime as the sole callback topology while fencing a lease', async () => {
+    it('keeps the committed account runtime as the sole callback topology and exposes lease currentness separately', async () => {
         class ManualMode {
             readonly kind = 'manual' as const;
             readonly marker = 'captured-mode';
@@ -403,9 +310,10 @@ describe('connected-account contribution registry', () => {
         });
         const lease = await resolveLease(registry, { pluginId: 'acme.alpha', localId: 'shared' });
 
-        // The public lease is an invocation fence, not a second structural
-        // runtime copy. Consumers use declared properties directly.
-        expect(Reflect.ownKeys(lease.runtime)).toEqual([]);
+        // Registration owns the committed snapshot. The lease does not add a
+        // recursive proxy topology around it; typed invokers own callback
+        // currentness at their public boundary.
+        expect(lease.runtime).toBe(registration.value);
         await expect(lease.runtime.status({} as never)).resolves.toEqual({
             status: 'connected',
             displayName: 'captured-runtime',
@@ -416,20 +324,7 @@ describe('connected-account contribution registry', () => {
         )).resolves.toMatchObject({ accountId: 'captured-mode' });
 
         current = false;
-        await expect(lease.runtime.status({} as never)).rejects.toThrow(/no longer current/i);
-    });
-
-    it.each([
-        ['accessor', () => Object.defineProperty({}, 'id', { enumerable: true, get: () => 'shared' })],
-        ['prototype', () => Object.assign(Object.create({ inherited: true }), { id: 'shared' })],
-        ['cyclic', () => { const value: Record<string, unknown> = { id: 'shared' }; value.self = value; return value; }],
-    ])('rejects malformed descriptors before publishing any registry entry (%s)', (_label, buildDefinition) => {
-        const readRegistrations = vi.fn(() => []);
-        expect(() => createConnectedAccountContributionRegistry({
-            generation: '11', descriptors: [{ ...descriptor('acme.alpha'), definition: buildDefinition() } as never],
-            activateOnDemand: async () => {}, readRegistrations, isGenerationCurrent: () => true,
-        })).toThrow();
-        expect(readRegistrations).not.toHaveBeenCalled();
+        expect(lease.isCurrent()).toBe(false);
     });
 
     it('accepts schema-valid nested descriptor metadata without borrowing manifest input limits', () => {
@@ -460,21 +355,6 @@ describe('connected-account contribution registry', () => {
             generation: '12', descriptors: [descriptor('acme.alpha'), descriptor('acme.alpha')],
             activateOnDemand: async () => {}, readRegistrations: () => [], isGenerationCurrent: () => true,
         })).toThrow(/duplicate connected-account descriptor/i);
-    });
-
-    it.each([
-        ['accessor', Object.defineProperty({}, 'pluginId', { enumerable: true, get: () => 'acme.alpha' })],
-        ['prototype', Object.assign(Object.create({ pluginId: 'acme.alpha' }), { localId: 'shared' })],
-        ['extra', { pluginId: 'acme.alpha', localId: 'shared', extra: true }],
-    ])('rejects a malformed qualified lookup before demand (%s)', async (_label, ref) => {
-        const activateOnDemand = vi.fn(async () => {});
-        const registry = createConnectedAccountContributionRegistry({
-            generation: '13', descriptors: [descriptor('acme.alpha')], activateOnDemand,
-            readRegistrations: () => [], isGenerationCurrent: () => true,
-        });
-
-        await expect(registry.resolve(ref as never)).rejects.toThrow(/qualified connected-account reference/i);
-        expect(activateOnDemand).not.toHaveBeenCalled();
     });
 
     it('reports an unresolvable service as a null lease instead of an untyped throw', async () => {

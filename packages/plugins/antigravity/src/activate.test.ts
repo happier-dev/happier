@@ -6,6 +6,7 @@ import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime
 import { activate } from './activate.js';
 import { antigravityExternalSessionsContribution } from './agent/cliPrint/externalSessions.js';
 import { antigravityExternalSessionObservationContribution } from './agent/cliPrint/observation.js';
+import { ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/catalog.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Antigravity plugin activation', () => {
@@ -34,6 +35,47 @@ describe('Antigravity plugin activation', () => {
       });
     } finally {
       await testkit.dispose();
+    }
+  });
+
+  it('registers only the data-only Connected Account state-sharing descriptor before open', async () => {
+    const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const launch = fixture.registration('agents', 'antigravity')?.connectedAccountLaunch;
+
+      expect(Object.keys(launch ?? {}).sort()).toEqual(['stateSharingDescriptor']);
+      expect(launch?.stateSharingDescriptor).toEqual({
+        providerSupportStatus: 'unsupported',
+        config: {
+          supported: false,
+          modes: ['isolated'],
+          entries: [],
+          unavailableReason: 'not_implemented',
+        },
+        state: {
+          supported: false,
+          modes: ['isolated'],
+          entries: [],
+          symlinkUnavailableDegradePolicy: 'block_continuity',
+          unavailableReason: 'not_implemented',
+        },
+        authIsolation: {
+          mode: 'process_env',
+          secretEntries: [
+            'GEMINI_API_KEY',
+            'GOOGLE_API_KEY',
+            'GOOGLE_GENAI_USE_VERTEXAI',
+            'GOOGLE_CLOUD_PROJECT',
+            'GOOGLE_CLOUD_LOCATION',
+            'ANTIGRAVITY_AUTH_MODE',
+            'GEMINI_FORCE_ENCRYPTED_FILE_STORAGE',
+            'GOOGLE_APPLICATION_CREDENTIALS',
+          ],
+        },
+      });
+      expect(ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('connectedServices');
+    } finally {
+      await fixture.dispose();
     }
   });
 
@@ -198,7 +240,7 @@ describe('Antigravity plugin activation', () => {
     const result = await registration?.({
       payload: {
         runtimeSelection: {
-          providerRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
+          agentRuntimeSelection: { antigravityRuntimeMode: 'sdk' },
           env: { GEMINI_API_KEY: 'sdk-key' },
         },
       },
@@ -233,7 +275,7 @@ describe('Antigravity plugin activation', () => {
     const registration = fixture.registration('hooks', 'resolve-prerequisites');
     const result = await registration?.({
       runtimeSelection: {
-        providerRuntimeSelection: { antigravityRuntimeMode: 'cliPrint' },
+        agentRuntimeSelection: { antigravityRuntimeMode: 'cliPrint' },
         cwd: '/repo',
         env: { SAFE_TEST_ENV: 'kept' },
       },

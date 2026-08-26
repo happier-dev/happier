@@ -38,7 +38,6 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import type { PendingInputServerWireMode } from '@/sync/engine/pending/pendingInputServerWireContract';
 import {
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS,
-    BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES,
     type BundledAgentUiBehaviorDescriptor,
 } from './generatedBundledPluginEntries.uiBehaviorOverrides';
 import {
@@ -89,6 +88,33 @@ export type AgentPermissionFooterBehavior = Readonly<{
     forceReadOnlyAfterStop: boolean;
     supportsExecPolicyAmendment: boolean;
     stopHandling: AgentPermissionFooterStopHandling;
+}>;
+
+export type AgentAskUserQuestionDialogBehavior = Readonly<{
+    dialogId: string;
+    settingMutation?: Readonly<{
+        settingId: string;
+        allowedValues: readonly string[];
+    }>;
+    terminalNotice?: Readonly<{
+        headerKey: TranslationKey;
+        questionKey: TranslationKey;
+    }>;
+    terminalSecondaryAction?: Readonly<{
+        kind: 'openAttachedTerminal';
+        labelKey: TranslationKey;
+        descriptionKey: TranslationKey;
+    }>;
+}>;
+
+/**
+ * A closed, data-only declaration for host-owned AskUserQuestion behavior.
+ * It can identify an exact dialog, allowlist one setting/value vocabulary, and
+ * select the host's attached-terminal presentation. It cannot provide a
+ * callback, route, or general effect.
+ */
+export type AgentAskUserQuestionBehavior = Readonly<{
+    dialogs: readonly AgentAskUserQuestionDialogBehavior[];
 }>;
 
 export type ExternalSessionBrowseSourceOption = Readonly<{
@@ -216,6 +242,7 @@ export type AgentUiBehavior = Readonly<{
         promptProtocol?: PermissionPromptProtocol;
         footer?: Partial<AgentPermissionFooterBehavior>;
     }>;
+    askUserQuestion?: AgentAskUserQuestionBehavior;
     resume?: Readonly<{
         experimentSwitches?: readonly AgentExperimentSwitchDef[];
     }>;
@@ -442,6 +469,11 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
                 },
             }
             : {}),
+        ...(b.askUserQuestion
+            ? { askUserQuestion: b.askUserQuestion }
+            : a.askUserQuestion
+                ? { askUserQuestion: a.askUserQuestion }
+                : {}),
         ...(a.resume || b.resume ? { resume: { ...(a.resume ?? {}), ...(b.resume ?? {}) } } : {}),
         ...(a.workState || b.workState ? { workState: { ...(a.workState ?? {}), ...(b.workState ?? {}) } } : {}),
         ...(a.sessionComposer || b.sessionComposer
@@ -496,8 +528,6 @@ function buildDefaultAgentUiBehavior(agentId: BundledAgentId): AgentUiBehavior {
     return buildDefaultAgentUiBehaviorFromCore(getAgentCore(agentId));
 }
 
-const CANONICAL_AGENTS_UI_BEHAVIOR_OVERRIDES = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES;
-
 function resolveGeneratedAgentUiBehavior(agentId: CanonicalAgentId): AgentUiBehavior {
     const generatedDescriptor = BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS[agentId]?.descriptor;
     const generatedBehavior = generatedDescriptor
@@ -514,13 +544,9 @@ export const CANONICAL_AGENTS_UI_BEHAVIOR: Readonly<Record<CanonicalAgentId, Age
                 ...buildDefaultAgentUiBehavior(id),
             };
             const descriptorBehavior = resolveGeneratedAgentUiBehavior(id);
-            const generatedOverride = CANONICAL_AGENTS_UI_BEHAVIOR_OVERRIDES[id] ?? {};
             return [
                 id,
-                mergeAgentUiBehavior(
-                    mergeAgentUiBehavior(base, descriptorBehavior),
-                    generatedOverride,
-                ),
+                mergeAgentUiBehavior(base, descriptorBehavior),
             ] as const;
         }),
     ) as Record<CanonicalAgentId, AgentUiBehavior>,

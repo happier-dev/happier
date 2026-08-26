@@ -148,6 +148,99 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
     ).toBeUndefined();
   });
 
+  it('publishes an Agent-resolved descriptor before exposing the runtime and keeps it as the fallback event identity', async () => {
+    const hostDescriptor = {
+      v: 1,
+      agentId: 'claude',
+      agent: { backendMode: 'host-generic' },
+    } as const;
+    const agentDescriptor = {
+      v: 1,
+      agentId: 'claude',
+      agent: { backendMode: 'native', configDir: '/tmp/claude-config' },
+    } as const;
+    let metadata: Record<string, unknown> = {
+      runtimeDescriptorV1: hostDescriptor,
+    };
+    const updateMetadata = vi.fn(async (
+      updater: (current: Record<string, unknown>) => Record<string, unknown>,
+    ) => {
+      metadata = updater(metadata);
+    });
+    const runtime = createRuntimeTurnOperations();
+    const plan = {
+      kind: HOST_SESSION_RUNTIME_PLAN_KIND,
+      agentId: 'claude',
+      opts: {},
+      config: {
+        createSessionRuntime: vi.fn(async () => ({
+          operations: runtime,
+          runtimeDescriptorV1: agentDescriptor,
+        })),
+      },
+    } as unknown as HostSessionRuntimePlan;
+
+    const wrapped = withHostSessionRuntimeIdentityPublication({
+      plan,
+      identity: {
+        runtimeDescriptor: hostDescriptor,
+        runtimeCapabilities: null,
+        runtimeFacets: null,
+      },
+    });
+
+    const created = await wrapped.config.createSessionRuntime?.({
+      session: { updateMetadata },
+    } as never);
+
+    expect(updateMetadata).toHaveBeenCalledOnce();
+    expect(metadata.runtimeDescriptorV1).toEqual(agentDescriptor);
+
+    const messages: unknown[] = [];
+    const unsubscribe = created?.operations.subscribeRuntimeEvents((message) => {
+      messages.push(message);
+    });
+    unsubscribe?.();
+
+    expect(messages).toContainEqual({
+      type: 'event',
+      name: 'runtime.descriptor',
+      payload: agentDescriptor,
+    });
+  });
+
+  it('does not publish an Agent descriptor when opening the runtime fails', async () => {
+    const updateMetadata = vi.fn(async () => undefined);
+    const plan = {
+      kind: HOST_SESSION_RUNTIME_PLAN_KIND,
+      agentId: 'claude',
+      opts: {},
+      config: {
+        createSessionRuntime: vi.fn(async () => {
+          throw new Error('open failed');
+        }),
+      },
+    } as unknown as HostSessionRuntimePlan;
+    const wrapped = withHostSessionRuntimeIdentityPublication({
+      plan,
+      identity: {
+        runtimeDescriptor: {
+          v: 1,
+          agentId: 'claude',
+          agent: { backendMode: 'host-generic' },
+        },
+        runtimeCapabilities: null,
+        runtimeFacets: null,
+      },
+    });
+
+    await expect(wrapped.config.createSessionRuntime?.({
+      session: { updateMetadata },
+    } as never)).rejects.toThrow('open failed');
+
+    expect(updateMetadata).not.toHaveBeenCalled();
+  });
+
   it('publishes fallback identity before the first prompt and refreshes its lazy provider session id', async () => {
     let providerSessionId: string | null = null;
     const runtime = createRuntimeTurnOperations({

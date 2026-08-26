@@ -65,7 +65,9 @@ import {
 import {
   createRuntimeAuthRecoverySchedulerForDaemon,
 } from '../../../../../../../../apps/cli/src/daemon/connectedServices/runtimeAuth/createRuntimeAuthRecoverySchedulerForDaemon.js';
-import { createAgentRuntimeCatalogEntryHooks } from '../../../../../../../../apps/cli/src/plugins/projection/registry/agentCatalogEntryHooks.js';
+import {
+  projectAgentPreflightSessionControlsCatalogEntry,
+} from '../../../../../../../../apps/cli/src/plugins/projection/registry/agentCatalogEntryHooks.js';
 import {
   resolveExecutablePluginRuntimeRegistry,
 } from '../../../../../../../../apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.js';
@@ -75,7 +77,6 @@ import {
   createAgentCliSystemToolService,
 } from '../../../../../../../../apps/cli/src/plugins/runtime/exec/system/tools/agentCliBinding.js';
 import { createPluginExecSystemToolResolver } from '../../../../../../../../apps/cli/src/plugins/runtime/exec/system/tools/resolveGrant.js';
-import { PI_AGENT_RUNTIME_CONTRIBUTION } from '../../../contributions/runtime.js';
 import { PLUGIN_MANIFEST } from '../../../../manifest.js';
 import {
   buildPiRequestAuthExtensionAssetSource,
@@ -274,47 +275,10 @@ function codexAccessToken(accountId: string, credentialRevision: string): string
 }
 
 describe('Pi request-auth strict spawned real-owner composition', () => {
-  it('projects only the explicit first-party Agent CLI system-tool binding', () => {
-    const systemTools = PLUGIN_MANIFEST.contributes.systemTools ?? [];
-    const hooks = createAgentRuntimeCatalogEntryHooks({
-      agentId: 'pi',
-      packageName: '@happier-dev/plugins-pi',
-      contribution: PI_AGENT_RUNTIME_CONTRIBUTION,
-      systemTools,
-    })();
+  it('declares the first-party Agent CLI system-tool binding in its manifest catalog', () => {
+    const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'pi');
 
-    expect(hooks.agentCliSystemTool).toEqual({ toolId: 'pi-cli' });
-
-    const matchingNamesWithoutBinding = createAgentRuntimeCatalogEntryHooks({
-      agentId: 'pi',
-      packageName: '@happier-dev/plugins-pi',
-      contribution: {
-        ...PI_AGENT_RUNTIME_CONTRIBUTION,
-        agentCliSystemTool: undefined,
-      },
-      systemTools,
-    })();
-    expect(matchingNamesWithoutBinding).not.toHaveProperty('agentCliSystemTool');
-
-    expect(() => createAgentRuntimeCatalogEntryHooks({
-      agentId: 'pi',
-      packageName: '@happier-dev/plugins-pi',
-      contribution: {
-        ...PI_AGENT_RUNTIME_CONTRIBUTION,
-        agentCliSystemTool: { toolId: 'missing-tool' },
-      },
-      systemTools,
-    })).toThrow(/declared system tool/i);
-
-    expect(() => createAgentRuntimeCatalogEntryHooks({
-      agentId: 'pi',
-      packageName: '@happier-dev/plugins-pi',
-      contribution: {
-        ...PI_AGENT_RUNTIME_CONTRIBUTION,
-        agentCliSystemTool: { toolId: '  ' },
-      },
-      systemTools,
-    })).toThrow(/toolId/i);
+    expect(agent?.catalog?.agentCliSystemTool).toEqual({ toolId: 'pi-cli' });
   });
 
   it('fails closed on an invalid explicit override instead of falling back to PATH', async () => {
@@ -521,12 +485,24 @@ describe('Pi request-auth strict spawned real-owner composition', () => {
       PATH: conflictingBin,
     };
     const systemTools = PLUGIN_MANIFEST.contributes.systemTools ?? [];
-    const hooks = createAgentRuntimeCatalogEntryHooks({
-      agentId: 'pi',
-      packageName: '@happier-dev/plugins-pi',
-      contribution: PI_AGENT_RUNTIME_CONTRIBUTION,
+    const agentCliSystemTool = PLUGIN_MANIFEST.contributes.agents.find(
+      (entry) => entry.id === 'pi',
+    )?.catalog?.agentCliSystemTool;
+    if (!agentCliSystemTool) throw new Error('missing_pi_cli_system_tool_catalog_declaration');
+    const preflightSessionControls = PLUGIN_MANIFEST.contributes.agents.find(
+      (entry) => entry.id === 'pi',
+    )?.preflightSessionControls;
+    if (!preflightSessionControls) {
+      throw new Error('missing_pi_preflight_session_controls_declaration');
+    }
+    const hooks = projectAgentPreflightSessionControlsCatalogEntry({
+      agentId: 'pi' as never,
+      preflightSessionControls,
+      agentCliSystemTool,
       systemTools,
-    })();
+      retirementSignal: new AbortController().signal,
+      isCurrent: () => true,
+    });
     const preflight = await hooks.getPreflightSessionControlsProbeAdapter?.();
 
     await expect(preflight?.probeModelsRaw?.({

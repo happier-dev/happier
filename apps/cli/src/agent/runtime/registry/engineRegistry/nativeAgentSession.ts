@@ -28,6 +28,7 @@ import {
 } from '@happier-dev/protocol';
 import {
     parsePermissionIntentAlias,
+    readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata,
     resolvePermissionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
 import type {
@@ -320,6 +321,7 @@ function createNativeAgentTerminalModeBinding<TRuntime extends RuntimeTurnOperat
     sessionId: string;
     directory: string;
     readMetadata: () => Readonly<Record<string, unknown>>;
+    configuration?: AgentSessionConfigurationSnapshot;
     runWithTerminalModelSelection:
         HostSessionRuntimeFactoryParams['runWithTerminalModelSelection'];
     environment?: Readonly<Record<string, string>>;
@@ -509,6 +511,7 @@ function createNativeAgentTerminalModeBinding<TRuntime extends RuntimeTurnOperat
                                     providerSessionId,
                                 }
                                 : metadata,
+                            ...(params.configuration ? { configuration: params.configuration } : {}),
                             modelSelection,
                             runWithCurrentPublisherPermit,
                             ...(params.environment || params.unsetEnvironmentVariables
@@ -1231,11 +1234,16 @@ function buildNativeAgentSessionOpenInputs(
     metadata: Readonly<Record<string, unknown>>,
     providerBindingMaterialization: HostSessionRuntimeFactoryParams['providerBindingMaterialization'],
     hostPermissionMode: string,
-    buildOptions: Readonly<{ allowPendingProviderBinding?: boolean }> = {},
+    buildOptions: Readonly<{
+        allowPendingProviderBinding?: boolean;
+        sessionConnectedAccounts?: NonNullable<AgentSessionOpenRequest['connectedAccounts']>;
+    }> = {},
 ): Readonly<{
     launchEnvironment: NonNullable<AgentSessionOpenRequest['launchEnvironment']>;
+    runtimeDescriptorV1?: NonNullable<AgentSessionOpenRequest['runtimeDescriptorV1']>;
     configuration: AgentSessionConfigurationSnapshot;
     stateSharing: NonNullable<AgentSessionOpenRequest['stateSharing']>;
+    connectedAccounts?: NonNullable<AgentSessionOpenRequest['connectedAccounts']>;
     providerBinding?: NonNullable<AgentSessionOpenRequest['providerBinding']>;
 }> {
     const stateSharing = resolveNativeAgentSessionStateSharingPolicy(agentId);
@@ -1280,16 +1288,41 @@ function buildNativeAgentSessionOpenInputs(
         },
         options,
     });
+    const runtimeDescriptorV1 =
+        readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(metadata);
+    const connectedAccounts = buildOptions.sessionConnectedAccounts
+        ? Object.freeze(buildOptions.sessionConnectedAccounts.map((selection) =>
+            Object.freeze({
+                purpose: selection.purpose,
+                account: Object.freeze({
+                    service: Object.freeze({ ...selection.account.service }),
+                    accountId: selection.account.accountId,
+                }),
+            }),
+        ))
+        : undefined;
     const providerConnectionId = modelSelection?.ref.providerConnectionId ?? null;
     if (providerConnectionId === null) {
         if (providerBindingMaterialization !== undefined) {
             throw new Error('Native model selection cannot include Provider binding materialization');
         }
-        return Object.freeze({ launchEnvironment, configuration, stateSharing });
+        return Object.freeze({
+            launchEnvironment,
+            ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
+            configuration,
+            stateSharing,
+            ...(connectedAccounts ? { connectedAccounts } : {}),
+        });
     }
     if (providerBindingMaterialization === undefined) {
         if (buildOptions.allowPendingProviderBinding === true) {
-            return Object.freeze({ launchEnvironment, configuration, stateSharing });
+            return Object.freeze({
+                launchEnvironment,
+                ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
+                configuration,
+                stateSharing,
+                ...(connectedAccounts ? { connectedAccounts } : {}),
+            });
         }
         throw new Error('Provider-bound native Agent session requires Provider binding materialization');
     }
@@ -1313,8 +1346,10 @@ function buildNativeAgentSessionOpenInputs(
     }
     return Object.freeze({
         launchEnvironment,
+        ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
         configuration,
         stateSharing,
+        ...(connectedAccounts ? { connectedAccounts } : {}),
         providerBinding: projectAgentSessionProviderBindingV1({
             metadata: providerBindingMetadata,
             materialization: providerBindingMaterialization,
@@ -1402,7 +1437,34 @@ type NativeAgentSessionDirectFacets = Readonly<{
     cwd: string;
     connectedAccounts: NonNullable<AgentSessionOpenRequest['connectedAccounts']>;
     capabilities: AgentSessionCapabilities;
+    cancellation: NativeAgentSessionCancellation;
 }>;
+
+type NativeAgentSessionCancellation =
+    | Readonly<{ declared: false }>
+    | Readonly<{
+        declared: true;
+        cancel: NonNullable<AgentSessionRuntime['cancel']>;
+    }>;
+
+function resolveNativeAgentSessionCancellation(
+    agentId: string,
+    capabilities: AgentSessionCapabilities,
+    session: AgentSessionRuntime,
+): NativeAgentSessionCancellation {
+    if (capabilities.cancel !== true) return { declared: false };
+    const cancel = session.cancel;
+    if (typeof cancel !== 'function') {
+        throw new PluginError({
+            code: 'agent_session_cancellation_contract_mismatch',
+            message: `Native Agent '${agentId}' declares sessions.cancel but its session runtime does not implement cancel`,
+        });
+    }
+    return {
+        declared: true,
+        cancel: (request, options) => cancel.call(session, request, options),
+    };
+}
 
 type NativeAgentSessionInteractionLifecycle = Readonly<{
     onTurnTerminal(
@@ -1843,6 +1905,12 @@ export function createNativeAgentSessionOperations(
     toolExecutionLifecycle?: NativeAgentToolExecutionLifecycleObserver,
     runtimeIncarnationId = randomUUID(),
 ): PluginRuntimeHookOperations {
+    if (!directFacets) {
+        throw new PluginError({
+            code: 'agent_session_capabilities_missing',
+            message: 'Native Agent session operations require declared session capabilities',
+        });
+    }
     let disposeStarted = false;
     let disposePromise: Promise<void> | null = null;
     let disposeRuntimeScopePromise: Promise<void> | null = null;
@@ -3339,8 +3407,8 @@ export function createNativeAgentSessionOperations(
                 );
                 return;
             }
-            if (!session.cancel) return;
-            const result = await session.cancel({
+            if (directFacets.cancellation.declared === false) return;
+            const result = await directFacets.cancellation.cancel({
                 turnId,
                 reason: 'user',
             });
@@ -3696,6 +3764,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 Readonly<Record<string, string>> | null = null;
             let resolvedLateSensitiveEnvironmentVariableNames:
                 readonly string[] = Object.freeze([]);
+            let resolvedLateSessionConnectedAccounts:
+                NonNullable<AgentSessionOpenRequest['connectedAccounts']>
+                | undefined;
             let resolvedLateProviderBindingHandoff:
                 ReturnType<
                     typeof consumeProviderBindingLaunchHandoffFromEnvironments
@@ -3852,6 +3923,12 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         {
                             allowPendingProviderBinding:
                                 useRunnerManagedProviderBinding,
+                            ...(resolvedLateEnvironment.sessionConnectedAccounts
+                                ? {
+                                    sessionConnectedAccounts:
+                                        resolvedLateEnvironment.sessionConnectedAccounts,
+                                }
+                                : {}),
                         },
                     );
                     resolvedLateEnvironmentValues =
@@ -3859,6 +3936,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     resolvedLateSensitiveEnvironmentVariableNames =
                         resolvedLateEnvironment
                             .sensitiveEnvironmentVariableNames;
+                    resolvedLateSessionConnectedAccounts =
+                        resolvedLateEnvironment.sessionConnectedAccounts;
                     resolvedLateProviderBindingHandoff =
                         providerBindingHandoff;
                 }
@@ -4258,6 +4337,12 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         ),
                         publicBinding.handoff.materialization,
                         hostRuntimeParams.getPermissionMode(),
+                        resolvedLateSessionConnectedAccounts
+                            ? {
+                                sessionConnectedAccounts:
+                                    resolvedLateSessionConnectedAccounts,
+                            }
+                            : {},
                     );
                     cleanupLateProviderBindingMaterialization();
                     lateProviderBindingMaterializationCleanup =
@@ -4748,8 +4833,14 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 }
                 throw boundaryError;
             }
+            let cancellation: NativeAgentSessionCancellation;
             try {
                 assertGenerationCurrent();
+                cancellation = resolveNativeAgentSessionCancellation(
+                    identity.agentId,
+                    sessionCapabilities,
+                    session,
+                );
             } catch (error) {
                 let boundaryError = sanitizeBoundaryError(error);
                 try {
@@ -4809,6 +4900,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     cwd,
                     connectedAccounts: openRequest.connectedAccounts ?? [],
                     capabilities: sessionCapabilities,
+                    cancellation,
                 },
                 publications,
                 persistedRollbackTurns,
@@ -4945,6 +5037,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             signal.addEventListener('abort', disposeOnScopeAbort, { once: true });
             return {
                 operations,
+                configuration: openInputs.configuration,
+                ...(session.runtimeDescriptorV1
+                    ? { runtimeDescriptorV1: session.runtimeDescriptorV1 }
+                    : {}),
                 ...(resolvedLateProviderBindingHandoff
                     ? {
                         admittedProviderBindingHandoff:
@@ -5042,6 +5138,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         runtimeParams.session.getMetadataSnapshot()
                         ?? runtimeParams.metadata
                     ),
+                    configuration: created.configuration ?? undefined,
                     runWithTerminalModelSelection:
                         runtimeParams.runWithTerminalModelSelection,
                     // Declaration-derived, never inferred: the Agent's own cold

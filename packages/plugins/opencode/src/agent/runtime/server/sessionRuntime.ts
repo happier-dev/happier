@@ -219,6 +219,9 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
   let latestCompletedTurnId: string | null = null;
   let providerSessionId: string | null = null;
   let effectiveModelId: string | null = null;
+  const canonicalProviderBindingModelId = params.request.providerBinding
+    ? params.request.providerBinding.model.id.trim()
+    : null;
   const modelListeners = new Set<(snapshot: Readonly<{
     models: readonly Readonly<{ id: string; name: string }>[];
     currentModelId: string | null;
@@ -237,7 +240,10 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
       return { dispose: () => { modelListeners.delete(listener); } };
     },
   });
-  const publishEffectiveModel = (modelId: string | null | undefined): void => {
+  const publishEffectiveModel = (dispatchedModelId: string | null | undefined): void => {
+    const modelId = params.request.providerBinding
+      ? canonicalProviderBindingModelId
+      : dispatchedModelId;
     if (!modelId || modelId === effectiveModelId) return;
     effectiveModelId = modelId;
     const snapshot = readModels();
@@ -593,7 +599,7 @@ export function createOpenCodeSessionRuntime(params: Readonly<{
   return {
     send,
     async cancel(request) {
-      if (!active) return { status: 'notRunning' };
+      if (!active || activeTurnId !== request.turnId) return { status: 'notRunning' };
       await params.operations.cancelTurn();
       return { status: 'requested', turnId: request.turnId };
     },

@@ -112,12 +112,12 @@ async function verifyRegularContainedTree(rootPath: string): Promise<void> {
       if (stats.isSymbolicLink()) {
         throw new Error(`Plugin development candidate contains an unsupported symbolic link: ${entryPath}`);
       }
-      const canonicalEntryPath = await realpath(entryPath);
-      if (!isPathInsideRoot(canonicalRootPath, canonicalEntryPath)) {
-        throw new Error(`Plugin development candidate escapes its owned root: ${entryPath}`);
-      }
       if (stats.isDirectory()) {
-        pending.push(entryPath);
+        const canonicalEntryPath = await realpath(entryPath);
+        if (!isPathInsideRoot(canonicalRootPath, canonicalEntryPath)) {
+          throw new Error(`Plugin development candidate escapes its owned root: ${entryPath}`);
+        }
+        pending.push(canonicalEntryPath);
       } else if (!stats.isFile()) {
         throw new Error(`Plugin development candidate contains an unsupported filesystem entry: ${entryPath}`);
       }

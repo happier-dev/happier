@@ -8,6 +8,7 @@ import type {
 } from '@happier-dev/protocol';
 import type { SessionStateUpdateV1 } from '@happier-dev/agents';
 import type { SessionHandle } from '@happier-dev/plugin-sdk/sessions';
+import type { AgentSessionConfigurationSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export type HostTerminalAvailabilityOperation =
     | 'launch'
@@ -30,6 +31,7 @@ export type HostTerminalCurrentPublisherPermit = <T>(
 export type HostTerminalLaunchRequest = Readonly<{
     sessionId: string;
     metadata: Readonly<Record<string, unknown>>;
+    configuration?: AgentSessionConfigurationSnapshot;
     modelSelection: ProviderBoundModelRef | null;
     runWithCurrentPublisherPermit: HostTerminalCurrentPublisherPermit;
     directory: string;

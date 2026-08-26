@@ -14,8 +14,7 @@ vi.mock('@/configuration', () => ({
 }));
 
 import {
-  readReleasedStartupOverridesCacheV1,
-  writeReleasedStartupOverridesCacheV1,
+  resolveReleasedCodexStartupOverridesCacheV1Compatibility,
 } from './releasedStartupOverridesCacheV1';
 
 describe('releasedStartupOverridesCacheV1 compatibility adapter', () => {
@@ -23,7 +22,7 @@ describe('releasedStartupOverridesCacheV1 compatibility adapter', () => {
     await rm(cacheHome, { recursive: true, force: true });
   });
 
-  it('reads the exact deployed cli-v0.2.0 V1 file in a fresh module instance', async () => {
+  it('reads the exact deployed cli-v0.2.0 V1 file through the Codex-only owner', async () => {
     await rm(cacheHome, { recursive: true, force: true });
     const cachePath = join(cacheHome, 'cli', 'startup-overrides-cache.json');
     await mkdir(join(cacheHome, 'cli'), { recursive: true });
@@ -39,11 +38,10 @@ describe('releasedStartupOverridesCacheV1 compatibility adapter', () => {
         },
       },
     }), 'utf8');
-    vi.resetModules();
-    const freshCache = await import('./releasedStartupOverridesCacheV1');
+    const compatibility = resolveReleasedCodexStartupOverridesCacheV1Compatibility('codex');
+    if (!compatibility) throw new Error('expected deployed Codex compatibility owner');
 
-    expect(freshCache.readReleasedStartupOverridesCacheV1({
-      backendId: 'codex',
+    expect(compatibility.read({
       nowMs: 50,
       maxAgeMs: 7,
     })).toEqual({
@@ -53,24 +51,25 @@ describe('releasedStartupOverridesCacheV1 compatibility adapter', () => {
       modelUpdatedAt: 42,
       updatedAt: 43,
     });
-    expect(freshCache.readReleasedStartupOverridesCacheV1({
-      backendId: 'codex',
+    expect(compatibility.read({
       nowMs: 51,
       maxAgeMs: 7,
     })).toBeNull();
+    expect(resolveReleasedCodexStartupOverridesCacheV1Compatibility('claude')).toBeNull();
   });
 
   it('preserves the deployed V1 path, schema, timestamps, and max-age semantics', async () => {
-    writeReleasedStartupOverridesCacheV1({
-      backendId: 'codex',
+    const compatibility = resolveReleasedCodexStartupOverridesCacheV1Compatibility('codex');
+    if (!compatibility) throw new Error('expected deployed Codex compatibility owner');
+
+    compatibility.write({
       permissionMode: 'safe-yolo',
       permissionModeUpdatedAt: 101,
       modelId: 'gpt-5.1-codex-max',
       modelUpdatedAt: 102,
       updatedAt: 103,
     });
-    writeReleasedStartupOverridesCacheV1({
-      backendId: 'codex',
+    compatibility.write({
       permissionMode: 'yolo',
       permissionModeUpdatedAt: 104,
       modelId: 'gpt-5.2-codex',
@@ -96,8 +95,7 @@ describe('releasedStartupOverridesCacheV1 compatibility adapter', () => {
       );
     });
 
-    expect(readReleasedStartupOverridesCacheV1({
-      backendId: 'codex',
+    expect(compatibility.read({
       nowMs: 113,
       maxAgeMs: 7,
     })).toEqual({
@@ -107,8 +105,7 @@ describe('releasedStartupOverridesCacheV1 compatibility adapter', () => {
       modelUpdatedAt: 105,
       updatedAt: 106,
     });
-    expect(readReleasedStartupOverridesCacheV1({
-      backendId: 'codex',
+    expect(compatibility.read({
       nowMs: 114,
       maxAgeMs: 7,
     })).toBeNull();

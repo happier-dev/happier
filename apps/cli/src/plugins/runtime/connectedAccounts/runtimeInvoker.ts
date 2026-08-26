@@ -40,7 +40,10 @@ import {
     resolveConnectedAccountConfiguredOrigins,
     type ConnectedAccountConfiguredEndpoint,
 } from './configuredOrigins';
-import type { ConnectedAccountRuntimeLease } from './contributionRegistry';
+import {
+    ConnectedAccountRuntimeInvocationNotStartedError,
+    type ConnectedAccountRuntimeLease,
+} from './contributionRegistry';
 import {
     redactConnectedAccountAuthenticationResultDiagnostic,
     snapshotConnectedAccountEstablishedResult,
@@ -54,6 +57,26 @@ type PluginConnectedAccountReadContext =
     Parameters<PluginConnectedAccountRuntime['status']>[0];
 type ConnectedAccountCredentialReader =
     PluginConnectedAccountReadContext['credentials'];
+type ConnectedAccountCallbackCurrentnessPhase = 'beforeCallback' | 'afterCallback';
+
+/**
+ * The typed invocation boundary, rather than a recursive runtime wrapper,
+ * owns the generation/currentness fence around every plugin callback. The
+ * callback's own rejection stays visible while current; a retirement while it
+ * is pending wins over that stale producer result just as every other host
+ * currentness boundary does.
+ */
+async function invokeCurrentConnectedAccountCallback<TResult>(
+    assertCurrent: (phase: ConnectedAccountCallbackCurrentnessPhase) => Promise<void>,
+    callback: () => MaybePromise<TResult>,
+): Promise<TResult> {
+    await assertCurrent('beforeCallback');
+    try {
+        return await callback();
+    } finally {
+        await assertCurrent('afterCallback');
+    }
+}
 
 export type ConnectedAccountRuntimeAuthenticationInvocation =
     ConnectedAccountAttemptProviderInvocation & Readonly<{
@@ -232,6 +255,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
         lease: ConnectedAccountRuntimeLease;
         seed: PluginInvocationServicesSeed;
         context: PluginConnectedAccountAuthenticationContext;
+        assertCurrent(phase?: ConnectedAccountCallbackCurrentnessPhase): Promise<void>;
         lifetime: PluginInvocationLifetime;
     }>> {
         const lease = await params.resolveRuntime(input.admission.service);
@@ -265,16 +289,27 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
             redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
             isGenerationCurrent: () => !signal.aborted && lease.isCurrent(),
         });
-        const assertCurrent = async (): Promise<void> => {
+        const assertCurrent = async (
+            phase: ConnectedAccountCallbackCurrentnessPhase = 'afterCallback',
+        ): Promise<void> => {
             if (signal.aborted) {
                 throw signal.reason instanceof Error
                     ? signal.reason
                     : new Error('Connected-account authentication operation was aborted');
             }
-            if (
-                !lease.isCurrent()
-                || !await input.isConfigurationCurrent(input.context.configuration)
-            ) {
+            if (!lease.isCurrent()) {
+                if (phase === 'beforeCallback') {
+                    throw new ConnectedAccountRuntimeInvocationNotStartedError();
+                }
+                throw new Error('Connected-account authentication runtime is no longer current');
+            }
+            if (!await input.isConfigurationCurrent(input.context.configuration)) {
+                throw new Error('Connected-account authentication runtime is no longer current');
+            }
+            if (!lease.isCurrent()) {
+                if (phase === 'beforeCallback') {
+                    throw new ConnectedAccountRuntimeInvocationNotStartedError();
+                }
                 throw new Error('Connected-account authentication runtime is no longer current');
             }
         };
@@ -373,7 +408,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                 configuration,
                 attemptCredentials,
             });
-            return Object.freeze({ lease, seed, context, lifetime });
+            return Object.freeze({ lease, seed, context, assertCurrent, lifetime });
         } catch (error) {
             lifetime.complete();
             throw error;
@@ -395,7 +430,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
         lease: ConnectedAccountRuntimeLease;
         seed: PluginInvocationServicesSeed;
         context: PluginConnectedAccountReadContext;
-        assertCurrent(): Promise<void>;
+        assertCurrent(phase?: ConnectedAccountCallbackCurrentnessPhase): Promise<void>;
         lifetime: PluginInvocationLifetime;
     }>> {
         assertSameAccount(input.target.account, input.context.account);
@@ -437,7 +472,9 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
             redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
             isGenerationCurrent: () => !signal.aborted && lease.isCurrent(),
         });
-        const assertCurrent = async (): Promise<void> => {
+        const assertCurrent = async (
+            _phase: ConnectedAccountCallbackCurrentnessPhase = 'afterCallback',
+        ): Promise<void> => {
             if (signal.aborted) {
                 throw signal.reason instanceof Error
                     ? signal.reason
@@ -583,7 +620,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                     'connected_account_producer_context_unavailable',
                 );
             }
-            const { lease, seed, context, lifetime } = invocationContext;
+            const { lease, seed, context, assertCurrent, lifetime } = invocationContext;
             try {
                 const mode = lease.runtime.authentication.modes[input.admission.modeId];
                 if (!mode || mode.kind !== input.admission.descriptor.kind) {
@@ -598,12 +635,18 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                     case 'beginOAuth':
                         if (mode.kind !== 'oauthAuthorizationCode') break;
                         params.registerRawForRedaction(seed, input.operation.request.state);
-                        result = await mode.begin(input.operation.request, context, options);
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => mode.begin(input.operation.request, context, options),
+                        );
                         invoked = true;
                         break;
                     case 'beginDevice':
                         if (mode.kind !== 'oauthDeviceCode') break;
-                        result = await mode.begin(context, options);
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => mode.begin(context, options),
+                        );
                         invoked = true;
                         break;
                     case 'submitManual':
@@ -618,10 +661,13 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                                 params.registerRawForRedaction(seed, value);
                             }
                         }
-                        result = await mode.complete(
-                            Object.freeze({ fields: input.operation.fields }),
-                            context,
-                            options,
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => mode.complete(
+                                Object.freeze({ fields: input.operation.fields }),
+                                context,
+                                options,
+                            ),
                         );
                         invoked = true;
                         break;
@@ -631,23 +677,35 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                         params.registerRawForRedaction(seed, input.operation.completion.callbackUrl);
                         params.registerRawForRedaction(seed, input.operation.completion.state);
                         params.registerRawForRedaction(seed, input.operation.completion.pkceVerifier);
-                        result = await mode.complete(input.operation.completion, context, options);
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => mode.complete(input.operation.completion, context, options),
+                        );
                         invoked = true;
                         break;
                     case 'pollDevice':
                         if (mode.kind !== 'oauthDeviceCode') break;
-                        result = await mode.poll(context, options);
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => mode.poll(context, options),
+                        );
                         invoked = true;
                         break;
                     case 'reconcile':
                         if (typeof mode.reconcile !== 'function') break;
-                        result = await mode.reconcile(context, options);
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => mode.reconcile!(context, options),
+                        );
                         invoked = true;
                         break;
                     case 'cancel':
-                        result = mode.kind === 'manual'
-                            ? undefined
-                            : await mode.cancel(context);
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => mode.kind === 'manual'
+                                ? undefined
+                                : mode.cancel(context),
+                        );
                         invoked = true;
                         break;
                 }
@@ -657,12 +715,14 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                     );
                 }
                 const redactDiagnosticText = params.redactDiagnosticText;
-                return redactDiagnosticText === undefined
+                const output = redactDiagnosticText === undefined
                     ? result
                     : redactConnectedAccountAuthenticationResultDiagnostic(
                         result,
                         (value) => redactDiagnosticText(seed, value),
                     );
+                await assertCurrent();
+                return output;
             } finally {
                 lifetime.complete();
             }
@@ -679,42 +739,60 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                 let quotaLeafUnavailable = false;
                 switch (input.operation.kind) {
                     case 'refresh':
-                        result = await lease.runtime.refresh(Object.freeze({
-                            ...context,
-                            operation: Object.freeze({
-                                operationId: input.operation.operationId,
-                                configurationRevision:
-                                    input.target.expectedRuntimeConfigurationRevision,
-                            }),
-                            stagedCredentials: guardStagedCredentials(
-                                input.operation.stagedCredentials,
-                                assertCurrent,
-                                (value) => params.registerRawForRedaction(seed, value),
-                            ),
-                        }), options);
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => lease.runtime.refresh(Object.freeze({
+                                ...context,
+                                operation: Object.freeze({
+                                    operationId: input.operation.operationId,
+                                    configurationRevision:
+                                        input.target.expectedRuntimeConfigurationRevision,
+                                }),
+                                stagedCredentials: guardStagedCredentials(
+                                    input.operation.stagedCredentials,
+                                    assertCurrent,
+                                    (value) => params.registerRawForRedaction(seed, value),
+                                ),
+                            }), options),
+                        );
                         break;
                     case 'status':
-                        result = await lease.runtime.status(context, options);
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => lease.runtime.status(context, options),
+                        );
                         break;
                     case 'quota':
                         if (lease.runtime.quota) {
-                            result = await lease.runtime.quota(
-                                context,
-                                options,
+                            result = await invokeCurrentConnectedAccountCallback(
+                                assertCurrent,
+                                () => lease.runtime.quota!(
+                                    context,
+                                    options,
+                                ),
                             );
                         } else {
                             quotaLeafUnavailable = true;
-                            result = null;
+                            result = await invokeCurrentConnectedAccountCallback(
+                                assertCurrent,
+                                () => null,
+                            );
                         }
                         break;
                     case 'revoke':
-                        result = await lease.runtime.revoke(context, options);
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => lease.runtime.revoke(context, options),
+                        );
                         break;
                     case 'materialize':
-                        result = await lease.runtime.materialize(
-                            input.operation.request,
-                            context,
-                            options,
+                        result = await invokeCurrentConnectedAccountCallback(
+                            assertCurrent,
+                            () => lease.runtime.materialize(
+                                input.operation.request,
+                                context,
+                                options,
+                            ),
                         );
                         break;
                 }

@@ -1,5 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import { describe, expect, it } from 'vitest';
 
 import {
   GROK_PREFLIGHT_SESSION_CONTROLS,
@@ -30,41 +29,18 @@ Available models:
 });
 
 describe('GROK_PREFLIGHT_SESSION_CONTROLS', () => {
-  it('runs the official models command through the host agent-cli executor', async () => {
-    const executable = { kind: 'systemTool' as const, id: 'grok-cli' };
-    const run = vi.fn(async () => ({
-      termination: {
-        observed: { kind: 'exit' as const, exitCode: 0 },
-        requestedBy: { kind: 'none' as const },
-      },
-      stdout: new TextEncoder().encode('Available models:\n  * grok-4.5 (default)\n'),
-      stderr: new Uint8Array(),
-      stdoutTruncated: false,
-      stderrTruncated: false,
-    }));
-    const exec = {
-      run,
-      systemTools: {
-        resolve: async () => ({ executable, executablePath: '/managed/grok' }),
-      },
-      spawn: async () => { throw new Error('spawn should not be used'); },
-      clients: { spawn: async () => { throw new Error('protocol clients should not be used'); } },
-      agentCli: { checkReadiness: async () => { throw new Error('agent CLI readiness should not be used'); } },
-    } satisfies ExecService;
-
-    await expect(GROK_PREFLIGHT_SESSION_CONTROLS.probeModelsRaw({
-      exec,
-      cwd: '/workspace',
-      timeoutMs: 1_500,
-    })).resolves.toEqual([{ id: 'grok-4.5', name: 'Grok 4.5' }]);
-
-    expect(run).toHaveBeenCalledWith({
-      executable: { kind: 'systemTool', id: 'grok-cli' },
+  it('declares the native command while leaving execution to the host', async () => {
+    const models = GROK_PREFLIGHT_SESSION_CONTROLS.models;
+    expect(models?.command).toEqual({
+      toolId: 'grok-cli',
       args: ['models'],
-      cwd: { root: 'workspace', relativePath: '' },
-      maxStderrBytes: 262_144,
-      maxStdoutBytes: 262_144,
-      timeoutMs: 1_500,
+      ci: 'omit',
     });
+    await expect(models?.parseOutput?.({
+      ok: true,
+      stdout: 'Available models:\n  * grok-4.5 (default)\n',
+      stderr: '',
+      exitCode: 0,
+    })).resolves.toEqual([{ id: 'grok-4.5', name: 'Grok 4.5' }]);
   });
 });

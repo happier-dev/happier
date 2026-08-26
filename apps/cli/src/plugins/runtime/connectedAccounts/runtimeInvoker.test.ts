@@ -192,6 +192,78 @@ function invokeEstablished(
 }
 
 describe('connected-account runtime invoker', () => {
+    it('rejects an authentication callback when its generation retires during its await', async () => {
+        let generationCurrent = true;
+        let releaseCompletion!: () => void;
+        let markEntered!: () => void;
+        const entered = new Promise<void>((resolve) => {
+            markEntered = resolve;
+        });
+        const completion = new Promise<void>((resolve) => {
+            releaseCompletion = resolve;
+        });
+        const registeredRuntime: PluginConnectedAccountRuntime = {
+            ...runtime(() => {}),
+            authentication: {
+                modes: {
+                    manual: {
+                        kind: 'manual',
+                        async complete() {
+                            markEntered();
+                            await completion;
+                            return {
+                                status: 'connected',
+                                accountId: 'account-a',
+                                displayName: 'Account A',
+                                scopes: [],
+                            };
+                        },
+                    },
+                },
+            },
+        };
+        const invoker = createEstablishedInvoker(
+            registeredRuntime,
+            () => generationCurrent,
+        );
+
+        const outcome = invoker.invokeAuthentication({
+            admission: Object.freeze({
+                service,
+                descriptor: mode,
+                generation: 'generation-1',
+                immutableGenerationId: 'artifact-1',
+                modeId: mode.id,
+            }),
+            operation: Object.freeze({
+                kind: 'submitManual',
+                fields: Object.freeze({ token: 'candidate' }),
+            }),
+            context: Object.freeze({
+                service,
+                attempt: Object.freeze({ kind: 'connect', attemptId: 'attempt-1' }),
+                configuration: Object.freeze({
+                    target: Object.freeze({ kind: 'service', service, modeId: mode.id }),
+                    revision: 'configuration-1',
+                    values: Object.freeze({}),
+                    getSecret: async () => null,
+                }),
+                attemptCredentials: Object.freeze({
+                    get: async () => null,
+                    set: async () => {},
+                    delete: async () => {},
+                }),
+            }),
+            isConfigurationCurrent: () => true,
+        });
+
+        await entered;
+        generationCurrent = false;
+        releaseCompletion();
+
+        await expect(outcome).rejects.toThrow(/authentication runtime is no longer current/i);
+    });
+
     it('refuses a proxy materialization that retires its generation during request-auth inspection', async () => {
         let generationCurrent = true;
         const rawHeaders = Object.freeze({
@@ -1088,7 +1160,7 @@ describe('connected-account runtime invoker', () => {
         ]);
     });
 
-    it('returns typed unavailability when a real guarded lease retires before provider entry', async () => {
+    it('returns typed unavailability when a current lease retires before provider entry', async () => {
         const complete = vi.fn(async () => ({
             status: 'connected' as const,
             accountId: 'account-a',
@@ -1223,7 +1295,7 @@ describe('connected-account runtime invoker', () => {
     });
 
     it.each(['providerCheck', 'none'] as const)(
-        'preserves %s uncertainty when a real guarded lease retires after provider entry',
+        'preserves %s uncertainty when a current lease retires after provider entry',
         async (outcomeReconciliation) => {
             const oauthMode = PluginConnectedAccountAuthenticationModeV2Schema.parse({
                 id: 'oauth',

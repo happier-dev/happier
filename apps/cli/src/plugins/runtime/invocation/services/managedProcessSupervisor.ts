@@ -140,7 +140,7 @@ export type ManagedServiceDiagnosticRetention = Readonly<{
 }>;
 
 export type ManagedServiceProcessStopResult = Readonly<{
-    status: 'stopped' | 'detached';
+    status: 'stopped' | 'detached' | 'termination_incomplete';
 }>;
 
 export interface ManagedServiceProcessHandle {
@@ -891,6 +891,20 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         };
         const isStopped = (): boolean => snapshot.state === 'stopped';
         const isStopping = (): boolean => cleanupPromise !== null;
+        const hasProvenManagedProcessTermination = (): boolean => {
+            if (spec.mode.kind !== 'managedSpawn') return true;
+            const terminal = processTerminal;
+            return terminal?.kind === 'result'
+                && (
+                    terminal.result.termination.observed.kind === 'exit'
+                    || terminal.result.termination.observed.kind === 'signal'
+                );
+        };
+        const terminationIncomplete = (cause?: unknown): PluginError => new PluginError({
+            code: 'plugin_managed_server_termination_incomplete',
+            message: 'Managed server termination could not be verified',
+            retryable: true,
+        }, cause === undefined ? undefined : { cause });
         const isGenerationUsable = (): boolean => {
             try {
                 return scope.isGenerationCurrent() && !entry.lifecycle.signal.aborted;
@@ -1188,6 +1202,39 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 stopWatchdog();
                 const attempt = (async () => {
                     const failures: ManagedServiceCleanupFailure[] = [];
+                    if (!processDisposed) {
+                        let processDisposalFailure: unknown = null;
+                        try {
+                            await process?.dispose();
+                        } catch (error) {
+                            processDisposalFailure = error;
+                        }
+                        if (
+                            spec.mode.kind === 'managedSpawn'
+                            && !hasProvenManagedProcessTermination()
+                        ) {
+                            // `dispose()` returning or a terminator reporting
+                            // success does not establish that the exact child
+                            // exited. Keep its projection, logs, port lease and
+                            // host-private process custody until a real terminal
+                            // observation arrives.
+                            throw terminationIncomplete(processDisposalFailure);
+                        }
+                        processDisposed = true;
+                        if (
+                            processDisposalFailure !== null
+                            && !(
+                                isPluginError(processDisposalFailure)
+                                && processDisposalFailure.code
+                                    === 'plugin_exec_termination_incomplete'
+                            )
+                        ) {
+                            failures.push({
+                                phase: 'process',
+                                cause: processDisposalFailure,
+                            });
+                        }
+                    }
                     try {
                         await releaseEndpointProjection();
                     } catch (error) {
@@ -1203,17 +1250,6 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         } catch (error) {
                             failures.push({
                                 phase: 'outputSubscription',
-                                cause: error,
-                            });
-                        }
-                    }
-                    if (!processDisposed) {
-                        try {
-                            await process?.dispose();
-                            processDisposed = true;
-                        } catch (error) {
-                            failures.push({
-                                phase: 'process',
                                 cause: error,
                             });
                         }
@@ -1575,7 +1611,9 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 lifecycleProbeController.abort();
                 stopWatchdog();
                 setUnhealthy('plugin_managed_server_process_exited');
-                void releaseEndpointProjection().catch(() => undefined);
+                if (hasProvenManagedProcessTermination()) {
+                    void releaseEndpointProjection().catch(() => undefined);
+                }
             }).catch(() => {
                 processTerminal = Object.freeze({ kind: 'failed' });
                 lifecycleProbeController.abort();
@@ -1721,7 +1759,17 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             },
             async stop(options?: { signal?: AbortSignal }): Promise<ManagedServiceProcessStopResult> {
                 assertNotAborted(options?.signal);
-                await waitWithAbort(cleanup(), options?.signal);
+                try {
+                    await waitWithAbort(cleanup(), options?.signal);
+                } catch (error) {
+                    if (
+                        isPluginError(error)
+                        && error.code === 'plugin_managed_server_termination_incomplete'
+                    ) {
+                        return Object.freeze({ status: 'termination_incomplete' });
+                    }
+                    throw error;
+                }
                 return Object.freeze({ status: spec.mode.kind === 'managedSpawn' ? 'stopped' : 'detached' });
             },
             async dispose(): Promise<void> {

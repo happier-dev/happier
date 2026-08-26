@@ -11,7 +11,7 @@ export const AGENT_DEFINITION = Object.freeze({
     cloudConnect: null,
     connectedServices: null,
     resume: {
-      vendorResume: 'experimental',
+      vendorResume: 'experimental' as const,
       vendorResumeIdField: 'cursorSessionId',
       experimentalResumePolicy: 'runtime_checked',
     },

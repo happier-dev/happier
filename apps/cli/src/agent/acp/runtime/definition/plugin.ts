@@ -1,107 +1,121 @@
-import { PluginAgentAcpTransportSchema } from '@happier-dev/protocol';
+import {
+  PluginAgentContributionV2Schema,
+  PluginAgentRuntimeAcpV2Schema,
+} from '@happier-dev/protocol';
+import type {
+  PluginAgentAcpTransport,
+} from '@happier-dev/protocol';
+import type { AgentAcpRuntimeOptions } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type {
-  AcpRuntimeDefinitionInit,
   AcpRuntimeDefinition,
-  HostAcpBackendSpec,
+  AcpRuntimeDefinitionInit,
+  HostAcpTransportSpec,
 } from './_types';
 import { createAcpRuntimeDefinition } from './create';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
+const NEUTRAL_ACP_MCP_POLICY = Object.freeze({
+  policy: 'drop' as const,
+});
 
-function readStringRecord(value: unknown): Readonly<Record<string, string>> | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-  const out: Record<string, string> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry !== 'string') {
-      return undefined;
-    }
-    out[key] = entry;
-  }
-  return Object.freeze(out);
-}
+export type NormalizedPluginDeclarativeAcpRuntime = Readonly<{
+  transport: PluginAgentAcpTransport;
+  definition?: NonNullable<AgentAcpRuntimeOptions['definition']>;
+}>;
 
-function readOptionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0
-    ? value
-    : undefined;
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function readLocalizedString(value: unknown): string | undefined {
-  const direct = readOptionalString(value);
-  if (direct) return direct;
-  return isRecord(value) ? readOptionalString(value.fallback) : undefined;
-}
-
-function readPluginUx(value: unknown): HostAcpBackendSpec['ux'] | undefined {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value;
+  }
   if (!isRecord(value)) {
     return undefined;
   }
-  const name = readOptionalString(value.name);
-  const title = readOptionalString(value.title);
-  const description = readOptionalString(value.description);
-  const defaultMode = readOptionalString(value.defaultMode);
-  const defaultModel = readOptionalString(value.defaultModel);
-  const ux = {
-    ...(name ? { name } : {}),
-    ...(title ? { title } : {}),
-    ...(description ? { description } : {}),
-    ...(defaultMode ? { defaultMode } : {}),
-    ...(defaultModel ? { defaultModel } : {}),
-  };
-  return Object.keys(ux).length > 0
-    ? Object.freeze(ux)
+  const fallback = value.fallback;
+  return typeof fallback === 'string' && fallback.trim().length > 0
+    ? fallback
     : undefined;
 }
 
-function readPluginTransport(
-  backendId: string,
-  pluginId: string | undefined,
-  value: unknown,
-): HostAcpBackendSpec['transport'] {
-  const transport = PluginAgentAcpTransportSchema.parse(value);
-  const timeouts = transport.timeouts
+/**
+ * Normalizes the one strict Protocol declaration into the existing public ACP
+ * composer options. Omitted MCP policy deliberately keeps the composer's
+ * neutral no-delivery behavior.
+ */
+export function normalizePluginDeclarativeAcpRuntime(
+  runtime: unknown,
+): NormalizedPluginDeclarativeAcpRuntime {
+  const parsed = PluginAgentRuntimeAcpV2Schema.parse(runtime);
+  const definition = parsed.definition
+    ? Object.freeze({
+      ...(parsed.definition.modelConfigOptionId
+        ? { modelConfigOptionId: parsed.definition.modelConfigOptionId }
+        : {}),
+      ...(parsed.definition.stderrRules
+        ? { stderrRules: parsed.definition.stderrRules }
+        : {}),
+      mcp: parsed.definition.mcp ?? NEUTRAL_ACP_MCP_POLICY,
+    }) satisfies NonNullable<AgentAcpRuntimeOptions['definition']>
+    : undefined;
+
+  return Object.freeze({
+    transport: parsed.transport,
+    ...(definition ? { definition } : {}),
+  });
+}
+
+function normalizePluginAcpTransport(params: Readonly<{
+  backendId: string;
+  pluginId?: string;
+  transport: PluginAgentAcpTransport;
+}>): HostAcpTransportSpec {
+  const timeouts = params.transport.timeouts
     ? {
-        ...(transport.timeouts.initializeMs ? { initMs: transport.timeouts.initializeMs } : {}),
-        ...(transport.timeouts.idleMs ? { idleMs: transport.timeouts.idleMs } : {}),
-        ...(transport.timeouts.toolCallMs ? { toolCallMs: transport.timeouts.toolCallMs } : {}),
+        ...(params.transport.timeouts.initializeMs
+          ? { initMs: params.transport.timeouts.initializeMs }
+          : {}),
+        ...(params.transport.timeouts.idleMs
+          ? { idleMs: params.transport.timeouts.idleMs }
+          : {}),
+        ...(params.transport.timeouts.toolCallMs
+          ? { toolCallMs: params.transport.timeouts.toolCallMs }
+          : {}),
       }
     : undefined;
 
-  if (transport.kind === 'webSocket') {
+  if (params.transport.kind === 'webSocket') {
     return {
       kind: 'ws',
-      url: transport.url,
-      ...(transport.headers ? { headers: transport.headers } : {}),
+      url: params.transport.url,
+      ...(params.transport.headers ? { headers: params.transport.headers } : {}),
       ...(timeouts ? { timeouts } : {}),
     };
   }
-  if (transport.kind === 'tcp') {
+  if (params.transport.kind === 'tcp') {
     return {
       kind: 'tcp',
-      host: transport.host,
-      port: transport.port,
+      host: params.transport.host,
+      port: params.transport.port,
       ...(timeouts ? { timeouts } : {}),
     };
   }
-  if (transport.executable.kind === 'managedDependency') {
+  if (params.transport.executable.kind === 'managedDependency') {
     throw new Error(
-      `Plugin ACP backend '${backendId}' uses a managedDependency executable, which the current ACP host runtime cannot launch directly.`,
+      `Plugin ACP backend '${params.backendId}' uses a managedDependency executable, which the current ACP host runtime cannot launch directly.`,
     );
   }
-  const executableReference = transport.executable.id;
+  const executableReference = params.transport.executable.id;
   const toolId = typeof executableReference === 'string'
     ? executableReference
-    : executableReference.pluginId === pluginId
+    : executableReference.pluginId === params.pluginId
       ? executableReference.localId
       : null;
   if (!toolId) {
     throw new Error(
-      `Plugin ACP backend '${backendId}' uses a cross-plugin system-tool reference, which the current ACP host runtime cannot launch directly.`,
+      `Plugin ACP backend '${params.backendId}' uses a cross-plugin system-tool reference, which the current ACP host runtime cannot launch directly.`,
     );
   }
   return {
@@ -109,133 +123,74 @@ function readPluginTransport(
     launch: {
       kind: 'system-tool',
       toolId,
-      purpose: `Launch ACP backend ${backendId}`,
-      ...(transport.args ? { args: transport.args } : {}),
-      ...(transport.env ? { env: transport.env } : {}),
+      purpose: `Launch ACP backend ${params.backendId}`,
+      ...(params.transport.args ? { args: params.transport.args } : {}),
+      ...(params.transport.env ? { env: params.transport.env } : {}),
     },
     ...(timeouts ? { timeouts } : {}),
   };
 }
 
-function createRuntimeUx(params: Readonly<{
-  backendId: string;
-  ux?: HostAcpBackendSpec['ux'];
-}>): AcpRuntimeDefinitionInit['ux'] {
-  const name = readOptionalString(params.ux?.name);
-  const description = readOptionalString(params.ux?.description);
-  const defaultMode = readOptionalString(params.ux?.defaultMode);
-  const defaultModel = readOptionalString(params.ux?.defaultModel);
-  const title = readOptionalString(params.ux?.title)
-    ?? name
-    ?? params.backendId;
-  return Object.freeze({
-    ...(name ? { name } : {}),
-    title,
-    ...(description ? { description } : {}),
-    ...(defaultMode ? { defaultMode } : {}),
-    ...(defaultModel ? { defaultModel } : {}),
-  });
-}
-
-function requireFinalPluginAcpRuntime(
-  backend: unknown,
-  pluginId?: string,
-): HostAcpBackendSpec {
+function requirePluginAcpAgentContribution(backend: unknown): unknown {
   if (!isRecord(backend)) {
     throw new Error('Plugin ACP backend contributions must use agents[].runtime.kind = acp.');
   }
   const runtime = backend.runtime;
-  if ('acp' in backend || 'engine' in backend || (!isRecord(runtime) && backend.runtimeKind === 'acp')) {
+  if (
+    'acp' in backend
+    || 'engine' in backend
+    || (!isRecord(runtime) && backend.runtimeKind === 'acp')
+  ) {
     throw new Error('Plugin ACP backend contributions must use agents[].runtime.kind = acp; legacy .acp/runtimeKind/engine wire is not supported.');
   }
-  if (!isRecord(runtime) || runtime.kind !== 'acp') {
-    throw new Error('Plugin ACP backend contributions must use agents[].runtime.kind = acp.');
-  }
-  const backendId = typeof backend.id === 'string' ? backend.id : '';
-  if (backendId.length === 0) {
-    throw new Error('Plugin ACP backend contributions require a backend id.');
-  }
-  const runtimeUx = readPluginUx(runtime.ux);
-  const contributionTitle = readLocalizedString(backend.title);
-  const contributionDescription = readLocalizedString(backend.description);
-  const ux = runtimeUx || contributionTitle || contributionDescription
-    ? Object.freeze({
-        ...(contributionTitle ? { title: contributionTitle } : {}),
-        ...(contributionDescription ? { description: contributionDescription } : {}),
-        ...runtimeUx,
-      })
-    : undefined;
-  const launchEnv = readStringRecord(runtime.launchEnv);
-  return {
-    backendId,
-    transport: readPluginTransport(backendId, pluginId, runtime.transport),
-    ...(ux ? { ux } : {}),
-    ...(launchEnv ? { launchEnv } : {}),
-    ...(isRecord(runtime.capabilities) ? { capabilities: runtime.capabilities as HostAcpBackendSpec['capabilities'] } : {}),
-    ...(isRecord(runtime.auth) ? { auth: runtime.auth as HostAcpBackendSpec['auth'] } : {}),
-    ...(typeof runtime.fsEnabled === 'boolean' ? { fsEnabled: runtime.fsEnabled } : {}),
-    ...(isRecord(runtime.transportLifecycle) ? { transportLifecycle: runtime.transportLifecycle as HostAcpBackendSpec['transportLifecycle'] } : {}),
-    ...(isRecord(runtime.permissionModeArgv) ? { permissionModeArgv: runtime.permissionModeArgv as HostAcpBackendSpec['permissionModeArgv'] } : {}),
-    ...(typeof runtime.sessionIdHeaderName === 'string' ? { sessionIdHeaderName: runtime.sessionIdHeaderName } : {}),
-    ...(isRecord(runtime.toolNameInference) ? { toolNameInference: runtime.toolNameInference as HostAcpBackendSpec['toolNameInference'] } : {}),
-    ...(isRecord(runtime.stderrRules) ? { stderrRules: runtime.stderrRules as HostAcpBackendSpec['stderrRules'] } : {}),
-    ...(isRecord(runtime.permissionOptionSelection) ? { permissionOptionSelection: runtime.permissionOptionSelection as HostAcpBackendSpec['permissionOptionSelection'] } : {}),
-    ...(isRecord(runtime.messageMeta) ? { messageMeta: runtime.messageMeta as HostAcpBackendSpec['messageMeta'] } : {}),
-    ...(isRecord(runtime.mcp) ? { mcp: runtime.mcp as HostAcpBackendSpec['mcp'] } : {}),
-    ...(isRecord(runtime.callbacks) ? { callbacks: runtime.callbacks as HostAcpBackendSpec['callbacks'] } : {}),
-  };
-}
-
-function buildPluginDefinitionInit(params: Readonly<{
-  pluginId?: string;
-  spec: HostAcpBackendSpec;
-}>): AcpRuntimeDefinitionInit {
-  return {
-    backendId: params.spec.backendId,
-    source: {
-      kind: 'plugin_contributed',
-      ...(params.pluginId ? { pluginId: params.pluginId } : {}),
-    },
-    identity: {
-      backendId: params.spec.backendId,
-    },
-    ux: createRuntimeUx({
-      backendId: params.spec.backendId,
-      ux: params.spec.ux,
-    }),
-    transport: params.spec.transport,
-    launchEnv: params.spec.launchEnv ?? {},
-    capabilities: params.spec.capabilities ?? {},
-    ...(params.spec.transport.timeouts ? { timeouts: params.spec.transport.timeouts } : {}),
-    ...(params.spec.auth ? { auth: params.spec.auth } : {}),
-    ...(typeof params.spec.fsEnabled === 'boolean' ? { fsEnabled: params.spec.fsEnabled } : {}),
-    ...(params.spec.transportLifecycle ? { transportLifecycle: params.spec.transportLifecycle } : {}),
-    ...(params.spec.permissionModeArgv ? { permissionModeArgv: params.spec.permissionModeArgv } : {}),
-    ...(params.spec.sessionIdHeaderName ? { sessionIdHeaderName: params.spec.sessionIdHeaderName } : {}),
-    ...(params.spec.toolNameInference ? { toolNameInference: params.spec.toolNameInference } : {}),
-    ...(params.spec.stderrRules ? { stderrRules: params.spec.stderrRules } : {}),
-    ...(params.spec.permissionOptionSelection ? { permissionOptionSelection: params.spec.permissionOptionSelection } : {}),
-    ...(params.spec.messageMeta ? { messageMeta: params.spec.messageMeta } : {}),
-    mcp: params.spec.mcp ?? {
-      policy: 'pass_through',
-    },
-    callbacks: params.spec.callbacks ?? {},
-  };
-}
-
-export function normalizePluginAcpDefinition(params: Readonly<{
-  pluginId?: string;
-  spec: HostAcpBackendSpec;
-}>): AcpRuntimeDefinition {
-  return createAcpRuntimeDefinition(buildPluginDefinitionInit(params));
+  return backend;
 }
 
 export function normalizePluginBackendContributionAcpDefinition(params: Readonly<{
   pluginId?: string;
   backend: unknown;
 }>): AcpRuntimeDefinition {
-  return normalizePluginAcpDefinition({
+  const agent = PluginAgentContributionV2Schema.parse(
+    requirePluginAcpAgentContribution(params.backend),
+  );
+  if (!('runtime' in agent) || agent.runtime.kind !== 'acp') {
+    throw new Error('Plugin ACP backend contributions must use agents[].runtime.kind = acp.');
+  }
+
+  const runtime = normalizePluginDeclarativeAcpRuntime(agent.runtime);
+  const transport = normalizePluginAcpTransport({
+    backendId: agent.id,
     pluginId: params.pluginId,
-    spec: requireFinalPluginAcpRuntime(params.backend, params.pluginId),
+    transport: runtime.transport,
   });
+  const sessionCapabilities = 'primary' in agent && agent.primary === 'sessions'
+    ? agent.capabilities.sessions
+    : null;
+  const title = readLocalizedString(agent.title) ?? agent.id;
+  const description = readLocalizedString(agent.description);
+  const definitionInit: AcpRuntimeDefinitionInit = {
+    backendId: agent.id,
+    source: {
+      kind: 'plugin_contributed',
+      ...(params.pluginId ? { pluginId: params.pluginId } : {}),
+    },
+    identity: {
+      backendId: agent.id,
+    },
+    ux: {
+      title,
+      ...(description ? { description } : {}),
+    },
+    transport,
+    launchEnv: {},
+    capabilities: {
+      supportsResume: sessionCapabilities?.open.includes('resume') === true,
+    },
+    ...(transport.timeouts ? { timeouts: transport.timeouts } : {}),
+    ...(runtime.definition?.stderrRules
+      ? { stderrRules: runtime.definition.stderrRules }
+      : {}),
+    mcp: runtime.definition?.mcp ?? NEUTRAL_ACP_MCP_POLICY,
+  };
+  return createAcpRuntimeDefinition(definitionInit);
 }

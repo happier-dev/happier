@@ -6,7 +6,10 @@ import {
   resolveHomeDirFromEnvironment,
 } from '@happier-dev/plugin-sdk/fs';
 import type { HandoffExportSessionMetadata } from '@happier-dev/plugin-sdk/agents/runtime';
-import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
+import {
+  buildCodexAgentRuntimeDescriptor,
+  readCanonicalCodexAgentRuntimeDescriptorV1,
+} from '../../../../protocol/runtimeDescriptorV1.js';
 import { collectCodexRootSessionRolloutFiles } from '../../../rollout/discovery/sessionsForHome.js';
 import { homes } from '../../../rollout/discovery/sessionsForHomes.js';
 import {
@@ -53,14 +56,38 @@ async function resolveAuthoritativeCodexHomes(params: Readonly<{
 }
 
 function resolveCodexSource(metadata: HandoffExportSessionMetadata): CodexExternalSessionSource | undefined {
-  return projectAgentExternalSessionSourceToCodex(metadata.externalSessionSource) ?? undefined;
+  const linkedSource = projectAgentExternalSessionSourceToCodex(metadata.externalSessionSource);
+  if (linkedSource) return linkedSource;
+
+  const runtimeDescriptor = metadata.runtimeDescriptorV1
+    ? readCanonicalCodexAgentRuntimeDescriptorV1(metadata.runtimeDescriptorV1)
+    : null;
+  if (!runtimeDescriptor?.home) return undefined;
+  if (runtimeDescriptor.home === 'connectedService' && !runtimeDescriptor.connectedServiceId) {
+    return undefined;
+  }
+  return {
+    kind: 'codexHome',
+    home: runtimeDescriptor.home,
+    ...(runtimeDescriptor.connectedServiceId
+      ? { connectedServiceId: runtimeDescriptor.connectedServiceId }
+      : {}),
+    ...(runtimeDescriptor.connectedServiceProfileId
+      ? { connectedServiceProfileId: runtimeDescriptor.connectedServiceProfileId }
+      : {}),
+    ...(runtimeDescriptor.connectedServiceGroupId
+      ? { connectedServiceGroupId: runtimeDescriptor.connectedServiceGroupId }
+      : {}),
+  };
 }
 
 function resolveCanonicalCodexHandoffBackendMode(
-  value: HandoffExportSessionMetadata['codexBackendMode'],
+  metadata: HandoffExportSessionMetadata,
 ): 'acp' | 'appServer' | null {
-  const normalized = typeof value === 'string' ? value.trim() : '';
-  return normalized === 'acp' || normalized === 'appServer' ? normalized : null;
+  const runtimeDescriptor = metadata.runtimeDescriptorV1
+    ? readCanonicalCodexAgentRuntimeDescriptorV1(metadata.runtimeDescriptorV1)
+    : null;
+  return runtimeDescriptor?.backendMode ?? null;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
@@ -78,7 +105,7 @@ export async function exportCodexSessionBundle(params: Readonly<{
   signal?: AbortSignal;
 }>): Promise<CodexSessionHandoffBundle> {
   throwIfAborted(params.signal);
-  const backendMode = resolveCanonicalCodexHandoffBackendMode(params.metadata.codexBackendMode);
+  const backendMode = resolveCanonicalCodexHandoffBackendMode(params.metadata);
   const codexSource = resolveCodexSource(params.metadata);
   const source = projectCodexExternalSessionSourceToHandoff(codexSource);
   const sanitizedRuntimeDescriptor = backendMode

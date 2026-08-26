@@ -12,7 +12,7 @@ import { configuration } from '@/configuration';
  * exact on-disk startup-seed direction. Remove it only after supported releases no
  * longer require the V1 Codex resume contract and its contraction is approved.
  */
-export type ReleasedStartupOverridesCacheEntryV1 = Readonly<{
+export type ReleasedCodexStartupOverridesCacheEntryV1 = Readonly<{
   permissionMode: PermissionMode;
   permissionModeUpdatedAt: number;
   modelId: string | null;
@@ -22,10 +22,19 @@ export type ReleasedStartupOverridesCacheEntryV1 = Readonly<{
 
 type ReleasedStartupOverridesCacheFileV1 = Readonly<{
   version: 1;
-  byBackend: Readonly<Record<string, ReleasedStartupOverridesCacheEntryV1>>;
+  byBackend: Readonly<Record<string, ReleasedCodexStartupOverridesCacheEntryV1>>;
+}>;
+
+export type ReleasedCodexStartupOverridesCacheV1Compatibility = Readonly<{
+  read(params: Readonly<{
+    nowMs: number;
+    maxAgeMs: number;
+  }>): ReleasedCodexStartupOverridesCacheEntryV1 | null;
+  write(entry: ReleasedCodexStartupOverridesCacheEntryV1): void;
 }>;
 
 const EMPTY_CACHE: ReleasedStartupOverridesCacheFileV1 = { version: 1, byBackend: {} };
+const DEPLOYED_CODEX_BACKEND_ID = 'codex';
 let inMemory: ReleasedStartupOverridesCacheFileV1 | null = null;
 let persistInFlight: Promise<void> | null = null;
 let pendingPersist: ReleasedStartupOverridesCacheFileV1 | null = null;
@@ -56,7 +65,7 @@ function kickPersist(): void {
   })();
 }
 
-function normalizeEntry(value: unknown): ReleasedStartupOverridesCacheEntryV1 | null {
+function normalizeEntry(value: unknown): ReleasedCodexStartupOverridesCacheEntryV1 | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Readonly<Record<string, unknown>>;
   const permissionMode = typeof record.permissionMode === 'string'
@@ -100,7 +109,7 @@ function loadCacheOnce(): ReleasedStartupOverridesCacheFileV1 {
       inMemory = EMPTY_CACHE;
       return inMemory;
     }
-    const byBackend: Record<string, ReleasedStartupOverridesCacheEntryV1> = {};
+    const byBackend: Record<string, ReleasedCodexStartupOverridesCacheEntryV1> = {};
     for (const [backendId, value] of Object.entries(record.byBackend)) {
       const entry = normalizeEntry(value);
       if (entry) byBackend[backendId] = entry;
@@ -113,29 +122,28 @@ function loadCacheOnce(): ReleasedStartupOverridesCacheFileV1 {
   }
 }
 
-export function readReleasedStartupOverridesCacheV1(params: Readonly<{
-  backendId: string;
+function readReleasedCodexStartupOverridesCacheV1(params: Readonly<{
   nowMs: number;
   maxAgeMs: number;
-}>): ReleasedStartupOverridesCacheEntryV1 | null {
-  const entry = loadCacheOnce().byBackend[params.backendId];
+}>): ReleasedCodexStartupOverridesCacheEntryV1 | null {
+  const entry = loadCacheOnce().byBackend[DEPLOYED_CODEX_BACKEND_ID];
   if (!entry) return null;
   return params.maxAgeMs >= 0 && params.nowMs - entry.updatedAt > params.maxAgeMs
     ? null
     : entry;
 }
 
-export function writeReleasedStartupOverridesCacheV1(params: Readonly<{
-  backendId: string;
-}> & ReleasedStartupOverridesCacheEntryV1): void {
+function writeReleasedCodexStartupOverridesCacheV1(
+  params: ReleasedCodexStartupOverridesCacheEntryV1,
+): void {
   const cache = loadCacheOnce();
-  const existing = cache.byBackend[params.backendId];
+  const existing = cache.byBackend[DEPLOYED_CODEX_BACKEND_ID];
   if (existing && existing.updatedAt >= params.updatedAt) return;
   const next: ReleasedStartupOverridesCacheFileV1 = {
     version: 1,
     byBackend: {
       ...cache.byBackend,
-      [params.backendId]: {
+      [DEPLOYED_CODEX_BACKEND_ID]: {
         permissionMode: params.permissionMode,
         permissionModeUpdatedAt: params.permissionModeUpdatedAt,
         modelId: params.modelId,
@@ -147,4 +155,23 @@ export function writeReleasedStartupOverridesCacheV1(params: Readonly<{
   inMemory = next;
   pendingPersist = next;
   kickPersist();
+}
+
+const RELEASED_CODEX_STARTUP_OVERRIDES_CACHE_V1_COMPATIBILITY = Object.freeze({
+  read: readReleasedCodexStartupOverridesCacheV1,
+  write: writeReleasedCodexStartupOverridesCacheV1,
+});
+
+/**
+ * Selects the only retained consumer of the deployed V1 cache. The generic
+ * startup host receives this bounded storage adapter instead of a catalog
+ * policy flag, so no Agent contribution can opt another runtime into Codex's
+ * released compatibility state.
+ */
+export function resolveReleasedCodexStartupOverridesCacheV1Compatibility(
+  backendId: string,
+): ReleasedCodexStartupOverridesCacheV1Compatibility | null {
+  return backendId === DEPLOYED_CODEX_BACKEND_ID
+    ? RELEASED_CODEX_STARTUP_OVERRIDES_CACHE_V1_COMPATIBILITY
+    : null;
 }

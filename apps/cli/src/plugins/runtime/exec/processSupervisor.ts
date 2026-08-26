@@ -7,6 +7,7 @@ import type {
     PluginProcessResult,
     PluginProcessTerminationRequest,
 } from '@happier-dev/plugin-sdk/exec';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
@@ -102,6 +103,14 @@ function observedTermination(exitCode: number | null, signal: NodeJS.Signals | n
         return Object.freeze({ kind: 'signal' as const, signal });
     }
     return failedTermination(new Error('Process closed without an exit code or signal'));
+}
+
+function terminationIncompleteError(cause?: unknown): PluginError {
+    return new PluginError({
+        code: 'plugin_exec_termination_incomplete',
+        message: 'Plugin process termination could not be verified',
+        retryable: true,
+    }, cause === undefined ? undefined : { cause });
 }
 
 export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcessInput): SupervisedPluginProcess {
@@ -250,7 +259,8 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         if (!observed && !requestedBy) {
             requestedBy = Object.freeze({ ...request });
         }
-        terminationPromise ??= (async () => {
+        if (terminationPromise) return terminationPromise;
+        const attempt = (async () => {
             const terminate = input.terminateProcessTree ?? (async (target: ChildProcessWithoutNullStreams) => {
                 try {
                     await killProcessTree(target, { graceMs: 100 });
@@ -268,35 +278,58 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
                 }
                 await waitPromise;
             })();
+            // A bounded caller wait may finish first. Keep a rejection from a
+            // later tree-kill attempt observed without relabeling the process.
+            void joined.catch(() => undefined);
             const joinTimeoutMs = Math.max(1, input.terminationJoinTimeoutMs ?? 5_000);
             let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-            const joinedBeforeDeadline = await Promise.race([
-                joined.then(() => true),
-                new Promise<false>((resolve) => {
-                    timeoutHandle = setTimeout(() => resolve(false), joinTimeoutMs);
-                    timeoutHandle.unref?.();
-                }),
-            ]);
-            if (timeoutHandle) clearTimeout(timeoutHandle);
-            if (!joinedBeforeDeadline) {
-                if (!observed) {
-                    freezeObserved(Object.freeze({
-                        kind: 'failed' as const,
-                        diagnostic: Object.freeze({
-                            code: 'PLUGIN_EXEC_TERMINATION_TIMEOUT',
-                            severity: 'error' as const,
-                            message: 'Process tree did not terminate before the bounded join deadline',
-                        }),
-                    }));
+            let joinedBeforeDeadline: boolean;
+            try {
+                joinedBeforeDeadline = await Promise.race([
+                    joined.then(() => true),
+                    new Promise<false>((resolve) => {
+                        timeoutHandle = setTimeout(() => resolve(false), joinTimeoutMs);
+                        timeoutHandle.unref?.();
+                    }),
+                ]);
+            } catch (error) {
+                if (!observed && (child.exitCode !== null || child.signalCode !== null)) {
+                    freezeObserved(observedTermination(child.exitCode, child.signalCode));
                 }
-                seal();
+                if (observed) {
+                    // An observed exit or signal is the process-terminal fact;
+                    // close-stream reconciliation is not required to prove it.
+                    seal();
+                    return;
+                }
+                throw terminationIncompleteError(error);
+            } finally {
+                if (timeoutHandle) clearTimeout(timeoutHandle);
+            }
+            if (!joinedBeforeDeadline) {
+                if (observed) {
+                    // See the error path above: a real exit/signal is enough to
+                    // settle the handle even if `close` never arrives.
+                    seal();
+                    return;
+                }
+                // A join deadline is a bounded caller wait, not evidence that
+                // the OS process died. Keep its host-private custody and leave
+                // `handle.wait()` pending until a real terminal event arrives.
+                throw terminationIncompleteError();
             }
         })();
-        return terminationPromise;
+        terminationPromise = attempt;
+        void attempt.catch(() => {
+            if (terminationPromise === attempt) {
+                terminationPromise = null;
+            }
+        });
+        return attempt;
     };
 
     const abort = () => {
-        void requestTermination({ kind: 'abort' });
+        void requestTermination({ kind: 'abort' }).catch(() => undefined);
     };
     for (const signal of input.signals ?? []) {
         signal.addEventListener('abort', abort, { once: true });
@@ -304,7 +337,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     }
     if (input.timeoutMs !== undefined) {
         timeout = setTimeout(() => {
-            void requestTermination({ kind: 'timeout' });
+            void requestTermination({ kind: 'timeout' }).catch(() => undefined);
         }, Math.max(0, input.timeoutMs));
         timeout.unref?.();
     }
@@ -313,7 +346,8 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     }
 
     const dispose = (reason: DisposeReason = 'caller'): Promise<void> => {
-        disposePromise ??= (async () => {
+        if (disposePromise) return disposePromise;
+        const attempt = (async () => {
             for (const signal of input.signals ?? []) {
                 signal.removeEventListener('abort', abort);
             }
@@ -324,7 +358,13 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             await requestTermination({ kind: 'dispose', reason });
             outputListeners.clear();
         })();
-        return disposePromise;
+        disposePromise = attempt;
+        void attempt.catch(() => {
+            if (disposePromise === attempt) {
+                disposePromise = null;
+            }
+        });
+        return attempt;
     };
     const handle: PluginProcessHandle = Object.freeze({
         async write(data: Uint8Array) {

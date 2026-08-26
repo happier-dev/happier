@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
 import { SecretStringV1Schema } from '../crypto/settingsSecretStringSchemasV1.js';
+import { HistoricalCodingPromptBehaviorProfileOverrideV1Schema } from '../prompts/codingPromptBehaviorV1.js';
 import { SESSION_PERMISSION_MODES } from '../sessions/metadata/sessionPermissionModes.js';
 import {
   EnvironmentVariableSchema,
@@ -80,6 +81,10 @@ export const AIBackendProfileSchema = z.object({
   createdAt: z.number().default(() => Date.now()),
   updatedAt: z.number().default(() => Date.now()),
   version: z.string().default('1.0.0'),
+
+  // Reader-only predecessor field. The canonical collection reader projects
+  // this to V2 codingPromptBehaviorOverrides; V2 is the sole writer.
+  codingPromptBehaviorV1: HistoricalCodingPromptBehaviorProfileOverrideV1Schema.optional(),
 })
   // NOTE: Zod v4 marks `superRefine` as deprecated in favor of `.check(...)`.
   // We use chained `.refine(...)` here to preserve per-field error paths/messages.

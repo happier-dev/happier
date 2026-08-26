@@ -14,17 +14,24 @@ import type {
 
 import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES } from './agent/auth/services/native/scopes.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
+import {
+  claudeCliSessionCommandConfig,
+  resolveClaudeCliSessionOptions,
+} from './agent/cli/command.js';
+import { resolveClaudeSessionRuntimePreferences } from './agent/preferences/session.js';
 import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from './agent/environment.js';
 import {
   augmentClaudeDaemonSpawnEnv,
   resolveClaudeDaemonSpawnPrerequisites,
 } from './agent/lifecycle/spawnHooks.js';
+import { shouldUseClaudeDeferredBootstrap } from './agent/lifecycle/deferredStartup.js';
 import { readClaudeMcpConfigServers } from './agent/mcp/configServers.js';
 import {
   CLAUDE_PROVIDER_BINDING_ADAPTER_V1,
   CLAUDE_PROVIDER_OWNED_ENV_KEYS,
 } from './agent/providerBinding/adapter.js';
 import { createClaudeAgentRuntime } from './agent/runtime/nativeRuntime.js';
+import { createClaudePromptSubmitVerificationPolicy } from './agent/runtime/terminal/unified/promptSubmitVerification.js';
 import { claudeExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
 import { claudeExternalSessionHooksContribution } from './agent/surfaces/sessions/external/hooks.js';
 import { claudeExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
@@ -285,23 +292,32 @@ export const CLAUDE_PLUGIN = definePlugin({
           auth: {
             support: 'login_terminal',
             machineLoginKey: 'claude-code',
-            probe: {
-              parser: 'claudeCredentialsFile',
-              backgroundChecks: 'safe',
-              statusArgs: null,
-              envVars: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
-              credentialPaths: ['~/.claude/.credentials.json', '~/.claude/.claude.json'],
-            },
+            environmentVariables: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
+            credentialPaths: ['~/.claude/.credentials.json', '~/.claude/.claude.json'],
             loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login\r' }],
           },
         },
         primary: 'sessions',
         catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
           // Binds Claude's own CLI to the declared `claude-cli` system tool so
           // `exec.systemTools.resolve` reaches the canonical Agent CLI launch
           // resolution. This is the public declaration every Agent uses; the
           // host projects it through the one catalog-entry hook owner.
           agentCliSystemTool: { toolId: 'claude-cli' },
+          codingPromptBehavior: {
+            blocks: [{
+              id: 'provider.claude.ask_user_question_isolation',
+              text: [
+                'RELIABILITY RULES (IMPORTANT):',
+                "- Tool-use sequencing is strict. If you use \"AskUserQuestion\", do NOT include any other tool_use in the same assistant turn. Wait for the user's answer before calling other tools.",
+              ].join('\n'),
+            }, {
+              id: 'provider.claude.disable_todos',
+              when: 'disableTodos',
+              text: 'Do not create TODO items, TODO lists, or task lists in your output. If you would normally create TODOs, instead proceed with the work directly or ask the user for clarification.',
+            }],
+          },
         },
         connectedAccounts: [{
           purpose: 'model_upstream',
@@ -392,6 +408,24 @@ export const CLAUDE_PLUGIN = definePlugin({
         } },
       },
       factory: createClaudeAgentRuntime,
+      cliSessionCommand: {
+        ...claudeCliSessionCommandConfig,
+        buildSessionOptions: (input) => {
+          const command = resolveClaudeCliSessionOptions(input);
+          if (!command.ok) return command;
+          return {
+            ok: true,
+            options: {
+              ...command.options,
+              ...resolveClaudeSessionRuntimePreferences({ settings: input.settings }),
+            },
+          };
+        },
+      },
+      terminalPromptSubmitVerification: createClaudePromptSubmitVerificationPolicy(),
+      sessionStartup: {
+        shouldUseDeferredBootstrap: shouldUseClaudeDeferredBootstrap,
+      },
       providerBinding: CLAUDE_PROVIDER_BINDING_ADAPTER_V1,
       sessionRunnerFactory: {
         module: './agent/runtime/nativeRuntime',

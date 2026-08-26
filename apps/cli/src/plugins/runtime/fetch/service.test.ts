@@ -1398,7 +1398,7 @@ describe('createPluginHttpService', () => {
             credentialBinding,
         })).rejects.toMatchObject({
             code: 'plugin_fetch_interceptor_failed',
-            message: expect.stringContaining('retarget a credential-bearing request'),
+            message: expect.stringContaining('retarget a protected-header request'),
         });
         await expect(service.request({
             url: 'https://api.example.test/remethod',
@@ -1407,7 +1407,102 @@ describe('createPluginHttpService', () => {
             credentialBinding,
         })).rejects.toMatchObject({
             code: 'plugin_fetch_interceptor_failed',
-            message: expect.stringContaining('retarget a credential-bearing request'),
+            message: expect.stringContaining('retarget a protected-header request'),
+        });
+        expect(adapter).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a trusted interceptor\'s same-origin endpoint or method retargeting when a raw Authorization header will be sent', async () => {
+        const adapter = vi.fn(async (request: TestFetchRequest) => Object.freeze({
+            ...createResponse('ok'),
+            finalUrl: request.url,
+        }));
+        const retargetInterceptor = legacyInterceptorRegistry([{
+            pluginId: 'acme.policy',
+            contribution: { id: 'retarget', origins: ['https://api.example.test'] },
+            registration: {
+                id: 'retarget',
+                handle: async ({ effectiveRequest }) => (
+                    effectiveRequest.url === 'https://api.example.test/endpoint'
+                        ? { kind: 'allow', request: { url: 'https://api.example.test/dangerous' } }
+                        : effectiveRequest.url === 'https://api.example.test/method'
+                            ? { kind: 'allow', request: { method: 'DELETE' } }
+                            : {
+                                kind: 'allow',
+                                request: { headers: { set: { 'x-policy': 'observed' } } },
+                            }
+                ),
+            },
+        }]);
+        const host = createStablePluginHttpHost({
+            adapter,
+            interceptorRegistry: retargetInterceptor,
+        });
+        const binding = createLoggerAndEventsAvailablePluginInvocationServiceBinding(
+            'generation-raw-credential',
+            'binding-raw-credential',
+            [{
+                required: true,
+                request: {
+                    id: 'api',
+                    capability: 'network',
+                    reason: 'Connected Account API access',
+                    scope: {
+                        targets: [{ kind: 'fixedOrigin', origin: 'https://api.example.test' }],
+                        methods: ['GET', 'DELETE'],
+                    },
+                },
+            }],
+        );
+        const service = host.bind({
+            plugin: { id: 'caller.plugin', version: '1.0.0' },
+            contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
+            generation: 'generation-raw-credential',
+            correlationId: 'correlation-raw-credential',
+            surface: 'ui',
+            signal: new AbortController().signal,
+            isGenerationCurrent: () => true,
+        }, binding);
+        const headers = Object.freeze({ authorization: 'Bearer connected-account-secret' });
+
+        // An otherwise unchanged request remains observable to the trusted
+        // interceptor and carries its raw credential only to its original endpoint.
+        await expect(service.request({
+            url: 'https://api.example.test/allowed',
+            method: 'GET',
+            headers,
+            redirect: 'error',
+        })).resolves.toMatchObject({ status: 200 });
+        expect(adapter).toHaveBeenCalledTimes(1);
+        expect(adapter.mock.calls[0]?.[0]).toMatchObject({
+            url: 'https://api.example.test/allowed',
+            method: 'GET',
+            headers: expect.objectContaining({
+                authorization: 'Bearer connected-account-secret',
+                'x-policy': 'observed',
+            }),
+        });
+
+        // A broad network grant must not let an installation-wide interceptor
+        // repurpose raw Connected Account credentials into a different endpoint
+        // or a destructive method before the transport boundary.
+        await expect(service.request({
+            url: 'https://api.example.test/endpoint',
+            method: 'GET',
+            headers,
+            redirect: 'error',
+        })).rejects.toMatchObject({
+            code: 'plugin_fetch_interceptor_failed',
+            message: expect.stringContaining('retarget a protected-header request'),
+        });
+        await expect(service.request({
+            url: 'https://api.example.test/method',
+            method: 'GET',
+            headers,
+            redirect: 'error',
+        })).rejects.toMatchObject({
+            code: 'plugin_fetch_interceptor_failed',
+            message: expect.stringContaining('retarget a protected-header request'),
         });
         expect(adapter).toHaveBeenCalledTimes(1);
     });

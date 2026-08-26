@@ -3,7 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { getAgentBehavior } from './catalog';
 import { getPermissionFooterCopy } from './permissionUiCopy';
 
-const NEUTRAL_CLAUDE_COPY = {
+const UNAVAILABLE_PROTOCOL_COPY = {
+    protocol: 'unavailable',
+    denyKey: 'common.no',
+};
+
+const CLAUDE_COPY = {
     protocol: 'claude',
     yesAllowAllEditsKey: 'claude.permissions.yesAllowAllEdits',
     yesForToolKey: 'claude.permissions.yesForTool',
@@ -18,14 +23,14 @@ const CODEX_DECISION_COPY = {
 };
 
 describe('getPermissionFooterCopy', () => {
-    it('gives an Agent that declares no protocol the neutral default', () => {
-        expect(getPermissionFooterCopy(undefined)).toEqual(NEUTRAL_CLAUDE_COPY);
-        expect(getPermissionFooterCopy(null)).toEqual(NEUTRAL_CLAUDE_COPY);
+    it('fails closed when an Agent declares no known prompt protocol', () => {
+        expect(getPermissionFooterCopy(undefined)).toEqual(UNAVAILABLE_PROTOCOL_COPY);
+        expect(getPermissionFooterCopy(null)).toEqual(UNAVAILABLE_PROTOCOL_COPY);
     });
 
     it('selects the decision-protocol copy from the declared protocol alone', () => {
         expect(getPermissionFooterCopy('codexDecision')).toEqual(CODEX_DECISION_COPY);
-        expect(getPermissionFooterCopy('claude')).toEqual(NEUTRAL_CLAUDE_COPY);
+        expect(getPermissionFooterCopy('claude')).toEqual(CLAUDE_COPY);
     });
 
     it('reads the same protocol a bundled Agent publishes through its UI behavior', () => {
@@ -35,6 +40,6 @@ describe('getPermissionFooterCopy', () => {
         expect(getPermissionFooterCopy(getAgentBehavior('codex').permissions?.promptProtocol))
             .toEqual(CODEX_DECISION_COPY);
         expect(getPermissionFooterCopy(getAgentBehavior('claude').permissions?.promptProtocol))
-            .toEqual(NEUTRAL_CLAUDE_COPY);
+            .toEqual(CLAUDE_COPY);
     });
 });

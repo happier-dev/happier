@@ -16,7 +16,7 @@ function binding(
 }
 
 describe('claudeProviderBindingExposesInheritedIdentity', () => {
-  it('exposes the inherited login when a credential-less binding redirects the upstream', () => {
+  it('exposes the inherited login for every credential-less Provider binding, including Anthropic', () => {
     expect(claudeProviderBindingExposesInheritedIdentity(binding({
       protocol: 'anthropic',
       normalizedUrl: 'http://localhost:1234',
@@ -27,6 +27,18 @@ describe('claudeProviderBindingExposesInheritedIdentity', () => {
       normalizedUrl: 'https://gateway.example.test/anthropic',
       credential: 'none',
     }))).toBe(true);
+    for (const normalizedUrl of [
+      'https://api.anthropic.com',
+      'https://api.anthropic.com/v1',
+      'https://API.Anthropic.com/v1',
+      null,
+    ]) {
+      expect(claudeProviderBindingExposesInheritedIdentity(binding({
+        protocol: 'anthropic',
+        normalizedUrl,
+        credential: 'none',
+      }))).toBe(true);
+    }
   });
 
   it('does not expose it when the binding carries its own credential', () => {
@@ -37,21 +49,7 @@ describe('claudeProviderBindingExposesInheritedIdentity', () => {
     }))).toBe(false);
   });
 
-  it('does not expose it when the binding keeps Claude Code on Anthropic', () => {
-    for (const normalizedUrl of [
-      'https://api.anthropic.com',
-      'https://api.anthropic.com/v1',
-      'https://API.Anthropic.com/v1',
-    ]) {
-      expect(claudeProviderBindingExposesInheritedIdentity(binding({
-        protocol: 'anthropic',
-        normalizedUrl,
-        credential: 'none',
-      }))).toBe(false);
-    }
-  });
-
-  it('treats a look-alike Anthropic host as a redirect', () => {
+  it('keeps the endpoint out of the credential-isolation decision', () => {
     for (const normalizedUrl of [
       'https://api.anthropic.com.evil.test/v1',
       'https://evil.test/https://api.anthropic.com',

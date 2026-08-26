@@ -60,6 +60,7 @@ import type {
   PreparedPluginJsonSchema,
   PluginTargetedContributionV1,
   RehydratedPluginContributionPointOperationV1,
+  RehydratedPluginContributionPointSurfaceV1,
 } from '@happier-dev/protocol';
 import type { HostStructuredMessageDescriptorV1 } from '@/plugins/runtime/invocation/services/structuredMessageDescriptor';
 import type { PluginUiArtifactsManifestV1 } from '@happier-dev/protocol/plugins/ui';
@@ -183,6 +184,8 @@ export type AdmittedTargetedContributionSurface = Readonly<{
      * admission for this contributor generation. It never crosses RPC.
      */
     inputValidation: PreparedPluginJsonSchema;
+    /** Exact target-owned parser retained by cold admission, never projected over RPC. */
+    targetProtocol: RehydratedPluginContributionPointSurfaceV1;
     presentation: 'content' | 'fill';
     rendererChain: readonly ResolvedUiRendererV2Contribution[];
     /** Exact parent contributor identity, retained for independent surface projection. */

@@ -16,6 +16,7 @@ describe('Codex B.5 surface declarations', () => {
     expect(backend).not.toHaveProperty('surfaceHandlers');
     expect(backend.capabilities.surfaces).toEqual(['terminal', 'externalSessions']);
     expect(backend.capabilities.sessions.open).toEqual(['create', 'resume', 'fork']);
+    expect(backend.capabilities.sessions.delivery).toEqual(['newTurn', 'steer']);
     expect(backend.capabilities.executionRuns).toMatchObject({
       open: ['create', 'resume'],
       checkpoint: true,

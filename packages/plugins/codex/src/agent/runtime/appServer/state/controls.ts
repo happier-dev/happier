@@ -1,10 +1,12 @@
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+
 import {
     CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
     CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
 } from './configOptionIds.js';
 
 type JsonRpcClient = Readonly<{
-    request: (method: string, params?: unknown) => Promise<unknown>;
+    request: (method: string, params?: JsonValue) => Promise<unknown>;
 }>;
 
 type MetadataRecord = Record<string, unknown>;

@@ -30,21 +30,20 @@
             "delivery": "shell_bridge"
           }
         },
+        "catalog": {
+          "agentCliSystemTool": {
+            "toolId": "cursor-agent"
+          },
+          "vendorResume": {
+            "support": "experimental"
+          }
+        },
         "cli": {
           "auth": {
+            "environmentVariables": [
+              "CURSOR_API_KEY"
+            ],
             "loginLaunches": [],
-            "probe": {
-              "backgroundChecks": "safe",
-              "envVars": [
-                "CURSOR_API_KEY"
-              ],
-              "parser": "cursorAboutJson",
-              "statusArgs": [
-                "about",
-                "--format",
-                "json"
-              ]
-            },
             "support": "status_only"
           },
           "displayName": "Cursor Agent CLI",

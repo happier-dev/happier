@@ -979,10 +979,6 @@ describe('buildPluginProjectionV2', () => {
                     },
                     auth: {
                         support: 'login_terminal' as const,
-                        probe: {
-                            parser: 'unknown' as const,
-                            backgroundChecks: 'safe' as const,
-                        },
                         loginLaunches: [
                             { kind: 'primary' as const, args: ['login'] },
                             { kind: 'device_code' as const, args: ['login', '--device-code'] },
