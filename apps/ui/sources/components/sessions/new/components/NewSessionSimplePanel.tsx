@@ -355,6 +355,7 @@ export const NewSessionSimplePanel = React.memo(function NewSessionSimplePanel(p
                     : [
                         {
                             justifyContent: 'flex-start' as const,
+                            paddingTop: 0,
                         },
                     ]),
             ]}
