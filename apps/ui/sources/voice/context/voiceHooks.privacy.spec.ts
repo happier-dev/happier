@@ -395,12 +395,20 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
 
     voiceHooks.onReady('s1');
     // activity-only sessions should not emit a full session context block.
-    expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalledWith('s1', expect.stringContaining('# Session: Summary'));
+    expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalledWith(
+      's1',
+      expect.stringContaining('# Session: Summary'),
+      'session_context',
+    );
 
     // Now track the session and ensure full context can be emitted.
     useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
     voiceHooks.onReady('s1');
-    expect(fakeSink.sendContextualUpdate).toHaveBeenCalledWith('s1', expect.stringContaining('# Session: Summary'));
+    expect(fakeSink.sendContextualUpdate).toHaveBeenCalledWith(
+      's1',
+      expect.stringContaining('# Session: Summary'),
+      'session_context',
+    );
   });
 
   it('dedupes full session context within an attempt and clears it at both lifecycle boundaries', () => {
@@ -411,6 +419,7 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     expect(fakeSink.sendContextualUpdate).not.toHaveBeenCalledWith(
       's1',
       expect.stringContaining('# Session: Summary'),
+      'session_context',
     );
 
     voiceHooks.onVoiceStopped();
@@ -419,6 +428,7 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     expect(fakeSink.sendContextualUpdate).toHaveBeenLastCalledWith(
       's1',
       expect.stringContaining('# Session: Summary'),
+      'session_context',
     );
 
     voiceHooks.onVoiceStarted('s1', 'current_ui_only');
@@ -427,6 +437,7 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     expect(fakeSink.sendContextualUpdate).toHaveBeenLastCalledWith(
       's1',
       expect.stringContaining('# Session: Summary'),
+      'session_context',
     );
   });
 
@@ -769,8 +780,8 @@ describe('voiceHooks privacy settings (opt-out defaults)', () => {
     (voiceHooks as any).onCurrentUiContextChanged('s1', null, projector);
 
     expect(fakeSink.sendContextualUpdate.mock.calls).toEqual([
-      ['s1', navigationUpdate],
-      ['s1', retiredUpdate],
+      ['s1', navigationUpdate, 'current_ui'],
+      ['s1', retiredUpdate, 'current_ui'],
     ]);
     expect(retiredUpdate).not.toContain('PRIVATE ENTITY');
     expect(retiredUpdate).not.toContain('PRIVATE DETAIL');

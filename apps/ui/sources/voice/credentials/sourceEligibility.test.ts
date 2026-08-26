@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type {
+  PluginConnectedAccountAuthenticationModeV2,
+  PluginConnectedAccountAuthenticationV2,
+} from '@happier-dev/protocol';
 
 import { resolveVoiceConnectedAccountTargetEligibility } from './sourceEligibility';
 
@@ -26,6 +30,23 @@ const target = Object.freeze({
   account: account.ref,
 });
 
+const oauthMode = {
+  id: 'oauth',
+  kind: 'oauthAuthorizationCode',
+  scopes: ['openid', 'profile', 'email', 'offline_access'],
+  pkce: 'required',
+  outcomeReconciliation: 'none',
+} satisfies PluginConnectedAccountAuthenticationModeV2;
+
+function authenticationWith(
+  mode: PluginConnectedAccountAuthenticationModeV2 = oauthMode,
+): PluginConnectedAccountAuthenticationV2 {
+  return {
+    defaultModeId: mode.id,
+    modes: [mode],
+  };
+}
+
 describe('resolveVoiceConnectedAccountTargetEligibility', () => {
   it('keeps a connected account selectable when its authentication mode declares no configuration', () => {
     expect(resolveVoiceConnectedAccountTargetEligibility({
@@ -33,13 +54,7 @@ describe('resolveVoiceConnectedAccountTargetEligibility', () => {
       declaredServices: [CODEX_SERVICE],
       accounts: [account],
       groups: [],
-      resolveAuthenticationMode: () => ({
-        id: 'oauth',
-        kind: 'oauthAuthorizationCode',
-        scopes: ['openid', 'profile', 'email', 'offline_access'],
-        pkce: 'required',
-        outcomeReconciliation: 'none',
-      }),
+      resolveAuthentication: () => authenticationWith(),
     })).toBe('usable');
   });
 
@@ -49,7 +64,7 @@ describe('resolveVoiceConnectedAccountTargetEligibility', () => {
       declaredServices: [CODEX_SERVICE],
       accounts: [account],
       groups: [],
-      resolveAuthenticationMode: () => null,
+      resolveAuthentication: () => null,
     })).toBe('unknown');
   });
 
@@ -63,7 +78,7 @@ describe('resolveVoiceConnectedAccountTargetEligibility', () => {
         configurationRevision: 'configuration-1',
       }],
       groups: [],
-      resolveAuthenticationMode: () => null,
+      resolveAuthentication: () => null,
     })).toBe('unknown');
   });
 
@@ -73,7 +88,7 @@ describe('resolveVoiceConnectedAccountTargetEligibility', () => {
       declaredServices: [CODEX_SERVICE],
       accounts: [{ ...account, status: 'needs_reauth' as const }],
       groups: [],
-      resolveAuthenticationMode: () => null,
+      resolveAuthentication: () => null,
     })).toBe('unusable');
   });
 
@@ -87,13 +102,7 @@ describe('resolveVoiceConnectedAccountTargetEligibility', () => {
         credentialRevision: null,
       }],
       groups: [],
-      resolveAuthenticationMode: () => ({
-        id: 'oauth',
-        kind: 'oauthAuthorizationCode',
-        scopes: ['openid', 'profile', 'email', 'offline_access'],
-        pkce: 'required',
-        outcomeReconciliation: 'none',
-      }),
+      resolveAuthentication: () => authenticationWith(),
     })).toBe('unusable');
   });
 
@@ -103,7 +112,7 @@ describe('resolveVoiceConnectedAccountTargetEligibility', () => {
       declaredServices: [CODEX_SERVICE],
       accounts: [account],
       groups: [],
-      resolveAuthenticationMode: () => ({
+      resolveAuthentication: () => authenticationWith({
         id: 'oauth',
         kind: 'oauthAuthorizationCode',
         scopes: ['openid', 'profile', 'email', 'offline_access'],
@@ -120,7 +129,7 @@ describe('resolveVoiceConnectedAccountTargetEligibility', () => {
             secret: false,
           }],
         },
-      }),
+      } as PluginConnectedAccountAuthenticationModeV2),
     })).toBe('unusable');
   });
 });

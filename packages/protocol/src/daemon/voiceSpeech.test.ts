@@ -4,6 +4,7 @@ import {
   DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES,
   DaemonVoiceSpeechCatalogRequestSchema,
   DaemonVoiceSpeechDownloadChunkResponseSchema,
+  DaemonVoiceSpeechSettingsActionRequestSchema,
   DaemonVoiceSpeechSynthesizeRequestSchema,
   DaemonVoiceSpeechSynthesizeResponseSchema,
   DaemonVoiceSpeechTranscribeRequestSchema,
@@ -83,6 +84,31 @@ describe('daemon provider-neutral Voice speech RPC contract', () => {
       ...current,
       providerId: 'retired_nested_selector',
     })).toThrow();
+  });
+
+  it('binds a settings action to its exact validated UI settings snapshot', () => {
+    const target = { pluginId: 'acme.voice', localId: 'speech' } as const;
+    const request = {
+      target,
+      actionId: 'refresh-model',
+      settings: { model: 'acme-v2' },
+      expectedSettingsVersion: 7,
+    } as const;
+
+    expect(DaemonVoiceSpeechSettingsActionRequestSchema.parse(request)).toEqual(request);
+    expect(DaemonVoiceSpeechSettingsActionRequestSchema.safeParse({
+      target,
+      actionId: 'refresh-model',
+      settings: { model: 'acme-v2' },
+    }).success).toBe(false);
+    expect(DaemonVoiceSpeechSettingsActionRequestSchema.safeParse({
+      ...request,
+      expectedSettingsVersion: -1,
+    }).success).toBe(false);
+    expect(DaemonVoiceSpeechSettingsActionRequestSchema.safeParse({
+      ...request,
+      staleDaemonSettings: { model: 'old' },
+    }).success).toBe(false);
   });
 
   it('accepts the strict current synthesis transfer metadata and bounded provider error', () => {

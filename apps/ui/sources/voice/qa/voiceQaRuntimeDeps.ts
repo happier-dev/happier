@@ -87,7 +87,12 @@ export function createDefaultVoiceQaControllerDeps(): VoiceQaControllerDeps {
             const snapshot = adapter?.getSnapshot();
             if (!adapter || (snapshot?.status !== 'connecting' && snapshot?.status !== 'connected')) return null;
             const settings = (storage.getState() as any).settings?.voice;
-            return resolveVoiceAdapterContextChannel(adapter.id, settings);
+            const channel = resolveVoiceAdapterContextChannel(adapter.id, settings);
+            if (!channel) return null;
+            return {
+                sendTextMessage: (message: string) => channel.sendTextMessage(message),
+                sendContextualUpdate: (update: string) => channel.sendContextualUpdate(update, 'current_ui'),
+            };
         },
         getRealtimeBinding: (controlSessionId) => {
             const adapter = resolveActiveRealtimeAdapter();

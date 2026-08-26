@@ -31,7 +31,11 @@ export type DaemonVoiceClientCredentialSelectionV1 = z.infer<
 export const DaemonVoiceClientRawCredentialMaterializeRequestV1Schema = z.object({
   cacheIdentity: DaemonPluginReactNativeBundleCacheIdentityV1Schema,
   phase: z.enum(['settings', 'prepare', 'connection']),
-  /** Host-private callback fence; omitted by older UI callers. */
+  /**
+   * Host-private opaque callback fence. Its `csr_` wire shape is retained for
+   * compatibility, but it is source-neutral and never identifies a secret or
+   * Connected Account to the caller.
+   */
   expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema.nullable().optional(),
   request: ConnectedAccountHttpHeadersRequestSchema,
 }).strict();
@@ -52,7 +56,7 @@ export const DaemonVoiceClientRawCredentialMaterializeResponseV1Schema = z.discr
       kind: z.literal('httpHeaders'),
       headers: z.record(z.string(), z.string()),
     }).strict(),
-    /** Host-private receipt; public Voice credential access never exposes it. */
+    /** Source-neutral host-private receipt; public Voice access never exposes it. */
     credentialRevision: ConnectedServiceCredentialRevisionV1Schema.nullable().optional(),
   }).strict(),
   z.object({

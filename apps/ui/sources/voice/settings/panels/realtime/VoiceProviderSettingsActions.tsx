@@ -282,6 +282,10 @@ const settingsActionInvoker = createHostPluginSettingsActionInvoker<ActionContex
     if (!isContextCurrent(context)) throw actionError('voice_provider_settings_action_retired');
     const actions = context.registration.settingsActions;
     if (!actions) throw actionError('voice_provider_settings_action_unavailable');
+    const settingsVersion = Number(input.settingsRevision);
+    if (!Number.isInteger(settingsVersion) || settingsVersion < 0) {
+      throw actionError('voice_provider_settings_version_unavailable');
+    }
     return await actions.execute({ ...input, signal });
   },
   async applyPatch({ snapshot, patch, signal, context }) {

@@ -172,7 +172,7 @@ describe('createDefaultVoiceQaControllerDeps', () => {
         );
         expect(appendVoiceConversationUserText).not.toHaveBeenCalled();
         expect(contextSendTextMessage).toHaveBeenCalledWith('context text');
-        expect(contextSendContextualUpdate).toHaveBeenCalledWith('context update');
+        expect(contextSendContextualUpdate).toHaveBeenCalledWith('context update', 'current_ui');
     });
 
     it('keeps QA generic while production composes ElevenLabs only from generated public entries', async () => {

@@ -1,3 +1,5 @@
+import type { ReactElement } from 'react';
+
 import { VoiceSurfaceView } from './VoiceSurfaceView';
 import { useVoiceSurfaceModel } from './useVoiceSurfaceModel';
 import type { VoiceSurfaceProps } from './voiceSurfaceTypes';
@@ -11,6 +13,10 @@ export function VoiceSurface(props: VoiceSurfaceProps) {
         return null;
     }
 
+    return <VoiceSurfaceRuntime {...props} />;
+}
+
+function VoiceSurfaceRuntime(props: VoiceSurfaceProps): ReactElement | null {
     const model = useVoiceSurfaceModel(props);
 
     if (model == null) {

@@ -314,6 +314,27 @@ export function createBundledRealtimeProviderRuntime(
       inputLevelWriter?.write(level);
     },
   });
+  let inputMuteTail: Promise<void> = Promise.resolve();
+  const settleInputMute = (
+    controlSessionId: string,
+    attemptId: number,
+    muted: boolean,
+  ): Promise<void> => {
+    const operation = inputMuteTail.then(() => {
+      const activeRuntime = runtime;
+      if (
+        disposed
+        || !activeRuntime
+        || activeRuntime.getOwnedControlSessionId() !== controlSessionId
+        || activeRuntime.getOwnedAttemptId() !== attemptId
+      ) {
+        return;
+      }
+      return config.setInputMuted?.(muted);
+    });
+    inputMuteTail = operation.catch(() => {});
+    return operation;
+  };
   const closeOutputLevelWriter = (): void => {
     const outputWriter = outputLevelWriter;
     outputLevelWriter = null;
@@ -1556,14 +1577,19 @@ export function createBundledRealtimeProviderRuntime(
       const controlSessionId = runtime?.getOwnedControlSessionId();
       const attemptId = runtime?.getOwnedAttemptId();
       if (!controlSessionId || attemptId === null || attemptId === undefined) return;
+      // Do not expose physical capture while the canonical projection remains
+      // muted. Muting can wait for provider settlement because that ordering is
+      // conservative; unmuting projects first, then re-enables capture.
+      if (!muted) host.machine.setMuted(controlSessionId, providerId, attemptId, false);
       mic.setMuted(muted);
       if (muted) inputLevelWriter?.reset();
-      if (config.microphoneMode === 'provider_managed') {
-        await config.setInputMuted(muted);
-      } else {
-        await config.setInputMuted?.(muted);
+      await settleInputMute(controlSessionId, attemptId, muted);
+      // A newer unmute may have changed the canonical physical mic while this
+      // provider operation was awaiting settlement. That newer physical fact
+      // remains authoritative for the projection.
+      if (muted && mic.isMuted()) {
+        host.machine.setMuted(controlSessionId, providerId, attemptId, true);
       }
-      host.machine.setMuted(controlSessionId, providerId, attemptId, muted);
     },
     sendContextUpdate({ update }) {
       if (runtime!.getActiveControlSessionId()) {

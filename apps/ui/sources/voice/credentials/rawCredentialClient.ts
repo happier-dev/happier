@@ -110,6 +110,7 @@ export function createVoiceClientRawCredentialAccess(input: Readonly<{
             }
             if (!Object.hasOwn(response.data, 'credentialRevision')) throw unavailable();
             const credentialRevision = response.data.credentialRevision ?? null;
+            if (credentialRevision === null) throw unavailable();
             if (
                 expectedCredentialRevision !== null
                 && credentialRevision !== expectedCredentialRevision

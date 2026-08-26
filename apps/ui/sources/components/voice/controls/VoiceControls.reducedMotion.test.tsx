@@ -10,6 +10,7 @@ import { TactilePressable } from './VoiceControls';
 
 const motion = vi.hoisted(() => ({ reduced: false }));
 const timingCalls = vi.hoisted(() => [] as unknown[]);
+const animatedViewHostType: string = 'Animated.View';
 
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
     useReducedMotionPreference: () => motion.reduced,
@@ -66,7 +67,7 @@ describe('TactilePressable reduced motion', () => {
     }
 
     function feedbackStyle(control: ReactTestInstance): Record<string, unknown> {
-        const frames = control.findAll((node) => node.type === 'Animated.View');
+        const frames = control.findAll((node) => node.type === animatedViewHostType);
         expect(frames).toHaveLength(1);
         return flattenedStyle(frames[0]!.props.style);
     }

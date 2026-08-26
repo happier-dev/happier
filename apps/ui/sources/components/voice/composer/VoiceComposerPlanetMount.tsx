@@ -32,9 +32,16 @@ export const VoiceComposerPlanetMount = React.memo(function VoiceComposerPlanetM
     isPresented?: boolean;
 }>): React.ReactElement | null {
     // AgentInput and the draft stay retained; the Voice presentation runtime
-    // does not. Gate before opening energy and attempt subscriptions.
+    // does not. The wrapper stays hook-free so a retained Session can change
+    // presentation without changing this component's hook order.
     if (props.isPresented === false) return null;
 
+    return <VoiceComposerPlanetPresentedMount sessionId={props.sessionId} />;
+});
+
+function VoiceComposerPlanetPresentedMount(props: Readonly<{
+    sessionId: string | null;
+}>): React.ReactElement | null {
     /*
      * The planet is drawn from the app's one energy clock; there is nothing to draw
      * it from without the bus. `app/(app)/_layout.tsx` wraps the whole authenticated
@@ -46,7 +53,7 @@ export const VoiceComposerPlanetMount = React.memo(function VoiceComposerPlanetM
     const energy = useVoiceEnergyIfMounted();
     if (!energy) return null;
     return <VoiceComposerPlanetRuntime sessionId={props.sessionId} />;
-});
+}
 
 function VoiceComposerPlanetRuntime(props: Readonly<{
     sessionId: string | null;

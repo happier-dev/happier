@@ -146,11 +146,16 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
         ...(transcript ? [{ type: 'transcript' as const, event: transcript }] : []),
       ];
     },
-    encodeTurnControl: (action) => action === 'stop_session'
-      ? { type: 'voice.stop_session' }
-      : action === 'send_exact_message'
-        ? { type: 'voice.user_text' }
-        : null,
+    encodeTurnControl: (action, payload) => {
+      if (action === 'stop_session') {
+        return VoiceRealtimeJsonValueSchema.parse({ type: 'voice.stop_session' });
+      }
+      if (action !== 'send_exact_message') return null;
+      const text = readObject(payload ?? null).text;
+      return typeof text === 'string' && text.trim()
+        ? VoiceRealtimeJsonValueSchema.parse({ type: 'voice.user_text', text })
+        : null;
+    },
     async releasePrepared({ controlSessionId, attemptId }) {
       await releasePreparedAttempt(controlSessionId, attemptId);
     },

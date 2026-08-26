@@ -1343,7 +1343,12 @@ describe('unified Voice speech machine RPC', () => {
     );
     if (!executeSettingsAction) throw new Error('speech settings action RPC must be registered');
 
-    const response = await executeSettingsAction({ target, actionId: settingsAction.id });
+    const response = await executeSettingsAction({
+      target,
+      actionId: settingsAction.id,
+      settings: providerConfig,
+      expectedSettingsVersion: 1,
+    });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(response).toEqual({
       ok: false,
@@ -1352,7 +1357,7 @@ describe('unified Voice speech machine RPC', () => {
     await registration.dispose();
   });
 
-  it('executes only a declared speech settings action with fresh daemon settings and settings credentials', async () => {
+  it('executes a declared speech settings action with its exact UI snapshot and fences a lagging daemon snapshot', async () => {
     const { handlers, registrar } = manager();
     const settingsActionCredentials: VoiceCredentialAccess<'settings'> = Object.freeze({
       phase: 'settings', mediated: null, raw: null,
@@ -1360,7 +1365,7 @@ describe('unified Voice speech machine RPC', () => {
     let current = true;
     let retireAfterExecution = false;
     const execute: NonNullable<VoiceSpeechRuntimeLease['runtime']['settingsActions']>['execute'] = vi.fn(async (input, context) => {
-      expect(input).toEqual({ actionId: 'refresh-voice', settings: { voiceName: 'en-US-A' } });
+      expect(input).toEqual({ actionId: 'refresh-voice', settings: { voiceName: 'ui-captured-voice' } });
       expect(context.credentials).toBe(settingsActionCredentials);
       expect(context.credentials.phase).toBe('settings');
       expect(context.signal.aborted).toBe(false);
@@ -1396,13 +1401,15 @@ describe('unified Voice speech machine RPC', () => {
       _signal,
       phase = 'speech',
     ) => phase === 'settings' ? settingsActionCredentials : credentials;
+    let daemonSettingsVersion = 7;
     const registration = registerMachineVoiceSpeechRpcHandlers({
       rpcHandlerManager: registrar as never,
       resolveSpeechRuntime: vi.fn(async (): Promise<VoiceSpeechRuntimeLease> => ({
         runtime,
         contribution: definition,
         readSettings: () => Object.freeze({
-          settings: Object.freeze({ voiceName: 'en-US-A' }),
+          settings: Object.freeze({ voiceName: 'lagging-daemon-voice' }),
+          settingsVersion: daemonSettingsVersion,
           resolveCredentials,
           isCurrent: () => current,
         }),
@@ -1417,20 +1424,35 @@ describe('unified Voice speech machine RPC', () => {
       throw new Error('speech settings action RPC must be registered');
     }
 
-    await expect(executeSettingsAction({ target, actionId: 'refresh-voice' })).resolves.toEqual({
+    await expect(executeSettingsAction({
+      target,
+      actionId: 'refresh-voice',
+      settings: { voiceName: 'ui-captured-voice' },
+      expectedSettingsVersion: 6,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'provider_unavailable',
+    });
+    expect(execute).not.toHaveBeenCalled();
+
+    await expect(executeSettingsAction({
+      target,
+      actionId: 'refresh-voice',
+      settings: { voiceName: 'ui-captured-voice' },
+      expectedSettingsVersion: 7,
+    })).resolves.toEqual({
       ok: true,
       patch: { voiceName: 'refreshed-voice' },
     });
     expect(execute).toHaveBeenCalledTimes(1);
 
+    retireAfterExecution = true;
     await expect(executeSettingsAction({
       target,
       actionId: 'refresh-voice',
-      settings: { voiceName: 'caller-controlled' },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-
-    retireAfterExecution = true;
-    await expect(executeSettingsAction({ target, actionId: 'refresh-voice' })).resolves.toMatchObject({
+      settings: { voiceName: 'ui-captured-voice' },
+      expectedSettingsVersion: 7,
+    })).resolves.toMatchObject({
       ok: false,
       errorCode: 'provider_unavailable',
     });

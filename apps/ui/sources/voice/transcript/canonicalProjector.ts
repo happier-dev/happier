@@ -1,3 +1,5 @@
+import { sha256 } from '@noble/hashes/sha2';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import {
   VoiceRealtimeStableIdSchema,
   VoiceTranscriptCanonicalEventV1Schema,
@@ -117,6 +119,10 @@ function eventFingerprint(event: VoiceTranscriptCanonicalEventV1): string {
   ]);
 }
 
+function eventFingerprintDigest(fingerprint: string): string {
+  return bytesToHex(sha256(utf8ToBytes(fingerprint)));
+}
+
 export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTranscriptProjectorDeps = {}) {
   const maxItems = clampPositiveInteger(deps.maxItems, 500);
   const maxDiagnostics = clampPositiveInteger(deps.maxDiagnostics, 64);
@@ -124,6 +130,18 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
   const items = new Map<string, CanonicalVoiceTranscriptItem>();
   const seenEventIds = new Map<string, string>();
   const lastItemEventFingerprints = new Map<string, string>();
+  type FinalizedItemMetadata = Readonly<{
+    role: 'user' | 'assistant';
+    revision: number;
+    firstSequence: number;
+    lastSequence: number;
+    fingerprintDigest: string;
+  }>;
+  // One compact attempt-local authority record per finalized identity survives
+  // snapshot eviction so a provider's later higher-revision correction can
+  // still replace its final. It deliberately excludes transcript text and is
+  // cleared with the attempt.
+  const finalizedItemMetadata = new Map<string, FinalizedItemMetadata>();
   const eventIdOrder: string[] = [];
   type PendingAdmittedPersistenceEvent = Readonly<{
     admission: CanonicalVoiceTranscriptPersistenceAdmission;
@@ -174,6 +192,20 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     }
   };
 
+  const rememberFinalizedItem = (
+    item: CanonicalVoiceTranscriptItem,
+    fingerprint: string,
+  ): void => {
+    finalizedItemMetadata.delete(item.itemId);
+    finalizedItemMetadata.set(item.itemId, Object.freeze({
+      role: item.role,
+      revision: item.revision,
+      firstSequence: item.firstSequence,
+      lastSequence: item.lastSequence,
+      fingerprintDigest: eventFingerprintDigest(fingerprint),
+    }));
+  };
+
   const evictItems = (): void => {
     while (items.size > maxItems) {
       const oldest = [...items.values()].sort((left, right) => (
@@ -213,6 +245,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     items.clear();
     seenEventIds.clear();
     lastItemEventFingerprints.clear();
+    finalizedItemMetadata.clear();
     eventIdOrder.length = 0;
     pendingAdmittedPersistenceEventsByEventId.clear();
     pendingAdmittedPersistenceEventsByItemId.clear();
@@ -257,14 +290,23 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     }
 
     const previous = items.get(event.itemId) ?? null;
+    const finalized = finalizedItemMetadata.get(event.itemId) ?? null;
     const pendingByItemId = pendingAdmittedPersistenceEventsByItemId.get(event.itemId);
     if (pendingByItemId) {
       return pendingByItemId.fingerprint === fingerprint
         ? { status: 'duplicate', item: null }
         : diagnose('late_after_final', event);
     }
-    if (previous && previous.role !== event.role) return diagnose('conflicting_duplicate', event);
-    if (previous && lastItemEventFingerprints.get(event.itemId) === fingerprint) {
+    const previousRole = previous?.role ?? finalized?.role;
+    if (previousRole && previousRole !== event.role) return diagnose('conflicting_duplicate', event);
+    const lastItemFingerprint = lastItemEventFingerprints.get(event.itemId);
+    if (
+      lastItemFingerprint === fingerprint
+      || (
+        lastItemFingerprint === undefined
+        && finalized?.fingerprintDigest === eventFingerprintDigest(fingerprint)
+      )
+    ) {
       rememberEventId(event.eventId, fingerprint);
       return { status: 'duplicate', item: previous };
     }
@@ -275,12 +317,18 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
       return diagnose('out_of_order', event);
     }
     const isCorrection = event.type === 'voice.transcript.corrected';
-    if (isCorrection && !previous?.final) return diagnose('correction_without_final', event);
-    if (previous?.final && !isCorrection) return diagnose('late_after_final', event);
-    if (previous && event.revision <= previous.revision) {
+    if (isCorrection && !finalized) return diagnose('correction_without_final', event);
+    if (finalized && !isCorrection) return diagnose('late_after_final', event);
+    const previousRevision = previous?.revision ?? finalized?.revision;
+    if (previousRevision !== undefined && event.revision <= previousRevision) {
       return diagnose('conflicting_duplicate', event);
     }
-    if (previous && event.provenance === 'live' && event.sequence <= previous.lastSequence) {
+    const previousLastSequence = previous?.lastSequence ?? finalized?.lastSequence;
+    if (
+      previousLastSequence !== undefined
+      && event.provenance === 'live'
+      && event.sequence <= previousLastSequence
+    ) {
       return diagnose('out_of_order', event);
     }
 
@@ -293,7 +341,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
       final: event.type === 'voice.transcript.final' || isCorrection,
       corrected: isCorrection,
       revision: event.revision,
-      firstSequence: previous?.firstSequence ?? event.sequence,
+      firstSequence: previous?.firstSequence ?? finalized?.firstSequence ?? event.sequence,
       lastSequence: event.sequence,
       provenance: event.provenance,
       announce: event.provenance === 'live' && (event.type === 'voice.transcript.final' || isCorrection)
@@ -304,6 +352,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     if (next.final) deps.persistFinal?.(next);
     items.set(next.itemId, next);
     lastItemEventFingerprints.set(next.itemId, fingerprint);
+    if (next.final) rememberFinalizedItem(next, fingerprint);
     rememberEventId(event.eventId, fingerprint);
     if (event.provenance === 'live') lastLiveSequence = event.sequence;
     evictItems();
@@ -352,16 +401,25 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     }
 
     const previous = items.get(event.itemId) ?? null;
+    const finalized = finalizedItemMetadata.get(event.itemId) ?? null;
     const pendingByItemId = pendingAdmittedPersistenceEventsByItemId.get(event.itemId);
     if (pendingByItemId) {
       if (pendingByItemId.fingerprint !== fingerprint) diagnose('late_after_final', event);
       return null;
     }
-    if (previous && previous.role !== event.role) {
+    const previousRole = previous?.role ?? finalized?.role;
+    if (previousRole && previousRole !== event.role) {
       diagnose('conflicting_duplicate', event);
       return null;
     }
-    if (previous && lastItemEventFingerprints.get(event.itemId) === fingerprint) return null;
+    const lastItemFingerprint = lastItemEventFingerprints.get(event.itemId);
+    if (
+      lastItemFingerprint === fingerprint
+      || (
+        lastItemFingerprint === undefined
+        && finalized?.fingerprintDigest === eventFingerprintDigest(fingerprint)
+      )
+    ) return null;
     if (
       event.provenance === 'live'
       && event.sequence <= Math.max(lastLiveSequence, greatestReservedLiveSequence())
@@ -370,19 +428,25 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
       return null;
     }
     const isCorrection = event.type === 'voice.transcript.corrected';
-    if (isCorrection && !previous?.final) {
+    if (isCorrection && !finalized) {
       diagnose('correction_without_final', event);
       return null;
     }
-    if (previous?.final && !isCorrection) {
+    if (finalized && !isCorrection) {
       diagnose('late_after_final', event);
       return null;
     }
-    if (previous && event.revision <= previous.revision) {
+    const previousRevision = previous?.revision ?? finalized?.revision;
+    if (previousRevision !== undefined && event.revision <= previousRevision) {
       diagnose('conflicting_duplicate', event);
       return null;
     }
-    if (previous && event.provenance === 'live' && event.sequence <= previous.lastSequence) {
+    const previousLastSequence = previous?.lastSequence ?? finalized?.lastSequence;
+    if (
+      previousLastSequence !== undefined
+      && event.provenance === 'live'
+      && event.sequence <= previousLastSequence
+    ) {
       diagnose('out_of_order', event);
       return null;
     }
@@ -396,7 +460,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
       final: true,
       corrected: isCorrection,
       revision: event.revision,
-      firstSequence: previous?.firstSequence ?? event.sequence,
+      firstSequence: previous?.firstSequence ?? finalized?.firstSequence ?? event.sequence,
       lastSequence: event.sequence,
       provenance: event.provenance,
       announce: event.provenance === 'live' ? 'polite' : 'none',
@@ -433,6 +497,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     if (appliedToCurrentSnapshot) {
       items.set(pending.item.itemId, pending.item);
       lastItemEventFingerprints.set(pending.item.itemId, pending.fingerprint);
+      rememberFinalizedItem(pending.item, pending.fingerprint);
       rememberEventId(pending.eventId, pending.fingerprint);
       if (pending.item.provenance === 'live') {
         lastLiveSequence = Math.max(lastLiveSequence, pending.item.lastSequence);

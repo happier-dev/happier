@@ -155,7 +155,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
     let disposed = false;
     let disposePromise: Promise<void> | null = null;
     const listeners = new Set<() => void>();
-    const adapterUnsubs = new Map<string, () => void>();
+    const adapterUnsubs = new Map<VoiceAdapterController, () => void>();
     const adapterStopPromises = new Map<string, Promise<void>>();
 
     const releaseRealtimeCaptureAdmission = (match?: Readonly<{
@@ -169,6 +169,9 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         realtimeCaptureAdmission = null;
         retiredAttemptStopStarted = false;
         admission.lease.release();
+        if (!disposed) {
+            refreshAdapterSubscriptions();
+        }
     };
 
     /*
@@ -585,24 +588,24 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         return publishedSnapshot;
     };
 
-    const refreshAdapterSubscriptions = () => {
+    function refreshAdapterSubscriptions(): void {
         const unavailable = unavailableConfiguredProvider;
         if (unavailable && getRegistry().get(unavailable.providerId)) {
             unavailableConfiguredProvider = null;
         }
         const adapters = listAttemptAdapters();
-        const currentIds = new Set(adapters.map((adapter) => adapter.id));
-        for (const [adapterId, unsubscribe] of adapterUnsubs) {
-            if (currentIds.has(adapterId)) continue;
-            adapterUnsubs.delete(adapterId);
+        const currentAdapters = new Set(adapters);
+        for (const [adapter, unsubscribe] of adapterUnsubs) {
+            if (currentAdapters.has(adapter)) continue;
+            adapterUnsubs.delete(adapter);
             try { unsubscribe(); } catch { /* ignore teardown failures */ }
         }
         for (const adapter of adapters) {
-            if (adapterUnsubs.has(adapter.id)) continue;
+            if (adapterUnsubs.has(adapter)) continue;
             const unsubscribe = adapter.subscribe?.(() => publishSnapshot());
-            if (typeof unsubscribe === 'function') adapterUnsubs.set(adapter.id, unsubscribe);
+            if (typeof unsubscribe === 'function') adapterUnsubs.set(adapter, unsubscribe);
         }
-    };
+    }
 
     const stopForCurrentUiContextToolSetRestart = (
         adapter: VoiceAdapterController,
@@ -658,6 +661,11 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         }
         if (cancelledRestartStart) {
             await stopAdapter(cancelledRestartStart.adapter, cancelledRestartStart.sessionId);
+            return;
+        }
+        const pendingStartAttempt = startingAdapter;
+        if (pendingStartAttempt) {
+            await stopAdapter(pendingStartAttempt.adapter, pendingStartAttempt.sessionId);
             return;
         }
 
@@ -1000,6 +1008,11 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             if (!owned) {
                 if (cancelledRestartStart) {
                     await stopAdapter(cancelledRestartStart.adapter, cancelledRestartStart.sessionId);
+                    return;
+                }
+                const startAttempt = startingAdapter;
+                if (startAttempt) {
+                    await stopAdapter(startAttempt.adapter, startAttempt.sessionId);
                 }
                 return;
             }

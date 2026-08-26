@@ -763,7 +763,7 @@ export function VoiceOrb(props: Readonly<{
                             overflow: 'hidden',
                         }}
                     >
-                        {live ? <VoiceWaveform stop={stop} height={24} /> : null}
+                        {live && expanded ? <VoiceWaveform stop={stop} height={24} /> : null}
                     </View>
 
                     {extraControls.length > 0 ? (

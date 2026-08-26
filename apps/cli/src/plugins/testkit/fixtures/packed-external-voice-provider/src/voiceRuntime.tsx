@@ -1,6 +1,9 @@
 import * as React from 'react';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
-import type { VoiceProviderContribution } from '@happier-dev/plugin-sdk/voice';
+import type {
+  RegisteredVoiceProviderRuntime,
+  VoiceProviderContribution,
+} from '@happier-dev/plugin-sdk/voice';
 import type {
   RealtimeVoiceProviderRuntime,
   VoiceClientAuthArtifact,
@@ -26,9 +29,7 @@ type PackedProviderConfig = Readonly<{
 }>;
 
 type PackedConversationRuntime = RealtimeVoiceProviderRuntime & Readonly<{
-  settingsActions: NonNullable<
-    Parameters<PluginClientApi['voiceProviders']['register']>[1]['settingsActions']
-  >;
+  settingsActions: NonNullable<RegisteredVoiceProviderRuntime['settingsActions']>;
 }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {

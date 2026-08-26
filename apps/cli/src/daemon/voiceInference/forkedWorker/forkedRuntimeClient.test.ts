@@ -403,6 +403,74 @@ describe('forked voice inference runtime client', () => {
     await client.stop();
   });
 
+  it.each(['append', 'finish'] as const)(
+    'lets cancellation win over a decoded late streaming %s result',
+    async (operation) => {
+      const pendingOperation: {
+        id: string | null;
+        reply: ((response: VoiceInferenceWorkerResponseFrame) => void) | null;
+      } = { id: null, reply: null };
+      const fake = createFakeChannel({
+        onRequest: (frame, reply) => {
+          if (frame.kind === 'stt_stream_start') {
+            reply({ kind: 'result', id: frame.id, result: { kind: 'stt_stream_start', sessionId: 'worker-stream-late-operation' } });
+            return;
+          }
+          if (frame.kind === 'stt_stream_append' || frame.kind === 'stt_stream_finish') {
+            pendingOperation.id = frame.id;
+            pendingOperation.reply = reply;
+            return;
+          }
+          if (frame.kind === 'stt_stream_cancel') {
+            reply({ kind: 'result', id: frame.id, result: { kind: 'stt_stream_cancel' } });
+          }
+        },
+      });
+      const client = createForkedVoiceInferenceRuntimeClient({ channelFactory: async () => fake.channel });
+
+      try {
+        const session = await client.createStreamingTranscriptionSession?.({
+          requestId: `stt-stream-late-${operation}`,
+          packId: 'pack-1',
+          packDir: '/tmp/pack-1',
+          manifest,
+          language: null,
+          format: {
+            sampleRateHz: 16_000,
+            channelCount: 1,
+            bitsPerSample: 16,
+            ffmpegCodec: 'pcm_s16le',
+          },
+        });
+        if (!session) {
+          throw new Error('expected forked streaming session');
+        }
+        const controller = new AbortController();
+        const pending = operation === 'append'
+          ? session.appendPcm16({ seq: 0, pcm16Bytes: new Uint8Array([0, 0]), signal: controller.signal })
+          : session.finish({ finalSeq: 0, signal: controller.signal });
+        await vi.waitFor(() => expect(pendingOperation.id).not.toBeNull());
+        const reply = pendingOperation.reply;
+        const id = pendingOperation.id;
+        if (!reply || !id) {
+          throw new Error('expected a pending streaming operation');
+        }
+
+        reply(operation === 'append'
+          ? { kind: 'result', id, result: { kind: 'stt_stream_append', events: [] } }
+          : { kind: 'result', id, result: { kind: 'stt_stream_finish', text: 'late', language: 'en', events: [] } });
+        controller.abort();
+
+        await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+        if (operation === 'append') {
+          await session.close();
+        }
+      } finally {
+        await client.stop();
+      }
+    },
+  );
+
   it('terminates the worker when stream cleanup cannot be sent and remains one-shot', async () => {
     let terminateCount = 0;
     const seenRequests: VoiceInferenceWorkerRequestFrame[] = [];
@@ -570,6 +638,43 @@ describe('forked voice inference runtime client', () => {
     expect(terminateCount).toBe(1);
     await client.stop();
   });
+
+  it.each(['warm', 'prime'] as const)(
+    'lets cancellation win over a decoded late native %s result',
+    async (kind) => {
+      const pendingOperation: {
+        id: string | null;
+        reply: ((response: VoiceInferenceWorkerResponseFrame) => void) | null;
+      } = { id: null, reply: null };
+      const fake = createFakeChannel({
+        onRequest: (frame, reply) => {
+          if (frame.kind === kind) {
+            pendingOperation.id = frame.id;
+            pendingOperation.reply = reply;
+          }
+        },
+      });
+      const client = createForkedVoiceInferenceRuntimeClient({ channelFactory: async () => fake.channel });
+      const controller = new AbortController();
+
+      try {
+        const pending = invokeWarmOrPrime(client, kind, controller.signal);
+        await vi.waitFor(() => expect(pendingOperation.id).not.toBeNull());
+        const reply = pendingOperation.reply;
+        const id = pendingOperation.id;
+        if (!reply || !id) {
+          throw new Error('expected a pending warm or prime operation');
+        }
+
+        reply({ kind: 'result', id, result: kind === 'warm' ? { kind: 'warm' } : { kind: 'prime' } });
+        controller.abort();
+
+        await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+      } finally {
+        await client.stop();
+      }
+    },
+  );
 
   it.each(['warm', 'prime'] as const)(
     'settles an aborted native %s locally, retires its exact channel, and waits for the supervised replacement',

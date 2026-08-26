@@ -174,10 +174,13 @@ function reconcileProjectedExternalSpeechProviders(input: Readonly<{
         ? {
             settingsActions: Object.freeze({
               execute: async (action: PluginSettingsActionInput & Readonly<{
+                settingsRevision?: string;
                 signal: AbortSignal;
               }>) => await bundledSpeechDaemonClient.executeSettingsAction({
                 entry: descriptor,
                 actionId: action.actionId,
+                settings: action.settings,
+                expectedSettingsVersion: Number(action.settingsRevision),
                 signal: action.signal,
               }),
             }),

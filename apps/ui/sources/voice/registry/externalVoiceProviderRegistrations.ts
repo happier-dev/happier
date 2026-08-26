@@ -24,6 +24,8 @@ export type ExternalVoiceProviderRegistration = Readonly<{
   }>;
   settingsActions?: Readonly<{
     execute(input: PluginSettingsActionInput & Readonly<{
+      /** Host snapshot receipt; non-speech action runtimes may ignore it. */
+      settingsRevision?: string;
       signal: AbortSignal;
     }>): Promise<PluginSettingsActionResult>;
   }>;

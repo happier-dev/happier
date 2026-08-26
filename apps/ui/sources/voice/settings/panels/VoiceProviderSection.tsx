@@ -45,7 +45,7 @@ import {
   resolveVoiceConnectedAccountTargetEligibility,
   type VoiceConnectedAccountTargetEligibility,
 } from '@/voice/credentials/sourceEligibility';
-import { getConnectedAccountAuthenticationMode } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
   VoiceCredentialItem,
   voiceCredentialDeclarationHasRawGrants,
@@ -378,10 +378,7 @@ export function VoiceProviderSection(props: {
               )),
               accounts: accountProfile.connectedAccountsV4 ?? [],
               groups: accountProfile.connectedAccountGroupsV4 ?? [],
-              resolveAuthenticationMode: (candidate) => getConnectedAccountAuthenticationMode(
-                candidate.ref.service,
-                candidate.authenticationModeId,
-              ),
+              resolveAuthentication: getConnectedAccountAuthentication,
             })
             : 'unusable',
         });

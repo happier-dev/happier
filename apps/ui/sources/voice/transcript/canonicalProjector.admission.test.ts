@@ -187,4 +187,60 @@ describe('canonical voice transcript persistence admission', () => {
     expect(projector.commitAdmittedPersistenceEvent(admission!)).toBeNull();
     expect(projector.project(correction)).toMatchObject({ status: 'applied' });
   });
+
+  it('keeps evicted finals as correction authority through deferred admission', () => {
+    const projector = createCanonicalVoiceTranscriptProjector({ maxItems: 1 });
+    expect(projector.project(finalEvent({
+      eventId: 'evicted-final',
+      itemId: 'evicted-turn',
+      role: 'assistant',
+      text: 'original answer',
+    }))).toMatchObject({ status: 'applied' });
+    expect(projector.project(finalEvent({
+      eventId: 'retained-final',
+      itemId: 'retained-turn',
+      sequence: 2,
+      text: 'newer item',
+    }))).toMatchObject({ status: 'applied' });
+    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['retained-turn']);
+
+    const firstCorrection = projector.admitPersistenceEvent(finalEvent({
+      type: 'voice.transcript.corrected',
+      eventId: 'evicted-correction-1',
+      itemId: 'evicted-turn',
+      role: 'assistant',
+      sequence: 3,
+      revision: 2,
+      text: 'first correction',
+    }));
+    expect(firstCorrection).not.toBeNull();
+    expect(projector.commitAdmittedPersistenceEvent(firstCorrection!)).toMatchObject({
+      appliedToCurrentSnapshot: true,
+      item: { itemId: 'evicted-turn', text: 'first correction', revision: 2, corrected: true },
+    });
+
+    const secondCorrection = projector.admitPersistenceEvent(finalEvent({
+      type: 'voice.transcript.corrected',
+      eventId: 'evicted-correction-2',
+      itemId: 'evicted-turn',
+      role: 'assistant',
+      sequence: 4,
+      revision: 3,
+      text: 'second correction',
+    }));
+    expect(secondCorrection).not.toBeNull();
+    expect(projector.commitAdmittedPersistenceEvent(secondCorrection!)).toMatchObject({
+      appliedToCurrentSnapshot: true,
+      item: { itemId: 'evicted-turn', text: 'second correction', revision: 3, corrected: true },
+    });
+    expect(projector.admitPersistenceEvent(finalEvent({
+      eventId: 'late-ordinary-final',
+      itemId: 'evicted-turn',
+      role: 'assistant',
+      sequence: 5,
+      revision: 4,
+      text: 'must not replace a correction',
+    }))).toBeNull();
+    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['retained-turn']);
+  });
 });

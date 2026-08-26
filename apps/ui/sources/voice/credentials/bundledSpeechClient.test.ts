@@ -139,6 +139,8 @@ describe('bundled speech selected-daemon client', () => {
       expect(request.payload).toEqual({
         target: { pluginId: 'acme.voice', localId: 'speech-v2' },
         actionId: 'refresh-model',
+        settings: { model: 'acme-speech-v1' },
+        expectedSettingsVersion: 7,
       });
       return { ok: true, patch: { model: 'acme-speech-v2' } };
     });
@@ -147,6 +149,8 @@ describe('bundled speech selected-daemon client', () => {
     await expect(client.executeSettingsAction({
       entry: createAcmeSpeechContribution(),
       actionId: 'refresh-model',
+      settings: { model: 'acme-speech-v1' },
+      expectedSettingsVersion: 7,
     })).resolves.toEqual({ patch: { model: 'acme-speech-v2' } });
   });
 

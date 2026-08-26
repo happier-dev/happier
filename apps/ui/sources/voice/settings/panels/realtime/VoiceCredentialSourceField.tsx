@@ -22,7 +22,7 @@ import {
   useProjectedPluginLocalizedTextResolver,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
-import { getConnectedAccountAuthenticationMode } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import {
   mutateAccountVoiceCredentialSource,
@@ -162,10 +162,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
         declaredServices,
         accounts: profile.connectedAccountsV4 ?? [],
         groups: profile.connectedAccountGroupsV4 ?? [],
-        resolveAuthenticationMode: (candidate) => getConnectedAccountAuthenticationMode(
-          candidate.ref.service,
-          candidate.authenticationModeId,
-        ),
+        resolveAuthentication: getConnectedAccountAuthentication,
       }) === 'usable';
       const presentation = presentQualifiedConnectedAccountTarget({
         target,
@@ -204,10 +201,7 @@ export function VoiceCredentialSourceField(props: Readonly<{
         declaredServices,
         accounts: profile.connectedAccountsV4 ?? [],
         groups: profile.connectedAccountGroupsV4 ?? [],
-        resolveAuthenticationMode: (candidate) => getConnectedAccountAuthenticationMode(
-          candidate.ref.service,
-          candidate.authenticationModeId,
-        ),
+        resolveAuthentication: getConnectedAccountAuthentication,
       }) === 'usable';
       const presentation = presentQualifiedConnectedAccountTarget({
         target,

@@ -205,6 +205,79 @@ describe('canonical voice transcript projector', () => {
     expect(diagnostics).toEqual(['correction_without_final', 'late_after_final', 'out_of_order']);
   });
 
+  it('keeps evicted finals as correction authority for the active attempt', () => {
+    const diagnostics: string[] = [];
+    const persistFinal = vi.fn();
+    const projector = createCanonicalVoiceTranscriptProjector({
+      maxItems: 1,
+      persistFinal,
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic.code),
+    });
+
+    expect(projector.project(event({
+      type: 'voice.transcript.final',
+      sequence: 1,
+      revision: 1,
+      eventId: 'evicted-final',
+      itemId: 'evicted-item',
+      role: 'assistant',
+      text: 'original answer',
+    }))).toMatchObject({ status: 'applied' });
+    expect(projector.project(event({
+      type: 'voice.transcript.final',
+      sequence: 2,
+      revision: 1,
+      eventId: 'retained-final',
+      itemId: 'retained-item',
+      text: 'newer item',
+    }))).toMatchObject({ status: 'applied' });
+    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['retained-item']);
+
+    const firstCorrection = event({
+      type: 'voice.transcript.corrected',
+      sequence: 3,
+      revision: 2,
+      eventId: 'evicted-correction-1',
+      itemId: 'evicted-item',
+      role: 'assistant',
+      text: 'first correction',
+    });
+    expect(projector.project(firstCorrection)).toMatchObject({
+      status: 'applied',
+      item: { itemId: 'evicted-item', text: 'first correction', revision: 2, final: true },
+    });
+    expect(projector.project({
+      ...firstCorrection,
+      eventId: 'evicted-correction-1-replay',
+      provenance: 'replay',
+    })).toEqual({ status: 'duplicate', item: null });
+    expect(projector.project(event({
+      type: 'voice.transcript.corrected',
+      sequence: 4,
+      revision: 3,
+      eventId: 'evicted-correction-2',
+      itemId: 'evicted-item',
+      role: 'assistant',
+      text: 'second correction',
+    }))).toMatchObject({
+      status: 'applied',
+      item: { itemId: 'evicted-item', text: 'second correction', revision: 3, final: true },
+    });
+    expect(projector.project(event({
+      type: 'voice.transcript.final',
+      sequence: 5,
+      revision: 4,
+      eventId: 'late-ordinary-final',
+      itemId: 'evicted-item',
+      role: 'assistant',
+      text: 'must not replace a correction',
+    }))).toMatchObject({ status: 'rejected' });
+
+    expect(projector.snapshot().map((item) => item.itemId)).toEqual(['retained-item']);
+    expect(persistFinal).toHaveBeenCalledTimes(4);
+    expect(diagnostics).toEqual(['late_after_final']);
+  });
+
   it('replaces one persisted canonical row when an explicit correction follows final', () => {
     let messages: any[] = [];
     const projector = createVoiceTranscriptProjector({
@@ -360,7 +433,13 @@ describe('canonical voice transcript projector', () => {
     expect(projector.resetEpoch(2)).toBe(true);
     expect(projector.snapshot()).toEqual([]);
     expect(projector.project(event({ epoch: 1, sequence: 4, eventId: 'stale' })).status).toBe('rejected');
-    expect(projector.project(event({ epoch: 2, sequence: 1, eventId: 'new', itemId: 'new' })).status).toBe('applied');
+    expect(projector.project(event({
+      epoch: 2,
+      sequence: 1,
+      eventId: 'new',
+      itemId: 'item-1',
+      type: 'voice.transcript.final',
+    })).status).toBe('applied');
   });
 
   it('allocates a fresh persistence identity per host attempt while reconnect events retain it', () => {

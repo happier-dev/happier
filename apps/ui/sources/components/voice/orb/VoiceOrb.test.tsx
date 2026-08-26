@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { VoiceEnergyProvider } from '@/components/voice/light/useVoiceEnergy';
@@ -14,6 +14,19 @@ import {
 } from './voiceOrbGeometry';
 
 vi.mock('@/sync/store/hooks', () => ({ useLocalSetting: () => 1 }));
+
+const waveformRenderCount = vi.hoisted(() => ({ count: 0 }));
+
+vi.mock('@/components/voice/light/VoiceLight', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/voice/light/VoiceLight')>();
+    return {
+        ...actual,
+        VoiceWaveform: () => {
+            waveformRenderCount.count += 1;
+            return null;
+        },
+    };
+});
 
 const labels: VoiceOrbLabels = {
     orb: 'Voice. Listening.',
@@ -160,6 +173,10 @@ function flattenStyle(style: unknown): Record<string, unknown> {
  * not shippable, and none of these are visible in a screenshot.
  */
 describe('VoiceOrb', () => {
+    beforeEach(() => {
+        waveformRenderCount.count = 0;
+    });
+
     it('is the transport when collapsed: one tap starts the canonical attempt', async () => {
         const { body, control } = await renderOrb();
 
@@ -263,6 +280,16 @@ describe('VoiceOrb', () => {
         expect(sheet?.props.accessibilityElementsHidden).toBe(true);
         expect(sheet?.props.importantForAccessibility).toBe('no-hide-descendants');
         expect(sheet?.props.pointerEvents).toBe('none');
+    });
+
+    it('mounts the full waveform only while the sheet is expanded', async () => {
+        const control = createControl({ live: true, canStop: true, canMute: true, surfaceState: 'listening' });
+
+        const collapsed = await renderOrb({ control, expanded: false });
+        expect(waveformRenderCount.count).toBe(1);
+
+        const expanded = await renderOrb({ control, expanded: true });
+        expect(waveformRenderCount.count).toBe(3);
     });
 
     it('restores the expanded sheet to native accessibility traversal', async () => {

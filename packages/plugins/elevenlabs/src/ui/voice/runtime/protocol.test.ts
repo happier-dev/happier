@@ -153,6 +153,34 @@ describe('createElevenLabsProtocolAdapter', () => {
     })).toEqual([]);
   });
 
+  it('preserves the exact-message text payload for the SDK connection', () => {
+    const runtime = createElevenLabsProtocolAdapter({
+      preparation: {
+        isSelected: vi.fn(() => true),
+        prepare: vi.fn(),
+        buildStartConfig: vi.fn(),
+      },
+      lifecycle: {
+        prepared: vi.fn(),
+        releasePrepared: vi.fn(async () => {}),
+        started: vi.fn(),
+        ended: vi.fn(async () => {}),
+      },
+      eventMapper: createElevenLabsEventMapper(),
+      onDiagnosticError: vi.fn(),
+      rememberHostedConversation: vi.fn(),
+    });
+
+    expect(runtime.adapter.encodeTurnControl(
+      'send_exact_message',
+      { text: 'Keep this exact message.' },
+    )).toEqual({
+      type: 'voice.user_text',
+      text: 'Keep this exact message.',
+    });
+    expect(runtime.adapter.encodeTurnControl('send_exact_message', {})).toBeNull();
+  });
+
   it('discards prepared provider state when the controller tears down before session identity', async () => {
     const lifecycle = {
       prepared: vi.fn(),

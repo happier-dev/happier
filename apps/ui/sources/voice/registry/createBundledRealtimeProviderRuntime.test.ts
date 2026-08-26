@@ -386,11 +386,14 @@ describe('createBundledRealtimeProviderRuntime', () => {
     const acquireAudioMode = vi.fn<BundledRealtimeProviderRuntimeHost['acquireAudioMode']>(
       async () => ({ release: releaseAudioMode }),
     );
+    let micMuted = false;
     const mic = {
       ensureActive: vi.fn(async () => undefined),
       teardown: vi.fn(async () => undefined),
-      setMuted: vi.fn(),
-      isMuted: vi.fn(() => false),
+      setMuted: vi.fn((muted: boolean) => {
+        micMuted = muted;
+      }),
+      isMuted: vi.fn(() => micMuted),
       getStream: vi.fn(() => null),
       getAudioContext: vi.fn(() => null),
     };

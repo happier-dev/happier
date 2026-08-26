@@ -370,7 +370,13 @@ export async function playAudioBytesWithStopper(opts: {
 
     try {
       await file.write(new Uint8Array(opts.bytes));
-      player = createAudioPlayer(file.uri);
+      // The native coordinator owns the AVAudioSession lease. Expo's default
+      // player deactivates that session after playback finishes, so its iOS
+      // player must remain only a lease consumer until the coordinator releases.
+      player = createAudioPlayer(
+        file.uri,
+        Platform.OS === 'ios' ? { keepAudioSessionActive: true } : undefined,
+      );
       const playbackPlayer = player;
       const qaOutputTap = beginVoiceQaOutputTap({ bytes: opts.bytes, format: opts.format });
 

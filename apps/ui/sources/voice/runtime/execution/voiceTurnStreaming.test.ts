@@ -278,7 +278,10 @@ describe('createVoiceTurnStreaming', () => {
     it('injects only the latest automatic UI projection beside deferred session context', async () => {
         stateRef.current.settings.voice.providers.local_conversation.config.streaming.enabled = false;
         stateRef.current.settings.voice.privacy = { currentUiContextMode: 'automatic' };
-        const sendTurn = vi.fn(async () => ({ assistantText: 'reply', actions: [] }));
+        const sendTurn = vi.fn(async (_params: Parameters<VoiceAgentClient['sendTurn']>[0]) => ({
+            assistantText: 'reply',
+            actions: [],
+        }));
         const client: VoiceAgentClient = {
             start: vi.fn(async () => ({ voiceAgentId: 'run_1' })),
             sendTurn,
@@ -324,7 +327,10 @@ describe('createVoiceTurnStreaming', () => {
         async (currentUiContextMode) => {
             stateRef.current.settings.voice.providers.local_conversation.config.streaming.enabled = false;
             stateRef.current.settings.voice.privacy = { currentUiContextMode: 'automatic' };
-            const sendTurn = vi.fn(async () => ({ assistantText: 'reply', actions: [] }));
+            const sendTurn = vi.fn(async (_params: Parameters<VoiceAgentClient['sendTurn']>[0]) => ({
+                assistantText: 'reply',
+                actions: [],
+            }));
             const client: VoiceAgentClient = {
                 start: vi.fn(async () => ({ voiceAgentId: 'run_1' })),
                 sendTurn,

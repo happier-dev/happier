@@ -307,6 +307,12 @@ export function createForkedVoiceInferenceRuntimeClient(
     return channelReady;
   }
 
+  function throwIfAborted(signal: AbortSignal | null | undefined): void {
+    if (signal?.aborted) {
+      throw createVoiceInferenceError('cancelled');
+    }
+  }
+
   async function request<TResult>(
     build: (id: string) => VoiceInferenceWorkerRequestFrame,
     interpret: (frame: VoiceInferenceWorkerResponseFrame) => TResult,
@@ -470,6 +476,7 @@ export function createForkedVoiceInferenceRuntimeClient(
         terminateChannelOnAbort: true,
       },
     );
+    throwIfAborted(input.signal);
   }
 
   async function primeModel(input: VoiceInferenceRuntimePrimeModelInput): Promise<void> {
@@ -490,6 +497,7 @@ export function createForkedVoiceInferenceRuntimeClient(
         terminateChannelOnAbort: true,
       },
     );
+    throwIfAborted(input.signal);
   }
 
   async function releaseModel(input: VoiceInferenceRuntimeReleaseModelInput): Promise<void> {
@@ -645,7 +653,7 @@ export function createForkedVoiceInferenceRuntimeClient(
         if (closed) {
           throw createVoiceInferenceError('cancelled', 'voice_inference_stream_closed');
         }
-        return await request(
+        const appended = await request(
           (id) => ({
             kind: 'stt_stream_append',
             id,
@@ -661,13 +669,15 @@ export function createForkedVoiceInferenceRuntimeClient(
           },
           { signal: appendInput.signal },
         );
+        throwIfAborted(appendInput.signal);
+        return appended;
       },
       finish: async (finishInput) => {
         if (closed) {
           throw createVoiceInferenceError('cancelled', 'voice_inference_stream_closed');
         }
         try {
-          return await request(
+          const finished = await request(
             (id) => ({
               kind: 'stt_stream_finish',
               id,
@@ -686,6 +696,8 @@ export function createForkedVoiceInferenceRuntimeClient(
             },
             { signal: finishInput.signal },
           );
+          throwIfAborted(finishInput.signal);
+          return finished;
         } finally {
           closed = true;
         }

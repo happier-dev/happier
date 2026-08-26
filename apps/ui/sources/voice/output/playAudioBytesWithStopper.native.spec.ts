@@ -94,6 +94,29 @@ describe('playAudioBytesWithStopper (native)', () => {
     expect(playbackState.playbackStatusListener).toBeNull();
   });
 
+  it('keeps the coordinator-owned iOS audio session active after byte playback finishes', async () => {
+    playbackState.playbackStatusListener = null;
+
+    const promise = playAudioBytesWithStopper({
+      bytes: new Uint8Array([1, 2, 3]).buffer,
+      format: 'mp3',
+      registerPlaybackStopper: () => () => {},
+    });
+
+    await waitForPlaybackStatusListener();
+
+    expect(nativeCreateAudioPlayer).toHaveBeenCalledWith(
+      expect.stringMatching(/^file:\/\/\/tmp\/happier-voice-\d+\.mp3$/),
+      { keepAudioSessionActive: true },
+    );
+
+    const notifyPlaybackFinished: (status: any) => void = playbackState.playbackStatusListener ?? (() => {
+      throw new Error('Expected playback status listener to be registered');
+    });
+    notifyPlaybackFinished({ didJustFinish: true });
+    await promise;
+  });
+
   it('deletes the created temp file when player initialization throws', async () => {
     fileDelete.mockReset();
     fileDelete.mockResolvedValue(undefined);

@@ -107,6 +107,8 @@ export type VoiceSpeechRuntimeLease = Readonly<{
   contribution: Extract<VoiceProviderContribution, { kind: 'speech' }>;
   readSettings(): Readonly<{
     settings: unknown;
+    /** Canonical Account Settings revision for this exact daemon snapshot. */
+    settingsVersion?: number;
     resolveCredentials(
       settings: Readonly<Record<string, unknown>>,
       signal: AbortSignal,
@@ -459,6 +461,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
           );
           return Object.freeze({
             settings: envelope.data.config,
+            settingsVersion: snapshot.settingsVersion,
             resolveCredentials(
               providerSettings: Readonly<Record<string, unknown>>,
               signal: AbortSignal,
@@ -735,9 +738,12 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         if (!settingsLease.isCurrent()) {
           throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
         }
+        if (settingsLease.settingsVersion !== parsed.data.expectedSettingsVersion) {
+          throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
+        }
         const correspondence = resolveVoiceSpeechSettingsCorrespondence({
           contribution: lease!.contribution,
-          settings: settingsLease.settings,
+          settings: parsed.data.settings,
         });
         let isCredentialAuthorityCurrent = () => true;
         const credentials = settingsLease.resolveCredentials(

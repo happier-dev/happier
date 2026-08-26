@@ -396,6 +396,7 @@ describe('projected external Voice provider activation', () => {
         model: 'synthetic-stt-v1',
         voiceName: 'synthetic-voice-v1',
       },
+      settingsRevision: '7',
       signal: actionSignal,
     })).resolves.toEqual({ patch: { voiceName: 'synthetic-voice-v2' } });
     expect(rawCredentialMachineRpc).toHaveBeenCalledWith({
@@ -404,6 +405,14 @@ describe('projected external Voice provider activation', () => {
       payload: {
         target: { pluginId, localId: declaration.id },
         actionId: 'refresh-voice',
+        settings: {
+          baseUrl: '',
+          insecureLocalOriginConsent: '',
+          insecureLocalConsentMachineId: '',
+          model: 'synthetic-stt-v1',
+          voiceName: 'synthetic-voice-v1',
+        },
+        expectedSettingsVersion: 7,
       },
       signal: actionSignal,
     });

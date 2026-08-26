@@ -252,6 +252,7 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
       const abortController = new AbortController();
       const unlinkAbortSignal = linkAbortSignal(signal, abortController);
       const unregisterRequest = registerRequestAbortController(ttsCancellationState, requestId, abortController);
+      let stagedOutputFilePath: string | null = null;
       try {
         if (abortController.signal.aborted) {
           throw createVoiceInferenceError('cancelled');
@@ -278,6 +279,9 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
               output,
               signal: abortController.signal,
             });
+            if (abortController.signal.aborted) {
+              throw createVoiceInferenceError('cancelled');
+            }
             if (
               synthesized.output.codec !== output.codec
               || synthesized.output.mimeType !== output.mimeType
@@ -291,17 +295,27 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
             );
             const safeRequestId = sanitizeOpaqueIdForFileName(requestId, 'request');
             const filePath = join(paths.tempDir, `${safeRequestId}-${randomUUID()}-${fileName}`);
-            await writeFile(filePath, synthesized.bytes);
-            return {
+            const synthesizedBytes = synthesized.bytes;
+            stagedOutputFilePath = filePath;
+            await writeFile(filePath, synthesizedBytes);
+            if (abortController.signal.aborted) {
+              throw createVoiceInferenceError('cancelled');
+            }
+            const result = {
               requestId,
               output: synthesized.output,
               filePath,
-              sizeBytes: synthesized.bytes.byteLength,
+              sizeBytes: synthesizedBytes.byteLength,
               name: fileName,
             };
+            stagedOutputFilePath = null;
+            return result;
           });
         }, { signal: abortController.signal });
       } catch (error) {
+        if (stagedOutputFilePath) {
+          await rm(stagedOutputFilePath, { force: true }).catch(() => undefined);
+        }
         if (abortController.signal.aborted) {
           throw createVoiceInferenceError('cancelled');
         }
@@ -333,6 +347,9 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
         }
         await assertTempUploadPath(filePath);
         cleanupFilePath = filePath;
+        if (abortController.signal.aborted) {
+          throw createVoiceInferenceError('cancelled');
+        }
         return await params.lifecycle.runExclusive(normalizedPackId, async () => {
           if (abortController.signal.aborted) {
             throw createVoiceInferenceError('cancelled');
@@ -347,6 +364,9 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
               inputMimeType,
               normalization: normalizationDecision,
             });
+            if (abortController.signal.aborted) {
+              throw createVoiceInferenceError('cancelled');
+            }
             const transcribed = await runtime.transcribeAudio({
               requestId,
               filePath: validatedInput.filePath,
@@ -360,6 +380,9 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
               normalization: validatedInput.normalization,
               signal: abortController.signal,
             });
+            if (abortController.signal.aborted) {
+              throw createVoiceInferenceError('cancelled');
+            }
             return {
               requestId,
               text: transcribed.text,
@@ -468,10 +491,14 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
                 if (!session) {
                   throw createVoiceInferenceError('runtime_unavailable', 'voice_inference_streaming_stt_unavailable');
                 }
-                return await runWithRuntimeErrorHandling(async () => await session.appendPcm16({
+                const appended = await runWithRuntimeErrorHandling(async () => await session.appendPcm16({
                   ...appendInput,
                   signal: abortController.signal,
                 }));
+                if (abortController.signal.aborted) {
+                  throw createVoiceInferenceError('cancelled');
+                }
+                return appended;
               },
               finish: async (finishInput) => {
                 if (abortController.signal.aborted) {
@@ -482,10 +509,14 @@ export function createVoiceInferenceWorkerExecution(params: VoiceInferenceExecut
                   throw createVoiceInferenceError('runtime_unavailable', 'voice_inference_streaming_stt_unavailable');
                 }
                 try {
-                  return await runWithRuntimeErrorHandling(async () => await session.finish({
+                  const finished = await runWithRuntimeErrorHandling(async () => await session.finish({
                     ...finishInput,
                     signal: abortController.signal,
                   }));
+                  if (abortController.signal.aborted) {
+                    throw createVoiceInferenceError('cancelled');
+                  }
+                  return finished;
                 } finally {
                   await closeRuntimeSession();
                 }

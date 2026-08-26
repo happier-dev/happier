@@ -13,6 +13,7 @@ import type { VoiceAdapterController, VoiceSessionSnapshot } from './types';
 type VoiceAdapterRegistry = Readonly<{
     get: (id: string) => VoiceAdapterController | null;
     list: () => ReadonlyArray<VoiceAdapterController>;
+    subscribe?: (listener: () => void) => () => void;
 }>;
 
 const OPENAI_PROVIDER_ID = 'happier.voice.openai/realtime-openai';
@@ -44,6 +45,7 @@ function createDeferred<T>() {
 function createAdapter(params: Readonly<{
     id: string;
     snapshot: VoiceSessionSnapshot;
+    engineKind?: VoiceAdapterController['engineKind'];
     freshSnapshots?: boolean;
     retry?: () => Promise<void>;
     start?: () => Promise<void>;
@@ -56,6 +58,7 @@ function createAdapter(params: Readonly<{
     retry: ReturnType<typeof vi.fn>;
     toggle: ReturnType<typeof vi.fn>;
     bargeIn: ReturnType<typeof vi.fn>;
+    listenerCount: () => number;
 }> {
     let snapshot = params.snapshot;
     const listeners = new Set<() => void>();
@@ -85,7 +88,7 @@ function createAdapter(params: Readonly<{
     return {
         controller: {
             id: params.id,
-            engineKind: 'realtime',
+            engineKind: params.engineKind ?? 'realtime',
             start,
             stop,
             toggle,
@@ -111,6 +114,7 @@ function createAdapter(params: Readonly<{
         retry,
         toggle,
         bargeIn,
+        listenerCount: () => listeners.size,
     };
 }
 
@@ -2238,4 +2242,181 @@ describe('createVoiceSessionLifecycleController', () => {
             await controller.dispose();
         }
     });
+
+    it('tracks current and retained adapter subscriptions by object identity across a same-ID replacement', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const captureAdmission = createVoiceCaptureAdmissionController();
+        const releaseRetiredStop = createDeferred<void>();
+        const retiredStopStarted = createDeferred<void>();
+        const adapterId = 'realtime-replacement';
+        const sessionId = 'voice-session';
+        let retired!: ReturnType<typeof createAdapter>;
+        retired = createAdapter({
+            id: adapterId,
+            snapshot: {
+                adapterId,
+                sessionId: null,
+                status: 'disconnected',
+                mode: 'idle',
+                canStop: false,
+            },
+            start: async () => {
+                retired.setSnapshot({
+                    adapterId,
+                    sessionId,
+                    status: 'connected',
+                    mode: 'listening',
+                    canStop: true,
+                });
+            },
+            stop: async () => {
+                retiredStopStarted.resolve();
+                await releaseRetiredStop.promise;
+                retired.setSnapshot({
+                    adapterId,
+                    sessionId: null,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                });
+            },
+        });
+        let replacement!: ReturnType<typeof createAdapter>;
+        replacement = createAdapter({
+            id: adapterId,
+            snapshot: {
+                adapterId,
+                sessionId: null,
+                status: 'disconnected',
+                mode: 'idle',
+                canStop: false,
+            },
+            stop: async () => {
+                replacement.setSnapshot({
+                    adapterId,
+                    sessionId: null,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                });
+            },
+        });
+        let current = retired.controller;
+        const registryListeners = new Set<() => void>();
+        const registry: VoiceAdapterRegistry = {
+            get: (id) => id === adapterId ? current : null,
+            list: () => [current],
+            subscribe: (listener) => {
+                registryListeners.add(listener);
+                return () => registryListeners.delete(listener);
+            },
+        };
+        const controller = createVoiceSessionLifecycleController({
+            captureAdmission,
+            getRegistry: () => registry,
+        });
+
+        try {
+            controller.setConfiguredProviderId(adapterId);
+            await controller.toggle(sessionId);
+            expect(retired.listenerCount()).toBe(1);
+
+            current = replacement.controller;
+            for (const listener of [...registryListeners]) listener();
+            await retiredStopStarted.promise;
+
+            // While the old real-time attempt is stopping, it remains retained
+            // for terminalization and the replacement must already be current.
+            expect(retired.listenerCount()).toBe(1);
+            expect(replacement.listenerCount()).toBe(1);
+
+            releaseRetiredStop.resolve();
+            await vi.waitFor(() => {
+                const admission = captureAdmission.acquire('dictation');
+                expect(admission).toMatchObject({ status: 'acquired' });
+                if (admission.status === 'acquired') admission.lease.release();
+            });
+
+            // Retention ends with the old attempt. Its subscription must not
+            // wait for an unrelated later registry publication to disappear.
+            expect(retired.listenerCount()).toBe(0);
+            expect(replacement.listenerCount()).toBe(1);
+
+            replacement.setSnapshot({
+                adapterId,
+                sessionId,
+                status: 'connected',
+                mode: 'listening',
+                canStop: true,
+            });
+            expect(controller.getSnapshot()).toMatchObject({
+                adapterId,
+                sessionId,
+                status: 'connected',
+                canStop: true,
+            });
+
+            await controller.stop('stale-session');
+            expect(replacement.stop).toHaveBeenCalledWith({ sessionId });
+            expect(controller.getSnapshot().status).toBe('disconnected');
+        } finally {
+            releaseRetiredStop.resolve();
+            await controller.dispose();
+        }
+    });
+
+    it.each(['stop', 'toggle'] as const)(
+        '%s stops a pending realtime Start before its first active snapshot and releases capture admission',
+        async (operation) => {
+            const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+            const captureAdmission = createVoiceCaptureAdmissionController();
+            const startDeferred = createDeferred<void>();
+            const adapter = createAdapter({
+                id: OPENAI_PROVIDER_ID,
+                snapshot: {
+                    adapterId: OPENAI_PROVIDER_ID,
+                    sessionId: null,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                },
+                start: async () => {
+                    await startDeferred.promise;
+                },
+            });
+            const controller = createVoiceSessionLifecycleController({
+                captureAdmission,
+                getRegistry: () => ({
+                    get: (id) => id === adapter.controller.id ? adapter.controller : null,
+                    list: () => [adapter.controller],
+                }),
+            });
+            let start: Promise<void> | null = null;
+
+            try {
+                controller.setConfiguredProviderId(OPENAI_PROVIDER_ID);
+                start = controller.toggle('starting-session');
+                await vi.waitFor(() => expect(adapter.start).toHaveBeenCalledOnce());
+                expect(captureAdmission.acquire('dictation')).toMatchObject({ status: 'busy' });
+
+                const endAttempt = operation === 'stop'
+                    ? controller.stop('stale-session')
+                    : controller.toggle('stale-session');
+                await expect(endAttempt).resolves.toBeUndefined();
+
+                expect(adapter.start).toHaveBeenCalledOnce();
+                expect(adapter.stop).toHaveBeenCalledWith({ sessionId: 'starting-session' });
+                const releasedAdmission = captureAdmission.acquire('dictation');
+                expect(releasedAdmission).toMatchObject({ status: 'acquired' });
+                if (releasedAdmission.status === 'acquired') releasedAdmission.lease.release();
+
+                startDeferred.resolve();
+                await start;
+            } finally {
+                startDeferred.resolve();
+                await start?.catch(() => undefined);
+                await controller.dispose();
+            }
+        },
+    );
 });

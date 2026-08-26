@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import { getRetainedLocalVoiceEffectOutcomes } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 
 import {
   daemonVoiceAgentStart,
@@ -9,6 +8,7 @@ import {
   expoSpeechSpeak,
   expoSpeechStop,
   fileDelete,
+  flushMicrotasks,
   getStorage,
   loadLocalVoiceEngineWithCompatState,
   registerLocalVoiceEngineHarnessHooks,
@@ -100,6 +100,13 @@ describe('local voice engine stop', () => {
       },
     });
     const { getVoiceConversationRuntimeSnapshot } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
+    const { voiceCaptureAdmissionController } = await import(
+      '@/voice/runtime/input/VoiceCaptureAdmissionController'
+    );
+    const { voiceRuntimeLevelStore } = await import('@/voice/runtime/levels/voiceRuntimeLevelStore');
+    const { getRetainedLocalVoiceEffectOutcomes } = await import(
+      '@/voice/tools/localVoiceEffectOutcomeCustody'
+    );
     const {
       getLocalVoiceState,
       isLocalVoiceAgentActive,
@@ -109,7 +116,9 @@ describe('local voice engine stop', () => {
 
     await toggleLocalVoiceTurn('s1');
     await vi.waitFor(() => expect(daemonVoiceAgentStart).toHaveBeenCalledOnce());
+    await flushMicrotasks(4_000);
     expect(isLocalVoiceAgentActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(true);
+    expect(voiceRuntimeLevelStore.getSnapshot().inputSourceActive).toBe(true);
     getRetainedLocalVoiceEffectOutcomes(VOICE_AGENT_GLOBAL_SESSION_ID).set('effect-1', {
       fingerprint: 'effect-fingerprint',
       outcome: Promise.resolve({ t: 'sendSessionMessage', args: {}, result: { ok: true } }),
@@ -122,6 +131,15 @@ describe('local voice engine stop', () => {
     expect(daemonVoiceAgentStop).toHaveBeenCalledOnce();
     expect(isLocalVoiceAgentActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(false);
     expect(getRetainedLocalVoiceEffectOutcomes(VOICE_AGENT_GLOBAL_SESSION_ID).size).toBe(0);
+    expect(voiceRuntimeLevelStore.getSnapshot()).toMatchObject({
+      inputLevel: 0,
+      inputSourceActive: false,
+    });
+    const dictation = voiceCaptureAdmissionController.acquire('dictation');
+    expect(dictation.status).toBe('acquired');
+    if (dictation.status === 'acquired') {
+      dictation.lease.release();
+    }
     expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
       controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
       state: 'disconnected',

@@ -249,6 +249,7 @@ describe('VoiceProviderSettingsActions', () => {
     expect(spies.execute).toHaveBeenCalledWith(expect.objectContaining({
       actionId: 'create-agent',
       settings: expect.objectContaining({ agentId: '' }),
+      settingsRevision: '4',
       signal: expect.any(AbortSignal),
     }));
     expect(state.config.agentId).toBe('agent-created');

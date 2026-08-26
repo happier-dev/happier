@@ -52,13 +52,15 @@ export type DaemonVoiceSpeechCatalogRequest = z.infer<
 >;
 
 /**
- * The settings themselves stay daemon-owned: callers name only a declared
- * action and its contribution target, then the daemon re-reads the current
- * Account Settings snapshot before invoking the runtime.
+ * A generic UI settings action carries its already validated config and the
+ * Account Settings revision it captured. The daemon admits only the matching
+ * revision before provider effects; the UI remains the sole CAS/patch owner.
  */
 export const DaemonVoiceSpeechSettingsActionRequestSchema = z.object({
   target: asProtocolZod(PluginContributionIdentityV1Schema),
   actionId: asProtocolZod(PluginContributionLocalIdSchema),
+  settings: z.record(PluginSettingFieldIdV2Schema, PluginJsonValueV2Schema),
+  expectedSettingsVersion: z.number().int().nonnegative(),
 }).strict();
 export type DaemonVoiceSpeechSettingsActionRequest = z.infer<
   typeof DaemonVoiceSpeechSettingsActionRequestSchema

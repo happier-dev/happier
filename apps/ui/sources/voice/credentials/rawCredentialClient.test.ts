@@ -35,7 +35,7 @@ describe('Voice client raw credential adapter', () => {
         const invoke = vi.fn(async () => ({
             ok: true,
             materialization: { kind: 'httpHeaders', headers: responseHeaders },
-            credentialRevision: null,
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
         }));
         const raw = createVoiceClientRawCredentialAccess({
             identity,
@@ -63,6 +63,26 @@ describe('Voice client raw credential adapter', () => {
             },
             expect.any(AbortSignal),
         );
+    });
+
+    it('rejects a callback materialization that does not return an opaque currentness receipt', async () => {
+        const invoke = vi.fn(async () => ({
+            ok: true,
+            materialization: { kind: 'httpHeaders', headers: { authorization: 'Bearer missing-receipt' } },
+            credentialRevision: null,
+        }));
+        const raw = createVoiceClientRawCredentialAccess({
+            identity,
+            phase: 'connection',
+            signal: new AbortController().signal,
+            isCurrent: () => true,
+            isInvocationCurrent: () => true,
+            client: { invoke },
+        });
+
+        await expect(raw.materialize(request)).rejects.toMatchObject({
+            code: 'plugin_voice_credential_access_unavailable',
+        });
     });
 
     it('pins one daemon-reported Connected Account revision for the full callback', async () => {
@@ -212,7 +232,7 @@ describe('Voice client raw credential adapter', () => {
         const invoke = vi.fn(async () => ({
             ok: true,
             materialization: { kind: 'httpHeaders', headers: { authorization: 'Bearer exact-source' } },
-            credentialRevision: null,
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
         }));
         const raw = createVoiceClientRawCredentialAccess({
             identity,
@@ -243,7 +263,7 @@ describe('Voice client raw credential adapter', () => {
         const invoke = vi.fn(async () => ({
             ok: true,
             materialization: { kind: 'httpHeaders', headers: { authorization: 'Bearer machine-a' } },
-            credentialRevision: null,
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
         }));
         const raw = createVoiceClientRawCredentialAccess({
             identity,

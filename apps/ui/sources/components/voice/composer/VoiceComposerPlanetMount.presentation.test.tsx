@@ -7,6 +7,8 @@ const hookCalls = vi.hoisted(() => ({ energy: 0, control: 0 }));
 vi.mock('@/components/voice/light/useVoiceEnergy', () => ({
     useVoiceEnergyIfMounted: () => {
         hookCalls.energy += 1;
+        React.useState(0);
+        React.useState(0);
         return { luminosity: 0, energized: false, direction: 'none' };
     },
 }));
@@ -15,6 +17,7 @@ vi.mock('@/components/voice/attempt/useVoiceAttemptControl', () => ({
     VOICE_ATTEMPT_IDLE_TARGET_GLOBAL: { kind: 'global' },
     useVoiceAttemptControl: () => {
         hookCalls.control += 1;
+        React.useState(0);
         return {
             availability: 'available',
             canStop: false,
@@ -41,21 +44,27 @@ describe('VoiceComposerPlanetMount retained presentation', () => {
         hookCalls.control = 0;
     });
 
-    it('does not mount energy or attempt subscriptions while its retained Session is hidden', () => {
+    it('unmounts energy and attempt subscriptions across presented → hidden → presented', () => {
         let tree: renderer.ReactTestRenderer;
         act(() => {
-            tree = renderer.create(<VoiceComposerPlanetMount sessionId="session-1" isPresented={false} />);
+            tree = renderer.create(<VoiceComposerPlanetMount sessionId="session-1" isPresented />);
         });
 
-        expect(hookCalls).toEqual({ energy: 0, control: 0 });
+        expect(hookCalls).toEqual({ energy: 1, control: 1 });
+        expect(tree!.root.findByType('VoiceComposerPlanet')).toBeTruthy();
+
+        act(() => {
+            tree!.update(<VoiceComposerPlanetMount sessionId="session-1" isPresented={false} />);
+        });
+
+        expect(hookCalls).toEqual({ energy: 1, control: 1 });
         expect(tree!.toJSON()).toBeNull();
 
         act(() => {
             tree!.update(<VoiceComposerPlanetMount sessionId="session-1" isPresented />);
         });
 
-        expect(hookCalls.energy).toBe(1);
-        expect(hookCalls.control).toBe(1);
+        expect(hookCalls).toEqual({ energy: 2, control: 2 });
         expect(tree!.root.findByType('VoiceComposerPlanet')).toBeTruthy();
 
         act(() => tree!.unmount());
