@@ -14,6 +14,11 @@ on:
         required: false
         default: false
         type: boolean
+      runner_pool:
+        description: "Runner pool for approved non-secret Linux test lanes"
+        required: false
+        default: github
+        type: string
       run_ui_e2e:
         required: false
         default: false
@@ -203,6 +208,7 @@ env:
 
 jobs:
   cliproxyapi-managed-runtime:
+    needs: [trusted_ref_guard]
     name: CLIProxyAPI managed runtime (${{ matrix.platform_key }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -210,7 +216,7 @@ jobs:
       matrix:
         include:
           - platform_key: linux-amd64
-            runner: ubuntu-24.04
+            runner: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
             go_target: linux-amd64
             wrapper_name: happier-cliproxyapi-managed
           - platform_key: darwin-arm64
@@ -284,12 +290,13 @@ jobs:
 
   ui-e2e:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui_e2e }}
+    needs: [trusted_ref_guard]
     name: UI E2E (Playwright) / shard ${{ matrix.shard }}/18
     strategy:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(inputs.ui_e2e_specs != '' && '[1]' || '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]') }}
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     env:
       # UI E2E boots Expo web; keep web assets available to avoid CI-only runtime surprises.
@@ -563,12 +570,13 @@ jobs:
 
   ui-unit:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
+    needs: [trusted_ref_guard]
     name: UI Unit Tests / part ${{ matrix.part }}/4
     strategy:
       fail-fast: false
       matrix:
         part: [1, 2, 3, 4]
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     env:
       HAPPIER_UI_VITEST_PART: ${{ matrix.part }}
@@ -629,8 +637,9 @@ jobs:
 
   ui-integration:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
+    needs: [trusted_ref_guard]
     name: UI Integration Tests
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 240
     steps:
       - name: Checkout
@@ -684,8 +693,9 @@ jobs:
 
   shared-packages-unit:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_ui }}
+    needs: [trusted_ref_guard]
     name: Shared Package Unit Tests
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -777,8 +787,9 @@ jobs:
 
   plugin-workspaces-unit:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_plugin_workspaces }}
+    needs: [trusted_ref_guard]
     name: Plugin Workspace Unit Tests
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -819,8 +830,9 @@ jobs:
 
   server:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_server }}
+    needs: [trusted_ref_guard]
     name: Server Tests (unit + integration)
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -862,8 +874,9 @@ jobs:
 
   server-db-contract:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_server_db_contract }}
+    needs: [trusted_ref_guard]
     name: Server DB Contract (Postgres)
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 25
     services:
       postgres:
@@ -1300,8 +1313,9 @@ jobs:
 
   binary-smoke:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_binary_smoke }}
+    needs: [trusted_ref_guard]
     name: Binary Smoke (isolated cwd)
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -1766,8 +1780,9 @@ jobs:
 
   typecheck:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_typecheck }}
+    needs: [trusted_ref_guard]
     name: Typecheck
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -2066,8 +2081,9 @@ jobs:
 
   e2e-core:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_e2e_core }}
+    needs: [trusted_ref_guard]
     name: Core E2E (fast, packages/tests, server-light, sqlite)
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2123,8 +2139,9 @@ jobs:
 
   e2e-core-slow:
     if: ${{ github.event_name == 'workflow_call' && inputs.run_e2e_core_slow }}
+    needs: [trusted_ref_guard]
     name: Core E2E (slow, packages/tests, server-light, sqlite)
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     steps:
       - name: Checkout
@@ -2194,8 +2211,9 @@ jobs:
 
   plugin-platform-packed:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_plugin_platform_packed }}
+    needs: [trusted_ref_guard]
     name: Plugin Platform (natural packed artifacts)
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     env:
       PACKED_PLUGIN_PLATFORM_OUTPUT_ROOT: ${{ runner.temp }}/plugin-platform-packed
@@ -2317,6 +2335,9 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    outputs:
+      ubuntu_2204: ${{ steps.runner_pool.outputs.ubuntu_2204 }}
+      ubuntu_2404: ${{ steps.runner_pool.outputs.ubuntu_2404 }}
     steps:
       - name: Admit trusted workflow control ref
         env:
@@ -2333,6 +2354,30 @@ jobs:
             "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
             *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
           esac
+      - name: Resolve runner pool
+        id: runner_pool
+        env:
+          RUNNER_POOL: ${{ inputs.runner_pool || 'github' }}
+        run: |
+          set -euo pipefail
+          case "$RUNNER_POOL" in
+            github)
+              ubuntu_2204=ubuntu-22.04
+              ubuntu_2404=ubuntu-latest
+              ;;
+            blacksmith-linux-4vcpu)
+              ubuntu_2204=blacksmith-4vcpu-ubuntu-2204
+              ubuntu_2404=blacksmith-4vcpu-ubuntu-2404
+              ;;
+            *)
+              echo "Unsupported runner_pool: $RUNNER_POOL" >&2
+              exit 1
+              ;;
+          esac
+          {
+            echo "ubuntu_2204=$ubuntu_2204"
+            echo "ubuntu_2404=$ubuntu_2404"
+          } >> "$GITHUB_OUTPUT"
 
   release_actor_guard:
     needs: [trusted_ref_guard]
