@@ -47,6 +47,7 @@ function compatibleInstance(overrides = {}) {
       portForwards: [
         { guestPortRange: [52005, 54004], hostPortRange: [52005, 54004] },
         { guestPortRange: [18081, 20080], hostPortRange: [18081, 20080] },
+        { guestIP: '0.0.0.0', guestIPMustBeZero: false, proto: 'any', ignore: true },
       ],
     },
     ...overrides,
@@ -98,6 +99,26 @@ test('managed Lima reconcile rejects static range forwarding because Lima reduce
     ...entry,
     static: true,
   }));
+  const executor = fakeExecutor({
+    'uname -s': { exitCode: 0, out: 'Darwin\n', err: '' },
+    'limactl --version': { exitCode: 0, out: 'limactl version 2.1.0\n', err: '' },
+    'limactl list --all-fields --format=json happier-agent-primary': {
+      exitCode: 0,
+      out: `${JSON.stringify(incompatible)}\n`,
+      err: '',
+    },
+  });
+
+  await assert.rejects(
+    reconcileManagedLimaInstance({ executor, instance: 'happier-agent-primary', profile }),
+    (error) => error.code === 'MANAGED_LIMA_CONFIGURATION_DRIFT'
+      && error.drift.some((entry) => entry.field === 'portForwards'),
+  );
+});
+
+test('managed Lima reconcile rejects a profile that leaves unmatched guest listeners auto-forwarded', async () => {
+  const incompatible = compatibleInstance();
+  incompatible.config.portForwards = incompatible.config.portForwards.filter((entry) => entry.ignore !== true);
   const executor = fakeExecutor({
     'uname -s': { exitCode: 0, out: 'Darwin\n', err: '' },
     'limactl --version': { exitCode: 0, out: 'limactl version 2.1.0\n', err: '' },

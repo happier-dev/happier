@@ -63,10 +63,13 @@ export function resolveManagedLimaProfile(name, { architecture = 'aarch64' } = {
 }
 
 function renderPortForwards(portForwards) {
-  return portForwards.map((entry) => ({
-    guestPortRange: [entry.guestStart, entry.guestEnd],
-    hostPortRange: [entry.hostStart, entry.hostEnd],
-  }));
+  return [
+    ...portForwards.map((entry) => ({
+      guestPortRange: [entry.guestStart, entry.guestEnd],
+      hostPortRange: [entry.hostStart, entry.hostEnd],
+    })),
+    { guestIP: '0.0.0.0', guestIPMustBeZero: false, proto: 'any', ignore: true },
+  ];
 }
 
 function mutableConfigurationArgs(profile) {

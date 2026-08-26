@@ -353,6 +353,7 @@ test('candidate refresh replaces only captured Git state then reuses sync and de
     profile,
     sourceDir: '/Users/dev/happier/dev',
     env: { HAPPIER_STACK_HOME_DIR: home },
+    executor: { capture: async () => ({ exitCode: 0 }) },
   }, {
     captureGitBasis: async () => ({
       capturedAt: '2026-08-26T00:00:00.000Z',
@@ -395,6 +396,73 @@ test('candidate refresh replaces only captured Git state then reuses sync and de
   assert.equal(result.capture.worktreeHeadCount, 1);
   assert.equal(result.bootstrap.refreshed, true);
   assert.equal(result.dependencies.ready, true);
+});
+
+test('candidate refresh bootstraps a replacement VM when persisted state outlives the guest repository', async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'happier-candidate-replacement-vm-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const paths = resolveExecutionHostCandidatePaths(profile, { HAPPIER_STACK_HOME_DIR: home });
+  await mkdir(join(home, 'execution-host-candidate'), { recursive: true });
+  await writeFile(paths.stateFile, JSON.stringify({
+    version: 1,
+    activation: 'candidate',
+    authoritative: false,
+    sourceDir: '/Users/dev/happier/dev',
+    capture: { head: 'a'.repeat(40), refCount: 1, refsDigest: '0'.repeat(64), worktreeHeadCount: 1 },
+  }));
+  const calls = [];
+  const refs = [{ name: 'refs/heads/dev', object: 'b'.repeat(40) }];
+
+  const result = await refreshExecutionHostCandidateRepository({
+    profile,
+    sourceDir: '/Users/dev/happier/dev',
+    env: { HAPPIER_STACK_HOME_DIR: home },
+    executor: {},
+  }, {
+    guestRepositoryExists: async ({ guestRepositoryDir }) => {
+      calls.push(['inspect-git', guestRepositoryDir]);
+      return false;
+    },
+    captureGitBasis: async () => ({
+      capturedAt: '2026-08-26T00:00:00.000Z',
+      repositoryRoot: '/Users/dev/happier/dev',
+      head: 'b'.repeat(40),
+      headRef: 'refs/heads/dev',
+      refs,
+      dirtyEntryCount: 0,
+      worktreeCount: 1,
+      detachedWorktreeCount: 0,
+      worktreeHeads: ['b'.repeat(40)],
+    }),
+    exportGitBundle: async () => calls.push(['bundle']),
+    pauseProject: async () => calls.push(['pause-sync']),
+    bootstrapGuestRepository: async ({ basis }) => {
+      calls.push(['bootstrap-git', basis.head]);
+      return { created: true, verifiedHead: basis.head, verifiedRefs: 1 };
+    },
+    refreshGuestRepository: async () => {
+      calls.push(['refresh-git']);
+      throw new Error('refresh must not run without a guest repository');
+    },
+    applyGuestStackIdentity: async () => {},
+    getInstanceStatus: async () => ({ instance: { sshConfigFile: '/private/lima-ssh.conf' } }),
+    publishSshConfig: async ({ destination }) => ({
+      ssh: 'happier-candidate',
+      sshConfigFile: destination,
+    }),
+    ensureSyncProject: async () => ({
+      env: { MUTAGEN_DATA_DIRECTORY: '/private/mutagen' },
+      ownership: 'owned',
+    }),
+    resumeSync: async () => {},
+    flushSync: async () => {},
+    bootstrapDependencies: async () => ({ code: 0 }),
+  });
+
+  assert.deepEqual(calls.map(([kind]) => kind), [
+    'bundle', 'pause-sync', 'inspect-git', 'bootstrap-git',
+  ]);
+  assert.equal(result.bootstrap.created, true);
 });
 
 test('candidate mirror sync resumes continuous transport without recapturing Git or dependencies', async (t) => {

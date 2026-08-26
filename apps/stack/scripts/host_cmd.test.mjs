@@ -46,6 +46,7 @@ test('host exec uses only an explicitly configured candidate and preserves comma
       portForwards: [
         { guestPortRange: [52005, 54004], hostPortRange: [52005, 54004] },
         { guestPortRange: [18081, 20080], hostPortRange: [18081, 20080] },
+        { guestIP: '0.0.0.0', guestIPMustBeZero: false, proto: 'any', ignore: true },
       ],
     },
   };
@@ -172,6 +173,7 @@ test('active execution profile delegates an ordinary hstack command before local
       portForwards: [
         { guestPortRange: [52005, 54004], hostPortRange: [52005, 54004] },
         { guestPortRange: [18081, 20080], hostPortRange: [18081, 20080] },
+        { guestIP: '0.0.0.0', guestIPMustBeZero: false, proto: 'any', ignore: true },
       ],
     },
   };

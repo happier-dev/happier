@@ -318,6 +318,13 @@ async function defaultRefreshGuestRepository({
   }
 }
 
+async function defaultGuestRepositoryExists({ executor, profile, guestRepositoryDir }) {
+  const result = await executor.capture('limactl', [
+    'shell', profile.instance, '--', 'test', '-d', join(guestRepositoryDir, '.git'),
+  ]);
+  return result.exitCode === 0 || result.code === 0;
+}
+
 async function atomicWriteJson(path, value) {
   const directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -533,6 +540,7 @@ async function updateCandidateRepository({
   getInstanceStatus,
   publishSshConfig,
   ensureSyncProject,
+  pauseProject,
   resumeSync,
   flushSync,
   bootstrapDependencies,
@@ -556,6 +564,11 @@ async function updateCandidateRepository({
       { encoding: 'utf8', mode: 0o600 },
     );
     await exportGitBundle({ sourceDir, bundlePath, basis: normalizedBasis });
+    await pauseProject({
+      stackBaseDir: paths.syncBaseDir,
+      ownerId,
+      env,
+    });
     const bootstrap = await applyGitState({
       executor,
       profile,
@@ -651,6 +664,7 @@ export async function prepareExecutionHostCandidateRepository(
     getInstanceStatus = getManagedLimaStatus,
     publishSshConfig = publishManagedLimaLocalSshConfig,
     ensureSyncProject = ensureDevTargetSyncProject,
+    pauseProject = pauseOwnedDevTargetSyncProject,
     resumeSync = resumeDevTargetSync,
     flushSync = flushDevTargetSync,
     bootstrapDependencies = runDevTargetDependencyBootstrap,
@@ -673,6 +687,7 @@ export async function prepareExecutionHostCandidateRepository(
     getInstanceStatus,
     publishSshConfig,
     ensureSyncProject,
+    pauseProject,
     resumeSync,
     flushSync,
     bootstrapDependencies,
@@ -689,6 +704,7 @@ export async function recoverExecutionHostCandidateRepository(
     getInstanceStatus = getManagedLimaStatus,
     publishSshConfig = publishManagedLimaLocalSshConfig,
     ensureSyncProject = ensureDevTargetSyncProject,
+    pauseProject = pauseOwnedDevTargetSyncProject,
     resumeSync = resumeDevTargetSync,
     flushSync = flushDevTargetSync,
     bootstrapDependencies = runDevTargetDependencyBootstrap,
@@ -714,6 +730,7 @@ export async function recoverExecutionHostCandidateRepository(
     getInstanceStatus,
     publishSshConfig,
     ensureSyncProject,
+    pauseProject,
     resumeSync,
     flushSync,
     bootstrapDependencies,
@@ -725,11 +742,14 @@ export async function refreshExecutionHostCandidateRepository(
   {
     captureGitBasis = defaultCaptureGitBasis,
     exportGitBundle = defaultExportGitBundle,
+    bootstrapGuestRepository = defaultBootstrapGuestRepository,
     refreshGuestRepository = defaultRefreshGuestRepository,
+    guestRepositoryExists = defaultGuestRepositoryExists,
     applyGuestStackIdentity = defaultApplyGuestStackIdentity,
     getInstanceStatus = getManagedLimaStatus,
     publishSshConfig = publishManagedLimaLocalSshConfig,
     ensureSyncProject = ensureDevTargetSyncProject,
+    pauseProject = pauseOwnedDevTargetSyncProject,
     resumeSync = resumeDevTargetSync,
     flushSync = flushDevTargetSync,
     bootstrapDependencies = runDevTargetDependencyBootstrap,
@@ -752,13 +772,21 @@ export async function refreshExecutionHostCandidateRepository(
     env,
     executor,
     transferPrefix: 'refresh-',
-    applyGitState: refreshGuestRepository,
+    applyGitState: async (input) => {
+      const repositoryExists = await guestRepositoryExists({
+        executor,
+        profile,
+        guestRepositoryDir: input.guestRepositoryDir,
+      });
+      return await (repositoryExists ? refreshGuestRepository : bootstrapGuestRepository)(input);
+    },
     applyGuestStackIdentity,
     captureGitBasis,
     exportGitBundle,
     getInstanceStatus,
     publishSshConfig,
     ensureSyncProject,
+    pauseProject,
     resumeSync,
     flushSync,
     bootstrapDependencies,

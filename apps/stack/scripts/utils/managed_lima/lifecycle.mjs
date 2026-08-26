@@ -68,12 +68,19 @@ function compareMutableResources(instance, profile) {
 }
 
 function rangesEqual(actual, expected) {
-  if (!Array.isArray(actual) || actual.length !== expected.length) return false;
-  return expected.every((wanted) => actual.some((entry) => (
+  if (!Array.isArray(actual) || actual.length !== expected.length + 1) return false;
+  const expectedRangesPresent = expected.every((wanted) => actual.some((entry) => (
     JSON.stringify(entry?.guestPortRange) === JSON.stringify([wanted.guestStart, wanted.guestEnd])
     && JSON.stringify(entry?.hostPortRange) === JSON.stringify([wanted.hostStart, wanted.hostEnd])
     && entry?.static !== true
   )));
+  const unmatchedForwardingDisabled = actual.some((entry) => (
+    entry?.guestIP === '0.0.0.0'
+    && entry?.guestIPMustBeZero === false
+    && entry?.proto === 'any'
+    && entry?.ignore === true
+  ));
+  return expectedRangesPresent && unmatchedForwardingDisabled;
 }
 
 function compareConfiguration(instance, profile) {

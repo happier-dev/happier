@@ -348,7 +348,7 @@ test('dev-targets status reports managed Lima lifecycle health alongside mirror 
         '  printf "limactl version 2.0.0\\n"',
         '  exit 0',
         'fi',
-        'printf \'[{"status":"Running","vmType":"vz","arch":"aarch64","cpus":8,"memory":25769803776,"disk":171798691840,"config":{"mounts":[],"containerd":{"user":false,"system":false},"ssh":{"forwardAgent":false},"vmOpts":{"vz":{"diskImageFormat":"raw","rosetta":{"enabled":false,"binfmt":false}}},"portForwards":[{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004]},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080]}]}}]\\n\'',
+        'printf \'[{"status":"Running","vmType":"vz","arch":"aarch64","cpus":8,"memory":25769803776,"disk":171798691840,"config":{"mounts":[],"containerd":{"user":false,"system":false},"ssh":{"forwardAgent":false},"vmOpts":{"vz":{"diskImageFormat":"raw","rosetta":{"enabled":false,"binfmt":false}}},"portForwards":[{"guestPortRange":[52005,54004],"hostPortRange":[52005,54004]},{"guestPortRange":[18081,20080],"hostPortRange":[18081,20080]},{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","ignore":true}]}}]\\n\'',
         '',
       ].join('\n'),
     );
