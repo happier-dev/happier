@@ -58,7 +58,7 @@ export const SESSION_SHARED_METADATA_VERSION_V1 = 1 as const;
 export const SESSION_OWNER_METADATA_VERSION_V1 = 1 as const;
 export const SESSION_OWNER_METADATA_ACCOUNT_SCOPED_KIND =
   'session_owner_metadata' as const;
-export const SESSION_OWNER_METADATA_ACCOUNT_SCOPED_KIND_BYTE_V1 = 10 as const;
+export const SESSION_OWNER_METADATA_ACCOUNT_SCOPED_KIND_BYTE_V1 = 26 as const;
 
 const BoundedIdentifierSchema = z.string().trim().min(1).max(256);
 const BoundedPresentationTextSchema = z.string().trim().min(1).max(2_048);

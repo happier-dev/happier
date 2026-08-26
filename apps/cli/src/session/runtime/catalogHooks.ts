@@ -5,9 +5,9 @@ import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
 import type {
   CatalogAgentId,
   ProviderSessionRuntimePreferences,
-  ProviderSessionRuntimePreferencesParams,
   VendorResumeSupportFn,
 } from '@/agent/catalog/types';
+import type { AgentCliSessionCommandBuildInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export async function getVendorResumeSupport(agentId?: CatalogAgentId | null): Promise<VendorResumeSupportFn> {
   const catalogId = resolveCatalogAgentId(agentId);
@@ -25,7 +25,7 @@ export async function getVendorResumeSupport(agentId?: CatalogAgentId | null): P
   if (entry.vendorResumeSupport === 'unsupported') {
     return () => false;
   }
-  if (entry.getVendorResumeSupport) {
+  if (entry.vendorResumeSupport === 'experimental' && entry.getVendorResumeSupport) {
     return await entry.getVendorResumeSupport();
   }
   if (isRuntimeCheckedExperimentalVendorResume(catalogId)) {
@@ -36,7 +36,7 @@ export async function getVendorResumeSupport(agentId?: CatalogAgentId | null): P
 
 export async function resolveProviderSessionRuntimePreferences(
   agentId: CatalogAgentId | null | undefined,
-  params: ProviderSessionRuntimePreferencesParams,
+  params: AgentCliSessionCommandBuildInputV1,
 ): Promise<ProviderSessionRuntimePreferences> {
   const catalogId = resolveCatalogAgentId(agentId);
   const entry = catalogId ? AGENTS[catalogId] ?? null : null;

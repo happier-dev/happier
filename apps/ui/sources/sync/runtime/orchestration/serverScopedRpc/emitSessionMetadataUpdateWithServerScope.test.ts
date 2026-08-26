@@ -50,7 +50,7 @@ const sharedEditorPatch: SessionMetadataTuplePatchV1 = {
 };
 
 const ownerMetadataCiphertext =
-    'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
+    'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
 const ownerMetadataEnvelope = {
     t: 'encrypted' as const,
     c: ownerMetadataCiphertext,

@@ -22,7 +22,7 @@ import { sessionRoutes } from "./sessionRoutes";
 const PLAIN_OWNER_METADATA = { t: "plain", v: { v: 1 } } as const;
 const ENCRYPTED_OWNER_METADATA = {
     t: "encrypted",
-    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+    c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
 } as const;
 const LEGACY_METADATA = JSON.stringify({});
 const LEGACY_AGENT_STATE = JSON.stringify({});

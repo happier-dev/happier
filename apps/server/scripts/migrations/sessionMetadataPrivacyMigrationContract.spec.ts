@@ -75,22 +75,22 @@ describe('session metadata privacy envelope schema and migration contract', () =
         const schema = await read('prisma/mysql/schema.prisma');
         expect(schema).toMatch(/ownerMetadata\s+String\?\s+@db\.LongText/);
 
-        const canonicalKind10Ciphertext =
-            'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
-        const caseOnlyDistinctKind10Ciphertext =
-            'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGdb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
-        const canonicalBytes = Buffer.from(canonicalKind10Ciphertext, 'base64');
-        const caseOnlyDistinctBytes = Buffer.from(caseOnlyDistinctKind10Ciphertext, 'base64');
-        expect([...canonicalBytes.slice(0, 2)]).toEqual([0xa1, 10]);
-        expect([...caseOnlyDistinctBytes.slice(0, 2)]).toEqual([0xa1, 10]);
+        const canonicalKind26Ciphertext =
+            'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
+        const caseOnlyDistinctKind26Ciphertext =
+            'oRoBAGMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
+        const canonicalBytes = Buffer.from(canonicalKind26Ciphertext, 'base64');
+        const caseOnlyDistinctBytes = Buffer.from(caseOnlyDistinctKind26Ciphertext, 'base64');
+        expect([...canonicalBytes.slice(0, 2)]).toEqual([0xa1, 26]);
+        expect([...caseOnlyDistinctBytes.slice(0, 2)]).toEqual([0xa1, 26]);
         expect(
-            [...canonicalKind10Ciphertext].filter(
+            [...canonicalKind26Ciphertext].filter(
                 (character, index) =>
-                    character !== caseOnlyDistinctKind10Ciphertext[index],
+                    character !== caseOnlyDistinctKind26Ciphertext[index],
             ),
         ).toHaveLength(1);
-        expect(canonicalKind10Ciphertext.toLowerCase())
-            .toBe(caseOnlyDistinctKind10Ciphertext.toLowerCase());
+        expect(canonicalKind26Ciphertext.toLowerCase())
+            .toBe(caseOnlyDistinctKind26Ciphertext.toLowerCase());
 
         const sql = await read(`prisma/mysql/migrations/${migrationId}/migration.sql`);
         // MySQL 8.0's utf8mb4_bin is case-sensitive on the admitted ASCII Base64

@@ -1,4 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { resolveCurrentExecutionSurfacesForCatalogAgent } = vi.hoisted(() => ({
+  resolveCurrentExecutionSurfacesForCatalogAgent: vi.fn(),
+}));
+
+vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
+  getSessionHostBridge: () => ({
+    resolveCurrentExecutionSurfacesForCatalogAgent,
+  }),
+}));
 
 import type { AgentNativeResumeIdentityV1 } from '@happier-dev/protocol';
 
@@ -6,6 +20,7 @@ import {
   captureDepartingAgentNativeResumeRecord,
   hasMatchingAgentNativeReturnIdentity,
   invalidateFailedAgentNativeReturnIdentity,
+  resolveObservableAgentNativeTranscriptPath,
   resolveAgentNativeReturnIdentity,
   type LocalAgentNativeResumeRecordStore,
 } from './agentNativeReturn';
@@ -38,6 +53,84 @@ const SESSION_ID = 'session-1';
 const DEPARTURE_HEAD = 130;
 
 const CLAUDE_IDENTITY: AgentNativeResumeIdentityV1 = { v: 1, vendorResumeId: 'claude-1' };
+
+beforeEach(() => {
+  resolveCurrentExecutionSurfacesForCatalogAgent.mockReset();
+  resolveCurrentExecutionSurfacesForCatalogAgent.mockResolvedValue(null);
+});
+
+describe('resolveObservableAgentNativeTranscriptPath', () => {
+  it('uses the current Agent candidate from canonical identity and descriptor, then rejects a symlink escape', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-native-transcript-root-'));
+    const outsideRoot = await mkdtemp(join(tmpdir(), 'happier-native-transcript-outside-'));
+    try {
+      const containedPath = join(root, 'sessions', 'rollout.jsonl');
+      const escapedPath = join(outsideRoot, 'escaped.jsonl');
+      const escapedLink = join(root, 'sessions', 'escaped.jsonl');
+      await mkdir(join(root, 'sessions'), { recursive: true });
+      await writeFile(containedPath, '{}\n');
+      await writeFile(escapedPath, '{}\n');
+      await symlink(escapedPath, escapedLink);
+      const resolveNativeTranscriptPathCandidate = vi.fn(async () => ({
+        path: containedPath,
+        containmentRoot: root,
+      }));
+      resolveCurrentExecutionSurfacesForCatalogAgent.mockResolvedValueOnce({
+        agentId: 'codex',
+        backendId: 'codex.runtime',
+        executionSurfaces: { handoff: { resolveNativeTranscriptPathCandidate } },
+      });
+
+      await expect(resolveObservableAgentNativeTranscriptPath({
+        agentId: 'codex',
+        metadata: {
+          codexSessionId: 'thread-1',
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: { homePath: root },
+          },
+        },
+      })).resolves.toBe(containedPath);
+      expect(resolveCurrentExecutionSurfacesForCatalogAgent).toHaveBeenCalledWith('codex');
+      expect(resolveNativeTranscriptPathCandidate).toHaveBeenCalledWith({
+        identity: { v: 1, vendorResumeId: 'thread-1' },
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { homePath: root },
+        },
+      });
+
+      resolveCurrentExecutionSurfacesForCatalogAgent.mockResolvedValueOnce({
+        agentId: 'codex',
+        backendId: 'codex.runtime',
+        executionSurfaces: {
+          handoff: {
+            resolveNativeTranscriptPathCandidate: async () => ({
+              path: escapedLink,
+              containmentRoot: root,
+            }),
+          },
+        },
+      });
+      await expect(resolveObservableAgentNativeTranscriptPath({
+        agentId: 'codex',
+        metadata: {
+          codexSessionId: 'thread-1',
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: { homePath: root },
+          },
+        },
+      })).resolves.toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
+  });
+});
 
 /** A departing Claude whose own conversation id is committed in the current view. */
 function claudeMetadata(overrides?: Record<string, unknown>): Record<string, unknown> {

@@ -1,10 +1,17 @@
 import { z } from 'zod';
 
 import { getAccountScopedBlobCiphertextBase64LengthV1 } from '../crypto/accountScopedCipherEnvelope.js';
+import {
+  StrictJsonValueSchema,
+  type JsonValue as StrictJsonValue,
+} from '../json/strictJsonValue.js';
 import { ParticipantRecipientV1Schema } from '../messages/structured/participantMessageV1.js';
-import { isStrictPluginJsonValue } from '../plugins/contributions/strictJsonValue.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionIdSchema } from '../sessions/idsV1.js';
+import {
+  PredecessorSessionDraftManualAutomationV1Schema,
+  PredecessorSessionDraftModelIdV1Schema,
+} from '../sessions/authoring/fieldCatalog.js';
 import {
   SyncedSessionAuthoringFieldIdV1Schema,
   SyncedSessionAuthoringValueV1Schema,
@@ -65,11 +72,12 @@ export const CanonicalSessionDraftAddressV1Schema = z.string().min(1).refine(
 );
 export type CanonicalSessionDraftAddressV1 = z.infer<typeof CanonicalSessionDraftAddressV1Schema>;
 
-export interface StrictJsonObject { readonly [key: string]: StrictJsonValue }
-export type StrictJsonValue = null | string | number | boolean | readonly StrictJsonValue[] | StrictJsonObject;
-export const StrictJsonValueSchema = z.custom<StrictJsonValue>(isStrictPluginJsonValue, {
-  message: 'Expected strict JSON data',
-});
+export { StrictJsonValueSchema };
+export type { StrictJsonValue };
+export type StrictJsonObject = Extract<
+  StrictJsonValue,
+  { readonly [key: string]: StrictJsonValue }
+>;
 
 export const DraftFieldV1Schema = z.object({
   mutationId: z.string().uuid(),
@@ -108,11 +116,24 @@ const ComposerSchema = z.object({
   attachments: z.object({ mutationId: z.string().uuid(), value: semanticArraySchema }).strict(),
 }).strict();
 
+const SessionDraftAcceptedSyncedAuthoringFieldIdV1Schema = z.union([
+  SyncedSessionAuthoringFieldIdV1Schema,
+  z.literal('modelId'),
+]);
+const PredecessorSessionDraftAutomationV1Schema = z.union([
+  SyncedSessionAuthoringValueV1Schema.shape.automation,
+  PredecessorSessionDraftManualAutomationV1Schema,
+]);
+
 const SyncedAuthoringFieldsSchema = z
-  .partialRecord(SyncedSessionAuthoringFieldIdV1Schema, DraftFieldV1Schema)
+  .partialRecord(SessionDraftAcceptedSyncedAuthoringFieldIdV1Schema, DraftFieldV1Schema)
   .superRefine((fields, context) => {
     for (const [fieldId, field] of Object.entries(fields as Record<string, { value: unknown }>)) {
-      const fieldSchema = (SyncedSessionAuthoringValueV1Schema.shape as Record<string, z.ZodTypeAny>)[fieldId];
+      const fieldSchema = fieldId === 'modelId'
+        ? PredecessorSessionDraftModelIdV1Schema
+        : fieldId === 'automation'
+          ? PredecessorSessionDraftAutomationV1Schema
+          : (SyncedSessionAuthoringValueV1Schema.shape as Record<string, z.ZodTypeAny>)[fieldId];
       if (fieldSchema && !fieldSchema.safeParse(field.value).success) {
         context.addIssue({
           code: z.ZodIssueCode.custom,

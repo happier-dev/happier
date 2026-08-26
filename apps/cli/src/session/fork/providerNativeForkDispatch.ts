@@ -4,8 +4,7 @@ import {
   toForkPointV1,
 } from '@/session/fork/providerNativeForkHandler';
 import {
-  readProviderSessionIdSessionState,
-  readSessionMetadataRuntimeDescriptor,
+  readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata,
   type ForkResultV1,
   type ForkSessionMetadataV1,
   type ForkSurfaceV1,
@@ -14,44 +13,9 @@ import {
 export function buildForkSessionMetadata(
   metadata: Readonly<Record<string, unknown>>,
 ): ForkSessionMetadataV1 {
-  const providerSessionId = readProviderSessionIdSessionState(metadata).value;
-  const codexRuntimeDescriptor = readSessionMetadataRuntimeDescriptor(metadata, 'codex');
-  const openCodeRuntimeDescriptor = readSessionMetadataRuntimeDescriptor(metadata, 'opencode');
+  const runtimeDescriptorV1 = readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(metadata);
   return Object.freeze({
-    ...(providerSessionId !== null ? { providerSessionId } : {}),
-    ...(codexRuntimeDescriptor?.providerSessionId
-      ? { codexSessionId: codexRuntimeDescriptor.providerSessionId }
-      : {}),
-    ...(codexRuntimeDescriptor?.backendMode
-      ? { codexBackendMode: codexRuntimeDescriptor.backendMode }
-      : {}),
-    ...(codexRuntimeDescriptor?.home
-      ? { codexHome: codexRuntimeDescriptor.home }
-      : {}),
-    ...(codexRuntimeDescriptor?.connectedServiceId
-      ? { codexConnectedServiceId: codexRuntimeDescriptor.connectedServiceId }
-      : {}),
-    ...(codexRuntimeDescriptor?.connectedServiceProfileId
-      ? { codexConnectedServiceProfileId: codexRuntimeDescriptor.connectedServiceProfileId }
-      : {}),
-    ...(codexRuntimeDescriptor?.connectedServiceGroupId
-      ? { codexConnectedServiceGroupId: codexRuntimeDescriptor.connectedServiceGroupId }
-      : {}),
-    ...(codexRuntimeDescriptor?.homePath
-      ? { codexHomePath: codexRuntimeDescriptor.homePath }
-      : {}),
-    ...(openCodeRuntimeDescriptor?.providerSessionId
-      ? { opencodeSessionId: openCodeRuntimeDescriptor.providerSessionId }
-      : {}),
-    ...(openCodeRuntimeDescriptor?.backendMode
-      ? { opencodeBackendMode: openCodeRuntimeDescriptor.backendMode }
-      : {}),
-    ...(openCodeRuntimeDescriptor?.serverBaseUrl
-      ? { opencodeServerBaseUrl: openCodeRuntimeDescriptor.serverBaseUrl }
-      : {}),
-    ...(openCodeRuntimeDescriptor?.serverBaseUrl
-      ? { opencodeServerBaseUrlExplicit: openCodeRuntimeDescriptor.serverBaseUrlExplicit }
-      : {}),
+    ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
   });
 }
 

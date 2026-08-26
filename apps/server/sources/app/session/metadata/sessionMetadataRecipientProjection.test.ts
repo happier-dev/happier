@@ -13,7 +13,7 @@ import {
 } from "./sessionOwnerMetadataPersistence";
 
 const OWNER_CIPHERTEXT =
-    "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==";
+    "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==";
 const OWNER_ENVELOPE = {
     t: "encrypted",
     c: OWNER_CIPHERTEXT,

@@ -26,7 +26,13 @@ describe('resolveSpawnChildEnvironment provider overlay composition', () => {
     },
   };
   it('runs provider-bound prerequisites once before authorization and does not rerun them in full composition', async () => {
-    const resolveRuntimePrerequisites = vi.fn(async () => ({ ok: true as const }));
+    const resolveRuntimePrerequisites = vi.fn(async (selection) => {
+      expect(selection).toMatchObject({ hasExternalModelBinding: true });
+      expect(selection).not.toHaveProperty('providerBinding');
+      expect(JSON.stringify(selection)).not.toContain('pc_gateway');
+      expect(JSON.stringify(selection)).not.toContain('model-a');
+      return { ok: true as const };
+    });
     const augmentEnv = vi.fn(() => ({ AUGMENTED: 'yes' }));
     const common = {
       options: { directory: '/repo' },

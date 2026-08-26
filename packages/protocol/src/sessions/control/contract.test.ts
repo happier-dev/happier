@@ -138,7 +138,7 @@ describe('sessionControl contract exports', () => {
       metadataLayoutVersion: 1,
       ownerMetadata: {
         t: 'encrypted',
-        c: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+        c: 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==',
       },
       agentState: 'full-owner-state',
       agentStateVersion: 4,
@@ -190,7 +190,7 @@ describe('sessionControl contract exports', () => {
     expect(protocol.V2SessionRecordSchema.safeParse({
       ...base,
       ownerMetadata:
-        'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+        'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==',
     }).success).toBe(false);
   });
 
@@ -277,7 +277,7 @@ describe('sessionControl contract exports', () => {
       .toBe(true);
     expect(protocol.V2SessionRecordSchema.safeParse({
       ...layoutZero,
-      ownerMetadata: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+      ownerMetadata: 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==',
     }).success).toBe(false);
     const {
       metadataLayoutVersion: _metadataLayoutVersion,
@@ -285,7 +285,7 @@ describe('sessionControl contract exports', () => {
     } = layoutZero;
     expect(protocol.V2SessionRecordSchema.safeParse({
       ...omittedLayout,
-      ownerMetadata: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+      ownerMetadata: 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==',
     }).success).toBe(false);
     const {
       agentState: _agentState,

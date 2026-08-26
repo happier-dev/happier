@@ -208,10 +208,10 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     : null;
   const canonicalRuntimeSelection = readCanonicalSpawnRuntimeSelection(params.options);
   const runtimeDescriptorV1 = canonicalRuntimeSelection.runtimeDescriptorV1;
-  const providerRuntimeSelection =
-    canonicalRuntimeSelection.providerRuntimeSelection
-    && Object.keys(canonicalRuntimeSelection.providerRuntimeSelection).length > 0
-      ? canonicalRuntimeSelection.providerRuntimeSelection
+  const agentRuntimeSelection =
+    canonicalRuntimeSelection.agentRuntimeSelection
+    && Object.keys(canonicalRuntimeSelection.agentRuntimeSelection).length > 0
+      ? canonicalRuntimeSelection.agentRuntimeSelection
       : undefined;
   const connectedServices = projectDaemonSpawnConnectedServices(
     params.options.connectedServices,
@@ -237,9 +237,9 @@ async function resolveSpawnChildEnvironmentImpl(params: {
 
   function buildRuntimeSelectionPayload() {
     return {
-      ...(providerRuntimeSelection ? { providerRuntimeSelection } : {}),
+      ...(agentRuntimeSelection ? { agentRuntimeSelection } : {}),
       ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
-      ...(params.providerBindingContext ? { providerBinding: params.providerBindingContext } : {}),
+      ...(params.providerBindingContext ? { hasExternalModelBinding: true as const } : {}),
       ...(params.options.directory ? { cwd: params.options.directory, directory: params.options.directory } : {}),
       ...(Object.keys(runtimeSelectionEnv).length > 0 ? { env: runtimeSelectionEnv } : {}),
       ...(connectedServices ? { connectedServices } : {}),

@@ -8,9 +8,11 @@ import {
 describe('session runtime catalog hooks', () => {
   it('resolves provider runtime preferences from catalog entries', async () => {
     await expect(resolveProviderSessionRuntimePreferences('kilo', {
+      isExplicitCliSubcommand: true,
+      parsed: { agentArgs: [] },
       settings: {},
-      processEnv: {},
-      startedBy: 'terminal',
+      environment: {},
+      startOrigin: 'terminal',
     })).resolves.toEqual({});
   });
 

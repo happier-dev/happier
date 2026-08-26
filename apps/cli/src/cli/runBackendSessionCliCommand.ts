@@ -7,6 +7,7 @@ import {
   type BackendTargetRefV2Input,
   type ProviderErrorV1,
 } from '@happier-dev/protocol';
+import type { AgentCliSessionCommandBuildInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { StoredCredentials } from '@/persistence';
 import { readStoredCredentials } from '@/persistence';
@@ -129,13 +130,29 @@ async function resolveProviderRunOptions(params: Readonly<{
   agentId: AgentId;
   settings: Readonly<Record<string, unknown>>;
   processEnv: NodeJS.ProcessEnv;
-  startedBy: CommonBackendRunOptions['startedBy'];
+  startedBy: 'terminal' | 'daemon';
+  isExplicitCliSubcommand: boolean;
+  parsed: ProviderSessionArgPartitionResult;
 }>): Promise<Readonly<Record<string, unknown>>> {
-  const extras = await resolveProviderSessionRuntimePreferences(params.agentId, {
+  const buildInput: AgentCliSessionCommandBuildInputV1 = Object.freeze({
+    isExplicitCliSubcommand: params.isExplicitCliSubcommand,
+    parsed: Object.freeze({
+      ...(params.parsed.startingMode === undefined
+        ? {}
+        : { startingMode: params.parsed.startingMode }),
+      ...(params.parsed.directory === undefined
+        ? {}
+        : { directory: params.parsed.directory }),
+      ...(params.parsed.resume === undefined
+        ? {}
+        : { resume: params.parsed.resume }),
+      agentArgs: Object.freeze([...params.parsed.providerArgs]),
+    }),
     settings: params.settings,
-    processEnv: params.processEnv,
-    startedBy: params.startedBy,
+    environment: Object.freeze({ ...params.processEnv }),
+    startOrigin: params.startedBy,
   });
+  const extras = await resolveProviderSessionRuntimePreferences(params.agentId, buildInput);
   const environmentVariables = readProviderEnvironmentVariables(extras.environmentVariables);
   const unsetEnvironmentVariables = readUnsetEnvironmentVariables(extras.unsetEnvironmentVariables);
   return {
@@ -150,6 +167,8 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   backendIdForSessionRuntime: string;
   /** Canonical catalog Agent identity used only for daemon runtime authority. */
   runtimeAuthorityAgentId?: RuntimeAuthorityAgentId;
+  /** Host-derived command form preserved for a public Agent CLI options composer. */
+  isExplicitCliSubcommand?: boolean;
   /** Optional legacy CLI argument normalizer; never a runtime-authority source. */
   agentIdForDeprecatedAliases?: AgentId;
   /** Optional Profile, account-settings, and Connected Services catalog owner. */
@@ -246,6 +265,8 @@ Provider CLI Options:
     const profileQuery = parsed.profileQuery ?? '';
     const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args, parsed) : ({} as Extra);
     const startedBy = resolved.startedBy ?? 'terminal';
+    const isExplicitCliSubcommand = params.isExplicitCliSubcommand
+      ?? (params.context.args[0] === cliArgumentAgentId);
 
     const selfMigration = await selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup();
     if (selfMigration) {
@@ -539,6 +560,8 @@ Provider CLI Options:
             explicitEnv: profileEnvironmentVariables,
           }),
           startedBy,
+          isExplicitCliSubcommand,
+          parsed,
         })
         : {};
     const providerEnvironmentVariablesRaw = readProviderEnvironmentVariables(

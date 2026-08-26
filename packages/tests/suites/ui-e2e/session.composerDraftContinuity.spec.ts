@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { createTestAuthMtls } from '../../src/testkit/auth';
 import { fetchJson } from '../../src/testkit/http';
+import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
@@ -51,6 +52,7 @@ type DraftReadResponse = Readonly<{
 }>;
 
 const DRAFT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SEEDED_MACHINE_ID = 'session-composer-draft-continuity-machine';
 
 function requireString(value: unknown, context: string): string {
     if (typeof value === 'string' && value.trim().length > 0) return value;
@@ -332,6 +334,16 @@ test.describe('ui e2e: session composer draft continuity', () => {
             fingerprint: IDENTITY_HEADERS.fingerprint,
         });
         token = auth.token;
+
+        const registeredMachine = await registerMachineIdentity({
+            baseUrl: server.baseUrl,
+            token,
+            machineId: SEEDED_MACHINE_ID,
+            metadata: 'session-composer-draft-continuity-machine',
+        });
+        if (registeredMachine.status !== 200) {
+            throw new Error(`Failed to register composer draft machine (status=${registeredMachine.status})`);
+        }
 
         sessionA = await createPlainSession({ baseUrl: server.baseUrl, token, title: 'Composer draft continuity A' });
         sessionB = await createPlainSession({ baseUrl: server.baseUrl, token, title: 'Composer draft continuity B' });

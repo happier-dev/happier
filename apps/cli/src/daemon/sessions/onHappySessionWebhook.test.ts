@@ -1550,6 +1550,7 @@ describe('createOnHappySessionWebhook', () => {
   });
 
   it('fails the existing spawn readiness result when report-scoped canonical readiness rejects', async () => {
+    const { logger } = await import('@/ui/logger');
     const tracked: TrackedSession = {
       pid: 795,
       startedBy: 'daemon',
@@ -1585,13 +1586,29 @@ describe('createOnHappySessionWebhook', () => {
       writeSessionMarkerFn: vi.fn(async () => undefined),
     });
 
-    await expect(onWebhook(
-      'session-daemon-795',
-      createMetadata(tracked.pid, 'daemon'),
-      async () => {
-        throw new Error('runner authority refresh failed');
-      },
-    )).rejects.toThrow('runner authority refresh failed');
+    const startupFailure = Object.assign(
+      new Error('runner authority refresh failed'),
+      { code: 'SESSION_MARKER_MUTATION_LOCK_TIMEOUT' },
+    );
+    const debugSpy = vi.spyOn(logger, 'debug');
+    try {
+      await expect(onWebhook(
+        'session-daemon-795',
+        createMetadata(tracked.pid, 'daemon'),
+        async () => {
+          throw startupFailure;
+        },
+      )).rejects.toThrow('runner authority refresh failed');
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Canonical Session startup readiness failed: '
+          + 'SESSION_MARKER_MUTATION_LOCK_TIMEOUT: runner authority refresh failed',
+        ),
+        startupFailure,
+      );
+    } finally {
+      debugSpy.mockRestore();
+    }
     await expect(spawnResult).resolves.toEqual({
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,

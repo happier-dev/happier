@@ -174,9 +174,6 @@ export async function resolveExternalTakeoverSpawnOptionsFromRuntimeRegistry(
 
     const options = mapExternalTakeoverLaunchPlanToSpawnOptions({
       plan: launch.value,
-      ...(launch.nativeResumeReference
-        ? { nativeResumeReference: launch.nativeResumeReference }
-        : {}),
       targetDirectory: params.targetDirectory,
       resolvedIdentity: resolvedIdentity.value,
       linkedSessionId: params.sessionId,

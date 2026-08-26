@@ -14,7 +14,7 @@ const PLAIN_OWNER_METADATA = { t: "plain", v: { v: 1 } } as const;
 const STORED_PLAIN_OWNER_METADATA = JSON.stringify(PLAIN_OWNER_METADATA);
 const ENCRYPTED_OWNER_METADATA = {
     t: "encrypted",
-    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+    c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
 } as const;
 
 const layoutOneBody = {

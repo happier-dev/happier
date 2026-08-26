@@ -34,14 +34,19 @@ describe('dispatchProviderNativeFork', () => {
     expect(fork).toHaveBeenCalledWith({
       parentSessionId: 'happy_parent',
       parentMetadata: {
-        providerSessionId: 'codex_parent_1',
-        codexSessionId: 'codex_parent_1',
-        codexBackendMode: 'appServer',
-        codexHome: 'connectedService',
-        codexConnectedServiceId: 'openai-codex',
-        codexConnectedServiceProfileId: 'work',
-        codexConnectedServiceGroupId: 'team',
-        codexHomePath: '/tmp/connected-codex-home',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: {
+            backendMode: 'appServer',
+            providerSessionId: 'codex_parent_1',
+            home: 'connectedService',
+            connectedServiceId: 'openai-codex',
+            connectedServiceProfileId: 'work',
+            connectedServiceGroupId: 'team',
+            homePath: '/tmp/connected-codex-home',
+          },
+        },
       },
       directory: '/tmp/project',
       forkPoint: { kind: 'latest' },
@@ -75,7 +80,7 @@ describe('dispatchProviderNativeFork', () => {
     }));
   });
 
-  it('projects OpenCode-safe fields from the canonical descriptor without forwarding the raw envelope', async () => {
+  it('forwards the bounded OpenCode descriptor without flattening Agent-specific fields', async () => {
     const fork = vi.fn().mockResolvedValue(null);
 
     await dispatchProviderNativeFork({
@@ -99,11 +104,16 @@ describe('dispatchProviderNativeFork', () => {
 
     expect(fork).toHaveBeenCalledWith(expect.objectContaining({
       parentMetadata: {
-        providerSessionId: 'opencode-parent-1',
-        opencodeSessionId: 'opencode-parent-1',
-        opencodeBackendMode: 'server',
-        opencodeServerBaseUrl: 'http://127.0.0.1:49196/',
-        opencodeServerBaseUrlExplicit: true,
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'opencode',
+          agent: {
+            backendMode: 'server',
+            providerSessionId: ' opencode-parent-1 ',
+            serverBaseUrl: 'http://127.0.0.1:49196',
+            serverBaseUrlExplicit: true,
+          },
+        },
       },
     }));
   });

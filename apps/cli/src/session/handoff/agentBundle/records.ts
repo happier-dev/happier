@@ -1,6 +1,6 @@
 import type { SessionHandoffAgentBundle } from '../types';
 
-import { getSessionHandoffAgentBundleRecordExtractor } from './catalogHooks';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 
 function decodeBase64Utf8(value: string): string {
   return Buffer.from(value, 'base64').toString('utf8');
@@ -55,8 +55,12 @@ function readGenericJsonLinesAgentBundleRecords(
 export async function readSessionHandoffAgentBundleRecords(
   agentBundle: SessionHandoffAgentBundle,
 ): Promise<readonly unknown[]> {
-  const providerExtractor = await getSessionHandoffAgentBundleRecordExtractor(agentBundle.agentId);
-  return providerExtractor
-    ? providerExtractor(agentBundle)
+  const currentRuntime = await getSessionHostBridge()
+    .resolveCurrentExecutionSurfacesForCatalogAgent(agentBundle.agentId);
+  const extractMediaScannableRecords = currentRuntime
+    ?.executionSurfaces.handoff
+    ?.extractMediaScannableRecords;
+  return extractMediaScannableRecords
+    ? await extractMediaScannableRecords({ bundle: agentBundle })
     : readGenericJsonLinesAgentBundleRecords(agentBundle);
 }

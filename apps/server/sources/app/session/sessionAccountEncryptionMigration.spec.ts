@@ -55,7 +55,7 @@ function createTx(params: Readonly<{
 const encryptedSource = {
     t: "encrypted",
     c:
-        "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+        "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
 } as const;
 const plainTarget = {
     t: "plain",

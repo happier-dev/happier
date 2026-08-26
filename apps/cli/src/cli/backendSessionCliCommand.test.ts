@@ -278,6 +278,65 @@ describe('runBackendSessionCliCommand', () => {
     expect(foregroundAdmissionMocks.admit).toHaveBeenCalledTimes(1);
   });
 
+  it('passes host-resolved Session preference facts through the canonical catalog hook', async () => {
+    const credentials = { token: 'x' } as Credentials;
+    const profile = AIBackendProfileSchema.parse({
+      id: 'work',
+      name: 'Work',
+      environmentVariables: [{ name: 'R0_61_PREFERENCE_ENV', value: 'profile-value' }],
+      envVarRequirements: [],
+      compatibility: {},
+      isBuiltIn: false,
+      createdAt: 0,
+      updatedAt: 0,
+      version: '1.0.0',
+    });
+    const settings = {
+      claudeUnifiedTerminalResumeChoice: 'ask_every_time',
+      profiles: [profile],
+    };
+
+    vi.spyOn(persistenceModule, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+    vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
+    vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
+      source: 'none',
+      settings,
+      settingsVersion: 0,
+      scopeKey: 'scope-test',
+      loadedAtMs: Date.now(),
+      whenRefreshed: null,
+    } as any);
+    const resolvePreferences = vi
+      .spyOn(catalogHooksModule, 'resolveProviderSessionRuntimePreferences')
+      .mockResolvedValue({});
+    runSessionCommandSpy.mockImplementation(async (_backendId: string, options: any) => {
+      await resolveLateSessionCommandOptions(options);
+    });
+
+    await runBackendSessionCliCommand({
+      context: { args: ['codex', '--profile', 'work'], terminalRuntime: null } as CommandContext,
+      backendIdForSessionRuntime: 'codex',
+      agentIdForAccountSettings: 'codex' as any,
+    });
+
+    expect(resolvePreferences).toHaveBeenCalledWith(
+      'codex',
+      expect.objectContaining({
+        settings,
+        environment: expect.objectContaining({
+          R0_61_PREFERENCE_ENV: 'profile-value',
+        }),
+        startOrigin: 'terminal',
+        isExplicitCliSubcommand: true,
+        parsed: expect.objectContaining({ agentArgs: expect.any(Array) }),
+      }),
+    );
+    const preferenceInput = resolvePreferences.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(preferenceInput).not.toHaveProperty('processEnv');
+    expect(preferenceInput).not.toHaveProperty('startedBy');
+  });
+
   it('sends persisted terminal-resume Connected Services intent through foreground admission', async () => {
     const connectedServices = {
       v: 1 as const,

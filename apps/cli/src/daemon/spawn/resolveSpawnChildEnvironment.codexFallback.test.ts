@@ -29,9 +29,9 @@ afterEach(async () => {
 });
 
 describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
-  it('passes explicit Codex backend mode through generic provider runtime selection', async () => {
-    const resolveRuntimePrerequisites = vi.fn(async ({ providerRuntimeSelection, tools }) => {
-      expect(providerRuntimeSelection).toEqual({ codexBackendMode: 'acp' });
+  it('passes explicit Codex backend mode through generic Agent runtime selection', async () => {
+    const resolveRuntimePrerequisites = vi.fn(async ({ agentRuntimeSelection, tools }) => {
+      expect(agentRuntimeSelection).toEqual({ codexBackendMode: 'acp' });
       expect(tools.resolveManagedInstallable).toBeTypeOf('function');
       return { ok: true as const };
     });
@@ -45,8 +45,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
         resolveRuntimePrerequisites,
-        augmentEnv: ({ providerRuntimeSelection }) => ({
-          ...(providerRuntimeSelection?.codexBackendMode === 'acp' ? { HAPPIER_CODEX_BACKEND_MODE_CONFIRMED: 'acp' } : {}),
+        augmentEnv: ({ agentRuntimeSelection }) => ({
+          ...(agentRuntimeSelection?.codexBackendMode === 'acp' ? { HAPPIER_CODEX_BACKEND_MODE_CONFIRMED: 'acp' } : {}),
         }),
       },
       processEnv: {},
@@ -103,8 +103,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
   });
 
   it('fails closed when provider runtime selection validation fails', async () => {
-    const resolveRuntimePrerequisites = vi.fn(async ({ providerRuntimeSelection }) => {
-      expect(providerRuntimeSelection).toEqual({ codexBackendMode: 'acp' });
+    const resolveRuntimePrerequisites = vi.fn(async ({ agentRuntimeSelection }) => {
+      expect(agentRuntimeSelection).toEqual({ codexBackendMode: 'acp' });
       return {
         ok: false as const,
         reasonCode: 'codex_acp_unavailable' as const,
@@ -424,8 +424,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
   });
 
   it('prefers explicit provider backend mode over the legacy ACP experiment flag', async () => {
-    const resolveRuntimePrerequisites = vi.fn(async ({ providerRuntimeSelection }) => {
-      expect(providerRuntimeSelection).toEqual({ codexBackendMode: 'appServer' });
+    const resolveRuntimePrerequisites = vi.fn(async ({ agentRuntimeSelection }) => {
+      expect(agentRuntimeSelection).toEqual({ codexBackendMode: 'appServer' });
       return { ok: true as const };
     });
 
@@ -439,8 +439,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
         resolveRuntimePrerequisites,
-        augmentEnv: ({ providerRuntimeSelection }) => ({
-          ...(providerRuntimeSelection?.codexBackendMode === 'appServer' ? { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } : {}),
+        augmentEnv: ({ agentRuntimeSelection }) => ({
+          ...(agentRuntimeSelection?.codexBackendMode === 'appServer' ? { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } : {}),
         }),
       },
       processEnv: {},
@@ -459,8 +459,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
   });
 
   it('derives provider backend mode from runtimeDescriptorV1 when legacy fields are absent', async () => {
-    const resolveRuntimePrerequisites = vi.fn(async ({ providerRuntimeSelection }) => {
-      expect(providerRuntimeSelection).toEqual({ codexBackendMode: 'appServer' });
+    const resolveRuntimePrerequisites = vi.fn(async ({ agentRuntimeSelection }) => {
+      expect(agentRuntimeSelection).toEqual({ codexBackendMode: 'appServer' });
       return { ok: true as const };
     });
 
@@ -480,8 +480,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
         resolveRuntimePrerequisites,
-        augmentEnv: ({ providerRuntimeSelection }) => ({
-          ...(providerRuntimeSelection?.codexBackendMode === 'appServer' ? { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } : {}),
+        augmentEnv: ({ agentRuntimeSelection }) => ({
+          ...(agentRuntimeSelection?.codexBackendMode === 'appServer' ? { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } : {}),
         }),
       },
       processEnv: {},
@@ -500,7 +500,7 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
   it('canonicalizes legacy runtime descriptors before daemon spawn hooks observe generic runtime selection', async () => {
     const resolveRuntimePrerequisites = vi.fn(async (runtimeSelection) => {
       expect(runtimeSelection).toMatchObject({
-        providerRuntimeSelection: { codexBackendMode: 'appServer' },
+        agentRuntimeSelection: { codexBackendMode: 'appServer' },
         runtimeDescriptorV1: {
           v: 1,
           agentId: 'codex',
@@ -515,7 +515,7 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
     });
     const augmentEnv = vi.fn((runtimeSelection) => {
       expect(runtimeSelection).toMatchObject({
-        providerRuntimeSelection: { codexBackendMode: 'appServer' },
+        agentRuntimeSelection: { codexBackendMode: 'appServer' },
         runtimeDescriptorV1: {
           v: 1,
           agentId: 'codex',
@@ -576,8 +576,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
         resolveRuntimePrerequisites: async () => ({ ok: true }),
-        augmentEnv: ({ providerRuntimeSelection }) => ({
-          ...(providerRuntimeSelection?.codexBackendMode === 'appServer' ? { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } : {}),
+        augmentEnv: ({ agentRuntimeSelection }) => ({
+          ...(agentRuntimeSelection?.codexBackendMode === 'appServer' ? { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } : {}),
         }),
       },
       processEnv: {},
@@ -607,8 +607,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
       options,
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
-        resolveRuntimePrerequisites: async ({ providerRuntimeSelection }) => {
-          if (providerRuntimeSelection?.codexBackendMode === 'acp') {
+        resolveRuntimePrerequisites: async ({ agentRuntimeSelection }) => {
+          if (agentRuntimeSelection?.codexBackendMode === 'acp') {
             return { ok: false, reasonCode: 'codex_acp_unavailable' as const, errorMessage: 'codex-acp is missing' };
           }
           return { ok: true };
@@ -671,8 +671,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
       },
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
-        resolveRuntimePrerequisites: async ({ providerRuntimeSelection }) => {
-          if (providerRuntimeSelection?.codexBackendMode === 'acp') {
+        resolveRuntimePrerequisites: async ({ agentRuntimeSelection }) => {
+          if (agentRuntimeSelection?.codexBackendMode === 'acp') {
             return {
               ok: false,
               reasonCode: 'codex_acp_unavailable',

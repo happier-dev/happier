@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  SyncedSessionAuthoringFieldIdV1Schema,
+  SyncedSessionAuthoringValueV1Schema,
+} from '../sessions/authoring/index.js';
+import {
   SESSION_DRAFT_SOCKET_EVENT,
   SessionDraftAddressV1Schema,
   SessionDraftChangeHintV1Schema,
@@ -15,6 +19,15 @@ import {
 
 const mutationId = '00000000-0000-4000-8000-000000000001';
 const draftId = '00000000-0000-4000-8000-000000000002';
+const predecessorManualAutomation = {
+  enabled: true,
+  name: 'On demand review',
+  description: 'Run only when invoked',
+  scheduleKind: 'manual',
+  everyMinutes: 60,
+  cronExpr: '0 * * * *',
+  timezone: null,
+};
 
 function newSessionDocument() {
   return {
@@ -89,6 +102,86 @@ describe('session draft protocol', () => {
     })).toThrow();
   });
 
+  it('reads and preserves the remote-dev predecessor model id without restoring it as a canonical write', () => {
+    const parsed = SessionDraftPrivatePayloadV1Schema.parse({
+      v: 1,
+      address: { kind: 'newSession', draftId },
+      document: {
+        ...newSessionDocument(),
+        target: {
+          kind: 'newSession',
+          authoring: {
+            directory: { mutationId, value: '/tmp/project' },
+            modelId: { mutationId, value: 'gpt-5' },
+          },
+        },
+      },
+    });
+
+    expect(parsed.document.target).toMatchObject({
+      kind: 'newSession',
+      authoring: { modelId: { mutationId, value: 'gpt-5' } },
+    });
+    expect(SyncedSessionAuthoringFieldIdV1Schema.safeParse('modelId').success).toBe(false);
+  });
+
+  it('reads and preserves the remote-dev predecessor manual automation schedule without restoring it as a canonical write', () => {
+    const parsed = SessionDraftPrivatePayloadV1Schema.parse({
+      v: 1,
+      address: { kind: 'newSession', draftId },
+      document: {
+        ...newSessionDocument(),
+        target: {
+          kind: 'newSession',
+          authoring: {
+            directory: { mutationId, value: '/tmp/project' },
+            automation: { mutationId, value: predecessorManualAutomation },
+          },
+        },
+      },
+    });
+
+    expect(parsed.document.target).toMatchObject({
+      kind: 'newSession',
+      authoring: {
+        automation: { mutationId, value: predecessorManualAutomation },
+      },
+    });
+    expect(SyncedSessionAuthoringValueV1Schema.shape.automation.safeParse(predecessorManualAutomation).success).toBe(false);
+  });
+
+  it('limits predecessor draft compatibility to the published reader shapes', () => {
+    expect(() => SessionDraftPrivatePayloadV1Schema.parse({
+      v: 1,
+      address: { kind: 'newSession', draftId },
+      document: {
+        ...newSessionDocument(),
+        target: {
+          kind: 'newSession',
+          authoring: {
+            modelId: { mutationId, value: '' },
+          },
+        },
+      },
+    })).toThrow();
+    expect(() => SessionDraftPrivatePayloadV1Schema.parse({
+      v: 1,
+      address: { kind: 'newSession', draftId },
+      document: {
+        ...newSessionDocument(),
+        target: {
+          kind: 'newSession',
+          authoring: {
+            automation: {
+              mutationId,
+              value: { ...predecessorManualAutomation, unexpected: true },
+            },
+          },
+        },
+      },
+    })).toThrow();
+  });
+
   it('preserves mutation tokens, open extensions, and forward-compatible routing values', () => {
     const parsed = SessionDraftDocumentV1Schema.parse({
       ...newSessionDocument(),
@@ -128,6 +221,35 @@ describe('session draft protocol', () => {
     expect(sessionDocument.target.kind === 'session'
       && sessionDocument.target.routing.recipient.value).toEqual(futureRawValue);
     expect(SessionDraftRecipientValueV1Schema.safeParse(futureRawValue).success).toBe(false);
+  });
+
+  it('normalizes extension values into detached immutable strict JSON', () => {
+    const authoredValue = {
+      future: ['value', { nested: true }],
+    };
+    const parsed = SessionDraftDocumentV1Schema.parse({
+      ...newSessionDocument(),
+      extensions: {
+        'plugin.example': {
+          custom: { mutationId, value: authoredValue },
+        },
+      },
+    });
+    const parsedValue = parsed.extensions['plugin.example']?.custom.value;
+
+    expect(parsedValue).not.toBe(authoredValue);
+    expect(Object.isFrozen(parsedValue)).toBe(true);
+    expect(parsedValue).toMatchObject({ future: ['value', { nested: true }] });
+    if (parsedValue === null || typeof parsedValue !== 'object' || Array.isArray(parsedValue)) {
+      throw new Error('Expected an extension object');
+    }
+    const future = parsedValue.future;
+    expect(Array.isArray(future)).toBe(true);
+    expect(future).not.toBe(authoredValue.future);
+    expect(Object.isFrozen(future)).toBe(true);
+    const nested = Array.isArray(future) ? future[1] : undefined;
+    expect(nested).not.toBe(authoredValue.future[1]);
+    expect(Object.isFrozen(nested)).toBe(true);
   });
 
   it('bounds typed routes and exposes content-free change/socket contracts', () => {

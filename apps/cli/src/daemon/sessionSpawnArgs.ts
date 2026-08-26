@@ -10,7 +10,6 @@ import {
   serializeNativeForkSourceV1,
   type NativeForkSource,
 } from '@/session/shared/spawnSessionContract';
-import { normalizeSessionControlPermissionModeForBackendTarget } from '@/session/backendTargets/permissionModes';
 import { normalizeDaemonBackendTargetV2Input } from './backendTargetRouting';
 
 export function buildHappySessionControlArgs(opts: Readonly<{
@@ -77,11 +76,7 @@ export function buildHappySessionControlArgs(opts: Readonly<{
 
   const permissionMode = typeof opts.permissionMode === 'string' ? opts.permissionMode.trim() : '';
   if (permissionMode) {
-    const normalizedPermissionMode = normalizeSessionControlPermissionModeForBackendTarget({
-      backendTarget: backendTarget ?? undefined,
-      permissionMode,
-    });
-    args.push('--permission-mode', normalizedPermissionMode);
+    args.push('--permission-mode', permissionMode);
     if (typeof opts.permissionModeUpdatedAt === 'number') {
       args.push('--permission-mode-updated-at', `${opts.permissionModeUpdatedAt}`);
     }

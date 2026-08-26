@@ -67,7 +67,6 @@ export type SpawnDaemonSessionRequest = Omit<
   SpawnSessionOptions,
   | 'experimentalCodexAcp'
   | 'backendTarget'
-  | 'nativeResumeReference'
   | 'providerBindingMetadataV1'
 > & {
   /** Private machine transport discriminator retained for lifecycle routing. */

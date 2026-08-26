@@ -62,7 +62,7 @@ export async function attemptAcpLatestFork(params: Readonly<{
             );
             const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(launchMetadata) ?? undefined;
             const runtimeSelection = readCanonicalSpawnRuntimeSelection({ runtimeDescriptorV1 });
-            const providerBackendMode = runtimeSelection.providerBackendMode;
+            const agentBackendMode = runtimeSelection.agentBackendMode;
             const codexBackendMode = runtimeSelection.codexBackendMode;
             const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
                 inherited: params.inheritedForkOverrides,
@@ -130,7 +130,7 @@ export async function attemptAcpLatestFork(params: Readonly<{
                             ...(requestId ? { requestId } : {}),
                             agentHint: {
                                 agentId: params.forkBackendResolution.agentHintAgentId,
-                                ...(providerBackendMode ? { backendMode: providerBackendMode } : {}),
+                                ...(agentBackendMode ? { backendMode: agentBackendMode } : {}),
                                 providerSessionId: forkedProviderSessionId,
                             },
                         },

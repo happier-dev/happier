@@ -612,6 +612,80 @@ describe('sessionRegistry', () => {
     expect(serializedMarker).not.toContain('"instructions"');
   });
 
+  it('adopts a nonce-correlated PID placeholder when only the early process-start witness is unavailable', async () => {
+    const {
+      hashProcessCommand,
+      listSessionMarkers,
+      writeSessionMarker,
+    } = await import('./sessionRegistry');
+    const pid = 123460;
+    const spawnNonce = 'nonce-accepted-before-process-identity';
+    const processCommand = 'happier codex --started-by daemon';
+    const processCommandHash = hashProcessCommand(processCommand);
+    const respawn = {
+      version: 1 as const,
+      directory: '/tmp/project',
+      spawnNonce,
+      backendTarget: {
+        kind: 'builtInAgent' as const,
+        agentId: 'codex' as const,
+      },
+    };
+
+    await writeSessionMarker({
+      pid,
+      happySessionId: `PID-${pid}`,
+      startedBy: 'daemon',
+      processCommand,
+      processCommandHash,
+      respawn,
+    });
+
+    await expect(writeSessionMarker({
+      pid,
+      happySessionId: 'session-canonical-after-webhook',
+      startedBy: 'daemon',
+      processCommand,
+      processCommandHash,
+      processStartTimeMs: 1_717_171_717_000,
+      respawn,
+    }, {
+      adoptCanonicalSessionIdFromPidPlaceholder: true,
+    })).resolves.toBeUndefined();
+
+    await expect(listSessionMarkers()).resolves.toEqual([
+      expect.objectContaining({
+        pid,
+        happySessionId: 'session-canonical-after-webhook',
+        processCommandHash,
+        processStartTimeMs: 1_717_171_717_000,
+      }),
+    ]);
+
+    const mismatchedPid = pid + 1;
+    await writeSessionMarker({
+      pid: mismatchedPid,
+      happySessionId: `PID-${mismatchedPid}`,
+      startedBy: 'daemon',
+      processCommand,
+      processCommandHash,
+      respawn: { ...respawn, spawnNonce: 'nonce-command-mismatch' },
+    });
+    await expect(writeSessionMarker({
+      pid: mismatchedPid,
+      happySessionId: 'session-command-mismatch',
+      startedBy: 'daemon',
+      processCommand: 'different runner command',
+      processCommandHash: hashProcessCommand('different runner command'),
+      processStartTimeMs: 1_717_171_717_001,
+      respawn: { ...respawn, spawnNonce: 'nonce-command-mismatch' },
+    }, {
+      adoptCanonicalSessionIdFromPidPlaceholder: true,
+    })).rejects.toThrow(
+      'session_marker_canonical_adoption_ownership_mismatch',
+    );
+  });
+
   it('persists and clears only the exact active turn and causal input custody for the matching session marker', async () => {
     const {
       listSessionMarkers,

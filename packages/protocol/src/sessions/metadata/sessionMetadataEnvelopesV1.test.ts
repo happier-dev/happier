@@ -6,7 +6,7 @@ import {
   sealAccountScopedBlobCiphertext,
   type AccountScopedCryptoMaterial,
 } from '../../crypto/accountScopedCipher.js';
-import { decodeBase64 } from '../../crypto/base64.js';
+import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import {
   projectExternalSessionOperationSharedPresentationV1,
   projectExternalSessionOperationProgressV1,
@@ -298,6 +298,22 @@ const RemoteDevMetadataReaderAtFae505Schema = z.object({
 }).passthrough();
 
 describe('session metadata privacy envelopes v1', () => {
+  it('reserves the owner-metadata ciphertext byte apart from predecessor Account drafts', () => {
+    const ciphertext = sealSessionOwnerMetadataV1({
+      material: material(6),
+      ownerMetadata: { v: 1 },
+      randomBytes: deterministicRandomBytes(1),
+    });
+    const predecessorDraftTagged = decodeBase64(ciphertext, 'base64');
+    predecessorDraftTagged[1] = 10;
+
+    expect(decodeBase64(ciphertext, 'base64')[1]).toBe(26);
+    expect(isSessionOwnerMetadataCiphertextV1(ciphertext)).toBe(true);
+    expect(isSessionOwnerMetadataCiphertextV1(
+      encodeBase64(predecessorDraftTagged, 'base64'),
+    )).toBe(false);
+  });
+
   it('normalizes deployed Antigravity runtime identity through the host owner projection', () => {
     const created = createSessionOwnerMetadataV1({
       metadata: {
@@ -353,11 +369,11 @@ describe('session metadata privacy envelopes v1', () => {
     });
   });
 
-  it('admits only the exact canonical padded Base64 spelling of kind-10 ciphertext', () => {
+  it('admits only the exact canonical padded Base64 spelling of kind-26 ciphertext', () => {
     const canonicalCiphertext =
-      'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
+      'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
     const caseOnlyDistinctCiphertext =
-      'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGdb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
+      'oRoBAGMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
     const lenientAliases = [
       `${canonicalCiphertext}\n`,
       `${canonicalCiphertext.slice(0, 12)}!${canonicalCiphertext.slice(12)}`,

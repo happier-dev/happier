@@ -82,6 +82,14 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
         const plan: AgentExternalSessionTakeoverLaunchPlan = {
             directory: '/workspace/fresh',
             backendModeHint: 'native-mode',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'fixture-agent',
+                agent: {
+                    providerSessionId: 'remote-fresh',
+                    sessionFile: '/agent/sessions/remote-fresh.jsonl',
+                },
+            },
             environmentVariables: {
                 FIXTURE_HOME: '/runtime/fresh',
             },
@@ -106,6 +114,14 @@ describe('mapExternalTakeoverLaunchPlanToSpawnOptions', () => {
             resume: 'remote-fresh',
             approvedNewDirectoryCreation: true,
             backendMode: 'native-mode',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'fixture-agent',
+                agent: {
+                    providerSessionId: 'remote-fresh',
+                    sessionFile: '/agent/sessions/remote-fresh.jsonl',
+                },
+            },
             environmentVariables: {
                 FIXTURE_HOME: '/runtime/fresh',
             },

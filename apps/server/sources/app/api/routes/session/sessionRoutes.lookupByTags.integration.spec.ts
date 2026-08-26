@@ -9,7 +9,7 @@ import { sessionRoutes } from "./sessionRoutes";
 
 const OWNER_METADATA_ENVELOPE_V1 = {
     t: "encrypted",
-    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+    c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
 } as const;
 const STORED_OWNER_METADATA_ENVELOPE_V1 =
     JSON.stringify(OWNER_METADATA_ENVELOPE_V1);
@@ -206,7 +206,7 @@ describe("sessionRoutes lookup by tags (integration)", () => {
                 tag: "direct:v1:privacy-invalid",
                 accountId: owner.id,
                 metadata: "shared-safe",
-                ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                ownerMetadata: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
                 metadataLayoutVersion: 2,
             },
             select: { id: true, tag: true },

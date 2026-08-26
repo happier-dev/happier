@@ -297,7 +297,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
         });
         const normalizedRuntimeDescriptorV1 = normalizedRuntimeSelection.runtimeDescriptorV1;
         const normalizedBackendMode =
-            normalizedRuntimeSelection.providerBackendMode ?? normalizedRuntimeSelection.codexBackendMode;
+            normalizedRuntimeSelection.agentBackendMode ?? normalizedRuntimeSelection.codexBackendMode;
         const normalizedCodexBackendMode = normalizedRuntimeSelection.codexBackendMode;
         const buildBaseSpawnOptions = (resolvedDirectory: string): SpawnSessionOptions => ({
             directory: resolvedDirectory,

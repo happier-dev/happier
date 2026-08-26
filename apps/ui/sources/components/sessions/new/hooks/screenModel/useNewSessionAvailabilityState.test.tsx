@@ -47,7 +47,7 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@happier-dev/agents')>();
     return {
         ...actual,
-        isAgentAuthProbeSafeForBackgroundChecks: (agentId: string) => probeSafeAgents.has(agentId),
+        isAgentCliAuthBackgroundCheckSafe: (agentId: string) => probeSafeAgents.has(agentId),
     };
 });
 

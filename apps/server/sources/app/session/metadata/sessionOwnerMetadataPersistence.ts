@@ -11,11 +11,11 @@ export type SessionOwnerMetadataAccountMode = "plain" | "e2ee";
 /**
  * Parses the persisted layout-1 owner envelope at the Server Session boundary.
  *
- * The bare kind-10 branch is limited to the retained development shape that
+ * The bare owner-ciphertext branch is limited to the retained development shape that
  * predates explicit envelopes: layout 1 plus an E2EE Account. It never decrypts
  * or content-sniffs the ciphertext, and every current writer emits the explicit
  * envelope. Remove this branch after the complete retained-development database
- * inventory reports zero bare kind-10 layout-1 owner values.
+ * inventory reports zero bare layout-1 owner values.
  */
 export function parsePersistedSessionOwnerMetadataEnvelopeV1(params: Readonly<{
     metadataLayoutVersion: number;

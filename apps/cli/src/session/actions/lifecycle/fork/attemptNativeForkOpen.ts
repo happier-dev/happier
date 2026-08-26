@@ -162,8 +162,8 @@ export async function attemptNativeForkOpen(params: Readonly<{
         approvedNewDirectoryCreation: true,
         spawnNonce: params.spawnNonce,
         nativeForkSource,
-        ...(runtimeSelection.providerBackendMode
-            ? { backendMode: runtimeSelection.providerBackendMode }
+        ...(runtimeSelection.agentBackendMode
+            ? { backendMode: runtimeSelection.agentBackendMode }
             : {}),
         ...(runtimeSelection.codexBackendMode
             ? { codexBackendMode: runtimeSelection.codexBackendMode }

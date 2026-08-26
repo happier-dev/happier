@@ -3512,12 +3512,9 @@ describe('executeSpawnSessionRequest', () => {
       id: 'codex',
       vendorResumeSupport: 'experimental',
     });
-    hoisted.vendorResumeSupport.mockImplementation((params: VendorResumeSupportParams & {
-      runtimeDescriptorV1?: unknown;
-      agentRuntimeDescriptorV1?: unknown;
-    }) => {
-      expect(params).toMatchObject({
-        codexBackendMode: 'appServer',
+    hoisted.vendorResumeSupport.mockImplementation((params: VendorResumeSupportParams) => {
+      expect(params).toEqual({
+        agentRuntimeSelection: { codexBackendMode: 'appServer' },
         runtimeDescriptorV1: {
           v: 1,
           agentId: 'codex',
@@ -3527,8 +3524,7 @@ describe('executeSpawnSessionRequest', () => {
           },
         },
       });
-      expect(params).not.toHaveProperty('agentRuntimeDescriptorV1');
-      return params.codexBackendMode === 'appServer';
+      return params.agentRuntimeSelection?.codexBackendMode === 'appServer';
     });
 
     const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
@@ -3550,7 +3546,12 @@ describe('executeSpawnSessionRequest', () => {
       },
     });
 
-    expect(hoisted.vendorResumeSupport).toHaveBeenCalledWith(expect.objectContaining({ codexBackendMode: 'appServer' }));
+    expect(hoisted.vendorResumeSupport).toHaveBeenCalledWith({
+      agentRuntimeSelection: { codexBackendMode: 'appServer' },
+      runtimeDescriptorV1: expect.objectContaining({
+        agent: expect.objectContaining({ backendMode: 'appServer' }),
+      }),
+    });
     expect(result).not.toEqual(
       expect.objectContaining({
         type: 'error',
@@ -3564,7 +3565,9 @@ describe('executeSpawnSessionRequest', () => {
       id: 'codex',
       vendorResumeSupport: 'experimental',
     });
-    hoisted.vendorResumeSupport.mockImplementation((params: VendorResumeSupportParams) => params.codexBackendMode === 'appServer');
+    hoisted.vendorResumeSupport.mockImplementation((params: VendorResumeSupportParams) => (
+      params.agentRuntimeSelection?.codexBackendMode === 'appServer'
+    ));
 
     const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
 
@@ -3577,7 +3580,9 @@ describe('executeSpawnSessionRequest', () => {
       },
     });
 
-    expect(hoisted.vendorResumeSupport).toHaveBeenCalledWith(expect.objectContaining({ codexBackendMode: 'appServer' }));
+    expect(hoisted.vendorResumeSupport).toHaveBeenCalledWith({
+      agentRuntimeSelection: { codexBackendMode: 'appServer' },
+    });
     expect(result).not.toEqual(
       expect.objectContaining({
         type: 'error',

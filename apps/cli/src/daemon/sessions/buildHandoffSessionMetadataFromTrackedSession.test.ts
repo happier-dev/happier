@@ -1,29 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const buildRuntimeLocalHandoffMetadataForAgentMock = vi.hoisted(() => vi.fn(
-    (
-        agentId: string,
-        params: Readonly<{
-            machineId: string | null;
-            workingDirectory: string | null;
-            transcriptStorage: string | null;
-            environmentVariables: Readonly<Record<string, string | undefined>> | null;
-            vendorResumeId: string;
-        }>,
-    ): Readonly<Record<string, unknown>> => (
-        agentId === 'opencode'
-            ? { opencodeSessionId: params.vendorResumeId }
-            : { claudeSessionId: params.vendorResumeId }
-    ),
-));
+const { resolveCurrentExecutionSurfacesForCatalogAgent } = vi.hoisted(() => ({
+    resolveCurrentExecutionSurfacesForCatalogAgent: vi.fn(),
+}));
 
 const { readAgentCatalogSnapshot } = vi.hoisted(() => ({
     readAgentCatalogSnapshot: vi.fn(),
 }));
 
-vi.mock('@/session/handoff/metadata/catalogHooks', () => ({
-    buildRuntimeLocalHandoffMetadataForAgent:
-        buildRuntimeLocalHandoffMetadataForAgentMock,
+vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
+    getSessionHostBridge: () => ({
+        resolveCurrentExecutionSurfacesForCatalogAgent,
+    }),
 }));
 
 vi.mock('@/agent/catalog/snapshot', () => ({
@@ -34,7 +22,8 @@ import { buildHandoffSessionMetadataFromTrackedSession } from './buildHandoffSes
 
 describe('buildHandoffSessionMetadataFromTrackedSession', () => {
     beforeEach(() => {
-        buildRuntimeLocalHandoffMetadataForAgentMock.mockClear();
+        resolveCurrentExecutionSurfacesForCatalogAgent.mockReset();
+        resolveCurrentExecutionSurfacesForCatalogAgent.mockResolvedValue(null);
         readAgentCatalogSnapshot.mockReturnValue({
             agentDefinitionsById: new Map(),
             catalogEntriesById: {
@@ -45,12 +34,17 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
         });
     });
 
-    it('excludes External Session operation progress and presentation from Agent handoff leaves', () => {
+    it('passes only canonical identity and descriptor facts to the current Agent handoff leaf', async () => {
         const inputMetadata = {
             machineId: 'machine-session-handoff',
             path: '/repo-source-current',
             homeDir: '/Users/target',
             flavor: 'claude',
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'claude',
+                agent: { configDir: '/descriptor-owned/.claude' },
+            },
             externalSessionOperationV1: {
                 v: 1,
                 progress: { operationId: 'private-operation', revision: 6 },
@@ -65,35 +59,68 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
             },
         };
 
-        buildHandoffSessionMetadataFromTrackedSession({
+        const buildRuntimeLocalMetadata = vi.fn(async () => ({
+            externalSessionSource: {
+                kind: 'claudeConfig',
+                configDir: '/descriptor-owned/.claude',
+            },
+        }));
+        resolveCurrentExecutionSurfacesForCatalogAgent.mockResolvedValueOnce({
+            agentId: 'claude',
+            backendId: 'claude.runtime',
+            executionSurfaces: { handoff: { buildRuntimeLocalMetadata } },
+        });
+
+        const result = await buildHandoffSessionMetadataFromTrackedSession({
             trackedSession: {
                 startedBy: 'daemon',
                 pid: 122,
                 happySessionId: 'sess_handoff_private_operation',
                 vendorResumeId: 'provider-handoff-private-operation',
+                spawnOptions: {
+                    transcriptStorage: 'direct',
+                    environmentVariables: {
+                        CLAUDE_CONFIG_DIR: '/tracked-environment-must-not-reach-leaf',
+                    },
+                },
                 happySessionMetadataFromLocalWebhook: inputMetadata,
             } as never,
             machineId: 'machine-session-handoff',
         });
 
-        expect(buildRuntimeLocalHandoffMetadataForAgentMock)
-            .toHaveBeenCalledWith('claude', {
+        expect(resolveCurrentExecutionSurfacesForCatalogAgent).toHaveBeenCalledWith('claude');
+        expect(buildRuntimeLocalMetadata).toHaveBeenCalledWith({
+            identity: {
                 machineId: 'machine-session-handoff',
                 workingDirectory: '/repo-source-current',
-                transcriptStorage: null,
-                environmentVariables: null,
+                transcriptStorage: 'direct',
                 vendorResumeId: 'provider-handoff-private-operation',
-            });
-        expect(buildRuntimeLocalHandoffMetadataForAgentMock.mock.calls[0]?.[1])
+            },
+            runtimeDescriptorV1: inputMetadata.runtimeDescriptorV1,
+        });
+        expect(buildRuntimeLocalMetadata.mock.calls[0]?.[0])
             .not.toHaveProperty('externalSessionOperationV1');
-        expect(buildRuntimeLocalHandoffMetadataForAgentMock.mock.calls[0]?.[1])
+        expect(buildRuntimeLocalMetadata.mock.calls[0]?.[0])
             .not.toHaveProperty('externalSessionOperationPresentationV1');
+        expect(buildRuntimeLocalMetadata.mock.calls[0]?.[0])
+            .not.toHaveProperty('environmentVariables');
         expect(inputMetadata).toHaveProperty('externalSessionOperationV1');
         expect(inputMetadata).toHaveProperty('externalSessionOperationPresentationV1');
+        expect(result).toEqual(expect.objectContaining({
+            runtimeLocalMetadata: expect.objectContaining({
+                claudeSessionId: 'provider-handoff-private-operation',
+                externalSessionV1: expect.objectContaining({
+                    source: {
+                        kind: 'claudeConfig',
+                        configDir: '/descriptor-owned/.claude',
+                    },
+                }),
+            }),
+        }));
     });
 
-    it('falls back to the persisted handoff overlay when the tracked session lost its webhook metadata', () => {
-        const metadata = buildHandoffSessionMetadataFromTrackedSession({
+    it('falls back to the persisted handoff overlay when the tracked session lost its webhook metadata', async () => {
+        const metadata = await buildHandoffSessionMetadataFromTrackedSession({
             trackedSession: {
                 startedBy: 'daemon',
                 pid: 123,
@@ -138,8 +165,8 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
         }));
     });
 
-    it('builds configured ACP fallback metadata when webhook metadata is missing', () => {
-        const metadata = buildHandoffSessionMetadataFromTrackedSession({
+    it('builds configured ACP fallback metadata when webhook metadata is missing', async () => {
+        const metadata = await buildHandoffSessionMetadataFromTrackedSession({
             trackedSession: {
                 startedBy: 'daemon',
                 pid: 234,
@@ -170,8 +197,8 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
         }));
     });
 
-    it('uses direct-session runtime identity when webhook metadata has no legacy flavor field', () => {
-        const metadata = buildHandoffSessionMetadataFromTrackedSession({
+    it('uses direct-session runtime identity when webhook metadata has no legacy flavor field', async () => {
+        const metadata = await buildHandoffSessionMetadataFromTrackedSession({
             trackedSession: {
                 startedBy: 'daemon',
                 pid: 345,
@@ -204,8 +231,8 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
         }));
     });
 
-    it('uses the installed external Agent identity for its catalog-owned handoff metadata', () => {
-        const metadata = buildHandoffSessionMetadataFromTrackedSession({
+    it('resolves the installed external Agent identity through the current runtime surface', async () => {
+        const metadata = await buildHandoffSessionMetadataFromTrackedSession({
             trackedSession: {
                 startedBy: 'daemon',
                 pid: 456,
@@ -226,22 +253,12 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
             machineId: 'machine-session-handoff',
         });
 
-        expect(buildRuntimeLocalHandoffMetadataForAgentMock).toHaveBeenCalledWith('acme.agent', {
-            machineId: 'machine-session-handoff',
-            workingDirectory: '/repo-acme',
-            transcriptStorage: null,
-            environmentVariables: null,
-            vendorResumeId: 'acme-session-456',
-        });
-        expect(metadata).toEqual(expect.objectContaining({
-            runtimeLocalMetadata: expect.objectContaining({
-                claudeSessionId: 'acme-session-456',
-            }),
-        }));
+        expect(resolveCurrentExecutionSurfacesForCatalogAgent).toHaveBeenCalledWith('acme.agent');
+        expect(metadata).not.toHaveProperty('runtimeLocalMetadata');
     });
 
-    it('does not apply an installed Agent handoff hook to a configured external runtime identity', () => {
-        buildHandoffSessionMetadataFromTrackedSession({
+    it('does not resolve a configured external runtime identity through an installed Agent handoff leaf', async () => {
+        await buildHandoffSessionMetadataFromTrackedSession({
             trackedSession: {
                 startedBy: 'daemon',
                 pid: 457,
@@ -261,6 +278,6 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
             machineId: 'machine-session-handoff',
         });
 
-        expect(buildRuntimeLocalHandoffMetadataForAgentMock).not.toHaveBeenCalled();
+        expect(resolveCurrentExecutionSurfacesForCatalogAgent).not.toHaveBeenCalled();
     });
 });

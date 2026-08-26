@@ -120,18 +120,12 @@ type ResolveSpawnBackendIdentityFailure = Readonly<{
 export async function resolveSpawnBackendIdentity(params: Readonly<{
   existingSessionId: string;
   resume: string;
-  /** Host-private takeover provenance; never accepted from daemon RPC. */
-  nativeResumeReference?: string;
   backendTarget: BackendTargetRefV2 | undefined;
   credentials: StoredCredentials | null;
   loadLocalHandoffMetadataByVendorResumeId: (vendorResumeId: string) => Promise<Record<string, unknown> | null>;
 }>): Promise<ResolveSpawnBackendIdentitySuccess | ResolveSpawnBackendIdentityFailure> {
   const normalizedExistingSessionId = params.existingSessionId.trim();
   let effectiveResume = params.resume.trim();
-  const nativeResumeReference = typeof params.nativeResumeReference === 'string'
-    && params.nativeResumeReference.length > 0
-    ? params.nativeResumeReference
-    : '';
   const hasBackendTargetInput = params.backendTarget !== undefined;
   let effectiveBackendTargetV2 = normalizeDaemonBackendTargetV2Input(params.backendTarget);
   let sessionAttachPayload: SessionAttachFilePayload | null = null;
@@ -169,9 +163,7 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
     const linkedVendorResumeId = typeof attachContext.linkedVendorResumeId === 'string'
       ? attachContext.linkedVendorResumeId.trim()
       : '';
-    if (nativeResumeReference) {
-      effectiveResume = nativeResumeReference;
-    } else if (linkedVendorResumeId) {
+    if (linkedVendorResumeId) {
       effectiveResume = linkedVendorResumeId;
     } else if (!effectiveResume) {
       const derivedResume = typeof attachContext.vendorResumeId === 'string' ? attachContext.vendorResumeId.trim() : '';

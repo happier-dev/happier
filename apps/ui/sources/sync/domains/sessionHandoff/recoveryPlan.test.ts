@@ -76,6 +76,16 @@ describe('buildSessionHandoffRecoveryPlan', () => {
                 resume: 'remote_opencode_session',
                 transcriptStorage: 'direct',
                 serverId: 'server_1',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'opencode',
+                    agent: {
+                        backendMode: 'server',
+                        providerSessionId: 'remote_opencode_session',
+                        serverBaseUrl: null,
+                        serverBaseUrlExplicit: false,
+                    },
+                },
                 // OpenCode's canonical metadata reader answers `server` for a session
                 // that declares no mode, so the recovery plan pins the mode the source
                 // session actually ran in rather than leaving it to the restart default.
@@ -218,11 +228,16 @@ describe('buildSessionHandoffRecoveryPlan', () => {
 
         const projectedMetadata = {
             path: '/repo',
-            providerSessionId: 'remote_opencode_session',
-            opencodeSessionId: 'remote_opencode_session',
-            opencodeBackendMode: 'server',
-            opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
-            opencodeServerBaseUrlExplicit: true,
+            runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'opencode',
+                agent: {
+                    backendMode: 'server',
+                    providerSessionId: 'remote_opencode_session',
+                    serverBaseUrl: 'http://127.0.0.1:4096/',
+                    serverBaseUrlExplicit: true,
+                },
+            },
         };
         expect(resolveVendorHandoffIdMetadataMock).toHaveBeenCalled();
         for (const [metadata] of resolveVendorHandoffIdMetadataMock.mock.calls) {
@@ -305,7 +320,7 @@ describe('buildSessionHandoffRecoveryPlan', () => {
         });
     });
 
-    it('normalizes legacy codex backend mode metadata onto the canonical codexBackendMode field', () => {
+    it('re-envelopes legacy Codex backend metadata before publishing the generic recovery plan', () => {
         const legacyCodexBackendMode = '  mcp_resume  ' as unknown as Metadata['codexBackendMode'];
         const sourceMetadata = {
             flavor: 'codex',
@@ -326,7 +341,11 @@ describe('buildSessionHandoffRecoveryPlan', () => {
             sourceResume: {
                 agent: 'codex',
                 directory: '/repo',
-                codexBackendMode: 'acp',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    agent: { backendMode: 'acp' },
+                },
             },
         });
     });

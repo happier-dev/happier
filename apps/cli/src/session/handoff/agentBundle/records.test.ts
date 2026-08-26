@@ -2,12 +2,14 @@ import { readFileSync } from 'node:fs';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getSessionHandoffAgentBundleRecordExtractor } = vi.hoisted(() => ({
-  getSessionHandoffAgentBundleRecordExtractor: vi.fn(),
+const { resolveCurrentExecutionSurfacesForCatalogAgent } = vi.hoisted(() => ({
+  resolveCurrentExecutionSurfacesForCatalogAgent: vi.fn(),
 }));
 
-vi.mock('./catalogHooks', () => ({
-  getSessionHandoffAgentBundleRecordExtractor,
+vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
+  getSessionHostBridge: () => ({
+    resolveCurrentExecutionSurfacesForCatalogAgent,
+  }),
 }));
 
 import { readSessionHandoffAgentBundleRecords } from './records';
@@ -18,11 +20,11 @@ function encode(value: unknown): string {
 
 describe('readSessionHandoffAgentBundleRecords', () => {
   beforeEach(() => {
-    getSessionHandoffAgentBundleRecordExtractor.mockReset();
-    getSessionHandoffAgentBundleRecordExtractor.mockResolvedValue(null);
+    resolveCurrentExecutionSurfacesForCatalogAgent.mockReset();
+    resolveCurrentExecutionSurfacesForCatalogAgent.mockResolvedValue(null);
   });
 
-  it('uses the provider-owned record extractor when the catalog provides one', async () => {
+  it('uses the current Agent handoff leaf to decode opaque bundle records', async () => {
     const agentBundle = {
       agentId: 'opencode',
       remoteSessionId: 'oc-session-1',
@@ -33,13 +35,19 @@ describe('readSessionHandoffAgentBundleRecords', () => {
         serverBaseUrlExplicit: false,
       },
     } as const;
-    const extract = vi.fn(() => [{ id: 'from-provider-hook' }]);
-    getSessionHandoffAgentBundleRecordExtractor.mockResolvedValueOnce(extract);
+    const extractMediaScannableRecords = vi.fn(async () => [{ id: 'from-agent-leaf' }]);
+    resolveCurrentExecutionSurfacesForCatalogAgent.mockResolvedValueOnce({
+      agentId: 'opencode',
+      backendId: 'opencode.runtime',
+      executionSurfaces: {
+        handoff: { extractMediaScannableRecords },
+      },
+    });
 
-    expect(await readSessionHandoffAgentBundleRecords(agentBundle)).toEqual([{ id: 'from-provider-hook' }]);
+    expect(await readSessionHandoffAgentBundleRecords(agentBundle)).toEqual([{ id: 'from-agent-leaf' }]);
 
-    expect(getSessionHandoffAgentBundleRecordExtractor).toHaveBeenCalledWith('opencode');
-    expect(extract).toHaveBeenCalledWith(agentBundle);
+    expect(resolveCurrentExecutionSurfacesForCatalogAgent).toHaveBeenCalledWith('opencode');
+    expect(extractMediaScannableRecords).toHaveBeenCalledWith({ bundle: agentBundle });
   });
 
   it('keeps provider-specific OpenCode parsing out of the generic CLI parser', () => {
@@ -50,6 +58,7 @@ describe('readSessionHandoffAgentBundleRecords', () => {
     expect(source).not.toMatch(/case ['"]opencode['"]/u);
     expect(source).not.toMatch(/case ['"](claude|codex)['"]/u);
     expect(source).not.toMatch(/switch\s*\(\s*agentBundle\.providerId\s*\)/u);
+    expect(source).not.toMatch(/catalogHooks/u);
   });
 
   it('parses JSONL bundle payloads by bundle shape instead of provider id', async () => {

@@ -35,9 +35,11 @@ describe('external session runtime catalog hooks', () => {
 
     expect(supportsResume({})).toBe(false);
     await expect(resolveProviderSessionRuntimePreferences('acme.agent', {
+      isExplicitCliSubcommand: true,
+      parsed: { agentArgs: [] },
       settings: {},
-      processEnv: {},
-      startedBy: 'daemon',
+      environment: {},
+      startOrigin: 'daemon',
     })).resolves.toEqual({ source: 'acme' });
 
     readAgentCatalogSnapshot.mockReturnValue({
@@ -53,5 +55,58 @@ describe('external session runtime catalog hooks', () => {
 
     const supportsResumeAfterCatalogReplacement = await getVendorResumeSupport('acme.agent');
     expect(supportsResumeAfterCatalogReplacement({})).toBe(true);
+  });
+
+  it('invokes a dynamic vendor-resume predicate only for the normalized experimental level', async () => {
+    const predicate = vi.fn(() => true);
+    const getPredicate = vi.fn(async () => predicate);
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        'acme.agent': {
+          id: 'acme.agent',
+          cliSubcommand: 'acme-agent',
+          vendorResumeSupport: 'supported',
+          getVendorResumeSupport: getPredicate,
+        },
+      },
+    });
+
+    const supported = await getVendorResumeSupport('acme.agent');
+    expect(supported({})).toBe(true);
+    expect(getPredicate).not.toHaveBeenCalled();
+
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        'acme.agent': {
+          id: 'acme.agent',
+          cliSubcommand: 'acme-agent',
+          vendorResumeSupport: 'malformed' as never,
+          getVendorResumeSupport: getPredicate,
+        },
+      },
+    });
+
+    const malformed = await getVendorResumeSupport('acme.agent');
+    expect(malformed({})).toBe(false);
+    expect(getPredicate).not.toHaveBeenCalled();
+
+    readAgentCatalogSnapshot.mockReturnValue({
+      agentDefinitionsById: new Map(),
+      catalogEntriesById: {
+        'acme.agent': {
+          id: 'acme.agent',
+          cliSubcommand: 'acme-agent',
+          vendorResumeSupport: 'experimental',
+          getVendorResumeSupport: getPredicate,
+        },
+      },
+    });
+
+    const experimental = await getVendorResumeSupport('acme.agent');
+    expect(experimental({})).toBe(true);
+    expect(getPredicate).toHaveBeenCalledOnce();
+    expect(predicate).toHaveBeenCalledWith({});
   });
 });

@@ -32,8 +32,8 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
       },
     })).toEqual({
       codexBackendMode: 'appServer',
-      providerBackendMode: 'appServer',
-      providerRuntimeSelection: {
+      agentBackendMode: 'appServer',
+      agentRuntimeSelection: {
         codexBackendMode: 'appServer',
       },
       runtimeDescriptorV1: {
@@ -75,8 +75,8 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
       },
     })).toEqual({
       codexBackendMode: 'acp',
-      providerBackendMode: 'acp',
-      providerRuntimeSelection: {
+      agentBackendMode: 'acp',
+      agentRuntimeSelection: {
         codexBackendMode: 'acp',
       },
       runtimeDescriptorV1: {
@@ -95,7 +95,7 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
       codexBackendMode: 'mcp',
     })).toEqual({
       codexBackendMode: 'appServer',
-      providerRuntimeSelection: {
+      agentRuntimeSelection: {
         codexBackendMode: 'appServer',
       },
     });
@@ -107,7 +107,7 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
       codexBackendMode: 'acp',
     })).toEqual({
       codexBackendMode: 'appServer',
-      providerRuntimeSelection: {
+      agentRuntimeSelection: {
         codexBackendMode: 'appServer',
       },
     });
@@ -124,8 +124,8 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
         },
       },
     })).toEqual({
-      providerBackendMode: 'server',
-      providerRuntimeSelection: {
+      agentBackendMode: 'server',
+      agentRuntimeSelection: {
         opencodeBackendMode: 'server',
       },
       runtimeDescriptorV1: {
@@ -160,8 +160,8 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
         },
       },
     })).toEqual({
-      providerBackendMode: 'sdk',
-      providerRuntimeSelection: {
+      agentBackendMode: 'sdk',
+      agentRuntimeSelection: {
         antigravityRuntimeMode: 'sdk',
       },
       runtimeDescriptorV1: {

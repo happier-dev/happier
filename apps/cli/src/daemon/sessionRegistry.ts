@@ -324,14 +324,30 @@ async function writeSessionMarkerUnlocked(
   if (canonicalAdoptionRequested) {
     const canonicalSessionId = marker.happySessionId.trim();
     const existingSessionId = existingMarkerFromDisk?.happySessionId ?? '';
-    const identityMatches =
+    const incomingProcessCommandHash = marker.processCommandHash;
+    const incomingProcessStartTimeMs = marker.processStartTimeMs;
+    const exactProcessIdentityMatches =
       existingMarkerFromDisk !== null
-      && marker.processCommandHash !== undefined
-      && marker.processStartTimeMs !== undefined
+      && incomingProcessCommandHash !== undefined
+      && incomingProcessStartTimeMs !== undefined
       && sessionMarkerProcessIdentityMatches(existingMarkerFromDisk, {
-        processCommandHash: marker.processCommandHash,
-        processStartTimeMs: marker.processStartTimeMs,
+        processCommandHash: incomingProcessCommandHash,
+        processStartTimeMs: incomingProcessStartTimeMs,
       });
+    // Accepted spawn custody may be written before process inventory can return
+    // an OS start-time witness. In that narrow case, retain the command hash
+    // paired with the exact spawn nonce until the canonical webhook obtains the
+    // current complete identity; never use this path for a conflicting command.
+    const acceptedSpawnIdentityMatches =
+      existingMarkerFromDisk !== null
+      && incomingProcessCommandHash !== undefined
+      && incomingProcessStartTimeMs !== undefined
+      && existingMarkerFromDisk.processStartTimeMs === undefined
+      && existingMarkerFromDisk.processCommandHash !== undefined
+      && existingMarkerFromDisk.processCommandHash
+        === incomingProcessCommandHash;
+    const identityMatches =
+      exactProcessIdentityMatches || acceptedSpawnIdentityMatches;
     const sessionIdentityCanAdopt =
       existingSessionId === `PID-${marker.pid}`
       || existingSessionId === canonicalSessionId;

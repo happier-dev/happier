@@ -19,7 +19,6 @@ import { buildTrackedSessionFromMarker } from '@/daemon/sessions/trackedSessionF
 import type { TrackedSession } from '@/daemon/types';
 import { buildSpawnSessionOptionsFromRespawnDescriptorV1 } from '@/daemon/processSupervision/sessionRunnerRespawnDescriptor';
 import { createDefaultTerminalHostAdapterInventory } from '@/integrations/terminal/host/defaultAdapters';
-import { notifyTerminalAttachmentRetiredThroughCatalog } from '@/terminal/attachment/catalogHooks';
 import { logger } from '@/ui/logger';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
@@ -235,7 +234,6 @@ async function stopSessionViaMarkersBestEffort(params: Readonly<{
       timeoutMs: resolveSessionControlStopTimeoutMs(),
       pollIntervalMs: resolveSessionControlStopPollIntervalMs(),
     }),
-    onExactTerminalAttachmentRetired: notifyTerminalAttachmentRetiredThroughCatalog,
     retireExactTerminalControlServiceability: async ({ attachmentInfo, terminalMode }) => {
       return await retireExactTerminalControlServiceability({
         credentials: params.credentials,

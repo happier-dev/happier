@@ -72,6 +72,24 @@ function shouldRequireCanonicalRunnerMarkerAdoption(
   );
 }
 
+function describeCanonicalStartupReadinessFailure(error: unknown): string {
+  try {
+    const code =
+      error && typeof error === 'object'
+        ? (error as { code?: unknown }).code
+        : undefined;
+    const message = error instanceof Error
+      ? error.message.trim()
+      : String(error).trim();
+    const codePrefix = typeof code === 'string' || typeof code === 'number'
+      ? `${code}: `
+      : '';
+    return `${codePrefix}${message || 'Unknown error'}`;
+  } catch {
+    return 'Unknown error';
+  }
+}
+
 function resolveParentPidLookupTimeoutMs(): number {
   const raw = String(process.env[PARENT_PID_LOOKUP_TIMEOUT_ENV_KEY] ?? '').trim();
   if (!raw) return DEFAULT_PARENT_PID_LOOKUP_TIMEOUT_MS;
@@ -1197,7 +1215,8 @@ export function createOnHappySessionWebhook(params: Readonly<{
       }
     } catch (error) {
       logger.debug(
-        '[DAEMON RUN] Canonical Session startup readiness failed',
+        '[DAEMON RUN] Canonical Session startup readiness failed: '
+          + describeCanonicalStartupReadinessFailure(error),
         error,
       );
       trackedDaemonCanonicalSession.spawnStartupReadinessFailure ??= {

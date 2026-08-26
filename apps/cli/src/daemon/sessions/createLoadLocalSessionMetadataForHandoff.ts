@@ -72,7 +72,7 @@ export function createLoadLocalSessionMetadataForHandoff(params: Readonly<{
     const localExportMetadataOverlay =
       vendorResumeId ? await localSessionHandoffMetadataStore.loadByVendorResumeId(vendorResumeId) : null;
 
-    return buildHandoffSessionMetadataFromTrackedSession({
+    return await buildHandoffSessionMetadataFromTrackedSession({
       trackedSession,
       machineId: params.getMachineId(),
       fallbackHomeDir,

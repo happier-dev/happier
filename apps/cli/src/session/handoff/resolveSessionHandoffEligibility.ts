@@ -52,14 +52,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function readProjectedProviderSessionId(
-  metadata: HandoffExportSessionMetadataV1,
-): string | null {
-  if (typeof metadata.providerSessionId !== 'string') return null;
-  const providerSessionId = metadata.providerSessionId.trim();
-  return providerSessionId || null;
-}
-
 function buildVendorEligibilityMetadata(
   metadata: Record<string, unknown>,
   runtimeDescriptorV1: unknown,
@@ -196,13 +188,9 @@ export async function resolveSessionHandoffEligibility(input: Readonly<{
       agentId,
       storageMode,
       sourceMachineId,
-      // Handoff callbacks receive the strict Agent-owned projection, not raw
-      // session metadata. Its generic providerSessionId is the canonical
-      // external Agent identity; preserve the raw-metadata fallback only for
-      // compatibility readers that still reach this owner directly.
-      vendorHandoffId:
-        readProjectedProviderSessionId(input.metadata)
-        ?? runtimeIdentity.providerSessionId,
+      // Handoff callbacks receive the strict Agent-owned projection. The host
+      // keeps the opaque runtime identity and admits its vendor id separately.
+      vendorHandoffId: runtimeIdentity.providerSessionId,
       metadata: input.metadata,
       resolveCurrentExecutionSurfacesForAgent:
         input.resolveCurrentExecutionSurfacesForAgent,

@@ -27,7 +27,7 @@ import { isMissingAttentionProjectionColumnError } from "./v2SessionListPage";
 
 const OWNER_METADATA_ENVELOPE_V1 = {
     t: "encrypted",
-    c: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+    c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
 } as const;
 const STORED_OWNER_METADATA_ENVELOPE_V1 =
     JSON.stringify(OWNER_METADATA_ENVELOPE_V1);
@@ -365,7 +365,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         expect(recipient.agentStateVersion).toBe(7);
         expect(recipient.metadataLayoutVersion).toBe(1);
         expect(JSON.stringify(recipient)).not.toMatch(
-            /oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU\/wWRuslcRY3OZA==|full-owner-agent-state/,
+            /oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0\+8\+YDECLScN6uQTItPyWVR7XbQA==|full-owner-agent-state/,
         );
         expect(V2SessionListResponseSchema.safeParse({
             sessions: [owner, recipient],

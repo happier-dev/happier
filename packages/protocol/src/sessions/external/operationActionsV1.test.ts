@@ -959,7 +959,7 @@ describe('external-session operation machine-socket contract', () => {
 
   it('parses persisted takeover admission with exact publication, Pending, and metadata fences', () => {
     const ownerMetadataCiphertext =
-      'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==';
+      'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
     const migrationPatch = {
       mode: 'owner_migration',
       expectedAccountEncryptionMode: 'e2ee',

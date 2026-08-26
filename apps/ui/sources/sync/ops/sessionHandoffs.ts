@@ -1260,7 +1260,6 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
         ...buildBackendTransportFieldsFromUiState({
             machineId: options.targetMachineId,
             backendTarget: { kind: 'backend', backendId: preparedResponse.resume.agent },
-            providerMode: preparedResponse.resume.codexBackendMode,
             runtimeDescriptorV1: preparedRuntimeDescriptorV1,
         }),
         ...(normalizeId(options.serverId) ? { serverId: normalizeId(options.serverId) } : {}),
@@ -1515,7 +1514,6 @@ export async function performSessionHandoffRecoveryAction(params: Readonly<{
         ...buildBackendTransportFieldsFromUiState({
             machineId: sourceResume.machineId,
             backendTarget: { kind: 'backend', backendId: sourceResume.agent },
-            providerMode: sourceResume.codexBackendMode,
             runtimeDescriptorV1: sourceRuntimeDescriptorV1,
         }),
         ...(sourceResume.serverId ? { serverId: sourceResume.serverId } : {}),

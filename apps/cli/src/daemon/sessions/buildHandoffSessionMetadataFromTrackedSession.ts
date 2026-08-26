@@ -8,10 +8,14 @@ import {
 } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
-import { buildRuntimeLocalHandoffMetadataForAgent } from '@/session/handoff/metadata/catalogHooks';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import type { TrackedSession } from '../types';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
-import { getAgentResumeConfig } from '@happier-dev/agents';
+import {
+    getAgentResumeConfig,
+    readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata,
+} from '@happier-dev/agents';
+import { ExternalSessionsSourceSchema } from '@happier-dev/protocol';
 import { buildProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 function asMetadataRecord(value: unknown): Metadata | null {
@@ -27,6 +31,10 @@ function normalizeOptionalString(value: unknown): string | null {
     }
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeTranscriptStorage(value: unknown): 'direct' | 'persisted' | null {
+    return value === 'direct' || value === 'persisted' ? value : null;
 }
 
 function resolveFallbackFlavorFromBackendTarget(trackedSession: TrackedSession): string {
@@ -90,12 +98,12 @@ function resolveTrackedSessionFallbackMetadata(params: Readonly<{
     };
 }
 
-export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
+export async function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
     trackedSession: TrackedSession;
     machineId?: string;
     fallbackHomeDir?: string;
     localExportMetadataOverlay?: Record<string, unknown> | null;
-}>): SessionHandoffLocalMetadataSource | null {
+}>): Promise<SessionHandoffLocalMetadataSource | null> {
     const localExportMetadataOverlay = asMetadataRecord(params.localExportMetadataOverlay);
     const baseMetadata =
         asMetadataRecord(params.trackedSession.happySessionMetadataFromLocalWebhook)
@@ -149,16 +157,40 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
     // whether a runtime identity owns a handoff metadata hook. This keeps an
     // installed external Agent exact while leaving configured ACP identities
     // without a catalog Agent unmodified.
-    if (agentId && isCatalogAgentId(agentId)) {
-        const providerRuntimeLocalMetadata = buildRuntimeLocalHandoffMetadataForAgent(agentId, {
+    const runtimeDescriptorV1 = readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(metadata);
+    if (agentId && runtimeDescriptorV1 && isCatalogAgentId(agentId)) {
+        const currentRuntime = await getSessionHostBridge()
+            .resolveCurrentExecutionSurfacesForCatalogAgent(agentId);
+        const buildRuntimeLocalMetadata = currentRuntime?.agentId === agentId
+            ? currentRuntime.executionSurfaces.handoff?.buildRuntimeLocalMetadata
+            : null;
+        const identity = {
             machineId: normalizeOptionalString(metadata.machineId),
             workingDirectory: normalizeOptionalString(metadata.path),
-            transcriptStorage: normalizeOptionalString(params.trackedSession.spawnOptions?.transcriptStorage),
-            environmentVariables: params.trackedSession.spawnOptions?.environmentVariables ?? null,
+            transcriptStorage: normalizeTranscriptStorage(
+                params.trackedSession.spawnOptions?.transcriptStorage,
+            ),
             vendorResumeId,
-        });
-        if (providerRuntimeLocalMetadata) {
-            Object.assign(runtimeLocalMetadata, providerRuntimeLocalMetadata);
+        } as const;
+        const providerRuntimeLocalMetadata = buildRuntimeLocalMetadata
+            ? await buildRuntimeLocalMetadata({ identity, runtimeDescriptorV1 })
+            : null;
+        const externalSessionSource = ExternalSessionsSourceSchema.safeParse(
+            providerRuntimeLocalMetadata?.externalSessionSource,
+        );
+        if (
+            externalSessionSource.success
+            && identity.machineId
+            && identity.transcriptStorage === 'direct'
+        ) {
+            runtimeLocalMetadata.externalSessionV1 = {
+                v: 1,
+                agentId,
+                machineId: identity.machineId,
+                remoteSessionId: vendorResumeId,
+                source: externalSessionSource.data,
+                linkedAtMs: Date.now(),
+            };
         }
     }
 

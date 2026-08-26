@@ -12,7 +12,7 @@ import {
 import {
     type ResolvedBackendCatalogEntry,
 } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
+import { isAgentCliAuthBackgroundCheckSafe } from '@happier-dev/agents';
 import { getInstallablesRegistryEntries } from '@/capabilities/installablesRegistry';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
@@ -90,7 +90,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         const out: AgentId[] = [];
         for (const agentId of params.enabledAgentIds) {
             if (!isBundledAgentId(agentId)) continue;
-            if (!isAgentAuthProbeSafeForBackgroundChecks(agentId)) continue;
+            if (!isAgentCliAuthBackgroundCheckSafe(agentId)) continue;
             if (out.includes(agentId)) continue;
             out.push(agentId);
         }

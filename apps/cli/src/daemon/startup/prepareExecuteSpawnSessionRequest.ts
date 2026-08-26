@@ -22,29 +22,6 @@ import { resolveDarwinBackgroundServiceSpawnDirectoryFailure } from '../spawn/re
 import { applyInitialTranscriptAfterSeqToAttachPayload } from '../sessionEncryption/applyInitialTranscriptAfterSeqToAttachPayload';
 import { buildProviderSpawnErrorResult } from '../spawn/buildProviderSpawnErrorResult';
 
-type DaemonVendorResumeSupportHook = Readonly<{
-    resolveVendorResumeSupportParams?: (params: Readonly<{
-        catalogAgentId: string | null;
-        options: ReturnType<typeof readCanonicalSpawnRuntimeSelection>;
-    }>) => Readonly<Record<string, unknown>>;
-}>;
-
-function resolveVendorResumeSupportParamsForSpawn(params: Readonly<{
-    catalogAgentId: string | null;
-    options: SpawnSessionOptions;
-    daemonSpawnHooks: unknown;
-}>): Readonly<Record<string, unknown>> {
-    const runtimeSelection = readCanonicalSpawnRuntimeSelection(params.options);
-    const hook = (params.daemonSpawnHooks as DaemonVendorResumeSupportHook | null)?.resolveVendorResumeSupportParams;
-    if (hook) {
-        return hook({
-            catalogAgentId: params.catalogAgentId,
-            options: runtimeSelection,
-        });
-    }
-    return runtimeSelection;
-}
-
 /**
  * A requested Agent that is not installed in the current catalog is an invalid
  * spawn request, reported through the existing spawn error vocabulary rather
@@ -141,7 +118,6 @@ export async function prepareExecuteSpawnSessionRequest(
         directory: requestedDirectory,
         sessionId,
         resume,
-        nativeResumeReference,
         existingSessionId,
         permissionMode,
         permissionModeUpdatedAt,
@@ -155,9 +131,6 @@ export async function prepareExecuteSpawnSessionRequest(
     const backendIdentityResolution = await resolveSpawnBackendIdentity({
         existingSessionId: typeof existingSessionId === 'string' ? existingSessionId : '',
         resume: normalizedResume,
-        ...(typeof nativeResumeReference === 'string'
-            ? { nativeResumeReference }
-            : {}),
         backendTarget,
         credentials: params.request.credentials,
         loadLocalHandoffMetadataByVendorResumeId: params.request.loadLocalHandoffMetadataByVendorResumeId,
@@ -231,11 +204,15 @@ export async function prepareExecuteSpawnSessionRequest(
             };
         }
         const vendorResumeSupport = await getVendorResumeSupport(catalogAgentId);
-        const ok = vendorResumeSupport(resolveVendorResumeSupportParamsForSpawn({
-            catalogAgentId,
-            options,
-            daemonSpawnHooks,
-        }));
+        const runtimeSelection = readCanonicalSpawnRuntimeSelection(options);
+        const ok = vendorResumeSupport({
+            ...(runtimeSelection.agentRuntimeSelection
+                ? { agentRuntimeSelection: runtimeSelection.agentRuntimeSelection }
+                : {}),
+            ...(runtimeSelection.runtimeDescriptorV1
+                ? { runtimeDescriptorV1: runtimeSelection.runtimeDescriptorV1 }
+                : {}),
+        });
         if (!ok) {
             const supportLevel = catalogEntry?.vendorResumeSupport ?? null;
             const qualifier = supportLevel === 'experimental' ? ' (experimental and not enabled)' : '';

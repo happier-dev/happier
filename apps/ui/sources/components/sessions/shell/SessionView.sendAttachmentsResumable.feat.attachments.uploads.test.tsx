@@ -336,7 +336,7 @@ vi.mock('@/sync/sync', () => ({
         subscribeAcceptedExternalSessionTailCursor: () => () => {},
         sendMessage: (...args: any[]) => sendMessageSpy(...args),
         enqueuePendingMessage: (...args: any[]) => enqueuePendingMessageSpy(...args),
-        updatePendingMessage: (...args: any[]) => updatePendingMessageSpy(...args),
+        updatePendingMessage: (...args: Parameters<typeof updatePendingMessageSpy>) => updatePendingMessageSpy(...args),
         patchSessionMetadataWithRetry: (...args: any[]) => patchSessionMetadataWithRetrySpy(...args),
         submitMessage: async () => {},
         encryption: {
@@ -1683,7 +1683,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
 
             expect(updatePendingMessageSpy).toHaveBeenCalledTimes(1);
             expect(updatePendingMessageSpy).toHaveBeenCalledWith(
-                's1', 'p-edit', 'Edited queued text', { v: 1 }, {
+                's1', 'p-edit', 'Edited queued text', {
+                    v: 1,
+                    mentions: [],
+                    composerAttachments: [],
+                }, {
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -1747,7 +1751,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
             expect(updatePendingMessageSpy).toHaveBeenCalledTimes(1);
             expect(updatePendingMessageSpy).toHaveBeenCalledWith(
-                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, {
+                's1', queuedMessage.id, 'Edited queued text', {
+                    v: 1,
+                    mentions: [],
+                    composerAttachments: [],
+                }, {
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -1816,7 +1824,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
             expect(updatePendingMessageSpy).toHaveBeenCalledWith(
-                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, {
+                's1', queuedMessage.id, 'Edited queued text', {
+                    v: 1,
+                    mentions: [],
+                    composerAttachments: [],
+                }, {
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -1898,7 +1910,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
             expect(updatePendingMessageSpy).toHaveBeenCalledWith(
-                's1', queuedMessage.id, 'Edited queued text', { v: 1 }, {
+                's1', queuedMessage.id, 'Edited queued text', {
+                    v: 1,
+                    mentions: [],
+                    composerAttachments: [],
+                }, {
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -1985,7 +2001,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
             });
             expect(updatePendingMessageSpy).toHaveBeenCalledWith(
-                's1', queuedMessage.id, 'Edited @new.ts text', { v: 1 }, {
+                's1', queuedMessage.id, 'Edited @new.ts text', {
+                    v: 1,
+                    mentions: [],
+                    composerAttachments: [],
+                }, {
                     preparedComposerAdmission: { stagedMediaHandles: [] },
                 },
             );
@@ -2141,7 +2161,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 '@src/index.ts',
                 {
                     v: 1,
-                    mentions: [mention],
+                    mentions: [{
+                        ...mention,
+                        start: 0,
+                        end: 13,
+                    }],
                     composerAttachments: [attachment],
                 },
                 {
@@ -3088,25 +3112,26 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             const newerMention = {
                 kind: 'partner.reference',
                 ref: 'partner:newer',
-                tokenText: '@newer.ts',
+                token: '@newer.ts',
+                start: 21,
+                end: 30,
                 label: 'Newer issue',
             } as const;
-            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
-            const onStructuredInputMentionsChange = agentInput.props.onStructuredInputMentionsChange;
-            if (typeof onStructuredInputMentionsChange !== 'function') {
-                throw new Error('expected SessionView to expose the structured-mention owner');
-            }
             await act(async () => {
-                onStructuredInputMentionsChange([newerMention]);
+                const current = readComposerPresentationSnapshot(sessionRef);
+                if (!current) throw new Error('expected active Session Composer snapshot');
+                expect(applyComposerPresentationTransaction({
+                    ref: sessionRef,
+                    transaction: {
+                        expectedRevision: current.revision,
+                        operations: [{ kind: 'reference.insert', reference: newerMention }],
+                    },
+                }).status).toBe('applied');
             });
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('Use @accepted.ts and @newer.ts');
-            expect(readSessionDraftValue(
-                TEST_SERVER_ACCOUNT_SCOPE,
-                's1',
-                'structuredInput.mentions',
-            )).toEqual(expect.arrayContaining([
-                expect.objectContaining({ ref: newerMention.ref, tokenText: newerMention.tokenText }),
+            expect(readComposerPresentationSnapshot(sessionRef)?.references).toEqual(expect.arrayContaining([
+                expect.objectContaining({ ref: newerMention.ref, token: newerMention.token }),
             ]));
 
             await act(async () => {
@@ -3122,11 +3147,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
-            expect(readSessionDraftValue(
-                TEST_SERVER_ACCOUNT_SCOPE,
-                's1',
-                'structuredInput.mentions',
-            )).toBeUndefined();
+            expect(readComposerPresentationSnapshot(sessionRef)?.references).toEqual([]);
             expect(agentInput.props.value).toBe('');
         } finally {
             act(() => {

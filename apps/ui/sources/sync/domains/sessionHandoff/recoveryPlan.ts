@@ -6,7 +6,6 @@ import {
 } from '@happier-dev/agents';
 import {
     ExternalSessionAgentIdSchema,
-    normalizeCodexBackendMode,
     readRuntimeDescriptorV1FromMetadata,
     type ExternalSessionAgentId,
     type RuntimeDescriptorV1,
@@ -30,7 +29,6 @@ export type SessionHandoffSourceResumePlan = Readonly<{
     transcriptStorage: 'direct' | 'persisted';
     serverId: string | null;
     runtimeDescriptorV1?: unknown;
-    codexBackendMode?: 'mcp' | 'acp' | 'appServer';
     environmentVariables?: Record<string, string>;
 }>;
 
@@ -99,9 +97,8 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
     const directory = typeof input.sourceMetadata.path === 'string' ? input.sourceMetadata.path.trim() : '';
     if (!agent || !directory) return null;
 
-    const codexBackendMode = normalizeCodexBackendMode(input.sourceMetadata.codexBackendMode);
     const agentMetadata = projectSessionMetadataForAgentHandoff(input.sourceMetadata);
-    const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(input.sourceMetadata);
+    const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(agentMetadata);
     // Every Agent reaches the one descriptor interpreter here: a bundled Agent
     // through its build-time projection and an installed one through the
     // descriptor its source machine published. The machine is passed explicitly
@@ -128,7 +125,6 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
             ...(runtimeDescriptorV1
                 ? { runtimeDescriptorV1 }
                 : {}),
-            ...(codexBackendMode ? { codexBackendMode } : {}),
             ...(sourceRecoveryPatch?.environmentVariables
                 ? { environmentVariables: sourceRecoveryPatch.environmentVariables }
                 : {}),

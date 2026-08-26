@@ -117,9 +117,9 @@ describe("session publisher presence on SQLite", () => {
     it("rejects a predecessor publisher tuple patch after a successor commits its fence", async () => {
         const seeded = await seed();
         const previousOwnerMetadataCiphertext =
-            "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==";
+            "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==";
         const nextOwnerMetadataCiphertext =
-            "oQohIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzh5AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGA==";
+            "oRohIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzh6m869PVe0miAb8CnDsASVAnt9+tG1Zg==";
         const previousOwnerMetadata = {
             t: "encrypted",
             c: previousOwnerMetadataCiphertext,

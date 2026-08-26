@@ -26,16 +26,16 @@ type SpawnRuntimeSelectionCompatIngress = Readonly<{
 
 export type CanonicalSpawnRuntimeSelection = Readonly<{
   codexBackendMode?: CodexBackendMode;
-  providerBackendMode?: string;
-  providerRuntimeSelection?: Readonly<Record<string, unknown>>;
+  agentBackendMode?: string;
+  agentRuntimeSelection?: Readonly<Record<string, unknown>>;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>;
 
-function readProviderRuntimeSelectionFromDescriptor(
+function readAgentRuntimeSelectionFromDescriptor(
   runtimeDescriptorV1: RuntimeDescriptorV1 | undefined,
 ): Readonly<{
-  providerBackendMode?: string;
-  providerRuntimeSelection?: Readonly<Record<string, unknown>>;
+  agentBackendMode?: string;
+  agentRuntimeSelection?: Readonly<Record<string, unknown>>;
 }> {
   if (!runtimeDescriptorV1) {
     return {};
@@ -55,15 +55,15 @@ function readProviderRuntimeSelectionFromDescriptor(
     runtimeKindOverride: runtimeKind,
   });
   return {
-    providerBackendMode: runtimeKind,
-    ...(accountSettings && Object.keys(accountSettings).length > 0 ? { providerRuntimeSelection: accountSettings } : {}),
+    agentBackendMode: runtimeKind,
+    ...(accountSettings && Object.keys(accountSettings).length > 0 ? { agentRuntimeSelection: accountSettings } : {}),
   };
 }
 
-function readLegacyCodexBackendModeFromProviderRuntimeSelection(
-  providerRuntimeSelection: Readonly<Record<string, unknown>> | undefined,
+function readLegacyCodexBackendModeFromAgentRuntimeSelection(
+  agentRuntimeSelection: Readonly<Record<string, unknown>> | undefined,
 ): CodexBackendMode | undefined {
-  return normalizeCodexBackendMode(providerRuntimeSelection?.codexBackendMode) ?? undefined;
+  return normalizeCodexBackendMode(agentRuntimeSelection?.codexBackendMode) ?? undefined;
 }
 
 export function readSpawnRuntimeDescriptorV1(
@@ -77,9 +77,9 @@ export function readCanonicalSpawnRuntimeSelection(
 ): CanonicalSpawnRuntimeSelection {
   const runtimeDescriptorV1 = readSpawnRuntimeDescriptorV1(options);
   const {
-    providerBackendMode,
-    providerRuntimeSelection: descriptorRuntimeSelection,
-  } = readProviderRuntimeSelectionFromDescriptor(runtimeDescriptorV1);
+    agentBackendMode,
+    agentRuntimeSelection: descriptorRuntimeSelection,
+  } = readAgentRuntimeSelectionFromDescriptor(runtimeDescriptorV1);
   const codexCompatRuntimeKindOverride =
     normalizeCodexBackendMode(options.backendMode)
     ?? normalizeCodexBackendMode(options.codexBackendMode)
@@ -89,13 +89,13 @@ export function readCanonicalSpawnRuntimeSelection(
     accountSettings: null,
     runtimeKindOverride: codexCompatRuntimeKindOverride,
   }) ?? undefined;
-  const providerRuntimeSelection = descriptorRuntimeSelection ?? codexCompatRuntimeSelection;
-  const codexBackendMode = readLegacyCodexBackendModeFromProviderRuntimeSelection(providerRuntimeSelection);
+  const agentRuntimeSelection = descriptorRuntimeSelection ?? codexCompatRuntimeSelection;
+  const codexBackendMode = readLegacyCodexBackendModeFromAgentRuntimeSelection(agentRuntimeSelection);
 
   return {
     ...(codexBackendMode ? { codexBackendMode } : {}),
-    ...(providerBackendMode ? { providerBackendMode } : {}),
-    ...(providerRuntimeSelection ? { providerRuntimeSelection } : {}),
+    ...(agentBackendMode ? { agentBackendMode } : {}),
+    ...(agentRuntimeSelection ? { agentRuntimeSelection } : {}),
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
   };
 }

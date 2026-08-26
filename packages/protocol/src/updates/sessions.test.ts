@@ -49,7 +49,7 @@ describe('session update payloads', () => {
       metadataLayoutVersion: 1,
       ownerMetadata: {
         t: 'encrypted',
-        c: 'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+        c: 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==',
       },
     })).success).toBe(true);
     expect(UpdateBodySchema.safeParse(buildNewSessionUpdateBody({
@@ -66,7 +66,7 @@ describe('session update payloads', () => {
     expect(UpdateBodySchema.safeParse(buildNewSessionUpdateBody({
       metadataLayoutVersion: 1,
       ownerMetadata:
-        'oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==',
+        'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==',
     })).success).toBe(false);
   });
 });

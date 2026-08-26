@@ -7368,11 +7368,11 @@ describe("sessionWriteService", () => {
 
     describe("updateSessionMetadataEnvelopeTuple", () => {
         const previousOwnerMetadataCiphertext =
-            "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==";
+            "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==";
         const caseOnlyDistinctPreviousOwnerMetadataCiphertext =
-            "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGdb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==";
+            "oRoBAGMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==";
         const ownerMetadataCiphertext =
-            "oQohIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzh5AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGA==";
+            "oRohIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzh6m869PVe0miAb8CnDsASVAnt9+tG1Zg==";
         const previousOwnerMetadataEnvelope = { t: "encrypted", c: previousOwnerMetadataCiphertext } as const;
         const caseOnlyDistinctPreviousOwnerMetadataEnvelope = { t: "encrypted", c: caseOnlyDistinctPreviousOwnerMetadataCiphertext } as const;
         const ownerMetadataEnvelope = { t: "encrypted", c: ownerMetadataCiphertext } as const;

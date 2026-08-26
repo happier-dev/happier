@@ -4148,10 +4148,30 @@ function SessionViewLoaded({
             const nextValue = typeof nextValueOrUpdater === 'function'
                 ? (nextValueOrUpdater as (value: string) => string)(currentValue)
                 : nextValueOrUpdater;
+            if (!activeServerAccountScope) {
+                const snapshot = existingSessionComposerOwner.read();
+                existingSessionComposerOwner.apply(snapshot.revision, {
+                    text: nextValue,
+                    references: composerReferencesFromStructuredMentions({
+                        text: nextValue,
+                        mentions: snapshot.document.structuredInputMentions,
+                    }),
+                    attachments: snapshot.document.composerAttachments.map((attachment) => (
+                        composerAttachmentDraftToView(attachment, {
+                            entriesById: composerAttachmentAvailabilityEntriesById,
+                        })
+                    )),
+                });
+            }
             messageRef.current = nextValue;
             return nextValue;
         });
-    }, [setDraftValue]);
+    }, [
+        activeServerAccountScope,
+        composerAttachmentAvailabilityEntriesById,
+        existingSessionComposerOwner,
+        setDraftValue,
+    ]);
     const updatePendingMessageComposerDocument = React.useCallback((
         updater: (document: PendingMessageComposerEditState['document']) => PendingMessageComposerEditState['document'],
     ): PendingMessageComposerEditState | null => {
@@ -6557,10 +6577,7 @@ function SessionViewLoaded({
                                             }
                                             const rawStructuredInput = RawIngressStructuredInputV1Schema.parse({
                                                 v: 1,
-                                                mentions: composerStructuredMentionsFromReferences({
-                                                    references: snapshot.references,
-                                                    existing: [],
-                                                }),
+                                                mentions: snapshot.references,
                                                 composerAttachments: candidate.attachments,
                                             });
                                             const prepared = await preparePendingMessageComposerAdmission(sessionId, {
