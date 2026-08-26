@@ -3,7 +3,9 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { lightTheme } from '@/theme';
 import { createSessionItemTestRowModel, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { resolveSessionTagColorRole } from './sessionTagColors';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -222,6 +224,32 @@ describe('SessionItem tags (layout)', () => {
 
         const styleArray = Array.isArray(row?.props.style) ? row?.props.style.filter(Boolean) : [row?.props.style].filter(Boolean);
         expect(styleArray.some((s: any) => typeof s === 'object' && s?.paddingVertical === 10)).toBe(false);
+    });
+
+    it('renders tags with their stable muted color', async () => {
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession()}
+                serverId="server_a"
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                tagsEnabled={true}
+                tags={['focus']}
+                allKnownTags={['focus']}
+                onSetTags={vi.fn()}
+            />,
+        );
+
+        const tagText = screen.findAllByType('Text').find((node) => node.props.children === 'focus');
+        const tagChip = tagText?.parent;
+        const colors = lightTheme.colors.state[resolveSessionTagColorRole('focus')];
+
+        expect(tagChip?.props.style).toContainEqual({ backgroundColor: colors.background, borderColor: colors.border });
+        expect(tagText?.props.style).toContainEqual({ color: colors.onTint });
     });
 
     it('keeps narrow tags in the trailing metadata cluster', async () => {

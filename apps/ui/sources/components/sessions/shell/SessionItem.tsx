@@ -48,6 +48,7 @@ import {
 } from './sessionListRowHeights';
 import { shouldUseReadableNativePhoneMinimalSessionRow } from './sessionListRowDensity';
 import { planSessionTagDisplay } from './sessionTagPlacement';
+import { resolveSessionTagColorRole } from './sessionTagColors';
 import { useIsTablet } from '@/utils/platform/responsive';
 import type { SessionStatus } from '@/utils/sessions/sessionUtils';
 import { useSessionRowActionMenu } from './row/actionMenu/useSessionRowActionMenu';
@@ -1154,28 +1155,33 @@ const SessionItemContent = React.memo(
                     isMinimal ? styles.tagsRowMinimal : null,
                 ]}
             >
-                {tagChips.map((tag) => (
-                    <View
-                        key={tag.key}
-                        style={[
-                            styles.tagChip,
-                            tagChipDensity === 'compact' ? styles.tagChipCompact : null,
-                            tagChipDensity === 'minimal' ? styles.tagChipMinimal : null,
-                            placement === 'inline' ? styles.tagChipInline : null,
-                        ]}
-                    >
-                        <Text
+                {tagChips.map((tag) => {
+                    const colors = theme.colors.state[resolveSessionTagColorRole(tag.label, tag.isOverflow)];
+                    return (
+                        <View
+                            key={tag.key}
                             style={[
-                                styles.tagChipText,
-                                tagChipDensity === 'compact' ? styles.tagChipTextCompact : null,
-                                tagChipDensity === 'minimal' ? styles.tagChipTextMinimal : null,
+                                styles.tagChip,
+                                tagChipDensity === 'compact' ? styles.tagChipCompact : null,
+                                tagChipDensity === 'minimal' ? styles.tagChipMinimal : null,
+                                placement === 'inline' ? styles.tagChipInline : null,
+                                { backgroundColor: colors.background, borderColor: colors.border },
                             ]}
-                            numberOfLines={1}
                         >
-                            {tag.label}
-                        </Text>
-                    </View>
-                ))}
+                            <Text
+                                style={[
+                                    styles.tagChipText,
+                                    tagChipDensity === 'compact' ? styles.tagChipTextCompact : null,
+                                    tagChipDensity === 'minimal' ? styles.tagChipTextMinimal : null,
+                                    { color: colors.onTint },
+                                ]}
+                                numberOfLines={1}
+                            >
+                                {tag.label}
+                            </Text>
+                        </View>
+                    );
+                })}
             </View>
         );
 
