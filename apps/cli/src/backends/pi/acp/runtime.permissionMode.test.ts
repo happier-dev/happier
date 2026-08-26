@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Metadata, PermissionMode } from '@/api/types';
 import type { CatalogAcpRuntimeCreateCall, CatalogAcpSessionOpenCall } from '@/testkit/backends/catalogAcpRuntime';
+import type { Credentials } from '@/persistence';
 import { createCatalogAcpBackendSpy, createMessageBufferFixture, createSessionProviderInputConsumerFixture } from '@/testkit/backends/catalogAcpRuntime';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
@@ -13,6 +14,11 @@ import { formatPiSessionDirectoryForCwd } from '@/backends/pi/utils/piSessionFil
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 
 import { createPiAcpRuntime } from './runtime';
+
+const credentials: Credentials = {
+  token: 'test-token',
+  encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+};
 
 describe('Pi ACP runtime permission mode wiring', () => {
   afterEach(() => {
@@ -29,6 +35,8 @@ describe('Pi ACP runtime permission mode wiring', () => {
     const runtime = createPiAcpRuntime({
       directory: '/tmp',
       machineId: 'machine-1',
+      credentials,
+      fallbackToolDelivery: 'shell_bridge',
       session,
       messageBuffer: createMessageBufferFixture(),
       mcpServers: {},
@@ -58,6 +66,8 @@ describe('Pi ACP runtime permission mode wiring', () => {
       const runtime = createPiAcpRuntime({
         directory: '/tmp',
         machineId: 'machine-1',
+        credentials,
+        fallbackToolDelivery: 'shell_bridge',
         session: createApiSessionClientFixture(),
         messageBuffer: createMessageBufferFixture(),
         mcpServers: {},
@@ -87,6 +97,8 @@ describe('Pi ACP runtime permission mode wiring', () => {
 
     const runtime = createPiAcpRuntime({
       directory: '/tmp',
+      credentials,
+      fallbackToolDelivery: 'shell_bridge',
       machineId: 'machine-1',
       session: createApiSessionClientFixture(),
       messageBuffer: createMessageBufferFixture(),
@@ -114,6 +126,8 @@ describe('Pi ACP runtime permission mode wiring', () => {
     const runtime = createPiAcpRuntime({
       directory: '/tmp',
       machineId: 'machine-1',
+      credentials,
+      fallbackToolDelivery: 'shell_bridge',
       session: createApiSessionClientFixture(),
       messageBuffer: createMessageBufferFixture(),
       mcpServers: {},
@@ -159,6 +173,8 @@ describe('Pi ACP runtime permission mode wiring', () => {
       const runtime = createPiAcpRuntime({
         directory: cwd,
         machineId: 'machine-1',
+        credentials,
+        fallbackToolDelivery: 'shell_bridge',
         session,
         messageBuffer: createMessageBufferFixture(),
         mcpServers: {},

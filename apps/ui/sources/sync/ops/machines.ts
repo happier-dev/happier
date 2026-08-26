@@ -22,6 +22,7 @@ import {
     buildCompatibleSpawnHappySessionRpcParams,
     buildSpawnHappySessionRpcParams,
     shouldUseLegacySpawnHappySessionRpcParams,
+    supportsSpawnPendingFirstInput,
     supportsSpawnSourceContext,
     type CompatibleSpawnHappySessionRpcParams,
     type SpawnHappySessionRpcParams,
@@ -90,7 +91,10 @@ export type MachineSpawnAttemptCustody =
     | Readonly<{ status: 'lock_unavailable' }>;
 
 export type MachineSpawnNewSessionUntilResolvedResult =
-    | (SpawnSessionResult & Readonly<{ spawnAttemptCustody?: MachineSpawnAttemptCustody }>)
+    | (SpawnSessionResult & Readonly<{
+        spawnAttemptCustody?: MachineSpawnAttemptCustody;
+        pendingFirstInputTransferred?: boolean;
+    }>)
     | (Extract<SpawnSessionResult, { type: 'error' }> & Readonly<{
         spawnNonce: string;
         spawnAttemptCustody: Extract<MachineSpawnAttemptCustody, { status: 'unresolved' }>;
@@ -194,6 +198,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
         reused: boolean;
     }> | null = null;
     let spawnSubmitted = false;
+    let pendingFirstInputTransferred = false;
     // This must survive into the transport-error recovery branch below. The
     // source recipe itself remains in the RPC payload; this flag only prevents
     // the browser from resolving a target-only custody record as success.
@@ -232,6 +237,8 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             effectiveServerId,
             activeServerId: profileScope.serverId,
         });
+        pendingFirstInputTransferred = preparedOptions.pendingFirstInput !== undefined
+            && supportsSpawnPendingFirstInput(daemonCliVersion);
 
         if (
             preparedOptions.sourceContext
@@ -327,6 +334,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             return {
                 type: 'success',
                 sessionId: activeAttempt.record.createdSessionId,
+                pendingFirstInputTransferred,
                 spawnAttemptCustody: buildSpawnAttemptCustodyIdentity('completed', activeAttempt.record),
             };
         }
@@ -353,6 +361,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                 return {
                     type: 'success',
                     sessionId: resolved.sessionId,
+                    pendingFirstInputTransferred,
                     spawnAttemptCustody: completedCustody,
                 };
             }
@@ -402,6 +411,12 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             directory: preparedOptions.directory,
             daemonCliVersion,
         });
+        if (
+            normalized.type === 'success'
+            && typeof normalized.pendingFirstInputAccepted === 'boolean'
+        ) {
+            pendingFirstInputTransferred = normalized.pendingFirstInputAccepted;
+        }
         const shouldResolve =
             (normalized.type === 'success' && !normalized.sessionId && normalized.sessionIdStatus === 'pending')
             || (normalized.type === 'error' && normalized.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT);
@@ -432,6 +447,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                 return {
                     type: 'success',
                     sessionId: resolved.sessionId,
+                    pendingFirstInputTransferred,
                     spawnAttemptCustody: completedCustody,
                 };
             }
@@ -462,7 +478,14 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
         const completedCustody = completedRecord
             ? buildSpawnAttemptCustodyIdentity('completed', completedRecord)
             : null;
-        return completedCustody ? { ...normalized, spawnAttemptCustody: completedCustody } : normalized;
+        if (normalized.type === 'success') {
+            return {
+                ...normalized,
+                pendingFirstInputTransferred,
+                ...(completedCustody ? { spawnAttemptCustody: completedCustody } : {}),
+            };
+        }
+        return normalized;
     } catch (error) {
         if (isAccountSettingsScopeChangedDuringSpawnPreparationError(error)) {
             if (!spawnSubmitted) await clearCustody();
@@ -509,6 +532,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
                     return {
                         type: 'success',
                         sessionId: resolved.sessionId,
+                        pendingFirstInputTransferred,
                         spawnAttemptCustody: completedCustody,
                     };
                 }

@@ -979,7 +979,16 @@ export function registerMachineRpcHandlers(params: Readonly<{
             spawnNonce: result.spawnNonce,
           });
         }
-        return result;
+        return {
+          ...result,
+          ...(pendingFirstInput !== undefined
+            ? {
+                pendingFirstInputAccepted:
+                  normalizedPendingFirstInput !== undefined
+                  && result.runnerAcceptance !== 'preexisting_or_adopted',
+              }
+            : {}),
+        };
 
       case 'requestToApproveDirectoryCreation':
         logger.debug(`[API MACHINE] Requesting directory creation approval for: ${result.directory}`);

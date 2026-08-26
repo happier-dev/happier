@@ -74,6 +74,44 @@ describe('newSessionDraftRepositoryAdapter', () => {
         }));
     });
 
+    it('preserves an omitted permission mode so agent defaults can hydrate it', () => {
+        const snapshot = {
+            address: { kind: 'newSession', draftId: DRAFT_ID },
+            document: {
+                v: 1,
+                composer: {
+                    text: field('text-1', ''),
+                    mentions: field('mentions-1', []),
+                    attachments: field('attachments-1', []),
+                },
+                target: {
+                    kind: 'newSession',
+                    authoring: {
+                        targetType: field('target-1', 'new_session'),
+                        machineId: field('machine-1', 'machine-a'),
+                        serverId: field('server-1', 'server-a'),
+                        directory: field('directory-1', '/repo/a'),
+                        agentId: field('agent-1', 'codex'),
+                        backendTarget: field('backend-1', { kind: 'builtInAgent', agentId: 'codex' }),
+                        permissionMode: field('permission-1', null),
+                    },
+                },
+                extensions: {},
+            },
+            status: 'clean',
+            conflict: null,
+            createdAt: 10,
+            updatedAt: 20,
+            materialized: true,
+            localSupplement: {},
+        } as unknown as SessionDraftSnapshot;
+
+        const draft = readNewSessionDraftFromSnapshot(snapshot);
+
+        expect(draft).not.toBeNull();
+        expect(draft).not.toHaveProperty('permissionMode');
+    });
+
     it('projects only the synchronized authoring catalog plus composer text', () => {
         const patch = buildNewSessionDraftPatch({
             authoringDraft: {

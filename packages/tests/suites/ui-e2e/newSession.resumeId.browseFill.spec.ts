@@ -193,10 +193,17 @@ test.describe('ui e2e: /new resume id browse fills from direct sessions', () => 
     // so select the machine before choosing Codex.
     await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 60_000 });
     await openNewSessionMachineSelection({ page, uiBaseUrl });
-    const machineOption = page.locator(
-      `[data-testid="new-session-machine:${machineId}"]:visible, [data-testid="new-session-machine-option:${machineId}"]:visible`,
-    );
+    const activeMachinePopover = page.getByTestId('agent-input-content-popover');
+    const machinePopoverOpened = await expect(activeMachinePopover)
+      .toHaveCount(1, { timeout: 5_000 })
+      .then(() => true, () => false);
+    const machineOptionSelector =
+      `[data-testid="new-session-machine:${machineId}"]:visible, [data-testid="new-session-machine-option:${machineId}"]:visible`;
+    const machineOption = machinePopoverOpened
+      ? activeMachinePopover.locator(machineOptionSelector)
+      : page.locator(machineOptionSelector);
     await expect(machineOption).not.toHaveCount(0, { timeout: 120_000 });
+    await expect(machineOption.first()).toBeVisible({ timeout: 120_000 });
     await machineOption.first().click();
     await page.waitForURL((url: URL) => url.pathname.endsWith('/new'), { timeout: 60_000 });
 

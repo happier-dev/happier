@@ -404,13 +404,12 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
 
         expect(requestMock).not.toHaveBeenCalled();
-        expect(runtimeFetchMock).toHaveBeenCalledWith(
-            `https://owner.example/v1/sessions/${sessionId}/messages?scope=main`,
-            expect.objectContaining({
-                method: 'GET',
-            }),
-        );
-        const ownerMessagesCall = findRuntimeFetchCall(`https://owner.example/v1/sessions/${sessionId}/messages?scope=main`);
+        const ownerMessagesCall = runtimeFetchMock.mock.calls.find(([url]) => (
+            typeof url === 'string'
+            && url.startsWith(`https://owner.example/v1/sessions/${sessionId}/messages?`)
+            && new URL(url).searchParams.get('scope') === 'main'
+        ));
+        expect(ownerMessagesCall?.[1]).toEqual(expect.objectContaining({ method: 'GET' }));
         expectHeaderValue(ownerMessagesCall?.[1]?.headers, 'Authorization', `Bearer ${ownerToken}`);
         const messagesById = storage.getState().sessionMessages[sessionId]?.messagesById ?? {};
         expect(Object.values(messagesById).some((message) => message.kind === 'user-text' && message.text === 'hello scoped')).toBe(true);

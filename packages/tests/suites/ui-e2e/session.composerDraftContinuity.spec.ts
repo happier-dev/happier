@@ -325,7 +325,6 @@ test.describe('ui e2e: session composer draft continuity', () => {
             fingerprint: IDENTITY_HEADERS.fingerprint,
         });
         token = auth.token;
-
         sessionA = await createPlainSession({ baseUrl: server.baseUrl, token, title: 'Composer draft continuity A' });
         sessionB = await createPlainSession({ baseUrl: server.baseUrl, token, title: 'Composer draft continuity B' });
 

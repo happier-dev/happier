@@ -1,4 +1,4 @@
-import { mkdir, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readdir, rm } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 
 import {
@@ -10,20 +10,35 @@ import {
 import { codexConnectedServiceStateSharingDescriptor } from '@/backends/codex/connectedServices/codexConnectedServiceStateSharingDescriptor';
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
 import { ConnectedServiceSharedStateLinkUnavailableError } from '@/daemon/connectedServices/stateSharing/createSharedStateLink';
-import { withConnectedServiceStateSharingDestinationLock } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingLock';
+import { withConnectedServiceStateSharingLocks } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingLock';
 import {
   readConnectedServiceStateSharingManifest,
   removeLegacyConnectedServiceStateSharingManifest,
   writeConnectedServiceStateSharingManifest,
 } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
 import { applyConnectedServiceStateSharingDescriptor } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
-import type { ConnectedServiceSessionFileImportDetail } from '@/daemon/connectedServices/stateSharing/importConnectedServiceSessionFiles';
+import {
+  importConnectedServiceSessionFiles,
+  type ConnectedServiceSessionFileImportDetail,
+} from '@/daemon/connectedServices/stateSharing/importConnectedServiceSessionFiles';
 
 import { resolveConfiguredCodexSqliteHome } from './codexStateFileNames';
+import { reconcileCodexSharedJsonlState } from './reconcileCodexSharedJsonlState';
 
 const CODEX_IMPORTABLE_SESSION_HOME_ENTRIES = Object.freeze([
   'sessions',
   'archived_sessions',
+] as const);
+
+const CODEX_SHARED_STATE_DIRECTORY_ENTRIES = Object.freeze([
+  'sessions',
+  'archived_sessions',
+  'memories',
+] as const);
+
+const CODEX_SHARED_STATE_FILE_ENTRIES = Object.freeze([
+  'session_index.jsonl',
+  'history.jsonl',
 ] as const);
 
 type CodexStateMode = 'shared' | 'isolated';
@@ -123,19 +138,74 @@ function resolveVendorResumeIdFromImportedRollout(
   return null;
 }
 
+async function ensureNativeCodexSharedStateStore(sourceCodexHome: string): Promise<void> {
+  await mkdir(sourceCodexHome, { recursive: true });
+  await Promise.all(CODEX_SHARED_STATE_DIRECTORY_ENTRIES.map(async (entryName) => {
+    await mkdir(join(sourceCodexHome, entryName), { recursive: true });
+  }));
+  await Promise.all(CODEX_SHARED_STATE_FILE_ENTRIES.map(async (entryName) => {
+    const handle = await open(join(sourceCodexHome, entryName), 'a');
+    await handle.close();
+  }));
+}
+
+async function backfillPreviousCodexNonSessionState(params: Readonly<{
+  previousCodexHome?: string | null;
+  sourceCodexHome: string;
+}>): Promise<void> {
+  if (!params.previousCodexHome) return;
+  await importConnectedServiceSessionFiles({
+    roots: [{
+      sourceRoot: params.previousCodexHome,
+      destinationRoot: params.sourceCodexHome,
+      includeDirectory: (relativePath) =>
+        relativePath === 'memories' || relativePath.startsWith('memories/'),
+      includeFile: (relativePath) =>
+        relativePath.startsWith('memories/'),
+    }],
+  });
+  await reconcileCodexSharedJsonlState(params);
+}
+
+async function withCodexSharedStatePreflightSource<T>(params: Readonly<{
+  enabled: boolean;
+  sourceCodexHome: string;
+  run: (preflightSourceCodexHome: string | null) => Promise<T>;
+}>): Promise<T> {
+  if (!params.enabled) return await params.run(null);
+  await mkdir(params.sourceCodexHome, { recursive: true });
+  const preflightSourceCodexHome = await mkdtemp(join(params.sourceCodexHome, '.happier-state-preflight-'));
+  try {
+    await Promise.all(CODEX_SHARED_STATE_DIRECTORY_ENTRIES.map(async (entryName) => {
+      await mkdir(join(preflightSourceCodexHome, entryName), { recursive: true });
+    }));
+    await Promise.all(CODEX_SHARED_STATE_FILE_ENTRIES.map(async (entryName) => {
+      const handle = await open(join(preflightSourceCodexHome, entryName), 'w');
+      await handle.close();
+    }));
+    return await params.run(preflightSourceCodexHome);
+  } finally {
+    await rm(preflightSourceCodexHome, { recursive: true, force: true });
+  }
+}
+
 export async function syncCodexConnectedServiceHome(params: Readonly<{
   destinationCodexHome: string;
+  previousCodexHome?: string | null;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<SyncCodexConnectedServiceHomeResult> {
-  return await withConnectedServiceStateSharingDestinationLock(params.destinationCodexHome, async () => {
-    const settings = resolveCodexHomeSharingSettings(params.accountSettings ?? null);
-    const processEnv = params.processEnv ?? process.env;
+  const settings = resolveCodexHomeSharingSettings(params.accountSettings ?? null);
+  const processEnv = params.processEnv ?? process.env;
+  const sourceCodexHome = resolveSourceCodexHome({
+    destinationCodexHome: params.destinationCodexHome,
+    processEnv,
+  });
+  const lockRoots = settings.stateMode === 'shared' && sourceCodexHome
+    ? [params.destinationCodexHome, sourceCodexHome]
+    : [params.destinationCodexHome];
+  return await withConnectedServiceStateSharingLocks(lockRoots, async () => {
     const sourceSqliteHome = resolve(resolveConfiguredCodexSqliteHome(processEnv));
-    const sourceCodexHome = resolveSourceCodexHome({
-      destinationCodexHome: params.destinationCodexHome,
-      processEnv,
-    });
     if (!sourceCodexHome) {
       return {
         providerId: 'codex',
@@ -153,34 +223,51 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
     const configEntryNames = await resolveCodexConfigEntryNames(sourceCodexHome);
     const stateEntryNames = codexConnectedServiceStateSharingDescriptor.state.entries.map((entry) => entry.path);
 
-    const applyResult = await applyConnectedServiceStateSharingDescriptor({
-      descriptor: codexConnectedServiceStateSharingDescriptor,
-      nativeSourceContext: {
-        sourceRoot: sourceCodexHome,
-        sourceEnv: processEnv as Record<string, string>,
-      },
-      target: {
-        targetMaterializedRoot: params.destinationCodexHome,
-        targetMaterializedEnv: {},
-      },
-      configMode: settings.configMode,
-      requestedStateMode: settings.stateMode,
-      effectiveStateMode: settings.stateMode,
-      cwd: process.cwd(),
-      existingManifest: manifest,
-      configEntryNames,
-      stateEntryNames,
-      resolveStateSourceRoot: () => sourceCodexHome,
-      mapStateSymlinkUnavailableDiagnostic: (error) => toStateSymlinkUnavailableDiagnostic(error),
-      sessionImportRoots: settings.stateMode === 'shared'
-        ? CODEX_IMPORTABLE_SESSION_HOME_ENTRIES.map((entryName) => ({
-          sourceRoot: join(params.destinationCodexHome, entryName),
-          destinationRoot: join(sourceCodexHome, entryName),
-          includeFile: (relativePath: string) => relativePath.toLowerCase().endsWith('.jsonl'),
-        }))
-        : [],
-      resolveVendorResumeIdFromImportedFile: resolveVendorResumeIdFromImportedRollout,
-      providerLabel: 'Codex',
+    const applyResult = await withCodexSharedStatePreflightSource({
+      enabled: settings.stateMode === 'shared',
+      sourceCodexHome,
+      run: async (preflightSourceCodexHome) => await applyConnectedServiceStateSharingDescriptor({
+        descriptor: codexConnectedServiceStateSharingDescriptor,
+        nativeSourceContext: {
+          sourceRoot: sourceCodexHome,
+          sourceEnv: processEnv as Record<string, string>,
+        },
+        target: {
+          targetMaterializedRoot: params.destinationCodexHome,
+          targetMaterializedEnv: {},
+        },
+        configMode: settings.configMode,
+        requestedStateMode: settings.stateMode,
+        effectiveStateMode: settings.stateMode,
+        cwd: process.cwd(),
+        existingManifest: manifest,
+        configEntryNames,
+        stateEntryNames,
+        prepareSharedStateSource: preflightSourceCodexHome ? async () => {
+          await backfillPreviousCodexNonSessionState({
+            previousCodexHome: params.previousCodexHome ?? null,
+            sourceCodexHome,
+          });
+          await ensureNativeCodexSharedStateStore(sourceCodexHome);
+        } : undefined,
+        resolveStatePreflightSourceRoot: preflightSourceCodexHome
+          ? () => preflightSourceCodexHome
+          : undefined,
+        resolveStateSourceRoot: () => sourceCodexHome,
+        mapStateSymlinkUnavailableDiagnostic: (error) => toStateSymlinkUnavailableDiagnostic(error),
+        sessionImportRoots: settings.stateMode === 'shared'
+          ? dedupeEntries([
+            resolve(params.destinationCodexHome),
+            ...(params.previousCodexHome ? [resolve(params.previousCodexHome)] : []),
+          ]).flatMap((sessionSourceHome) => CODEX_IMPORTABLE_SESSION_HOME_ENTRIES.map((entryName) => ({
+            sourceRoot: join(sessionSourceHome, entryName),
+            destinationRoot: join(sourceCodexHome, entryName),
+            includeFile: (relativePath: string) => relativePath.toLowerCase().endsWith('.jsonl'),
+          })))
+          : [],
+        resolveVendorResumeIdFromImportedFile: resolveVendorResumeIdFromImportedRollout,
+        providerLabel: 'Codex',
+      }),
     });
 
     await writeConnectedServiceStateSharingManifest(params.destinationCodexHome, applyResult.manifest);

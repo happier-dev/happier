@@ -17,6 +17,7 @@ const buildLiveNewSessionAuthoringDraftFromResolvedInputsMock = vi.hoisted(() =>
 const saveNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const writeNewSessionDraftMock = vi.hoisted(() => vi.fn());
+const writeSessionDraftLocalSupplementMock = vi.hoisted(() => vi.fn());
 const flushSessionDraftMock = vi.hoisted(() => vi.fn(async () => ({ status: 'clean' as const })));
 
 vi.mock('@/components/sessions/authoring/context/buildNewSessionAuthoringContext', () => ({
@@ -29,13 +30,16 @@ vi.mock('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters', (
     buildPersistedNewSessionDraftFromAuthoringDraft: vi.fn(() => ({ selectedPath: '/repo' })),
 }));
 
-vi.mock('@/sync/domains/state/persistence', () => ({
+vi.mock('@/sync/domains/state/persistence', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/state/persistence')>(),
     saveNewSessionDraft: (...args: unknown[]) => saveNewSessionDraftMock(...args),
     clearNewSessionDraft: (...args: unknown[]) => clearNewSessionDraftMock(...args),
 }));
 
-vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
+vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/ops/sessionDrafts/sessionDraftRepository')>(),
     writeNewSessionDraft: (params: unknown) => writeNewSessionDraftMock(params),
+    writeSessionDraftLocalSupplement: (params: unknown) => writeSessionDraftLocalSupplementMock(params),
     flushSessionDraft: (_params: unknown) => flushSessionDraftMock(),
 }));
 
@@ -54,6 +58,7 @@ describe('useNewSessionAuthoringState', () => {
         saveNewSessionDraftMock.mockReset();
         clearNewSessionDraftMock.mockReset();
         writeNewSessionDraftMock.mockReset();
+        writeSessionDraftLocalSupplementMock.mockReset();
         flushSessionDraftMock.mockReset();
         flushSessionDraftMock.mockResolvedValue({ status: 'clean' });
 

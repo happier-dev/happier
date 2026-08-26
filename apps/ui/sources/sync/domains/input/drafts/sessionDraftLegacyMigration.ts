@@ -25,6 +25,7 @@ import {
     type ExistingSessionDraftPatch,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { SessionDraftValueFieldSchemas } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 
 import { projectSyncedSessionAuthoringFields } from './sessionAuthoringDraftProjection';
 
@@ -151,6 +152,7 @@ export async function migrateLegacySessionDrafts(scope: ServerAccountScope): Pro
             address,
             patch: {
                 ...(legacyNewDraft.launchUserAttemptId ? { launchUserAttemptId: legacyNewDraft.launchUserAttemptId } : {}),
+                newSessionLocalState: buildNewSessionDraftLocalState(legacyNewDraft),
                 legacyNewSessionDraftV1: true,
             },
         });

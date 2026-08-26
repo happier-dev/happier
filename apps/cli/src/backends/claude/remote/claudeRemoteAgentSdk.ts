@@ -39,6 +39,7 @@ import {
     resolveClaudeUltracodeForModel,
 } from '@/backends/claude/utils/claudeEffort';
 import { resolveClaudeCodeXdgIsolation } from '@/backends/claude/utils/resolveClaudeCodeXdgIsolation';
+import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 import type { SDKMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
 import type { PermissionResult } from '@/backends/claude/sdk/types';
@@ -131,6 +132,7 @@ function argsContainMcpConfigFlag(args?: string[] | null): boolean {
 export async function claudeRemoteAgentSdk(opts: {
             // Fixed parameters
             sessionId: string | null;
+            happySessionId?: string | null;
             transcriptPath: string | null;
             path: string;
             claudeArgs?: string[];
@@ -203,7 +205,7 @@ export async function claudeRemoteAgentSdk(opts: {
     // Test seam
     createQuery?: AgentSdkQueryFactory;
     spawnClaudeCodeProcess?: ((options: AgentSdkSpawnOptions) => AgentSdkSpawnedProcess) | null;
-}) {
+}): Promise<void> {
     const recordTraceMarker = (params: { kind: string; payload: Record<string, unknown> }) => {
 	        recordToolTraceEvent({
 	            direction: 'outbound',
@@ -726,7 +728,11 @@ export async function claudeRemoteAgentSdk(opts: {
             if (resolvedUltracode) out.settings = buildClaudeUltracodeSettingsJson();
             return Object.keys(out).length > 0 ? out : undefined;
         })();
-        const claudeSubprocessEnv = { ...xdgIsolationEnv, ...buildClaudeSubprocessEnv(), ...experimentalEnvOverlay };
+        const claudeSubprocessEnv = withCurrentHappierSessionId({
+            ...xdgIsolationEnv,
+            ...buildClaudeSubprocessEnv(),
+            ...experimentalEnvOverlay,
+        }, opts.happySessionId ?? '');
         logClaudeRuntimeAuthEnvDiagnostic({
             logPrefix: 'claudeRemoteAgentSdk',
             sessionId: opts.sessionId ?? null,

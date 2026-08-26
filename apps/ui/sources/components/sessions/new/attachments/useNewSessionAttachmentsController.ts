@@ -219,7 +219,10 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         updateReviewCommentDraft,
     ]);
 
-    const handleSend = React.useCallback((options?: NewSessionAgentInputSendOptions) => {
+    const submitNewSession = React.useCallback((
+        options: NewSessionAgentInputSendOptions | undefined,
+        capturePromptAtDispatch: boolean,
+    ) => {
         const promptText = options?.inputTextOverride ?? params.promptStore.getPrompt();
         const submit = (opts?: HandleCreateSessionOptions) => {
             blurActiveElementOnWeb();
@@ -236,9 +239,11 @@ export function useNewSessionAttachmentsController(params: Readonly<{
 
         const hasAttachments = attachmentsUploadsEnabled && draftsSnapshotRef.current.length > 0;
         if (!hasAttachments && !hasReviewCommentDrafts) {
-            submit(options?.inputTextOverride || structuredInputMetaOverrides
+            submit(options?.inputTextOverride || structuredInputMetaOverrides || (capturePromptAtDispatch && promptText)
                 ? {
-                    ...(options?.inputTextOverride ? { inputTextOverride: options.inputTextOverride } : {}),
+                    ...((options?.inputTextOverride || (capturePromptAtDispatch && promptText))
+                        ? { inputTextOverride: promptText }
+                        : {}),
                     ...(structuredInputMetaOverrides ? { structuredInputMetaOverrides } : {}),
                 }
                 : undefined);
@@ -356,6 +361,10 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         params.targetServerId,
     ]);
 
+    const handleSend = React.useCallback((options?: NewSessionAgentInputSendOptions) => {
+        submitNewSession(options, true);
+    }, [submitNewSession]);
+
     const resumedPersistedLaunchKeyRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         const key = typeof params.resumePersistedLaunchKey === 'string'
@@ -363,8 +372,8 @@ export function useNewSessionAttachmentsController(params: Readonly<{
             : '';
         if (key.length === 0 || resumedPersistedLaunchKeyRef.current === key) return;
         resumedPersistedLaunchKeyRef.current = key;
-        handleSend();
-    }, [handleSend, params.resumePersistedLaunchKey]);
+        submitNewSession(undefined, false);
+    }, [params.resumePersistedLaunchKey, submitNewSession]);
 
     return {
         attachmentsUploadsEnabled,

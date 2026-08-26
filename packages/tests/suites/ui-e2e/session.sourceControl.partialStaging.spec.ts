@@ -231,7 +231,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
       await expect(detailsPaneLocator(page).getByText('ADDED_HUNK1_A')).toHaveCount(0, { timeout: 120_000 });
 
       // Discard remaining changes for the file.
-      const discardTwoHunks = rightPane.getByTestId(`scm-discard-${toTestIdSafeValue(twoHunksPath)}`);
+      const discardTwoHunks = detailsPaneLocator(page).getByTestId(`scm-discard-${toTestIdSafeValue(twoHunksPath)}`);
       await discardTwoHunks.click();
       await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
       await page.getByTestId('web-modal-confirm').click();

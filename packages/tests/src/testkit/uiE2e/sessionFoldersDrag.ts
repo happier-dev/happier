@@ -4,7 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { fetchJson } from '../http';
 import { mutateUiE2eLocalSettings } from './localSettingsStorage';
 import { gotoDomContentLoadedWithRetries } from './pageNavigation';
-import { mutateUiE2eScopedAccountSettings } from './scopedAccountSettingsStorage';
+import {
+  mutateUiE2eScopedAccountSettings,
+  readUiE2eScopedAccountSettings,
+} from './scopedAccountSettingsStorage';
 import {
   buildSessionOrganizationImportRequestFromFolderSettings,
   fetchSessionOrganizationSnapshot,
@@ -86,6 +89,33 @@ export function folderOrderKey(folderId: string): string {
   return `folder:${folderId}`;
 }
 
+export async function ensureSessionFolderTreeView(page: Page): Promise<void> {
+  const renderedTreeStructure = page.locator(
+    '[data-testid^="session-folder-header-"], [data-testid^="session-list-project-header:"]',
+  ).first();
+  if (await renderedTreeStructure.count() > 0) return;
+
+  // A direct E2E storage mutation can leave persistence ahead of the already
+  // hydrated React store. Establish a known off state across both, reload it,
+  // then exercise the real menu action to enable tree view deterministically.
+  await mutateUiE2eScopedAccountSettings({
+    page,
+    settingsPatch: { sessionFolderViewModeV1: 'off' },
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('session-list-ordering-menu-trigger').first()).toHaveCount(1, { timeout: 120_000 });
+
+  await page.getByTestId('session-list-ordering-menu-trigger').first().click();
+  const toggle = page.getByTestId('session-folder-view-toggle');
+  await expect(toggle).toHaveCount(1, { timeout: 60_000 });
+  await toggle.click();
+  await expect.poll(async () => {
+    const nextSettings = await readUiE2eScopedAccountSettings({ page });
+    return nextSettings.sessionFolderViewModeV1;
+  }, { timeout: 60_000 }).toBe('tree');
+  await expect(renderedTreeStructure).toHaveCount(1, { timeout: 120_000 });
+}
+
 function readOrderIndex(
   order: Readonly<Record<string, readonly string[] | undefined>>,
   firstKey: string,
@@ -110,9 +140,9 @@ async function ensureSessionFolderViewMode(params: Readonly<{
   if (!firstFolderId) return;
 
   const firstFolderHeader = params.page.getByTestId(`session-folder-header-${firstFolderId}`);
-  // The scoped setting was persisted before navigation. Header absence here means the
-  // organization snapshot has not rendered yet; toggling would turn the requested
-  // tree mode back off and make a slow runner fail deterministically.
+  if (await firstFolderHeader.count() === 0) {
+    await ensureSessionFolderTreeView(params.page);
+  }
   await expect(firstFolderHeader).toHaveCount(1, { timeout: 120_000 });
 }
 

@@ -336,6 +336,8 @@ export type SpawnSessionResult =
       sessionId?: string;
       spawnNonce?: string;
       sessionIdStatus?: 'available' | 'pending';
+      /** Daemon acknowledgement that this request carried first-input custody into its spawn owner. */
+      pendingFirstInputAccepted?: boolean;
     }
   | { type: 'requestToApproveDirectoryCreation'; directory: string }
   | { type: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string; errorDetail?: SpawnSessionErrorDetail };

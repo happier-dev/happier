@@ -11,6 +11,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     flushSessionDraft,
     writeNewSessionDraft,
+    writeSessionDraftLocalSupplement,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
@@ -24,6 +25,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { buildNewSessionDraftPatch } from './newSessionDraftRepositoryAdapter';
+import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 
 import type { NewSessionPromptStore } from './newSessionPromptStore';
 
@@ -198,7 +200,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.windowsRemoteSessionLaunchModeOverride,
     ]);
 
-    const stageDraftIfEnabled = React.useCallback((_draft: PersistedDraft) => {
+    const stageDraftIfEnabled = React.useCallback((draft: PersistedDraft) => {
         if (!draftPersistenceEnabledRef.current) {
             return;
         }
@@ -215,6 +217,11 @@ export function useNewSessionAuthoringState(params: Readonly<{
                 text: promptStore.getPrompt(),
             }),
             materializationIntent: 'userEdit',
+        });
+        writeSessionDraftLocalSupplement({
+            scope: params.draftScope,
+            address,
+            patch: { newSessionLocalState: buildNewSessionDraftLocalState(draft) },
         });
     }, [
         buildCurrentAuthoringDraft,

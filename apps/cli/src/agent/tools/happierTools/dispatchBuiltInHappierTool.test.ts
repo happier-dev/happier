@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 
 import { listBuiltInHappierTools } from './listBuiltInHappierTools';
 import { dispatchBuiltInHappierTool } from './dispatchBuiltInHappierTool';
@@ -84,6 +85,37 @@ describe('built-in Happier tools', () => {
       ok: false,
       errorCode: 'action_disabled',
       error: 'Action is disabled',
+    });
+    expect(changeTitle).not.toHaveBeenCalled();
+  });
+
+  it('rejects change_title when session title updates are discoverable-only', async () => {
+    const changeTitle = vi.fn(async () => ({ success: true, title: 'New title' }));
+
+    const result = await dispatchBuiltInHappierTool({
+      toolName: 'change_title',
+      args: { title: 'New title' },
+      sessionId: 'sess-1',
+      surface: 'session_agent',
+      actionsSettings: ActionsSettingsV1Schema.parse({
+        v: 1,
+        actions: {
+          'session.title.set': {
+            toolExposureModes: { session_agent: 'discoverable_only' },
+          },
+        },
+      }),
+      deps: {
+        changeTitle,
+        startExecutionRun: async () => unsupported(),
+        executeActionByToolName: async () => unsupported(),
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'unknown_tool',
+      error: 'Unknown built-in Happier tool: change_title',
     });
     expect(changeTitle).not.toHaveBeenCalled();
   });
@@ -444,8 +476,8 @@ describe('built-in Happier tools', () => {
     const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
 
     const result = await dispatchBuiltInHappierTool({
-      toolName: 'memory_search',
-      args: { machineId: 'machine-1', query: { q: 'needle' } },
+      toolName: 'memory_ensure_up_to_date',
+      args: { machineId: 'machine-1', sessionId: 'sess-1' },
       sessionId: 'sess-1',
       surface: 'cli',
       deps: {

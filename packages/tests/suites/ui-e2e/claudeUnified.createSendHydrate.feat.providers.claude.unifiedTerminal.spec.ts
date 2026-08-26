@@ -5,13 +5,13 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { enableClaudeUnifiedTerminal } from '../../src/testkit/uiE2e/enableClaudeUnifiedTerminal';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
-import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -45,30 +45,6 @@ async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: nu
     }
   }
   return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
-}
-
-async function enableClaudeUnifiedTerminal(params: Readonly<{ page: Page; uiBaseUrl: string }>): Promise<void> {
-  await setUiFeatureToggle({
-    page: params.page,
-    baseUrl: params.uiBaseUrl,
-    featureId: 'providers.claude.unifiedTerminal',
-    enabled: true,
-  });
-
-  await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/settings/providers/claude`);
-  const unifiedToggle = params.page.getByTestId('settings-provider-field-claudeUnifiedTerminalEnabled');
-  await expect(unifiedToggle).toHaveCount(1, { timeout: 60_000 });
-
-  const input = unifiedToggle.locator('input[type="checkbox"]').first();
-  if ((await input.count()) > 0) {
-    if (!(await input.isChecked().catch(() => false))) {
-      await unifiedToggle.click();
-      await expect(input).toBeChecked({ timeout: 60_000 });
-    }
-    return;
-  }
-
-  await unifiedToggle.click();
 }
 
 async function countVisibleCommittedTranscriptMessagesWithText(page: Page, text: string): Promise<number> {
@@ -126,7 +102,7 @@ test.describe('ui e2e: Claude unified create/send/hydrate', () => {
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 

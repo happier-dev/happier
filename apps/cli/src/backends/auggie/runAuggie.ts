@@ -35,7 +35,7 @@ export async function runAuggie(opts: StandardAcpProviderRunOptions & {
     beforeInitializeSession: ({ metadata }) => {
       (metadata as any).auggieAllowIndexing = allowIndexingFromEnv;
     },
-    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => {
+    createRuntime: ({ directory, machineId, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode, memoryRecallGuidanceEnabled, processEnv, pendingQueueDrainMaxPopPerWake, providerInputConsumer }) => {
       const metadataSnapshot = session.getMetadataSnapshot?.() ?? null;
       const allowIndexing = allowIndexingFromEnv || metadataSnapshot?.auggieAllowIndexing === true;
       return createAuggieAcpRuntime({
@@ -49,6 +49,7 @@ export async function runAuggie(opts: StandardAcpProviderRunOptions & {
         memoryRecallGuidanceEnabled,
         allowIndexing,
         getPermissionMode,
+        processEnv,
         pendingQueueDrainMaxPopPerWake,
         providerInputConsumer,
       });

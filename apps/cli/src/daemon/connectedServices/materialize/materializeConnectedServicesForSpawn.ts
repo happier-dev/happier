@@ -20,8 +20,11 @@ import {
   serializeConnectedServiceMaterializedEnvKeys,
   serializeConnectedServiceChildSelections,
 } from '../connectedServiceChildEnvironment';
-import type { ConnectedServicesMaterializeResult } from './providerMaterializerTypes';
-import type { ConnectedServicesProviderMaterializerInput } from './providerMaterializerTypes';
+import type {
+  ConnectedServicesMaterializationDiagnostic,
+  ConnectedServicesMaterializeResult,
+  ConnectedServicesProviderMaterializerInput,
+} from './providerMaterializerTypes';
 import { resolveConnectedServiceMaterializedRootDir } from './resolveConnectedServiceMaterializedRootDir';
 import { resolveConnectedServiceTargetMaterializedRoot } from './resolveConnectedServiceTargetMaterializedRoot';
 
@@ -281,6 +284,12 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   vendorResumeId?: string | null;
   candidatePersistedSessionFile?: string | null;
   validateGroupMutationCurrentness?: ConnectedServicesProviderMaterializerInput['validateGroupMutationCurrentness'];
+  validatePromotedMaterialization?: (input: Readonly<{
+    env: Readonly<Record<string, string>>;
+    targetMaterializedRoot: string | null;
+    materializationRoot: string;
+    diagnostics: readonly ConnectedServicesMaterializationDiagnostic[] | undefined;
+  }>) => Promise<void> | void;
 }>): Promise<(ConnectedServicesMaterializeResult & Readonly<{
   materializationRoot: string;
   cleanupMaterializationRoot: () => void;
@@ -316,6 +325,7 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
       agentId: params.agentId,
       activeServerDir: params.activeServerDir,
       rootDir: attemptRoot,
+      previousMaterializedRoot: rootDir,
       sessionDirectory: params.sessionDirectory ?? null,
       recordsByServiceId: freshMaterial.recordsByServiceId,
       selectionsByServiceId: freshMaterial.selectionsByServiceId,
@@ -349,6 +359,18 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
     agentId: params.agentId,
     targetMaterializedEnv: materializedEnv,
   }) ?? (materialized.cleanupOnFailure ? rootDir : null);
+  const buildPromotedEnv = (): Record<string, string> => ({
+    ...materializedEnv,
+    ...(targetMaterializedRoot
+      ? { [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: targetMaterializedRoot }
+      : null),
+    ...(serializedSelections
+      ? { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: serializedSelections }
+      : null),
+    ...(serializedMaterializedEnvKeys
+      ? { [HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY]: serializedMaterializedEnvKeys }
+      : null),
+  });
   try {
     await runSerializedPromotion(rootDir, async () => {
       assertActiveAttempt({ rootDir, attemptId, cleanupRoot });
@@ -360,6 +382,13 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
             env: materializedEnv,
             targetMaterializedRoot,
             finalRootDir: rootDir,
+          });
+          assertActiveAttempt({ rootDir, attemptId, cleanupRoot });
+          await params.validatePromotedMaterialization?.({
+            env: buildPromotedEnv(),
+            targetMaterializedRoot,
+            materializationRoot: rootDir,
+            diagnostics: materialized.diagnostics,
           });
           assertActiveAttempt({ rootDir, attemptId, cleanupRoot });
         },
@@ -376,19 +405,16 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
       cleanupMaterializationRoot: cleanupFinalRoot,
       cleanupOnFailure,
       cleanupOnExit,
-      env: {
-        ...materializedEnv,
-        ...(targetMaterializedRoot
-          ? { [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: targetMaterializedRoot }
-          : null),
-        ...(serializedSelections
-          ? { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: serializedSelections }
-          : null),
-        ...(serializedMaterializedEnvKeys
-          ? { [HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY]: serializedMaterializedEnvKeys }
-          : null),
-      },
+      env: buildPromotedEnv(),
     };
+  } catch (error) {
+    try {
+      materialized.cleanupOnFailure?.();
+    } catch {
+      // Preserve the validation or promotion failure as the actionable error.
+    }
+    cleanupRoot();
+    throw error;
   } finally {
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
   }

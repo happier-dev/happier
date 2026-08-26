@@ -168,6 +168,7 @@ async function waitForReleasedServerPendingInputContract(client: ApiSessionClien
 
 describe('ApiSessionClient session.userMessage.send delivery', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       features: {
         sharing: {
@@ -582,30 +583,6 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
 
     const received: any[] = [];
     client.onUserMessage((msg) => received.push(msg));
-    materializeNextPendingQueueV2MessageMock.mockResolvedValueOnce({
-      didMaterialize: true,
-      localId: 'l1',
-      didWrite: true,
-      pendingQueueState: { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 2 },
-      message: {
-        id: 'm1',
-        seq: 1,
-        localId: 'l1',
-        messageRole: 'user',
-        content: {
-          t: 'plain',
-          v: {
-            role: 'user',
-            content: { type: 'text', text: 'hello' },
-            localId: 'l1',
-            meta: { source: 'ui', sentFrom: 'ios' },
-          },
-        },
-        createdAt: 1_000,
-        updatedAt: 1_000,
-      },
-    });
-
     // Simulate the daemon/UI invoking the session-scoped RPC handler, which calls the internal enqueue.
     await (client as any).enqueueSessionUserMessage({
       text: 'hello',

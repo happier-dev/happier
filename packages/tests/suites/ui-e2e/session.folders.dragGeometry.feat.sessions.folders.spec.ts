@@ -235,20 +235,31 @@ test.describe('ui e2e: session list drag geometry', () => {
     // The three sessions exercised directly by the geometry assertions, plus a
     // bank of filler sessions so the list is long enough to scroll/virtualize
     // (the wrong-blue-line bug only reproduced after scrolling).
-    const dragSessionId = await createPlainSession({
-      baseUrl: server.baseUrl,
-      token,
-      title: `geo drag ${run.runId}`,
-      rootPath,
-      machineId: SEEDED_MACHINE_ID,
-      tagPrefix: 'session-drag-geometry',
-    });
-    // Two extra root sessions guarantee rows exist both above and below the
-    // dragged session for the relative up/down moves in scenario 3.
+    // Create filler first so the three rows exercised directly remain mounted
+    // in the initial virtualized viewport. Their relative creation order still
+    // leaves one row above and one below the dragged row for scenario 3.
+    for (let index = 0; index < FILLER_SESSION_COUNT; index += 1) {
+      await createPlainSession({
+        baseUrl: server.baseUrl,
+        token,
+        title: `geo filler ${String(index).padStart(2, '0')} ${run.runId}`,
+        rootPath,
+        machineId: SEEDED_MACHINE_ID,
+        tagPrefix: 'session-drag-geometry',
+      });
+    }
     const extraRootSessionAId = await createPlainSession({
       baseUrl: server.baseUrl,
       token,
       title: `geo extra root a ${run.runId}`,
+      rootPath,
+      machineId: SEEDED_MACHINE_ID,
+      tagPrefix: 'session-drag-geometry',
+    });
+    const dragSessionId = await createPlainSession({
+      baseUrl: server.baseUrl,
+      token,
+      title: `geo drag ${run.runId}`,
       rootPath,
       machineId: SEEDED_MACHINE_ID,
       tagPrefix: 'session-drag-geometry',
@@ -261,16 +272,6 @@ test.describe('ui e2e: session list drag geometry', () => {
       machineId: SEEDED_MACHINE_ID,
       tagPrefix: 'session-drag-geometry',
     });
-    for (let index = 0; index < FILLER_SESSION_COUNT; index += 1) {
-      await createPlainSession({
-        baseUrl: server.baseUrl,
-        token,
-        title: `geo filler ${String(index).padStart(2, '0')} ${run.runId}`,
-        rootPath,
-        machineId: SEEDED_MACHINE_ID,
-        tagPrefix: 'session-drag-geometry',
-      });
-    }
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);

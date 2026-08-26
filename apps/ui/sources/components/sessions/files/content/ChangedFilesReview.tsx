@@ -32,12 +32,27 @@ import { useScmDiffExpandedKeys } from '@/components/sessions/files/content/revi
 import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabilityConfig';
 import { resolveWebScrollableElement } from '@/components/ui/scroll/resolveWebScrollableElement';
 import { Icon } from '@/components/ui/icons/Icon';
+import { preserveWebScrollAnchorAfterToggle } from './review/preserveWebScrollAnchorAfterToggle';
 
 const ViewWithClick = View as unknown as React.ComponentType<
     React.ComponentPropsWithRef<typeof View> & { onClick?: any; onKeyDown?: any; tabIndex?: number }
 >;
 
 const REVIEW_DIFF_LIST_DRAW_DISTANCE_MULTIPLIER = 0.75;
+
+export function selectChangedFilesReviewWebRootCandidate(params: Readonly<{
+    imperativeHost: Element | null;
+    queriedHost: Element | null;
+}>): Element | null {
+    return params.imperativeHost ?? params.queriedHost;
+}
+
+export function resolveChangedFilesReviewCurrentWebScrollRoot<T>(params: Readonly<{
+    resolveCurrent: () => T | null;
+    retained: T | null;
+}>): T | null {
+    return params.resolveCurrent() ?? params.retained;
+}
 
 type ChangedFilesReviewTheme = Readonly<{
     colors: Readonly<{
@@ -482,7 +497,10 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         if (!win) return null;
         const doc = win.document as Document | undefined;
         const listHost = (doc?.querySelector?.('[data-testid="scm-review-list"]') as Element | null) ?? null;
-        const rootCandidate: Element | null = listHost ?? (host as Element | null);
+        const rootCandidate = selectChangedFilesReviewWebRootCandidate({
+            imperativeHost: host as Element | null,
+            queriedHost: listHost,
+        });
         if (!rootCandidate) return null;
 
         const disableOverflowAnchor = (el: any) => {
@@ -509,6 +527,38 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         webScrollRootRef.current = resolved as any;
         return resolved as any;
     }, []);
+
+    const toggleCollapsedPreservingWebAnchor = React.useCallback((path: string) => {
+        if (Platform.OS !== 'web') {
+            toggleCollapsed(path);
+            return;
+        }
+
+        const scrollRoot = resolveChangedFilesReviewCurrentWebScrollRoot({
+            resolveCurrent: resolveWebScrollRoot,
+            retained: webScrollRootRef.current,
+        });
+        const doc = (globalThis as any).window?.document as Document | undefined;
+        const rowTestId = `scm-change-row-${toTestIdSafeValue(path)}`;
+        const row = doc?.querySelector?.(`[data-testid="${rowTestId}"]`) as HTMLElement | null;
+        const anchorY = row?.getBoundingClientRect?.().y;
+        toggleCollapsed(path);
+
+        if (!scrollRoot || typeof anchorY !== 'number') return;
+        const raf: (cb: FrameRequestCallback) => number =
+            typeof globalThis.requestAnimationFrame === 'function'
+                ? globalThis.requestAnimationFrame.bind(globalThis)
+                : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
+        preserveWebScrollAnchorAfterToggle({
+            anchorY,
+            scrollRoot,
+            readAnchorY: () => {
+                const currentRow = doc?.querySelector?.(`[data-testid="${rowTestId}"]`) as HTMLElement | null;
+                return currentRow?.getBoundingClientRect?.().y;
+            },
+            requestFrame: raf,
+        });
+    }, [resolveWebScrollRoot, toggleCollapsed]);
 
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
@@ -874,7 +924,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 testID="scm-review-list"
                 files={diffFiles as any}
                 expandedKeys={expandedKeys}
-                onToggleExpanded={toggleCollapsed}
+                onToggleExpanded={toggleCollapsedPreservingWebAnchor}
                 canRenderInlineDiffs={true}
                 wrapLines={true}
                 showLineNumbers={true}

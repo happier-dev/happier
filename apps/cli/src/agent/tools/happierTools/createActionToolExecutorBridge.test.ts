@@ -143,6 +143,83 @@ describe('createActionToolExecutorBridge', () => {
     ]);
   });
 
+  it('binds only ActionSpec-declared current session and machine fields', async () => {
+    const calls: Array<{ actionId: string; input: unknown; ctx: unknown }> = [];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'session_agent',
+      defaultSessionMachineId: 'machine-current',
+      executor: {
+        execute: async (actionId, input, ctx) => {
+          calls.push({ actionId, input, ctx });
+          return { ok: true, result: { ok: true } };
+        },
+      },
+    });
+
+    await bridge.executeActionByToolName('action_execute', {
+      actionId: 'memory.search',
+      input: { query: { v: 1, query: 'native tools', scope: { type: 'global' }, mode: 'hints' } },
+    }, 'sess-current');
+    await bridge.executeActionByToolName('action_execute', {
+      actionId: 'memory.get_window',
+      input: { seqFrom: 10, seqTo: 12 },
+    }, 'sess-current');
+    await bridge.executeActionByToolName('action_execute', {
+      actionId: 'session.status.get',
+      input: { live: true },
+    }, 'sess-current');
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        actionId: 'memory.search',
+        input: expect.objectContaining({ machineId: 'machine-current' }),
+        ctx: expect.objectContaining({ defaultSessionMachineId: 'machine-current' }),
+      }),
+      expect.objectContaining({
+        actionId: 'memory.get_window',
+        input: { machineId: 'machine-current', seqFrom: 10, seqTo: 12 },
+      }),
+      expect.objectContaining({
+        actionId: 'session.status.get',
+        input: { sessionId: 'sess-current', live: true },
+      }),
+    ]);
+  });
+
+  it('preserves explicit contextual values', async () => {
+    const calls: unknown[] = [];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'session_agent',
+      defaultSessionMachineId: 'machine-current',
+      executor: {
+        execute: async (actionId, input) => {
+          calls.push({ actionId, input });
+          return { ok: true, result: { ok: true } };
+        },
+      },
+    });
+
+    await bridge.executeActionByToolName('action_execute', {
+      actionId: 'memory.get_window',
+      input: {
+        machineId: 'machine-explicit',
+        sessionId: 'sess-historical',
+        seqFrom: 1,
+        seqTo: 2,
+      },
+    }, 'sess-current');
+
+    expect(calls).toEqual([{
+      actionId: 'memory.get_window',
+      input: {
+        machineId: 'machine-explicit',
+        sessionId: 'sess-historical',
+        seqFrom: 1,
+        seqTo: 2,
+      },
+    }]);
+  });
+
   it('returns approved result-bearing action results without converting them to approval requests', async () => {
     const actionsSettings = ActionsSettingsV1Schema.parse({
       v: 1,

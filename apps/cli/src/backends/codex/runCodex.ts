@@ -182,6 +182,7 @@ import {
 	import { resolveCodexBackendModeForRun } from './utils/resolveCodexBackendModeForRun';
 	import { resolveCodexRequestedDirectory } from './utils/resolveCodexRequestedDirectory';
 import { readDaemonInitialGoalFromEnv } from '@/agent/runtime/sessionInitialGoal';
+import { withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
 
 function isRuntimeAuthFailureClassification(value: unknown): value is ConnectedServiceRuntimeFailureClassification {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -1616,8 +1617,9 @@ export async function runCodex(opts: {
 
     // Start Happier MCP server (HTTP) and prepare STDIO bridge config for Codex
     const directory = workspaceDirFromMetadata ?? requestedDirectory;
+    const codexProviderProcessEnv = withCurrentHappierSessionId(process.env, session.sessionId);
     let mcpServers: Awaited<ReturnType<typeof resolveRunnerMcpServers>>['mcpServers'] = {};
-    let codexAppServerProcessEnv = process.env;
+    let codexAppServerProcessEnv = codexProviderProcessEnv;
     let codexAppServerConfigOverrides: string[] = [];
     const mcpSession = applyRunnerMcpSessionContext(session, {
         getPermissionMode: () => currentPermissionMode ?? initialPermissionMode,
@@ -1640,7 +1642,9 @@ export async function runCodex(opts: {
     happierMcpServer = happierBridge.happierMcpServer;
     mcpServers = happierBridge.mcpServers;
     if (useCodexAppServer) {
-        codexAppServerConfigOverrides = buildCodexAppServerConfigOverrides(mcpServers);
+        codexAppServerConfigOverrides = buildCodexAppServerConfigOverrides(mcpServers, {
+            happierSessionId: codexProviderProcessEnv.HAPPIER_SESSION_ID,
+        });
     }
     const resolveFreshSessionSystemPrompt = async (baseOverride?: string | null): Promise<string> =>
         await resolveEffectiveCodingPromptText({
@@ -1659,7 +1663,11 @@ export async function runCodex(opts: {
     if (!useCodexAcp && !useCodexAppServer) {
         const codexMcpServer = await resolveCodexMcpServerSpawn();
         const { CodexMcpClient: CodexMcpClientClass } = await import('./codexMcpClient');
-        client = new CodexMcpClientClass({ mode: codexMcpServer.mode, command: codexMcpServer.command });
+        client = new CodexMcpClientClass({
+            mode: codexMcpServer.mode,
+            command: codexMcpServer.command,
+            env: codexProviderProcessEnv,
+        });
     }
 
             // NOTE: Codex resume support varies by build; forks may seed `codex-reply` with a stored session id.
@@ -1746,6 +1754,7 @@ export async function runCodex(opts: {
     if (useCodexAcp) {
         codexAcpRuntime = createCodexAcpRuntime({
             directory,
+            processEnv: codexProviderProcessEnv,
             session,
             messageBuffer,
             mcpServers,

@@ -7,8 +7,6 @@ import {
 } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { PermissionMode } from '@/api/types';
-import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
-import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 
 import { ProviderPromptSubmissionRejectedBeforeEffectError } from './providerPromptSubmission';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
@@ -23,11 +21,11 @@ function createModeQueue() {
 }
 
 describe('runPermissionModePromptLoop provider submission phase ownership', () => {
-  it('delivers advertised provider commands unchanged and defers fresh-session prompt composition', async () => {
+  it('delivers advertised provider commands unchanged and applies deferred fresh-session prompt composition to the next prompt', async () => {
     const queue = createModeQueue();
     queue.push(
       { text: '/goal fix authentication', localId: 'local-command' },
-      { permissionMode: 'default' },
+      { permissionMode: 'default', appendSystemPrompt: 'APPEND' },
       { userMessageLocalId: 'local-command' },
     );
 
@@ -36,22 +34,41 @@ describe('runPermissionModePromptLoop provider submission phase ownership', () =
       permissionModeUpdatedAt: 0,
     };
     let shouldExit = false;
-    const resolveFreshSessionSystemPrompt = vi.fn(async () => 'HAPPIER SYSTEM PROMPT');
+    const resolveFreshSessionSystemPrompt = vi.fn(async ({ baseOverride }: { baseOverride?: string | null }) => (
+      baseOverride === undefined ? 'HAPPIER SYSTEM PROMPT' : baseOverride ?? ''
+    ));
     const sendPromptWithMeta = vi.fn(async (prompt: { onProviderPromptAccepted?: () => void }) => {
       prompt.onProviderPromptAccepted?.();
-      shouldExit = true;
+      if (sendPromptWithMeta.mock.calls.length === 1) {
+        queue.push(
+          { text: 'continue normally', localId: 'local-message' },
+          { permissionMode: 'default', appendSystemPrompt: 'APPEND' },
+          { userMessageLocalId: 'local-message' },
+        );
+      } else {
+        shouldExit = true;
+      }
     });
-    const session = createMutableApiSessionClientFixture({ metadata });
-    const permissionHandler = new ProviderEnforcedPermissionHandler(session, { logPrefix: '[Pi test]' });
 
     await runPermissionModePromptLoop({
       providerName: 'Pi',
       providerId: 'pi',
       agentMessageType: 'pi',
       explicitPermissionMode: 'default',
-      session,
+      session: {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: vi.fn(),
+        ensureMetadataSnapshot: async () => metadata,
+        waitForMetadataUpdate: () => new Promise<boolean>(() => {}),
+        waitForPendingEligibilityUpdate: () => new Promise<void>(() => {}),
+        fetchLatestUserPermissionIntentFromTranscript: async () => null,
+        sendAgentMessage: vi.fn(),
+      } as any,
       messageQueue: queue,
-      permissionHandler,
+      permissionHandler: {
+        setPermissionMode: vi.fn(),
+        reset: vi.fn(),
+      } as any,
       runtime: {
         beginTurn: vi.fn(),
         startOrLoad: vi.fn(async () => undefined),
@@ -82,7 +99,10 @@ describe('runPermissionModePromptLoop provider submission phase ownership', () =
     expect(sendPromptWithMeta).toHaveBeenCalledWith(expect.objectContaining({
       text: '/goal fix authentication',
     }));
-    expect(resolveFreshSessionSystemPrompt).not.toHaveBeenCalled();
+    expect(sendPromptWithMeta).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      text: 'APPEND\n\ncontinue normally',
+    }));
+    expect(resolveFreshSessionSystemPrompt).toHaveBeenCalledTimes(1);
   });
 
   it('attributes acceptance to the model captured before provider dispatch', async () => {

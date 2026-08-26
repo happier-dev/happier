@@ -9,6 +9,7 @@ export function listBuiltInHappierTools(params?: Readonly<{
   surface?: BuiltInHappierToolsSurface;
   isActionEnabled?: (id: ActionId) => boolean;
   actionsSettings?: ActionsSettingsV1 | null;
+  requiredDirectActionIds?: readonly ActionId[];
 }>) {
   const surface = params?.surface ?? 'session_agent';
   const actionsSettings = params?.actionsSettings ?? readActionsSettingsFromEnv();
@@ -16,7 +17,12 @@ export function listBuiltInHappierTools(params?: Readonly<{
   return [
     ...filterBuiltInToolsForSurface(
       HAPPIER_BUILT_IN_TOOLS,
-      { surface, isActionEnabled, actionsSettings },
+      {
+        surface,
+        isActionEnabled,
+        actionsSettings,
+        requiredDirectActionIds: params?.requiredDirectActionIds,
+      },
     ),
   ];
 }

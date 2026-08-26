@@ -25,7 +25,8 @@ export type CatalogProviderSessionIdentityPublication =
   | Readonly<{ kind: 'external-owner' }>
   | Readonly<{ kind: 'runtime-only'; reason: 'vendor-resume-unsupported' }>;
 
-type CatalogBackendOptionsBeforeSpawn<TBackendOptions extends object> =
+/** Backend options a pre-spawn resolver may contribute — everything except the host-owned fields. */
+export type CatalogBackendOptionsBeforeSpawn<TBackendOptions extends object> =
   Partial<Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'happierSessionId'>>;
 
 type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
@@ -38,11 +39,21 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  processEnv?: NodeJS.ProcessEnv;
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
   backendOptions?: Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'happierSessionId'>;
-  resolveBackendOptionsBeforeSpawn?: (context: Readonly<{
-    session: ApiSessionClient;
-  }>) => Promise<CatalogBackendOptionsBeforeSpawn<TBackendOptions>>;
+  /**
+   * Additional backend options resolved inside `ensureBackend`, immediately before the
+   * backend process is constructed and spawned — for options (e.g. a resolved system
+   * prompt) that depend on the live session and cannot be computed synchronously at
+   * runtime-construction time.
+   *
+   * The returned shape is the same host-excluded subset as {@link backendOptions}:
+   * `cwd`, `mcpServers`, `permissionHandler`, `permissionMode`, and `happierSessionId`
+   * are owned by the runtime and cannot be overridden here (the merge applies them last
+   * as defense in depth). Rejection propagates and prevents the spawn.
+   */
+  resolveBackendOptionsBeforeSpawn?: (ctx: { session: ApiSessionClient }) => Promise<CatalogBackendOptionsBeforeSpawn<TBackendOptions>>;
   getPermissionMode?: () => PermissionMode | null | undefined;
   resolvePermissionMode?: (args: {
     getPermissionMode?: () => PermissionMode | null | undefined;
@@ -171,14 +182,17 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
       const resolvedBackendOptions = params.resolveBackendOptionsBeforeSpawn
         ? await params.resolveBackendOptionsBeforeSpawn({ session: params.session })
         : {};
+
       const created = await createCatalogAcpBackend<TBackendOptions>(params.provider, {
         ...(params.backendOptions ?? {}),
-        ...resolvedBackendOptions,
+        ...(resolvedBackendOptions ?? {}),
+        // Host-owned fields apply last and cannot be overridden by either options source.
         cwd: params.directory,
         mcpServers: params.mcpServers,
         permissionHandler: params.permissionHandler,
         permissionMode,
         happierSessionId: params.session.sessionId,
+        ...(params.processEnv ? { env: params.processEnv } : {}),
       } as unknown as TBackendOptions);
 
       logger.debug(`[${params.loggerLabel}] Backend created`);

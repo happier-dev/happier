@@ -80,6 +80,25 @@ type PublicShareDataset = Readonly<{
 
 const PUBLIC_SHARE_MESSAGES_ACCESS_TOKEN_HEADER = 'x-public-share-messages-access-token';
 
+export function resolvePublicShareTokenParam(
+    routeToken: string | null | undefined,
+    pathname: string | null | undefined,
+): string | null {
+    const normalizedRouteToken = typeof routeToken === 'string' ? routeToken.trim() : '';
+    if (normalizedRouteToken && normalizedRouteToken !== ':token' && normalizedRouteToken !== '[token]') {
+        return normalizedRouteToken;
+    }
+
+    const match = typeof pathname === 'string' ? pathname.match(/\/share\/([^/?#]+)\/?$/) : null;
+    if (!match?.[1]) return null;
+    try {
+        const decoded = decodeURIComponent(match[1]).trim();
+        return decoded && decoded !== ':token' && decoded !== '[token]' ? decoded : null;
+    } catch {
+        return null;
+    }
+}
+
 function getOwnerDisplayName(owner: ShareOwner | null): string {
     if (!owner) return t('status.unknown');
     if (owner.username) return `@${owner.username}`;
@@ -126,7 +145,10 @@ export default memo(function PublicShareViewerScreen() {
     const { theme } = useUnistyles();
     const safeArea = useSafeAreaInsets();
     const headerHeight = useHeaderHeight();
-    const tokenParam = typeof token === 'string' ? token : null;
+    const tokenParam = resolvePublicShareTokenParam(
+        typeof token === 'string' ? token : null,
+        typeof window === 'undefined' ? null : window.location.pathname,
+    );
 
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -167,7 +189,11 @@ export default memo(function PublicShareViewerScreen() {
                 headers['Authorization'] = authHeader;
             }
 
-            const response = await serverFetch(path, { method: 'GET', headers }, { includeAuth: false });
+            const response = await serverFetch(
+                path,
+                { method: 'GET', headers },
+                { includeAuth: false, retry: 'none' },
+            );
             if (!isCurrentLoad()) return;
             if (!response.ok) {
                 if (response.status === 403) {
@@ -197,7 +223,7 @@ export default memo(function PublicShareViewerScreen() {
             const messagesResponse = await serverFetch(
                 messagesPath,
                 { method: 'GET', headers: messagesHeaders },
-                { includeAuth: false },
+                { includeAuth: false, retry: 'none' },
             );
             if (!isCurrentLoad()) return;
             if (!messagesResponse.ok) {

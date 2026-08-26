@@ -176,11 +176,27 @@ async function connectWorkingSessionInProgress(params: Readonly<{
   token: string;
   sessionId: string;
 }>): Promise<Readonly<{ close: () => void }>> {
-  await updateSessionRuntimeStatus({
-    ...params,
-    latestTurnStatus: 'in_progress',
-  });
-  return { close: () => {} };
+  const socket = createSessionScopedSocketCollector(params.baseUrl, params.token, params.sessionId);
+  socket.connect();
+  try {
+    await waitFor(async () => socket.isConnected(), {
+      timeoutMs: 20_000,
+      context: `connect working session socket for ${params.sessionId}`,
+    });
+    socket.emit('session-alive', {
+      sid: params.sessionId,
+      time: Date.now(),
+      thinking: false,
+    });
+    await updateSessionRuntimeStatus({
+      ...params,
+      latestTurnStatus: 'in_progress',
+    });
+    return socket;
+  } catch (error) {
+    socket.close();
+    throw error;
+  }
 }
 
 async function updateSessionRuntimeStatus(params: Readonly<{
@@ -572,6 +588,15 @@ test.describe('ui e2e: session list attention', () => {
     test.setTimeout(420_000);
     if (!server || !token || !uiBaseUrl || !working || !ready) throw new Error('missing session list attention fixtures');
 
+    // The narrow-density scenario intentionally leaves its shared session in progress. Use a
+    // fresh session here so this scenario proves the live in-progress projection it establishes,
+    // rather than accidentally accepting the prior test's still-in-progress status.
+    const currentWorking = await createPlainSession({
+      baseUrl: server.baseUrl,
+      token,
+      title: 'Static working attention e2e',
+    });
+
     await page.setViewportSize({ width: 1440, height: 900 });
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
@@ -586,9 +611,9 @@ test.describe('ui e2e: session list attention', () => {
     await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'cozy' });
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
 
-    await expect(row(page, working.id)).toHaveCount(1, { timeout: 120_000 });
+    await expect(row(page, currentWorking.id)).toHaveCount(1, { timeout: 120_000 });
     await expect(row(page, ready.id)).toHaveCount(1, { timeout: 120_000 });
-    const workingRuntime = await connectWorkingSessionInProgress({ baseUrl: server.baseUrl, token, sessionId: working.id });
+    const workingRuntime = await connectWorkingSessionInProgress({ baseUrl: server.baseUrl, token, sessionId: currentWorking.id });
     try {
       await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: ready.id });
       await updateSessionRuntimeStatus({
@@ -602,9 +627,9 @@ test.describe('ui e2e: session list attention', () => {
       await expect(page.getByTestId(sessionListTestIds.secondaryReadyIndicator(ready.id))).toHaveCount(1, { timeout: 60_000 });
       await expect(readySubtitleText(page, ready.id)).not.toHaveText('', { timeout: 60_000 });
 
-      const workingStatus = workingSubtitle(page, working.id);
+      const workingStatus = workingSubtitle(page, currentWorking.id);
       await expect(workingStatus).toHaveCount(1, { timeout: 60_000 });
-      const workingText = workingSubtitleText(page, working.id);
+      const workingText = workingSubtitleText(page, currentWorking.id);
       await expect(workingText).not.toHaveText('', { timeout: 60_000 });
       const firstStatusText = await workingText.textContent();
       await page.waitForTimeout(3_500);

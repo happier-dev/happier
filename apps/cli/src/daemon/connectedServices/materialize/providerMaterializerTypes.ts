@@ -67,6 +67,7 @@ export type ConnectedServicesProviderMaterializerInput = Readonly<{
   agentId: CatalogAgentId;
   activeServerDir: string;
   rootDir: string;
+  previousMaterializedRoot?: string | null;
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;

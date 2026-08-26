@@ -146,7 +146,7 @@ describe('KeyboardShortcutProvider', () => {
         testState.settings = {
             ...testState.settings,
             keyboardShortcutOverridesV1: {
-                'session.new': [{ binding: 'Mod+P' }],
+                'session.new': [{ binding: 'Ctrl+P' }],
             },
         };
         const newSession = vi.fn();
@@ -170,7 +170,7 @@ describe('KeyboardShortcutProvider', () => {
             window.dispatchEvent(createKeyboardEvent({
                 key: 'p',
                 code: 'KeyP',
-                metaKey: true,
+                ctrlKey: true,
             }));
         });
 

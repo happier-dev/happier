@@ -48,7 +48,7 @@ async function waitForParentDirectory(
     }
 ): Promise<boolean> {
     const { file, parentDir, abortSignal, watcherPolicy } = opts;
-    const startedAt = Date.now();
+    let elapsedMs = 0;
     let attempts = 0;
     let loggedMissingParent = false;
 
@@ -58,7 +58,6 @@ async function waitForParentDirectory(
         }
 
         attempts += 1;
-        const elapsedMs = Date.now() - startedAt;
         if (elapsedMs >= watcherPolicy.missingParentTimeoutMs) {
             logger.debug(
                 `[FILE_WATCHER] Parent directory still missing after ${attempts} attempts over ${elapsedMs}ms; stopping watcher for ${file}`
@@ -74,7 +73,9 @@ async function waitForParentDirectory(
         }
 
         const remainingMs = watcherPolicy.missingParentTimeoutMs - elapsedMs;
-        await delayUnrefAbortable(Math.min(watcherPolicy.missingParentRetryDelayMs, remainingMs), abortSignal);
+        const retryDelayMs = Math.min(watcherPolicy.missingParentRetryDelayMs, remainingMs);
+        await delayUnrefAbortable(retryDelayMs, abortSignal);
+        elapsedMs += retryDelayMs;
     }
 
     return false;

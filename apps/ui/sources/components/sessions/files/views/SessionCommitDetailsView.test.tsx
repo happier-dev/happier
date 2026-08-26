@@ -28,8 +28,11 @@ const sessionScmDiffCommitSpy = vi.fn(async (_sessionId: string, _request: { com
 }));
 
 const sessionScmCommitBackoutSpy = vi.fn(async () => ({ success: true }));
+const modalAlertSpy = vi.fn();
 
 let reviewCommentsEnabled = false;
+let scmWriteEnabled = true;
+let modalConfirmResult = false;
 let sessionsMock: Session[] | null = [];
 let sessionMock: Session | null = createCommitSessionFixture();
 let prefetchAheadCount = 1;
@@ -131,8 +134,8 @@ installSessionFilesViewCommonModuleMocks({
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
             spies: {
-                alert: vi.fn(),
-                confirm: vi.fn(async () => false),
+                alert: modalAlertSpy,
+                confirm: vi.fn(async () => modalConfirmResult),
             },
         }).module;
     },
@@ -190,7 +193,11 @@ vi.mock('@/sync/ops', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => (featureId === 'files.reviewComments' ? reviewCommentsEnabled : false),
+    useFeatureEnabled: (featureId: string) => {
+        if (featureId === 'files.reviewComments') return reviewCommentsEnabled;
+        if (featureId === 'scm.writeOperations') return scmWriteEnabled;
+        return false;
+    },
 }));
 
 vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
@@ -267,8 +274,11 @@ describe('SessionCommitDetailsView', () => {
 
     beforeEach(() => {
         reviewCommentsEnabled = false;
+        scmWriteEnabled = true;
+        modalConfirmResult = false;
         sessionScmDiffCommitSpy.mockClear();
         sessionScmCommitBackoutSpy.mockClear();
+        modalAlertSpy.mockClear();
         diffFilesListSpy.mockClear();
         resetCommitDetailsStorageState();
     });
@@ -280,6 +290,71 @@ describe('SessionCommitDetailsView', () => {
         expect(diffFilesListSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualizeFileList: true }));
         expect(tree.findAllByType('DiffPresentationStyleToggleButton' as any)).toHaveLength(1);
         expect(tree.findAllByType('ScrollView' as any)).toHaveLength(0);
+    });
+
+    it('waits for session storage hydration before loading a deep-linked commit', async () => {
+        sessionsMock = null;
+        const tree = await renderCommitDetailsView();
+        const SessionCommitDetailsView = await loadSessionCommitDetailsViewComponent();
+
+        expect(sessionScmDiffCommitSpy).not.toHaveBeenCalled();
+
+        sessionsMock = [];
+        await act(async () => {
+            tree.update(<SessionCommitDetailsView sessionId={commitSessionId} sha={commitSha} />);
+        });
+        await settleCommitDetailsView();
+
+        expect(sessionScmDiffCommitSpy).toHaveBeenCalledWith(commitSessionId, { commit: commitSha });
+    });
+
+    it('shows missing context when hydrated storage does not contain the session', async () => {
+        sessionMock = null;
+
+        const tree = await renderCommitDetailsView();
+
+        expect(tree.findByProps({ testID: 'scm-commit-details-error-message' }).props.children)
+            .toBe('files.commitDetails.missingContext');
+        expect(sessionScmDiffCommitSpy).not.toHaveBeenCalled();
+    });
+
+    it('shows the thrown diff-load error and keeps the back action available', async () => {
+        sessionScmDiffCommitSpy.mockRejectedValueOnce(new Error('network down'));
+        const onBack = vi.fn();
+        const SessionCommitDetailsView = await loadSessionCommitDetailsViewComponent();
+        const screen = await renderScreen(
+            <SessionCommitDetailsView sessionId={commitSessionId} sha={commitSha} onBack={onBack} />,
+        );
+        mountedTrees.push(screen.tree);
+        await settleCommitDetailsView();
+
+        expect(screen.findByTestId('scm-commit-details-error-message')?.props.children).toBe('network down');
+        await screen.pressByTestIdAsync('scm-commit-details-back');
+        expect(onBack).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides the revert action when SCM writes are disabled', async () => {
+        scmWriteEnabled = false;
+
+        const tree = await renderCommitDetailsView();
+
+        expect(tree.findAllByProps({ testID: 'scm-commit-details-revert' })).toHaveLength(0);
+    });
+
+    it('reports an unexpected revert failure after confirmation', async () => {
+        modalConfirmResult = true;
+        sessionScmCommitBackoutSpy.mockRejectedValueOnce(new Error('rpc unavailable'));
+        const SessionCommitDetailsView = await loadSessionCommitDetailsViewComponent();
+        const screen = await renderScreen(
+            <SessionCommitDetailsView sessionId={commitSessionId} sha={commitSha} />,
+        );
+        mountedTrees.push(screen.tree);
+        await settleCommitDetailsView();
+
+        await screen.pressByTestIdAsync('scm-commit-details-revert');
+        await settleCommitDetailsView();
+
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'rpc unavailable');
     });
 
     it('tracks the first visible file as the large-review expansion anchor', async () => {

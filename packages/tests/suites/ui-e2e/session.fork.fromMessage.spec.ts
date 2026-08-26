@@ -8,6 +8,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSessionForkStrategy';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
@@ -193,6 +194,7 @@ test.describe('ui e2e: session fork from message', () => {
 
     await expect(page.getByTestId(`transcript-message-fork:${messageId}`)).toHaveCount(1, { timeout: 120_000 });
     await page.getByTestId(`transcript-message-fork:${messageId}`).click();
+    await selectSessionForkStrategy(page, 'replay');
 
     await page.waitForURL(
       (url) => {
@@ -332,6 +334,7 @@ test.describe('ui e2e: session fork from message', () => {
 
     await expect(page.getByTestId(`transcript-message-fork:${userMessageId}`)).toHaveCount(1, { timeout: 120_000 });
     await page.getByTestId(`transcript-message-fork:${userMessageId}`).click();
+    await selectSessionForkStrategy(page, 'replay');
 
     await page.waitForURL(
       (url) => {

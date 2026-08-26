@@ -175,6 +175,7 @@ const harness = vi.hoisted(() => {
   );
 
   const apiMachine = {
+    getActiveRpcHandlerExecutions: vi.fn(() => []),
     recoverDaemonTerminalSessionMutationJournals: vi.fn(async () => {}),
     enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => {}),
     setRPCHandlers: vi.fn(),

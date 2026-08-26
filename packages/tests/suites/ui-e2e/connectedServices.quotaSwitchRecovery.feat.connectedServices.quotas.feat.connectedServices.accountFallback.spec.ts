@@ -25,6 +25,7 @@ import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../..
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { CLAUDE_CODE_E2E_OAUTH_SCOPE } from '../../src/testkit/connectedServicesRecovery';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 const CONNECTED_SERVICE_FEATURE_ENV = {
@@ -333,8 +334,8 @@ async function createConnectedServiceProfile(params: Readonly<{
             accessToken: `access-${params.profileId}`,
             refreshToken: `refresh-${params.profileId}`,
             idToken: `id-${params.profileId}`,
-            scope: null,
-            tokenType: null,
+            scope: CLAUDE_CODE_E2E_OAUTH_SCOPE,
+            tokenType: 'Bearer',
             providerAccountId: `acct-${params.profileId}`,
             providerEmail: params.providerEmail,
         },
@@ -975,7 +976,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
                         HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
                         HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
                         HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
-                        HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false',
+                        HAPPIER_CONNECTED_SERVICES_DISABLE_CLAUDE_SUBSCRIPTION_QUOTA_ENDPOINT: '1',
                         HAPPIER_CONNECTED_SERVICES_LEGACY_CLAUDE_RESTART_SAME_HOME: '1',
                         HAPPIER_CONNECTED_SERVICES_AUTH_GROUP_RESTART_SIGNAL_DELAY_MS: '0',
                     },

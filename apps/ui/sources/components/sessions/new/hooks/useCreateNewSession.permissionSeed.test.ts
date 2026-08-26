@@ -532,7 +532,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         machineSpawnNewSessionSpy.mockImplementationOnce(async (options: unknown) => {
             captured.value = options as SpawnPayloadCapture;
-            return { type: 'success', sessionId: 'sess_target' };
+            return { type: 'success', sessionId: 'sess_target', pendingFirstInputTransferred: true };
         });
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -597,6 +597,80 @@ describe('useCreateNewSession permission seeding', () => {
             },
         }));
         expect(followUpSpawnedSessionWithServerScopeSpy).not.toHaveBeenCalled();
+    });
+
+    it('sends the first turn from the UI when the transport did not transfer it', async () => {
+        const {
+            useCreateNewSession,
+            followUpSpawnedSessionWithServerScopeSpy,
+            machineSpawnNewSessionSpy,
+        } = await setupUseCreateNewSessionHarness();
+
+        machineSpawnNewSessionSpy.mockResolvedValueOnce({
+            type: 'success',
+            sessionId: 'sess_target',
+            pendingFirstInputTransferred: false,
+        });
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = { experiments: false } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+                launchIntentSignature: 'test-launch-intent',
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: {
+                    metadata: {},
+                    daemonState: { startedWithCliVersion: '0.2.10' },
+                },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'opencode' as any,
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'default' as any,
+                promptStore: createNewSessionPromptStore('do not lose me'),
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess_target',
+            initialMessageText: 'do not lose me',
+            messageLocalId: expect.stringMatching(/^first-turn-/),
+        }));
     });
 
     it('carries the composer structured-input envelope into the first turn, merged with the model seed', async () => {

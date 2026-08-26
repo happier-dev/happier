@@ -104,8 +104,21 @@ describe('migrateLegacySessionDrafts', () => {
             selectedSecretId: expect.anything(),
             sessionOnlySecretValueEncByProfileIdByEnvVarName: expect.anything(),
         }));
-        expect(mocks.writeSupplement).toHaveBeenCalledWith(expect.objectContaining({
-            patch: { launchUserAttemptId: 'attempt-a', legacyNewSessionDraftV1: true },
+        const newSessionSupplementWrite = mocks.writeSupplement.mock.calls
+            .map(([params]) => params)
+            .find((params) => params.address?.kind === 'newSession');
+        expect(newSessionSupplementWrite).toEqual(expect.objectContaining({
+            scope,
+            address: { kind: 'newSession', draftId: '00000000-0000-4000-8000-000000000777' },
+            patch: expect.objectContaining({
+                launchUserAttemptId: 'attempt-a',
+                legacyNewSessionDraftV1: true,
+                newSessionLocalState: expect.objectContaining({
+                    selectedSecretId: 'secret-must-not-sync',
+                    sessionConfigOptionOverrides: { apiKey: 'must-not-sync' },
+                    sessionOnlySecretValueEncByProfileIdByEnvVarName: { 'profile-a': { TOKEN: 'ciphertext' } },
+                }),
+            }),
         }));
         expect(state.sessionDrafts).toEqual({ 'session-a': 'legacy text' });
         expect(state.draftValues).toHaveProperty('session-a');

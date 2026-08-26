@@ -1010,6 +1010,7 @@ describe('runCodex CodexACP resume behavior', () => {
     expect(createCodexAppServerRuntimeSpy).toHaveBeenCalledTimes(1);
     expect(createCodexAppServerRuntimeSpy).toHaveBeenCalledWith(expect.objectContaining({
       configOverrides: [
+        'shell_environment_policy.set.HAPPIER_SESSION_ID="sess_1"',
         'mcp_servers.happier.command="/tmp/happier-mcp-bridge"',
         'mcp_servers.happier.args=["--url","http://127.0.0.1:0"]',
         'mcp_servers.happier.enabled=true',
@@ -1022,9 +1023,12 @@ describe('runCodex CodexACP resume behavior', () => {
         sendAgentMessageEphemeral?: unknown;
       };
     } | undefined;
-    expect(runtimeArgs?.processEnv).toBe(process.env);
+    expect(runtimeArgs?.processEnv).toEqual(expect.objectContaining({
+      HAPPIER_SESSION_ID: 'sess_1',
+    }));
     expect(runtimeArgs?.transcriptSession?.sendAgentMessageEphemeral).toBeTypeOf('function');
     expect(runtimeArgs?.configOverrides).toEqual([
+      'shell_environment_policy.set.HAPPIER_SESSION_ID="sess_1"',
       'mcp_servers.happier.command="/tmp/happier-mcp-bridge"',
       'mcp_servers.happier.args=["--url","http://127.0.0.1:0"]',
       'mcp_servers.happier.enabled=true',
@@ -4243,7 +4247,9 @@ describe('runCodex CodexACP resume behavior', () => {
     const emittedMessages = (lastSessionClient?.sendSessionEvent as ReturnType<typeof vi.fn> | undefined)?.mock.calls
       .map((call) => call[0]?.message)
       .filter((message): message is string => typeof message === 'string') ?? [];
-    expect(emittedMessages.some((message) => message.includes('credential refreshed'))).toBe(true);
+    expect(emittedMessages.map((message) => message.toLowerCase())).toEqual(expect.arrayContaining([
+      expect.stringContaining('credential refreshed'),
+    ]));
     expect(emittedMessages.some((message) => message.startsWith('Codex process error:'))).toBe(false);
     const { logger } = await import('@/ui/logger');
     const warnCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;

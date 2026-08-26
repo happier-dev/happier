@@ -25,6 +25,8 @@ export {
 } from './actionApprovalMetadata.js';
 export {
   ACTION_SPECS,
+  ActionContextualDefaultSourceSchema,
+  ActionContextualDefaultsSchema,
   ActionSafetySchema,
   ActionSpecSchema,
   ActionSurfaceSchema,
@@ -49,6 +51,8 @@ export {
   listVoicePromptHotPathSpecs,
   listVoiceToolActionSpecs,
   type ActionSafety,
+  type ActionContextualDefaultSource,
+  type ActionContextualDefaults,
   type ActionInputFieldHint,
   type ActionInputHints,
   type ActionInputOption,

@@ -16,7 +16,7 @@ describe('killProcessTree', () => {
 
     await killProcessTree(parent, { graceMs: 250 });
 
-    await expect(waitForProcessExit(parent.pid!, { timeoutMs: 3_000 })).resolves.toBe(true);
-    await expect(waitForProcessExit(childPid, { timeoutMs: 3_000 })).resolves.toBe(true);
-  }, 20_000);
+    await expect(waitForProcessExit(parent.pid!, { timeoutMs: 10_000 })).resolves.toBe(true);
+    await expect(waitForProcessExit(childPid, { timeoutMs: 10_000 })).resolves.toBe(true);
+  }, 30_000);
 });

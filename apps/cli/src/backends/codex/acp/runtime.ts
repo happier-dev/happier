@@ -24,6 +24,7 @@ import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
 
 export function createCodexAcpRuntime(params: {
   directory: string;
+  processEnv?: NodeJS.ProcessEnv;
   session: ApiSessionClient;
   pushSender?: PermissionRequestPushSender;
   messageBuffer: MessageBuffer;
@@ -111,7 +112,7 @@ export function createCodexAcpRuntime(params: {
       const permissionMode = typeof permissionModeRaw === 'string' ? permissionModeRaw : undefined;
       const created = createCodexAcpBackend({
         cwd: params.directory,
-        env: buildCodexAcpEnvOverrides(),
+        env: buildCodexAcpEnvOverrides({ baseEnv: params.processEnv }),
         mcpServers: params.mcpServers,
         permissionHandler: params.permissionHandler,
         permissionMode,

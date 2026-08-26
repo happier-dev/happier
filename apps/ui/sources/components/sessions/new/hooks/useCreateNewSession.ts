@@ -904,13 +904,18 @@ export function useCreateNewSession(params: Readonly<{
                         }
                         : {}),
                 };
-                handedFirstTurnToDaemon = daemonOwnsFirstTurn && daemonFirstTurnText.length > 0;
                 const releaseUserRequestLease = sync.acquireUserRequestLease();
                 try {
                     result = await machineSpawnNewSession(spawnOptions);
                 } finally {
                     releaseUserRequestLease();
                 }
+                handedFirstTurnToDaemon = result.type === 'success'
+                    && daemonFirstTurnText.length > 0
+                    && (
+                        result.pendingFirstInputTransferred === true
+                        || (result.pendingFirstInputTransferred === undefined && daemonOwnsFirstTurn)
+                    );
 
                 operationCustody = result.spawnAttemptCustody;
                 if (

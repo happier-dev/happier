@@ -8,6 +8,7 @@ import { writeCodexAuthStoreFile } from './writeCodexAuthStoreFile';
 
 export async function materializeCodexConnectedServiceAuth(params: Readonly<{
   rootDir: string;
+  previousCodexHome?: string | null;
   record: ConnectedServiceCredentialRecordV1;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
@@ -19,6 +20,7 @@ export async function materializeCodexConnectedServiceAuth(params: Readonly<{
   const codexHome = join(params.rootDir, 'codex-home');
   const syncResult = await syncCodexConnectedServiceHome({
     destinationCodexHome: codexHome,
+    previousCodexHome: params.previousCodexHome ?? null,
     accountSettings: params.accountSettings ?? null,
     processEnv: params.processEnv ?? process.env,
   });

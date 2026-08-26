@@ -11,6 +11,7 @@ import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import {
   ConnectedServiceStateSharingLockError,
   withConnectedServiceStateSharingDestinationLock,
+  withConnectedServiceStateSharingLocks,
 } from './connectedServiceStateSharingLock';
 
 async function waitFor(condition: () => boolean): Promise<void> {
@@ -67,6 +68,36 @@ describe('connectedServiceStateSharingLock', () => {
         events.push('first:end');
       });
       const second = withConnectedServiceStateSharingDestinationLock(destination, async () => {
+        events.push('second:start');
+      });
+
+      await waitFor(() => events.length === 1);
+      expect(events).toEqual(['first:start']);
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(events).toEqual(['first:start', 'first:end', 'second:start']);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('acquires overlapping root sets in one stable order', async () => {
+    const root = join(tmpdir(), `happier-state-sharing-lock-roots-${Date.now()}`);
+    const firstRoot = join(root, 'a');
+    const secondRoot = join(root, 'b');
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const firstCanFinish = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    try {
+      const first = withConnectedServiceStateSharingLocks([secondRoot, firstRoot], async () => {
+        events.push('first:start');
+        await firstCanFinish;
+        events.push('first:end');
+      });
+      const second = withConnectedServiceStateSharingLocks([firstRoot, secondRoot], async () => {
         events.push('second:start');
       });
 

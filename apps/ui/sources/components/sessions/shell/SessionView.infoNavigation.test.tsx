@@ -267,7 +267,9 @@ vi.mock('@/sync/domains/session/activeViewingSession', () => ({
     getActiveViewingSessionResetVersion: () => 0,
     registerSessionVisibleSurface: () => () => {},
 }));
-vi.mock('@/sync/sync', () => ({
+vi.mock('@/sync/sync', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/sync')>(),
+    syncSwitchServer: vi.fn(async () => {}),
     sync: {
         markSessionViewed: async () => {},
         fetchPendingMessages: async () => {},
@@ -312,6 +314,10 @@ vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => {
         getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
     };
 });
+vi.mock('@/sync/domains/server/activeServerSwitch', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/server/activeServerSwitch')>(),
+    setActiveServerAndSwitch: vi.fn(async () => {}),
+}));
 vi.mock('@/utils/system/versionUtils', () => ({
     isVersionSupported: () => true,
     MINIMUM_CLI_VERSION: '0.0.0',

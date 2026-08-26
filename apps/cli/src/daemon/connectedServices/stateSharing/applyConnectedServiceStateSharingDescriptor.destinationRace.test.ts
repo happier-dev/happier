@@ -43,6 +43,7 @@ async function applyDescriptor(params: Readonly<{
 
 describe('applyConnectedServiceStateSharingDescriptor destination races', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.doUnmock('node:fs/promises');
     vi.resetModules();
   });
@@ -97,6 +98,7 @@ describe('applyConnectedServiceStateSharingDescriptor destination races', () => 
   );
 
   it('throws after exactly three destination races and removes the prepared temporary link', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
     const root = await mkdtemp(join(tmpdir(), 'happier-state-link-race-exhausted-'));
     const sourceRoot = join(root, 'source');
     const targetRoot = join(root, 'target');

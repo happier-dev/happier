@@ -134,7 +134,7 @@ async function ensureTmuxSettingsInUi(params: {
 }): Promise<void> {
     const { page, uiBaseUrl, tmuxSessionName, tmuxTmpDir } = params;
 
-    await page.goto(`${uiBaseUrl}/settings/session`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${uiBaseUrl}/settings/session/runtime`, { waitUntil: 'domcontentloaded' });
 
     const enabledItem = page.getByTestId('settings-session-tmux-enabled-item');
     await expect(enabledItem).toHaveCount(1, { timeout: 60_000 });

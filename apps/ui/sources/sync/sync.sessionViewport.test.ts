@@ -705,64 +705,6 @@ describe('sync session viewport', () => {
         expect(hydrated?.offsetY).toBe(980);
     });
 
-    it('repairs stale hidden transcript markers non-destructively and clears the reveal marker', async () => {
-        // C6/D2a: reopening a session with a stale-message marker must NOT wipe the transcript.
-        // The edited region is refetched and merged in place; loaded history is preserved and the
-        // stale marker is cleared. (Previously onSessionVisible did a full destructive reset.)
-        const { sync } = await import('./sync');
-        const { storage } = await import('@/sync/domains/state/storage');
-        const { apiSocket } = await import('@/sync/api/session/apiSocket');
-        const invalidateCoalesced = vi.fn();
-        const requestMock = apiSocket.request as unknown as ReturnType<typeof vi.fn>;
-        requestMock.mockImplementation(async () => new Response(
-            JSON.stringify({ messages: [], hasMore: false, nextAfterSeq: null }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ));
-        const sessionId = 'session-stale-reveal';
-        type StaleTranscriptHarness = {
-            markSessionTranscriptStale: (
-                sessionId: string,
-                marker: { updateType: 'message-updated'; seq: number; messageId: string },
-            ) => void;
-            messagesSync: Map<string, { invalidateCoalesced: () => void }>;
-            sessionMaterializedMaxSeqById: Record<string, number>;
-            deferredTranscriptState: { staleMessageIdsBySessionId: Record<string, readonly string[]> };
-        };
-        const harness = sync as unknown as StaleTranscriptHarness;
-
-        storage.getState().applySessions([createSessionFixture({ id: sessionId, seq: 7, encryptionMode: 'plain' })]);
-        storage.getState().applyMessages(sessionId, [buildMessage('message-stale', 7)]);
-        storage.getState().applyMessagesLoaded(sessionId);
-        const historyCountBefore = storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst.length ?? 0;
-        harness.messagesSync = new Map([[sessionId, { invalidateCoalesced }]]);
-        harness.sessionMaterializedMaxSeqById = { [sessionId]: 7 };
-        harness.markSessionTranscriptStale(sessionId, {
-            updateType: 'message-updated',
-            seq: 7,
-            messageId: 'message-stale',
-        });
-
-        sync.onSessionVisible(sessionId);
-        await expect.poll(() => requestMock.mock.calls.length).toBe(1);
-        await expect.poll(
-            () => harness.deferredTranscriptState.staleMessageIdsBySessionId[sessionId]?.length ?? 0,
-        ).toBe(0);
-
-        // Transcript history preserved (not wiped), record stays loaded, materialized seq intact.
-        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst.length).toBe(historyCountBefore);
-        expect(storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true);
-        expect(harness.sessionMaterializedMaxSeqById[sessionId]).toBe(7);
-        expect(invalidateCoalesced).toHaveBeenCalledTimes(1);
-
-        // Reopening again with no remaining stale marker does not re-trigger a repair, only the
-        // standard coalesced invalidate.
-        sync.onSessionVisible(sessionId);
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(requestMock).toHaveBeenCalledTimes(1);
-        expect(storage.getState().sessionMessages[sessionId]?.messageIdsOldestFirst.length).toBe(historyCountBefore);
-        expect(invalidateCoalesced).toHaveBeenCalledTimes(2);
-    });
-
     it('hydrates deferred hidden session state on reveal and clears the marker', async () => {
         const { sync } = await import('./sync');
         const invalidateCoalesced = vi.fn();

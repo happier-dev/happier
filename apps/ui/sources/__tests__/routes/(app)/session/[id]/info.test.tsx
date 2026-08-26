@@ -860,7 +860,7 @@ describe('/session/[id]/info', () => {
         expect(handoffItems).toHaveLength(0);
     });
 
-    it('fails closed and hides the handoff quick action when server-routed transfer is the only transport the selected server advertises', async () => {
+    it('shows the handoff quick action when server-routed transfer is the available transport', async () => {
         sessionHandoffFeatureEnabled = true;
         serverFeaturesSnapshot = {
             status: 'ready',
@@ -904,7 +904,7 @@ describe('/session/[id]/info', () => {
 
         const screen = await renderInfoScreen();
         const handoffItems = screen.findAllByType('Item' as any).filter((node: any) => node.props?.title === 'Hand off session');
-        expect(handoffItems).toHaveLength(0);
+        expect(handoffItems).toHaveLength(1);
     });
 
     it('reacts when machine-rpc direct-peer viability becomes available for the reachable machine target after metadata goes stale', async () => {

@@ -11,12 +11,14 @@ import {
     persistedDraft,
     platformOsState,
     renderNewSessionScreenModel,
+    replaceRepositoryDraftFromPersistedFixture,
     repoSnapshotState,
     resetDraftPersistenceState,
     routerPushMock,
     runFocusEffectsAndSettle,
     saveNewSessionDraftMock,
     searchParamsState,
+    TEST_DRAFT_ID,
     targetServerState,
     useNewSessionScreenModelModulePromise,
     workspaceGraphState,
@@ -44,8 +46,8 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
         standardCleanup();
     });
 
-    beforeEach(() => {
-        resetDraftPersistenceState();
+    beforeEach(async () => {
+        await resetDraftPersistenceState();
     });
 
     it('re-hydrates the worktree checkout selection when a newer draft is loaded on focus', async () => {
@@ -71,6 +73,7 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
             baseRef: 'main',
         };
         persistedDraft.updatedAt = 456;
+        await replaceRepositoryDraftFromPersistedFixture();
 
         const cleanups = await runFocusEffectsAndSettle();
         for (const cleanup of cleanups) {
@@ -89,12 +92,8 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
     });
 
     it('persists updated checkout creation draft state after in-memory changes', async () => {
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
-
-        await renderScreen(React.createElement(Probe));
+        await renderNewSessionScreenModel((nextModel) => { model = nextModel; });
 
         await act(async () => {
             model?.simpleProps?.setCheckoutCreationDraft?.({
@@ -119,12 +118,8 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
     });
 
     it('fails closed back to the inferred workspace selection after invalid in-memory changes', async () => {
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
-
-        await renderScreen(React.createElement(Probe));
+        await renderNewSessionScreenModel((nextModel) => { model = nextModel; });
 
         expect(model?.simpleProps?.setSelectedWorkspaceId).toBeUndefined();
         expect(model?.simpleProps?.setSelectedWorkspaceLocationId).toBeUndefined();
@@ -153,7 +148,7 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
+        const Probe = () => { model = useNewSessionScreenModel({ draftId: TEST_DRAFT_ID }); return null; };
 
         await renderScreen(React.createElement(Probe));
 
@@ -205,7 +200,7 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
+        const Probe = () => { model = useNewSessionScreenModel({ draftId: TEST_DRAFT_ID }); return null; };
 
         await renderScreen(React.createElement(Probe));
 
@@ -297,7 +292,7 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
+        const Probe = () => { model = useNewSessionScreenModel({ draftId: TEST_DRAFT_ID }); return null; };
 
         await renderScreen(React.createElement(Probe));
 
@@ -346,7 +341,7 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
+        const Probe = () => { model = useNewSessionScreenModel({ draftId: TEST_DRAFT_ID }); return null; };
 
         await renderScreen(React.createElement(Probe));
 
@@ -403,7 +398,7 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
+        const Probe = () => { model = useNewSessionScreenModel({ draftId: TEST_DRAFT_ID }); return null; };
 
         await renderScreen(React.createElement(Probe));
 
@@ -464,7 +459,7 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
+        const Probe = () => { model = useNewSessionScreenModel({ draftId: TEST_DRAFT_ID }); return null; };
 
         await renderScreen(React.createElement(Probe));
 
@@ -541,7 +536,7 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
+        const Probe = () => { model = useNewSessionScreenModel({ draftId: TEST_DRAFT_ID }); return null; };
 
         await renderScreen(React.createElement(Probe));
 
@@ -576,7 +571,7 @@ describe('useNewSessionScreenModel (draft hydration — checkout)', () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
+        const Probe = () => { model = useNewSessionScreenModel({ draftId: TEST_DRAFT_ID }); return null; };
 
         await renderScreen(React.createElement(Probe));
 

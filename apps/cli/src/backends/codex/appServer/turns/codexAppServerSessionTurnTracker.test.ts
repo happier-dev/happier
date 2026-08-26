@@ -67,6 +67,33 @@ describe('createCodexAppServerSessionTurnTracker', () => {
         expect(session.updateMetadata).not.toHaveBeenCalled();
     });
 
+    it('allows the committed user message to cross a loaded server boundary before giving up rollback anchors', async () => {
+        const { lifecycle, session } = createLifecycleHarness();
+        const waitForCommittedUserMessageSeq = vi.fn(async () => 10);
+        const tracker = createCodexAppServerSessionTurnTracker({
+            session: {
+                ...session,
+                getCommittedUserMessageSeq: vi.fn(() => null),
+                waitForCommittedUserMessageSeq,
+            },
+            getProviderThreadId: () => 'thread-1',
+            now: () => 100,
+        });
+
+        await tracker.beginTurn({
+            turnId: null,
+            startUserMessageLocalId: 'prompt-local-slow',
+            startSeqInclusive: null,
+        });
+
+        expect(waitForCommittedUserMessageSeq).toHaveBeenCalledWith('prompt-local-slow', {
+            timeoutMs: 10_000,
+        });
+        expect(lifecycle.beginTurn).toHaveBeenCalledWith(expect.objectContaining({
+            transcriptAnchors: expect.objectContaining({ startUserMessageSeq: 10 }),
+        }));
+    });
+
     it('adds prompt anchors to a generic lifecycle begin without starting another turn', async () => {
         const { lifecycle, session } = createLifecycleHarness();
         const tracker = createCodexAppServerSessionTurnTracker({

@@ -187,7 +187,7 @@ export interface NewSessionDraft {
     agentType: NewSessionAgentType;
     backendTarget?: BackendTargetRefV1 | null;
     transcriptStorage?: 'persisted' | 'direct';
-    permissionMode: PermissionMode;
+    permissionMode?: PermissionMode;
     modelMode: ModelMode;
     /**
      * ACP-only session mode selection (e.g. "plan") for the new-session wizard.

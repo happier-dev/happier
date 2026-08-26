@@ -11,6 +11,7 @@ import type {
     NewSessionDraftPatch,
     SessionDraftSnapshot,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 
 function readAuthoringValues(snapshot: SessionDraftSnapshot): Partial<SyncedSessionAuthoringValueV1> {
     if (snapshot.document.target.kind !== 'newSession') return {};
@@ -52,22 +53,33 @@ export function readNewSessionDraftFromSnapshot(snapshot: SessionDraftSnapshot |
         experimentalCodexAcp: null,
         codexBackendMode: authoring.codexBackendMode ?? null,
         acpSessionModeId: authoring.acpSessionModeId ?? null,
-        sessionConfigOptionOverrides: null,
+        sessionConfigOptionOverrides: snapshot.localSupplement.newSessionLocalState?.sessionConfigOptionOverrides ?? null,
         automation: authoring.automation ?? null,
     });
     const persisted = buildPersistedNewSessionDraftFromAuthoringDraft({
         draft: authoringDraft,
         machineId: authoring.machineId ?? null,
-        selectedSecretId: null,
-        selectedSecretIdByProfileIdByEnvVarName: null,
-        sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
-        agentNewSessionOptionStateByAgentId: null,
+        selectedSecretId: snapshot.localSupplement.newSessionLocalState?.selectedSecretId ?? null,
+        selectedSecretIdByProfileIdByEnvVarName: snapshot.localSupplement.newSessionLocalState?.selectedSecretIdByProfileIdByEnvVarName ?? null,
+        sessionOnlySecretValueEncByProfileIdByEnvVarName: snapshot.localSupplement.newSessionLocalState?.sessionOnlySecretValueEncByProfileIdByEnvVarName ?? null,
+        agentNewSessionOptionStateByAgentId: snapshot.localSupplement.newSessionLocalState?.agentNewSessionOptionStateByAgentId ?? null,
         targetServerId: authoring.serverId ?? null,
+        windowsRemoteSessionLaunchModeOverride: snapshot.localSupplement.newSessionLocalState?.windowsRemoteSessionLaunchModeOverride ?? null,
         updatedAt: snapshot.updatedAt,
     });
     const launchUserAttemptId = snapshot.localSupplement.launchUserAttemptId;
-    return launchUserAttemptId ? { ...persisted, launchUserAttemptId } : persisted;
+    const draft = {
+        ...persisted,
+        entryIntent: snapshot.localSupplement.newSessionLocalState?.entryIntent ?? null,
+        ...(launchUserAttemptId ? { launchUserAttemptId } : {}),
+    };
+    if (authoring.permissionMode != null) return draft;
+
+    const { permissionMode: _omittedPermissionMode, ...draftWithoutPermissionMode } = draft;
+    return draftWithoutPermissionMode;
 }
+
+export { buildNewSessionDraftLocalState };
 
 export function buildNewSessionDraftPatch(params: Readonly<{
     authoringDraft: SessionAuthoringDraft;

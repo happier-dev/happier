@@ -1,12 +1,19 @@
 import { resolve } from 'path';
-import { describe, it, expect } from 'vitest';
+import { afterAll, describe, it, expect } from 'vitest';
 import { validatePath, validateWorkspaceInspectionPath } from './pathSecurity';
-import { mkdirSync, symlinkSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
 describe('validatePath', () => {
-    const workingDir = '/home/user/project';
+    const workingRoot = mkdtempSync(join(tmpdir(), 'happier-pathSecurity-working-'));
+    const workingDir = join(workingRoot, 'project');
+    mkdirSync(workingDir, { recursive: true });
+    const canonicalWorkingDir = realpathSync(workingDir);
+
+    afterAll(() => {
+        rmSync(workingRoot, { recursive: true, force: true });
+    });
 
     it('should allow paths within working directory', () => {
         expect(validatePath(resolve(workingDir, 'file.txt'), workingDir)).toMatchObject({
@@ -15,11 +22,11 @@ describe('validatePath', () => {
         });
         expect(validatePath('file.txt', workingDir)).toMatchObject({
             valid: true,
-            resolvedPath: resolve(workingDir, 'file.txt'),
+            resolvedPath: resolve(canonicalWorkingDir, 'file.txt'),
         });
         expect(validatePath('./src/file.txt', workingDir)).toMatchObject({
             valid: true,
-            resolvedPath: resolve(workingDir, 'src', 'file.txt'),
+            resolvedPath: resolve(canonicalWorkingDir, 'src', 'file.txt'),
         });
     });
 
@@ -39,7 +46,7 @@ describe('validatePath', () => {
         const result = validatePath('./src/../notes/todo.txt', workingDir);
         expect(result).toMatchObject({
             valid: true,
-            resolvedPath: resolve(workingDir, 'notes', 'todo.txt'),
+            resolvedPath: resolve(canonicalWorkingDir, 'notes', 'todo.txt'),
         });
     });
 
@@ -50,20 +57,32 @@ describe('validatePath', () => {
     });
 
     it('should allow the working directory itself', () => {
-        expect(validatePath('.', workingDir)).toMatchObject({ valid: true, resolvedPath: resolve(workingDir) });
+        expect(validatePath('.', workingDir)).toMatchObject({ valid: true, resolvedPath: canonicalWorkingDir });
         expect(validatePath(workingDir, workingDir)).toMatchObject({ valid: true, resolvedPath: resolve(workingDir) });
     });
 
     it('allows paths inside additional allowed directories', () => {
-        const extra = '/tmp/happier/uploads';
-        expect(validatePath('/tmp/happier/uploads/session/file.jpg', workingDir, [extra]).valid).toBe(true);
-        expect(validatePath('/tmp/happier/uploads/abc/img.png', workingDir, [extra]).valid).toBe(true);
+        const testBase = mkdtempSync(join(tmpdir(), 'happier-pathSecurity-extra-'));
+        const extra = join(testBase, 'uploads');
+        try {
+            mkdirSync(extra, { recursive: true });
+            expect(validatePath(join(extra, 'session', 'file.jpg'), workingDir, [extra]).valid).toBe(true);
+            expect(validatePath(join(extra, 'abc', 'img.png'), workingDir, [extra]).valid).toBe(true);
+        } finally {
+            rmSync(testBase, { recursive: true, force: true });
+        }
     });
 
     it('rejects traversal outside additional allowed directory', () => {
-        const extra = '/tmp/happier/uploads';
-        const result = validatePath('/tmp/happier/uploads/../../etc/passwd', workingDir, [extra]);
-        expect(result.valid).toBe(false);
+        const testBase = mkdtempSync(join(tmpdir(), 'happier-pathSecurity-traversal-'));
+        const extra = join(testBase, 'uploads');
+        try {
+            mkdirSync(extra, { recursive: true });
+            const result = validatePath(join(extra, '..', '..', 'etc', 'passwd'), workingDir, [extra]);
+            expect(result.valid).toBe(false);
+        } finally {
+            rmSync(testBase, { recursive: true, force: true });
+        }
     });
 
     it('prevents symlink traversal out of an allowed directory', () => {

@@ -25,6 +25,7 @@ import {
     persistedDraft,
     platformOsState,
     renderNewSessionScreenModel,
+    replaceRepositoryDraftFromPersistedFixture,
     resetDraftPersistenceState,
     routerPushMock,
     routerSetParamsMock,
@@ -49,11 +50,12 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
         standardCleanup();
     });
 
-    beforeEach(() => {
-        resetDraftPersistenceState();
+    beforeEach(async () => {
+        await resetDraftPersistenceState();
     });
 
     it('clears remembered Claude plan mode when the user switches the new-session mode back to build', async () => {
+        vi.useFakeTimers();
         const backendTarget = { kind: 'builtInAgent' as const, agentId: 'claude' as const };
         const scopeKey = buildRememberedEngineSelectionScopeKey({
             serverId: null,
@@ -81,12 +83,14 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
 
         await act(async () => {
             model?.simpleProps?.setAcpSessionModeId?.(null);
+            await vi.advanceTimersByTimeAsync(3_000);
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 
         expect(model?.simpleProps?.acpSessionModeId).toBeNull();
 
         standardCleanup();
+        vi.useRealTimers();
 
         expect((settingsState as any).lastEngineSelectionsByScopeV1?.[scopeKey]?.acpSessionModeId).toBeNull();
     });
@@ -606,7 +610,9 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
 
         searchParamsState.value = {};
         persistedDraft.automationDraft = makeTestAutomationDraft();
+        persistedDraft.entryIntent = 'automation';
         persistedDraft.updatedAt = 456;
+        await replaceRepositoryDraftFromPersistedFixture();
 
         await hook.rerender();
         const cleanups = await runFocusEffectsAndSettle();
@@ -637,20 +643,22 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
             persistDraftNowRef.current?.();
         });
 
-        const savedAutomationDraft = saveNewSessionDraftMock.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined;
-        expect(savedAutomationDraft).toEqual(expect.objectContaining({
+        expect(saveNewSessionDraftMock).toHaveBeenCalledWith(expect.objectContaining({
             automationDraft: expect.objectContaining({
                 enabled: true,
             }),
+        }));
+        expect(saveNewSessionDraftMock).toHaveBeenCalledWith(expect.objectContaining({
             entryIntent: 'automation',
         }));
 
-        persistedDraft.automationDraft = savedAutomationDraft?.automationDraft as any;
-        persistedDraft.entryIntent = savedAutomationDraft?.entryIntent;
-        persistedDraft.updatedAt = Number(savedAutomationDraft?.updatedAt ?? 456);
+        persistedDraft.automationDraft = makeTestAutomationDraft({ enabled: true });
+        persistedDraft.entryIntent = 'automation';
+        persistedDraft.updatedAt = 456;
         searchParamsState.value = {};
 
         await automationRouteHook.unmount();
+        await replaceRepositoryDraftFromPersistedFixture();
         await renderNewSessionScreenModel((nextModel) => {
             plainRouteModel = nextModel;
         });
@@ -796,6 +804,7 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
         persistedDraft.selectedWorkspaceLocationId = 'loc_local';
         persistedDraft.selectedWorkspaceCheckoutId = 'checkout_feature_auth';
         persistedDraft.updatedAt = 456;
+        await replaceRepositoryDraftFromPersistedFixture();
 
         const cleanups = await runFocusEffectsAndSettle();
         for (const cleanup of cleanups) {
@@ -848,12 +857,8 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
         machineMcpServersPreviewMock.mockClear();
         persistDraftNowRef.current = null;
 
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
-
-        await renderScreen(React.createElement(Probe));
+        await renderNewSessionScreenModel((nextModel) => { model = nextModel; });
 
         expect(machineMcpServersPreviewMock).toHaveBeenCalledWith(
             'machine-2',
@@ -915,12 +920,8 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
         settingsState.useEnhancedSessionWizard = true;
         persistedDraft.backendTarget = { kind: 'builtInAgent', agentId: 'claude' };
 
-        const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
-
         let model: any = null;
-        const Probe = () => { model = useNewSessionScreenModel(); return null; };
-
-        await renderScreen(React.createElement(Probe));
+        await renderNewSessionScreenModel((nextModel) => { model = nextModel; });
 
         expect(model?.variant).toBe('wizard');
         expect(typeof model?.wizardProps?.profiles?.openProfileEdit).toBe('function');
@@ -936,12 +937,15 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
                 machineId: 'machine-2',
             }),
         }));
-        expect(saveNewSessionDraftMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+        expect(saveNewSessionDraftMock).toHaveBeenCalledWith(expect.objectContaining({
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
             selectedMachineId: 'machine-2',
             selectedPath: '/repo/custom',
         }));
-        expect(saveNewSessionDraftMock.mock.calls.at(-1)?.[0]).toEqual(expect.not.objectContaining({
+        const synchronizedWrite = saveNewSessionDraftMock.mock.calls
+            .map(([draft]) => draft)
+            .find((draft) => draft?.backendTarget?.agentId === 'claude');
+        expect(synchronizedWrite).toEqual(expect.not.objectContaining({
             selectedWorkspaceId: expect.anything(),
             selectedWorkspaceLocationId: expect.anything(),
             selectedWorkspaceCheckoutId: expect.anything(),
@@ -1038,28 +1042,6 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
 
         expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
         expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(0);
-    });
-
-    it('persists a launch draft with the legacy unscoped key when the active account scope is cleared', async () => {
-        activeServerAccountScopeState.value = null;
-        loadNewSessionDraftMock.mockReturnValueOnce(null);
-
-        let model: any = null;
-        await renderNewSessionScreenModel((nextModel) => {
-            model = nextModel;
-        });
-
-        await act(async () => {
-            model?.simpleProps?.setPrompt?.('draft after logout');
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-        await act(async () => {
-            persistDraftNowRef.current?.();
-        });
-
-        expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(1);
-        expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(0);
     });
 
     it('keeps the default environment selected even when a workspace graph still carries a legacy default profile', async () => {

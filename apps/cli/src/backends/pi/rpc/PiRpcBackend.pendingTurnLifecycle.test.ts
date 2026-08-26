@@ -620,17 +620,26 @@ describe('PiRpcBackend pending turn lifecycle', () => {
     });
     const backendWithPrivate = backend as unknown as PrivatePendingTurnBackend;
     let firstRejected: Error | null = null;
-    const firstTurn = backendWithPrivate.createPendingTurn(10_000).promise;
-    firstTurn.catch((error: Error) => {
+    const firstTurn = backendWithPrivate.createPendingTurn(10_000);
+    firstTurn.promise.catch((error: Error) => {
       firstRejected = error;
     });
 
     try {
       expect(() => backendWithPrivate.createPendingTurn(10_000)).toThrow(/pending turn/i);
+      const firstOutcome = await Promise.race([
+        firstTurn.promise.then(
+          () => 'resolved',
+          (error: Error) => error.message,
+        ),
+        delay(0).then(() => 'pending'),
+      ]);
+
+      expect(firstOutcome).toBe('pending');
       expect(firstRejected).toBeNull();
     } finally {
       await backend.dispose();
-      await firstTurn.catch(() => undefined);
+      await firstTurn.promise.catch(() => undefined);
     }
   });
 

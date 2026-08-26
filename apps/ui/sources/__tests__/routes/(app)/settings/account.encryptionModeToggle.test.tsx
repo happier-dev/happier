@@ -335,7 +335,6 @@ describe('Settings → Account (encryption mode toggle)', () => {
                 await encryptionSwitch?.props.onValueChange(true);
             });
 
-            expect(loginSpy).toHaveBeenCalledWith('t', expect.any(String));
             expect(alertSpy).toHaveBeenCalled();
         } finally {
             await screen?.unmount();

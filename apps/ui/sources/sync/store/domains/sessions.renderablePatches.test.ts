@@ -19,7 +19,8 @@ afterEach(() => {
 });
 
 function mockSessionsDomainBoundaries() {
-    vi.doMock('../../domains/state/persistence', () => ({
+    vi.doMock('../../domains/state/persistence', async (importOriginal) => ({
+        ...await importOriginal<typeof import('../../domains/state/persistence')>(),
         loadSettings: () => ({
             settings: { groupInactiveSessionsByProject: false },
             version: null,
