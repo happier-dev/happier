@@ -50,6 +50,13 @@ function publicApiComparisonRequiresHumanReview(value) {
   return value.humanReviewRequired === true || comparisonRequiresHumanReview(value.comparison);
 }
 
+function publicApiComparisonRequiresReleaseApproval(value) {
+  if (!isRecord(value)) return false;
+  return value.externalPublicationRequiresApproval === true
+    || value.sourcePosture === 'prepublish_hold'
+    || publicApiComparisonRequiresHumanReview(value);
+}
+
 /**
  * Runs the public-package governance comparison while the release conductor
  * is still forming its editorial/version recommendation. The comparison's
@@ -59,6 +66,7 @@ export async function analyzeReleasePublicApiComparisons({
   paths,
   repositoryRoot,
   releaseChannel,
+  verifyCurrentRecords = true,
   analyzeCurrentPublicApiForEditorialImpl = analyzeCurrentPublicApiForEditorial,
 }) {
   const resolvedRepositoryRoot = resolve(repositoryRoot);
@@ -71,12 +79,17 @@ export async function analyzeReleasePublicApiComparisons({
     if (manifest.name !== candidate.packageName || typeof manifest.version !== 'string') {
       throw new Error(`Invalid public package manifest for editorial comparison: ${candidate.packageRelDir}`);
     }
+    const sourcePosture = manifest.happier?.publicSdkRelease?.posture;
+    if (sourcePosture !== 'prepublish_hold' && sourcePosture !== 'developer_preview') {
+      throw new Error(`Invalid public SDK release posture for editorial comparison: ${candidate.packageRelDir}`);
+    }
     const analysis = await analyzeCurrentPublicApiForEditorialImpl({
       profileId: candidate.profileId,
       packageName: candidate.packageName,
       packageRoot,
       sourceVersion: manifest.version,
       releaseChannel,
+      verifyCurrentRecords,
       repositoryRoot: resolvedRepositoryRoot,
     });
     comparisons.push(Object.freeze({
@@ -84,6 +97,9 @@ export async function analyzeReleasePublicApiComparisons({
       profileId: candidate.profileId,
       packageName: candidate.packageName,
       sourceVersion: analysis.sourceVersion,
+      sourcePosture,
+      externalPublicationRequiresApproval:
+        manifest.happier?.publicSdkRelease?.externalPublicationRequiresApproval === true,
       releaseChannel: analysis.releaseChannel,
       humanReviewRequired: comparisonRequiresHumanReview(analysis.comparison),
       comparison: analysis.comparison,
@@ -134,6 +150,7 @@ export function buildReleaseChangeAnalysis(input) {
     changedPaths: [...new Set(input.paths)].sort(),
     compatibilityAnalysisRequired: risks.compatibilityAnalysisRequired,
     publicApiHumanReviewRequired: publicApiComparisons.some(publicApiComparisonRequiresHumanReview),
+    publicSdkReleaseApprovalRequired: publicApiComparisons.some(publicApiComparisonRequiresReleaseApproval),
     risks,
     requiredFastSuites,
     requiredHeavySuites: [...new Set(requiredHeavySuites)],
@@ -148,6 +165,7 @@ export function renderReleaseChangeAnalysisGitHubOutput(analysis) {
   return [
     `compatibility_analysis_required=${analysis.compatibilityAnalysisRequired}`,
     `public_api_human_review_required=${analysis.publicApiHumanReviewRequired}`,
+    `public_sdk_release_approval_required=${analysis.publicSdkReleaseApprovalRequired}`,
     `risk_cli_upgrade=${analysis.risks.cliUpgrade}`,
     `risk_session_continuity=${analysis.risks.sessionContinuity}`,
     `risk_relay_upgrade=${analysis.risks.relayUpgrade}`,
@@ -187,6 +205,7 @@ export async function main(argv = process.argv.slice(2)) {
       'has-published-relay-predecessor': { type: 'string', default: 'false' },
       'github-output': { type: 'string', default: '' },
       'repository-root': { type: 'string', default: '' },
+      'trust-checked-in-governance': { type: 'string', default: 'false' },
     },
     allowPositionals: false,
   });
@@ -204,6 +223,7 @@ export async function main(argv = process.argv.slice(2)) {
     paths,
     repositoryRoot: repositoryRoot ?? process.cwd(),
     releaseChannel,
+    verifyCurrentRecords: !boolean(values['trust-checked-in-governance'], '--trust-checked-in-governance'),
   });
   const result = buildReleaseChangeAnalysis({
     base,

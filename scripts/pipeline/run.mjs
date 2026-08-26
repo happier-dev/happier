@@ -1376,6 +1376,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           tarball: { type: 'string', default: '' },
           'tarball-dir': { type: 'string', default: '' },
           'authorized-sha': { type: 'string', default: '' },
+          'approve-public-sdk-release': { type: 'string', default: 'false' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -1497,6 +1498,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const sdkVersion = String(values['sdk-version'] ?? '').trim();
     const channelsProtocolVersion = String(values['channels-protocol-version'] ?? '').trim();
     const authorizedSha = String(values['authorized-sha'] ?? '').trim();
+    const approvePublicSdkRelease = parseBoolString(
+      values['approve-public-sdk-release'],
+      '--approve-public-sdk-release',
+    );
     const runnerDir = String(values['server-runner-dir'] ?? '').trim();
     const runTests = String(values['run-tests'] ?? '').trim();
     const mode = String(values.mode ?? '').trim();
@@ -1528,6 +1533,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       ...(sdkVersion ? ['--sdk-version', sdkVersion] : []),
       ...(channelsProtocolVersion ? ['--channels-protocol-version', channelsProtocolVersion] : []),
       ...(authorizedSha ? ['--authorized-sha', authorizedSha] : []),
+      '--approve-public-sdk-release', String(approvePublicSdkRelease),
       ...(runnerDir ? ['--server-runner-dir', runnerDir] : []),
       ...(runTests ? ['--run-tests', runTests] : []),
       ...(mode ? ['--mode', mode] : []),
@@ -4425,8 +4431,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'deploy-environment': { type: 'string', default: 'preview' },
               'deploy-targets': { type: 'string', default: 'ui,server,website,docs' },
               'release-profile': { type: 'string', default: '' },
+              'waive-ci': { type: 'string', default: 'false' },
+              'approve-public-sdk-release': { type: 'string', default: 'false' },
+              'include-validation-suites': { type: 'string', default: '' },
+              'waive-validation-suites': { type: 'string', default: '' },
+              'override-reason': { type: 'string', default: '' },
               'force-deploy': { type: 'string', default: 'false' },
-              bump: { type: 'string', default: 'none' },
               'ui-expo-action': { type: 'string', default: 'none' },
               'desktop-mode': { type: 'string', default: 'none' },
               'source-sha': { type: 'string', default: '' },
@@ -4518,6 +4528,17 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           if (!dryRun && (!releaseProfile.normalRelease || !releaseProfile.checksProfile)) {
             fail(`--release-profile ${releaseProfile.id} is manual certification and cannot be used for normal dispatch`);
           }
+          const waiveCi = parseBoolString(values['waive-ci'], '--waive-ci');
+          const approvePublicSdkRelease = parseBoolString(
+            values['approve-public-sdk-release'],
+            '--approve-public-sdk-release',
+          );
+          const includeValidationSuites = parseCsvList(String(values['include-validation-suites'] ?? ''));
+          const waiveValidationSuites = parseCsvList(String(values['waive-validation-suites'] ?? ''));
+          const overrideReason = String(values['override-reason'] ?? '').trim();
+          if ((waiveCi || approvePublicSdkRelease || waiveValidationSuites.length > 0) && !overrideReason) {
+            fail('--override-reason is required when CI/validation evidence is waived or a public SDK release is approved.');
+          }
 
           const deployTargets = parseCsvList(String(values['deploy-targets'] ?? ''));
           if (deployTargets.length === 0) {
@@ -4531,19 +4552,11 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             }
           }
           const forceDeploy = parseBoolString(values['force-deploy'], '--force-deploy');
-          const bumpPreset = String(values.bump ?? '').trim() || 'none';
+          const bumpPreset = 'none';
 
           const uiExpoAction = String(values['ui-expo-action'] ?? '').trim() || 'none';
           const desktopMode = String(values['desktop-mode'] ?? '').trim() || 'none';
 
-          if (!['none', 'patch', 'minor', 'major'].includes(bumpPreset)) {
-            fail(`--bump must be one of: none, patch, minor, major (got: ${bumpPreset})`);
-          }
-          if (bumpPreset !== 'none') {
-            fail(
-              'Final exact-SHA release promotion requires --bump none. Release candidates must be materialized: commit CHANGELOG and version changes, resolve the resulting exact source SHA, then dispatch with --bump none.',
-            );
-          }
           if ((deployEnvironment !== 'dev' || jsonOutput) && !releaseNotesId) {
             fail('--release-notes-id is required for normal preview/production release dispatch.');
           }
@@ -4585,6 +4598,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 authorizedPromotionSourceSha: promotionSource.sha,
                 effectiveDeployTargets: deployTargets,
                 validationProfile: releaseProfile.id,
+                overrides: {
+                  waiveCi,
+                  approvePublicSdkRelease,
+                  includeValidationSuiteIds: includeValidationSuites,
+                  waiveValidationSuiteIds: waiveValidationSuites,
+                  reason: overrideReason,
+                },
                 operationId,
                 releaseNotesId,
                 ...(resumeRunId ? { resumeRunId } : {}),
@@ -4618,12 +4638,16 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               '--ref', 'dev',
               '-f', 'dry_run=false',
               '-f', `validation_profile=${releaseProfile.id}`,
+              '-f', `waive_ci=${waiveCi}`,
+              '-f', `approve_public_sdk_release=${approvePublicSdkRelease}`,
+              '-f', `include_validation_suites=${includeValidationSuites.join(',')}`,
+              '-f', `waive_validation_suites=${waiveValidationSuites.join(',')}`,
+              '-f', `override_reason=${overrideReason}`,
               '-f', `environment=${deployEnvironment}`,
               '-f', `deploy_targets=${deployTargets.join(',')}`,
               '-f', `force_deploy=${forceDeploy}`,
               '-f', `ui_expo_action=${uiExpoAction}`,
               '-f', `desktop_mode=${desktopMode}`,
-              '-f', `bump=${bumpPreset}`,
               '-f', `confirm=${action}`,
               '-f', `authorized_promotion_source_sha=${promotionSource.sha}`,
               '-f', `release_notes_id=${releaseNotesId}`,
@@ -4882,8 +4906,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             console.log(`- force_deploy: ${forceDeploy}`);
             console.log(`- ui_expo_action: ${uiExpoAction}`);
             console.log(`- desktop_mode: ${desktopMode}`);
-            console.log(`- bump: ${bumpPreset}`);
             console.log(`- confirm: ${action}`);
+            console.log(`- waive_ci: ${waiveCi}`);
+            console.log(`- approve_public_sdk_release: ${approvePublicSdkRelease}`);
+            console.log(`- include_validation_suites: ${includeValidationSuites.join(',') || 'none'}`);
+            console.log(`- waive_validation_suites: ${waiveValidationSuites.join(',') || 'none'}`);
+            if (overrideReason) console.log(`- override_reason: ${overrideReason}`);
             return;
           }
 

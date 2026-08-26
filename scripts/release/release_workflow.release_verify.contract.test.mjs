@@ -51,7 +51,7 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
   assert.match(
     raw,
-    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_resume, resolve_validation_profile, ci, snapshot_release_issues\][\s\S]*?needs\.resolve_resume\.result == 'success'[\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'[\s\S]*?needs\.snapshot_release_issues\.result == 'success'/,
+    /plan:[\s\S]*?needs:\s*\[release_actor_guard, resolve_resume, resolve_validation_profile, ci\][\s\S]*?needs\.resolve_resume\.result == 'success'[\s\S]*?needs\.resolve_validation_profile\.result == 'success'[\s\S]*?needs\.ci\.result == 'success'/,
     'release.yml should compute canonical publication decisions after profile resolution and general CI',
   );
   assert.match(
@@ -66,7 +66,7 @@ test('release workflow verifies immutable candidates before promoting preview or
   );
 });
 
-test('preview and stable releases advance a pre-promotion issue snapshot only after release verification', async () => {
+test('issue-stage bookkeeping is best effort and never gates product publication', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
   const workflow = YAML.parse(raw);
   const snapshot = workflow.jobs.snapshot_release_issues;
@@ -90,11 +90,13 @@ test('preview and stable releases advance a pre-promotion issue snapshot only af
     /source_issues_json="\[\]"[\s\S]*?dev_issues_json="\[\]"[\s\S]*?if \[ "\$INCLUDE_DEVELOPMENT_STAGES" = "true" \]; then[\s\S]*?stage:source[\s\S]*?stage:dev[\s\S]*?fi/,
     'source/dev queues must only be captured when the selected candidate comes from dev',
   );
-  assert.ok(workflow.jobs.plan.needs.includes('snapshot_release_issues'));
+  assert.ok(!workflow.jobs.plan.needs.includes('snapshot_release_issues'));
+  assert.equal(snapshot['continue-on-error'], true);
 
   assert.deepEqual(advance.needs, ['snapshot_release_issues', 'release_verify']);
   assert.equal(advance.permissions.issues, 'write');
   assert.match(String(advance.if), /needs\.release_verify\.result == 'success'/);
+  assert.equal(advance['continue-on-error'], true);
   assert.match(JSON.stringify(advance.steps), /reconcile-issue-stage\.mjs advance/);
   assert.match(JSON.stringify(advance.steps), /stage:source/);
   assert.match(JSON.stringify(advance.steps), /stage:dev/);
@@ -143,8 +145,10 @@ test('release validation retains a risk-selected pre-publication platform gate w
       prePublicationGate,
       `release pre-publication platform gates should share one applicability decision`,
     );
-    assert.equal(workflow.jobs.release_verify.with[inputName], false);
+    assert.equal(workflow.jobs.release_verify.with[inputName], undefined);
   }
+
+  assert.equal(workflow.jobs.release_verify.with.validation_profile, 'integrated');
 
   assert.equal(prePublicationGate, true);
 
@@ -304,6 +308,12 @@ test('publication admission requires full stable checks and risk-selected server
   assert.ok(admission, 'release.yml should have one canonical release admission job');
   assert.ok(admission.needs.includes('plan'));
   assert.ok(admission.needs.includes('trust_root_validation'));
+  assert.equal(workflow.on.workflow_dispatch.inputs.approve_public_sdk_release.type, 'boolean');
+  assert.equal(
+    workflow.jobs.publish_npm.with.approve_public_sdk_release,
+    '${{ inputs.approve_public_sdk_release }}',
+    'the exact packed public SDK candidate must consume the reviewed maintainer decision',
+  );
   assert.match(
     admissionScript,
     /scripts\/pipeline\/release\/admit-release\.mjs/,

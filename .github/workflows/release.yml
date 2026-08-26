@@ -12,6 +12,31 @@ on:
         options:
           - integrated
           - stable
+      waive_ci:
+        description: "Maintainer override — accept this exact candidate without existing CI evidence"
+        required: false
+        default: false
+        type: boolean
+      approve_public_sdk_release:
+        description: "Maintainer approval — publish this exact public SDK candidate after reviewing its API comparison"
+        required: false
+        default: false
+        type: boolean
+      include_validation_suites:
+        description: "Maintainer refinement — comma-separated additional validation suite IDs"
+        required: false
+        default: ""
+        type: string
+      waive_validation_suites:
+        description: "Maintainer override — comma-separated heavy validation suite IDs to mark WAIVED"
+        required: false
+        default: ""
+        type: string
+      override_reason:
+        description: "Maintainer override — required bounded reason when evidence is waived"
+        required: false
+        default: ""
+        type: string
       dry_run:
         description: "Safety — Run checks and show plan, but do not push/deploy"
         required: true
@@ -54,13 +79,6 @@ on:
           - none
           - build_only
           - build_and_publish
-      bump:
-        description: "Version bump (Preset) — Final exact-SHA promotion requires none. Materialize CHANGELOG and version bumps in the approved candidate before final preparation."
-        required: true
-        type: choice
-        default: none
-        options:
-          - none
       qualified_v4_activation_approval:
         description: "Qualified V4 activation — explicit irreversible-migration approval only: attests backup/restore readiness, all old API and worker writers are stopped and remain stopped if migration fails, and no old-server or old-daemon rollback."
         required: false
@@ -191,6 +209,7 @@ jobs:
   snapshot_release_issues:
     name: Snapshot issues eligible for this channel release
     needs: [release_actor_guard]
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -320,17 +339,37 @@ jobs:
           HMAINT_OPERATION_ID: ${{ inputs.hmaint_operation_id }}
           HMAINT_ATTEMPT_ID: ${{ inputs.hmaint_attempt_id }}
           RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
-          BUMP: ${{ inputs.bump }}
+          BUMP: none
           CONFIRM: ${{ inputs.confirm }}
           DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
           ENVIRONMENT: ${{ inputs.environment }}
           DRY_RUN: ${{ inputs.dry_run }}
+          WAIVE_CI: ${{ inputs.waive_ci }}
+          APPROVE_PUBLIC_SDK_RELEASE: ${{ inputs.approve_public_sdk_release }}
+          INCLUDE_VALIDATION_SUITES: ${{ inputs.include_validation_suites }}
+          WAIVE_VALIDATION_SUITES: ${{ inputs.waive_validation_suites }}
+          OVERRIDE_REASON: ${{ inputs.override_reason }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/validate-release-dispatch.mjs
+      - name: Record explicit maintainer overrides
+        if: ${{ inputs.waive_ci == true || inputs.approve_public_sdk_release == true || inputs.waive_validation_suites != '' }}
+        env:
+          WAIVE_CI: ${{ inputs.waive_ci }}
+          APPROVE_PUBLIC_SDK_RELEASE: ${{ inputs.approve_public_sdk_release }}
+          WAIVE_VALIDATION_SUITES: ${{ inputs.waive_validation_suites }}
+          OVERRIDE_REASON: ${{ inputs.override_reason }}
+        run: |
+          {
+            echo '### Maintainer release overrides'
+            if [ "$WAIVE_CI" = "true" ]; then echo '- Exact-SHA CI evidence: **WAIVED**'; fi
+            if [ "$APPROVE_PUBLIC_SDK_RELEASE" = "true" ]; then echo '- Exact public SDK candidate: **APPROVED**'; fi
+            if [ -n "$WAIVE_VALIDATION_SUITES" ]; then echo "- Validation suites: **WAIVED** ($WAIVE_VALIDATION_SUITES)"; fi
+            echo "- Reason: $OVERRIDE_REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Verify successful existing CI for exact source
         id: existing_ci
-        if: ${{ inputs.dry_run != true }}
+        if: ${{ inputs.dry_run != true && inputs.waive_ci != true }}
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ inputs.authorized_promotion_source_sha }}
@@ -346,8 +385,8 @@ jobs:
 
   plan:
     name: Release Plan (inputs + changes + bump/publish decisions)
-    needs: [release_actor_guard, resolve_resume, resolve_validation_profile, ci, snapshot_release_issues]
-    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_resume.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' && needs.snapshot_release_issues.result == 'success' }}
+    needs: [release_actor_guard, resolve_resume, resolve_validation_profile, ci]
+    if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_resume.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.ci.result == 'success' }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -508,7 +547,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
           FORCE_DEPLOY: ${{ inputs.force_deploy }}
           PLAN_SOURCE_REF: ${{ needs.ci.outputs.source_ref }}
-          RELEASE_BUMP: ${{ inputs.bump }}
+          RELEASE_BUMP: none
           STACK_BASELINE_TAG: ${{ steps.versioned_plan.outputs.stack_baseline_tag || 'none' }}
           UI_EXPO_ACTION: ${{ inputs.ui_expo_action }}
           VERSIONED_APP_CHANGED: ${{ steps.versioned_plan.outputs.changed_app }}
@@ -562,7 +601,7 @@ jobs:
         id: bump_plan
         env:
           ENVIRONMENT: ${{ inputs.environment }}
-          BUMP_PRESET: ${{ inputs.bump }}
+          BUMP_PRESET: none
           BUMP_APP_OVERRIDE: preset
           BUMP_CLI_OVERRIDE: preset
           BUMP_STACK_OVERRIDE: preset
@@ -1067,6 +1106,8 @@ jobs:
       risk_cli_upgrade: ${{ needs.plan.outputs.risk_cli_upgrade == 'true' }}
       risk_session_continuity: ${{ needs.plan.outputs.risk_session_continuity == 'true' }}
       risk_relay_upgrade: ${{ needs.plan.outputs.risk_relay_upgrade == 'true' }}
+      include_validation_suites: ${{ inputs.include_validation_suites }}
+      waive_validation_suites: ${{ inputs.waive_validation_suites }}
 
   verify_resume_candidates:
     name: Verify successful immutable siblings for resume
@@ -1207,6 +1248,7 @@ jobs:
       channel: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      approve_public_sdk_release: ${{ inputs.approve_public_sdk_release }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
@@ -1218,6 +1260,7 @@ jobs:
     uses: ./.github/workflows/release-verify.yml
     with:
       channel: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+      validation_profile: integrated
       candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       candidate_build_run_id: ${{ needs.prepare_release_candidate.outputs.build_run_id }}
       cli_candidate_build_run_id: ${{ inputs.candidate_run_id }}
@@ -1232,18 +1275,10 @@ jobs:
       verify_stack_release: ${{ needs.promote_hstack_binaries.result == 'success' }}
       verify_server_release: ${{ needs.promote_server_runtime.result == 'success' }}
       verify_ui_web_release: ${{ needs.promote_ui_web.result == 'success' }}
-      run_installers_smoke: false
-      run_binary_smoke: false
-      run_cli_update_continuity: false
-      run_daemon_continuity: false
-      run_session_continuity: false
-      run_self_host_systemd: false
-      run_self_host_launchd: false
-      run_self_host_schtasks: false
-      run_self_host_daemon: false
 
   advance_release_issues:
     name: Advance issues to the released channel
+    continue-on-error: true
     if: ${{ needs.release_verify.result == 'success' && needs.snapshot_release_issues.outputs.eligible == 'true' }}
     needs: [snapshot_release_issues, release_verify]
     runs-on: ubuntu-latest

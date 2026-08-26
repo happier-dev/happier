@@ -40,7 +40,11 @@ test('the finite Turbo graph is activated through the current package manager wi
   }
   assert.equal(
     rootPackage.scripts['typecheck:inner'],
-    'yarn -s build:packages && turbo run typecheck:finite --filter=@happier-dev/plugin-sdk --filter=@happier-dev/sdk && turbo run typecheck:source:finite --filter=@happier-dev/terminal-native --filter=@happier-dev/plugin-ui --filter=@happier-dev/app --filter=@happier-dev/cli --filter=@happier-dev/server --filter=@happier-dev/tests',
+    'yarn -s build:packages && yarn -s prepare:typecheck:workspaces && turbo run typecheck:finite --filter=@happier-dev/plugin-sdk --filter=@happier-dev/sdk && turbo run typecheck:source:finite --filter=@happier-dev/terminal-native --filter=@happier-dev/plugin-ui --filter=@happier-dev/app --filter=@happier-dev/cli --filter=@happier-dev/server --filter=@happier-dev/tests',
+  );
+  assert.equal(
+    rootPackage.scripts['prepare:typecheck:workspaces'],
+    'node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs --for-component=packages/terminal-native --for-component=packages/plugin-ui --for-component=apps/ui --for-component=apps/cli --for-component=apps/server --for-component=packages/tests',
   );
   assert.equal(
     rootPackage.scripts['check:public-sdk:finite'],

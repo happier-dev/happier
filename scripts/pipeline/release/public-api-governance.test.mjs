@@ -99,7 +99,7 @@ test('public API comparator leaves a first publication explicitly dormant rather
   assert.match(renderPublicApiReleaseComparison(report), /human review required: no/i);
 });
 
-test('public API comparison output makes its existing human-review decision explicit', () => {
+test('public API comparison admits a purely additive surface without mandatory human classification', () => {
   const report = comparePublicApiReleaseRecords({
     packageName: '@happier-dev/example',
     candidateVersion: '0.1.0-preview.2',
@@ -110,8 +110,9 @@ test('public API comparison output makes its existing human-review decision expl
     candidateDeclarations: declarations(),
   });
 
-  assert.equal(report.disposition.humanReviewRequired, true);
-  assert.match(renderPublicApiReleaseComparison(report), /human review required: yes/i);
+  assert.equal(report.disposition.humanReviewRequired, false);
+  assert.equal(report.disposition.versionDecision, 'compatible_addition');
+  assert.match(renderPublicApiReleaseComparison(report), /human review required: no/i);
 });
 
 test('release preparation derives the exact candidate channel and passes only a previous published tarball inventory into the canonical governance owner', async () => {
@@ -222,6 +223,36 @@ test('editorial API analysis verifies source records and compares them before a 
     assert.equal(analysis.sourceVersion, '0.1.0-preview.2');
     assert.equal(analysis.comparison.status, 'comparison');
     assert.deepEqual(analysis.comparison.facts.addedSymbols, ['.:Alpha']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('exact release admission can consume CI-verified checked-in API records without rerunning the generator', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'public-api-governance-admission-'));
+  try {
+    const packageRoot = join(root, 'package');
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(join(packageRoot, 'api-surface.json'), `${JSON.stringify(inventory([]))}\n`);
+    await writeFile(join(packageRoot, 'api-declarations.md'), declarations());
+    const analysis = await analyzeCurrentPublicApiForEditorial({
+      profileId: 'example',
+      packageName: '@happier-dev/example',
+      packageRoot,
+      sourceVersion: '0.1.0-preview.2',
+      releaseChannel: 'preview',
+      verifyCurrentRecords: false,
+      resolvePreviousPublishedInventoryImpl: async () => ({
+        previousVersion: null,
+        previousInventoryPath: null,
+        previousDeclarationsPath: null,
+        cleanup: async () => {},
+      }),
+      runApiGovernanceImpl: async () => {
+        throw new Error('exact admission must rely on the already-required exact-SHA CI governance check');
+      },
+    });
+    assert.equal(analysis.comparison.status, 'dormant_pre_baseline');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

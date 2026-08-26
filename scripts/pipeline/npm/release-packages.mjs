@@ -7,13 +7,19 @@ import { parseArgs } from 'node:util';
 import { resolveWindowsCommandInvocation } from '../lib/windows/resolveWindowsCommandInvocation.mjs';
 import { resolvePackedTarball } from './resolvePackedTarball.mjs';
 import { resolveCliPublicationBuildSteps } from '../../../apps/cli/scripts/buildPublication.mjs';
+import { assertCliManagedRuntimeTarballPublication } from './cli-managed-runtime-tarball.mjs';
 import {
   formatPublicReleaseChannel,
   formatPublicReleaseChannelChoices,
   normalizePublicReleaseChannel,
 } from '../release/lib/public-release-rings.mjs';
 import { resolveRollingPublishVersion } from '../release/lib/rolling-version-allocation.mjs';
-import { admitNpmPublication, resolvePublicNpmPackageNames } from '../release/admit-release.mjs';
+import {
+  admitNpmPublication,
+  admitPublicSdkRelease,
+  publicSdkReleaseApprovalRequired,
+  resolvePublicNpmPackageNames,
+} from '../release/admit-release.mjs';
 import { assertCleanWorktree } from '../git/ensure-clean-worktree.mjs';
 import { exportPackSandboxTarball } from '../../../apps/stack/scripts/pack.mjs';
 import { resolvePublicSdkTarballValidationTimeoutMs } from './validate-public-sdk-tarballs.mjs';
@@ -302,6 +308,21 @@ function readExpectedPeerDependencies(repoRoot, packageRelDir) {
   return Object.fromEntries(Object.entries(peers).map(([name, version]) => [name, String(version)]));
 }
 
+/** @param {string} repoRoot @param {string} packageRelDir */
+function readPublicSdkReleasePolicy(repoRoot, packageRelDir) {
+  const packageJsonPath = withinRepo(repoRoot, path.join(packageRelDir, 'package.json'));
+  const manifest = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  const posture = manifest.happier?.publicSdkRelease?.posture;
+  if (posture !== 'prepublish_hold' && posture !== 'developer_preview') {
+    fail(`package.json public SDK release posture must be prepublish_hold or developer_preview: ${packageJsonPath}`);
+  }
+  return Object.freeze({
+    posture,
+    externalPublicationRequiresApproval:
+      manifest.happier?.publicSdkRelease?.externalPublicationRequiresApproval === true,
+  });
+}
+
 /** @param {string} packageRelDir @param {string} version @param {Record<string, string>} peers */
 function publicSdkPublicationConfig(packageRelDir, version, peers) {
   if (packageRelDir === 'packages/plugin-sdk') {
@@ -434,6 +455,7 @@ async function main() {
       'sdk-version': { type: 'string', default: '' },
       'channels-protocol-version': { type: 'string', default: '' },
       'authorized-sha': { type: 'string', default: '' },
+      'approve-public-sdk-release': { type: 'string', default: 'false' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -468,6 +490,10 @@ async function main() {
     channels_protocol: String(values['channels-protocol-version'] ?? '').trim(),
   };
   const authorizedSha = String(values['authorized-sha'] ?? '').trim();
+  const approvePublicSdkRelease = parseBool(
+    values['approve-public-sdk-release'],
+    '--approve-public-sdk-release',
+  );
 
   const opts = { dryRun };
   if (mode !== 'pack' && mode !== 'pack+publish') {
@@ -537,7 +563,7 @@ async function main() {
     });
   }
 
-  /** @type {Array<{ key: 'plugin_sdk' | 'plugin_ui' | 'sdk' | 'channels_protocol'; packageRelDir: string; outDir: string; version: string; publication: Record<string, unknown> }>} */
+  /** @type {Array<{ key: 'plugin_sdk' | 'plugin_ui' | 'sdk' | 'channels_protocol'; packageRelDir: string; outDir: string; version: string; publication: Record<string, unknown>; sourceReleasePolicy?: { posture: string; externalPublicationRequiresApproval: boolean } }>} */
   const publicSdkPackages = [];
   if (publishPluginSdk) {
     const sourceVersion = readPluginSdkPairVersion(repoRoot);
@@ -566,6 +592,7 @@ async function main() {
         outDir: 'dist/release-assets/plugin-sdk',
         version,
         publication: publicSdkPublicationConfig(packageRelDir, version, peers),
+        sourceReleasePolicy: readPublicSdkReleasePolicy(repoRoot, packageRelDir),
       });
     }
   }
@@ -592,6 +619,7 @@ async function main() {
       outDir: 'dist/release-assets/sdk',
       version,
       publication: publicSdkPublicationConfig(packageRelDir, version, readExpectedPeerDependencies(repoRoot, packageRelDir)),
+      sourceReleasePolicy: readPublicSdkReleasePolicy(repoRoot, packageRelDir),
     });
   }
 
@@ -618,6 +646,7 @@ async function main() {
       outDir: 'dist/release-assets/channels-protocol',
       version,
       publication: publicSdkPublicationConfig(packageRelDir, version, readExpectedPeerDependencies(repoRoot, packageRelDir)),
+      sourceReleasePolicy: readPublicSdkReleasePolicy(repoRoot, packageRelDir),
     });
   }
 
@@ -676,6 +705,9 @@ async function main() {
 
         const outName = `${pkg.key}-${nextVersion}.tgz`;
         const tarballPath = packTo(repoRoot, pkg.dir, pkg.outDir, outName, opts);
+        if (pkg.key === 'cli' && !opts.dryRun) {
+          assertCliManagedRuntimeTarballPublication(tarballPath);
+        }
         if (mode === 'pack+publish') {
           publishTarball(repoRoot, publishTarget.channel, tarballPath, {
             tag: publishTarget.tag,
@@ -709,6 +741,19 @@ async function main() {
         env: process.env,
       });
       publicTarballs[pkg.key] = path.join(withinRepo(repoRoot, pkg.outDir), metadata.tarball.name);
+      const apiGovernance = metadata.publication?.apiGovernance ?? null;
+      if (pkg.sourceReleasePolicy && (authorizedSha || mode === 'pack+publish')) {
+        admitPublicSdkRelease({
+          packageName: String(metadata.publication?.name ?? ''),
+          approvalRequired: publicSdkReleaseApprovalRequired({
+            sourcePosture: pkg.sourceReleasePolicy.posture,
+            externalPublicationRequiresApproval:
+              pkg.sourceReleasePolicy.externalPublicationRequiresApproval,
+            apiGovernance,
+          }),
+          approved: approvePublicSdkRelease,
+        });
+      }
     }
 
     runPublicSdkTarballValidationPhase(repoRoot, publicTarballs, opts);

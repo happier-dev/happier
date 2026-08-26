@@ -5,6 +5,7 @@ import { appendFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import { releaseTargets } from './component-registry.mjs';
+import { validateReleaseValidationRefinements } from '../release-validation/resolve-validation-plan.mjs';
 
 const SHA = /^[0-9a-f]{40}$/u;
 const OPERATION = /^rel_[A-Za-z0-9_-]{8,80}$/u;
@@ -12,16 +13,28 @@ const ATTEMPT = /^attempt_[1-9][0-9]*$/u;
 const RELEASE_NOTES = /^[a-z0-9][a-z0-9._-]*$/u;
 const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z]+)*$/u;
 const TARGETS = new Set(releaseTargets);
+const OVERRIDE_REASON_MAX = 500;
 
 /** @param {unknown} value */
 const text = (value) => String(value ?? '').trim();
+
+function csv(value, label) {
+  const raw = text(value);
+  if (!raw) return [];
+  const values = raw.split(',').map((item) => item.trim());
+  if (values.some((item) => !/^[a-z0-9-]+$/u.test(item)) || new Set(values).size !== values.length) {
+    throw new Error(`${label} must be a unique comma-separated list of validation suite IDs.`);
+  }
+  return values;
+}
 
 /**
  * @param {{
  * authorizedPromotionSourceSha?: string; candidateRunId?: string; candidateVersion?: string;
  * candidateSourceSha?: string; resumeRunId?: string; operationId?: string; attemptId?: string;
- * releaseNotesId?: string; bump?: string; confirm?: string; deployTargets?: string;
+ * releaseNotesId?: string; confirm?: string; deployTargets?: string;
  * environment?: string; dryRun?: boolean; eventName?: string; refName?: string;
+ * waiveCi?: boolean; approvePublicSdkRelease?: boolean; includeValidationSuites?: string; waiveValidationSuites?: string; overrideReason?: string;
  * }} input
  */
 export function validateReleaseDispatch(input) {
@@ -33,10 +46,24 @@ export function validateReleaseDispatch(input) {
   const operationId = text(input.operationId);
   const attemptId = text(input.attemptId);
   const releaseNotesId = text(input.releaseNotesId);
-  const bump = text(input.bump);
   const confirm = text(input.confirm);
   const environment = text(input.environment);
   const dryRun = input.dryRun === true;
+  const refinements = validateReleaseValidationRefinements({
+    includeSuiteIds: csv(input.includeValidationSuites, 'include_validation_suites'),
+    waiveSuiteIds: csv(input.waiveValidationSuites, 'waive_validation_suites'),
+  });
+  const includeValidationSuiteIds = refinements.includeSuiteIds;
+  const waiveValidationSuiteIds = refinements.waiveSuiteIds;
+  const waiveCi = input.waiveCi === true;
+  const approvePublicSdkRelease = input.approvePublicSdkRelease === true;
+  const overrideReason = text(input.overrideReason);
+  if ((waiveCi || approvePublicSdkRelease || waiveValidationSuiteIds.length > 0) && !overrideReason) {
+    throw new Error('override_reason is required when CI or validation evidence is waived or a public SDK release is explicitly approved.');
+  }
+  if (overrideReason.length > OVERRIDE_REASON_MAX || /[\r\n]/u.test(overrideReason)) {
+    throw new Error(`override_reason must be a single line of at most ${OVERRIDE_REASON_MAX} characters.`);
+  }
 
   const candidateValues = [candidateRunId, candidateVersion, candidateSourceSha].filter(Boolean).length;
   if (resumeRunId && candidateValues !== 0) throw new Error('Top-level resume cannot combine with CLI candidate-run promotion.');
@@ -53,7 +80,6 @@ export function validateReleaseDispatch(input) {
   if (operationId && !OPERATION.test(operationId)) throw new Error('hmaint_operation_id has an invalid format.');
   if (operationId && !ATTEMPT.test(attemptId)) throw new Error('hmaint_attempt_id must match attempt_<positive integer>.');
   if (!RELEASE_NOTES.test(releaseNotesId)) throw new Error('release_notes_id has an invalid format.');
-  if (bump !== 'none') throw new Error('Release candidates must already be materialized; final exact-SHA promotion requires bump=none.');
 
   let mode;
   let sourceRef = 'dev';
@@ -87,7 +113,14 @@ export function validateReleaseDispatch(input) {
   for (const target of deployTargets) {
     if (!TARGETS.has(target)) throw new Error(`Unknown deploy_targets entry: '${target}'.`);
   }
-  return { mode, sourceRef, baseRef, compareLabel, deployTargets };
+  return {
+    mode,
+    sourceRef,
+    baseRef,
+    compareLabel,
+    deployTargets,
+    overrides: { waiveCi, approvePublicSdkRelease, includeValidationSuiteIds, waiveValidationSuiteIds, reason: overrideReason },
+  };
 }
 
 /** @param {Record<string, string | undefined>} env */
@@ -101,13 +134,17 @@ export function validateReleaseDispatchFromEnvironment(env) {
     operationId: env.HMAINT_OPERATION_ID,
     attemptId: env.HMAINT_ATTEMPT_ID,
     releaseNotesId: env.RELEASE_NOTES_ID,
-    bump: env.BUMP,
     confirm: env.CONFIRM,
     deployTargets: env.DEPLOY_TARGETS,
     environment: env.ENVIRONMENT,
     dryRun: env.DRY_RUN === 'true',
     eventName: env.GITHUB_EVENT_NAME,
     refName: env.GITHUB_REF_NAME,
+    waiveCi: env.WAIVE_CI === 'true',
+    approvePublicSdkRelease: env.APPROVE_PUBLIC_SDK_RELEASE === 'true',
+    includeValidationSuites: env.INCLUDE_VALIDATION_SUITES,
+    waiveValidationSuites: env.WAIVE_VALIDATION_SUITES,
+    overrideReason: env.OVERRIDE_REASON,
   });
 }
 

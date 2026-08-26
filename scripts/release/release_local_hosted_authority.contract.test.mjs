@@ -15,7 +15,7 @@ function executable(path, source) {
   chmodSync(path, 0o755);
 }
 
-test('local release rejects post-approval bumps before GitHub dispatch and delegates exact candidates', () => {
+test('local release delegates an already-materialized exact candidate to hosted execution', () => {
   const root = mkdtempSync(join(tmpdir(), 'hosted-release-authority-'));
   const bin = join(root, 'bin');
   const log = join(root, 'commands.log');
@@ -38,34 +38,6 @@ echo "gh $*" >> ${JSON.stringify(log)}
 exit 0
   `);
   try {
-    for (const dryRun of [false, true]) {
-      for (const bump of ['patch', 'minor', 'major']) {
-        writeFileSync(log, '');
-        const result = spawnSync(process.execPath, [
-          'scripts/pipeline/run.mjs',
-          'release',
-          '--confirm', 'release dev to preview',
-          '--repository', 'happier-dev/happier',
-          '--deploy-environment', 'preview',
-          '--deploy-targets', 'server,server_runner',
-          '--bump', bump,
-          '--source-sha', DEV_SOURCE_SHA,
-          '--allow-dirty', 'true',
-          ...(dryRun ? ['--dry-run'] : []),
-        ], {
-          cwd: repoRoot,
-          env: {
-            ...process.env,
-            PATH: `${bin}:${process.env.PATH ?? ''}`,
-          },
-          encoding: 'utf8',
-        });
-        assert.equal(result.status, 1, `bump=${bump} must fail closed`);
-        assert.match(result.stderr, /materialized.*CHANGELOG.*version.*--bump none/i);
-        assert.equal(readFileSync(log, 'utf8'), '', 'rejected bumps must not inspect Git or dispatch GitHub Actions');
-      }
-    }
-
     const output = execFileSync(process.execPath, [
       'scripts/pipeline/run.mjs',
       'release',
@@ -73,7 +45,6 @@ exit 0
       '--repository', 'happier-dev/happier',
       '--deploy-environment', 'preview',
       '--deploy-targets', 'server,server_runner',
-      '--bump', 'none',
       '--source-sha', DEV_SOURCE_SHA,
       '--workflow-control-sha', WORKFLOW_CONTROL_SHA,
       '--operation-id', 'rel_hosted_20260809',

@@ -55,7 +55,8 @@ test('pipeline CLI supports help for npm-release', async () => {
   assert.match(out, /--publish-plugin-sdk/);
   assert.match(out, /--publish-sdk/);
   assert.match(out, /--authorized-sha/);
-  assert.match(out, /PEP\/auth readiness owner is machine-readable/i);
+  assert.match(out, /--approve-public-sdk-release/);
+  assert.match(out, /packed API comparison requires maintainer approval/i);
   assert.match(out, /lockstep/i);
 });
 
@@ -260,9 +261,10 @@ test('pipeline CLI help describes bounded release-profile selection', async () =
   assert.match(help, /separate irreversible-migration approval/i);
   assert.match(help, /integrated.*stable.*deep/s);
   assert.match(help, /production.*stable/i);
-  assert.match(help, /--bump.*must be none.*exact-SHA/i);
-  assert.match(help, /Materialize and commit CHANGELOG and version changes.*--bump none/i);
-  assert.match(help, /Dry-run remains available only with --bump none/i);
+  assert.match(help, /--waive-ci/);
+  assert.match(help, /--include-validation-suites/);
+  assert.match(help, /--waive-validation-suites/);
+  assert.match(help, /--override-reason/);
 });
 
 test('pipeline help covers every supported subcommand', async () => {

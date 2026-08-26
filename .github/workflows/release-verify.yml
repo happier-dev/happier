@@ -35,6 +35,16 @@ on:
         required: false
         default: false
         type: boolean
+      include_validation_suites:
+        description: "Validation — additional suites selected for this candidate"
+        required: false
+        default: ""
+        type: string
+      waive_validation_suites:
+        description: "Validation — heavy suites explicitly waived for this candidate"
+        required: false
+        default: ""
+        type: string
       candidate_source_sha:
         description: "Candidate — Exact promoted source SHA"
         required: true
@@ -92,61 +102,6 @@ on:
         required: true
         default: true
         type: boolean
-      run_installers_smoke:
-        description: "Verify — Installers smoke (linux/macos/windows)"
-        required: true
-        default: true
-        type: boolean
-      run_artifact_verify:
-        description: "Verify — Candidate-built CLI archive checksums, admission, and smoke"
-        required: true
-        default: true
-        type: boolean
-      run_binary_smoke:
-        description: "Verify — Binary smoke (cli/server/self-host)"
-        required: true
-        default: true
-        type: boolean
-      run_cli_update_continuity:
-        description: "Verify — CLI update continuity (published channel -> local build, linux)"
-        required: true
-        default: true
-        type: boolean
-      run_daemon_continuity:
-        description: "Verify — Daemon continuity (local build, linux)"
-        required: true
-        default: true
-        type: boolean
-      run_session_continuity:
-        description: "Verify — Session continuity after server restart (local build, linux)"
-        required: true
-        default: true
-        type: boolean
-      run_release_assets_docker:
-        description: "Verify — Relay upgrade (published channel -> exact candidate, SQLite + Postgres)"
-        required: true
-        default: true
-        type: boolean
-      run_self_host_systemd:
-        description: "Verify — Real self-host systemd E2E (linux)"
-        required: true
-        default: true
-        type: boolean
-      run_self_host_launchd:
-        description: "Verify — Real self-host launchd E2E (macOS)"
-        required: true
-        default: true
-        type: boolean
-      run_self_host_schtasks:
-        description: "Verify — Real self-host schtasks E2E (Windows)"
-        required: true
-        default: true
-        type: boolean
-      run_self_host_daemon:
-        description: "Verify — Real self-host + CLI daemon E2E (linux+mac)"
-        required: true
-        default: true
-        type: boolean
   workflow_call:
     inputs:
       channel:
@@ -168,6 +123,14 @@ on:
         required: false
         default: false
         type: boolean
+      include_validation_suites:
+        required: false
+        default: ""
+        type: string
+      waive_validation_suites:
+        required: false
+        default: ""
+        type: string
       candidate_source_sha:
         required: true
         type: string
@@ -232,50 +195,6 @@ on:
       verify_ui_web_release:
         required: false
         default: false
-        type: boolean
-      run_installers_smoke:
-        required: false
-        default: true
-        type: boolean
-      run_artifact_verify:
-        required: false
-        default: true
-        type: boolean
-      run_binary_smoke:
-        required: false
-        default: true
-        type: boolean
-      run_cli_update_continuity:
-        required: false
-        default: true
-        type: boolean
-      run_daemon_continuity:
-        required: false
-        default: true
-        type: boolean
-      run_session_continuity:
-        required: false
-        default: true
-        type: boolean
-      run_release_assets_docker:
-        required: false
-        default: true
-        type: boolean
-      run_self_host_systemd:
-        required: false
-        default: true
-        type: boolean
-      run_self_host_launchd:
-        required: false
-        default: true
-        type: boolean
-      run_self_host_schtasks:
-        required: false
-        default: true
-        type: boolean
-      run_self_host_daemon:
-        required: false
-        default: true
         type: boolean
 
 permissions:
@@ -443,27 +362,18 @@ jobs:
         with:
           node-version: 22.x
 
-      - name: Resolve public profile or retained legacy flags
+      - name: Resolve candidate-applicable validation suites
         id: profile
         env:
           VALIDATION_PROFILE: ${{ inputs.validation_profile }}
-          LEGACY_RUN_INSTALLERS_SMOKE: ${{ inputs.run_installers_smoke }}
-          LEGACY_RUN_ARTIFACT_VERIFY: ${{ inputs.run_artifact_verify }}
-          LEGACY_RUN_BINARY_SMOKE: ${{ inputs.run_binary_smoke }}
-          LEGACY_RUN_CLI_UPDATE_CONTINUITY: ${{ inputs.run_cli_update_continuity }}
-          LEGACY_RUN_DAEMON_CONTINUITY: ${{ inputs.run_daemon_continuity }}
-          LEGACY_RUN_SESSION_CONTINUITY: ${{ inputs.run_session_continuity }}
-          LEGACY_RUN_RELEASE_ASSETS_DOCKER: ${{ inputs.run_release_assets_docker }}
-          LEGACY_RUN_SELF_HOST_SYSTEMD: ${{ inputs.run_self_host_systemd }}
-          LEGACY_RUN_SELF_HOST_LAUNCHD: ${{ inputs.run_self_host_launchd }}
-          LEGACY_RUN_SELF_HOST_SCHTASKS: ${{ inputs.run_self_host_schtasks }}
-          LEGACY_RUN_SELF_HOST_DAEMON: ${{ inputs.run_self_host_daemon }}
           CANDIDATE_CLI_VERSION: ${{ inputs.candidate_cli_version }}
           CANDIDATE_SERVER_VERSION: ${{ inputs.candidate_server_version }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RISK_CLI_UPGRADE: ${{ inputs.risk_cli_upgrade }}
           RISK_SESSION_CONTINUITY: ${{ inputs.risk_session_continuity }}
           RISK_RELAY_UPGRADE: ${{ inputs.risk_relay_upgrade }}
+          INCLUDE_VALIDATION_SUITES: ${{ inputs.include_validation_suites }}
+          WAIVE_VALIDATION_SUITES: ${{ inputs.waive_validation_suites }}
         run: |
           set -euo pipefail
           node .release-control/scripts/pipeline/release-validation/resolve-validation-plan.mjs \
@@ -474,17 +384,8 @@ jobs:
             --risk-cli-upgrade "$RISK_CLI_UPGRADE" \
             --risk-session-continuity "$RISK_SESSION_CONTINUITY" \
             --risk-relay-upgrade "$RISK_RELAY_UPGRADE" \
-            --legacy-run-installers-smoke "$LEGACY_RUN_INSTALLERS_SMOKE" \
-            --legacy-run-artifact-verify "$LEGACY_RUN_ARTIFACT_VERIFY" \
-            --legacy-run-binary-smoke "$LEGACY_RUN_BINARY_SMOKE" \
-            --legacy-run-cli-update-continuity "$LEGACY_RUN_CLI_UPDATE_CONTINUITY" \
-            --legacy-run-daemon-continuity "$LEGACY_RUN_DAEMON_CONTINUITY" \
-            --legacy-run-session-continuity "$LEGACY_RUN_SESSION_CONTINUITY" \
-            --legacy-run-release-assets-docker "$LEGACY_RUN_RELEASE_ASSETS_DOCKER" \
-            --legacy-run-self-host-systemd "$LEGACY_RUN_SELF_HOST_SYSTEMD" \
-            --legacy-run-self-host-launchd "$LEGACY_RUN_SELF_HOST_LAUNCHD" \
-            --legacy-run-self-host-schtasks "$LEGACY_RUN_SELF_HOST_SCHTASKS" \
-            --legacy-run-self-host-daemon "$LEGACY_RUN_SELF_HOST_DAEMON" \
+            --include-suites "$INCLUDE_VALIDATION_SUITES" \
+            --waive-suites "$WAIVE_VALIDATION_SUITES" \
             --github-output "$GITHUB_OUTPUT"
 
   verify:

@@ -434,6 +434,7 @@ jobs:
     secrets: inherit
     with:
       channel: dev
+      validation_profile: integrated
       candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       candidate_build_run_id: ${{ github.run_id }}
       publication_run_id: ${{ github.run_id }}
@@ -441,15 +442,6 @@ jobs:
       verify_stack_release: true
       verify_server_release: true
       verify_ui_web_release: true
-      run_installers_smoke: false
-      run_binary_smoke: false
-      run_cli_update_continuity: false
-      run_daemon_continuity: false
-      run_session_continuity: false
-      run_self_host_systemd: false
-      run_self_host_launchd: false
-      run_self_host_schtasks: false
-      run_self_host_daemon: false
 
   advance_source_issues_to_dev:
     name: Advance shipped issues from source to dev

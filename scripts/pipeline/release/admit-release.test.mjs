@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { admitRelease, resolvePublicNpmPackageNames } from './admit-release.mjs';
+import {
+  admitPublicSdkRelease,
+  admitRelease,
+  publicSdkReleaseApprovalRequired,
+  resolvePublicNpmPackageNames,
+} from './admit-release.mjs';
 
 const base = {
   checksProfile: 'fast',
@@ -30,7 +35,53 @@ test('requires full checks for production and successful selected risk gates', (
   }), /trust validation/);
 });
 
-test('npm publication consumes an exact admitted candidate and fails closed for public SDK readiness without an owner', () => {
+test('requires explicit maintainer approval only when the exact public SDK analysis asks for it', () => {
+  assert.throws(() => admitRelease({
+    ...base,
+    publicSdk: { approvalRequired: true, approved: false },
+  }), /public SDK release requires explicit maintainer approval/);
+  assert.deepEqual(admitRelease({
+    ...base,
+    publicSdk: { approvalRequired: true, approved: true },
+  }), { admitted: true });
+  assert.deepEqual(admitRelease({
+    ...base,
+    publicSdk: { approvalRequired: false, approved: false },
+  }), { admitted: true });
+});
+
+test('exact packed public SDK candidates retain prepublish and breaking-change approval', () => {
+  assert.equal(publicSdkReleaseApprovalRequired({
+    sourcePosture: 'prepublish_hold',
+    apiGovernance: { humanReviewRequired: false },
+  }), true);
+  assert.equal(publicSdkReleaseApprovalRequired({
+    sourcePosture: 'developer_preview',
+    apiGovernance: { humanReviewRequired: true },
+  }), true);
+  assert.equal(publicSdkReleaseApprovalRequired({
+    sourcePosture: 'developer_preview',
+    apiGovernance: { humanReviewRequired: false },
+  }), false);
+  assert.equal(publicSdkReleaseApprovalRequired({
+    sourcePosture: 'developer_preview',
+    externalPublicationRequiresApproval: true,
+    apiGovernance: { humanReviewRequired: false },
+  }), true);
+
+  assert.throws(() => admitPublicSdkRelease({
+    packageName: '@happier-dev/plugin-sdk',
+    approvalRequired: true,
+    approved: false,
+  }), /public SDK release requires explicit maintainer approval/);
+  assert.deepEqual(admitPublicSdkRelease({
+    packageName: '@happier-dev/plugin-sdk',
+    approvalRequired: true,
+    approved: true,
+  }), { admitted: true });
+});
+
+test('npm publication consumes an exact admitted candidate without inventing a missing readiness authority', () => {
   const candidateSha = 'a'.repeat(40);
 
   assert.throws(() => admitRelease({
@@ -55,7 +106,7 @@ test('npm publication consumes an exact admitted candidate and fails closed for 
     },
   }), /does not match the checked-out source/);
 
-  assert.throws(() => admitRelease({
+  assert.deepEqual(admitRelease({
     ...base,
     npmPublication: {
       mode: 'pack+publish',
@@ -64,7 +115,7 @@ test('npm publication consumes an exact admitted candidate and fails closed for 
       checkedOutSha: candidateSha,
       packageNames: ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui'],
     },
-  }), /PUBLIC_SDK_READINESS_OWNER_UNAVAILABLE/);
+  }), { admitted: true });
 });
 
 test('the public npm package names one release selection publishes have a single owner', () => {
@@ -86,13 +137,12 @@ test('the public npm package names one release selection publishes have a single
     checkedOutSha: candidateSha,
   };
 
-  // The Channels protocol is a public Developer Preview package whose consumers
-  // resolve the public SDK alongside it, so it fails closed at the same
-  // readiness owner as the rest of the public surface.
-  assert.throws(() => admitRelease({
+  // Public packages are governed by their executable API/package checks and
+  // approved release classification, not an unavailable synthetic gate.
+  assert.deepEqual(admitRelease({
     ...base,
     npmPublication: { ...npmPublication, packageNames: resolvePublicNpmPackageNames({ channelsProtocol: true }) },
-  }), /PUBLIC_SDK_READINESS_OWNER_UNAVAILABLE/);
+  }), { admitted: true });
 
   // Non-public packages stay publishable: the readiness owner must be able to
   // stay silent, or it proves nothing when it fires.

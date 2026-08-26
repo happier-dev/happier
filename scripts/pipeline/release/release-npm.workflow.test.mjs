@@ -15,8 +15,10 @@ test('npm publication workflow is reusable-only and receives its exact source id
   assert.match(npmWorkflow, /^on:\n  workflow_call:/mu);
   assert.doesNotMatch(npmWorkflow, /^  workflow_dispatch:/mu);
   assert.match(npmWorkflow, /authorized_sha:\n        description: "Release-admitted exact source SHA"\n        required: true/mu);
+  assert.match(npmWorkflow, /approve_public_sdk_release:\n        description: "Maintainer approval — publish this exact public SDK candidate"/mu);
   assert.match(releaseWorkflow, /uses: \.\/\.github\/workflows\/release-npm\.yml/mu);
   assert.match(releaseWorkflow, /authorized_sha: \$\{\{ needs\.prepare_release_candidate\.outputs\.source_sha \}\}/mu);
+  assert.match(releaseWorkflow, /approve_public_sdk_release: \$\{\{ inputs\.approve_public_sdk_release \}\}/mu);
 });
 
 test('npm publication workflow leaves public-package candidate preparation to package tests and the scripted pack owner', async () => {

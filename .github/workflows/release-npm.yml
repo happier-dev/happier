@@ -53,6 +53,11 @@ on:
         description: "Release-admitted exact source SHA"
         required: true
         type: string
+      approve_public_sdk_release:
+        description: "Maintainer approval — publish this exact public SDK candidate"
+        required: false
+        default: false
+        type: boolean
       run_tests:
         description: "Checks — Run publish checks/tests before publishing"
         required: false
@@ -363,6 +368,7 @@ jobs:
           RUN_TESTS: ${{ inputs.run_tests }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
           AUTHORIZED_SHA: ${{ steps.release_inputs.outputs.authorized_sha }}
+          APPROVE_PUBLIC_SDK_RELEASE: ${{ inputs.approve_public_sdk_release }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs npm-release \
@@ -382,6 +388,7 @@ jobs:
             --channels-protocol-version "${CHANNELS_PROTOCOL_VERSION}" \
             --run-tests "${RUN_TESTS}" \
             --authorized-sha "${AUTHORIZED_SHA}" \
+            --approve-public-sdk-release "${APPROVE_PUBLIC_SDK_RELEASE}" \
             --mode pack
 
       - name: Upload npm pack artifact (cli)

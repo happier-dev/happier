@@ -43,7 +43,7 @@ When you want to publish/deploy a new preview build:
    the whole semantic review.
 5. After explicit approval, the conductor dispatches **RELEASE — Publish
    (preview + production)** for that exact SHA. The workflow validates the
-   candidate, proves the already-completed same-repository push CI for that
+   candidate, proves the already-completed same-repository canonical CI for that
    exact SHA instead of rerunning the general matrix, promotes `dev` →
    `preview`, then deploys/publishes the verified immutable outputs.
 6. After post-promotion verification, the workflow advances its pre-promotion
@@ -136,13 +136,17 @@ merely from the existence of a versioned candidate:
 
 Unrelated UI, documentation, notes-only, or internally compatible changes do
 not pay these heavy costs merely because release propagation produced a server
-or CLI version. Required checks are not optional; unnecessary checks are
-skipped automatically with a reason; the agent asks only about additional
-borderline or deep certification.
+or CLI version. Unnecessary checks are skipped automatically with a reason.
+An explicit maintainer may refine the heavy suite selection or waive exact-SHA
+CI with a bounded reason; the workflow records that evidence as `WAIVED`, not
+`PASS`. Candidate identity, artifact integrity, signatures, authorization, and
+irreversible-data admission remain hard target contracts rather than release
+checkboxes.
 
-The final materialized commit must already have a successful canonical
-`CI — Tests` push run on its source branch. Release admission verifies that
-exact run and does not replay the broad CI matrix. Release-specific artifact,
+The final materialized commit normally has a successful canonical `CI — Tests`
+run on its source branch. Release admission verifies that exact run and does
+not replay the broad CI matrix unless an explicit maintainer waives it with a
+recorded reason. Release-specific artifact,
 upgrade, platform, database, and trust-root gates remain selected independently
 from the changed seams.
 

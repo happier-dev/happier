@@ -6,6 +6,8 @@ import { appendFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
+const TRUSTED_CI_EVENTS = new Set(['push', 'workflow_dispatch', 'merge_group']);
+
 /**
  * @param {unknown[]} runs
  * @param {{ repository: string; sourceSha: string; sourceBranch: string }} expected
@@ -16,19 +18,19 @@ export function selectExactSuccessfulCiRun(runs, expected) {
     const run = /** @type {Record<string, any>} */ (value);
     return run.head_sha === expected.sourceSha
       && run.head_branch === expected.sourceBranch
-      && run.event === 'push'
+      && TRUSTED_CI_EVENTS.has(run.event)
       && run.status === 'completed'
       && run.conclusion === 'success'
       && run.head_repository?.full_name === expected.repository;
   }).sort((left, right) => Number(/** @type {any} */ (right).id) - Number(/** @type {any} */ (left).id));
   if (matches.length === 0) {
-    throw new Error(`No successful exact-SHA push CI exists for ${expected.repository}@${expected.sourceSha} on ${expected.sourceBranch}`);
+    throw new Error(`No successful exact-SHA canonical CI exists for ${expected.repository}@${expected.sourceSha} on ${expected.sourceBranch}`);
   }
   return /** @type {Record<string, any>} */ (matches[0]);
 }
 
 function fetchWorkflowRuns(repository, workflow, sourceBranch) {
-  const endpoint = `repos/${repository}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(sourceBranch)}&event=push&status=success&per_page=100`;
+  const endpoint = `repos/${repository}/actions/workflows/${workflow}/runs?branch=${encodeURIComponent(sourceBranch)}&status=success&per_page=100`;
   const result = spawnSync('gh', ['api', endpoint], { encoding: 'utf8', env: process.env });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(String(result.stderr || result.stdout || '').trim());

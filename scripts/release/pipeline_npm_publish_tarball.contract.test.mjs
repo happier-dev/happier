@@ -433,25 +433,6 @@ test('pipeline npm publish requires an admitted exact source identity before any
   assert.equal(result.state.calls ?? 0, 0, 'admission must reject before any npm operation');
 });
 
-test('pipeline npm publish blocks direct public SDK publication without a machine-readable readiness owner', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-npm-publish-public-sdk-'));
-  const result = runNpmPublication(tmpDir, 'exact', {
-    remoteIntegrity: undefined,
-    distTags: {},
-    integrityQueries: 0,
-  }, {
-    packageName: '@happier-dev/sdk',
-    authorizedSha: 'a'.repeat(40),
-  });
-
-  assert.notEqual(result.error, undefined);
-  assert.match(
-    `${String(result.error?.message ?? '')}\n${String(result.error?.stderr ?? '')}`,
-    /PUBLIC_SDK_READINESS_OWNER_UNAVAILABLE/,
-  );
-  assert.equal(result.state.calls ?? 0, 0, 'admission must reject before any npm operation');
-});
-
 test('pipeline npm publish recovers an ambiguous publish by re-querying exact integrity', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-npm-publish-recover-'));
   const result = runNpmPublication(tmpDir, 'ambiguous', {

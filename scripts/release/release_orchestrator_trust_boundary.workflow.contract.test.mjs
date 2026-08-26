@@ -173,33 +173,19 @@ test('final exact-SHA release workflow has no post-admission version-bump mutati
   assert.equal(workflow.jobs.bump_versions_dev, undefined);
 });
 
-test('public exact-SHA release admission rejects non-none bumps before branch mutation', async () => {
+test('public exact-SHA release admission consumes already-materialized versions without a manual bump input', async () => {
   const workflow = await loadReleaseWorkflow();
   const validation = workflow.jobs.ci.steps.find((step) => step?.name === 'Validate release dispatch');
   assert.match(validation?.run ?? '', /validate-release-dispatch\.mjs/);
 
-  for (const dryRun of ['false', 'true']) {
-    for (const bump of ['patch', 'minor', 'major']) {
-      const result = runReleaseInputValidation({ BUMP: bump, DRY_RUN: dryRun });
-      assert.notEqual(result.status, 0, `bump=${bump} must not create a post-approval promotion commit`);
-      assert.match(
-        result.stderr,
-        /already be materialized; final exact-SHA promotion requires bump=none/,
-      );
-    }
-  }
-
-  assert.equal(
-    runReleaseInputValidation({ BUMP: 'none', DRY_RUN: 'false' }).status,
-    0,
-    'the final exact-SHA promotion path should admit an already materialized candidate',
-  );
-  assert.equal(validation?.env?.BUMP, '${{ inputs.bump }}');
+  assert.equal(runReleaseInputValidation({ BUMP: 'none', DRY_RUN: 'false' }).status, 0);
+  assert.equal(workflow.on.workflow_dispatch.inputs.bump, undefined);
+  assert.equal(validation?.env?.BUMP, 'none');
   const bumpPlan = workflow.jobs.plan.steps.find((step) => step?.id === 'bump_plan');
   assert.equal(
     bumpPlan?.env?.BUMP_PRESET,
-    '${{ inputs.bump }}',
-    'the resolved bump plan must receive the same final-admission input',
+    'none',
+    'the resolved bump plan only validates already-materialized versions',
   );
   for (const override of ['BUMP_APP_OVERRIDE', 'BUMP_CLI_OVERRIDE', 'BUMP_STACK_OVERRIDE']) {
     assert.equal(

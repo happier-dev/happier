@@ -41,6 +41,19 @@ test('public SDK release packing schedules one exact-tarball validation phase be
   assert.ok(firstPublishIndex > validationIndex, 'publication must follow exact-tarball validation');
 });
 
+test('public SDK release packing exposes exact-candidate maintainer approval to the pack owner', async () => {
+  const source = await import('node:fs/promises').then(({ readFile }) => readFile(releasePackagesPath, 'utf8'));
+  assert.match(source, /'approve-public-sdk-release': \{ type: 'string', default: 'false' \}/u);
+  assert.match(source, /publicSdkReleaseApprovalRequired/u);
+  assert.match(source, /admitPublicSdkRelease/u);
+  assert.match(source, /metadata\.publication\?\.apiGovernance/u);
+  assert.match(
+    source,
+    /key: 'channels_protocol',[\s\S]*?sourceReleasePolicy: readPublicSdkReleasePolicy\(repoRoot, packageRelDir\)/u,
+    'the Channels protocol must consume its declared external-publication approval policy too',
+  );
+});
+
 test('the generic npm release orchestration owns the public Channels protocol package', () => {
   const version = '0.1.0-preview.778';
   const result = spawnSync(process.execPath, [
@@ -75,22 +88,6 @@ test('the generic npm release orchestration owns the public Channels protocol pa
     [`--channel preview --tarball channels_protocol-${version}.tgz`],
     'the Channels protocol candidate publishes exactly once, through the one generic tarball publisher',
   );
-});
-
-test('Channels protocol publication is refused by the canonical public-package readiness owner', () => {
-  const result = spawnSync(process.execPath, [
-    releasePackagesPath,
-    '--channel', 'preview',
-    '--publish-channels-protocol', 'true',
-    '--mode', 'pack+publish',
-    '--authorized-sha', checkedOutSha(),
-  ], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-  });
-
-  assert.notEqual(result.status, 0);
-  assert.match(`${result.stdout}\n${result.stderr}`, /PUBLIC_SDK_READINESS_OWNER_UNAVAILABLE/u);
 });
 
 test('real package publication rejects a missing release-admitted candidate before package work', () => {

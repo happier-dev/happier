@@ -184,13 +184,13 @@ export function comparePublicApiReleaseRecords({
   }
 
   const changedDeclarationBlocks = summarizeDeclarationDiff(previousDeclarations, candidateDeclarations);
-  const hasMechanicalDifference = (
-    addedSymbols.length > 0
-    || removedSymbols.length > 0
+  const requiresHumanReview = (
+    removedSymbols.length > 0
     || deprecatedSymbols.length > 0
     || changedSymbols.length > 0
     || changedDeclarationBlocks.length > 0
   );
+  const hasMechanicalDifference = addedSymbols.length > 0 || requiresHumanReview;
   return Object.freeze({
     status: 'comparison',
     packageName,
@@ -206,8 +206,12 @@ export function comparePublicApiReleaseRecords({
     }),
     disposition: Object.freeze({
       removedSymbolsAreBreaking: removedSymbols.length > 0,
-      humanReviewRequired: hasMechanicalDifference,
-      versionDecision: hasMechanicalDifference ? 'human_required' : 'no_surface_change',
+      humanReviewRequired: requiresHumanReview,
+      versionDecision: requiresHumanReview
+        ? 'human_required'
+        : addedSymbols.length > 0
+          ? 'compatible_addition'
+          : 'no_surface_change',
     }),
   });
 }
@@ -433,6 +437,7 @@ export async function analyzeCurrentPublicApiForEditorial({
   releaseChannel: releaseChannelInput,
   repositoryRoot = packageRoot,
   env = process.env,
+  verifyCurrentRecords = true,
   resolvePreviousPublishedInventoryImpl = resolvePreviousPublishedApiInventory,
   runApiGovernanceImpl,
 }) {
@@ -447,11 +452,13 @@ export async function analyzeCurrentPublicApiForEditorial({
     check: true,
   };
   if (!governanceInput.profileId) throw new Error('Public API governance profile id is required');
-  const governanceReport = runApiGovernanceImpl
-    ? await runApiGovernanceImpl(governanceInput)
-    : await runRepositoryApiGovernance({ repositoryRoot, options: governanceInput });
-  if (!isRecord(governanceReport) || governanceReport.status !== 'current') {
-    throw new Error(`Public API governance records are not current for ${packageName}`);
+  if (verifyCurrentRecords) {
+    const governanceReport = runApiGovernanceImpl
+      ? await runApiGovernanceImpl(governanceInput)
+      : await runRepositoryApiGovernance({ repositoryRoot, options: governanceInput });
+    if (!isRecord(governanceReport) || governanceReport.status !== 'current') {
+      throw new Error(`Public API governance records are not current for ${packageName}`);
+    }
   }
 
   const baseline = await resolvePreviousPublishedInventoryImpl({

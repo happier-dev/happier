@@ -28,6 +28,7 @@ export const COMMAND_HELP_NPM = {
       '--run-tests <auto|true|false>     (default: auto).',
       '--mode <pack|pack+publish>        (default: pack+publish).',
       '--authorized-sha <40-hex>         Required for a real pack+publish; use the exact SHA emitted by release admission.',
+      '--approve-public-sdk-release <bool> Exact-candidate maintainer approval when public API governance or prepublish posture requires it.',
       '--plugin-sdk-version <version>    Optional exact lockstep pair version.',
       '--sdk-version <version>           Optional exact SDK version.',
       '--channels-protocol-version <version> Optional exact Channels protocol version.',
@@ -41,7 +42,7 @@ export const COMMAND_HELP_NPM = {
       'Dev/preview publishes temporary versions (no commit) using the rolling release-ring suffix (for example X.Y.Z-dev.<sequence>).',
       'Public SDK releases use sandbox-only manifests; plugin-sdk and plugin-ui remain a single lockstep pair.',
       'The public Channels protocol has its own consumers and cadence: it packs through the same sandbox and publishes through the generic tarball publisher, never the lockstep pair.',
-      'Pack-only and dry-run work without an admission identity. Real public-SDK publication is blocked until the PEP/auth readiness owner is machine-readable.',
+      'Pack-only and dry-run work without an admission identity. Exact public SDK candidates fail closed when their source posture or packed API comparison requires maintainer approval.',
       'Local auth: uses NPM_TOKEN if set, otherwise falls back to your local npm login state.',
     ],
     examples: [

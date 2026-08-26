@@ -9,7 +9,7 @@ import { createReleaseCliDryRunEnv, RELEASE_CLI_DRY_RUN_TIMEOUT_MS } from './rel
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI release dry-run reports hosted inputs and bump facts without predicting npm jobs', async () => {
+test('pipeline CLI release dry-run reports hosted inputs and release refinements without predicting npm jobs', async () => {
   const stub = createReleaseCliDryRunEnv();
   try {
     const out = execFileSync(
@@ -29,6 +29,14 @@ test('pipeline CLI release dry-run reports hosted inputs and bump facts without 
         'happier-dev/happier',
         '--release-notes-id',
         'test-release',
+        '--waive-ci',
+        'true',
+        '--approve-public-sdk-release',
+        'true',
+        '--waive-validation-suites',
+        'docker-release-assets',
+        '--override-reason',
+        'Maintainer accepted the bounded release risk.',
         '--dry-run',
       ],
       {
@@ -56,6 +64,10 @@ test('pipeline CLI release dry-run reports hosted inputs and bump facts without 
     assert.match(out, /- workflow: release\.yml/);
     assert.match(out, /- deploy_targets: cli/);
     assert.match(out, /- force_deploy: true/);
+    assert.match(out, /- waive_ci: true/);
+    assert.match(out, /- approve_public_sdk_release: true/);
+    assert.match(out, /- waive_validation_suites: docker-release-assets/);
+    assert.match(out, /- override_reason: Maintainer accepted the bounded release risk\./);
     assert.match(out, /- publish_cli=true/);
     assert.doesNotMatch(out, /runPublishNpm|runPublishCliBinaries|runDeploy/);
   } finally {
@@ -63,52 +75,7 @@ test('pipeline CLI release dry-run reports hosted inputs and bump facts without 
   }
 });
 
-test('pipeline CLI release dry-run rejects a pre-materialization bump before forming hosted inputs', async () => {
-  const stub = createReleaseCliDryRunEnv(process.env, {
-    diffPaths: ['packages/cli-common/src/providers/resolution.ts'],
-  });
-  try {
-    const result = spawnSync(
-      process.execPath,
-      [
-        resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
-        'release',
-        '--confirm',
-        'release dev to preview',
-        '--deploy-environment',
-        'preview',
-        '--deploy-targets',
-        'cli,stack',
-        '--bump',
-        'patch',
-        '--repository',
-        'happier-dev/happier',
-        '--dry-run',
-      ],
-      {
-        cwd: repoRoot,
-        env: {
-          ...stub.env,
-          NPM_TOKEN: 'npm-token',
-          GH_TOKEN: '',
-          GH_REPO: '',
-          GITHUB_REPOSITORY: '',
-        },
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: RELEASE_CLI_DRY_RUN_TIMEOUT_MS,
-      },
-    );
-
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /materialized.*CHANGELOG.*version.*--bump none/i);
-    assert.doesNotMatch(result.stdout, /release plan|hosted dispatch inputs/i);
-  } finally {
-    stub.cleanup();
-  }
-});
-
-test('pipeline CLI release dry-run carries the public package targets through the canonical bump plan', async () => {
+test('pipeline CLI release dry-run carries public package targets through the materialized-version plan', async () => {
   const stub = createReleaseCliDryRunEnv(process.env, {
     diffPaths: ['packages/plugin-sdk/src/runtime/runtime.ts', 'packages/sdk/src/index.ts'],
   });

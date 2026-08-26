@@ -19,7 +19,6 @@ const PUBLIC_NPM_RELEASE_SELECTIONS = Object.freeze({
   sdk: Object.freeze(['@happier-dev/sdk']),
   channelsProtocol: Object.freeze(['@happier-dev/channels-protocol']),
 });
-const PUBLIC_SDK_PACKAGES = new Set(Object.values(PUBLIC_NPM_RELEASE_SELECTIONS).flat());
 
 /**
  * @param {Partial<Record<keyof typeof PUBLIC_NPM_RELEASE_SELECTIONS, boolean>>} selection
@@ -32,13 +31,35 @@ export function resolvePublicNpmPackageNames(selection) {
 }
 
 /**
+ * The source posture protects packages that have not yet completed their first
+ * public release. Once a package is in developer preview, exact packed API
+ * governance decides whether the candidate needs a human compatibility call.
+ *
+ * @param {{ sourcePosture?: string; externalPublicationRequiresApproval?: boolean; apiGovernance?: { humanReviewRequired?: boolean } | null }} input
+ */
+export function publicSdkReleaseApprovalRequired(input) {
+  return input.externalPublicationRequiresApproval === true
+    || input.sourcePosture === 'prepublish_hold'
+    || input.apiGovernance?.humanReviewRequired === true;
+}
+
+/**
+ * @param {{ packageName?: string; approvalRequired: boolean; approved: boolean }} input
+ */
+export function admitPublicSdkRelease(input) {
+  if (input.approvalRequired && !input.approved) {
+    const packageName = String(input.packageName ?? '').trim();
+    throw new Error(
+      `public SDK release requires explicit maintainer approval for this exact candidate${packageName ? ` (${packageName})` : ''}`,
+    );
+  }
+  return { admitted: true };
+}
+
+/**
  * Admit one npm candidate at the shared release boundary. Source packing can
  * prove the checked-out bytes; opaque artifact publishers consume the same
  * already-admitted SHA and retain their artifact identity boundary.
- *
- * No machine-readable owner currently exposes the PEP/auth readiness gates.
- * This owner must therefore block real public-SDK publication rather than
- * accepting an operator-supplied substitute or parsing project Markdown.
  *
  * @param {{
  *   mode: string;
@@ -77,13 +98,6 @@ export function admitNpmPublication(input) {
     );
   }
 
-  const packageNames = [...new Set((input.packageNames ?? []).map((value) => String(value).trim()).filter(Boolean))];
-  if (publishes && packageNames.some((name) => PUBLIC_SDK_PACKAGES.has(name))) {
-    throw new Error(
-      '[release-admission] PUBLIC_SDK_READINESS_OWNER_UNAVAILABLE: public SDK publication is blocked because no canonical machine-readable owner exposes PEP RB-A, SDK-EU-17, RB-B, and auth A1-A5 readiness.',
-    );
-  }
-
   return { admitted: true, authorizedSha: authorizedSha || null };
 }
 
@@ -91,6 +105,7 @@ export function admitNpmPublication(input) {
  * @param {{ checksProfile: string; environment: string; publishServerRuntimeNeeded: boolean;
  * publishCliBinariesNeeded: boolean; risks: { mysqlContract: boolean; platformServices: boolean; trustRoots: boolean };
  * gates: { mysql: string; platform: string; trustRoots: string };
+ * publicSdk?: { approvalRequired: boolean; approved: boolean };
  * npmPublication?: Parameters<typeof admitNpmPublication>[0] }} input
  */
 export function admitRelease(input) {
@@ -106,6 +121,10 @@ export function admitRelease(input) {
   if (input.risks.trustRoots && input.gates.trustRoots !== 'success') {
     throw new Error('trust-root changes require successful installer and updater trust validation');
   }
+  if (input.publicSdk) admitPublicSdkRelease({
+    approvalRequired: input.publicSdk.approvalRequired,
+    approved: input.publicSdk.approved,
+  });
   if (input.npmPublication) admitNpmPublication(input.npmPublication);
   return { admitted: true };
 }
@@ -126,6 +145,10 @@ export function admitReleaseFromEnvironment(env) {
       mysql: String(env.MYSQL_GATE_RESULT ?? ''),
       platform: String(env.PLATFORM_GATE_RESULT ?? ''),
       trustRoots: String(env.TRUST_ROOT_GATE_RESULT ?? ''),
+    },
+    publicSdk: {
+      approvalRequired: enabled(env.PUBLIC_SDK_RELEASE_APPROVAL_REQUIRED),
+      approved: enabled(env.PUBLIC_SDK_RELEASE_APPROVED),
     },
   });
 }

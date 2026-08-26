@@ -101,7 +101,7 @@ test('plugin SDK pair publisher stages both tarballs before moving either public
   assert.doesNotMatch(out, /\bnpm publish\b/);
 });
 
-test('plugin SDK pair publisher blocks real public publication without a machine-readable readiness owner', () => {
+test('plugin SDK pair publisher accepts an exact release-admitted public candidate', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-plugin-sdk-pair-output-'));
   const version = '0.1.0-preview.7';
   const sdkTarball = createTarball(tempDir, '@happier-dev/plugin-sdk', version);
@@ -130,11 +130,6 @@ test('plugin SDK pair publisher blocks real public publication without a machine
     error = caught;
   }
 
-  assert.notEqual(error, undefined);
-  assert.match(
-    `${String(error?.message ?? '')}\n${String(error?.stderr ?? '')}`,
-    /PUBLIC_SDK_READINESS_OWNER_UNAVAILABLE/,
-  );
-  assert.deepEqual(JSON.parse(fs.readFileSync(statePath, 'utf8')), { integrities: {}, tags: {} });
-  assert.equal(fs.existsSync(outputPath), false, 'admission must reject before package identities are emitted');
+  assert.equal(error, undefined);
+  assert.equal(fs.existsSync(outputPath), true, 'an exact admitted SDK pair should emit package identities');
 });
