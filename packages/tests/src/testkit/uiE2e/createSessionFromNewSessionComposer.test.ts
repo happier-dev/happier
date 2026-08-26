@@ -24,6 +24,13 @@ type CountableLocator = Readonly<{
 }>;
 
 const MACHINE_OPTION_SELECTOR = '[data-testid^="new-session-machine:"]:visible, [data-testid^="new-session-machine-option:"]:visible';
+const COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR = '[data-testid^="transcript-message-"]:not([data-testid*=":"])';
+
+function committedTranscriptMessageLocator() {
+  return {
+    filter: () => ({ count: async (): Promise<number> => 1 }),
+  };
+}
 
 function exactMachineSelector(machineId: string): string {
   return `[data-testid="new-session-machine:${machineId}"]:visible, [data-testid="new-session-machine-option:${machineId}"]:visible`;
@@ -294,6 +301,7 @@ describe('createSessionFromNewSessionComposer', () => {
     let nowMs = 0;
     let currentUrl = 'http://127.0.0.1:3000/new';
     let sessionComposerVisible = false;
+    let committedPromptVisible = false;
 
     const exactMachineClickSpy = vi.fn(async () => {});
     const checkoutChipClickSpy = vi.fn(async () => {});
@@ -372,6 +380,13 @@ describe('createSessionFromNewSessionComposer', () => {
             count: async (): Promise<number> => (sessionComposerVisible ? 1 : 0),
           };
         }
+        if (selector === '[data-testid^="transcript-message-"]:not([data-testid*=":"])') {
+          return {
+            filter: () => ({
+              count: async (): Promise<number> => (committedPromptVisible ? 1 : 0),
+            }),
+          };
+        }
         throw new Error(`unexpected selector: ${selector}`);
       }),
       goto: vi.fn(async (url: string) => {
@@ -379,6 +394,7 @@ describe('createSessionFromNewSessionComposer', () => {
       }),
       waitForTimeout: vi.fn(async (delayMs: number) => {
         nowMs += delayMs;
+        if (sessionComposerVisible) committedPromptVisible = true;
       }),
       waitForURL: vi.fn(async (matcher: (url: URL) => boolean) => {
         const url = new URL(currentUrl);
@@ -402,6 +418,7 @@ describe('createSessionFromNewSessionComposer', () => {
     expect(checkoutChipClickSpy).toHaveBeenCalledTimes(1);
     expect(currentPathClickSpy).toHaveBeenCalledTimes(1);
     expect(sendClickSpy).toHaveBeenCalledTimes(1);
+    expect(committedPromptVisible).toBe(true);
   });
 
   it('recovers when /new initially renders blocking guidance and only exposes the composer after the machine picker fallback returns', async () => {
@@ -452,6 +469,7 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR) return committedTranscriptMessageLocator();
         if (selector === exactMachineSelector('machine-1')) {
           return {
             count: async (): Promise<number> => 0,
@@ -556,6 +574,7 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR) return committedTranscriptMessageLocator();
         if (selector === exactMachineSelector('machine-1')) {
           return {
             count: async (): Promise<number> => 0,
@@ -664,6 +683,7 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR) return committedTranscriptMessageLocator();
         if (selector === exactMachineSelector('machine-dup')) {
           return exactMachineLocator;
         }
@@ -762,6 +782,7 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR) return committedTranscriptMessageLocator();
         if (selector === exactMachineSelector('machine-delayed-enabled')) {
           return {
             count: async (): Promise<number> => 1,
@@ -862,6 +883,7 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR) return committedTranscriptMessageLocator();
         if (selector === exactMachineSelector('machine-session-input-only')) {
           return {
             count: async (): Promise<number> => 1,

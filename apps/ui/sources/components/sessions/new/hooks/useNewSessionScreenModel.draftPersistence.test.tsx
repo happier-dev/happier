@@ -978,17 +978,21 @@ describe('useNewSessionScreenModel (draft hydration — core)', () => {
 
         await renderScreen(React.createElement(Probe));
 
+        const requestClose = vi.fn();
         const content = model?.simpleProps?.resumePopover?.renderContent?.({
-            requestClose: () => {},
+            requestClose,
         });
         expect(content).toBeTruthy();
 
-        const resumeScreen = await renderScreen(content);
-
-        await act(async () => {
-            await resumeScreen.pressByTestIdAsync('resume-id-browse-trigger');
+        const detachedPopoverPortalTarget = { nodeType: 1 };
+        void content.props.resumeBrowse.onBrowse({ webPortalTarget: detachedPopoverPortalTarget });
+        await vi.waitFor(() => {
+            expect(modalShowMock).toHaveBeenCalledTimes(1);
         });
-
+        expect(requestClose).toHaveBeenCalledTimes(1);
+        expect(modalShowMock).toHaveBeenCalledWith(expect.objectContaining({
+            webPortalTarget: null,
+        }));
         expect(modalShowMock).toHaveBeenCalledTimes(1);
         expect(routerPushMock).not.toHaveBeenCalled();
     });

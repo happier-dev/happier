@@ -348,6 +348,7 @@ async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
             HAPPIER_DISABLE_CAFFEINATE: '1',
             HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
             HAPPIER_VARIANT: 'dev',
+            HAPPIER_CODEX_PATH: fakeCodexAppServerPath,
             HAPPIER_CODEX_APP_SERVER_BIN: fakeCodexAppServerPath,
             HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '10000',
         },

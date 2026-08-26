@@ -534,24 +534,23 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             return;
         }
 
-        const scrollRoot = resolveChangedFilesReviewCurrentWebScrollRoot({
-            resolveCurrent: resolveWebScrollRoot,
-            retained: webScrollRootRef.current,
-        });
         const doc = (globalThis as any).window?.document as Document | undefined;
         const rowTestId = `scm-change-row-${toTestIdSafeValue(path)}`;
         const row = doc?.querySelector?.(`[data-testid="${rowTestId}"]`) as HTMLElement | null;
         const anchorY = row?.getBoundingClientRect?.().y;
         toggleCollapsed(path);
 
-        if (!scrollRoot || typeof anchorY !== 'number') return;
+        if (typeof anchorY !== 'number') return;
         const raf: (cb: FrameRequestCallback) => number =
             typeof globalThis.requestAnimationFrame === 'function'
                 ? globalThis.requestAnimationFrame.bind(globalThis)
                 : (cb) => globalThis.setTimeout(() => cb(Date.now()), 0);
         preserveWebScrollAnchorAfterToggle({
             anchorY,
-            scrollRoot,
+            resolveScrollRoot: () => resolveChangedFilesReviewCurrentWebScrollRoot({
+                resolveCurrent: resolveWebScrollRoot,
+                retained: webScrollRootRef.current,
+            }),
             readAnchorY: () => {
                 const currentRow = doc?.querySelector?.(`[data-testid="${rowTestId}"]`) as HTMLElement | null;
                 return currentRow?.getBoundingClientRect?.().y;

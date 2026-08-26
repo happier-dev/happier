@@ -6,7 +6,7 @@ type RequestFrame = (callback: FrameRequestCallback) => number;
 
 export function preserveWebScrollAnchorAfterToggle(params: Readonly<{
     anchorY: number;
-    scrollRoot: ScrollRoot;
+    resolveScrollRoot: () => ScrollRoot | null;
     readAnchorY: () => number | null | undefined;
     requestFrame: RequestFrame;
 }>): void {
@@ -15,8 +15,9 @@ export function preserveWebScrollAnchorAfterToggle(params: Readonly<{
         const currentY = params.readAnchorY();
         if (typeof currentY === 'number') {
             const delta = currentY - params.anchorY;
-            if (Math.abs(delta) > 1) {
-                params.scrollRoot.scrollTop += delta;
+            const scrollRoot = params.resolveScrollRoot();
+            if (scrollRoot && Math.abs(delta) > 1) {
+                scrollRoot.scrollTop += delta;
             }
         }
         remainingFrames -= 1;

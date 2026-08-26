@@ -91,7 +91,7 @@ test.describe('ui e2e: /new path picker (Phase 11 SelectionList migration)', () 
             testDir: suiteDir,
             env: {
                 ...process.env,
-                HAPPIER_SERVER_URL: server.baseUrl,
+                EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
             },
         });
         uiBaseUrl = ui.baseUrl;

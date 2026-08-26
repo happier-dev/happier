@@ -14,7 +14,7 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { ensureCliDistSnapshotEntrypoint } from '../../src/testkit/process/cliDist';
 import { repoRootDir } from '../../src/testkit/paths';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
-import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 
@@ -118,14 +118,6 @@ async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: nu
     return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
 }
 
-function parseSessionIdFromUrl(url: string): string {
-    const pathname = new URL(url).pathname;
-    const parts = pathname.split('/').filter(Boolean);
-    const sessionId = parts[0] === 'session' ? parts[1] : null;
-    if (!sessionId) throw new Error(`failed to parse session id from url: ${url}`);
-    return sessionId;
-}
-
 async function ensureTmuxSettingsInUi(params: {
     page: Page;
     uiBaseUrl: string;
@@ -157,31 +149,6 @@ async function ensureTmuxSettingsInUi(params: {
     }
     await expect(tmpDirInput).toHaveCount(1, { timeout: 60_000 });
     await tmpDirInput.fill(tmuxTmpDir);
-}
-
-async function createSessionFromComposer(params: {
-    page: Page;
-    uiBaseUrl: string;
-    machineId: string;
-    prompt: string;
-}): Promise<string> {
-    const { page, uiBaseUrl, machineId, prompt } = params;
-    await page.goto(`${uiBaseUrl}/new`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 120_000 });
-
-    await openNewSessionMachineSelection({ page, uiBaseUrl });
-
-    const exact = page.getByTestId(`new-session-machine:${machineId}`);
-    await expect(exact).toHaveCount(1, { timeout: 120_000 });
-    await exact.click();
-
-    await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
-    await page.getByTestId('new-session-composer-input').fill(prompt);
-    await page.getByTestId('new-session-composer-input').press('Enter');
-
-    await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
-    return parseSessionIdFromUrl(page.url());
 }
 
 test.describe('ui e2e: tmux spawn → attach', () => {
@@ -308,7 +275,7 @@ test.describe('ui e2e: tmux spawn → attach', () => {
 
         const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
 
-        const sessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: `hello ${run.runId}` });
+        const sessionId = await createSessionFromNewSessionComposer({ page, uiBaseUrl, machineId, prompt: `hello ${run.runId}` });
         await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
         await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
         await expect.poll(async () => page.locator('[data-testid^="transcript-message-"]').count(), { timeout: 180_000 }).toBeGreaterThan(1);

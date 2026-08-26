@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
@@ -37,7 +37,7 @@ test.describe('ui e2e: session multi-pane URL sync', () => {
   }
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -142,13 +142,11 @@ test.describe('ui e2e: session multi-pane URL sync', () => {
     await expect(rightPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
     await expect(detailsPaneLocator(page)).toHaveCount(0, { timeout: 60_000 });
 
-    // State -> URL: opening a linked file mention updates search params (details + path).
-    await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('session-composer-input').fill('open @AGENTS.md');
-    await page.getByTestId('session-composer-input').press('Enter');
-
-    await expect(page.getByTestId('linked-workspace-file:AGENTS.md')).toHaveCount(1, { timeout: 120_000 });
-    await page.getByTestId('linked-workspace-file:AGENTS.md').click();
+    // State -> URL: opening the existing file row updates search params (details + path).
+    // This URL contract must not depend on an unrelated agent reply rendering a file mention.
+    const agentsFileRow = page.getByTestId('repository-tree-row-AGENTS.md');
+    await expect(agentsFileRow).toHaveCount(1, { timeout: 120_000 });
+    await agentsFileRow.click();
 
     await expect(detailsPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
     await expect.poll(async () => page.url(), { timeout: 60_000 }).toContain('details=file');
