@@ -16,8 +16,8 @@ import {
 } from '../../scripts/runVitestShards.mjs';
 
 describe('apps/ui runVitestShards', () => {
-    it('defaults shard count to 24', () => {
-        expect(resolveVitestShardCount({})).toBe(24);
+    it('defaults shard count to 32 so worker result batches stay below the observed RPC timeout boundary', () => {
+        expect(resolveVitestShardCount({})).toBe(32);
     });
 
     it('uses HAPPIER_UI_VITEST_SHARDS override when valid', () => {
@@ -25,16 +25,16 @@ describe('apps/ui runVitestShards', () => {
     });
 
     it('ignores invalid shard overrides', () => {
-        expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: '0' })).toBe(24);
-        expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: 'nope' })).toBe(24);
+        expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: '0' })).toBe(32);
+        expect(resolveVitestShardCount({ HAPPIER_UI_VITEST_SHARDS: 'nope' })).toBe(32);
     });
 
     it('partitions the configured shard count into balanced CI parts', () => {
-        expect(resolveVitestShardRange({ HAPPIER_UI_VITEST_PART: '1', HAPPIER_UI_VITEST_PARTS: '4' }, 24))
-            .toEqual({ start: 1, end: 6, part: 1, parts: 4 });
-        expect(resolveVitestShardRange({ HAPPIER_UI_VITEST_PART: '4', HAPPIER_UI_VITEST_PARTS: '4' }, 24))
-            .toEqual({ start: 19, end: 24, part: 4, parts: 4 });
-        expect(resolveVitestShardRange({}, 24)).toEqual({ start: 1, end: 24, part: 1, parts: 1 });
+        expect(resolveVitestShardRange({ HAPPIER_UI_VITEST_PART: '1', HAPPIER_UI_VITEST_PARTS: '4' }, 32))
+            .toEqual({ start: 1, end: 8, part: 1, parts: 4 });
+        expect(resolveVitestShardRange({ HAPPIER_UI_VITEST_PART: '4', HAPPIER_UI_VITEST_PARTS: '4' }, 32))
+            .toEqual({ start: 25, end: 32, part: 4, parts: 4 });
+        expect(resolveVitestShardRange({}, 32)).toEqual({ start: 1, end: 32, part: 1, parts: 1 });
     });
 
     it('bounds each shard independently', () => {

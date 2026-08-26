@@ -57,7 +57,7 @@ export function resolveVitestShardCount(env) {
   // The UI suite has a large module graph (React Native stubs + Expo/web shims).
   // Running too many files in a single Vitest process can cause heap growth over time,
   // even with `isolate: true`. More shards keeps each process smaller and avoids OOMs.
-  return override ?? 24;
+  return override ?? 32;
 }
 
 export function resolveVitestShardRange(env, shardCount) {
@@ -113,7 +113,7 @@ export function resolveVitestPassthroughArgs(argv) {
 /**
  * Vitest ORs positional filters: a shard invocation that carries both the caller's path
  * filter and the shard's file list re-runs the whole filtered set, so every shard executes
- * the same files (24x by default) instead of once. The shard file list is already the
+ * the same files (32x by default) instead of once. The shard file list is already the
  * resolved form of those filters, so the filters must be dropped from the per-shard run.
  *
  * Classification uses Vitest's own CLI parser rather than a local option table plus a
