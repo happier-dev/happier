@@ -142,6 +142,7 @@ describe('persisted takeover source continuity', () => {
         options: {
           directory: '/canonical/takeover/workspace',
         },
+        remoteSessionId: record.request.source.remoteSessionId,
         origin: {
           agentId: 'example',
           pluginId: 'example.plugin',

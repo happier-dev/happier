@@ -13,6 +13,10 @@ import { ConnectedServiceCredentialRevisionV1Schema } from './connectedServiceSc
 import { QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
+export const CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER =
+  'x-happier-connected-account-capability' as const;
+export const CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION = 2 as const;
+export const CONNECTED_ACCOUNT_REQUEST_AUTH_MATERIALIZATION_ID_MAX_LENGTH = 256 as const;
 export const CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH =
   '/connected-accounts/request-auth/lookup' as const;
 export const CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH =

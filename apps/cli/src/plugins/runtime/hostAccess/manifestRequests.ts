@@ -38,37 +38,37 @@ const MANIFEST_HOST_ACCESS_CONTRIBUTION_POLICIES: readonly ManifestHostAccessCon
     Object.freeze({
         family: 'agents',
         scope: 'manifest',
-        readDeclarations: (manifest) => manifest.contributes.agents,
+        readDeclarations: (manifest: Pick<CanonicalPluginManifest, 'contributes'>) => manifest.contributes.agents,
     }),
     Object.freeze({
         family: 'backgroundServices',
         scope: 'manifest',
-        readDeclarations: (manifest) => manifest.contributes.backgroundServices,
+        readDeclarations: (manifest: Pick<CanonicalPluginManifest, 'contributes'>) => manifest.contributes.backgroundServices,
     }),
     Object.freeze({
         family: 'notificationChannels',
         scope: 'manifest',
-        readDeclarations: (manifest) => manifest.contributes.notificationChannels,
+        readDeclarations: (manifest: Pick<CanonicalPluginManifest, 'contributes'>) => manifest.contributes.notificationChannels,
     }),
     Object.freeze({
         family: 'connectedAccountDescriptors',
         scope: 'manifest',
-        readDeclarations: (manifest) => manifest.contributes.connectedAccountDescriptors,
+        readDeclarations: (manifest: Pick<CanonicalPluginManifest, 'contributes'>) => manifest.contributes.connectedAccountDescriptors,
     }),
     Object.freeze({
         family: 'actions',
         scope: 'declaration',
-        readDeclarations: (manifest) => manifest.contributes.actions,
+        readDeclarations: (manifest: Pick<CanonicalPluginManifest, 'contributes'>) => manifest.contributes.actions,
     }),
     Object.freeze({
         family: 'hooks',
         scope: 'declaration',
-        readDeclarations: (manifest) => manifest.contributes.hooks,
+        readDeclarations: (manifest: Pick<CanonicalPluginManifest, 'contributes'>) => manifest.contributes.hooks,
     }),
     Object.freeze({
         family: 'resources',
         scope: 'declaration',
-        readDeclarations: (manifest) => manifest.contributes.resources,
+        readDeclarations: (manifest: Pick<CanonicalPluginManifest, 'contributes'>) => manifest.contributes.resources,
     }),
 ]);
 

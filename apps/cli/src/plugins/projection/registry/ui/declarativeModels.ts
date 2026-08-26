@@ -145,13 +145,19 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
             const permittedActions = actionEntries
                 .filter((entry) => entry.identity.pluginId === pluginId
                     && section.definition.actions.includes(entry.identity.localId));
+            const permittedEnabledActions = Object.freeze(Object.fromEntries(
+                permittedActions.map(({ identity }) => {
+                    const qualifiedId = buildQualifiedPluginContributionKey(identity);
+                    return [qualifiedId, enabledActions[qualifiedId] === true];
+                }),
+            ));
             const model = createStablePluginDeclarativeModel({
                 pluginId,
                 generation: String(params.generation),
                 renderer: {
                     id: rendererId,
                     kind: 'declarative',
-                    root: { kind: 'state', state: 'loading' },
+                    root: { kind: 'state', state: 'loading', title: 'Loading' },
                     documentSource: { kind: 'resource', resourceId: section.definition.resourceId },
                 },
                 settings: [],
@@ -168,7 +174,7 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
                     : { preparedTargetedSurfaces: params.preparedTargetedSurfacesByPluginId[pluginId] }),
                 availability: {
                     visible: true,
-                    enabledActions,
+                    enabledActions: permittedEnabledActions,
                 },
             });
             modelsByRendererKey[`${pluginId}\0${rendererId}`] = model;

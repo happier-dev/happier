@@ -1,10 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-export const CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV =
-  'HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH';
-export const CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION = 2 as const;
-export const CONNECTED_ACCOUNT_REQUEST_AUTH_MATERIALIZATION_ID_MAX_LENGTH = 256 as const;
+import {
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_MATERIALIZATION_ID_MAX_LENGTH,
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
+
 export const CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_RELATIVE_PATH =
   join('request-auth', 'capability.json');
 

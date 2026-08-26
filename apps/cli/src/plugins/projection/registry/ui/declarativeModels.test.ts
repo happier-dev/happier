@@ -311,6 +311,45 @@ describe('declarative projection models', () => {
         expect(listDeclarativeNodesInPreorder(model!.root)[2]).toMatchObject({ kind: 'action', enabled: false });
     });
 
+    it('does not lend unrelated plugin action availability to a Session info model', () => {
+        const source = registry();
+        const unavailable: unknown[] = [];
+        const unrelatedAction = {
+            ...source.actions[0]!,
+            pluginId: 'happier.triage',
+            definition: {
+                ...source.actions[0]!.definition,
+                id: 'actions/administer-v1',
+            },
+        };
+        const models = resolveDeclarativeProjectionModels({
+            registry: {
+                actions: [unrelatedAction],
+                sessionInfoSections: [{
+                    pluginId: 'happier.channels',
+                    definition: {
+                        id: 'external-conversations',
+                        resourceId: 'session-info-v1',
+                        order: 50,
+                        actions: [],
+                    },
+                }],
+            } as unknown as ResolvedContributionRegistry,
+            generation: 43,
+            onRendererModelUnavailable: ({ error }) => unavailable.push(error),
+        });
+
+        expect(unavailable).toEqual([]);
+        expect(models['happier.channels\0session-info-external-conversations']).toMatchObject({
+            identity: {
+                pluginId: 'happier.channels',
+                localId: 'session-info-external-conversations',
+                generation: '43',
+            },
+            declarativeInventory: { actions: [] },
+        });
+    });
+
     it('keeps a model inert when current action policy evaluation fails', () => {
         const models = resolveDeclarativeProjectionModels({
             registry: registry(),

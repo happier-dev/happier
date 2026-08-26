@@ -78,6 +78,7 @@ function leaseWithAdapter(
         lease: {
             registry,
             source: 'active' as const,
+            durableRevision: registry.durableRevision ?? -1,
             release: async () => undefined,
         } satisfies PluginRuntimeRegistryLease,
     };

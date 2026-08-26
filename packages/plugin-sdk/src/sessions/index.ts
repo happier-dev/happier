@@ -58,16 +58,16 @@ export type { SessionSummary } from '../services/sessions.js';
 export type { SessionSystemRecord } from '../services/sessions.js';
 export type { SessionSystemRecordAddress } from '../services/sessions.js';
 export type { SessionSystemRecordDeleteRequest } from '../services/sessions.js';
+export type { SessionSystemRecordKind } from './scoped.js';
 export type { SessionSystemRecordListQuery } from '../services/sessions.js';
+export type { SessionSystemRecordNamespace } from './scoped.js';
 export type { SessionSystemRecordPage } from '../services/sessions.js';
 export type { SessionSystemRecordReadRequest } from '../services/sessions.js';
+export type { SessionSystemRecordReadRequestV1 } from './scoped.js';
+export type { SessionSystemRecordReadResultV1 } from './scoped.js';
 export type { SessionSystemRecordRevision } from '../services/sessions.js';
 export type { SessionSystemRecordUpsertRequest } from '../services/sessions.js';
-export type {
-    SessionSystemRecordReadRequestV1,
-    SessionSystemRecordReadResultV1,
-    SessionSystemRecordWriteRequestV1,
-} from './scoped.js';
+export type { SessionSystemRecordWriteRequestV1 } from './scoped.js';
 export type { SessionUsageLimitRecoveryResumePromptModeV1 } from '../services/sessions.js';
 export type { SessionUsageLimitRecoveryV1 } from '../services/sessions.js';
 export { SessionUsageLimitRecoveryV1Schema } from '../services/sessions.js';
@@ -75,18 +75,18 @@ export type { SessionWatchEvent } from '../services/sessions.js';
 export type { SessionWatchQuery } from '../services/sessions.js';
 export type { SessionsService } from '../services/sessions.js';
 export type { SkillMentionV1 } from '../services/sessions.js';
+export type { SpecialCommandResult } from './specialCommands.js';
+export type { SpecialCommandType } from './specialCommands.js';
 export type { StructuredImageInputV1 } from '../services/sessions.js';
 export type { StructuredInputMentionSourcesV1 } from '../services/sessions.js';
 export type { VendorPluginMentionV1 } from '../services/sessions.js';
 export { hasSessionInputContentV1 } from '../services/sessions.js';
 export { isChangeTitleToolNameAlias } from '../services/sessions.js';
+export { isNonSteerablePromptPayload } from './specialCommands.js';
 export { isSlashCommandSupported } from '../services/sessions.js';
 export { normalizeSessionAttachmentUploadPath } from '../services/sessions.js';
 export { normalizeSlashCommandName } from '../services/sessions.js';
-export {
-    isNonSteerablePromptPayload,
-    parseSpecialCommand,
-} from './specialCommands.js';
+export { parseSpecialCommand } from './specialCommands.js';
 export { readHappierStructuredInputV1FromMeta } from '../services/sessions.js';
 export { readLeadingSlashCommandName } from '../services/sessions.js';
 export { readPendingLocalId } from '../services/sessions.js';

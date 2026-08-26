@@ -171,7 +171,7 @@ describe('ActionExecutor subagent registry actions', () => {
     });
   });
 
-  it('keeps raw subagent reads undiscoverable and unusable on the Plugin Action surface', async () => {
+  it('lets trusted plugins discover and invoke bounded subagent reads through the canonical Action owner', async () => {
     const subagentsList = vi.fn(async () => []);
     const subagentsGet = vi.fn(async () => null);
     const subagentsWatch = vi.fn(async () => ({ kind: 'snapshot' as const, subagents: [] }));
@@ -195,20 +195,20 @@ describe('ActionExecutor subagent registry actions', () => {
       ['sessions.subagents.watch', { id: 'other-subagent', parentSessionId: 'other-session' }],
     ] as const) {
       await expect(executor.execute('action.spec.get', { id: actionId }, context)).resolves.toMatchObject({
-        ok: false,
-        errorCode: 'action_disabled',
-        details: { reason: 'unsupported_surface', surface: 'plugin' },
+        ok: true,
+        result: {
+          actionSpec: {
+            id: actionId,
+            surfaces: { plugin: true },
+          },
+        },
       });
-      await expect(executor.execute(actionId, input, context)).resolves.toMatchObject({
-        ok: false,
-        errorCode: 'action_disabled',
-        details: { reason: 'unsupported_surface', surface: 'plugin' },
-      });
+      await expect(executor.execute(actionId, input, context)).resolves.toMatchObject({ ok: true });
     }
 
-    expect(subagentsList).not.toHaveBeenCalled();
-    expect(subagentsGet).not.toHaveBeenCalled();
-    expect(subagentsWatch).not.toHaveBeenCalled();
+    expect(subagentsList).toHaveBeenCalledWith({ parentSessionId: 'other-session' });
+    expect(subagentsGet).toHaveBeenCalledWith({ id: 'other-subagent', parentSessionId: 'other-session' });
+    expect(subagentsWatch).toHaveBeenCalledWith({ id: 'other-subagent', parentSessionId: 'other-session' });
   });
 
   it('rejects raw subagent mutations on the Plugin Action surface before their deps', async () => {

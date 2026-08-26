@@ -1,6 +1,6 @@
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
-} from '@happier-dev/agents/request-auth';
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import type { TrackedSession } from '@/daemon/types';
 import { canonicalAbsolutePathsEqual } from '@/utils/path/expandHomeDirPath';

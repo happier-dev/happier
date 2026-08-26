@@ -364,20 +364,24 @@ describe('external-session persisted takeover admission action', () => {
           order.push('resolve');
           return {
             ok: true as const,
-            value: resolvedSpawn({
-              directory: '/workspace',
-              existingSessionId: initial.request.sessionId,
-            }),
+            value: {
+              ...resolvedSpawn({
+                directory: '/workspace',
+                existingSessionId: initial.request.sessionId,
+              }),
+              remoteSessionId: initial.request.source.remoteSessionId,
+            },
           };
         }),
       });
 
-      await expect(owner.prepareSpawn(running)).resolves.toEqual(
-        resolvedSpawn({
+      await expect(owner.prepareSpawn(running)).resolves.toEqual({
+        ...resolvedSpawn({
           directory: '/workspace',
           existingSessionId: initial.request.sessionId,
         }),
-      );
+        remoteSessionId: initial.request.source.remoteSessionId,
+      });
       expect(suspendFollow).toHaveBeenCalledWith({
         sessionId: initial.request.sessionId,
         reason: 'takeover',

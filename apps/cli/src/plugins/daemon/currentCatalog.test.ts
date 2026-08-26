@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const installedBoundary = vi.hoisted(() => ({
   readInstalledPluginCatalog: vi.fn(async () => []),
+  readInstalledPluginCatalogSnapshot: vi.fn(async () => ({ revision: -1, entries: [] })),
 }));
 
 vi.mock('@/plugins/projection/catalog/installed', async (importOriginal) => {
@@ -9,8 +10,13 @@ vi.mock('@/plugins/projection/catalog/installed', async (importOriginal) => {
   return {
     ...actual,
     readInstalledPluginCatalog: installedBoundary.readInstalledPluginCatalog,
+    readInstalledPluginCatalogSnapshot: installedBoundary.readInstalledPluginCatalogSnapshot,
   };
 });
+
+vi.mock('@/plugins/projection/registry/sources/generatedBundledPluginManifests', () => ({
+  BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: Object.freeze([]),
+}));
 
 import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol';
 
@@ -88,6 +94,10 @@ describe('readCurrentDaemonPluginCatalogSnapshot', () => {
       .map(({ family, localId }) => ({ family, localId }));
     expect(registrationRefs).toEqual([{ family: 'providers', localId: 'packed-managed-provider' }]);
     installedBoundary.readInstalledPluginCatalog.mockResolvedValueOnce([entry] as never);
+    installedBoundary.readInstalledPluginCatalogSnapshot.mockResolvedValueOnce({
+      revision: 4,
+      entries: [entry],
+    } as never);
     const reloadController = {
       tryAcquireRuntimeRegistry: () => ({
         registry: {
@@ -103,6 +113,7 @@ describe('readCurrentDaemonPluginCatalogSnapshot', () => {
           }],
         },
         source: 'active',
+        durableRevision: 4,
         release: async () => {},
       }),
     } as unknown as PluginReloadController;
@@ -137,9 +148,6 @@ describe('readCurrentDaemonPluginCatalogSnapshot', () => {
       plugins: [],
       tools: [],
     });
-    expect(installedBoundary.readInstalledPluginCatalog).toHaveBeenCalledWith({
-      happyHomeDir: '/test/home',
-    });
   });
 
   it('releases the exact runtime lease after projecting the catalog', async () => {
@@ -154,6 +162,7 @@ describe('readCurrentDaemonPluginCatalogSnapshot', () => {
       tryAcquireRuntimeRegistry: () => ({
         registry,
         source: 'active',
+        durableRevision: -1,
         release,
       }),
     } as unknown as PluginReloadController;
@@ -203,6 +212,7 @@ describe('readCurrentDaemonPluginCatalogSnapshot', () => {
           },
         },
         source: 'active',
+        durableRevision: -1,
         release,
       }),
     } as unknown as PluginReloadController;
@@ -215,5 +225,112 @@ describe('readCurrentDaemonPluginCatalogSnapshot', () => {
       }],
     });
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('retains an attributed diagnostic from a runtime lease that matches the durable catalog revision', async () => {
+    const { entry } = buildManagedProviderCatalogEntry();
+    const currentDiagnostic = {
+      code: 'point_absent',
+      message: 'Targeted contribution admission rejected (point_absent).',
+      stage: 'normalization',
+      contribution: { pluginId: entry.pluginId, localId: 'provider-a' },
+      details: {
+        targetPluginId: 'acme.target',
+        pointId: 'providers',
+        protocol: { id: 'provider', version: 1 },
+      },
+    } as const;
+    const currentRelease = vi.fn(async () => {});
+    const reloadController = {
+      tryAcquireRuntimeRegistry: () => ({
+        registry: {
+          contributes: { tools: [], actionsById: new Map() },
+          pluginDiagnosticsByPluginId: { [entry.pluginId]: [currentDiagnostic] },
+        },
+        source: 'active',
+        durableRevision: 8,
+        release: currentRelease,
+      }),
+    } as unknown as PluginReloadController;
+    installedBoundary.readInstalledPluginCatalog.mockResolvedValueOnce([entry] as never);
+    installedBoundary.readInstalledPluginCatalogSnapshot.mockResolvedValueOnce({
+      revision: 8,
+      entries: [entry],
+    } as never);
+
+    await expect(readCurrentDaemonPluginCatalogSnapshot({ reloadController })).resolves.toMatchObject({
+      plugins: [expect.objectContaining({
+        pluginId: entry.pluginId,
+        contributionIntrospection: expect.objectContaining({
+          diagnostics: [expect.objectContaining({
+            data: expect.objectContaining({ code: 'point_absent' }),
+          })],
+        }),
+      })],
+      tools: [],
+    });
+    expect(currentRelease).toHaveBeenCalledOnce();
+  });
+
+  it('fails the runtime projection closed when a newer catalog cannot be paired with a current lease', async () => {
+    const staleRelease = vi.fn(async () => {});
+    const staleRegistry = {
+      contributes: {
+        immutableGenerationIdsByPluginId: { 'happier.channels': 'generation-6' },
+        tools: [{
+          provenance: 'external',
+          pluginId: 'happier.channels',
+          definition: {
+            id: 'channel-tool',
+            actionId: 'happier.channels/channel-a',
+            name: 'happier_channel_a',
+            title: 'Happier Channel A',
+            description: 'Run a stale channel action.',
+            inputSchema: { type: 'object', additionalProperties: false },
+            surfaces: ['agent', 'mcp', 'cli'],
+          },
+        }],
+        actionsById: new Map([[
+          'happier.channels/channel-a',
+          {
+            provenance: 'external',
+            pluginId: 'happier.channels',
+            definition: { id: 'channel-a' },
+          },
+        ]]),
+      },
+      targetActionInvocations: {
+        evaluateCatalogPolicy: () => ({ outcome: 'visible' as const }),
+      },
+      pluginDiagnosticsByPluginId: {
+        'happier.channels': [{
+          code: 'point_absent',
+          message: 'Targeted contribution admission rejected (point_absent).',
+          stage: 'normalization',
+          contribution: { pluginId: 'happier.channels', localId: 'channel-a' },
+        }],
+      },
+    };
+    const tryAcquireRuntimeRegistry = vi.fn(() => ({
+      registry: staleRegistry,
+      source: 'active' as const,
+      durableRevision: 6,
+      release: staleRelease,
+    }));
+    const reloadController = {
+      tryAcquireRuntimeRegistry,
+    } as unknown as PluginReloadController;
+    installedBoundary.readInstalledPluginCatalog.mockResolvedValueOnce([] as never);
+    installedBoundary.readInstalledPluginCatalogSnapshot.mockResolvedValueOnce({
+      revision: 7,
+      entries: [],
+    } as never);
+
+    await expect(readCurrentDaemonPluginCatalogSnapshot({ reloadController })).resolves.toEqual({
+      plugins: [],
+      tools: [],
+    });
+    expect(tryAcquireRuntimeRegistry).toHaveBeenCalledOnce();
+    expect(staleRelease).toHaveBeenCalledOnce();
   });
 });

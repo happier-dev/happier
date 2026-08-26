@@ -586,6 +586,7 @@ beforeEach(() => {
   boundaries.lease = {
     registry,
     source: 'active',
+    durableRevision: registry.durableRevision ?? -1,
     release: boundaries.leaseRelease,
   } satisfies PluginRuntimeRegistryLease;
 });

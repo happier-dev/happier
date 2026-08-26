@@ -348,7 +348,9 @@ function createFixture(input: Readonly<{
         activateContributionsOnDemand: activate,
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;
     const release = vi.fn(async () => undefined);
-    const createOrReuseCredential = vi.fn(async () => ({
+    const createOrReuseCredential = vi.fn<
+        QualifiedExternalSessionHookListener['createOrReuseCredential']
+    >(async () => ({
         installationPrincipalRef: 'installation-principal',
         eventPrincipalRef: 'event-principal',
         eventId: 'session-start',
@@ -372,12 +374,22 @@ function createFixture(input: Readonly<{
         port: 1234,
         createOrReuseCredential,
         restoreCredential,
-        rotateCredential: vi.fn(createOrReuseCredential),
+        rotateCredential: vi.fn<
+            QualifiedExternalSessionHookListener['rotateCredential']
+        >(createOrReuseCredential),
         readCredentialState,
-        enable: vi.fn(() => ({ state: 'active' })),
-        disable: vi.fn(() => ({ state: 'disabled' })),
-        disableDurableCredential: vi.fn(() => ({ state: 'disabled' })),
-        revokeDurableCredential: vi.fn(async () => undefined),
+        enable: vi.fn<QualifiedExternalSessionHookListener['enable']>(
+            () => ({ state: 'active' }),
+        ),
+        disable: vi.fn<QualifiedExternalSessionHookListener['disable']>(
+            () => ({ state: 'disabled' }),
+        ),
+        disableDurableCredential: vi.fn<
+            QualifiedExternalSessionHookListener['disableDurableCredential']
+        >(() => ({ state: 'disabled' })),
+        revokeDurableCredential: vi.fn<
+            QualifiedExternalSessionHookListener['revokeDurableCredential']
+        >(async () => undefined),
         buildOwnedEntry: vi.fn(() => ({
             matcher: null,
             hooks: [{

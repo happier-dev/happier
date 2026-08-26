@@ -20,6 +20,12 @@ export type PluginRuntimeRegistryLease = Readonly<{
     registry: ResolvedExecutablePluginRuntimeRegistry;
     source: 'active' | 'ephemeral';
     /**
+     * Existing durable registry revision that established this active serving
+     * lease. Consumers that join durable and runtime projections must require
+     * the same revision rather than combine two current snapshots.
+     */
+    durableRevision: number;
+    /**
      * Revalidates a mounted caller against the controller's currently published
      * runtime without transferring ownership of the retained registry snapshot.
      */
@@ -249,6 +255,7 @@ export function createPluginReloadController(params?: Readonly<{
     let shutdownPromise: Promise<void> | null = null;
     let shutdownStarted = false;
     let highestObservedDurableRevision: number | null = null;
+    let activeRegistryDurableRevision: number | null = null;
     let shutdownTimeoutMs = normalizeShutdownTimeoutMs(undefined);
     const outstandingLeaseCounts = new Map<ResolvedExecutablePluginRuntimeRegistry, number>();
     const pendingDisposal = new Set<ResolvedExecutablePluginRuntimeRegistry>();
@@ -334,10 +341,14 @@ export function createPluginReloadController(params?: Readonly<{
         registry: ResolvedExecutablePluginRuntimeRegistry,
     ): PluginRuntimeRegistryLease {
         retainRegistryLease(registry);
+        const durableRevision = registry === activeRegistry
+            ? (activeRegistryDurableRevision ?? registry.durableRevision ?? -1)
+            : (registry.durableRevision ?? -1);
         let released = false;
         return {
             registry,
             source: 'active',
+            durableRevision,
             resolveCurrentPluginMaterializationRef: (pluginId) => {
                 if (shutdownStarted) return null;
                 return activeRegistry?.resolveCurrentPluginMaterializationRef?.(pluginId) ?? null;
@@ -535,6 +546,7 @@ export function createPluginReloadController(params?: Readonly<{
             generation = attemptedGeneration;
             applyCurrentResourceSessionAccessWitness(registry);
             registry.publishDeclaredEventSubscriptions?.();
+            activeRegistryDurableRevision = registry.durableRevision ?? -1;
             activeRegistry = registry;
         };
         try {
@@ -660,6 +672,7 @@ export function createPluginReloadController(params?: Readonly<{
                 previousRegistry?.retireLiveSubscriptionConsumers?.();
                 applyCurrentResourceSessionAccessWitness(adoption.registry);
                 adoption.registry.publishDeclaredEventSubscriptions?.();
+                activeRegistryDurableRevision = adoption.durableRevision;
                 activeRegistry = adoption.registry;
             };
             try {
@@ -784,6 +797,7 @@ export function createPluginReloadController(params?: Readonly<{
                 if (activeRegistry) registriesToDispose.add(activeRegistry);
                 for (const registry of pendingDisposal) registriesToDispose.add(registry);
                 activeRegistry = null;
+                activeRegistryDurableRevision = null;
                 pendingDisposal.clear();
                 await waitForRegistryLeasesToDrain(registriesToDispose, shutdownTimeoutMs);
                 outstandingLeaseCounts.clear();

@@ -15,3 +15,7 @@ export type {
     SessionSystemRecordReadResultV1,
     SessionSystemRecordWriteRequestV1,
 } from '@happier-dev/agents';
+export type {
+    SessionSystemRecordKind,
+    SessionSystemRecordNamespace,
+} from '@happier-dev/protocol/sessions/general';

@@ -144,8 +144,7 @@
               "specifier": {
                 "enum": [
                   "./host/registration",
-                  "./host/fs/json-owner-file-lock",
-                  "./host/targeted-contributions"
+                  "./host/fs/json-owner-file-lock"
                 ]
               }
             }
@@ -182,8 +181,7 @@
               },
               "specifier": {
                 "enum": [
-                  "./host/fs/json-owner-file-lock",
-                  "./host/targeted-contributions"
+                  "./host/fs/json-owner-file-lock"
                 ]
               }
             },

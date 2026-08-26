@@ -20,6 +20,10 @@ const protocolAccountScopedCipher = resolve(
     import.meta.dirname,
     '../../protocol/src/crypto/accountScopedCipher.ts',
 );
+const protocolClaudeSubscriptionMaterialization = resolve(
+    import.meta.dirname,
+    '../../protocol/src/connect/claudeSubscriptionMaterialization.ts',
+);
 const protocolDeclarativeDocument = resolve(
     import.meta.dirname,
     '../../protocol/src/plugins/contributions/ui/declarativeDocument.ts',
@@ -40,6 +44,7 @@ const sourceAliases = [
     ['@happier-dev/protocol/providers/binding-compatibility', '../../protocol/src/providers/compatibility/resolve.ts'],
     ['@happier-dev/protocol/providers/model-selection', '../../protocol/src/providers/selection/v1.ts'],
     ['@happier-dev/protocol/connect/connected-account-purposes', '../../protocol/src/connect/connectedAccountPurposes.ts'],
+    ['@happier-dev/protocol/connect/claude-subscription-materialization', '../../protocol/src/connect/claudeSubscriptionMaterialization.ts'],
     ['@happier-dev/protocol/connect/connected-account-request-auth', '../../protocol/src/connect/connectedAccountRequestAuth.ts'],
     ['@happier-dev/protocol/connect/connected-service-bindings', '../../protocol/src/connect/connectedServiceBindings.ts'],
     ['@happier-dev/protocol/connect/connected-service-schemas', '../../protocol/src/connect/connectedServiceSchemas.ts'],
@@ -83,6 +88,11 @@ const bundleCases = [
         name: 'Connected Accounts projection',
         entry: resolve(import.meta.dirname, './connectedAccounts.ts'),
         source: 'export * from ENTRY;',
+    },
+    {
+        name: 'Connected Accounts request-auth author helper',
+        entry: resolve(import.meta.dirname, './connected-accounts/requestAuth.ts'),
+        source: 'export { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV, buildConnectedAccountRequestAuthClientSource } from ENTRY;',
     },
     {
         name: 'Provider projection',
@@ -259,6 +269,10 @@ describe('Plugin SDK publication realm closure', () => {
             expect(bundle.nodeReach).toEqual([]);
             if (bundleCase.name === 'Automation result-delivery projection') {
                 expect(bundle.moduleIds).toContain(protocolAutomationResultDelivery);
+                expect(bundle.moduleIds).not.toContain(protocolRoot);
+            }
+            if (bundleCase.name === 'Connected Accounts projection') {
+                expect(bundle.moduleIds).toContain(protocolClaudeSubscriptionMaterialization);
                 expect(bundle.moduleIds).not.toContain(protocolRoot);
             }
             if (bundleCase.name === 'Session input canonical projection') {

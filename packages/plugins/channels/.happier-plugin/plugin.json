@@ -24170,7 +24170,7 @@
     "scmHostingProviders": [],
     "sessionHeaderActions": [
       {
-        "action": {
+        "command": {
           "destination": "session-conversations",
           "kind": "openSurface"
         },

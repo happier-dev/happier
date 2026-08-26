@@ -69,11 +69,7 @@ import type {
     DefinedContributionPointProtocolMap,
     DefinedContributionPoints,
 } from './targetedContributionAuthoring.js';
-import {
-    attachTargetedContributionPointSemanticRefs,
-    flattenDefinedTargetedContributionPointSemanticRefs,
-    projectDefinedTargetedContributionPoints,
-} from './targetedContributionAuthoring.js';
+import { projectDefinedTargetedContributionPoints } from './targetedContributionAuthoring.js';
 import type { AgentExternalSessionsContribution } from './externalSessions.js';
 import type { AgentExternalSessionHooksContribution } from './externalSessionHooks.js';
 import type { AgentExternalSessionObservationContribution } from './externalSessionObservation.js';
@@ -2647,11 +2643,6 @@ function definePluginImplementation<
         input.id,
         input.contributionPoints,
     );
-    attachTargetedContributionPointSemanticRefs(
-        manifest.contributes.pluginContributionPoints ?? [],
-        flattenDefinedTargetedContributionPointSemanticRefs(contributionPoints),
-    );
-
     const activate: PluginActivationModule['activate'] = async (api) => {
         for (const adapter of DEFINE_PLUGIN_AUTHOR_ADAPTERS) {
             adapter.activate?.(authorInput, api);

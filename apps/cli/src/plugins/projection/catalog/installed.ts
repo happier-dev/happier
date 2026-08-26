@@ -24,6 +24,7 @@ import {
   shouldResolvePluginDevelopmentEntrypoint,
 } from '@/plugins/manifest/daemonEntry';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
+import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { projectPluginCatalogEntryIntrospection } from '@/plugins/projection/introspection/catalogEntry';
 import type { PluginContributionIntrospectionProjectionV1 } from '@happier-dev/protocol';
 
@@ -200,6 +201,40 @@ function buildCatalogEntry(params: Readonly<{
     }),
     diagnostics: params.diagnostics,
   };
+}
+
+export function projectBundledPluginCatalogEntries(params: Readonly<{
+  loadedPlugins: readonly LoadedPlugin[];
+  desiredGenerationByPluginId?: Readonly<Record<string, string>>;
+  excludedPluginIds?: ReadonlySet<string>;
+}>): readonly PluginCatalogEntry[] {
+  const entries = params.loadedPlugins.flatMap((plugin) => {
+    if (params.excludedPluginIds?.has(plugin.pluginId)) return [];
+    if (plugin.sourceSpec.kind !== 'bundled') {
+      throw new Error(`Expected bundled source for current catalog plugin '${plugin.pluginId}'`);
+    }
+    const record = {
+      source: {
+        ...plugin.sourceSpec,
+        resolvedPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+      },
+      compatibility: { status: 'compatible', diagnostics: [] },
+      install: { mode: 'link', manifestVersion: plugin.manifest.version },
+      state: { enabled: true },
+    } satisfies PluginStateRecord;
+    return [buildCatalogEntry({
+      pluginId: plugin.pluginId,
+      desiredGeneration: params.desiredGenerationByPluginId?.[plugin.pluginId] ?? null,
+      admittedIntegrity: null,
+      rollbackAvailability: 'unavailable',
+      record,
+      manifest: plugin.manifest,
+      manifestPath: plugin.manifestPath,
+      diagnostics: [],
+    })];
+  });
+  return Object.freeze(entries.sort((a, b) => a.pluginId.localeCompare(b.pluginId)));
 }
 
 async function resolvePluginCatalogEntryFromRecord(

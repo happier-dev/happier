@@ -1032,12 +1032,14 @@ async function resolveInstallTargets(
         }
         const physicalPath =
             await resolveExternalSessionHookPhysicalTargetPath(target.absolutePath);
-        const physicalPathIdentity = physicalPath === null
-            ? null
-            : resolveCanonicalAbsolutePathComparisonIdentity(physicalPath, {
-                platform: process.platform,
-            });
-        if (!physicalPathIdentity || seenPathIdentities.has(physicalPathIdentity)) return null;
+        if (physicalPath === null) return null;
+        const physicalPathIdentity = resolveCanonicalAbsolutePathComparisonIdentity(
+            physicalPath,
+            { platform: process.platform },
+        );
+        if (!physicalPathIdentity || seenPathIdentities.has(physicalPathIdentity)) {
+            return null;
+        }
         seenPathIdentities.add(physicalPathIdentity);
         resolved.push({
             targetId: declared.targetId,
@@ -1066,11 +1068,11 @@ function installTargetsMatchRecord(
     return priorById.size === record.targets.length
         && targets.every((target) => {
             const prior = priorById.get(target.targetId);
-            const priorPathIdentity = prior === undefined
-                ? null
-                : resolveCanonicalAbsolutePathComparisonIdentity(prior.absolutePath, {
-                    platform: process.platform,
-                });
+            if (prior === undefined) return false;
+            const priorPathIdentity = resolveCanonicalAbsolutePathComparisonIdentity(
+                prior.absolutePath,
+                { platform: process.platform },
+            );
             const targetPathIdentity = resolveCanonicalAbsolutePathComparisonIdentity(
                 target.absolutePath,
                 { platform: process.platform },

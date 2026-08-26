@@ -1,20 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import fastify from 'fastify';
-import { createRequire } from 'node:module';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol';
 
 import { configuration, reloadConfiguration } from '@/configuration';
 import { registerDaemonExternalActionRoute } from '@/daemon/externalActions/registerDaemonExternalActionRoute';
-
-// The SDK owns this runtime dependency and its source import resolves from the
-// SDK package directory. Use that same module instance to intercept its client.
-const sdkUndici = createRequire(
-  new URL('../../../../../packages/sdk/package.json', import.meta.url),
-)('undici') as typeof import('undici');
 
 const {
   createCliActionExecutor,
@@ -67,44 +61,48 @@ type MockActionResponse = Readonly<{
 }>;
 type FetchLike = (input: URL, init?: RequestInit) => MockActionResponse;
 
-let undiciMockAgent: InstanceType<typeof sdkUndici.MockAgent> | null = null;
-let restoreUndiciDispatcher: (() => void) | null = null;
+let patActionServer: Server | null = null;
+let patActionEndpoint: string | null = null;
+let patActionFetch: FetchLike | null = null;
+let originalServerUrl: string | undefined;
+let originalWebappUrl: string | undefined;
 
 function installPatActionTransportMock(fetch: FetchLike): void {
-  const endpoint = new URL(configuration.apiServerUrl);
-  const mockAgent = new sdkUndici.MockAgent();
-  const previousDispatcher = sdkUndici.getGlobalDispatcher();
-  mockAgent.disableNetConnect();
-  mockAgent
-    .get(endpoint.origin)
-    .intercept({ path: /^\/v1\/actions\/.+$/u, method: 'POST' })
-    .reply((options) => {
-      const headers = options.headers === undefined
-        ? undefined
-        : options.headers instanceof Headers
-          ? Object.fromEntries(options.headers.entries())
-          : options.headers;
-      const response = fetch(new URL(options.path, endpoint.origin), {
-        method: options.method,
-        ...(headers === undefined ? {} : { headers }),
-        ...(options.body === undefined || options.body === null
-          ? {}
-          : { body: typeof options.body === 'string' ? options.body : String(options.body) }),
-      });
-      return {
-        statusCode: response.statusCode,
-        data: response.body,
-        responseOptions: { headers: { 'content-type': 'application/json' } },
-      };
-    })
-    .persist();
-  sdkUndici.setGlobalDispatcher(mockAgent);
-  undiciMockAgent = mockAgent;
-  restoreUndiciDispatcher = () => {
-    sdkUndici.setGlobalDispatcher(previousDispatcher);
-    undiciMockAgent = null;
-    restoreUndiciDispatcher = null;
-  };
+  patActionFetch = fetch;
+}
+
+async function readRequestBody(request: IncomingMessage): Promise<string> {
+  let body = '';
+  for await (const chunk of request) body += String(chunk);
+  return body;
+}
+
+function requestHeaders(request: IncomingMessage): Record<string, string> {
+  return Object.fromEntries(Object.entries(request.headers).flatMap(([name, value]) => {
+    if (value === undefined) return [];
+    return [[name, Array.isArray(value) ? value.join(', ') : value]];
+  }));
+}
+
+async function handlePatActionRequest(request: IncomingMessage, response: import('node:http').ServerResponse): Promise<void> {
+  const fetch = patActionFetch;
+  const endpoint = patActionEndpoint;
+  if (fetch === null || endpoint === null) {
+    response.writeHead(503, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: 'test_action_transport_unavailable' }));
+    return;
+  }
+  try {
+    const result = fetch(new URL(request.url ?? '/', endpoint), {
+      method: request.method,
+      headers: requestHeaders(request),
+      body: await readRequestBody(request),
+    });
+    response.writeHead(result.statusCode, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(result.body));
+  } catch (error) {
+    request.socket.destroy(error instanceof Error ? error : new Error(String(error)));
+  }
 }
 
 function sessionListItem(id: string, tag?: string) {
@@ -144,6 +142,34 @@ function apiFailure(actionId: string, errorCode: string, details?: unknown): Moc
 }
 
 describe('createCliActionExecutorFromCredentials API Token transport', () => {
+  beforeAll(async () => {
+    patActionServer = createServer((request, response) => {
+      void handlePatActionRequest(request, response);
+    });
+    await new Promise<void>((resolve) => patActionServer?.listen(0, '127.0.0.1', () => resolve()));
+    const address = patActionServer.address();
+    if (address === null || typeof address === 'string') throw new Error('Expected PAT Action test endpoint.');
+    patActionEndpoint = `http://127.0.0.1:${address.port}`;
+    originalServerUrl = process.env.HAPPIER_SERVER_URL;
+    originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    process.env.HAPPIER_SERVER_URL = patActionEndpoint;
+    process.env.HAPPIER_WEBAPP_URL = patActionEndpoint;
+    reloadConfiguration();
+  });
+
+  afterAll(async () => {
+    patActionFetch = null;
+    const server = patActionServer;
+    patActionServer = null;
+    patActionEndpoint = null;
+    await new Promise<void>((resolve) => server?.close(() => resolve()) ?? resolve());
+    if (originalServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
+    else process.env.HAPPIER_SERVER_URL = originalServerUrl;
+    if (originalWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
+    else process.env.HAPPIER_WEBAPP_URL = originalWebappUrl;
+    reloadConfiguration();
+  });
+
   beforeEach(() => {
     createCliActionExecutor.mockReset();
     createCliActionExecutor.mockReturnValue({
@@ -164,11 +190,9 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     lookupSessionsByTags.mockImplementation(legacySessionRouteUsed);
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     vi.unstubAllGlobals();
-    const mockAgent = undiciMockAgent;
-    restoreUndiciDispatcher?.();
-    await mockAgent?.close();
+    patActionFetch = null;
   });
 
   it('composes Account-server-owned Actions into the executor used by the daemon ingress', async () => {
@@ -418,8 +442,9 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const originalWebappUrl = process.env.HAPPIER_WEBAPP_URL;
     try {
       process.env.HAPPIER_HOME_DIR = homeDir;
-      process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:45555';
-      process.env.HAPPIER_WEBAPP_URL = 'http://127.0.0.1:45555';
+      if (patActionEndpoint === null) throw new Error('Expected PAT Action test endpoint.');
+      process.env.HAPPIER_SERVER_URL = patActionEndpoint;
+      process.env.HAPPIER_WEBAPP_URL = patActionEndpoint;
       reloadConfiguration();
       const fetch = vi.fn<FetchLike>(() => apiSuccess('session.list', {
         sessions: [],
@@ -552,6 +577,10 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
   });
 
   it('resolves a PAT Session selector and starts a delegate through public Actions without legacy bootstrap', async () => {
+    resolveCurrentAccountMachineTarget.mockResolvedValue({
+      kind: 'selected',
+      target: { kind: 'machine', machineId: 'machine-selected' },
+    });
     const fetch = vi.fn<FetchLike>((input) => {
       const pathname = new URL(String(input)).pathname;
       if (pathname.endsWith('/v1/actions/session.list')) {
@@ -585,6 +614,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         encryption: null,
         credentialProvenance: 'api_token',
       },
+      machineId: 'machine-selected',
     });
 
     const target = await executor.resolveSessionTarget('active-work');
@@ -631,7 +661,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     ]);
     expect(JSON.parse(String(fetch.mock.calls[2]?.[1]?.body))).toEqual({
       v: 1,
-      target: { kind: 'session', sessionId: exactSessionId },
+      target: { kind: 'machine', machineId: 'machine-selected' },
       input: {
         actionId: 'subagents.delegate.start',
         fieldPath: 'backendTargetKeys',
@@ -640,10 +670,12 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         includeDisabled: true,
       },
     });
-    expect(JSON.parse(String(fetch.mock.calls[3]?.[1]?.body))).toMatchObject({
+    expect(JSON.parse(String(fetch.mock.calls[3]?.[1]?.body))).toEqual({
       v: 1,
-      target: { kind: 'session', sessionId: exactSessionId },
+      requestId: expect.any(String),
+      target: { kind: 'machine', machineId: 'machine-selected' },
       input: {
+        sessionId: exactSessionId,
         backendTargetKeys: ['agent:com.acme.agent/acme'],
         instructions: 'Delegate.',
       },
@@ -653,6 +685,47 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     expect(fetchSessionById).not.toHaveBeenCalled();
     expect(fetchSessionsPage).not.toHaveBeenCalled();
     expect(lookupSessionsByTags).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'subagents.plan.start',
+    'voice_agent.start',
+  ] as const)('binds the selected machine and exact parent Session for PAT-backed %s', async (actionId) => {
+    const fetch = vi.fn<FetchLike>(() => apiSuccess(actionId, { results: [] }));
+    installPatActionTransportMock(fetch);
+
+    const { createCliActionExecutorFromCredentials } = await import('./createCliActionExecutorFromCredentials');
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: {
+        token: 'hap_v1_token_secret',
+        encryption: null,
+        credentialProvenance: 'api_token',
+      },
+      machineId: 'machine-selected',
+    });
+
+    await expect(executor.execute(
+      actionId,
+      {
+        backendTargetKeys: ['agent:com.acme.agent/acme'],
+        instructions: 'Start.',
+      },
+      { surface: 'cli', defaultSessionId: exactSessionId },
+    )).resolves.toEqual({ ok: true, result: { results: [] } });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      v: 1,
+      requestId: expect.any(String),
+      target: { kind: 'machine', machineId: 'machine-selected' },
+      input: {
+        sessionId: exactSessionId,
+        backendTargetKeys: ['agent:com.acme.agent/acme'],
+        instructions: 'Start.',
+      },
+    });
+    expect(resolveCurrentAccountMachineTarget).not.toHaveBeenCalled();
+    expect(createCliActionExecutor).not.toHaveBeenCalled();
   });
 
   it('rejects a PAT session-list result that does not satisfy the canonical Session list schema', async () => {

@@ -64,6 +64,7 @@ async function createHarness(input: Readonly<{
       return {
         registry,
         source: 'active' as const,
+        durableRevision: registry.durableRevision ?? -1,
         release: vi.fn(async () => undefined),
       };
     },

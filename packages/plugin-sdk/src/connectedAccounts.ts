@@ -16,7 +16,7 @@ import {
 import {
     CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 as canonicalClaudeSubscriptionMaterializationContractV1,
     CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1 as canonicalClaudeSubscriptionSetupTokenEnvironmentRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/claude-subscription-materialization';
 import {
     OPENAI_CODEX_AUTH_BASE_URL,
     OPENAI_CODEX_AUTHORIZE_URL,

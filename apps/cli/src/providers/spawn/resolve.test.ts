@@ -345,7 +345,12 @@ function lease(
         : null;
     }),
   } as unknown as ResolvedExecutablePluginRuntimeRegistry;
-  return { registry: registryRuntime, source: 'active', release: vi.fn(async () => undefined) };
+  return {
+    registry: registryRuntime,
+    source: 'active',
+    durableRevision: -1,
+    release: vi.fn(async () => undefined),
+  };
 }
 
 function accountSettings(settings: unknown) {
@@ -750,6 +755,7 @@ describe('provider spawn authorization resolver', () => {
     const runtimeLease: PluginRuntimeRegistryLease = {
       registry: runtimeRegistry,
       source: 'ephemeral',
+      durableRevision: runtimeRegistry.durableRevision ?? -1,
       release: vi.fn(async () => undefined),
     };
     const snapshot: ActiveAccountSettingsSnapshot = {

@@ -27,6 +27,7 @@ function createRuntimeRegistry(
         applyResourceSessionAccessWitness?: ResolvedExecutablePluginRuntimeRegistry['applyResourceSessionAccessWitness'];
         currentGlobalExternalSessionsTarget?: ResolvedExecutablePluginRuntimeRegistry['currentGlobalExternalSessionsTarget'];
         additionalPluginDiagnostics?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+        durableRevision?: number;
     }>,
 ): ResolvedExecutablePluginRuntimeRegistry {
     return {
@@ -50,6 +51,9 @@ function createRuntimeRegistry(
             [label]: Object.freeze([...(params?.diagnostics ?? [])]),
             ...(params?.additionalPluginDiagnostics ?? {}),
         }),
+        ...(params?.durableRevision === undefined
+            ? {}
+            : { durableRevision: params.durableRevision }),
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: async () => [],
         resolvePromptAssetBlocks: async () => [],
@@ -1396,6 +1400,29 @@ describe('createPluginReloadController', () => {
         const activeLease = controller.tryAcquireRuntimeRegistry?.();
         expect(activeLease?.registry).toBe(registry);
         await activeLease?.release();
+    });
+
+    it('binds each active runtime lease to the durable revision that established it', async () => {
+        const coldRegistry = createRuntimeRegistry('cold', { durableRevision: 0 });
+        const preparedRegistry = createRuntimeRegistry('prepared', { durableRevision: -1 });
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: async () => coldRegistry,
+        });
+
+        const coldLease = await controller.acquireRuntimeRegistry();
+        expect(coldLease.durableRevision).toBe(0);
+        await coldLease.release();
+
+        await controller.adoptPreparedRuntimeRegistry({
+            registry: preparedRegistry,
+            changedPluginIds: ['acme.plugin'],
+            durableRevision: 4,
+            runningSessionDisposition: 'retainRunningSessions',
+        });
+
+        const preparedLease = controller.tryAcquireRuntimeRegistry?.();
+        expect(preparedLease?.durableRevision).toBe(4);
+        await preparedLease?.release();
     });
 
     it('waits for a held registry lease during shutdown before disposing its generation', async () => {

@@ -300,6 +300,7 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
       acquireRuntimeLease: async () => ({
         registry,
         source: 'active',
+        durableRevision: -1,
         release: async () => {},
       }),
       executeContributedAction,
@@ -347,6 +348,7 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
       acquireRuntimeLease: async () => ({
         registry,
         source: 'active',
+        durableRevision: -1,
         release: async () => {},
       }),
       executeContributedAction,

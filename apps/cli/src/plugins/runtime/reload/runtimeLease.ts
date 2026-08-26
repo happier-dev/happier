@@ -11,6 +11,7 @@ export function createEphemeralPluginRuntimeRegistryLease(
     return {
         registry,
         source: 'ephemeral',
+        durableRevision: registry.durableRevision ?? -1,
         resolveCurrentPluginMaterializationRef: registry.resolveCurrentPluginMaterializationRef,
         resolveCurrentMediatorContributionMaterializationRef:
             registry.resolveCurrentMediatorContributionMaterializationRef,

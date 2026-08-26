@@ -14,9 +14,11 @@ import type {
 } from '@happier-dev/plugin-sdk/managed-services';
 import { PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST } from '@happier-dev/plugins-opencode/manifest';
 import {
-    CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
     resolveConnectedAccountRequestAuthCapabilityPath,
 } from '@happier-dev/agents/request-auth';
+import {
+    CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { materializeNextPendingQueueV2MessageViaHttp } from '@/api/session/pendingQueueV2Transport';

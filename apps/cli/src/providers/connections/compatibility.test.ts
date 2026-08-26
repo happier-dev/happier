@@ -64,7 +64,12 @@ function lease(externalAgentProtocol?: ProviderWireProtocol): PluginRuntimeRegis
     contributes: { agentDefinitionsById: definitions },
     agentRuntimesByAgentId: runtimes,
   } as unknown as ResolvedExecutablePluginRuntimeRegistry;
-  return { registry, source: 'active', release: async () => undefined };
+  return {
+    registry,
+    source: 'active',
+    durableRevision: registry.durableRevision ?? -1,
+    release: async () => undefined,
+  };
 }
 
 function record(options: Readonly<{

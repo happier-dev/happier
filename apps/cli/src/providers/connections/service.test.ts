@@ -1856,6 +1856,7 @@ describe('provider connection service', () => {
         contributes: { providersByContributionKey: admittedProvidersByContributionKey },
       } as unknown as ResolvedExecutablePluginRuntimeRegistry,
       source: 'active',
+      durableRevision: -1,
       release,
     };
     const h = harness({

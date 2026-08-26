@@ -6,9 +6,11 @@ import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { isLegacyServiceKeyedCompatibilityCatalogAgent } from '@/agent/catalog/registry';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import {
-    CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
     resolveConnectedAccountRequestAuthCapabilityPath,
 } from '@happier-dev/agents/request-auth';
+import {
+    CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import {
     isPersistedExecutionRunConnectedServicesLaunchIdentityExact,
     normalizePersistedExecutionRunConnectedServicesLaunchV1,

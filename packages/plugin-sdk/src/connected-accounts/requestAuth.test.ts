@@ -7,13 +7,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
-  resolveConnectedAccountRequestAuthCapabilityPath,
-} from './capabilityFile.js';
-import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
+
+import {
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
   buildConnectedAccountRequestAuthClientSource,
-} from './clientSource.js';
+} from './requestAuth.js';
 
 const roots: string[] = [];
 const originalFetch = globalThis.fetch;
@@ -144,10 +145,10 @@ async function configureFiles(materializationId = 'run-1') {
 }
 
 async function writeTestCapabilityFile(root: string, materializationId: string, httpPort = 43210) {
-  const path = resolveConnectedAccountRequestAuthCapabilityPath(root);
+  const path = join(root, 'request-auth', 'capability.json');
   await mkdir(join(root, 'request-auth'), { recursive: true });
   const document = {
-    v: 2,
+    v: CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
     materializationId,
     subjectScopeDigest: 'd'.repeat(64),
     capability: randomBytes(32).toString('base64url'),
@@ -164,7 +165,7 @@ function writeTestCapabilityFileSync(
   httpPort = 43210,
 ): void {
   writeFileSync(path, `${JSON.stringify({
-    v: 2,
+    v: CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
     materializationId,
     subjectScopeDigest: 'd'.repeat(64),
     capability,

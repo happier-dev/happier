@@ -102,6 +102,7 @@ function createReloadController(): PluginReloadController {
       return Object.freeze({
         registry,
         source: 'active' as const,
+        durableRevision: registry.durableRevision ?? -1,
         release: ownerMocks.releaseInitialLease,
       });
     }),

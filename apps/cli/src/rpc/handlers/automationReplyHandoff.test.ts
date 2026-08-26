@@ -219,7 +219,12 @@ function createRuntimeLease(
   registry: ResolvedExecutablePluginRuntimeRegistry = createRuntimeRegistry(),
   release: () => Promise<void> = async () => {},
 ): PluginRuntimeRegistryLease {
-  return { registry, source: 'active', release };
+  return {
+    registry,
+    source: 'active',
+    durableRevision: -1,
+    release,
+  };
 }
 
 function createRegistration(overrides?: Readonly<{

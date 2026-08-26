@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildConnectedAccountRequestAuthClientSource,
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
-} from '@happier-dev/agents/request-auth';
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { buildOpenCodeRequestAuthPluginSource } from './source.js';
 

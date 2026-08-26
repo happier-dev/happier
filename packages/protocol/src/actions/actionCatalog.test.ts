@@ -12,8 +12,24 @@ import {
   SerializedActionDefinitionV1Schema,
 } from '../index.js';
 import { z } from 'zod';
+import { projectActionDefinitionForExternalDiscovery } from './actionCatalog.js';
+import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js';
 
 describe('actionCatalog action-definition adapter', () => {
+  it('projects a discovered Action definition as strict external JSON', () => {
+    const actionSpec = projectActionDefinitionForExternalDiscovery(
+      actionSpecToActionDefinitionV1(getActionSpec('machines.list'), { surface: 'api' }),
+    );
+
+    const prepared = prepareExternalActionResponseEnvelopeV1({
+      v: 1,
+      actionId: 'action.spec.get',
+      execution: { ok: true, result: { actionSpec } },
+    });
+
+    expect(prepared.response.execution).toMatchObject({ ok: true });
+  });
+
   it('builds a serialized action definition with a JSON-schema input contract', () => {
     const definition = actionSpecToActionDefinitionV1(getActionSpec('action.spec.get'));
 

@@ -171,6 +171,7 @@ vi.mock('@/ui/logger', () => ({
     debug: loggerDebug,
     debugLargeJson: vi.fn(),
     info: vi.fn(),
+    infoFile: vi.fn(),
     warn: vi.fn(),
     flushSync: vi.fn(),
     logFilePath: '/tmp/happier-daemon.log',

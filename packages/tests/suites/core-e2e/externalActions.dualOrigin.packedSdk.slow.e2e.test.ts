@@ -367,7 +367,7 @@ async function writePackedSdkDriver(params: Readonly<{ consumerDir: string }>): 
     '    ...(typeof candidate.status === "number" ? { status: candidate.status } : {}),',
     '  }));',
     '} finally {',
-    '  account.close();',
+    '  await account.close();',
     '}',
     '',
   ].join('\n'), 'utf8');

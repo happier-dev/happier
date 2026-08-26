@@ -18,6 +18,8 @@ import {
 } from '@happier-dev/agents';
 import { ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { rehydrateCanonicalProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -96,16 +98,11 @@ describe('resolveBuiltInContributions', () => {
       new URL('./agentCatalogEntryHooks.ts', import.meta.url),
       'utf8',
     );
-    const requestAuthClientSource = readFileSync(
-      new URL('../../../../../../packages/agents/src/requestAuth/clientSource.ts', import.meta.url),
-      'utf8',
-    );
 
     for (const source of [
       generatedSource,
       resolverSource,
       catalogEntryHooksSource,
-      requestAuthClientSource,
     ]) {
       expect(source).not.toMatch(/from ['"]@happier-dev\/protocol['"]/u);
       expect(source).not.toMatch(/from ['"]@happier-dev\/agents['"]/u);
@@ -113,6 +110,35 @@ describe('resolveBuiltInContributions', () => {
   });
 
   it('admits generated bundled Channels and Triage target semantics without activating their manifests', () => {
+    const channelsLocator = generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS
+      .find((locator) => locator.pluginId === 'happier.channels');
+    const channelsManifest = PluginManifestV2Schema.parse(channelsLocator?.manifest);
+    const channelsPoint = channelsManifest.contributes.pluginContributionPoints
+      ?.find((point) => point.id === 'providers');
+    const canonicalSchemaFailures = channelsPoint?.protocols.flatMap((protocol) => [
+      ...(protocol.descriptor !== undefined
+        && rehydrateCanonicalProtocolComposableSchema(protocol.descriptor) === null
+        ? [`${protocol.id}@${protocol.version}/descriptor`]
+        : []),
+      ...Object.entries(protocol.operations).flatMap(([role, operation]) => [
+        ...(operation.input.kind === 'protocolDefined'
+          && rehydrateCanonicalProtocolComposableSchema(operation.input.schema) === null
+          ? [`${protocol.id}@${protocol.version}/operations/${role}/input`]
+          : []),
+        ...(rehydrateCanonicalProtocolComposableSchema(operation.resultSchema) === null
+          ? [`${protocol.id}@${protocol.version}/operations/${role}/result`]
+          : []),
+      ]),
+      ...Object.entries(protocol.surfaces ?? {}).flatMap(([role, surface]) => (
+        rehydrateCanonicalProtocolComposableSchema(surface.inputSchema) === null
+          ? [`${protocol.id}@${protocol.version}/surfaces/${role}/input`]
+          : []
+      )),
+    ]);
+
+    expect(channelsPoint).toBeDefined();
+    expect(canonicalSchemaFailures).toEqual([]);
+
     const contributes = resolveBuiltInContributions();
     const immutableGenerationIdsByPluginId = Object.freeze(Object.fromEntries(
       generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map((entry) => [
@@ -145,7 +171,17 @@ describe('resolveBuiltInContributions', () => {
         version: TriageSourcesContributionProtocolV1.version,
       },
     });
+    const channelsAdmissionDiagnostics = Object.entries(registry.pluginDiagnosticsByPluginId)
+      .flatMap(([pluginId, diagnostics]) => diagnostics.map((diagnostic) => ({ pluginId, diagnostic })))
+      .filter(({ diagnostic }) => {
+        const details = diagnostic.details;
+        return typeof details === 'object'
+          && details !== null
+          && !Array.isArray(details)
+          && details.targetPluginId === 'happier.channels';
+      });
 
+    expect(channelsAdmissionDiagnostics).toEqual([]);
     expect(channels?.contributions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         contributor: expect.objectContaining({

@@ -507,6 +507,7 @@ describe('public managed Provider explicit-start production operation', () => {
       tryAcquireRuntimeRegistry: () => Object.freeze({
         registry,
         source: 'active' as const,
+        durableRevision: registry.durableRevision ?? -1,
         release,
       }),
     });

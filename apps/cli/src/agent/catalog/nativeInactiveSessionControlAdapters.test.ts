@@ -115,6 +115,7 @@ function runtimeRegistryFixture(params: Readonly<{
     acquire: async () => ({
       registry,
       source: 'ephemeral',
+      durableRevision: -1,
       release: params.release ?? (async () => undefined),
     }),
   };

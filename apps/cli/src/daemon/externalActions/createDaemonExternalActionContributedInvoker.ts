@@ -182,12 +182,17 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
   const targetActionApprovals = input.targetActionApprovals
     ?? createCliApprovalsArtifactStore({ credentials: input.credentials });
   const now = input.now ?? Date.now;
+  const inFlightReplays = new Map<string, Promise<ActionExecuteResult | null>>();
 
-  return async ({ artifactId: rawArtifactId, decision, signal }) => {
-    const artifactId = rawArtifactId.trim();
-    if (!artifactId) return null;
-    signal?.throwIfAborted();
-
+  const replayArtifact = async ({
+    artifactId,
+    decision,
+    signal,
+  }: Readonly<{
+    artifactId: string;
+    decision: 'approve' | 'reject';
+    signal?: AbortSignal;
+  }>): Promise<ActionExecuteResult | null> => {
     let existing: TargetActionApprovalRequestV1 | null;
     try {
       existing = await targetActionApprovals.targetActionApprovalsGet({ artifactId });
@@ -340,6 +345,25 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
     return executionResult.ok
       ? buildTargetActionApprovalDecisionResult(terminal)
       : executionResult;
+  };
+
+  return async ({ artifactId: rawArtifactId, decision, signal }) => {
+    const artifactId = rawArtifactId.trim();
+    if (!artifactId) return null;
+    signal?.throwIfAborted();
+
+    const inFlightReplay = inFlightReplays.get(artifactId);
+    if (inFlightReplay) return await inFlightReplay;
+
+    const replay = Promise.resolve().then(() => replayArtifact({ artifactId, decision, signal }));
+    inFlightReplays.set(artifactId, replay);
+    try {
+      return await replay;
+    } finally {
+      if (inFlightReplays.get(artifactId) === replay) {
+        inFlightReplays.delete(artifactId);
+      }
+    }
   };
 }
 

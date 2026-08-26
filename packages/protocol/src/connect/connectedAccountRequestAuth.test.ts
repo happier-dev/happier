@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import {
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
   CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
   CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
   CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH,
@@ -59,6 +61,13 @@ const credentialContext = {
 
 describe('private connected-account request-auth wire', () => {
   it('owns strict HTTP envelopes, status mapping, and Go conformance vectors', () => {
+    expect({
+      capabilityHeader: CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
+      capabilityVersion: CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
+    }).toEqual({
+      capabilityHeader: 'x-happier-connected-account-capability',
+      capabilityVersion: 2,
+    });
     expect(requestAuthHttpVectors.paths).toEqual({
       lookup: CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
       authFailure: CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,

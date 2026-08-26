@@ -558,6 +558,7 @@ describe('provider spawn authorization lifecycle', () => {
       agentId: 'codex',
       lease: {
         source: 'active',
+        durableRevision: -1,
         release: async () => undefined,
         registry: {
           activatedPluginIds: new Set(),
@@ -598,6 +599,7 @@ describe('provider spawn authorization lifecycle', () => {
       agentId: 'codex',
       lease: {
         source: 'active',
+        durableRevision: -1,
         release: async () => undefined,
         registry: {
           activatedPluginIds: new Set([pluginId]),

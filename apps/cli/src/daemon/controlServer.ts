@@ -14,7 +14,7 @@ import { isUnattestedPublicV1RunnerRolloutMutation } from './plannedRunnerRestar
 import { Metadata, type SessionCreationOutcome } from '@/api/types';
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
-} from '@happier-dev/agents/request-auth';
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
 import {
   CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES,
   CONNECTED_SERVICE_RUN_MATERIALIZE_PATH,
@@ -1095,31 +1095,31 @@ export function createDaemonControlApp({
   const sendConnectedAccountRequestAuthError = (
     reply: FastifyReply,
     code: Parameters<typeof getConnectedAccountRequestAuthErrorHttpStatusV1>[0],
-  ) => {
-    reply.code(getConnectedAccountRequestAuthErrorHttpStatusV1(code));
-    return {
-      ok: false as const,
+  ): void => {
+    const body = {
+      ok: false,
       error: { code },
-    };
+    } satisfies z.infer<typeof ConnectedAccountRequestAuthErrorResponseV1Schema>;
+    reply.code(getConnectedAccountRequestAuthErrorHttpStatusV1(code)).send(body);
   };
   const requireConnectedAccountRequestAuth = async (request: {
     headers: Record<string, unknown>;
   }, reply: FastifyReply): Promise<void> => {
     if (isDaemonQuiescing()) {
-      return reply.send(sendConnectedAccountRequestAuthError(
+      return sendConnectedAccountRequestAuthError(
         reply,
         'request_auth_unavailable',
-      ));
+      );
     }
     const provided = request.headers[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER];
     const principal = typeof provided === 'string'
       ? connectedAccountRequestAuth?.authenticate(provided) ?? null
       : null;
     if (!principal || !principal.isCurrent()) {
-      return reply.send(sendConnectedAccountRequestAuthError(
+      return sendConnectedAccountRequestAuthError(
         reply,
         'request_auth_unauthorized',
-      ));
+      );
     }
     requestAuthPrincipalByRequest.set(request, principal);
   };

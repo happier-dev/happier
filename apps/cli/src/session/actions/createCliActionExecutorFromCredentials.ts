@@ -118,9 +118,7 @@ function actionFailure(errorCode: string): ActionExecuteResult {
 
 function withExactSessionId(input: unknown, sessionId: string): unknown {
   const record = readRecord(input);
-  return record && readNonEmptyString(record.sessionId)
-    ? { ...record, sessionId }
-    : input;
+  return record ? { ...record, sessionId } : input;
 }
 
 async function resolveConfiguredMachineTarget(): Promise<ActionTarget | null> {
@@ -210,7 +208,7 @@ async function resolvePatSessionTarget(params: Readonly<{
         );
         return readPatSessionListPage(result);
       } finally {
-        client.close();
+        await client.close();
       }
     },
   });
@@ -284,7 +282,11 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     }
     return {
       kind: 'ready',
-      target: { kind: 'session', sessionId: resolved.sessionId },
+      ...(daemonLocalMachineId
+        ? {}
+        : params.machineId !== undefined
+          ? { target: { kind: 'machine' as const, machineId: params.machineId } }
+          : { target: { kind: 'session' as const, sessionId: resolved.sessionId } }),
       input: withExactSessionId(params.input, resolved.sessionId),
     };
   }
@@ -356,7 +358,7 @@ async function executePatPublicActionPlan(params: Readonly<{
     }
     throw error;
   } finally {
-    client.close();
+    await client.close();
   }
 }
 

@@ -5,7 +5,10 @@ import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
+
+import {
   readConnectedAccountRequestAuthCapabilityFile,
   resolveConnectedAccountRequestAuthCapabilityPath,
 } from './capabilityFile.js';
@@ -23,15 +26,13 @@ describe('connected-account request-auth child capability document', () => {
     const path = resolveConnectedAccountRequestAuthCapabilityPath(root);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, JSON.stringify({
-      v: 2,
+      v: CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
       materializationId: 'managed-run-1',
       subjectScopeDigest: 'a'.repeat(64),
       capability: 'A'.repeat(43),
       httpPort: 43123,
     }), 'utf8');
 
-    expect(CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV)
-      .toBe('HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH');
     expect(await readConnectedAccountRequestAuthCapabilityFile(path)).toEqual({
       v: 2,
       materializationId: 'managed-run-1',

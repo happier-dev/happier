@@ -708,6 +708,11 @@ describe('normal SDK declaration closure identities', () => {
 
         expect(declaration).not.toMatch(/@happier-dev\/protocol(?:\/|['"])/u);
         expect(declaration).not.toMatch(/\bzod\b/u);
+        expect(importedName(
+            declarationSourceFile,
+            '../sessions/subagents.js',
+            'SubagentLaunchV1',
+        )).toBe('SubagentLaunchV1');
         expect(exportedTypeAlias(
             declarationSourceFile,
             'HappierStructuredInputV1',

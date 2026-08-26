@@ -156,6 +156,9 @@ describe('executable plugin portable brand Resource projection', () => {
                 generationAuthority: inputs.generationAuthority,
             });
 
+            expect(runtime.durableRevision).toBe(
+                inputs.generationAuthority.commit?.revision ?? -1,
+            );
             expect(runtime.getPluginBrandAsset?.(PLUGIN_ID)).toEqual({
                 state: 'available',
                 resource: { pluginId: PLUGIN_ID, localId: 'brand-icon' },

@@ -54,6 +54,7 @@ const harness = vi.hoisted(() => {
   }));
 
   const apiMachine = {
+    getActiveRpcHandlerExecutions: vi.fn(() => []),
     setRPCHandlers: vi.fn(() => ({ externalSessionPluginAdmissionOwner: undefined })),
     getPeerMediationMachineRpcHandlerManager: vi.fn(() => ({
       invokeLocal: vi.fn(async () => ({ ok: true })),
@@ -229,6 +230,7 @@ vi.mock('@/ui/logger', () => ({
     debug: vi.fn(),
     debugLargeJson: vi.fn(),
     info: vi.fn(),
+    infoFile: vi.fn(),
     warn: vi.fn(),
     flushSync: vi.fn(),
     logFilePath: '/tmp/happier-daemon.log',

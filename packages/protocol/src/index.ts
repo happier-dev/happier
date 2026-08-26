@@ -5152,6 +5152,22 @@ export {
 } from './sessions/external/sourceTranscriptItemV1.js';
 
 export {
+  ExternalSessionTranscriptFollowCodeV1Schema,
+  ExternalSessionTranscriptFollowCursorV1Schema,
+  ExternalSessionTranscriptFollowEventV1Schema,
+  ExternalSessionTranscriptItemV1Schema,
+  MAX_EXTERNAL_SESSION_TRANSCRIPT_FOLLOW_CODE_CODE_UNITS,
+  MAX_EXTERNAL_SESSION_TRANSCRIPT_FOLLOW_CURSOR_CODE_UNITS,
+  MAX_EXTERNAL_SESSION_TRANSCRIPT_FOLLOW_EVENT_SERIALIZED_BYTES,
+  validateExternalSessionTranscriptFollowEventV1,
+  type ExternalSessionTranscriptFollowCodeV1,
+  type ExternalSessionTranscriptFollowCursorV1,
+  type ExternalSessionTranscriptFollowEventV1,
+  type ExternalSessionTranscriptFollowEventValidationV1,
+  type ExternalSessionTranscriptItemV1,
+} from './sessions/external/publicTranscriptFollowV1.js';
+
+export {
   ExternalSessionsAgentIdSchema,
   ExternalSessionsSourceSchema,
   ExternalSessionsSearchModeSchema,

@@ -144,6 +144,7 @@ const BROWSER_AUTOMATION_RUNTIME_ACTIONS_ENABLED = readyServerFeatures({
 
 const APPROVED_INTERNAL_RUNTIME_ACTION_CONTEXT = {
   defaultSessionId: 'sess_1',
+  surface: 'agent',
   bypassApprovals: true,
 } as const;
 

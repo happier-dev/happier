@@ -52,6 +52,7 @@ import type {
 import * as accountUsage from './accountUsage.js';
 import * as auth from './cloud/auth.js';
 import * as publicConnectedAccounts from './connected-accounts/index.js';
+import * as requestAuth from './connected-accounts/requestAuth.js';
 import * as providerLimitEvidence from './cloud/providerLimitEvidence.js';
 import * as connectedAccounts from './connectedAccounts.js';
 import * as envConstants from './envConstants.js';
@@ -99,6 +100,29 @@ function namedTypeImportBindings(
             || statement.moduleSpecifier.text !== moduleSpecifier
             || !importClause
             || importClause.isTypeOnly !== true
+        ) {
+            return [];
+        }
+        const bindings = importClause.namedBindings;
+        if (!bindings || !ts.isNamedImports(bindings)) return [];
+        return bindings.elements.map((binding) => (binding.propertyName ?? binding.name).text);
+    });
+}
+
+function namedValueImportBindings(
+    source: ts.SourceFile,
+    moduleSpecifier: string,
+): readonly string[] {
+    return source.statements.flatMap((statement): readonly string[] => {
+        const importClause = ts.isImportDeclaration(statement)
+            ? statement.importClause
+            : undefined;
+        if (
+            !ts.isImportDeclaration(statement)
+            || !ts.isStringLiteral(statement.moduleSpecifier)
+            || statement.moduleSpecifier.text !== moduleSpecifier
+            || !importClause
+            || importClause.isTypeOnly
         ) {
             return [];
         }
@@ -403,11 +427,11 @@ describe('Connected Accounts final package-local projection', () => {
         expect(publicConnectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1)
             .toBe(connectedAccounts.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1);
         expect(publicConnectedAccounts.CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV)
-            .toBe(agents.CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV);
+            .toBe(requestAuth.CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV);
         expect(publicConnectedAccounts.buildConnectedAccountRequestAuthClientSource)
-            .toBe(agents.buildConnectedAccountRequestAuthClientSource);
+            .toBe(requestAuth.buildConnectedAccountRequestAuthClientSource);
         expectTypeOf<PublicConnectedAccountRequestAuthClientSourceParams>()
-            .toEqualTypeOf<agents.ConnectedAccountRequestAuthClientSourceParams>();
+            .toEqualTypeOf<requestAuth.ConnectedAccountRequestAuthClientSourceParams>();
     });
 
     it('projects localized Connected Account purpose presentation from the Protocol owner', () => {
@@ -494,6 +518,14 @@ describe('Connected Accounts final package-local projection', () => {
             './protocol/protocolFacade.js',
         )).toEqual([]);
         expect(namedTypeImportBindings(source, '@happier-dev/protocol')).toEqual([]);
+        expect(namedValueImportBindings(source, '@happier-dev/protocol')).toEqual([]);
+        expect(namedValueImportBindings(
+            source,
+            '@happier-dev/protocol/connect/claude-subscription-materialization',
+        )).toEqual([
+            'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
+            'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
+        ]);
         expect(namedExportBindings(
             source,
             '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2',

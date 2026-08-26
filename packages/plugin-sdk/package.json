@@ -89,10 +89,6 @@
       "react-native": "./dist/host/registration/index.js",
       "default": "./dist/host/registration/index.js"
     },
-    "./host/targeted-contributions": {
-      "types": "./dist/host/targeted-contributions/index.d.ts",
-      "default": "./dist/host/targeted-contributions/index.js"
-    },
     "./http": {
       "types": "./dist/http/index.d.ts",
       "default": "./dist/http/index.js"

@@ -165,7 +165,10 @@ describe('runtime provider model-management composition', () => {
       }]]),
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;
     const lease: PluginRuntimeRegistryLease = {
-      registry: executable, source: 'active', release: vi.fn(async () => undefined),
+      registry: executable,
+      source: 'active',
+      durableRevision: -1,
+      release: vi.fn(async () => undefined),
     };
     const preparedLease: PluginRuntimeRegistryLease = {
       registry: {
@@ -176,6 +179,7 @@ describe('runtime provider model-management composition', () => {
         },
       } as unknown as ResolvedExecutablePluginRuntimeRegistry,
       source: 'active',
+      durableRevision: -1,
       release: vi.fn(async () => undefined),
     };
     let currentLease = lease;
@@ -613,7 +617,10 @@ describe('runtime provider model-management composition', () => {
       }]]),
     } as unknown as ResolvedExecutablePluginRuntimeRegistry;
     const lease: PluginRuntimeRegistryLease = {
-      registry: executable, source: 'active', release: vi.fn(async () => undefined),
+      registry: executable,
+      source: 'active',
+      durableRevision: -1,
+      release: vi.fn(async () => undefined),
     };
     let state = createEmptyProviderRuntimeStateFileV1('machine-a');
     const runtimeStore: ProviderRuntimeStateStore = {
@@ -823,6 +830,7 @@ describe('runtime provider model-management composition', () => {
     const lease: PluginRuntimeRegistryLease = {
       registry: executable,
       source: 'active',
+      durableRevision: -1,
       release: vi.fn(async () => undefined),
     };
     let state = createEmptyProviderRuntimeStateFileV1('machine-a');

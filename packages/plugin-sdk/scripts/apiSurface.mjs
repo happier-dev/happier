@@ -41,20 +41,10 @@ const HOST_EXPORTS_BY_ENTRYPOINT = new Map([
     ['reclaimJsonOwnerFileLockSnapshot', 'value'],
     ['withJsonOwnerFileLock', 'value'],
   ])],
-  ['./host/targeted-contributions', new Map([
-    ['decodeTargetedContributionPointSemantics', 'value'],
-    ['projectDefinedTargetedContributionPointSemanticRefs', 'value'],
-    ['readTargetedContributionPointSemanticRefs', 'value'],
-    ['TargetedContributionPointSemanticInput', 'type'],
-    ['TargetedContributionPointSemanticOperation', 'type'],
-    ['TargetedContributionPointSemanticProjection', 'type'],
-    ['TargetedContributionPointSemanticSurface', 'type'],
-  ])],
 ]);
 const HOST_REALMS_BY_ENTRYPOINT = new Map([
   ['./host/registration', 'any'],
   ['./host/fs/json-owner-file-lock', 'daemon'],
-  ['./host/targeted-contributions', 'daemon'],
 ]);
 const HOST_ENTRYPOINTS = new Set(HOST_EXPORTS_BY_ENTRYPOINT.keys());
 const HOST_ONLY_EXPORT_NAMES = new Set(

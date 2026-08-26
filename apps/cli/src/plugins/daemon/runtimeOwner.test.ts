@@ -201,6 +201,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -279,6 +280,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -351,6 +353,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -407,6 +410,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -455,6 +459,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -509,6 +514,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -557,6 +563,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -644,6 +651,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -704,6 +712,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -1055,6 +1064,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       return Object.freeze({
         registry,
         source: 'active' as const,
+        durableRevision: registry.durableRevision ?? -1,
         release: ownerMocks.releaseInitialLease,
       });
     });
@@ -1119,6 +1129,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -1190,6 +1201,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -1327,6 +1339,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -1390,6 +1403,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),
@@ -1435,6 +1449,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         return Object.freeze({
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release: ownerMocks.releaseInitialLease,
         });
       }),

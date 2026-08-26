@@ -10,7 +10,7 @@ import {
     tryAcquireAuthoritativePluginRuntimeRegistryLease,
 } from './runtimeLease';
 
-function createRuntimeRegistry(): ResolvedExecutablePluginRuntimeRegistry {
+function createRuntimeRegistry(durableRevision?: number): ResolvedExecutablePluginRuntimeRegistry {
     return {
         contributes: {
             agents: Object.freeze([]),
@@ -28,6 +28,7 @@ function createRuntimeRegistry(): ResolvedExecutablePluginRuntimeRegistry {
         agentRuntimesByAgentId: new Map(),
         scmHostingProvidersById: new Map(),
         pluginDiagnosticsByPluginId: Object.freeze({}),
+        ...(durableRevision === undefined ? {} : { durableRevision }),
         activatedPluginIds: new Set(),
         activateContributionsOnDemand: async () => [],
         resolvePromptAssetBlocks: async () => [],
@@ -112,7 +113,7 @@ describe('acquireAuthoritativePluginRuntimeRegistryLease', () => {
     });
 
     it('gives direct ephemeral hook registries the same one-shot release contract', async () => {
-        const registry = createRuntimeRegistry();
+        const registry = createRuntimeRegistry(7);
         const disposeSpy = vi.spyOn(registry, 'dispose');
         const lease = createEphemeralPluginRuntimeRegistryLease(registry);
 
@@ -120,6 +121,7 @@ describe('acquireAuthoritativePluginRuntimeRegistryLease', () => {
         await lease.release();
 
         expect(lease.source).toBe('ephemeral');
+        expect(lease.durableRevision).toBe(7);
         expect(disposeSpy).toHaveBeenCalledTimes(1);
     });
 

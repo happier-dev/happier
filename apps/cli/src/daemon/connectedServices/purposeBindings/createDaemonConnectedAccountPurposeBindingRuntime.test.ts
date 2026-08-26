@@ -1084,6 +1084,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         return {
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release,
         };
       },
@@ -1362,6 +1363,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         return {
           registry,
           source: 'active' as const,
+          durableRevision: registry.durableRevision ?? -1,
           release,
         };
       },

@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/protocol';
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
-} from '@happier-dev/agents/request-auth';
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import type { TrackedSession } from '@/daemon/types';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';

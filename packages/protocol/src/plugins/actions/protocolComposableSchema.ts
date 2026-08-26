@@ -977,12 +977,17 @@ function readCanonicalComposableSchemaProjection(
           || new Set(required).size !== required.length)) return null;
       const requiredKeys = new Set(required ?? []);
       const shape: Record<string, CanonicalComposableObjectPropertySchema> = {};
-      for (const [key, schema] of Object.entries(value.properties)) {
+      const propertyKeys = [
+        ...requiredKeys,
+        ...Object.keys(value.properties).filter((key) => !requiredKeys.has(key)),
+      ];
+      for (const key of propertyKeys) {
+        const schema = value.properties[key];
+        if (schema === undefined) return null;
         const child = readCanonicalComposableSchemaProjection(schema);
         if (!child) return null;
         shape[key] = requiredKeys.has(key) ? child : child.optional();
       }
-      if ([...requiredKeys].some((key) => !Object.hasOwn(shape, key))) return null;
 
       const additionalProperties = value.additionalProperties;
       if (additionalProperties === false) {

@@ -392,7 +392,7 @@ describe('EU-5c/EU-5d semantic host-extension chain', () => {
 
     it('refuses a header action whose reference does not resolve', () => {
         const dangling = ingestCanonicalPluginManifest(externalManifestText('1.0.0')
-            .replace(`"action":"${HEADER_ACTION_LOCAL_ID}"`, '"action":"not-declared"'), { sourceProvenance: 'registryCustodied' });
+            .replace(`"command":"${HEADER_ACTION_LOCAL_ID}"`, '"command":"not-declared"'), { sourceProvenance: 'registryCustodied' });
         expect(dangling.ok).toBe(false);
         expect(dangling.ok === false && dangling.diagnostics).toEqual(expect.arrayContaining([
             expect.objectContaining({ code: 'plugin_manifest_dangling_reference' }),

@@ -72,7 +72,7 @@ const EXTERNAL_ACTION_ENCRYPTION_KEY = new Uint8Array(32).fill(7);
 function createExternalActionRuntime(
   scope: 'global' | 'session' = 'session',
   pluginId = 'acme.external',
-  onActionInvocation?: () => void,
+  onActionInvocation?: () => void | Promise<void>,
   resolveCurrentPluginExecutionOrigin?: (
     pluginId: string,
   ) => PluginMachineExecutionOriginV1 | null,
@@ -161,7 +161,7 @@ function createExternalActionRuntime(
         family: 'actions',
         localId: registeredAction.definition.id,
         value: async (_input: JsonValue, context: PluginInvocationContext) => {
-          onActionInvocation?.();
+          await onActionInvocation?.();
           return {
             surface: context.surface,
             caller: context.caller?.kind ?? null,
@@ -299,6 +299,7 @@ function createExternalActionIngressExecutor(scope: 'global' | 'session' = 'sess
   const lease: PluginRuntimeRegistryLease = {
     registry: runtime,
     source: 'ephemeral',
+    durableRevision: runtime.durableRevision ?? -1,
     release: async () => {},
   };
   return createExternalActionExecutor(createDaemonExternalActionContributedInvoker({
@@ -313,6 +314,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     const lease: PluginRuntimeRegistryLease = {
       registry: runtime,
       source: 'active',
+      durableRevision: runtime.durableRevision ?? -1,
       release,
     };
     const listContributedActionDefinitions = createDaemonExternalActionContributedDefinitionLister({
@@ -384,6 +386,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     const lease: PluginRuntimeRegistryLease = {
       registry: runtime,
       source: 'active',
+      durableRevision: runtime.durableRevision ?? -1,
       release: async () => {},
     };
     const listContributedActionDefinitions = createDaemonExternalActionContributedDefinitionLister({
@@ -640,6 +643,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       const lease: PluginRuntimeRegistryLease = {
         registry: runtime,
         source: 'ephemeral',
+        durableRevision: runtime.durableRevision ?? -1,
         release: async () => {},
       };
       const acquireRuntimeRegistryLease = async (): Promise<PluginRuntimeRegistryLease> => lease;
@@ -731,6 +735,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       const lease: PluginRuntimeRegistryLease = {
         registry: runtime,
         source: 'ephemeral',
+        durableRevision: runtime.durableRevision ?? -1,
         release: async () => {},
       };
       const requestCurrentIntent = vi.fn(async () => ({
@@ -811,6 +816,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     const lease: PluginRuntimeRegistryLease = {
       registry: runtime,
       source: 'ephemeral',
+      durableRevision: runtime.durableRevision ?? -1,
       release: async () => {},
     };
     const invoke = createDaemonExternalActionContributedInvoker({
@@ -845,6 +851,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     const lease: PluginRuntimeRegistryLease = {
       registry: runtime,
       source: 'ephemeral',
+      durableRevision: runtime.durableRevision ?? -1,
       release: async () => {},
     };
     const invoke = createDaemonExternalActionContributedInvoker({
@@ -892,6 +899,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       const lease: PluginRuntimeRegistryLease = {
         registry: runtime,
         source: 'ephemeral',
+        durableRevision: runtime.durableRevision ?? -1,
         release: async () => {},
       };
       let persisted: TargetActionApprovalRequestV1 | null = null;
@@ -992,6 +1000,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       const lease: PluginRuntimeRegistryLease = {
         registry: runtime,
         source: 'ephemeral',
+        durableRevision: runtime.durableRevision ?? -1,
         release: async () => {},
       };
       let persisted: TargetActionApprovalRequestV1 | null = null;
@@ -1096,6 +1105,107 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     }
   });
 
+  it('serializes concurrent approve replays for one API target-action artifact', async () => {
+    const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'acme.external/actions/inspect': {
+          approvalRequiredSurfaces: ['api'],
+        },
+      },
+    });
+    let releaseActionInvocation: () => void = () => {};
+    try {
+      let actionInvocations = 0;
+      let firstActionInvocationStarted!: () => void;
+      const firstActionInvocation = new Promise<void>((resolve) => {
+        firstActionInvocationStarted = resolve;
+      });
+      const actionInvocationRelease = new Promise<void>((resolve) => {
+        releaseActionInvocation = resolve;
+      });
+      const runtime = createExternalActionRuntime('global', 'acme.external', async () => {
+        actionInvocations += 1;
+        if (actionInvocations === 1) firstActionInvocationStarted();
+        await actionInvocationRelease;
+      });
+      const lease: PluginRuntimeRegistryLease = {
+        registry: runtime,
+        source: 'ephemeral',
+        durableRevision: runtime.durableRevision ?? -1,
+        release: async () => {},
+      };
+      let persisted: TargetActionApprovalRequestV1 | null = null;
+      const targetActionApprovals = {
+        targetActionApprovalsGet: async () => persisted,
+        targetActionApprovalsUpdate: async (args: Readonly<{
+          artifactId: string;
+          request: TargetActionApprovalRequestV1;
+        }>) => {
+          persisted = args.request;
+          return { ok: true as const };
+        },
+      };
+      const defer = createDaemonExternalActionContributedInvoker({
+        acquireRuntimeRegistryLease: async () => lease,
+        requestCurrentIntent: createTargetActionCurrentIntentAdapter({
+          now: () => 1,
+          create: async (request) => {
+            persisted = request;
+            return { artifactId: 'approval-api-concurrent-1' };
+          },
+          read: async () => persisted,
+        }),
+      });
+      await defer({
+        action: { pluginId: 'acme.external', localId: 'inspect' },
+        input: {},
+        context: {
+          surface: 'api',
+          authority: 'account_automation',
+          actionCaller: { kind: 'host' },
+        },
+        signal: new AbortController().signal,
+      });
+      const replay = createDaemonExternalActionContributedApprovalReplay({
+        credentials: { token: 'daemon-token', encryption: null } as never,
+        acquireRuntimeRegistryLease: async () => lease,
+        targetActionApprovals,
+        now: () => 2,
+      });
+
+      const first = replay({ artifactId: 'approval-api-concurrent-1', decision: 'approve' });
+      await firstActionInvocation;
+      const second = replay({ artifactId: 'approval-api-concurrent-1', decision: 'approve' });
+      await new Promise<void>((resolve) => { setImmediate(resolve); });
+
+      expect(actionInvocations).toBe(1);
+
+      releaseActionInvocation();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      expect(firstResult).toMatchObject({
+        ok: true,
+        result: {
+          ok: true,
+          status: 'executed',
+          execution: { ok: true },
+        },
+      });
+      expect(secondResult).toEqual(firstResult);
+      expect(actionInvocations).toBe(1);
+      expect(persisted).toMatchObject({
+        status: 'executed',
+        decision: { kind: 'approve' },
+        execution: { ok: true },
+      });
+    } finally {
+      releaseActionInvocation();
+      if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;
+    }
+  });
+
   it('fails a replay when the current Action policy no longer matches its durable approval', async () => {
     const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
@@ -1114,6 +1224,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       const lease: PluginRuntimeRegistryLease = {
         registry: runtime,
         source: 'ephemeral',
+        durableRevision: runtime.durableRevision ?? -1,
         release: async () => {},
       };
       let persisted: TargetActionApprovalRequestV1 | null = null;

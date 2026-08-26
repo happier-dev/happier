@@ -6,6 +6,7 @@ import {
     AgentRuntimeJsonValueV1Schema,
     ExternalSessionOperationReferenceV1Schema,
     ExternalSessionRefSchema,
+    ExternalSessionTranscriptFollowEventV1Schema,
     ExternalSessionTranscriptItemIdV1Schema,
     ExternalSessionTranscriptSourceTimestampV1Schema,
     HostEventIdV1Schema,
@@ -39,6 +40,9 @@ const HostSessionIdSchema = asHostProtocolZod(SessionIdSchema);
 const HostExternalSessionRefSchema = asHostProtocolZod(ExternalSessionRefSchema);
 const HostExternalSessionOperationReferenceV1Schema = asHostProtocolZod(
     ExternalSessionOperationReferenceV1Schema,
+);
+const HostExternalSessionTranscriptFollowEventV1Schema = asHostProtocolZod(
+    ExternalSessionTranscriptFollowEventV1Schema,
 );
 const BoundedTextSchema = z.string().max(65_536);
 const Base64Schema = z.string().regex(
@@ -173,25 +177,8 @@ export const RunnerDaemonExternalSessionsTranscriptResultV1Schema = z.union([
 ]);
 export const RunnerDaemonExternalSessionsTakeoverResultV1Schema =
     HostExternalSessionOperationReferenceV1Schema;
-export const RunnerDaemonExternalSessionsFollowEventV1Schema = z.discriminatedUnion('kind', [
-    z.object({
-        kind: z.literal('data'),
-        items: z.array(RunnerDaemonExternalSessionTranscriptItemV1Schema).max(1_000),
-        fromCursor: CursorSchema.nullable(),
-        nextCursor: CursorSchema,
-    }).strict(),
-    z.object({
-        kind: z.literal('resyncRequired'),
-        reason: z.literal('cursorDiscontinuity'),
-        cursor: CursorSchema.nullable(),
-    }).strict(),
-    z.object({
-        kind: z.literal('terminated'),
-        reason: z.enum(['disposed', 'aborted', 'retired', 'providerFailure', 'resyncRequired']),
-        cursor: CursorSchema.nullable(),
-        code: BoundedIdSchema.optional(),
-    }).strict(),
-]);
+export const RunnerDaemonExternalSessionsFollowEventV1Schema =
+    HostExternalSessionTranscriptFollowEventV1Schema;
 
 export type RunnerDaemonManagedProviderCustodyScopeV1 = Readonly<{
     v: 1;

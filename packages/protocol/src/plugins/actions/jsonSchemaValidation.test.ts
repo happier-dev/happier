@@ -27,6 +27,16 @@ import {
   type ProtocolJsonValue,
 } from './jsonSchemaValidation';
 
+function deepSortObjectKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(deepSortObjectKeys);
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, deepSortObjectKeys(child)]),
+  );
+}
+
 describe('plugin JSON Schema validation policy', () => {
   it('enforces Protocol-owned byte ceilings at the canonical compiler boundary', () => {
     const validate = compilePluginJsonSchema({
@@ -377,6 +387,36 @@ describe('protocol composable schema kernel', () => {
     });
     expect(rehydrated.safeParse({}).success).toBe(false);
     expect(rehydrated.safeParse(undefined).success).toBe(false);
+  });
+
+  it('rehydrates canonical object schemas after manifest key ordering', () => {
+    const authored = defineProtocolObject({
+      zeta: defineProtocolString({ minLength: 1 }),
+      alpha: defineProtocolString({ minLength: 1 }).optional(),
+      beta: defineProtocolObject({
+        zetaNested: defineProtocolString({ minLength: 1 }),
+        alphaNested: defineProtocolString({ minLength: 1 }).optional(),
+        betaNested: defineProtocolString({ minLength: 1 }),
+      }, { policy: 'closed' }),
+    }, { policy: 'closed' });
+    const reordered = deepSortObjectKeys(authored.jsonSchema);
+    if (typeof reordered !== 'object' || reordered === null || Array.isArray(reordered)) {
+      throw new Error('Canonical schema projection must remain an object');
+    }
+
+    const rehydrated = rehydrateCanonicalProtocolComposableSchema(reordered);
+
+    expect(rehydrated?.safeParse({
+      zeta: 'z',
+      beta: { zetaNested: 'nested-z', betaNested: 'nested-b' },
+    })).toEqual({
+      success: true,
+      data: {
+        zeta: 'z',
+        beta: { zetaNested: 'nested-z', betaNested: 'nested-b' },
+      },
+    });
+    expect(rehydrated?.safeParse({ zeta: 'z' }).success).toBe(false);
   });
 
   it('rehydrates exact nested unknown-key policies and declines merely valid JSON Schema', () => {

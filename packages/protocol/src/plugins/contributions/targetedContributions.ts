@@ -3,8 +3,7 @@ import { z } from 'zod';
 import {
   PluginActionDangerLevelV2Schema,
   PluginActionSurfaceV2Schema,
-  PluginJsonSchemaV2Schema,
-} from '../actions/v2.js';
+} from '../actions/vocabulary.js';
 import {
   rehydrateCanonicalProtocolComposableSchema,
   type ProtocolComposableSchema,
@@ -24,7 +23,7 @@ import {
   PluginUiTargetedContributionSurfacePresentationV1Schema,
   type PluginUiTargetedContributionSurfacePresentationV1,
 } from '../ui/targetedContributions.js';
-import { PluginJsonValueV2Schema } from './publicTypes.js';
+import { PluginJsonSchemaV2Schema, PluginJsonValueV2Schema } from './publicTypes.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 const TARGETED_CONTRIBUTION_MAX_ROLES_PER_PROTOCOL = 16;

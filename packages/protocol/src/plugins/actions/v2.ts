@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import {
+  PluginActionDangerLevelV2Schema,
+  PluginActionSurfaceV2Schema,
+  type PluginActionDangerLevelV2,
+  type PluginActionSurfaceV2,
+} from './vocabulary.js';
 import type { ActionDefinitionSlashV1 } from '../../actions/actionDefinitionV1.js';
 import { ActionSafetySchema } from '../../actions/safety.js';
 import { ActionContextualDefaultsSchema } from '../../actions/contextualDefaults.js';
@@ -30,6 +36,12 @@ import {
 import { asProtocolZod } from "./internalProtocolZodAdapter.js";
 export { PluginJsonSchemaV2Schema, type PluginJsonSchemaV2 as PluginJsonSchema } from '../contributions/publicTypes.js';
 export type { PluginJsonValueV2 as PluginJsonValue } from '../contributions/publicTypes.js';
+export {
+  PluginActionDangerLevelV2Schema,
+  PluginActionSurfaceV2Schema,
+  type PluginActionDangerLevelV2,
+  type PluginActionSurfaceV2,
+};
 
 export const PluginActionDefinitionExamplesV1Schema = z
   .object({
@@ -68,16 +80,6 @@ export const PluginActionScopeV2Schema = z.enum([
   'machine',
 ]);
 export type PluginActionScopeV2 = z.infer<typeof PluginActionScopeV2Schema>;
-
-export const PluginActionSurfaceV2Schema = z.enum([
-  'cli',
-  'mcp',
-  'agent',
-  'ui',
-  'plugin',
-  'voice',
-]);
-export type PluginActionSurfaceV2 = z.infer<typeof PluginActionSurfaceV2Schema>;
 
 /**
  * Tool invocation is intentionally a smaller, independent surface grammar.
@@ -168,15 +170,6 @@ export const PluginActionSlashV2Schema = z.object({
   }),
 }).strict();
 export type PluginActionSlashV2 = z.infer<typeof PluginActionSlashV2Schema>;
-
-export const PluginActionDangerLevelV2Schema = z.enum([
-  'safe',
-  'writesLocal',
-  'writesRemote',
-  'externalSideEffect',
-  'destructive',
-]);
-export type PluginActionDangerLevelV2 = z.infer<typeof PluginActionDangerLevelV2Schema>;
 
 /**
  * The manifest grammar owns this boundary so projected readers do not each

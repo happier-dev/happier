@@ -23,8 +23,8 @@ import type {
 import type { AgentSessionAuthRefreshRequest } from '../agentRuntime/context.js';
 import type { PluginActionInputById } from '../actions/actionTypeMap.generated.js';
 import type { ProtocolComposableSchema } from '../protocol/protocolFacade.js';
+import type { SubagentLaunchV1 } from '../sessions/subagents.js';
 import type { ExternalSessionsService } from './externalSessions.js';
-import type { SubagentLaunchV1 } from '@happier-dev/protocol/sessions/subagents';
 import {
     AgentPermissionIntentV1Schema as protocolAgentPermissionIntentV1Schema,
     isSlashCommandSupported as protocolIsSlashCommandSupported,

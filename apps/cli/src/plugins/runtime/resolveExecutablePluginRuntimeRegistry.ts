@@ -558,6 +558,12 @@ export type ManagedProviderAdoptedPublicOutcome = Readonly<{
 export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     // Includes internal merged contribution surfaces (`catalogEntry`).
     contributes: Awaited<ReturnType<typeof resolveMergedContributionRegistry>>;
+    /**
+     * Durable installed-catalog revision from which this runtime was resolved.
+     * Controller-published leases use it only to avoid joining two different
+     * current snapshots; partial fixtures without this fact fail closed there.
+     */
+    durableRevision?: number;
     generation?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['generation'];
     targetActivationFacts?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['targetActivationFacts'];
     targetActionInvocations?: ReturnType<typeof createTargetActionInvocationRegistry>;
@@ -6169,6 +6175,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
 
     const resolvedRuntimeRegistry: ResolvedExecutablePluginRuntimeRegistry = {
         contributes: authoritativeContributes,
+        durableRevision: committed?.commit?.revision ?? -1,
         generation: activatedRegistry.generation,
         targetActivationFacts: activatedRegistry.targetActivationFacts,
         targetActionInvocations: committedTargetActionInvocations,

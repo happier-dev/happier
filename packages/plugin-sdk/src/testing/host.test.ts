@@ -196,6 +196,11 @@ const testkitTargetedTargetDefinition = definePlugin({
 
 type TestkitTargetedOperationHandle = AdmittedTargetedOperationExecutionHandle;
 type TestkitTargetedOperationRef = { current: TestkitTargetedOperationHandle | undefined };
+type ColdManifestTargetedContribution = Readonly<{
+  operations: Readonly<{
+    publish: TestkitTargetedOperationHandle;
+  }>;
+}>;
 type TestkitTargetedObservationRef = {
   current: TargetedContributionObservation<unknown> | undefined;
 };
@@ -1217,11 +1222,11 @@ describe('createPluginTestkit', () => {
         },
       },
     });
-    const coldPoint = Object.freeze({
+    const coldPoint: TargetedContributionPointRef<ColdManifestTargetedContribution> = Object.freeze({
       targetPluginId: targetDefinition.manifest.id,
       id: 'providers',
       protocol: Object.freeze({ id: protocol.id, version: protocol.version }),
-    }) satisfies TargetedContributionPointRef<unknown>;
+    });
     const contributorDefinition = definePlugin({
       id: 'acme.testkit.cold-manifest-contributor',
       version: '1.0.0',

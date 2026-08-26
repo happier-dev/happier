@@ -48,21 +48,9 @@ const HOST_FILE_LOCK_ENTRYPOINT = Object.freeze({
   }),
 });
 
-const HOST_TARGETED_CONTRIBUTIONS_ENTRYPOINT = Object.freeze({
-  specifier: './host/targeted-contributions',
-  sourceModule: 'src/host/targeted-contributions/index.ts',
-  visibility: 'host',
-  realm: 'daemon',
-  conditions: Object.freeze({
-    types: './dist/host/targeted-contributions/index.d.ts',
-    default: './dist/host/targeted-contributions/index.js',
-  }),
-});
-
 const HOST_ENTRYPOINTS = Object.freeze([
   HOST_REGISTRATION_ENTRYPOINT,
   HOST_FILE_LOCK_ENTRYPOINT,
-  HOST_TARGETED_CONTRIBUTIONS_ENTRYPOINT,
 ]);
 
 const AUTHOR_SYMBOL = Object.freeze({
@@ -119,50 +107,12 @@ const HOST_FILE_LOCK_SYMBOL = Object.freeze({
   realm: 'daemon',
 });
 
-const HOST_TARGETED_CONTRIBUTIONS_SYMBOL = Object.freeze({
-  specifier: './host/targeted-contributions',
-  exportName: 'decodeTargetedContributionPointSemantics',
-  kind: 'value',
-  sourceModule: 'src/targetedContributionAuthoring.ts',
-  sourceExport: 'decodeTargetedContributionPointSemantics',
-  realm: 'daemon',
-});
-
-const HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL = Object.freeze({
-  ...HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
-  exportName: 'projectDefinedTargetedContributionPointSemanticRefs',
-  sourceExport: 'projectDefinedTargetedContributionPointSemanticRefs',
-});
-
-const HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL = Object.freeze({
-  ...HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
-  exportName: 'readTargetedContributionPointSemanticRefs',
-  sourceExport: 'readTargetedContributionPointSemanticRefs',
-});
-
-const HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS = Object.freeze([
-  'TargetedContributionPointSemanticInput',
-  'TargetedContributionPointSemanticOperation',
-  'TargetedContributionPointSemanticProjection',
-  'TargetedContributionPointSemanticSurface',
-].map((exportName) => Object.freeze({
-  ...HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
-  exportName,
-  kind: 'type',
-  sourceExport: exportName,
-  realm: 'any',
-})));
-
 const HOST_SYMBOLS = Object.freeze([
   HOST_REGISTRATION_ACTION_HANDLER_NOT_STARTED_ERROR_SYMBOL,
   HOST_REGISTRATION_SYMBOL,
   ...HOST_REGISTRATION_TYPE_SYMBOLS,
   HOST_FILE_LOCK_RECLAIM_SYMBOL,
   HOST_FILE_LOCK_SYMBOL,
-  HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
-  HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
-  HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
-  ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
 ]);
 
 function validInventory(overrides = {}) {
@@ -278,7 +228,6 @@ test('checked schema fixes the approved package-owned inventory vocabulary', asy
     [
       './host/registration',
       './host/fs/json-owner-file-lock',
-      './host/targeted-contributions',
     ],
   );
   assert.equal(
@@ -443,30 +392,7 @@ test('publication inventory requires exact canonical semver and forbids future p
   );
 });
 
-test('projects the approved daemon-only targeted-contribution semantic decoder host seam', () => {
-  const inventory = validateApiSurfaceInventory(validInventory());
-  const generated = createApiSurfaceGenerationPlan(inventory);
-
-  assert.deepEqual(generated.packageExports['./host/targeted-contributions'], {
-    types: './dist/host/targeted-contributions/index.d.ts',
-    default: './dist/host/targeted-contributions/index.js',
-  });
-  assert.equal(
-    generated.sourceBarrels['src/host/targeted-contributions/index.ts'],
-    [
-      "export type { TargetedContributionPointSemanticInput } from '../../targetedContributionAuthoring.js';",
-      "export type { TargetedContributionPointSemanticOperation } from '../../targetedContributionAuthoring.js';",
-      "export type { TargetedContributionPointSemanticProjection } from '../../targetedContributionAuthoring.js';",
-      "export type { TargetedContributionPointSemanticSurface } from '../../targetedContributionAuthoring.js';",
-      "export { decodeTargetedContributionPointSemantics } from '../../targetedContributionAuthoring.js';",
-      "export { projectDefinedTargetedContributionPointSemanticRefs } from '../../targetedContributionAuthoring.js';",
-      "export { readTargetedContributionPointSemanticRefs } from '../../targetedContributionAuthoring.js';",
-      '',
-    ].join('\n'),
-  );
-});
-
-test('admits the daemon-only targeted-contribution semantic-ref carriers', () => {
+test('admits the host API surface', () => {
   const inventory = validateApiSurfaceInventory(validInventory());
 
   for (const expected of [
@@ -534,15 +460,6 @@ test('projects symbols without posture metadata while preserving structured depr
         symbols: HOST_SYMBOLS
           .filter((symbol) => symbol.specifier === './host/fs/json-owner-file-lock'),
       },
-      {
-        specifier: './host/targeted-contributions',
-        symbols: [
-          HOST_TARGETED_CONTRIBUTIONS_SYMBOL,
-          HOST_TARGETED_CONTRIBUTIONS_PROJECT_DEFINED_REFS_SYMBOL,
-          HOST_TARGETED_CONTRIBUTIONS_SEMANTIC_REFS_SYMBOL,
-          ...HOST_TARGETED_CONTRIBUTIONS_TYPE_SYMBOLS,
-        ],
-      },
     ],
   });
 
@@ -598,41 +515,6 @@ test('projects symbols without posture metadata while preserving structured depr
     },
     {
       exportName: 'createPluginRegistrationScope',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'TargetedContributionPointSemanticInput',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'TargetedContributionPointSemanticOperation',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'TargetedContributionPointSemanticProjection',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'TargetedContributionPointSemanticSurface',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'decodeTargetedContributionPointSemantics',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'projectDefinedTargetedContributionPointSemanticRefs',
-      replacement: undefined,
-      removalCondition: undefined,
-    },
-    {
-      exportName: 'readTargetedContributionPointSemanticRefs',
       replacement: undefined,
       removalCondition: undefined,
     },
@@ -905,7 +787,6 @@ test('one generation plan includes host package seams but excludes them from aut
     './actions',
     './host/fs/json-owner-file-lock',
     './host/registration',
-    './host/targeted-contributions',
   ]);
   assert.doesNotMatch(generated.sourceBarrels['src/actions/index.ts'], /@preview|@experimental|@stable/u);
   assert.match(

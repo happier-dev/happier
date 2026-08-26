@@ -253,10 +253,17 @@ describe('UI/testing public type contract', () => {
             .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'text'>>();
         expectTypeOf<SdkDeclarativeNodeOfKind<'markdown'>>()
             .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'markdown'>>();
-        expectTypeOf<SdkDeclarativeNodeOfKind<'stack'>>()
-            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'stack'>>();
-        expectTypeOf<SdkDeclarativeNodeOfKind<'group'>>()
-            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'group'>>();
+        // `toEqualTypeOf` recursively expands both aliases until Vitest's
+        // equality helper reaches its recursion sentinel. Compare each
+        // non-recursive member plus the complete child-kind vocabulary instead.
+        expectTypeOf<Omit<SdkDeclarativeNodeOfKind<'stack'>, 'children'>>()
+            .toEqualTypeOf<Omit<CanonicalDeclarativeNodeOfKind<'stack'>, 'children'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'stack'>['children'][number]['kind']>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'stack'>['children'][number]['kind']>();
+        expectTypeOf<Omit<SdkDeclarativeNodeOfKind<'group'>, 'children'>>()
+            .toEqualTypeOf<Omit<CanonicalDeclarativeNodeOfKind<'group'>, 'children'>>();
+        expectTypeOf<SdkDeclarativeNodeOfKind<'group'>['children'][number]['kind']>()
+            .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'group'>['children'][number]['kind']>();
         expectTypeOf<SdkDeclarativeNodeOfKind<'field'>>()
             .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'field'>>();
         expectTypeOf<SdkDeclarativeNodeOfKind<'status'>>()
@@ -279,10 +286,9 @@ describe('UI/testing public type contract', () => {
             .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'actionPanel'>>();
         expectTypeOf<SdkDeclarativeNodeOfKind<'collectionList'>>()
             .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'collectionList'>>();
-        expectTypeOf<PluginUiDeclarativeNodeV2>().toEqualTypeOf<CanonicalPluginDeclarativeNodeV2>();
         expectTypeOf<PluginUiDeclarativeToneV2>().toEqualTypeOf<CanonicalPluginUiDeclarativeToneV2>();
         // Every named export the SDK derives from the grammar is pinned too, so
-        // one drifting projection cannot hide behind an equal whole union.
+        // one drifting projection cannot hide behind its matching node member.
         expectTypeOf<PluginDeclarativeActionNodeV2>()
             .toEqualTypeOf<CanonicalDeclarativeNodeOfKind<'action'>>();
         expectTypeOf<PluginDeclarativeActionPanelNodeV2>()

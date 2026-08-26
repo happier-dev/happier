@@ -1188,11 +1188,11 @@ describe('Action Spec Registry', () => {
       sessionId: 'session-1',
       provider: 'codex',
     })).toMatchObject({ sessionId: 'session-1', agentId: 'codex' });
-    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(false);
+    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(true);
     expect(PluginInvocableActionIdSchema.safeParse('voice_agent.start').success).toBe(true);
   });
 
-  it('keeps every raw subagent registry Action off the Plugin surface while retaining its RPC binding', () => {
+  it('projects bounded subagent reads onto the trusted Plugin surface while retaining raw mutations as RPC-only', () => {
     const rawSubagentActionIds = [
       'sessions.subagents.list',
       'sessions.subagents.get',
@@ -1201,7 +1201,7 @@ describe('Action Spec Registry', () => {
       'sessions.subagents.updateStatus',
       'sessions.subagents.complete',
     ] as const;
-    const pluginExcludedReadActionIds = new Set([
+    const pluginReadableActionIds = new Set([
       'sessions.subagents.list',
       'sessions.subagents.get',
       'sessions.subagents.watch',
@@ -1209,18 +1209,21 @@ describe('Action Spec Registry', () => {
 
     for (const actionId of rawSubagentActionIds) {
       const spec = getActionSpec(actionId);
+      const isPluginReadable = pluginReadableActionIds.has(actionId);
       expect(spec.surfaces.rpc).toBe(true);
-      expect(spec.surfaces.plugin).toBe(false);
-      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(false);
-      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId)).toBe(false);
-      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(false);
-      expect(isPluginSurfaceExcludedActionId(actionId)).toBe(
-        pluginExcludedReadActionIds.has(actionId),
-      );
+      expect(spec.surfaces.plugin).toBe(isPluginReadable);
+      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(isPluginReadable);
+      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId)).toBe(isPluginReadable);
+      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(isPluginReadable);
+      expect(isPluginSurfaceExcludedActionId(actionId)).toBe(false);
       expect(isInternalActionId(actionId)).toBe(
-        !pluginExcludedReadActionIds.has(actionId),
+        !isPluginReadable,
       );
     }
+
+    const contextualExternalActionId = 'sessions.external.candidates.list';
+    expect(getActionSpec(contextualExternalActionId).surfaces.plugin).toBe(false);
+    expect(isPluginSurfaceExcludedActionId(contextualExternalActionId)).toBe(true);
   });
 
   it('keeps SDK-required discovery, run, path, and transcript Actions public in the canonical projection', () => {

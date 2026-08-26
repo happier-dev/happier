@@ -127,6 +127,11 @@ describe('SDK negative type contracts', () => {
             },
             {
                 fileName: 'agentUiGrammar.contract.test-d.ts',
+                reason: 'nested behavior inherits `contributes.agents[].id`.',
+                guardedDeclaration: "providerId: 'another.agent',",
+            },
+            {
+                fileName: 'agentUiGrammar.contract.test-d.ts',
                 reason: 'compiled first-party component ids are not authorable.',
                 guardedDeclaration: "slots: [{ id: 'x', slot: 'session.detailsTabs', componentId: 'firstParty.claude.teammateDetailsTab' }],",
             },

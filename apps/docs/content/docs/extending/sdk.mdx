@@ -95,7 +95,7 @@ const happier = connect({
 try {
   // Call a typed Action method or actions.execute(...) with its typed input.
 } finally {
-  happier.close();
+  await happier.close();
 }
 ```
 
@@ -121,7 +121,7 @@ unbound `happier.sessions.spawn(...)` rejects with `HappierActionError` whose
 `happier.machine(machineId).sessions`.
 
 `machine(id)` returns a target-bound view that shares the root client's
-lifecycle. Calling `close()` on either view aborts outstanding work for both.
+lifecycle. Calling `await close()` on either view aborts outstanding work for both.
 
 This is an admitted Action failure, not a transport failure.
 
@@ -224,6 +224,10 @@ const result = await machine.actions.invoke(
   { note: 'Remember this' },
 );
 ```
+
+Validate against the complete `inputSchema`, including `oneOf` and `anyOf`
+branches. A contributed Action can require fields inside one of those branches
+even when the schema has no top-level `required` array.
 
 Contributed Actions use their qualified plugin-and-Action identity in Action
 settings. Their **API** enablement and approval choice is enforced just like the
@@ -477,9 +481,10 @@ current state or use the Action owner's idempotency contract. For large data,
 return Artifact references, use an existing stream Action, or design bounded or
 paginated reads instead of one oversized inline result.
 
-The SDK supports `AbortSignal` and closes outstanding calls when `close()` is
-called. It does not replay a mutation or move a failed mutation to another
-endpoint. For mutating Actions, the SDK generates a request ID when you do not
+The SDK supports `AbortSignal` and `await close()` aborts outstanding calls.
+During shutdown, it gives active transcript and execution-run cleanup requests
+up to one second to settle before destroying its transport. It does not replay a
+mutation or move a failed mutation to another endpoint. For mutating Actions, the SDK generates a request ID when you do not
 supply one, but that generated value is not returned to the caller. If you may
 need to reconcile an uncertain mutation outcome, generate and retain the ID in
 your own code and pass it as `options.requestId`. A request ID provides
@@ -488,10 +493,10 @@ semantics; the SDK adds no receipt store or automatic retry subsystem.
 
 `session.followTranscript()` is a finite, demand-driven async iterator. It
 pauses between pages while the consumer is not awaiting another item, and an
-early loop exit or `close()` releases its canonical follow lease. For a genuine
+early loop exit or `await close()` releases its canonical follow lease. For a genuine
 execution-run stream, use `client.runs.startStream(...)`. The returned handle
 has `runId`, `streamId`, `cancel()`, and an async iterator; normal completion,
-early return, caller abort, and `close()` cancel that stream. On a
+early return, caller abort, and `await close()` cancel that stream. On a
 machine-bound client, stream start, read, and cancel remain on its selected
 machine. Snapshot Actions remain ordinary methods.
 

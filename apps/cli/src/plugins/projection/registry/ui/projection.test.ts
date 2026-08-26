@@ -599,10 +599,10 @@ describe('plugin UI projection family', () => {
                 badge: { label: 'Preview', tone: 'accent' },
             },
         });
-        expect(entry?.display).not.toHaveProperty('titleKey');
-        expect(entry?.display).not.toHaveProperty('developerFallback');
-        expect(entry?.display.badge).not.toHaveProperty('labelKey');
-        expect(entry?.display.badge).not.toHaveProperty('developerFallback');
+        expect(entry).not.toHaveProperty('display.titleKey');
+        expect(entry).not.toHaveProperty('display.developerFallback');
+        expect(entry).not.toHaveProperty('display.badge.labelKey');
+        expect(entry).not.toHaveProperty('display.badge.developerFallback');
     });
 
     it('gives the deterministic V2 locale owner precedence over the legacy translation adapter', () => {

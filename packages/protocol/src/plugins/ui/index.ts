@@ -76,6 +76,9 @@ export {
   type PluginSessionResourceTargetV1,
 } from '../contributions/ui/resources.js';
 export {
+  createPluginSessionInfoSectionRendererIdV1,
+} from '../contributions/ui/sessionInfoSections.js';
+export {
   PluginSurfaceTargetV1Schema,
   type PluginSurfaceTargetV1,
 } from '../contributions/ui/surfaceTargets.js';

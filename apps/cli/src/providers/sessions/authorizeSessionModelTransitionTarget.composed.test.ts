@@ -80,6 +80,7 @@ describe('real Claude registry Provider transition authorization composition', (
     const lease: PluginRuntimeRegistryLease = {
       registry,
       source: 'ephemeral',
+      durableRevision: registry.durableRevision ?? -1,
       release: async () => undefined,
     };
     const providerRegistry = {

@@ -1527,6 +1527,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             return {
               registry: runtimeRegistry,
               source: 'active' as const,
+              durableRevision: runtimeRegistry.durableRevision ?? -1,
               release: async () => undefined,
             };
           },

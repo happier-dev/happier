@@ -66,6 +66,9 @@ __pycache__/
 # author-declared relative paths, so ignore everything here except the tracked manifest.
 /packages/plugins/*/.happier-plugin/*
 !/packages/plugins/*/.happier-plugin/plugin.json
+# Local daemon authoring receipts can also be emitted beside example and
+# third-party plugin manifests; the manifest remains source, the receipt does not.
+**/.happier-plugin/.happier-daemon-outputs.json
 
 # Interrupted package copies, probes, and runner snapshots
 **/.tmp.*/

@@ -4,13 +4,13 @@ import {
   ExternalSessionRefreshCursorV1Schema,
   ExternalSessionRefSchema,
   ExternalSessionSourceIdSchema,
-  ExternalSessionTranscriptItemIdV1Schema,
-  ExternalSessionTranscriptSourceTimestampV1Schema,
+  ExternalSessionTranscriptFollowCursorV1Schema,
   MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION,
   materializeExternalSessionSourceInstances,
   type AccountProfile,
   type ExternalSessionsSource,
   type PluginContributionIdentityV1,
+  validateExternalSessionTranscriptFollowEventV1,
 } from '@happier-dev/protocol';
 import {
   isPluginError,
@@ -22,8 +22,6 @@ import { type PluginOperationAvailability } from '@happier-dev/plugin-sdk';
 import type {
   ExternalSessionTranscriptItem,
 } from '@happier-dev/plugin-sdk/sessions/external';
-import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
-import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
 import type { ResolvedAgentRichDefinition } from '@/plugins/projection/registry/types';
 import { logger } from '@/ui/logger';
@@ -456,10 +454,10 @@ type CompositionResolveInput = Parameters<ExternalSessionsCompositionPort['resol
 type CompositionFollowTarget = Parameters<ExternalSessionsCompositionPort['followTranscript']>[0];
 type CompositionFollowOptions = Parameters<ExternalSessionsCompositionPort['followTranscript']>[1];
 type CompositionFollowListener = Parameters<ExternalSessionsCompositionPort['followTranscript']>[2];
+type CompositionFollowResult = Awaited<ReturnType<ExternalSessionsCompositionPort['followTranscript']>>;
 
 const AUTHOR_FOLLOW_CLEANUP_TIMEOUT_MS = 5_000;
-const AUTHOR_FOLLOW_EVENT_MAX_SERIALIZED_BYTES = 1_048_576;
-const AUTHOR_HOST_CURSOR_MAX_CODE_UNITS = 4_096;
+const HOST_ADAPTER_CURSOR_MAX_CODE_UNITS = 4_096;
 
 function isCanonicalAuthorBoundedString(
   value: unknown,
@@ -483,13 +481,6 @@ function isPositiveSafeInteger(value: unknown): value is number {
   return typeof value === 'number'
     && Number.isSafeInteger(value)
     && value >= 1;
-}
-
-function hasExactKeys(value: Readonly<Record<string, unknown>>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  return actual.length === expected.length
-    && actual.every((key, index) => key === expected[index]);
 }
 
 function authorInputFailure(code: string): never {
@@ -576,7 +567,7 @@ function readAuthorListQueryWithAdapterContinuation(
   );
   const adapterCursor = isCanonicalAuthorBoundedString(
     record.cursor,
-    AUTHOR_HOST_CURSOR_MAX_CODE_UNITS,
+    HOST_ADAPTER_CURSOR_MAX_CODE_UNITS,
   )
     ? unwrapListCursor(record.cursor)
     : null;
@@ -738,132 +729,12 @@ function projectAuthorTranscriptReadResult(
 function readAuthorFollowEvent(
   value: unknown,
 ): HostExternalSessionsAuthorTranscriptFollowEvent {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new PluginError({
-      code: 'plugin_external_follow_event_invalid',
-      message: 'plugin_external_follow_event_invalid',
-    });
-  }
-  const event = value as Readonly<Record<string, unknown>>;
-  let parsed: HostExternalSessionsAuthorTranscriptFollowEvent | null = null;
-  if (
-    event.kind === 'data'
-    && hasExactKeys(event, ['kind', 'items', 'fromCursor', 'nextCursor'])
-    && Array.isArray(event.items)
-    && (event.fromCursor === null
-      || isCanonicalAuthorBoundedString(event.fromCursor, AUTHOR_HOST_CURSOR_MAX_CODE_UNITS))
-    && isCanonicalAuthorBoundedString(event.nextCursor, AUTHOR_HOST_CURSOR_MAX_CODE_UNITS)
-  ) {
-    const items = event.items.map((value) => {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-      const item = value as Readonly<Record<string, unknown>>;
-      const keys = [
-        'id',
-        ...(item.timestampMs === undefined ? [] : ['timestampMs']),
-        'kind',
-        'data',
-      ];
-      if (
-        !hasExactKeys(item, keys)
-        || (item.kind !== 'user' && item.kind !== 'agent' && item.kind !== 'system' && item.kind !== 'event')
-      ) return null;
-      const id = ExternalSessionTranscriptItemIdV1Schema.safeParse(item.id);
-      if (!id.success) return null;
-      let timestampMs: number | undefined;
-      if (item.timestampMs !== undefined) {
-        const timestamp = ExternalSessionTranscriptSourceTimestampV1Schema
-          .safeParse(item.timestampMs);
-        if (!timestamp.success) return null;
-        timestampMs = timestamp.data;
-      }
-      const data = AgentRuntimeJsonValueV1Schema.safeParse(item.data);
-      if (!data.success) return null;
-      return Object.freeze({
-        id: id.data,
-        ...(timestampMs === undefined ? {} : { timestampMs }),
-        kind: item.kind,
-        data: data.data,
-      });
-    });
-    if (!items.includes(null)) {
-      parsed = Object.freeze({
-        kind: 'data',
-        items: Object.freeze(items as NonNullable<(typeof items)[number]>[]),
-        fromCursor: event.fromCursor as string | null,
-        nextCursor: event.nextCursor,
-      });
-    }
-  } else if (
-    event.kind === 'resyncRequired'
-    && hasExactKeys(event, ['kind', 'reason', 'cursor'])
-    && event.reason === 'cursorDiscontinuity'
-    && (event.cursor === null
-      || isCanonicalAuthorBoundedString(event.cursor, AUTHOR_HOST_CURSOR_MAX_CODE_UNITS))
-  ) {
-    parsed = Object.freeze({
-      kind: 'resyncRequired',
-      reason: 'cursorDiscontinuity',
-      cursor: event.cursor as string | null,
-    });
-  } else if (
-    event.kind === 'terminated'
-    && hasExactKeys(event, [
-      'kind',
-      'reason',
-      'cursor',
-      ...(event.code === undefined ? [] : ['code']),
-    ])
-    && (
-      event.reason === 'disposed'
-      || event.reason === 'aborted'
-      || event.reason === 'retired'
-      || event.reason === 'providerFailure'
-      || event.reason === 'resyncRequired'
-    )
-    && (event.cursor === null
-      || isCanonicalAuthorBoundedString(event.cursor, AUTHOR_HOST_CURSOR_MAX_CODE_UNITS))
-    && (event.code === undefined
-      || (typeof event.code === 'string'
-        && event.code.length > 0
-        && event.code.length <= 256
-        && event.code === event.code.trim()))
-  ) {
-    parsed = Object.freeze({
-      kind: 'terminated',
-      reason: event.reason,
-      cursor: event.cursor as string | null,
-      ...(event.code === undefined ? {} : { code: event.code as string }),
-    });
-  }
-  if (!parsed) {
-    throw new PluginError({
-      code: 'plugin_external_follow_event_invalid',
-      message: 'plugin_external_follow_event_invalid',
-    });
-  }
-  // Sized through the canonical iterative Protocol byte owner: recursive
-  // serialization would reclassify a valid deep transcript event as invalid,
-  // so the declared byte ceiling stays the only bound.
-  let serializedBytes: number;
-  try {
-    serializedBytes = measureSerializedValidatedStrictPluginJsonUtf8Bytes(
-      parsed,
-      'External Session author follow event',
-      AUTHOR_FOLLOW_EVENT_MAX_SERIALIZED_BYTES,
-    );
-  } catch (error) {
-    throw new PluginError({
-      code: 'plugin_external_follow_event_invalid',
-      message: 'plugin_external_follow_event_invalid',
-    }, { cause: error });
-  }
-  if (serializedBytes > AUTHOR_FOLLOW_EVENT_MAX_SERIALIZED_BYTES) {
-    throw new PluginError({
-      code: 'plugin_external_follow_event_too_large',
-      message: 'plugin_external_follow_event_too_large',
-    });
-  }
-  return parsed;
+  const parsed = validateExternalSessionTranscriptFollowEventV1(value);
+  if (parsed.ok) return parsed.event;
+  const code = parsed.errorCode === 'serialized_bytes_exceeded'
+    ? 'plugin_external_follow_event_too_large'
+    : 'plugin_external_follow_event_invalid';
+  throw new PluginError({ code, message: code });
 }
 
 export async function createConfiguredPluginExternalSessionsAdapter(params: Readonly<{
@@ -1235,6 +1106,7 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
       operationSignal.addEventListener('abort', onOperationAbort, { once: true });
       if (operationSignal.aborted) onOperationAbort();
       let listenerFailure = false;
+      let followEventValidationError: PluginError | null = null;
       let listenerDelivery: Promise<void> | null = null;
       const deliverAuthorFollowEvent = (
         event: Parameters<CompositionFollowListener>[0],
@@ -1298,6 +1170,16 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
             );
           } catch (error) {
             listenerFailure = true;
+            if (
+              followEventValidationError === null
+              && isPluginError(error)
+              && (
+                error.code === 'plugin_external_follow_event_invalid'
+                || error.code === 'plugin_external_follow_event_too_large'
+              )
+            ) {
+              followEventValidationError = error;
+            }
             diagnoseFailure();
             if (!explicitDisposePending) await release();
             throw error;
@@ -1309,12 +1191,19 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
         listenerDelivery = delivery.catch(() => undefined);
         return delivery;
       };
-      const result = await domain.authorService.followTranscript(
-        parsedRef,
-        Object.freeze({ ...parsedOptions, signal: operationSignal }),
-        deliverAuthorFollowEvent,
-      );
+      let result: CompositionFollowResult;
+      try {
+        result = await domain.authorService.followTranscript(
+          parsedRef,
+          Object.freeze({ ...parsedOptions, signal: operationSignal }),
+          deliverAuthorFollowEvent,
+        );
+      } catch (error) {
+        if (followEventValidationError) throw followEventValidationError;
+        throw error;
+      }
       if (result.status === 'unavailable') {
+        if (followEventValidationError) throw followEventValidationError;
         const code = result.code;
         await release();
         return Object.freeze({
@@ -1328,6 +1217,10 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
         });
       }
       subscription = result.subscription;
+      if (followEventValidationError) {
+        await release();
+        throw followEventValidationError;
+      }
       if (result.failure) {
         void result.failure.then(
           () => {
@@ -1342,10 +1235,7 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
       }
       if (
         result.startingCursor !== null
-        && !isCanonicalAuthorBoundedString(
-          result.startingCursor,
-          AUTHOR_HOST_CURSOR_MAX_CODE_UNITS,
-        )
+        && !ExternalSessionTranscriptFollowCursorV1Schema.safeParse(result.startingCursor).success
       ) {
         await release();
         return Object.freeze({

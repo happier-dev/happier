@@ -272,6 +272,7 @@ describe('external-linked durable takeover continuation', () => {
           ok: true,
           value: {
             options: { directory: '/tmp/session' },
+            remoteSessionId: record.request.source.remoteSessionId,
             origin: {
               agentId: 'example',
               pluginId: 'example.plugin',
@@ -347,6 +348,7 @@ describe('external-linked durable takeover continuation', () => {
           ok: true,
           value: {
             options: { directory: '/tmp/session' },
+            remoteSessionId: record.request.source.remoteSessionId,
             origin: {
               agentId: 'example',
               pluginId: 'example.plugin',
@@ -428,6 +430,7 @@ describe('external-linked durable takeover continuation', () => {
           ok: true,
           value: {
             options: { directory: '/tmp/session' },
+            remoteSessionId: record.request.source.remoteSessionId,
             origin: {
               agentId: 'example',
               pluginId: 'example.plugin',
@@ -583,6 +586,7 @@ describe('external-linked durable takeover continuation', () => {
           ok: true,
           value: {
             options: { directory: '/tmp/session' },
+            remoteSessionId: record.request.source.remoteSessionId,
             origin: {
               agentId: 'example',
               pluginId: 'example.plugin',
@@ -727,6 +731,7 @@ describe('external-linked durable takeover continuation', () => {
         ok: true as const,
         value: {
           options: { directory: '/tmp/session' },
+          remoteSessionId: record.request.source.remoteSessionId,
           origin: {
             agentId: 'example',
             pluginId: 'example.plugin',
@@ -903,6 +908,7 @@ describe('external-linked durable takeover continuation', () => {
         ok: true as const,
         value: {
           options: { directory: '/tmp/session' },
+          remoteSessionId: interrupted.request.source.remoteSessionId,
           origin: {
             agentId: 'example',
             pluginId: 'example.plugin',
@@ -1444,6 +1450,7 @@ describe('external-linked durable takeover continuation', () => {
         ok: true as const,
         value: {
           options: { directory: '/tmp/session' },
+          remoteSessionId: record.request.source.remoteSessionId,
           origin: {
             agentId: 'example',
             pluginId: 'example.plugin',
@@ -1691,6 +1698,7 @@ describe('external-linked durable takeover continuation', () => {
           ok: true as const,
           value: {
             options: { directory: '/tmp/session' },
+            remoteSessionId: record.request.source.remoteSessionId,
             origin: {
               agentId: 'example',
               pluginId: 'example.plugin',

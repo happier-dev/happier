@@ -187,13 +187,25 @@ function projectActionDiscoveryExamples(examples: ActionDefinitionSummaryV1['exa
   return {
     ...(examples.voice === undefined
       ? {}
-      : { voice: examples.voice === null ? null : { argsExample: examples.voice.argsExample } }),
+      : {
+          voice: examples.voice === null
+            ? null
+            : { ...(examples.voice.argsExample === undefined ? {} : { argsExample: examples.voice.argsExample }) },
+        }),
     ...(examples.mcp === undefined
       ? {}
-      : { mcp: examples.mcp === null ? null : { argsExample: examples.mcp.argsExample } }),
+      : {
+          mcp: examples.mcp === null
+            ? null
+            : { ...(examples.mcp.argsExample === undefined ? {} : { argsExample: examples.mcp.argsExample }) },
+        }),
     ...(examples.sdk === undefined
       ? {}
-      : { sdk: examples.sdk === null ? null : { codeExample: examples.sdk.codeExample } }),
+      : {
+          sdk: examples.sdk === null
+            ? null
+            : { ...(examples.sdk.codeExample === undefined ? {} : { codeExample: examples.sdk.codeExample }) },
+        }),
   };
 }
 
@@ -207,14 +219,14 @@ function projectActionDiscoveryExecution(execution: NonNullable<ActionDefinition
             ? handler
             : {
                 target: handler.target,
-                exportName: handler.exportName,
-                registrationId: handler.registrationId,
+                ...(handler.exportName === undefined ? {} : { exportName: handler.exportName }),
+                ...(handler.registrationId === undefined ? {} : { registrationId: handler.registrationId }),
               },
         }),
-    transport: execution.transport,
-    routing: execution.routing,
-    approvalPolicy: execution.approvalPolicy,
-    resultSchema: execution.resultSchema,
+    ...(execution.transport === undefined ? {} : { transport: execution.transport }),
+    ...(execution.routing === undefined ? {} : { routing: execution.routing }),
+    ...(execution.approvalPolicy === undefined ? {} : { approvalPolicy: execution.approvalPolicy }),
+    ...(execution.resultSchema === undefined ? {} : { resultSchema: execution.resultSchema }),
   };
 }
 
@@ -231,31 +243,45 @@ export function projectActionDefinitionSummaryForExternalDiscovery(
     title: definition.title,
     description: definition.description,
     safety: definition.safety,
-    approval: definition.approval,
-    requiredAuthority: definition.requiredAuthority,
-    executionPlacement: definition.executionPlacement,
+    ...(definition.approval === undefined ? {} : { approval: definition.approval }),
+    ...(definition.requiredAuthority === undefined
+      ? {}
+      : { requiredAuthority: definition.requiredAuthority }),
+    ...(definition.executionPlacement === undefined
+      ? {}
+      : { executionPlacement: definition.executionPlacement }),
     placements: definition.placements,
     slash: definition.slash === null ? null : { tokens: definition.slash.tokens },
     bindings: definition.bindings === null
       ? null
       : {
-          voiceClientToolName: definition.bindings.voiceClientToolName,
-          mcpToolName: definition.bindings.mcpToolName,
-          sdkMethod: definition.bindings.sdkMethod,
-          rpcMethod: definition.bindings.rpcMethod,
-          rpcMethodAliases: definition.bindings.rpcMethodAliases,
+          ...(definition.bindings.voiceClientToolName === undefined
+            ? {}
+            : { voiceClientToolName: definition.bindings.voiceClientToolName }),
+          ...(definition.bindings.mcpToolName === undefined
+            ? {}
+            : { mcpToolName: definition.bindings.mcpToolName }),
+          ...(definition.bindings.sdkMethod === undefined
+            ? {}
+            : { sdkMethod: definition.bindings.sdkMethod }),
+          ...(definition.bindings.rpcMethod === undefined
+            ? {}
+            : { rpcMethod: definition.bindings.rpcMethod }),
+          ...(definition.bindings.rpcMethodAliases === undefined
+            ? {}
+            : { rpcMethodAliases: definition.bindings.rpcMethodAliases }),
         },
     examples: projectActionDiscoveryExamples(definition.examples),
     surfaces: definition.surfaces,
-    toolExposure: definition.toolExposure,
-    contextualDefaults: definition.contextualDefaults,
+    ...(definition.toolExposure === undefined ? {} : { toolExposure: definition.toolExposure }),
+    ...(definition.contextualDefaults === undefined ? {} : { contextualDefaults: definition.contextualDefaults }),
     inputHints: definition.inputHints,
-    outputSchema: definition.outputSchema,
-    execution: definition.execution === undefined
-      ? undefined
-      : projectActionDiscoveryExecution(definition.execution),
-    sideEffectClass: definition.sideEffectClass,
-    operation: definition.operation,
+    ...(definition.outputSchema === undefined ? {} : { outputSchema: definition.outputSchema }),
+    ...(definition.execution === undefined
+      ? {}
+      : { execution: projectActionDiscoveryExecution(definition.execution) }),
+    ...(definition.sideEffectClass === undefined ? {} : { sideEffectClass: definition.sideEffectClass }),
+    ...(definition.operation === undefined ? {} : { operation: definition.operation }),
   });
 }
 
@@ -266,7 +292,7 @@ export function projectActionDefinitionForExternalDiscovery(
     ...projectActionDefinitionSummaryForExternalDiscovery(definition),
     kindVersion: definition.kindVersion,
     inputSchema: definition.inputSchema,
-    compatibility: definition.compatibility,
+    ...(definition.compatibility === undefined ? {} : { compatibility: definition.compatibility }),
   });
 }
 

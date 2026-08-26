@@ -11,7 +11,7 @@ test('retains the portable production reference package contract', async () => {
     () => readFile(new URL('../.happier-plugin/plugin.json', import.meta.url), 'utf8'),
     { code: 'ENOENT' },
   );
-  const module = await import('../dist/index.js');
+  const module = await import('../dist/daemon.js');
   const manifest = module.manifest;
   const hostedSurface = await readFile(new URL('../ui/reviewPanel.web.tsx', import.meta.url), 'utf8');
 

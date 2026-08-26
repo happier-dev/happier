@@ -5,10 +5,12 @@ import { dirname, join, resolve } from 'node:path';
 
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_RELATIVE_PATH,
-  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
   parseConnectedAccountRequestAuthCapabilityDocument,
   resolveConnectedAccountRequestAuthCapabilityPath,
 } from '@happier-dev/agents/request-auth';
+import {
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
 
 import {
   constantTimeEqualUtf8,

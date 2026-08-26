@@ -15,6 +15,10 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
         packageSourceRoot: resolve(packageRoot, 'src'),
     },
     {
+        packageName: '@happier-dev/agents',
+        packageSourceRoot: resolve(packageRoot, '../agents/src'),
+    },
+    {
         packageName: '@happier-dev/protocol',
         packageSourceRoot: resolve(packageRoot, '../protocol/src'),
     },
@@ -25,9 +29,10 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
 ] as const;
 
 /**
- * Source-level Protocol/SDK tests must exercise the current normalizer rather
- * than a vendored package copy. Package-boundary tests retain their explicit
- * built-copy lanes.
+ * Source-level Protocol/SDK/Agent tests must exercise the current normalizer
+ * rather than a vendored package copy. In particular, Agent re-exports must
+ * share Protocol's runtime identity with the SDK's direct projection.
+ * Package-boundary tests retain their explicit built-copy lanes.
  *
  * `@happier-dev/cli-common` is listed for the same reason and needs it more: this package
  * deliberately resolves the private physical copies under its own `node_modules` (see

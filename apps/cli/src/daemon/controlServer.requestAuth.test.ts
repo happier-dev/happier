@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/protocol';
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
-} from '@happier-dev/agents/request-auth';
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
 
 import { logger } from '@/ui/logger';
 import { createDaemonControlApp } from './controlServer';

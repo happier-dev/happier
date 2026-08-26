@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-    CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
     readConnectedAccountRequestAuthCapabilityFile,
 } from '@happier-dev/agents/request-auth';
+import {
+    CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
     QualifiedConnectedAccountPurposeBindingsV1,
 } from '@happier-dev/protocol';

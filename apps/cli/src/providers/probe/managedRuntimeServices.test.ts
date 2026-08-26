@@ -349,6 +349,7 @@ describe('managed Provider catalog runtime composition', () => {
       acquireRegistryLease: async () => Object.freeze({
         registry: runtimeRegistry,
         source: 'active' as const,
+        durableRevision: -1,
         release: releaseRegistryLease,
       }),
     });

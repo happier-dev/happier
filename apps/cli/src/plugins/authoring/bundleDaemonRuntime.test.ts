@@ -638,12 +638,17 @@ describe('bundlePluginDaemonRuntime', () => {
       await linkCanonicalPublicRuntimePackages(projectRoot);
 
       const evaluated = await evaluatePluginAuthorSource({ locator: projectRoot });
-      const generatedManifestPath = join(projectRoot, '.happier-plugin', 'plugin.json');
-      await mkdir(join(projectRoot, '.happier-plugin'), { recursive: true });
-      await writeFile(generatedManifestPath, evaluated.canonicalManifestJson, 'utf8');
       await bundlePluginDaemonRuntimeImplementation(projectRoot);
 
       const daemonPath = join(projectRoot, 'dist', 'daemon.js');
+      await execFileAsync(process.execPath, [
+        '--test',
+        'test/index.test.mjs',
+      ], { cwd: projectRoot });
+
+      const generatedManifestPath = join(projectRoot, '.happier-plugin', 'plugin.json');
+      await mkdir(join(projectRoot, '.happier-plugin'), { recursive: true });
+      await writeFile(generatedManifestPath, evaluated.canonicalManifestJson, 'utf8');
       const daemonModuleLoaded = await import(`${pathToFileURL(daemonPath).href}?public-authoring-stage`);
       const daemonModule = daemonModuleLoaded as Readonly<{
           manifest: unknown;
@@ -708,7 +713,13 @@ describe('bundlePluginDaemonRuntime', () => {
         export: 'createReviewAgentRuntime',
         runtimeApiVersion: 1,
       });
-      expect(registered.actions).toEqual(declaredActions.map(({ id }) => id));
+      // Client-target actions are activated by their declared client artifact;
+      // daemon activation owns only the daemon-target declarations.
+      expect(registered.actions).toEqual(
+        declaredActions
+          .filter(({ execution }) => execution.target === 'daemon')
+          .map(({ id }) => id),
+      );
       expect(registered.agents).toEqual(declaredAgents.map(({ id }) => id));
       expect(registered.hooks).toEqual(declaredHooks.map(({ id }) => id));
       expect(registered.dynamicResources).toEqual(

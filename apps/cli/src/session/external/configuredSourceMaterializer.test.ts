@@ -169,12 +169,19 @@ function providerOpsFromCodexContribution(
       createInvocationExec: async () => createUnavailablePluginServices().exec,
     }),
   );
-  if (!surface.validateSource || !surface.listCandidates) {
-    throw new Error('Expected the real Codex External Sessions source/list surface');
+  if (
+    !surface.validateSource
+    || !surface.listCandidates
+    || !surface.pageTranscript
+    || !surface.readAfterTranscript
+  ) {
+    throw new Error('Expected the real Codex External Sessions source/list/transcript surface');
   }
   return {
     validateSource: surface.validateSource,
     listCandidates: surface.listCandidates,
+    pageTranscript: surface.pageTranscript,
+    readAfterTranscript: surface.readAfterTranscript,
   };
 }
 
@@ -2514,6 +2521,23 @@ describe('configured external-session source materializer', () => {
       kind: 'data', items: [], fromCursor: maximumQualifiedCursor, nextCursor: maximumQualifiedCursor,
     });
     expect(listener).toHaveBeenCalledOnce();
+    await privateListener({
+      kind: 'data',
+      items: Array.from({ length: 1_001 }, (_, index) => ({
+        id: `item-${index}`,
+        kind: 'agent' as const,
+        data: { type: 'text', text: 'x' },
+      })),
+      fromCursor: maximumQualifiedCursor,
+      nextCursor: maximumQualifiedCursor,
+    });
+    expect(listener).toHaveBeenCalledTimes(2);
+    await expect(privateListener({
+      kind: 'data',
+      items: [],
+      fromCursor: maximumQualifiedCursor,
+      nextCursor: `${maximumQualifiedCursor}q`,
+    })).rejects.toMatchObject({ code: 'plugin_external_follow_event_invalid' });
     await expect(composition.authorService.followTranscript(
       ref,
       { cursor: `${maximumQualifiedCursor}q` },
@@ -2616,7 +2640,7 @@ describe('configured external-session source materializer', () => {
         resolveProviderOps: async () => ops,
         followTranscript,
       });
-      const runnerAuthorListener = vi.fn(async () => await new Promise<void>((resolve) => {
+      const runnerAuthorListener = vi.fn(async (_event: unknown) => await new Promise<void>((resolve) => {
         setTimeout(resolve, 4_999);
       }));
       // This is the daemon-side publisher: author work is complete at 4,999 ms,
@@ -2966,7 +2990,7 @@ describe('configured external-session source materializer', () => {
     };
     try {
       let revision = 'settings:1';
-      let account: ConfiguredExternalSessionSourceAccountProjection = connectedAccount;
+      let account: ConfiguredExternalSessionSourceAccountProjection = { connectedServicesV2: [] };
       const listCandidates = vi.fn<ExternalSessionProviderOps['listCandidates']>(async ({ cursor, source }) => {
         const slot = (source as { connectedServiceProfileId?: string }).connectedServiceProfileId ?? 'user';
         return cursor
@@ -2990,7 +3014,7 @@ describe('configured external-session source materializer', () => {
         }),
         readAfterTranscript: async () => ({ outcome: 'already_current' }),
       };
-      const firstLifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
+      const createLifecycle = async () => await createLiveConfiguredPluginExternalSessionsAdapter({
         agents: [agent()],
         contributionGenerationId: 'registry:g1',
         readAccount: async () => account,
@@ -3000,6 +3024,7 @@ describe('configured external-session source materializer', () => {
         activeServerDir,
         resolveProviderOps: async () => ops,
       });
+      const firstLifecycle = await createLifecycle();
       const listPreparedSource = async (sourceId: string) => {
         const firstPreparation = await firstLifecycle.authorService.list({ sourceId });
         expect(firstPreparation.items).toEqual([]);
@@ -3017,38 +3042,45 @@ describe('configured external-session source materializer', () => {
       };
       let retainedSourceIndexes: string[] = [];
       try {
-        expect(firstLifecycle.candidateIndexIdentities).toHaveLength(2);
+        expect(firstLifecycle.candidateIndexIdentities).toHaveLength(1);
         const userPage = await listPreparedSource('codexHome:user:::');
         expect(userPage).toMatchObject({
           items: [{ ref: { remoteSessionId: 'user-newest' } }, { ref: { remoteSessionId: 'user-oldest' } }],
         });
-        // Captured before the second source builds, so the retained index is
-        // identified by the file the retained source actually created.
         retainedSourceIndexes = await listCandidateIndexFiles(activeServerDir);
         expect(retainedSourceIndexes).toHaveLength(1);
-        const workPage = await listPreparedSource('codexHome:connectedService:openai-codex:work:');
-        expect(workPage).toMatchObject({
-          items: [{ ref: { remoteSessionId: 'work-newest' } }, { ref: { remoteSessionId: 'work-oldest' } }],
-        });
-        const builtIndexes = await listCandidateIndexFiles(activeServerDir);
-        expect(builtIndexes).toHaveLength(2);
-
       } finally {
         firstLifecycle.dispose();
       }
 
-      account = { connectedServicesV2: [] };
+      // This new daemon process admits the retained user source plus a newly
+      // connected work source. An aggregate B1 list call attempts each source
+      // head once; it preserves the completed user index while building work.
+      account = connectedAccount;
       revision = 'settings:2';
-      const restartedLifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
-        agents: [agent()],
-        contributionGenerationId: 'registry:g1',
-        readAccount: async () => account,
-        readAccountRevision: () => revision,
-        subscribeAccountRevision: () => () => {},
-        isCurrent: () => true,
-        activeServerDir,
-        resolveProviderOps: async () => ops,
-      });
+      const expandedLifecycle = await createLifecycle();
+      try {
+        expect(expandedLifecycle.candidateIndexIdentities).toHaveLength(2);
+        const initial = await expandedLifecycle.authorService.list();
+        expect(initial.items).toEqual([]);
+        expect(initial.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
+        const continued = await expandedLifecycle.authorService.list({ cursor: initial.nextCursor! });
+        expect(continued.items).toEqual([]);
+        expect(continued.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
+        const complete = await expandedLifecycle.authorService.list({ cursor: continued.nextCursor! });
+        expect(complete.items.map((candidate) => candidate.ref.remoteSessionId).sort()).toEqual([
+          'user-newest', 'user-oldest', 'work-newest', 'work-oldest',
+        ].sort());
+        expect(await listCandidateIndexFiles(activeServerDir)).toHaveLength(2);
+      } finally {
+        expandedLifecycle.dispose();
+      }
+
+      // A third process no longer admits work. Rebuild reconciliation discovers
+      // and removes that cold on-disk index while retaining the user index.
+      account = { connectedServicesV2: [] };
+      revision = 'settings:3';
+      const restartedLifecycle = await createLifecycle();
       try {
         expect(restartedLifecycle.candidateIndexIdentities).toHaveLength(1);
         expect(await listCandidateIndexFiles(activeServerDir)).toEqual(retainedSourceIndexes);

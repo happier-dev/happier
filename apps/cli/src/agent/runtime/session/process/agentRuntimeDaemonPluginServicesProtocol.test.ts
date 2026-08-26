@@ -226,6 +226,31 @@ describe('runner daemon PluginServices v1 protocol', () => {
         }
     });
 
+    it('uses the public author follow-event cursor and collection bounds', () => {
+        const follow = (cursor: string, items: readonly unknown[] = []) => ({
+            kind: 'data' as const,
+            items,
+            fromCursor: null,
+            nextCursor: cursor,
+        });
+        const item = (index: number) => ({
+            id: `item-${index}`,
+            kind: 'agent' as const,
+            data: { type: 'text', text: 'x' },
+        });
+        const maximumCursor = 'c'.repeat(4_096);
+
+        expect(RunnerDaemonExternalSessionsFollowEventV1Schema.safeParse(
+            follow(maximumCursor),
+        ).success).toBe(true);
+        expect(RunnerDaemonExternalSessionsFollowEventV1Schema.safeParse(
+            follow(`${maximumCursor}c`),
+        ).success).toBe(false);
+        expect(RunnerDaemonExternalSessionsFollowEventV1Schema.safeParse(
+            follow('cursor-1', Array.from({ length: 1_001 }, (_, index) => item(index))),
+        ).success).toBe(true);
+    });
+
     it('requires explicit external or bundled authority in exact Provider custody', () => {
         const scope = {
             v: 1,

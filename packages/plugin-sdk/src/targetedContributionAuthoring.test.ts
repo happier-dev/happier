@@ -19,10 +19,8 @@ import {
     defineProtocolUtf8String,
 } from './protocol/protocolFacade.js';
 import {
-    decodeTargetedContributionPointSemantics,
     defineContributionPoint,
     defineContributionProtocol,
-    readTargetedContributionPointSemanticRefs,
 } from './targetedContributionAuthoring.js';
 import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
 import type {
@@ -38,14 +36,20 @@ function readManifestProtocol(
     plugin: Readonly<{
         manifest: Readonly<{
             contributes: Readonly<{
-                pluginContributionPoints?: readonly Readonly<{ protocols: readonly unknown[] }>[];
+                pluginContributionPoints?: readonly unknown[];
             }>;
         }>;
     }>,
     version: number,
 ) {
     const point = plugin.manifest.contributes.pluginContributionPoints?.[0];
-    const protocol = point?.protocols.find((candidate) => (
+    const protocols = typeof point === 'object'
+        && point !== null
+        && 'protocols' in point
+        && Array.isArray(point.protocols)
+        ? point.protocols
+        : [];
+    const protocol = protocols.find((candidate) => (
         typeof candidate === 'object'
         && candidate !== null
         && 'version' in candidate
@@ -247,78 +251,6 @@ describe('targeted contribution point semantics', () => {
         expect(Object.isFrozen(semantics)).toBe(true);
     });
 
-    it('keeps live semantic decoding outside canonical cold manifest JSON', () => {
-        const descriptor = defineProtocolObject({ providerId: defineProtocolString() }, { policy: 'closed' });
-        const detail = defineProtocolObject({ issueId: defineProtocolString() }, { policy: 'closed' });
-        const protocol = defineContributionProtocol({
-            id: 'live-cold-bridge',
-            version: 1,
-            descriptor,
-            operations: {
-                inspect: {
-                    required: true,
-                    input: { kind: 'contributorDefined' },
-                    resultSchema: emptyResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
-                },
-            },
-            surfaces: {
-                detail: { required: true, inputSchema: detail, presentation: 'content' },
-            },
-        });
-        const target = definePlugin({
-            id: 'happier.live-cold-bridge',
-            version: '0.1.0',
-            contributionPoints: { sources: protocol.point() },
-        });
-        const point = target.contributionPoints.sources;
-        const live = decodeTargetedContributionPointSemantics(point, {
-            protocol: point.protocol,
-            descriptor: { providerId: 'github' },
-            operations: [{ role: 'inspect' }],
-            surfaces: [{ role: 'detail', presentation: 'content' }],
-        });
-
-        expect(live.ok).toBe(true);
-        if (!live.ok) throw new Error(`Expected live bridge, received ${live.code}`);
-        expect(live.projection.descriptor).toEqual({ providerId: 'github' });
-        expect(live.projection.operations.map(({ role, input }) => ({ role, input }))).toEqual([
-            { role: 'inspect', input: { kind: 'contributorDefined' } },
-        ]);
-        expect(live.projection.surfaces).toEqual([{ role: 'detail', presentation: 'content' }]);
-        expect(readTargetedContributionPointSemanticRefs(target.manifest)).toEqual([point]);
-        expect(readTargetedContributionPointSemanticRefs(target.manifest)[0]).toBe(point);
-        expect(Object.getOwnPropertyDescriptor(point, 'semanticCarrier')).toMatchObject({
-            enumerable: false,
-            configurable: false,
-            writable: false,
-        });
-        expect(Object.getOwnPropertyDescriptor(
-            target.manifest.contributes.pluginContributionPoints ?? [],
-            'semanticPointRefs',
-        )).toMatchObject({
-            enumerable: false,
-            configurable: false,
-            writable: false,
-        });
-
-        const coldJson = JSON.stringify(target.manifest);
-        expect(coldJson).not.toContain('semanticCarrier');
-        expect(coldJson).not.toContain('semanticPointRefs');
-        const parsedCold = parsePluginManifest(JSON.parse(coldJson));
-        expect(parsedCold.ok).toBe(true);
-        if (!parsedCold.ok) throw new Error('Expected cold manifest to parse');
-        expect(readTargetedContributionPointSemanticRefs(parsedCold.manifest)).toEqual([]);
-        const coldProtocol = parsedCold.manifest.contributes.pluginContributionPoints?.[0]?.protocols[0];
-        const rehydrated = rehydratePluginContributionPointSemanticsV1(coldProtocol);
-        if (!rehydrated || !rehydrated.descriptor) throw new Error('Expected cold protocol semantics');
-        expect(rehydrated.descriptor.safeParse({ providerId: 'github' }).success).toBe(true);
-        expect(rehydrated.operations.map(({ role, input }) => ({ role, input }))).toEqual([
-            { role: 'inspect', input: { kind: 'contributorDefined' } },
-        ]);
-        expect(rehydrated.surfaces).toEqual([{ role: 'detail', presentation: 'content' }]);
-    });
-
     it('keeps each protocol epoch rehydrated from its own manifest declaration', () => {
         const surface = defineProtocolObject({ id: defineProtocolString() }, { policy: 'closed' });
         const v1 = defineContributionProtocol({
@@ -343,7 +275,8 @@ describe('targeted contribution point semantics', () => {
         const v2Semantics = rehydratePluginContributionPointSemanticsV1(readManifestProtocol(target, 2));
         if (!v2Semantics || !v2Semantics.descriptor) throw new Error('Expected V2 cold semantics');
 
-        expect(target.contributionPoints.sources.protocols.map((point) => point.protocol)).toEqual([
+        const refs = target.contributionPoints.sources.protocols;
+        expect([refs[0]!.protocol, refs[1]!.protocol]).toEqual([
             { id: 'triage-source', version: 1 },
             { id: 'triage-source', version: 2 },
         ]);

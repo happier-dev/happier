@@ -229,7 +229,7 @@ test('the public contract records stay reviewable in version control', () => {
   );
 });
 
-test('package-selected generated records are tracked or materialized by canonical prepack', async () => {
+test('package-selected generated records stay reviewable and use canonical prepack materializers', async () => {
   const repoRoot = resolve(packageRoot, '../..');
   const insideWorkTree = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
     cwd: repoRoot,
@@ -237,6 +237,7 @@ test('package-selected generated records are tracked or materialized by canonica
   });
   if (insideWorkTree.status !== 0) return;
 
+  const untrackedReviewBaselineRecords = [];
   for (const packageRecord of PACKAGE_SELECTED_GENERATED_RECORDS) {
     const packageJson = JSON.parse(await readFile(
       join(repoRoot, packageRecord.packageRelativePath, 'package.json'),
@@ -253,6 +254,9 @@ test('package-selected generated records are tracked or materialized by canonica
       repoRoot,
       `${packageRecord.packageRelativePath}/${record}`,
     ));
+    untrackedReviewBaselineRecords.push(
+      ...untracked.map((record) => `${packageRecord.packageRelativePath}/${record}`),
+    );
 
     // `prepack` is the package's clean-checkout materialization contract. It
     // may enter the shared lock-owning wrapper before it delegates to a
@@ -269,6 +273,12 @@ test('package-selected generated records are tracked or materialized by canonica
       );
     }
   }
+
+  assert.deepEqual(
+    untrackedReviewBaselineRecords,
+    [],
+    `package-selected generated records must be Git-tracked review baselines: ${untrackedReviewBaselineRecords.join(', ')}`,
+  );
 });
 
 test('SDK package boundary permits only explicitly allowlisted source declaration sidecars', async () => {

@@ -8707,9 +8707,6 @@ export function isPluginProvenanceOnlyActionId(actionId: string): actionId is Pl
  * serves these only for a host caller.
  */
 export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
-  'sessions.subagents.list': 'Host lifecycle projection read; user operations use the planning/delegation Actions.',
-  'sessions.subagents.get': 'Host lifecycle projection read; user operations use the planning/delegation Actions.',
-  'sessions.subagents.watch': 'Host lifecycle projection read; user operations use the planning/delegation Actions.',
   'sessions.external.candidates.list': 'Machine/source-scoped discovery seam; authors use SessionsService.external.list, which delegates to this same candidate-query owner.',
   'sessions.external.link.ensure': 'Machine/source-scoped linking seam; authors use SessionsService.external.attach, which delegates to this same idempotent link operation.',
   'sessions.external.transcript.page': 'Machine/source-scoped transcript seam; authors use SessionsService.external.readTranscript.',

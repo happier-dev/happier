@@ -24,6 +24,7 @@ export type { AuthenticatorContext } from '../connectedAccounts.js';
 export { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '../connectedAccounts.js';
 export { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from '../connectedAccounts.js';
 export { CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1 } from '../connectedAccounts.js';
+export { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from './requestAuth.js';
 export type { ClaudeSubscriptionMaterializationContractV1 } from '../connectedAccounts.js';
 export type { ClaudeSubscriptionSetupTokenEnvironmentRequestV1 } from '../connectedAccounts.js';
 export type { PluginConnectedAccountAuthCompletionResult as ConnectedAccountAuthCompletionResult } from '../services/connectedAccounts.js';
@@ -55,6 +56,7 @@ export type { ConnectedAccountPurposeId } from '../connectedAccounts.js';
 export type { PluginConnectedAccountReadContext as ConnectedAccountReadContext } from '../services/connectedAccounts.js';
 export type { PluginConnectedAccountReconciliationResult as ConnectedAccountReconciliationResult } from '../services/connectedAccounts.js';
 export type { ConnectedAccountRef } from '../connectedAccounts.js';
+export type { ConnectedAccountRequestAuthClientSourceParams } from './requestAuth.js';
 export type { ConnectedAccountRuntime } from '../connectedAccounts.js';
 export type { ConnectedAccountRuntimeConfiguration } from '../connectedAccounts.js';
 export type { PluginConnectedAccountRuntimeConfigurationTarget as ConnectedAccountRuntimeConfigurationTarget } from '../services/connectedAccounts.js';
@@ -63,11 +65,6 @@ export type { ConnectedAccountsService } from '../connectedAccounts.js';
 export type { ConnectedServiceCredentialRecordV1 } from '../connectedAccounts.js';
 export type { ConnectedServiceId } from '../connectedAccounts.js';
 export type { CredentialRequirementOptions } from '../connectedAccounts.js';
-export {
-    CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
-    buildConnectedAccountRequestAuthClientSource,
-} from './requestAuth.js';
-export type { ConnectedAccountRequestAuthClientSourceParams } from './requestAuth.js';
 export { HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV } from '../connectedAccounts.js';
 export { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV } from '../connectedAccounts.js';
 export { OPENAI_CODEX_OAUTH_PROFILE } from '../connectedAccounts.js';
@@ -96,6 +93,7 @@ export { QuotaFetchError } from '../connectedAccounts.js';
 export type { QuotaFetchErrorCode } from '../connectedAccounts.js';
 export type { TokenCredentialRecord } from '../connectedAccounts.js';
 export type { UnsupportedAccountUsage } from '../connectedAccounts.js';
+export { buildConnectedAccountRequestAuthClientSource } from './requestAuth.js';
 export { buildOauthAuthEntry } from '../connectedAccounts.js';
 export { classifyProviderLimitEvidence } from '../connectedAccounts.js';
 export { defineAuthMaterialization } from '../connectedAccounts.js';

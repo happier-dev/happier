@@ -51,10 +51,12 @@ import {
   type DaemonProviderConnectionViewV1,
 } from '@happier-dev/protocol/rpc';
 import {
-  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
   readConnectedAccountRequestAuthCapabilityFile,
   type ConnectedAccountRequestAuthCapabilityDocumentV2,
 } from '@happier-dev/agents/request-auth';
+import {
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
 import type {
   PackedChannelProviderLifecycleEvidence,
   PackedManagedProviderPreparedInput,

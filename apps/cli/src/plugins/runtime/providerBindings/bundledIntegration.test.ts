@@ -28,6 +28,7 @@ describe('bundled provider-binding activation parity', () => {
         const lease: PluginRuntimeRegistryLease = {
             registry,
             source: 'ephemeral',
+            durableRevision: registry.durableRevision ?? -1,
             release: async () => undefined,
         };
 

@@ -247,6 +247,10 @@
       "types": "./dist/plugins/contributions/systemTools.d.ts",
       "default": "./dist/plugins/contributions/systemTools.js"
     },
+    "./plugins/contributions/targeted": {
+      "types": "./dist/plugins/contributions/targetedContributions.d.ts",
+      "default": "./dist/plugins/contributions/targetedContributions.js"
+    },
     "./plugins/plugin-id": {
       "types": "./dist/plugins/pluginId.d.ts",
       "default": "./dist/plugins/pluginId.js"
@@ -330,6 +334,10 @@
     "./connect/connected-account-purposes": {
       "types": "./dist/connect/connectedAccountPurposes.d.ts",
       "default": "./dist/connect/connectedAccountPurposes.js"
+    },
+    "./connect/claude-subscription-materialization": {
+      "types": "./dist/connect/claudeSubscriptionMaterialization.d.ts",
+      "default": "./dist/connect/claudeSubscriptionMaterialization.js"
     },
     "./connect/connected-account-request-auth": {
       "types": "./dist/connect/connectedAccountRequestAuth.d.ts",

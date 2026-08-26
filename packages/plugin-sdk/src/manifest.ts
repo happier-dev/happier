@@ -1063,6 +1063,7 @@ export type PluginDeclarativeTargetedSurfaceNodeV2 = {
 
 export type PluginDeclarativeCollectionListNodeV2 = {
   kind: 'collectionList';
+  label?: PluginLocalizedStringV2;
   source: {
     collectionId: string;
     uiQueryId: string;

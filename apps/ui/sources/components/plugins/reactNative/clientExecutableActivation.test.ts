@@ -359,6 +359,7 @@ describe('projected client executable complete-set reconciliation', () => {
                 encodeToolResults: () => [], encodeToolContinuation: () => null,
                 encodeContextUpdate: () => [], encodeTextTurn: () => [],
                 microphoneMode: 'provider_managed' as const,
+                setInputMuted: () => {},
             });
         });
         const loaderBackend = backend(activate);
@@ -403,7 +404,9 @@ describe('projected client executable complete-set reconciliation', () => {
                 },
                 async createConnection() { throw new Error('not reached'); },
                 encodeToolResults: () => [], encodeToolContinuation: () => null,
-                encodeContextUpdate: () => [], encodeTextTurn: () => [], microphoneMode: 'provider_managed' as const,
+                encodeContextUpdate: () => [], encodeTextTurn: () => [],
+                microphoneMode: 'provider_managed' as const,
+                setInputMuted: () => {},
             });
         });
         const loaderBackend = backend(activate);

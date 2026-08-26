@@ -62,6 +62,8 @@ export type { SessionSystemRecordReadRequest } from '../services/sessions.js';
 export type { SessionSystemRecordRevision } from '../services/sessions.js';
 export type { SessionSystemRecordUpsertRequest } from '../services/sessions.js';
 export type {
+    SessionSystemRecordKind,
+    SessionSystemRecordNamespace,
     SessionSystemRecordReadRequestV1,
     SessionSystemRecordReadResultV1,
     SessionSystemRecordWriteRequestV1,
@@ -85,6 +87,10 @@ export { normalizeSlashCommandName } from '../services/sessions.js';
 export {
     isNonSteerablePromptPayload,
     parseSpecialCommand,
+} from './specialCommands.js';
+export type {
+    SpecialCommandResult,
+    SpecialCommandType,
 } from './specialCommands.js';
 export { readHappierStructuredInputV1FromMeta } from '../services/sessions.js';
 export { readLeadingSlashCommandName } from '../services/sessions.js';

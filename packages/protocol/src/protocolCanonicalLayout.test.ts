@@ -268,6 +268,7 @@ describe('protocol canonical layout', () => {
             './plugins/contribution-identity',
             './plugins/source-spec',
             './plugins/contributions/system-tools',
+            './plugins/contributions/targeted',
             './plugins/plugin-id',
             './plugins/hooks',
             './plugins/agents',
@@ -365,14 +366,19 @@ describe('protocol canonical layout', () => {
             .toBe(resolve(packageDir, target?.default ?? ''));
     });
 
-    it('publishes the portable targeted-selection and JSON-schema owners through narrow leaves', () => {
+    it('publishes the portable targeted-selection, target semantics, and JSON-schema owners through narrow leaves', () => {
         const protocolExports = readProtocolExports();
         const targetedSelection = protocolExports['./plugins/ui/targetedContributions'];
+        const targetedContributions = protocolExports['./plugins/contributions/targeted'];
         const jsonSchemaValidation = protocolExports['./plugins/actions/json-schema-validation'];
 
         expect(targetedSelection).toEqual({
             types: './dist/plugins/ui/targetedContributions.d.ts',
             default: './dist/plugins/ui/targetedContributions.js',
+        });
+        expect(targetedContributions).toEqual({
+            types: './dist/plugins/contributions/targetedContributions.d.ts',
+            default: './dist/plugins/contributions/targetedContributions.js',
         });
         expect(jsonSchemaValidation).toEqual({
             types: './dist/plugins/actions/jsonSchemaValidation.d.ts',
@@ -380,6 +386,8 @@ describe('protocol canonical layout', () => {
         });
         expect(requireFromTest.resolve('@happier-dev/protocol/plugins/ui/targetedContributions'))
             .toBe(resolve(packageDir, targetedSelection?.default ?? ''));
+        expect(requireFromTest.resolve('@happier-dev/protocol/plugins/contributions/targeted'))
+            .toBe(resolve(packageDir, targetedContributions?.default ?? ''));
         expect(requireFromTest.resolve('@happier-dev/protocol/plugins/actions/json-schema-validation'))
             .toBe(resolve(packageDir, jsonSchemaValidation?.default ?? ''));
     });

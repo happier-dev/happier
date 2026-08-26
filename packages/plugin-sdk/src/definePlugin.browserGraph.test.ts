@@ -72,7 +72,7 @@ describe('definePlugin browser graph', () => {
     ]);
   });
 
-  it('keeps manifest authoring validation out of Collection encryption/runtime modules', async () => {
+  it('keeps manifest authoring validation out of Collection and full Action runtime modules', async () => {
     const sdkEntry = resolve(import.meta.dirname, './definePlugin.ts');
     const emittedModules = new Set<string>();
     const emittedChunkNames: string[] = [];
@@ -124,6 +124,10 @@ describe('definePlugin browser graph', () => {
       || id.includes('/ajv-formats/')
       || id.includes('/semver/')
       || id.includes('/protocol/src/plugins/manifest/')
+      // Targeted contribution points share only Action's small surface/danger
+      // vocabulary. Pulling the full Action declaration grammar drags its
+      // daemon-only validation graph into browser and React Native hosts.
+      || id.includes('/protocol/src/plugins/actions/v2.')
     ));
     expect(forbiddenModules).toEqual([]);
     // `inlineDynamicImports` fuses the browser realm into one chunk, so this counts the

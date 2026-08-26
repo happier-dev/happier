@@ -121,6 +121,7 @@ function lease(input: Readonly<{
   return {
     registry,
     source: 'active',
+    durableRevision: -1,
     release: vi.fn(async () => undefined),
   };
 }
@@ -149,6 +150,7 @@ function claudeLease(): PluginRuntimeRegistryLease {
   return {
     registry,
     source: 'active',
+    durableRevision: -1,
     release: vi.fn(async () => undefined),
   };
 }

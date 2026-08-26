@@ -12,7 +12,6 @@ import {
     type PluginUiResourceBindingCapabilityV1,
 } from '@happier-dev/protocol';
 import {
-    createPluginSessionInfoSectionRendererIdV1,
     normalizePluginUiDestinationBindingV1,
     isPluginUiDestinationBindingPotentiallySupportedOnPlatformV1,
     normalizePluginSessionHeaderActionDescriptorV1,
@@ -26,6 +25,7 @@ import {
     type PluginUiArtifactsManifestEntryV1,
     type PluginUiDestinationBindingV1,
 } from '@happier-dev/protocol/plugins/ui';
+import { createPluginSessionInfoSectionRendererIdV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { createReactNativeCrashStateBindingKey } from '@/plugins/runtime/ui/reactNativeCrashDisableState';

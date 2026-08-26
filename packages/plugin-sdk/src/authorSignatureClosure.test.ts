@@ -23,7 +23,14 @@ describe('author signature closure source contract', () => {
             expect(source).toContain("from './requestAuth.js';");
             expect(source).not.toContain("from '@happier-dev/agents/request-auth';");
         }
-        expect(requestAuthSource).toContain("from '@happier-dev/agents/request-auth';");
+        expect(requestAuthSource).not.toContain("from '@happier-dev/agents/request-auth';");
+        expect(requestAuthSource).not.toContain("from 'node:");
+        expect(requestAuthSource).toContain(
+            "from '@happier-dev/protocol/connect/connected-account-request-auth';",
+        );
+        expect(requestAuthSource).toContain(
+            'export const CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV',
+        );
         expect(requestAuthSource).toContain('buildConnectedAccountRequestAuthClientSource');
         expect(requestAuthSource).toContain('ConnectedAccountRequestAuthClientSourceParams');
     });

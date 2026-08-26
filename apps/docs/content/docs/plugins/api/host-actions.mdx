@@ -3819,6 +3819,46 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `backendTargetKey` (text): Backend target key (optional filter)
 - `limit` (text): Max results
 
+## `sessions.subagents.get`
+
+**Get session subagent** — Return one provider-neutral subagent projection by id.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+- `id` (text, required): Subagent id
+- `parentSessionId` (text): Parent session id
+
+## `sessions.subagents.list`
+
+**List session subagents** — Return bounded provider-neutral subagent projections for a session.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `agent`, `rpc`, `api`.
+
+### Input guidance
+
+- `parentSessionId` (text): Parent session id
+- `groupId` (text): Group id
+- `limit` (text): Limit
+
+## `sessions.subagents.watch`
+
+**Watch session subagents** — Register the bounded host subagent watcher path and return its initial typed projection snapshot.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Also surfaced on: `rpc`, `api`.
+
+### Input guidance
+
+- `parentSessionId` (text): Parent session id
+- `id` (text): Subagent id
+
 ## `subagents.delegate.start`
 
 **Start delegate run** — No additional description is published.
