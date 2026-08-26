@@ -745,6 +745,8 @@ test('macos wsrepl lima matrix wrapper defaults Playwright to headless (supports
     ...process.env,
     // Ensure the runner forces headless-by-default even if the caller has an ambient override.
     HAPPIER_QA_HEADLESS: '0',
+    HAPPIER_SERVER_URL: '',
+    EXPO_PUBLIC_HAPPIER_SERVER_URL: '',
     HAPPIER_FEATURE_MACHINES_TRANSFER_SERVER_ROUTED__MAX_BYTES: '4096',
     HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED: '',
     HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED: '',
