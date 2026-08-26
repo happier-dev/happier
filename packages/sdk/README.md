@@ -53,7 +53,7 @@ try {
     await session.stop();
   }
 } finally {
-  happier.close();
+  await happier.close();
 }
 ```
 
@@ -105,7 +105,7 @@ Its console output is deliberately a compact summary, not a raw transcript
 dump.
 
 `machine(id)` returns a target-bound view that shares the root client's
-lifecycle. Calling `close()` on either view aborts outstanding work for both.
+lifecycle. Calling `await close()` on either view aborts outstanding work for both.
 
 For a correlated send that settles only after the target Session becomes idle,
 use `session.sendAndWait(message, input?, executionOptions?)`. It calls the
@@ -169,7 +169,12 @@ const qualifiedId = discovered.actionSpecs[0]?.id;
 if (!qualifiedId) throw new Error('No matching Action is available.');
 const { actionSpec } = await happier.actions.get({ id: qualifiedId });
 console.log(actionSpec.inputSchema);
-await happier.actions.invoke(qualifiedId, {});
+
+// Construct input that satisfies actionSpec.inputSchema before invoking.
+// Required fields may be expressed inside oneOf/anyOf branches, not only in
+// the schema's top-level `required` array.
+const input = { /* fields declared by this Action */ };
+await happier.actions.invoke(qualifiedId, input);
 ```
 
 The convenience method also accepts the canonical structured
@@ -209,7 +214,9 @@ sources with a hand-maintained method list.
 The client accepts an API Token only. It never reads CLI profiles,
 persists credentials, accepts Account signing or encryption material, retries a
 mutation, or fails a mutation over to another endpoint. Abort individual calls
-with `AbortSignal`; `close()` aborts outstanding calls. A server-mediated request
+with `AbortSignal`; `await close()` aborts outstanding calls. During shutdown it
+gives active transcript and execution-run cleanup requests up to one second to
+settle before destroying its transport. A server-mediated request
 is readable by that server. The public endpoint is
 `POST /v1/actions/:actionId`: use either a daemon-local
 `http://127.0.0.1:<daemon-port>` endpoint or a configured server origin. The
@@ -233,10 +240,10 @@ store implicitly.
 
 `session.followTranscript()` is a finite, demand-driven async iterator: it does
 not keep fetching while its consumer is not awaiting the next item, and an
-early loop exit or `close()` releases its `transcript.unfollow` lease. Use
+early loop exit or `await close()` releases its `transcript.unfollow` lease. Use
 `runs.startStream({ runId, ... })` for a genuine execution-run stream. Its
 handle exposes `runId`, `streamId`, `cancel()`, and an async iterator; normal
-completion, early iterator return, an abort signal, and `close()` all cancel
+completion, early iterator return, an abort signal, and `await close()` all cancel
 the canonical stream. A machine-bound client's stream start, reads, and cancel
 stay on that same target. Snapshot Actions remain ordinary methods.
 

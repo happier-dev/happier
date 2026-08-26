@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
+type MockUndiciRequestOptions = RequestInit & Readonly<{
+  dispatcher?: unknown;
+  headersTimeout?: number;
+}>;
+
 const undiciRequest = vi.hoisted(() => vi.fn(async (
   url: URL | RequestInfo,
-  options?: RequestInit,
+  options?: MockUndiciRequestOptions,
 ) => {
   const response = await fetch(url, options);
   const headers: Record<string, string> = {};
@@ -16,7 +21,18 @@ const undiciRequest = vi.hoisted(() => vi.fn(async (
   };
 }));
 
-vi.mock('undici', () => ({ request: undiciRequest }));
+const undiciAgent = vi.hoisted(() => {
+  const destroy = vi.fn(async () => undefined);
+  const instances: Array<Readonly<{ destroy: typeof destroy }>> = [];
+  const Agent = vi.fn(() => {
+    const dispatcher = { destroy };
+    instances.push(dispatcher);
+    return dispatcher;
+  });
+  return { Agent, destroy, instances };
+});
+
+vi.mock('undici', () => ({ request: undiciRequest, Agent: undiciAgent.Agent }));
 
 import {
   HappierActionError,
@@ -51,6 +67,90 @@ describe('Happier SDK client', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     undiciRequest.mockClear();
+    undiciAgent.Agent.mockClear();
+    undiciAgent.destroy.mockReset();
+    undiciAgent.destroy.mockResolvedValue(undefined);
+    undiciAgent.instances.length = 0;
+  });
+
+  it('owns one dispatcher per root client, shares it with bound clients, and closes it once', async () => {
+    const fetch = vi.fn(async (_url: URL | RequestInfo, _init?: RequestInit) => response({
+      v: 1,
+      actionId: 'machines.list',
+      execution: { ok: true, result: [] },
+    }));
+    vi.stubGlobal('fetch', fetch);
+
+    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const machine = client.machine('machine-1');
+    await client.actions.execute('machines.list', {});
+    await machine.actions.execute('machines.list', {});
+
+    expect(undiciAgent.Agent).toHaveBeenCalledTimes(1);
+    expect(undiciAgent.instances).toHaveLength(1);
+    const dispatcher = undiciAgent.instances[0];
+    expect(undiciRequest.mock.calls.map(([, options]) => options?.dispatcher)).toEqual([
+      dispatcher,
+      dispatcher,
+    ]);
+
+    const firstClose = client.close();
+    const secondClose = machine.close();
+    expect(secondClose).toBe(firstClose);
+    await firstClose;
+    expect(undiciAgent.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('finishes active transcript and execution-run cleanup before disposing its dispatcher', async () => {
+    const order: string[] = [];
+    undiciAgent.destroy.mockImplementation(async () => {
+      order.push('dispatcher.destroy');
+    });
+    const fetch = vi.fn(async (url: URL | RequestInfo) => {
+      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
+      order.push(actionId);
+      if (actionId === 'execution.run.stream.start') {
+        return response({ v: 1, actionId, execution: { ok: true, result: { streamId: 'stream-1' } } });
+      }
+      if (actionId === 'transcript.follow') {
+        return response({
+          v: 1,
+          actionId,
+          execution: { ok: true, result: { items: [{ role: 'assistant' }], nextCursor: '1', truncated: false } },
+        });
+      }
+      return response({ v: 1, actionId, execution: { ok: true, result: { ok: true } } });
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    await client.runs.startStream({ runId: 'run-1', message: 'Continue.' });
+    const iterator = client.sessions.get('session-1').followTranscript()[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: { role: 'assistant' } });
+
+    await client.close();
+
+    const destroyIndex = order.indexOf('dispatcher.destroy');
+    expect(order).toContain('execution.run.stream.cancel');
+    expect(order).toContain('transcript.unfollow');
+    expect(destroyIndex).toBeGreaterThan(order.indexOf('execution.run.stream.cancel'));
+    expect(destroyIndex).toBeGreaterThan(order.indexOf('transcript.unfollow'));
+  });
+
+  it('does not start an unconsumed transcript lifecycle after its client closes', async () => {
+    const actionIds: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: URL | RequestInfo) => {
+      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
+      actionIds.push(actionId);
+      return response({ v: 1, actionId, execution: { ok: true, result: { ok: true } } });
+    }));
+
+    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const transcript = client.sessions.get('session-1').followTranscript();
+    await client.close();
+
+    await expect(transcript[Symbol.asyncIterator]().next()).resolves.toEqual({ done: true, value: undefined });
+    expect(actionIds).toEqual([]);
   });
 
   it('executes one raw typed Action through the frozen HTTP envelope', async () => {
@@ -752,7 +852,7 @@ describe('Happier SDK client', () => {
 
     const client = connect({ endpoint: 'http://daemon', token: 'pat' });
     const pending = client.actions.execute('machines.list', {});
-    client.close();
+    await client.close();
 
     await expect(pending).rejects.toBeInstanceOf(HappierClientClosedError);
     expect(requestSignal?.aborted).toBe(true);
@@ -779,7 +879,7 @@ describe('Happier SDK client', () => {
     let client: ReturnType<typeof connect>;
     const response = new Response(null, { status: 200 });
     vi.spyOn(response, 'json').mockImplementation(async () => {
-      client.close();
+      void client.close();
       throw new Error('response body was interrupted');
     });
     vi.stubGlobal('fetch', vi.fn(async () => response));
@@ -1128,10 +1228,8 @@ describe('Happier SDK client', () => {
     const closingClient = connect({ endpoint: 'http://daemon', token: 'pat' });
     const closingIterator = closingClient.sessions.get('session-2').followTranscript()[Symbol.asyncIterator]();
     await closingIterator.next();
-    closingClient.close();
-    await vi.waitFor(() => {
-      expect(requests.filter(({ actionId }) => actionId === 'transcript.unfollow')).toHaveLength(2);
-    });
+    await closingClient.close();
+    expect(requests.filter(({ actionId }) => actionId === 'transcript.unfollow')).toHaveLength(2);
     for (const { body } of requests) expect(body).not.toHaveProperty('target');
   });
 
@@ -1359,12 +1457,12 @@ describe('Happier SDK client', () => {
 
     const client = connect({ endpoint: 'http://daemon', token: 'pat' });
     await client.runs.startStream({ runId: 'run-1', message: 'Continue.' });
-    client.close();
+    await client.close();
 
-    await vi.waitFor(() => expect(actionIds).toEqual([
+    expect(actionIds).toEqual([
       'execution.run.stream.start',
       'execution.run.stream.cancel',
-    ]));
+    ]);
   });
 
   it('binds the complete transcript lifecycle for a spawned machine Session', async () => {
@@ -1467,10 +1565,8 @@ describe('Happier SDK client', () => {
     const machine = connect({ endpoint: 'https://api.example.test', token: 'pat' }).machine('machine-7');
     const closingIterator = machine.sessions.get('session-2').followTranscript()[Symbol.asyncIterator]();
     await expect(closingIterator.next()).resolves.toEqual({ done: false, value: { role: 'assistant' } });
-    machine.close();
-    await vi.waitFor(() => {
-      expect(requests.filter(({ actionId }) => actionId === 'transcript.unfollow')).toHaveLength(2);
-    });
+    await machine.close();
+    expect(requests.filter(({ actionId }) => actionId === 'transcript.unfollow')).toHaveLength(2);
 
     const allTranscriptRequests = requests.filter(({ actionId }) => (
       actionId === 'transcript.follow'

@@ -42,6 +42,7 @@ export async function startExecutionRunStream(params: Readonly<{
   ) => Promise<ExecutionRunStreamReadResult>;
   cancel: (input: Readonly<Pick<ExecutionRunStreamReadInput, 'runId' | 'streamId'>>) => Promise<void>;
   closeSignal: AbortSignal;
+  registerCloseCleanup?: (cleanup: () => Promise<void>) => () => void;
   signal?: AbortSignal;
 }>): Promise<HappierExecutionRunStream> {
   const started = await params.start();
@@ -55,6 +56,7 @@ export async function startExecutionRunStream(params: Readonly<{
   let cancelled = false;
   let cancelPromise: Promise<void> | undefined;
   let terminalCleanupPromise: Promise<void> | undefined;
+  let unregisterCloseCleanup: (() => void) | undefined;
 
   const removeAbortListener = () => signal.removeEventListener('abort', onAbort);
   const cancel = (): Promise<void> => {
@@ -64,13 +66,17 @@ export async function startExecutionRunStream(params: Readonly<{
       .then(async () => {
         await params.cancel({ runId: params.runId, streamId: started.streamId });
       })
-      .finally(removeAbortListener);
+      .finally(() => {
+        removeAbortListener();
+        unregisterCloseCleanup?.();
+      });
     controller.abort();
     return cancelPromise;
   };
   const onAbort = () => {
     void cancel().catch(() => undefined);
   };
+  unregisterCloseCleanup = params.registerCloseCleanup?.(cancel);
   signal.addEventListener('abort', onAbort, { once: true });
   if (signal.aborted) onAbort();
 
@@ -152,6 +158,7 @@ export function createTranscriptIterable(params: Readonly<{
   release: (input: Readonly<{ sessionId: string; leaseId: string }>) => Promise<void>;
   sessionId: string;
   closeSignal: AbortSignal;
+  registerCloseCleanup?: (cleanup: () => Promise<void>) => () => void;
   options?: FollowTranscriptOptions;
 }>): AsyncIterable<HappierTranscriptItem> {
   const iteratorController = new AbortController();
@@ -198,7 +205,16 @@ export function createTranscriptIterable(params: Readonly<{
   };
   const start = () => {
     if (runner) return runner;
+    if (signal.aborted) {
+      runner = Promise.resolve();
+      settle();
+      return runner;
+    }
     const leaseId = globalThis.crypto.randomUUID();
+    const unregisterCloseCleanup = params.registerCloseCleanup?.(async () => {
+      iteratorController.abort();
+      await runner;
+    });
     runner = followTranscriptSourceWithFiniteActions<HappierTranscriptItem>({
       initialCursor: params.options?.cursor ?? 'tail',
       leaseId,
@@ -233,7 +249,7 @@ export function createTranscriptIterable(params: Readonly<{
         failure = error;
         settle();
       },
-    );
+    ).finally(() => unregisterCloseCleanup?.());
     return runner;
   };
 

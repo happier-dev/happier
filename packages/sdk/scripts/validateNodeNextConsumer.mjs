@@ -96,7 +96,7 @@ export async function validateNodeNextConsumer({ tarballPath = null } = {}) {
       "const client = connect({ endpoint: 'http://127.0.0.1:3210', token: 'pat' });",
       'void client.actions.execute(actionId, {});',
       'void client.machines.list();',
-      'client.close();',
+      'await client.close();',
       '',
     ].join('\n'));
 
@@ -110,7 +110,7 @@ export async function validateNodeNextConsumer({ tarballPath = null } = {}) {
     run(process.execPath, ['--input-type=module', '--eval', [
       "import { connect } from '@happier-dev/sdk';",
       "const client = connect({ endpoint: 'http://127.0.0.1:3210', token: 'pat' });",
-      'client.close();',
+      'await client.close();',
     ].join('\n')], fixture);
 
     const installed = JSON.parse(await readFile(join(fixture, 'node_modules/@happier-dev/sdk/package.json'), 'utf8'));

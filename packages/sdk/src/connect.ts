@@ -3,7 +3,7 @@ import {
   parseExternalActionResponseEnvelopeV1,
   parseQualifiedPluginActionId,
 } from '@happier-dev/protocol/actions';
-import { request as requestWithUndici } from 'undici';
+import { Agent, request as requestWithUndici } from 'undici';
 
 import { createGeneratedActions, MUTATING_PUBLIC_ACTION_IDS } from './actions/generated.js';
 import { HappierActionError, HappierClientClosedError, HappierTransportError } from './errors.js';
@@ -55,6 +55,22 @@ function normalizeEndpoint(endpoint: string | URL): URL {
 
 function combinedSignal(signal: AbortSignal | undefined, closeSignal: AbortSignal): AbortSignal {
   return signal === undefined ? closeSignal : AbortSignal.any([signal, closeSignal]);
+}
+
+const CLIENT_CLOSE_CLEANUP_GRACE_MS = 1_000;
+
+async function waitForCloseCleanup(cleanup: Promise<unknown>): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      cleanup,
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, CLIENT_CLOSE_CLEANUP_GRACE_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 function transportErrorCode(body: unknown): string | undefined {
@@ -159,7 +175,7 @@ export type HappierClient = Readonly<{
   sessions: HappierSessions;
   runs: HappierExecutionRuns;
   machine: (machineId: string) => HappierMachineClient;
-  close: () => void;
+  close: () => Promise<void>;
 }>;
 
 export type HappierMachineClient = Readonly<
@@ -172,6 +188,58 @@ export type HappierMachineClient = Readonly<
 >;
 
 type MachineActionTarget = Readonly<{ kind: 'machine'; machineId: string }>;
+
+type ClientCloseCleanup = () => Promise<void>;
+
+type ClientLifecycle = Readonly<{
+  controller: AbortController;
+  dispatcher: Agent;
+  isClosed: () => boolean;
+  close: () => Promise<void>;
+  registerCloseCleanup: (cleanup: ClientCloseCleanup) => () => void;
+}>;
+
+function createClientLifecycle(): ClientLifecycle {
+  const controller = new AbortController();
+  const dispatcher = new Agent();
+  const cleanup = new Set<ClientCloseCleanup>();
+  let closePromise: Promise<void> | undefined;
+
+  const registerCloseCleanup = (finalizer: ClientCloseCleanup) => {
+    cleanup.add(finalizer);
+    return () => cleanup.delete(finalizer);
+  };
+  const close = (): Promise<void> => {
+    if (closePromise !== undefined) return closePromise;
+
+    let resolveClose: (() => void) | undefined;
+    let rejectClose: ((reason?: unknown) => void) | undefined;
+    closePromise = new Promise<void>((resolve, reject) => {
+      resolveClose = resolve;
+      rejectClose = reject;
+    });
+
+    controller.abort(new HappierClientClosedError());
+    void (async () => {
+      try {
+        await waitForCloseCleanup(Promise.allSettled([...cleanup].map((finalizer) => finalizer())));
+        await dispatcher.destroy();
+        resolveClose?.();
+      } catch (error) {
+        rejectClose?.(error);
+      }
+    })();
+    return closePromise;
+  };
+
+  return {
+    controller,
+    dispatcher,
+    isClosed: () => controller.signal.aborted,
+    close,
+    registerCloseCleanup,
+  };
+}
 
 function assertMachineBoundTarget(target: unknown, boundTarget: MachineActionTarget): void {
   if (target === undefined) return;
@@ -218,18 +286,18 @@ function createMachineActions(execute: ActionExecute): HappierMachineActions {
 function createClient(
   endpoint: URL,
   token: string,
-  lifecycle: Readonly<{ controller: AbortController; isClosed: () => boolean }>,
+  lifecycle: ClientLifecycle,
 ): HappierClient;
 function createClient(
   endpoint: URL,
   token: string,
-  lifecycle: Readonly<{ controller: AbortController; isClosed: () => boolean }>,
+  lifecycle: ClientLifecycle,
   defaultTarget: MachineActionTarget,
 ): HappierMachineClient;
 function createClient(
   endpoint: URL,
   token: string,
-  lifecycle: Readonly<{ controller: AbortController; isClosed: () => boolean }>,
+  lifecycle: ClientLifecycle,
   defaultTarget?: MachineActionTarget,
 ): HappierClient | HappierMachineClient {
   const requestJson = async (params: Readonly<{
@@ -256,6 +324,7 @@ function createClient(
         },
         ...(params.body === undefined ? {} : { body: params.body }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
+        dispatcher: lifecycle.dispatcher,
         headersTimeout: 0,
       });
     } catch (error) {
@@ -364,6 +433,7 @@ function createClient(
           await params.cancel({ ...scope, ...cancelInput }, routing);
         },
         closeSignal: lifecycle.controller.signal,
+        registerCloseCleanup: lifecycle.registerCloseCleanup,
         signal: options?.signal,
       });
     },
@@ -377,6 +447,7 @@ function createClient(
       },
       sessionId: requireNonEmpty(sessionId, 'sessionId'),
       closeSignal: lifecycle.controller.signal,
+      registerCloseCleanup: lifecycle.registerCloseCleanup,
       options,
     })
   );
@@ -393,10 +464,6 @@ function createClient(
     kind: 'machine',
     machineId: requireNonEmpty(machineId, 'machineId'),
   });
-  const close = () => {
-    if (!lifecycle.isClosed()) lifecycle.controller.abort(new HappierClientClosedError());
-  };
-
   if (defaultTarget !== undefined) {
     const machineExecute: ActionExecute = async (actionId, input, options) => {
       assertMachineBoundTarget(options?.target, defaultTarget);
@@ -420,7 +487,7 @@ function createClient(
       sessions,
       runs,
       machine,
-      close,
+      close: lifecycle.close,
     });
   }
 
@@ -444,16 +511,12 @@ function createClient(
     sessions,
     runs,
     machine,
-    close,
+    close: lifecycle.close,
   });
 }
 
 export function connect(options: HappierConnectOptions): HappierClient {
   const endpoint = normalizeEndpoint(options.endpoint);
   const token = requireNonEmpty(options.token, 'token');
-  const controller = new AbortController();
-  return createClient(endpoint, token, {
-    controller,
-    isClosed: () => controller.signal.aborted,
-  });
+  return createClient(endpoint, token, createClientLifecycle());
 }

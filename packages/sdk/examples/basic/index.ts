@@ -89,5 +89,5 @@ try {
     await session.stop();
   }
 } finally {
-  account.close();
+  await account.close();
 }

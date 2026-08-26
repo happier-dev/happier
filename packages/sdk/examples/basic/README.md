@@ -60,4 +60,4 @@ message is rejected after Session creation, the example stops the committed
 Session from `HappierSessionInitialInputError` before reporting that error. The
 package also supports bounded execution-run streams through
 `client.runs.startStream(...)`; their iterator is cancelled on normal
-completion, early return, abort, or `client.close()`.
+completion, early return, abort, or `await client.close()`.
