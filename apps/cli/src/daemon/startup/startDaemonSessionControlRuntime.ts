@@ -307,7 +307,6 @@ import {
     isTerminalHostPhysicallyRetiredStopResult,
     type StopSessionResult,
 } from '../sessions/stopSessionContract';
-import { notifyTerminalAttachmentRetiredThroughCatalog } from '@/terminal/attachment/catalogHooks';
 import { waitForExistingSessionExitIfStopRequested } from '../sessions/waitForExistingSessionExitIfStopRequested';
 import { waitForTrackedRunnerProcessesExit } from '../sessions/waitForTrackedRunnerProcessesExit';
 import {
@@ -3772,7 +3771,6 @@ export async function startDaemonSessionControlRuntime(
                     ...(params.isShuttingDown ? { isShuttingDown: params.isShuttingDown } : {}),
                 }),
             }),
-            onExactTerminalAttachmentRetired: notifyTerminalAttachmentRetiredThroughCatalog,
             retireExactTerminalControlServiceability: async ({ sessionId, attachmentInfo, terminalMode }) => {
                 return await retireTerminalControlServiceabilityForCurrentAccount({
                     sessionId,
@@ -3832,7 +3830,6 @@ export async function startDaemonSessionControlRuntime(
         },
         onExactTerminalAttachmentRetired: async (input) => {
             physicallyRetiredTerminalAttachmentIdBySessionId.set(input.sessionId, input.attachmentInfo.attachmentId);
-            await notifyTerminalAttachmentRetiredThroughCatalog(input);
         },
         retireExactTerminalControlServiceability: async ({ sessionId, attachmentInfo, terminalMode }) => {
             return await retireTerminalControlServiceabilityForCurrentAccount({
@@ -8039,7 +8036,6 @@ export async function startDaemonSessionControlRuntime(
                     timeoutMs: configuration.daemonStopSessionWaitForExitMs,
                     pollIntervalMs: configuration.daemonStopSessionWaitForExitPollIntervalMs,
                 }),
-                onExactTerminalAttachmentRetired: notifyTerminalAttachmentRetiredThroughCatalog,
                 retireExactTerminalControlServiceability: async ({ sessionId, attachmentInfo, terminalMode }) => {
                     return await retireTerminalControlServiceabilityForCurrentAccount({
                         sessionId,

@@ -834,7 +834,6 @@ describe('createStopSession', () => {
       happyHomeDir: expect.any(String),
       sessionId: attachment.sessionId,
       expectedAttachmentId: attachment.attachmentId,
-      expectedHandle: attachment.handle,
     });
     expect(onExactTerminalAttachmentRetired).toHaveBeenCalledWith({
       happyHomeDir: expect.any(String),
@@ -1242,12 +1241,12 @@ describe('createStopSession', () => {
     await expect(firstStop).resolves.toEqual({ status: 'stopped' });
   });
 
-  it('keeps Stop successful when provider cleanup fails after exact retirement', async () => {
+  it('keeps Stop successful when terminal-retirement observation fails after exact retirement', async () => {
     const { createStopSession } = await import('./stopSession');
     const attachmentId = 'attachment-cleanup' as NonNullable<import('@happier-dev/agents').TerminalHostHandle['attachmentId']>;
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const onExactTerminalAttachmentRetired = vi.fn(async () => {
-      throw new Error('provider cleanup unavailable');
+      throw new Error('retirement observation unavailable');
     });
     const stop = createStopSession({
       pidToTrackedSession: new Map([[552, {

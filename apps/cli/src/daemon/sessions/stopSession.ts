@@ -466,15 +466,15 @@ export function createStopSession(params: Readonly<{
           });
           if (recovered) {
             if (recovered.status !== 'stopped' || attachmentInfo?.version !== 2) return recovered;
-            const descriptorRemoved = await (
-              params.removeHostAttachmentInfo ?? removeTerminalHostAttachmentInfo
-            )({
+            const disposition = await executeTerminalHostDisposition({
               happyHomeDir: configuration.happyHomeDir,
               sessionId: normalizedSessionId,
               expectedAttachmentId: attachmentInfo.attachmentId,
-              expectedHandle: attachmentInfo.handle,
-            }).catch(() => false);
-            if (!descriptorRemoved) {
+              intent: { kind: 'retire_confirmed_dead_attachment', reason: 'positive_dead_recovery' },
+              readAttachmentInfo: readHostAttachmentInfo,
+              removeAttachmentInfo: params.removeHostAttachmentInfo ?? removeTerminalHostAttachmentInfo,
+            });
+            if (disposition.status !== 'retired') {
               return incompleteStopSession('terminal_attachment_descriptor_retirement_failed');
             }
             await params.onExactTerminalAttachmentRetired?.({
@@ -482,7 +482,7 @@ export function createStopSession(params: Readonly<{
               sessionId: normalizedSessionId,
               attachmentInfo,
             }).catch((error) => {
-              logWarning(`[DAEMON RUN] Terminal host retired but provider artifacts could not be cleaned for session ${normalizedSessionId}`, error);
+              logWarning(`[DAEMON RUN] Failed to record terminal host retirement for session ${normalizedSessionId}`, error);
             });
             return recovered;
           }
@@ -787,7 +787,7 @@ export function createStopSession(params: Readonly<{
           sessionId: normalizedSessionId,
           attachmentInfo,
         }).catch((error) => {
-          logWarning(`[DAEMON RUN] Terminal host retired but provider artifacts could not be cleaned for session ${normalizedSessionId}`, error);
+          logWarning(`[DAEMON RUN] Failed to record terminal host retirement for session ${normalizedSessionId}`, error);
         });
       }
       if (disposition.status === 'destroyed') return { status: 'stopped' };

@@ -25,7 +25,15 @@ vi.mock('@/configuration', () => ({
   },
 }));
 
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
+import {
+  TERMINAL_STREAM_MAX_ENCODED_BYTES,
+  TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES,
+  TerminalStreamReadRequestSchema,
+  TerminalStreamReadResponseSchema,
+  decodeTerminalStreamBytesFrame,
+  encodeTerminalStreamBytes,
+} from '@happier-dev/protocol';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { callMachineRpc, readMachineRpcRequestDisposition } from './machineRpc';
 
@@ -73,6 +81,76 @@ describe('callMachineRpc', () => {
       timeoutMs: 100,
     })).resolves.toEqual({ type: 'success', sessionId: 'session-1' });
     expect(socket.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('round-trips a bounded terminal base64 frame byte-exactly through the encrypted JSON socket envelope', async () => {
+    const machineKey = new Uint8Array(32).fill(7);
+    const bytes = new Uint8Array(TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES);
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = index % 256;
+    }
+    bytes.set([0x00, 0xc0, 0x80, 0x81, 0x9f, 0xff], 0);
+    bytes.set([0xff, 0x9f, 0x81, 0x80, 0xc0, 0x00], bytes.length - 6);
+
+    const request = TerminalStreamReadRequestSchema.parse({
+      terminalId: 'term-byte-exact',
+      byteOffset: 0,
+      maxBytes: TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES,
+      maxFrames: 1,
+    });
+    const response = TerminalStreamReadResponseSchema.parse({
+      ok: true,
+      terminalId: request.terminalId,
+      frames: [{
+        t: 'bytes',
+        terminalId: request.terminalId,
+        seq: 0,
+        byteOffset: 0,
+        byteLength: bytes.byteLength,
+        encoding: 'base64',
+        data: encodeTerminalStreamBytes(bytes),
+      }],
+      nextByteOffset: bytes.byteLength,
+      availableByteOffset: bytes.byteLength,
+      droppedBeforeByteOffset: 0,
+      done: false,
+    });
+
+    socket.emit.mockImplementation((_event, payload, callback) => {
+      const socketPayload = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+      expect(socketPayload.method).toBe(`machine-session:${RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES}`);
+      expect(typeof socketPayload.params).toBe('string');
+      if (typeof socketPayload.params !== 'string') {
+        throw new Error('expected encrypted machine RPC params');
+      }
+      expect(TerminalStreamReadRequestSchema.parse(
+        decrypt(machineKey, 'dataKey', decodeBase64(socketPayload.params, 'base64')),
+      )).toEqual(request);
+
+      callback(JSON.parse(JSON.stringify({
+        ok: true,
+        result: encodeBase64(encrypt(machineKey, 'dataKey', response)),
+      })));
+    });
+
+    const result = TerminalStreamReadResponseSchema.parse(await callMachineRpc({
+      credentials: {
+        token: 'account-token',
+        encryption: { type: 'dataKey' as const, publicKey: machineKey, machineKey },
+      },
+      machineId: 'machine-session',
+      method: RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES,
+      request,
+      timeoutMs: 100,
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected terminal byte stream response');
+    const frame = result.frames[0];
+    expect(frame?.t).toBe('bytes');
+    if (!frame || frame.t !== 'bytes') throw new Error('expected terminal bytes frame');
+    expect(frame.data).toHaveLength(TERMINAL_STREAM_MAX_ENCODED_BYTES);
+    expect(decodeTerminalStreamBytesFrame(frame)).toEqual(bytes);
   });
 
   it('sends plaintext RPC for a marker-backed machine with token-only credentials', async () => {
