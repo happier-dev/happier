@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 
 import { describe, expect, it } from 'vitest';
 
@@ -23,29 +24,20 @@ describe('locale literal extraction', () => {
     // It has caught two real properties of these files that a normalising rewriter would destroy:
     // mixed quote styles (`"You're all caught up"` is double-quoted BECAUSE of the apostrophe), and
     // template literals writing line breaks as the two characters `\n`.
-    it.each(translationSources())('round-trips every string in %s', (fileName) => {
+    it.each(translationSources())('preserves every literal rewrite invariant in %s', async (fileName) => {
+        // Parsing a translation source is synchronous and can take seconds on CI. Yield between
+        // exhaustive cases so Vitest can flush completed-task IPC before starting the next parse.
+        await yieldToEventLoop();
+
         const source = readFileSync(join(TRANSLATIONS_DIR, fileName), 'utf8');
         const literals = extractLiterals(source, fileName);
 
         expect(literals.length).toBeGreaterThan(0);
         expect(findRoundTripMismatches(source, literals)).toEqual([]);
-    });
-
-    it('never touches a literal the translation map does not name', () => {
         // The property that matters for an incremental edit: an untranslated literal is not
         // rewritten at all, so its bytes — including any redundant escaping — survive exactly.
-        for (const fileName of translationSources()) {
-            const source = readFileSync(join(TRANSLATIONS_DIR, fileName), 'utf8');
-            const literals = extractLiterals(source, fileName);
-            expect(applyTranslations(source, literals, {}).output).toBe(source);
-        }
-    });
-
-    it('gives every literal a unique key so translations cannot collide', () => {
-        for (const fileName of translationSources()) {
-            const literals = extractLiterals(readFileSync(join(TRANSLATIONS_DIR, fileName), 'utf8'), fileName);
-            expect(new Set(literals.map((literal) => literal.key)).size).toBe(literals.length);
-        }
+        expect(applyTranslations(source, literals, {}).output).toBe(source);
+        expect(new Set(literals.map((literal) => literal.key)).size).toBe(literals.length);
     });
 
     it('keeps interpolations out of the translatable set and preserves fragment whitespace', () => {
