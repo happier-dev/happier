@@ -198,6 +198,19 @@ afterEach(() => {
 });
 
 describe('Sentry mounted detail deadline', () => {
+  it('disposes the mounted detail deadline after a normal success', async () => {
+    vi.useFakeTimers();
+    const harness = host([{ status: 200, headers: {}, body: ISSUE_BODY }]);
+
+    await expect(readSentryIssue({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: localRef(),
+      projection: 'overview',
+    }, harness.context)).resolves.toMatchObject({ kind: 'overview' });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('stops waiting on a deployment that never answers, and says so', async () => {
     vi.useFakeTimers();
     const harness = silentHost();

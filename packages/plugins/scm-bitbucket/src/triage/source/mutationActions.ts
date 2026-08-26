@@ -10,7 +10,10 @@ import {
   type BoundedInvocation,
 } from '@happier-dev/triage-sources/runtime';
 
-import { createBitbucketFailure } from '../failures.js';
+import {
+  createBitbucketFailure,
+  type BitbucketTriageFailure,
+} from '../failures.js';
 import { isBitbucketCommentId } from '../identity.js';
 import {
   declineBitbucketPullRequest,
@@ -99,10 +102,10 @@ function unavailable(failure: TriageSourceFailureV1): BitbucketMutationResultV1 
  * and the sentence are this source's. Two copies of a `clearTimeout`/`unref` pair is how one of
  * them ends up holding the daemon open for a write nobody is waiting on.
  *
- * NOTE, recorded rather than silently relied on: the deadline aborts with a `TimeoutError` so a
- * classifier CAN tell it apart from a caller cancellation, but this source's classifier
- * (`triage/failures.ts#classifyBitbucketTransportFailure`) currently folds both into
- * `cancelled/invocation-cancelled`. The distinction is available and unused here.
+ * NOTE, recorded rather than silently relied on: the deadline aborts with a `TimeoutError` so the
+ * classifier (`triage/failures.ts#classifyBitbucketTransportFailure`) preserves the distinction:
+ * deadline expiry is `transient/invocation-deadline-exceeded`, while caller cancellation is
+ * `cancelled/invocation-cancelled`.
  */
 function boundMutation(callerSignal: AbortSignal | undefined): BoundedInvocation {
   return createBoundedInvocation({
@@ -184,8 +187,19 @@ function shapeUnsettledWrite(
     : unavailable(toTriageSourceFailure(outcome.failure));
 }
 
-function isBitbucketAmbiguousWriteFailure(failure: Readonly<{ class: string }>): boolean {
-  return false;
+/**
+ * A transient transport/server answer cannot prove that Bitbucket did not apply a dispatched
+ * command. Caller cancellation has the same epistemic boundary: the source must stop its work,
+ * but it cannot tell the caller that a request which raced that cancellation never reached the
+ * forge. Both take the one exact confirming read under the invocation's existing signal; an
+ * already-aborted signal fails closed as `uncertain` and never emits a retry.
+ *
+ * In contrast, authentication, permission, rate-limit, contract and ordinary HTTP failures are a
+ * response from Bitbucket that proves this command was refused, so confirming them could turn a
+ * later unrelated state change into this Action's success.
+ */
+function isBitbucketAmbiguousWriteFailure(failure: BitbucketTriageFailure): boolean {
+  return failure.class === 'transient' || failure.class === 'cancelled';
 }
 
 /* --------------------------------------------------------------------- merge */

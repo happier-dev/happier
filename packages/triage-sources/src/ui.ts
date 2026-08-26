@@ -7,7 +7,10 @@ export {
   type TriageEvidenceDisclosureV1,
 } from './ui/evidenceDisclosure.js';
 export {
+  completeTriagePostMutationIfNeeded,
+  shouldCompleteTriagePostMutation,
   TriagePostMutationCompletionProvider,
   useTriagePostMutationCompletion,
   type TriagePostMutationCompletionV1,
+  type TriagePostMutationProviderStateClassifierV1,
 } from './ui/postMutation.js';

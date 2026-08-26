@@ -20,8 +20,17 @@ export const AZURE_DEVOPS_TRIAGE_PURPOSE = 'azure-devops-account-use';
  */
 export const AZURE_DEVOPS_CONNECTED_ACCOUNT_ID = 'azure-devops-account';
 
-/** The network host-access request that owns this plugin's Azure DevOps origins. */
+/**
+ * The public SCM-provider network host-access request.
+ *
+ * Azure DevOps Services and the fixed provider origins remain public-only. The configured-account
+ * origin has a separate request below because `privateNetwork` is scope-level and must not widen
+ * this public target when a Server deployment is configured on a private network.
+ */
 export const AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID = 'azure-devops-api';
+
+/** The network host-access request for the exact configured Azure DevOps account origin. */
+export const AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID = 'azure-devops-account-api';
 
 /**
  * Azure ships pull requests only. Azure Boards Work Items are a separate product domain with

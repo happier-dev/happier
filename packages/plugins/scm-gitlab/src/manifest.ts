@@ -45,6 +45,7 @@ import {
 import {
   getGitlabSourceEntryAction,
   listGitlabInstancesAction,
+  prepareGitlabReviewWorkspaceAction,
   scanGitlabSourceAction,
 } from './triage/operations.js';
 import {
@@ -190,6 +191,10 @@ export const GITLAB_PLUGIN = definePlugin({
     [GITLAB_TRIAGE_ACTION_IDS.get]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.get),
       run: getGitlabSourceEntryAction,
+    },
+    [GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace),
+      run: prepareGitlabReviewWorkspaceAction,
     },
     [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listNotes]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.listNotes),

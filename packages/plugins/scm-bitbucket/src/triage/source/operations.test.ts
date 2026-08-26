@@ -113,6 +113,19 @@ describe('Bitbucket listInstances', () => {
     expect(JSON.stringify(result.candidates)).not.toContain('Basic ');
   });
 
+  it('carries every discovered workspace candidate instead of imposing a local thirty-two-instance ceiling', async () => {
+    const { connectedAccounts } = createConnectedAccountsStub({
+      accounts: Array.from({ length: 17 }, (_unused, index) => ({ accountId: `account-${index + 1}` })),
+    });
+    const { http } = createHttpStub(routeBitbucket());
+
+    const result = await listBitbucketSourceInstances(createRuntime(connectedAccounts, http));
+
+    expect(result.kind).toBe('complete');
+    if (result.kind !== 'complete') throw new Error('expected a complete result');
+    expect(result.candidates).toHaveLength(34);
+  });
+
   it('never reports a truncated account listing as a complete enumeration', async () => {
     const { connectedAccounts } = createConnectedAccountsStub({
       accounts: [{ accountId: 'account-1' }],
@@ -375,6 +388,78 @@ describe('Bitbucket scan', () => {
     expect(laneRequests).toHaveLength(1);
     expect(laneRequests[0]?.url).not.toContain('reviewers.uuid');
     expect(laneRequests[0]?.url).toContain('values.participants');
+  });
+
+  it('reports malformed nested review evidence without inventing a reviewed verdict or dropping independent involvement', async () => {
+    const malformedReviewPage = {
+      ...reviewPage,
+      values: reviewPage.values.map((row, index) => ({
+        ...row,
+        participants: index === 0
+          ? row.participants.map((participant) => (
+            participant.user.uuid === VIEWER_UUID
+              ? { ...participant, approved: 'true' }
+              : participant
+          ))
+          : index === 1
+            ? [{
+              type: 'participant',
+              role: 'PARTICIPANT',
+              approved: 'true',
+              state: 'approved',
+              participated_on: null,
+              user: { type: 'user', uuid: VIEWER_UUID },
+            }]
+            : row.participants,
+      })),
+    };
+    const route = (url: string): StubReply | undefined => {
+      if (url.includes('/2.0/user')) return { body: currentUser };
+      if (url.includes('/2.0/repositories/') && !url.includes('/pullrequests')) {
+        return {
+          body: {
+            pagelen: 100,
+            page: 1,
+            values: [{
+              type: 'repository',
+              uuid: REPOSITORY_UUID,
+              name: 'deploy-tools',
+              full_name: 'example-workspace/deploy-tools',
+            }],
+          },
+        };
+      }
+      if (url.includes('/workspaces/')) return { body: { pagelen: 10, page: 1, values: [] } };
+      return { body: malformedReviewPage };
+    };
+
+    const { connectedAccounts } = createConnectedAccountsStub({
+      accounts: [{ accountId: 'account-1' }],
+    });
+    const { http } = createHttpStub(route);
+    const result = TriageScanResultV1Schema.parse(await scanBitbucketSource(
+      createRuntime(connectedAccounts, http),
+      TriageScanInputV1Schema.parse({
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'initial', limit: 50 },
+      }),
+    ));
+
+    if (result.kind === 'failed') throw new Error(`unexpected failure: ${result.failure.code}`);
+    const present = result.observations.flatMap((observation) => (
+      observation.kind === 'present' ? [observation] : []
+    ));
+    expect(present.map((observation) => observation.localRef.entryId)).toEqual(['5422']);
+    expect(present[0]?.viewer.involvement).toEqual(['reviewRequested']);
+    expect(present[0]?.snapshot.facts).not.toContainEqual(expect.objectContaining({
+      id: 'bitbucket/your-review',
+    }));
+    expect(result.evidence).toEqual({
+      kind: 'partial',
+      reason: 'undecodable-items',
+      omittedItemCount: 1,
+    });
   });
 
   it('refuses a limit below the provider page minimum before any provider request', async () => {

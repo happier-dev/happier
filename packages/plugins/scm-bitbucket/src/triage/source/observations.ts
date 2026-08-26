@@ -266,6 +266,20 @@ function buildLocator(entry: BitbucketPullRequestEntry): TriageEntryLocatorV1 {
 }
 
 /**
+ * Compares the one source-owned opaque route semantic that survives a
+ * provider reread. Presentation fields may change independently, while the
+ * immutable entry route remains admitted through `collisionScope`; neither
+ * path is reconstructed from the other.
+ */
+export function matchesBitbucketEntryLocator(
+  entry: BitbucketPullRequestEntry,
+  locator: TriageEntryLocatorV1,
+): boolean {
+  const current = buildLocator(entry);
+  return current.routingToken !== undefined && current.routingToken === locator.routingToken;
+}
+
+/**
  * Involvement is proven against the exact credential in hand, not inferred from the lane that
  * happened to return the row. The lane contributes its own canonical token, and the entry's own
  * author/reviewer/participant evidence contributes the rest, so a pull request returned by one lane
@@ -294,6 +308,35 @@ function buildViewerFacts(
   // the involvement this projection already carries, and declaring a source-owned attention level
   // from involvement alone would invent a provider fact rather than report one.
   return { involvement: [...involvement] };
+}
+
+/**
+ * Publishes the three revision facts only when the one provider response
+ * proves every member. A partial revision would let a later selected-workspace
+ * request compare one mutable source fact without its destination base.
+ */
+function readReviewRevision(
+  entry: BitbucketPullRequestEntry,
+): TriageSourceEntrySnapshotV1['reviewRevision'] | null {
+  const baseSha = projectLine(
+    entry.destination?.commitHash ?? null,
+    MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  );
+  const sourceHeadSha = projectLine(
+    entry.source?.commitHash ?? null,
+    MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  );
+  if (
+    baseSha === null || baseSha.truncated
+    || sourceHeadSha === null || sourceHeadSha.truncated
+  ) {
+    return null;
+  }
+  return {
+    baseSha: baseSha.value,
+    headSha: sourceHeadSha.value,
+    nativeRevision: sourceHeadSha.value,
+  };
 }
 
 /** The local ref, built from proven native identity rather than from any row presentation field. */
@@ -333,6 +376,7 @@ export function toBitbucketPresentObservation(
     entry.source?.commitHash ?? null,
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   );
+  const reviewRevision = readReviewRevision(entry);
 
   const state = toPresentationState(entry.state);
   const projectionTruncated = entry.projectionTruncated
@@ -354,6 +398,7 @@ export function toBitbucketPresentObservation(
       ...(nativeLabel === null ? {} : { nativeLabel: nativeLabel.value }),
     },
     facts: rowFacts.facts,
+    ...(reviewRevision === null ? {} : { reviewRevision }),
     ...(projectionTruncated ? { projectionTruncated: true as const } : {}),
   };
 

@@ -2,7 +2,6 @@ import type { PluginCollectionUiQueryErrorV1 } from '@happier-dev/plugin-sdk/col
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import { CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
-import { MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 } from './linkedEntriesQuery.js';
 
 /**
  * The Session cockpit's presentation projection.
@@ -87,7 +86,7 @@ export type TriageSessionLinkedEntriesViewV1 =
     | Readonly<{
         kind: 'linked';
         rows: readonly TriageSessionLinkedEntryRowV1[];
-        /** More links exist for this Session than this bounded page shows. */
+        /** The Data pager can append another page for this Session. */
         more: boolean;
         /** Why the shown rows may not be the current set; `null` when they are. */
         notice: string | null;
@@ -180,19 +179,20 @@ export function projectTriageSessionLinkedEntries(input: Readonly<{
             presentation: presentationFor(row, hydration),
         }))
         .sort(compareRows);
-    const bounded = ordered.slice(0, MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1);
-
     return Object.freeze({
         kind: 'linked',
-        rows: Object.freeze(bounded),
-        more: query.hasMore || bounded.length < ordered.length,
+        // The Data pager owns the accumulated row window. Dropping rows here
+        // would make every link after its first page unreachable even after the
+        // pager had successfully retained it.
+        rows: Object.freeze(ordered),
+        more: query.hasMore,
         // Last-known-good rows stay on screen; the reason they may be stale is
         // said out loud rather than implied by their silence.
         notice: failed ? describeFailure(query.failure) : null,
     });
 }
 
-/** The row ids this page needs hydrated, in the exact bounded set it renders. */
+/** The row ids the accumulated pager window renders. */
 export function triageSessionLinkHydrationTargets(
     query: TriageSessionLinkedEntriesQueryStateV1,
 ): readonly TriageSessionLinkQueryRowV1[] {
@@ -201,6 +201,5 @@ export function triageSessionLinkHydrationTargets(
             const byTime = readLinkedAtMs(right) - readLinkedAtMs(left);
             if (byTime !== 0) return byTime;
             return left.rowId < right.rowId ? -1 : left.rowId > right.rowId ? 1 : 0;
-        })
-        .slice(0, MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1);
+        });
 }

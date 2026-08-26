@@ -449,3 +449,20 @@ export function projectGitlabWriteOutcomeV1(
     }
   }
 }
+
+/** Whether GitLab's own settled write vocabulary leaves provider state uncertain. */
+export function gitlabWriteMayHaveChangedProviderStateV1(
+  outcome: GitlabWriteOutcomeV1 | null,
+): boolean {
+  if (outcome === null) return false;
+  switch (outcome.kind) {
+    case 'applied':
+    case 'unconfirmed':
+    case 'uncertain':
+    case 'rejected':
+    case 'unreadable':
+      return true;
+    default:
+      return false;
+  }
+}

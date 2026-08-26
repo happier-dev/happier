@@ -2,7 +2,6 @@ import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 // The published result schemas live on the protocol entry point; `testing/v1` publishes
 // only the conformance helpers and the fixture builder.
 import {
-    MAX_TRIAGE_INSTANCE_DRAFTS_V1,
     MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
     TriageGetResultV1Schema,
     TriageListInstancesResultV1Schema,
@@ -58,6 +57,11 @@ type MaterializeStub = (
     options: Readonly<{ signal?: AbortSignal }>,
 ) => Promise<unknown>;
 
+type RequestStub = (
+    input: Readonly<{ url: string }>,
+    options: Readonly<{ signal: AbortSignal }>,
+) => Promise<unknown>;
+
 function context(
     responses: readonly unknown[],
     statuses: readonly number[] = [],
@@ -66,6 +70,10 @@ function context(
         responseHeaders?: readonly Readonly<Record<string, string>>[];
         /** Replaces the host materialization boundary for one exact case. */
         materialize?: MaterializeStub;
+        /** Replaces the HTTP boundary while retaining the action signal under test. */
+        request?: RequestStub;
+        /** Lets a cancellation/deadline case own the invocation's caller signal. */
+        signal?: AbortSignal;
     }> = {},
 ) {
     let call = 0;
@@ -84,7 +92,13 @@ function context(
         headers: { authorization: 'Bearer secret' },
     });
     const materializeListedAccount = vi.fn(options.materialize ?? defaultMaterialize);
-    const request = vi.fn(async (input: Readonly<{ url: string }>) => {
+    const request = vi.fn(async (
+        input: Readonly<{ url: string }>,
+        requestOptions: Readonly<{ signal: AbortSignal }>,
+    ) => {
+        if (options.request !== undefined) {
+            return await options.request(input, requestOptions);
+        }
         const index = call++;
         const body = responses[index];
         return {
@@ -99,7 +113,7 @@ function context(
     });
     return {
         value: {
-            signal: new AbortController().signal,
+            signal: options.signal ?? new AbortController().signal,
             services: {
                 connectedAccounts: { listAccounts, materializeListedAccount },
                 http: { request },
@@ -163,9 +177,7 @@ describe('PostHog Triage source operations', () => {
             keyStability: 'locatorDerived',
         });
         expect(host.listAccounts).toHaveBeenCalledWith(
-            // The bound is the published draft ceiling, not a literal: a shrunk ceiling
-            // must move the request this source makes, not silently fail this check.
-            { purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE, limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1 },
+            { purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE },
             { signal: host.value.signal },
         );
         expect(host.materializeListedAccount).toHaveBeenCalledWith(expect.objectContaining({
@@ -591,6 +603,7 @@ describe('PostHog Triage source operations', () => {
         expect(result.failure.class).toBe('unsupportedContract');
         expect(host.request).not.toHaveBeenCalled();
     });
+
 });
 
 describe('the PostHog provider-failure projection', () => {
@@ -734,7 +747,7 @@ describe('PostHog invocation boundaries', () => {
         });
     });
 
-    it('aborts account materialization when a private request deadline elapses', async () => {
+    it('aborts account materialization when the mounted invocation deadline elapses', async () => {
         let observed: AbortSignal | undefined;
         const host = context([], [], {
             materialize: async (_request, materializeOptions) => {
@@ -766,7 +779,60 @@ describe('PostHog invocation boundaries', () => {
         expect(observed?.aborted).toBe(true);
     });
 
-    it('applies the shared private request deadline to settings browsing, capability checks, and mounted live get', async () => {
+    it('does not restart a mounted get deadline after CRUD succeeds just before it', async () => {
+        vi.useFakeTimers();
+        const caller = new AbortController();
+        const signals: AbortSignal[] = [];
+        let requestCount = 0;
+        const host = context([], [], {
+            request: async (_input, options) => {
+                signals.push(options.signal);
+                requestCount += 1;
+                if (requestCount === 1) {
+                    return await new Promise((resolve) => {
+                        setTimeout(() => resolve({
+                            status: 200,
+                            finalUrl: 'https://eu.posthog.com/api/projects/4821/error_tracking/issues/00000000-0000-4000-8000-000000000001/',
+                            headers: { 'content-type': 'application/json' },
+                            body: new TextEncoder().encode(JSON.stringify(crudIssueRead)),
+                        }), 4);
+                    });
+                }
+                return await new Promise(() => {
+                    // The query enrichment ignores cancellation. The owning invocation
+                    // must nevertheless settle at its original five-millisecond limit.
+                });
+            },
+            signal: caller.signal,
+        });
+        const read = createPosthogSourceEntryReader(5);
+        let settled = false;
+        const pending = read({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: LOCAL_REF,
+        }, host.value).then((result) => {
+            settled = true;
+            return result;
+        });
+
+        try {
+            await vi.advanceTimersByTimeAsync(4);
+            expect(signals).toHaveLength(2);
+            expect(signals[1]).toBe(signals[0]);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(settled).toBe(true);
+            await expect(pending).resolves.toMatchObject({ kind: 'present' });
+            expect(signals[0]?.aborted).toBe(true);
+        } finally {
+            caller.abort();
+            await pending;
+            vi.useRealTimers();
+        }
+    });
+
+    it('applies one source invocation deadline to settings browsing, capability checks, and mounted live get', async () => {
         const neverMaterializes = () => context([], [], {
             materialize: async () => await new Promise(() => undefined),
         });
@@ -970,5 +1036,21 @@ describe('PostHog sampled occurrence coverage', () => {
         if (result.kind !== 'sampled') return;
         expect(result.continuation).toBeUndefined();
         expect(result.incomplete).toBeUndefined();
+    });
+
+    it('publishes the full explicit query that produced a sampled page for later evidence reread', async () => {
+        const result = await readSample({ ...queryIssueEventsPage, hasMore: false, nextOffset: null });
+
+        expect(result.kind).toBe('sampled');
+        if (result.kind !== 'sampled') return;
+        expect(result.frozenRequest).toMatchObject({
+            v: 1,
+            issueId: LOCAL_REF.entryId,
+            filterTestAccounts: false,
+            onlyAppFrames: false,
+            include: ['exception', 'stacktrace', 'navigation', 'correlation'],
+            limit: 3,
+            offset: 0,
+        });
     });
 });

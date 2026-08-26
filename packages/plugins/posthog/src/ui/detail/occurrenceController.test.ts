@@ -5,6 +5,7 @@ import type { PosthogProjectedIssueEvent } from './issueEventProjection.js';
 import {
     posthogSampleInitialState,
     posthogSampleReducer,
+    resolvePosthogSelectedEvidence,
     type PosthogSampleStateV1,
 } from './occurrenceController.js';
 
@@ -24,12 +25,24 @@ function settled(
     events: readonly PosthogProjectedIssueEvent[],
     continuation: string | null,
     incomplete: typeof POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1 | null = null,
+    frozenRequest?: Readonly<{
+        v: 1;
+        issueId: string;
+        from: string;
+        to: string | null;
+        filterTestAccounts: false;
+        onlyAppFrames: false;
+        include: readonly ('exception' | 'stacktrace' | 'navigation' | 'correlation')[];
+        limit: number;
+        offset: number;
+    }>,
 ): PosthogSampleStateV1 {
     return posthogSampleReducer(state, {
         kind: 'pageSettled',
         token,
         events,
         omittedRowCount: 0,
+        ...(frozenRequest === undefined ? {} : { frozenRequest }),
         continuation,
         incomplete,
     });
@@ -144,6 +157,37 @@ describe('posthogSampleReducer', () => {
         expect(posthogSampleReducer(ready, { kind: 'selected', uuid: 'b' }).selectedUuid).toBe('b');
         expect(posthogSampleReducer(ready, { kind: 'selected', uuid: 'ghost' }).selectedUuid)
             .toBe('a');
+    });
+
+    it('records the selected row\'s absolute provider offset beside its frozen page', () => {
+        const page = {
+            v: 1 as const,
+            issueId: 'issue-1',
+            from: '2026-07-16T00:00:00.000Z',
+            to: '2026-08-15T00:00:00.000Z',
+            filterTestAccounts: false,
+            onlyAppFrames: false,
+            include: ['exception', 'stacktrace', 'navigation', 'correlation'],
+            limit: 3,
+            offset: 40,
+        };
+        const ready = settled(
+            started(posthogSampleInitialState(), 1),
+            1,
+            [event('a'), event('b')],
+            null,
+            null,
+            page,
+        );
+        const selected = resolvePosthogSelectedEvidence(
+            posthogSampleReducer(ready, { kind: 'selected', uuid: 'b' }),
+        );
+
+        expect(selected).toMatchObject({
+            event: { uuid: 'b' },
+            frozenRequest: page,
+            selectedAbsoluteOffset: 41,
+        });
     });
 
     it('carries the omitted-row count so a reader can see the page was not whole', () => {

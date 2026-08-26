@@ -4,6 +4,7 @@ import {
   readBitbucketBracedUuid,
   readBitbucketEntryId,
 } from './identity.js';
+import { readBitbucketCloneUrl } from '../bitbucketCloneUrl.js';
 import { truncateUtf8 } from './text.js';
 
 /**
@@ -51,6 +52,8 @@ export type BitbucketPullRequestEndpoint = Readonly<{
   branchName: string | null;
   commitHash: string | null;
   repository: BitbucketRepositoryRef | null;
+  /** The provider's HTTPS source repository clone link, never synthesized locally. */
+  cloneUrl?: string;
 }>;
 
 export type BitbucketPullRequestEntry = Readonly<{
@@ -88,6 +91,8 @@ export type BitbucketPullRequestEntry = Readonly<{
    */
   reviewers: readonly BitbucketAccountRef[] | null;
   participants: readonly BitbucketParticipantFact[] | null;
+  /** At least one nested reviewer/participant item could not be decoded as review evidence. */
+  reviewEvidenceIncomplete: boolean;
 }>;
 
 export type BitbucketRowDecodeFailureReason = 'not-an-object' | 'identity-invalid';
@@ -177,10 +182,12 @@ function readRepositoryRef(value: unknown): BitbucketRepositoryRef | null {
 function readEndpoint(value: unknown): BitbucketPullRequestEndpoint | null {
   const record = readRecord(value);
   if (record === null) return null;
+  const cloneUrl = readBitbucketCloneUrl(record.repository, 'https');
   return {
     branchName: readNestedString(record, 'branch', 'name'),
     commitHash: readNestedString(record, 'commit', 'hash'),
     repository: readRepositoryRef(record.repository),
+    ...(cloneUrl === null ? {} : { cloneUrl }),
   };
 }
 
@@ -192,28 +199,37 @@ function readParticipant(value: unknown): BitbucketParticipantFact | null {
   const record = readRecord(value);
   if (record === null) return null;
   const user = readAccountRef(record.user);
-  if (user === null) return null;
+  if (user === null || user.uuid === null || typeof record.approved !== 'boolean') return null;
+  const state = readParticipantState(record.state);
+  if (record.state !== null && state === null) return null;
   const role = record.role === 'REVIEWER' || record.role === 'PARTICIPANT' ? record.role : null;
   return {
     user,
     role,
-    approved: record.approved === true,
-    state: readParticipantState(record.state),
+    approved: record.approved,
+    state,
     participatedAtMs: readTimestampMs(record.participated_on),
   };
 }
 
+type OptionalListDecode<T> = Readonly<{
+  items: readonly T[] | null;
+  incomplete: boolean;
+}>;
+
 function readOptionalList<T>(
   value: unknown,
   decode: (item: unknown) => T | null,
-): readonly T[] | null {
-  if (!Array.isArray(value)) return null;
+): OptionalListDecode<T> {
+  if (!Array.isArray(value)) return { items: null, incomplete: false };
   const decoded: T[] = [];
+  let incomplete = false;
   for (const item of value) {
     const mapped = decode(item);
-    if (mapped !== null) decoded.push(mapped);
+    if (mapped === null) incomplete = true;
+    else decoded.push(mapped);
   }
-  return decoded;
+  return { items: decoded, incomplete };
 }
 
 /**
@@ -239,6 +255,11 @@ export function decodeBitbucketPullRequestRow(raw: unknown): BitbucketPullReques
   const summary = rawSummary === null
     ? null
     : truncateUtf8(rawSummary, MAX_BITBUCKET_TEXT_UTF8_BYTES);
+  const reviewers = readOptionalList(record.reviewers, (reviewer) => {
+    const account = readAccountRef(reviewer);
+    return account === null || account.uuid === null ? null : account;
+  });
+  const participants = readOptionalList(record.participants, readParticipant);
 
   return {
     ok: true,
@@ -265,8 +286,9 @@ export function decodeBitbucketPullRequestRow(raw: unknown): BitbucketPullReques
       destination,
       mergeCommitHash: readNestedString(record, 'merge_commit', 'hash'),
       declineReason: readString(record.reason),
-      reviewers: readOptionalList(record.reviewers, readAccountRef),
-      participants: readOptionalList(record.participants, readParticipant),
+      reviewers: reviewers.items,
+      participants: participants.items,
+      reviewEvidenceIncomplete: reviewers.incomplete || participants.incomplete,
     },
   };
 }

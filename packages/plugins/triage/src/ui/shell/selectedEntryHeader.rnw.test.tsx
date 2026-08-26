@@ -162,7 +162,7 @@ async function mountShell(): Promise<PluginUiTestkit> {
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view'); });
+    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
     return fixture;
 }
 
@@ -177,7 +177,7 @@ async function openTheRow(shell: PluginUiTestkit): Promise<void> {
 /** The next settled pass enumerates nothing, so the selected row is evicted. */
 async function evictTheRow(shell: PluginUiTestkit): Promise<void> {
     listsTheEntry = false;
-    await act(async () => { await refreshTriageListWindow('manual'); });
+    await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi); });
     await act(async () => { await Promise.resolve(); });
     void shell;
 }

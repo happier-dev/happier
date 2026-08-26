@@ -853,7 +853,6 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 32,
                   "type": "array"
                 },
                 "failures": {
@@ -976,7 +975,6 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 32,
                   "type": "array"
                 },
                 "kind": {
@@ -1131,7 +1129,6 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 32,
                   "type": "array"
                 },
                 "failure": {
@@ -1303,7 +1300,6 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 32,
                   "type": "array"
                 },
                 "kind": {
@@ -2220,6 +2216,35 @@
                               "projectionTruncated": {
                                 "const": true
                               },
+                              "reviewRevision": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "baseSha": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "headSha": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "nativeRevision": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  }
+                                },
+                                "required": [
+                                  "baseSha",
+                                  "headSha",
+                                  "nativeRevision"
+                                ],
+                                "type": "object"
+                              },
                               "scopeLabel": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -2943,6 +2968,35 @@
                               },
                               "projectionTruncated": {
                                 "const": true
+                              },
+                              "reviewRevision": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "baseSha": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "headSha": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "nativeRevision": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  }
+                                },
+                                "required": [
+                                  "baseSha",
+                                  "headSha",
+                                  "nativeRevision"
+                                ],
+                                "type": "object"
                               },
                               "scopeLabel": {
                                 "minLength": 1,
@@ -3704,6 +3758,85 @@
                   },
                   "maxItems": 20,
                   "type": "array"
+                },
+                "frozenRequest": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "filterTestAccounts": {
+                      "const": false
+                    },
+                    "from": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 1024
+                    },
+                    "include": {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "const": "exception"
+                          },
+                          {
+                            "const": "stacktrace"
+                          },
+                          {
+                            "const": "navigation"
+                          },
+                          {
+                            "const": "correlation"
+                          }
+                        ]
+                      },
+                      "maxItems": 4,
+                      "minItems": 4,
+                      "type": "array"
+                    },
+                    "issueId": {
+                      "minLength": 1,
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "limit": {
+                      "maximum": 20,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "offset": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "onlyAppFrames": {
+                      "const": false
+                    },
+                    "to": {
+                      "anyOf": [
+                        {
+                          "const": null
+                        },
+                        {
+                          "minLength": 1,
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 1024
+                        }
+                      ]
+                    },
+                    "v": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "issueId",
+                    "from",
+                    "to",
+                    "filterTestAccounts",
+                    "onlyAppFrames",
+                    "include",
+                    "limit",
+                    "offset"
+                  ],
+                  "type": "object"
                 },
                 "incomplete": {
                   "const": "posthog/sampled-offset-non-advancing"
@@ -4773,6 +4906,35 @@
                     "projectionTruncated": {
                       "const": true
                     },
+                    "reviewRevision": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "baseSha": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "headSha": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "nativeRevision": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        }
+                      },
+                      "required": [
+                        "baseSha",
+                        "headSha",
+                        "nativeRevision"
+                      ],
+                      "type": "object"
+                    },
                     "scopeLabel": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -5162,7 +5324,16 @@
     "commands": [],
     "composerAttachments": [],
     "composerControls": [],
-    "composerReferences": [],
+    "composerReferences": [
+      {
+        "icon": "error",
+        "id": "posthog-evidence",
+        "title": "PostHog occurrence",
+        "triggers": [
+          "@"
+        ]
+      }
+    ],
     "composerRegions": [],
     "connectedAccountDescriptors": [
       {

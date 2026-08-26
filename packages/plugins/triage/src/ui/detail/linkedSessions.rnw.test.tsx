@@ -20,6 +20,7 @@ const renderHeader = defineUiSurface(function LinkedSessionHeader(_context: Rend
     <TriageLinkedSessions
       sessions={[{ sessionId: 'session-linked', displayTitle: 'Route repair' }]}
       hasMore
+      onLoadMore={() => {}}
     />
   );
 });
@@ -60,7 +61,7 @@ describe('common-header linked Sessions', () => {
     const header = await mountHeader();
     openFails = true;
 
-    await expect(header.getByText('More linked Sessions are available.')).resolves.toBeDefined();
+    await expect(header.getByRole('button', { name: 'Load more' })).resolves.toBeDefined();
 
     await act(async () => {
       await header.press(await header.getByRole('button', { name: 'Route repair' }));

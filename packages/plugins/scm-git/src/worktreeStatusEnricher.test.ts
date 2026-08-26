@@ -6,8 +6,8 @@ import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { runWithRealGitScmRuntime } from './testkit/scmRuntime.test-support.js';
-import { readWorktreeStatusEnrichmentForPaths } from './worktreeStatusEnricher.js';
+import { runWithGitScmCommandRunner, runWithRealGitScmRuntime } from './testkit/scmRuntime.test-support.js';
+import { enrichGitWorktreesWithStatus, readWorktreeStatusEnrichmentForPaths } from './worktreeStatusEnricher.js';
 
 const execFile = promisify(execFileCallback);
 
@@ -81,5 +81,23 @@ describe('readWorktreeStatusEnrichmentForPaths', () => {
 
         expect(result[0]?.changeCount).toBe(fileCount);
         expect(statCalls.length).toBeLessThanOrEqual(4);
+    });
+
+    it('omits enrichment deterministically when the process boundary reports a timeout', async () => {
+        const result = await runWithGitScmCommandRunner(async () => ({
+            success: false,
+            stdout: '',
+            stderr: '',
+            exitCode: -1,
+            timedOut: true,
+        }), () => enrichGitWorktreesWithStatus({
+            worktrees: [{ path: '/repo/timed-out', branch: 'dev', isCurrent: false, isMain: true }],
+            includeWorktreeStatus: true,
+            perCallTimeoutMs: 1,
+        }));
+
+        expect(result).toHaveLength(1);
+        expect(result[0]?.changeCount).toBeUndefined();
+        expect(result[0]?.lastActivityAt).toBeUndefined();
     });
 });

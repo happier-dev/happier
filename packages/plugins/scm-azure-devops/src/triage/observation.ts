@@ -79,6 +79,7 @@ export function projectAzurePresentObservation(input: Readonly<{
     normalizeTriageSingleLineV1(entry.headCommitId ?? ''),
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   );
+  const reviewRevision = readReviewRevision(entry, nativeRevision);
 
   const snapshot: TriageSourceEntrySnapshotV1 = {
     v: 1,
@@ -97,8 +98,8 @@ export function projectAzurePresentObservation(input: Readonly<{
         }),
     },
     facts: facts.facts,
-    ...(entry.projectionTruncated
-      || title.truncated
+    ...(reviewRevision === null ? {} : { reviewRevision }),
+    ...(title.truncated
       || scopeLabel.truncated
       || facts.truncated
       || routingToken === null
@@ -152,6 +153,23 @@ export function projectAzurePresentObservation(input: Readonly<{
   return observation;
 }
 
+/** Azure's source commit is both the generic head and its native revision fact. */
+function readReviewRevision(
+  entry: AzurePullRequestEntry,
+  nativeRevision: string | null,
+): Readonly<{ baseSha: string; headSha: string; nativeRevision: string }> | null {
+  const baseSha = fittingWithin(
+    normalizeTriageSingleLineV1(entry.baseCommitId ?? ''),
+    MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  );
+  const headSha = fittingWithin(
+    normalizeTriageSingleLineV1(entry.headCommitId ?? ''),
+    MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  );
+  if (baseSha === null || headSha === null || nativeRevision === null) return null;
+  return { baseSha, headSha, nativeRevision };
+}
+
 /** A machine-meaningful string is emitted whole or not at all; a shortened one is wrong. */
 function fittingWithin(value: string, maximumBytes: number): string | null {
   if (value.length === 0) return null;
@@ -173,7 +191,7 @@ function readPresentationState(
   entry: AzurePullRequestEntry,
 ): TriageSourceEntrySnapshotV1['state']['presentation'] {
   if (entry.state === 'notSet' || entry.state === 'all') return 'unknown';
-  return entry.presentation === 'closed' ? 'closed' : 'active';
+  return entry.state === 'completed' || entry.state === 'abandoned' ? 'closed' : 'active';
 }
 
 /**

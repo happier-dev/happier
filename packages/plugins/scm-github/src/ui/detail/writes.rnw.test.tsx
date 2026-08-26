@@ -96,6 +96,7 @@ const APPLIED_OBSERVATION = {
 const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
 let nextResult: JsonValue = { kind: 'applied', effect: 'changed', observation: APPLIED_OBSERVATION };
+let nextActionError: unknown | null = null;
 let completedMutations = 0;
 
 async function mountDetail(
@@ -126,6 +127,7 @@ async function mountDetail(
       handlers: {
         executeAction: async ({ action, input }) => {
           recorded.push({ action, input });
+          if (nextActionError !== null) throw nextActionError;
           return nextResult;
         },
       },
@@ -139,6 +141,7 @@ afterEach(async () => {
   recorded.splice(0);
   completedMutations = 0;
   nextResult = { kind: 'applied', effect: 'changed', observation: APPLIED_OBSERVATION };
+  nextActionError = null;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
@@ -343,6 +346,33 @@ describe('the mounted GitHub write controls', () => {
 
   it('asks the canonical aggregate owner to reobserve after a settled write', async () => {
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+    await act(async () => {
+      await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));
+    });
+
+    expect(completedMutations).toBe(1);
+    expect(recorded).toHaveLength(1);
+  });
+
+  it('does not reobserve after GitHub reports a write was refused before dispatch', async () => {
+    nextResult = { kind: 'refused', reason: 'state_changed' };
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+
+    await act(async () => {
+      await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));
+    });
+
+    expect(completedMutations).toBe(0);
+    expect(recorded).toHaveLength(1);
+  });
+
+  it('reobserves after the host cannot settle a dispatched GitHub write', async () => {
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+    nextActionError = Object.assign(
+      new Error('The Action timed out after dispatch.'),
+      { code: 'timeout' },
+    );
+
     await act(async () => {
       await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));
     });

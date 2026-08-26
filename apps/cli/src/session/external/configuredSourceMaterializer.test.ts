@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  resolveExternalSessionsSourceKeyForDeclaration,
   ingestPluginManifestV2,
   MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION,
   type PluginAgentContributionV2,
@@ -33,6 +34,7 @@ import {
   createAgentExternalSessionsExecutionSurface,
 } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { resolveConnectedServiceMaterializedHomeRoot } from '@/daemon/connectedServices/catalogHooks';
 
 import {
   createConfiguredPluginExternalSessionsAdapter,
@@ -59,10 +61,26 @@ const codexContribution = {
           fields: [
             { name: 'kind', kind: 'literal', value: 'codexHome' },
             { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
-            { name: 'connectedServiceId', kind: 'string', optional: true },
-            { name: 'connectedServiceProfileId', kind: 'string', optional: true },
-            { name: 'connectedServiceGroupId', kind: 'string', optional: true },
-            { name: 'homePath', kind: 'string', optional: true },
+            { name: 'homePath', kind: 'string', min: 1, optional: true },
+            { name: 'connectedServiceId', kind: 'string', min: 1, optional: true },
+            { name: 'connectedServiceProfileId', kind: 'string', min: 1, optional: true },
+            { name: 'connectedServiceGroupId', kind: 'string', min: 1, optional: true },
+          ],
+          refinements: [
+            {
+              kind: 'requiresWhenEquals',
+              field: 'connectedServiceId',
+              when: { field: 'home', equals: 'connectedService' },
+            },
+            {
+              kind: 'forbidsWhenEquals',
+              fields: [
+                'connectedServiceId',
+                'connectedServiceProfileId',
+                'connectedServiceGroupId',
+              ],
+              when: { field: 'home', equals: 'user' },
+            },
           ],
         },
         key: {
@@ -103,6 +121,42 @@ function agent(contribution: PluginAgentContributionV2 = codexContribution) {
     identity: { pluginId: 'happier.codex', localId: contribution.id },
     richDefinition: { provenance: 'first_party' as const, definition: contribution },
   };
+}
+
+function connectedCodexSource(activeServerDir: string, profileId: string) {
+  const homePath = resolveConnectedServiceMaterializedHomeRoot('codex', {
+    activeServerDir,
+    serviceId: 'openai-codex',
+    profileId,
+  });
+  if (!homePath) {
+    throw new Error('Codex connected-service materialized home is unavailable in the test catalog');
+  }
+  const source = {
+    kind: 'codexHome' as const,
+    home: 'connectedService' as const,
+    connectedServiceId: 'openai-codex',
+    connectedServiceProfileId: profileId,
+    homePath,
+  };
+  return {
+    source,
+    sourceId: resolveExternalSessionsSourceKeyForDeclaration(
+      codexContribution.surfaces.externalSession.sources[0],
+      source,
+    ),
+  };
+}
+
+async function withTemporaryActiveServerDir<T>(
+  run: (activeServerDir: string) => Promise<T>,
+): Promise<T> {
+  const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-configured-source-materializer-'));
+  try {
+    return await run(activeServerDir);
+  } finally {
+    await rm(activeServerDir, { recursive: true, force: true });
+  }
 }
 
 async function listCandidateIndexFiles(activeServerDir: string): Promise<string[]> {
@@ -172,6 +226,7 @@ function providerOpsFromCodexContribution(
   if (
     !surface.validateSource
     || !surface.listCandidates
+    || !surface.resolveLinkIdentity
     || !surface.pageTranscript
     || !surface.readAfterTranscript
   ) {
@@ -180,6 +235,7 @@ function providerOpsFromCodexContribution(
   return {
     validateSource: surface.validateSource,
     listCandidates: surface.listCandidates,
+    resolveLinkIdentity: surface.resolveLinkIdentity,
     pageTranscript: surface.pageTranscript,
     readAfterTranscript: surface.readAfterTranscript,
   };
@@ -270,16 +326,8 @@ describe('configured external-session source materializer', () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-connected-source-admission-'));
     try {
       const activeServerDir = join(root, 'active-server');
-      const connectedCodexHome = join(
-        activeServerDir,
-        'daemon',
-        'connected-services',
-        'homes',
-        'openai-codex',
-        'work',
-        'codex',
-        'codex-home',
-      );
+      const connectedSource = connectedCodexSource(activeServerDir, 'work');
+      const connectedCodexHome = connectedSource.source.homePath;
       const remoteSessionId = '11111111-1111-1111-1111-111111111111';
       const sessionDirectory = join(connectedCodexHome, 'sessions', '2026', '08', '25');
       await mkdir(sessionDirectory, { recursive: true });
@@ -287,6 +335,7 @@ describe('configured external-session source materializer', () => {
         join(sessionDirectory, `rollout-2026-08-25T12-00-00-${remoteSessionId}.jsonl`),
         `${JSON.stringify({
           type: 'session_meta',
+          timestamp: '2026-08-25T12:00:00.000Z',
           payload: {
             id: remoteSessionId,
             timestamp: '2026-08-25T12:00:00.000Z',
@@ -299,6 +348,19 @@ describe('configured external-session source materializer', () => {
         env: { CODEX_HOME: join(root, 'empty-user-codex-home') },
       });
       const ops = providerOpsFromCodexContribution(contribution);
+      await expect(ops.listCandidates({
+        source: connectedSource.source,
+        limit: 10,
+        searchMode: 'fast',
+      })).resolves.toMatchObject({
+        candidates: [{
+          remoteSessionId,
+          linkData: { source: connectedSource.source },
+        }],
+      });
+      const listCandidates = vi.fn(async (request: Parameters<typeof ops.listCandidates>[0]) =>
+        await ops.listCandidates(request));
+      const observedOps: ExternalSessionProviderOps = { ...ops, listCandidates };
       const basis = {
         contributionGenerationId: 'registry:codex-connected-home',
         accountSettingsRevision: 'account:connected-home',
@@ -325,13 +387,33 @@ describe('configured external-session source materializer', () => {
         readCurrentBasis: () => basis,
         isCurrent: () => true,
         activeServerDir,
-        resolveProviderOps: async () => ops,
+        resolveProviderOps: async () => observedOps,
       });
 
-      const page = await composition.authorService.list({ limit: 10 });
+      try {
+        let page = await composition.authorService.list({
+          limit: 10,
+          sourceId: connectedSource.sourceId,
+        });
+        expect(listCandidates).toHaveBeenCalledWith(expect.objectContaining({
+          searchMode: 'fast',
+          source: connectedSource.source,
+        }));
+        for (let continuation = 0; continuation < 3 && page.items.length === 0; continuation += 1) {
+          expect(page.diagnostics).toBeUndefined();
+          expect(page.nextCursor).toMatch(/^plugin_external_sessions_v1_/);
+          page = await composition.authorService.list({
+            limit: 10,
+            sourceId: connectedSource.sourceId,
+            cursor: page.nextCursor!,
+          });
+        }
 
-      expect(page.items.map((item) => item.ref.remoteSessionId)).toContain(remoteSessionId);
-      expect(composition.sourceRefusals).toEqual([]);
+        expect(page.items.map((item) => item.ref.remoteSessionId)).toContain(remoteSessionId);
+        expect(composition.sourceRefusals).toEqual([]);
+      } finally {
+        composition.dispose();
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -483,77 +565,64 @@ describe('configured external-session source materializer', () => {
       }),
       readAfterTranscript: async () => ({ outcome: 'already_current' }),
     };
-    const request = {
-      agents: [agent()],
-      account,
-      basis,
-      readCurrentBasis: () => basis,
-      isCurrent: () => true,
-      agentId: 'codex',
-      remoteSessionId: 'remote-1',
-      resolveProviderOps: async () => ops,
-    } as const;
-
-    await expect(resolveConfiguredExternalSessionFollowTarget(request))
-      .resolves.toEqual({
-        status: 'unavailable',
-        code: 'plugin_external_follow_identity_ambiguous',
-      });
-    expect(resolveLinkIdentity).toHaveBeenCalledTimes(2);
-
-    resolveLinkIdentity.mockClear();
-    await expect(resolveConfiguredExternalSessionFollowTarget({
-      ...request,
-      // The bound source is the provider-normalized one this Session was
-      // linked through; it carries a canonical field the configured instance
-      // never declared, so key equality would not find its configured entry.
-      boundSource: {
-        kind: 'codexHome',
-        home: 'connectedService',
-        connectedServiceId: 'openai-codex',
-        connectedServiceProfileId: 'work',
-        homePath: '/canonical/work-home',
-      },
-    })).resolves.toEqual({
-      status: 'resolved',
-      ref: {
+    await withTemporaryActiveServerDir(async (activeServerDir) => {
+      const workSource = connectedCodexSource(activeServerDir, 'work');
+      const retiredSource = connectedCodexSource(activeServerDir, 'retired-profile');
+      const request = {
+        agents: [agent()],
+        account,
+        basis,
+        readCurrentBasis: () => basis,
+        isCurrent: () => true,
+        activeServerDir,
         agentId: 'codex',
-        sourceId: 'codexHome:connectedService:openai-codex:work:',
         remoteSessionId: 'remote-1',
-      },
-      source: {
-        kind: 'codexHome',
-        home: 'connectedService',
-        connectedServiceId: 'openai-codex',
-        connectedServiceProfileId: 'work',
-      },
-    });
-    // The other configured source is never consulted at all: the bound source
-    // is an authority, not a preference among scan results.
-    expect(resolveLinkIdentity).toHaveBeenCalledOnce();
-    expect(resolveLinkIdentity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        source: expect.objectContaining({ home: 'connectedService' }),
-      }),
-    );
+        resolveProviderOps: async () => ops,
+      } as const;
 
-    // A bound source no longer present in the configured aggregate fails
-    // closed. Following whichever remaining source answers for the same remote
-    // id would hand this Session a transcript it was never linked to.
-    resolveLinkIdentity.mockClear();
-    await expect(resolveConfiguredExternalSessionFollowTarget({
-      ...request,
-      boundSource: {
-        kind: 'codexHome',
-        home: 'connectedService',
-        connectedServiceId: 'openai-codex',
-        connectedServiceProfileId: 'retired-profile',
-      },
-    })).resolves.toEqual({
-      status: 'unavailable',
-      code: 'plugin_external_follow_identity_unavailable',
+      await expect(resolveConfiguredExternalSessionFollowTarget(request))
+        .resolves.toEqual({
+          status: 'unavailable',
+          code: 'plugin_external_follow_identity_ambiguous',
+        });
+      expect(resolveLinkIdentity).toHaveBeenCalledTimes(2);
+
+      resolveLinkIdentity.mockClear();
+      await expect(resolveConfiguredExternalSessionFollowTarget({
+        ...request,
+        // The Session carries the exact host-stamped home it was linked through.
+        // The aggregate must not decide that another configured source is close
+        // enough simply because it reports the same provider session id.
+        boundSource: workSource.source,
+      })).resolves.toEqual({
+        status: 'resolved',
+        ref: {
+          agentId: 'codex',
+          sourceId: workSource.sourceId,
+          remoteSessionId: 'remote-1',
+        },
+        source: workSource.source,
+      });
+      // The other configured source is never consulted at all: the bound source
+      // is an authority, not a preference among scan results.
+      expect(resolveLinkIdentity).toHaveBeenCalledOnce();
+      expect(resolveLinkIdentity).toHaveBeenCalledWith(
+        expect.objectContaining({ source: workSource.source }),
+      );
+
+      // A bound source no longer present in the configured aggregate fails
+      // closed. Following whichever remaining source answers for the same remote
+      // id would hand this Session a transcript it was never linked to.
+      resolveLinkIdentity.mockClear();
+      await expect(resolveConfiguredExternalSessionFollowTarget({
+        ...request,
+        boundSource: retiredSource.source,
+      })).resolves.toEqual({
+        status: 'unavailable',
+        code: 'plugin_external_follow_identity_unavailable',
+      });
+      expect(resolveLinkIdentity).not.toHaveBeenCalled();
     });
-    expect(resolveLinkIdentity).not.toHaveBeenCalled();
   });
 
   it('bounds configured-source validation within the inherited terminal admission deadline', async () => {
@@ -2063,62 +2132,63 @@ describe('configured external-session source materializer', () => {
       startingCursor: null,
       subscription: { dispose },
     }));
-    const composition = await createConfiguredPluginExternalSessionsAdapter({
-      agents: [agent()],
-      account: {
-        connectedServicesV2: [{
-          serviceId: 'openai-codex',
-          profiles: [{
-            profileId: 'work', status: 'connected', kind: 'oauth', providerEmail: null,
-            providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null,
+    await withTemporaryActiveServerDir(async (activeServerDir) => {
+      const selectedSource = connectedCodexSource(activeServerDir, 'work');
+      const composition = await createConfiguredPluginExternalSessionsAdapter({
+        agents: [agent()],
+        account: {
+          connectedServicesV2: [{
+            serviceId: 'openai-codex',
+            profiles: [{
+              profileId: 'work', status: 'connected', kind: 'oauth', providerEmail: null,
+              providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null,
+            }],
+            groups: [],
           }],
-          groups: [],
-        }],
-      },
-      basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
-      readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
-      isCurrent: () => true,
-      resolveProviderOps: async () => ({
-        validateSource: async ({ source }) => ({ ok: true as const, source }),
-        listCandidates: async () => ({ candidates: [], nextCursor: null }),
-        resolveLinkIdentity,
-        pageTranscript: async () => ({
-          items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+        },
+        basis: { contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' },
+        readCurrentBasis: () => ({ contributionGenerationId: 'registry:g1', accountSettingsRevision: 'account:1' }),
+        isCurrent: () => true,
+        activeServerDir,
+        resolveProviderOps: async () => ({
+          validateSource: async ({ source }) => ({ ok: true as const, source }),
+          listCandidates: async () => ({ candidates: [], nextCursor: null }),
+          resolveLinkIdentity,
+          pageTranscript: async () => ({
+            items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false,
+          }),
+          readAfterTranscript: async () => ({ outcome: 'already_current' }),
         }),
-        readAfterTranscript: async () => ({ outcome: 'already_current' }),
-      }),
-      followTranscript,
+        followTranscript,
+      });
+      try {
+        const result = await composition.authorService.followTranscript({
+          agentId: 'codex',
+          sourceId: selectedSource.sourceId,
+          remoteSessionId: 'remote-shared',
+        }, {}, vi.fn());
+
+        expect(result).toMatchObject({ status: 'following', startingCursor: null });
+        expect(resolveLinkIdentity).toHaveBeenCalledOnce();
+        expect(resolveLinkIdentity).toHaveBeenCalledWith(expect.objectContaining({
+          source: selectedSource.source,
+          remoteSessionId: 'remote-shared',
+        }));
+        expect(followTranscript).toHaveBeenCalledOnce();
+        expect(followTranscript).toHaveBeenCalledWith(expect.objectContaining({
+          source: selectedSource.source,
+          ref: {
+            agentId: 'codex',
+            sourceId: selectedSource.sourceId,
+            remoteSessionId: 'remote-shared',
+          },
+        }));
+        if (result.status === 'following') await result.subscription.dispose();
+        expect(dispose).toHaveBeenCalledOnce();
+      } finally {
+        composition.dispose();
+      }
     });
-    const selectedSource = {
-      kind: 'codexHome',
-      home: 'connectedService',
-      connectedServiceId: 'openai-codex',
-      connectedServiceProfileId: 'work',
-    } as const;
-
-    const result = await composition.authorService.followTranscript({
-      agentId: 'codex',
-      sourceId: 'codexHome:connectedService:openai-codex:work:',
-      remoteSessionId: 'remote-shared',
-    }, {}, vi.fn());
-
-    expect(result).toMatchObject({ status: 'following', startingCursor: null });
-    expect(resolveLinkIdentity).toHaveBeenCalledOnce();
-    expect(resolveLinkIdentity).toHaveBeenCalledWith(expect.objectContaining({
-      source: selectedSource,
-      remoteSessionId: 'remote-shared',
-    }));
-    expect(followTranscript).toHaveBeenCalledOnce();
-    expect(followTranscript).toHaveBeenCalledWith(expect.objectContaining({
-      source: selectedSource,
-      ref: {
-        agentId: 'codex',
-        sourceId: 'codexHome:connectedService:openai-codex:work:',
-        remoteSessionId: 'remote-shared',
-      },
-    }));
-    if (result.status === 'following') await result.subscription.dispose();
-    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it('delivers exactly one canonical disposed acknowledgement before closing an explicit public follow', async () => {
@@ -2546,7 +2616,7 @@ describe('configured external-session source materializer', () => {
     expect(followTranscript).toHaveBeenCalledOnce();
   });
 
-  it('starts release at the 5s author-listener deadline and bounds hanging cleanup to 5s', async () => {
+  it('starts release at the 6s daemon acknowledgement deadline and bounds hanging cleanup to 5s', async () => {
     vi.useFakeTimers();
     try {
       let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
@@ -2587,7 +2657,13 @@ describe('configured external-session source materializer', () => {
         kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-1',
       }));
 
-      await vi.advanceTimersByTimeAsync(4_999);
+      // The configured owner is awaiting the daemon's acknowledgement, not the
+      // author callback. The runner retains the five-second author deadline;
+      // the outer owner waits one additional transport round trip for its
+      // rejected acknowledgement before starting physical cleanup.
+      await vi.advanceTimersByTimeAsync(
+        EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS - 1,
+      );
       expect(dispose).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
       expect(dispose).toHaveBeenCalledOnce();
@@ -3130,52 +3206,60 @@ describe('configured external-session source materializer', () => {
       pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
       readAfterTranscript: async () => ({ outcome: 'already_current' }),
     };
-    const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
-      agents: [agent()],
-      contributionGenerationId: 'registry:g1',
-      readAccount,
-      readAccountRevision: () => revision,
-      subscribeAccountRevision: (listener) => {
-        notifyRevision.current = listener;
-        return () => {
-          notifyRevision.current = null;
-        };
-      },
-      isCurrent: () => true,
-      resolveProviderOps: async () => ops,
-    });
+    await withTemporaryActiveServerDir(async (activeServerDir) => {
+      const workSource = connectedCodexSource(activeServerDir, 'work');
+      const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
+        agents: [agent()],
+        contributionGenerationId: 'registry:g1',
+        activeServerDir,
+        readAccount,
+        readAccountRevision: () => revision,
+        subscribeAccountRevision: (listener) => {
+          notifyRevision.current = listener;
+          return () => {
+            notifyRevision.current = null;
+          };
+        },
+        isCurrent: () => true,
+        resolveProviderOps: async () => ops,
+      });
 
-    const staleList = lifecycle.authorService.list();
-    revision = 'settings:2';
-    notifyRevision.current?.(revision);
-    expect((await lifecycle.authorService.capabilities()).list).toEqual({
-      status: 'unavailable',
-      code: 'plugin_external_sources_reconfiguring',
-    });
-    releaseList();
-    await expect(staleList).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+      try {
+        const staleList = lifecycle.authorService.list();
+        revision = 'settings:2';
+        notifyRevision.current?.(revision);
+        expect((await lifecycle.authorService.capabilities()).list).toEqual({
+          status: 'unavailable',
+          code: 'plugin_external_sources_reconfiguring',
+        });
+        releaseList();
+        await expect(staleList).rejects.toMatchObject({ code: 'plugin_generation_retired' });
 
-    resolveSecondRead({
-      connectedServicesV2: [{
-        serviceId: 'openai-codex',
-        profiles: [{
-          profileId: 'work', status: 'connected', kind: 'oauth', providerEmail: null,
-          providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null,
-        }],
-        groups: [],
-      }],
-    });
-    await vi.waitFor(async () => {
-      expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' });
-    });
-    const current = await lifecycle.authorService.list({ sourceId: 'codexHome:connectedService:openai-codex:work:' });
-    expect(current.items[0]?.ref.remoteSessionId).toBe('work');
-    expect(Object.isFrozen(current.items[0]?.ref)).toBe(true);
+        resolveSecondRead({
+          connectedServicesV2: [{
+            serviceId: 'openai-codex',
+            profiles: [{
+              profileId: 'work', status: 'connected', kind: 'oauth', providerEmail: null,
+              providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null,
+            }],
+            groups: [],
+          }],
+        });
+        await vi.waitFor(async () => {
+          expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' });
+        });
+        const current = await lifecycle.authorService.list({ sourceId: workSource.sourceId });
+        expect(current.items[0]?.ref.remoteSessionId).toBe('work');
+        expect(Object.isFrozen(current.items[0]?.ref)).toBe(true);
 
-    lifecycle.dispose();
-    expect((await lifecycle.authorService.capabilities()).list).toEqual({
-      status: 'unavailable',
-      code: 'plugin_generation_retired',
+        lifecycle.dispose();
+        expect((await lifecycle.authorService.capabilities()).list).toEqual({
+          status: 'unavailable',
+          code: 'plugin_generation_retired',
+        });
+      } finally {
+        lifecycle.dispose();
+      }
     });
   });
 
@@ -3338,36 +3422,44 @@ describe('configured external-session source materializer', () => {
       pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
       readAfterTranscript: async () => ({ outcome: 'already_current' }),
     };
-    const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
-      agents: [agent()],
-      contributionGenerationId: 'registry:g1',
-      readAccount: async () => account,
-      readAccountRevision: () => revision,
-      subscribeAccountRevision: (listener) => {
-        notifyRevision = listener;
-        return () => { notifyRevision = null; };
-      },
-      isCurrent: () => true,
-      resolveProviderOps: async () => ops,
+    await withTemporaryActiveServerDir(async (activeServerDir) => {
+      const workSource = connectedCodexSource(activeServerDir, 'work');
+      const backupSource = connectedCodexSource(activeServerDir, 'backup');
+      const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
+        agents: [agent()],
+        contributionGenerationId: 'registry:g1',
+        activeServerDir,
+        readAccount: async () => account,
+        readAccountRevision: () => revision,
+        subscribeAccountRevision: (listener) => {
+          notifyRevision = listener;
+          return () => { notifyRevision = null; };
+        },
+        isCurrent: () => true,
+        resolveProviderOps: async () => ops,
+      });
+
+      try {
+        await expect(lifecycle.authorService.list({ sourceId: workSource.sourceId }))
+          .resolves.toMatchObject({ items: [{ ref: { remoteSessionId: 'work' } }] });
+
+        account = { connectedServicesV2: [] };
+        revision = 'settings:2';
+        (notifyRevision as ((next: string) => void) | null)?.(revision);
+        await vi.waitFor(async () => expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' }));
+        await expect(lifecycle.authorService.list({ sourceId: workSource.sourceId }))
+          .rejects.toMatchObject({ code: 'plugin_external_source_unavailable' });
+
+        account = connectedAccount('backup');
+        revision = 'settings:3';
+        (notifyRevision as ((next: string) => void) | null)?.(revision);
+        await vi.waitFor(async () => expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' }));
+        await expect(lifecycle.authorService.list({ sourceId: backupSource.sourceId }))
+          .resolves.toMatchObject({ items: [{ ref: { remoteSessionId: 'backup' } }] });
+      } finally {
+        lifecycle.dispose();
+      }
     });
-
-    await expect(lifecycle.authorService.list({ sourceId: 'codexHome:connectedService:openai-codex:work:' }))
-      .resolves.toMatchObject({ items: [{ ref: { remoteSessionId: 'work' } }] });
-
-    account = { connectedServicesV2: [] };
-    revision = 'settings:2';
-    (notifyRevision as ((next: string) => void) | null)?.(revision);
-    await vi.waitFor(async () => expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' }));
-    await expect(lifecycle.authorService.list({ sourceId: 'codexHome:connectedService:openai-codex:work:' }))
-      .rejects.toMatchObject({ code: 'plugin_external_source_unavailable' });
-
-    account = connectedAccount('backup');
-    revision = 'settings:3';
-    (notifyRevision as ((next: string) => void) | null)?.(revision);
-    await vi.waitFor(async () => expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' }));
-    await expect(lifecycle.authorService.list({ sourceId: 'codexHome:connectedService:openai-codex:backup:' }))
-      .resolves.toMatchObject({ items: [{ ref: { remoteSessionId: 'backup' } }] });
-    lifecycle.dispose();
   });
 
   it('coalesces rapid revisions and repairs a missed account notification from the canonical revision reader', async () => {

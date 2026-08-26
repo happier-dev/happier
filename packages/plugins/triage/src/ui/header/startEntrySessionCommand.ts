@@ -1,4 +1,5 @@
-import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { PluginUiActionExecutionOptions } from '@happier-dev/plugin-sdk/ui';
 
 import {
     TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
@@ -31,14 +32,14 @@ export type TriageSessionStartHostV1 = Readonly<{
     executeAction(
         action: string,
         input: JsonValue,
-        options?: PluginCancellationOptions,
+        options?: PluginUiActionExecutionOptions,
     ): Promise<unknown>;
 }>;
 
 export async function submitTriageEntrySessionStart(
     host: TriageSessionStartHostV1,
     input: TriageStartEntrySessionInputV1,
-    options?: PluginCancellationOptions,
+    options?: PluginUiActionExecutionOptions,
 ): Promise<TriageStartEntrySessionResultV1> {
     const result = await host.executeAction(
         TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,

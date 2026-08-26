@@ -47,13 +47,17 @@ import {
 } from './actions/userMarksProtocol.js';
 import {
   createTriageStartEntrySessionActionHandler,
+  createTriageStartPullRequestReviewActionHandler,
   createTriageUnlinkEntryFromSessionActionHandler,
 } from './actions/entrySession.js';
 import {
   TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
+  TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
   TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
   TriageStartEntrySessionInputV1Schema,
   TriageStartEntrySessionResultV1Schema,
+  TriageStartPullRequestReviewInputV1Schema,
+  TriageStartPullRequestReviewResultV1Schema,
   TriageUnlinkEntryFromSessionActionInputV1Schema,
   TriageUnlinkEntryFromSessionActionResultV1Schema,
 } from './actions/entrySessionProtocol.js';
@@ -260,6 +264,18 @@ function createTriagePlugin() {
         // canonical writer the link Action uses.
         hostAccess: ['account-storage'],
         run: createTriageStartEntrySessionActionHandler(),
+      },
+      [TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]: {
+        title: 'Start a pull request review',
+        description: 'Rereads the selected pull request and starts the chosen review engine.',
+        scopes: ['global'],
+        surfaces: ['plugin'],
+        dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
+        inputSchema: TriageStartPullRequestReviewInputV1Schema,
+        resultSchema: TriageStartPullRequestReviewResultV1Schema,
+        hostAccess: [],
+        run: createTriageStartPullRequestReviewActionHandler(),
       },
       [TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1]: {
         title: 'Unlink an entry from a session',

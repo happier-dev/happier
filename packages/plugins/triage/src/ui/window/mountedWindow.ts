@@ -155,29 +155,22 @@ export function readTriageListWindowSnapshot(
  * The only path from a surface to provider work. Pacing, single-flight and
  * last-known-good retention all stay with the store and its coordinator.
  *
- * Naming a host addresses that surface's window. Omitting one is a demand on
- * every mounted window — each still runs through its own host — because there is
- * no "current" scope to guess at and reading through another mount's Host API is
- * the very thing this seam exists to prevent.
+ * Naming a host addresses that surface's window. Every demand must name its
+ * exact scope: there is no "current" scope to guess at, and reading through
+ * another mount's Host API is the very thing this seam exists to prevent.
  */
 export function refreshTriageListWindow(
   trigger: TriageRefreshTriggerV1,
-  host?: TriageListWindowHostV1,
+  host: TriageListWindowHostV1,
 ): Promise<void> {
-  if (host !== undefined) {
-    return mountedByHost.get(host)?.store.refresh(trigger) ?? Promise.resolve();
-  }
-  return Promise.all(
-    [...mountedByHost.values()].map((mounted) => mounted.store.refresh(trigger)),
-  ).then(() => undefined);
+  return mountedByHost.get(host)?.store.refresh(trigger) ?? Promise.resolve();
 }
 
 /**
  * Append one more bounded window to a named surface's mount, or retry the
  * append that failed.
  *
- * It names a host for the same reason `refresh` does — the read leaves through
- * that mount's own Host API — but unlike `refresh` it has no all-mounts arm.
+ * It names a host because the read leaves through that mount's own Host API.
  * Depth is what one reader asked *this* surface for by pressing its own
  * continuation row; deepening every mounted window because one of them was
  * pressed would make another surface pay for a page nobody asked it for.

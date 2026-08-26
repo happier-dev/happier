@@ -46,6 +46,15 @@ export function isGithubSuccessStatus(status: number): boolean {
 }
 
 /**
+ * A GitHub 5xx is an answer about the server, not proof that the request had no
+ * effect. Every mutation owner must reconcile it with its authoritative read;
+ * 4xx responses remain the provider's definite rejection.
+ */
+export function isGithubWriteResponseAmbiguous(response: GithubApiResponseV1): boolean {
+  return response.status >= 500;
+}
+
+/**
  * Classifies a non-success GitHub response. `nowMs` is the invocation's single captured
  * clock reading: the emitted `retryNotBeforeMs` is an ABSOLUTE instant derived from
  * GitHub's own retry evidence, never from a guessed schedule.

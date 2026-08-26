@@ -255,12 +255,22 @@ describe('activate', () => {
     expect(actionIds).toContain('automation/setup-repository-event-v1');
     expect(actionIds).toContain(GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID);
     expect(actionIds).toContain(GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID);
-    const repositoryEvent = PLUGIN_MANIFEST.contributes.events?.find(
-      ({ id }) => id === 'automation/repository-event-v1',
+    const semanticEvents = (PLUGIN_MANIFEST.contributes.events ?? []).filter(
+      ({ id }) => id.startsWith('automation/'),
     );
-    expect(repositoryEvent).toMatchObject({
+    expect(semanticEvents.map(({ id }) => id)).toEqual([
+      'automation/issue-opened-v1',
+      'automation/pull-request-merged-v1',
+      'automation/pull-request-opened-v1',
+      'automation/repository-pushed-v1',
+    ]);
+    expect(semanticEvents).not.toContainEqual(expect.objectContaining({ id: 'automation/repository-event-v1' }));
+    expect(semanticEvents).toEqual(semanticEvents.map((event) => expect.objectContaining({
       kind: 'event',
-      payloadSchema: expect.objectContaining({ oneOf: expect.any(Array) }),
+      payloadSchema: expect.objectContaining({
+        type: 'object',
+        additionalProperties: false,
+      }),
       automation: {
         v: 1,
         eligible: true,
@@ -285,26 +295,16 @@ describe('activate', () => {
           },
         },
       },
-    });
-    expect(repositoryEvent?.payloadSchema).toMatchObject({
-      oneOf: expect.arrayContaining([
-        expect.objectContaining({
-          additionalProperties: false,
-          properties: expect.objectContaining({ kind: { const: 'push' } }),
-        }),
-        expect.objectContaining({
-          additionalProperties: false,
-          properties: expect.objectContaining({ kind: { const: 'issueOpened' } }),
-        }),
-        expect.objectContaining({
-          additionalProperties: false,
-          properties: expect.objectContaining({ kind: { const: 'pullRequestMerged' } }),
-        }),
-      ]),
-    });
+    })));
+    for (const event of semanticEvents) {
+      const properties = (event.payloadSchema as Readonly<{ properties?: Readonly<Record<string, unknown>> }>).properties;
+      expect(properties).not.toHaveProperty('kind');
+      expect(properties).not.toHaveProperty('eventId');
+      expect(properties).not.toHaveProperty('occurredAtMs');
+    }
     // The cold Event projection widens `automation` to an opaque object, so the
     // declared webhook source is read through its published shape.
-    const repositoryEventAutomationSource = (repositoryEvent?.automation as
+    const repositoryEventAutomationSource = (semanticEvents[0]?.automation as
       | Readonly<{ source?: Readonly<{ webhookContributionRef?: unknown }> }>
       | undefined)?.source;
     expect(repositoryEventAutomationSource?.webhookContributionRef).toEqual({

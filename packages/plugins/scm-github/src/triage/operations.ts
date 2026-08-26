@@ -3,10 +3,12 @@ import {
   MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
   TriageGetInputV1Schema,
   TriageListInstancesInputV1Schema,
+  TriagePrepareReviewWorkspaceInputV1Schema,
   TriageScanInputV1Schema,
   type TriageConfiguredSourceInstanceV1,
   type TriageGetResultV1,
   type TriageListInstancesResultV1,
+  type TriagePrepareReviewWorkspaceResultV1,
   type TriageScanResultV1,
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -15,18 +17,25 @@ import {
   createGithubListedAccountApiClient,
   type GithubApiClientV1,
 } from '../observations/githubApiClient.js';
+import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
 
 import {
   decodeGithubTriageConfiguration,
+  GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1,
   readGithubScanRepositoryKey,
   type GithubTriageConfigurationV1,
 } from './configuration.js';
 import {
+  GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1,
   GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1,
   readGithubTriageKindId,
 } from './contribution.js';
 import { classifyGithubTransportFailure, GITHUB_MISSING_LOCATOR_FAILURE } from './errors.js';
-import { runGithubTriageGet } from './get.js';
+import {
+  readGithubPullRequest,
+  runGithubTriageGet,
+  type GithubPullRequestSourceTipV1,
+} from './get.js';
 import { listGithubTriageInstances } from './instances.js';
 import { buildGithubRepositoryKey, parseGithubRoutingToken } from './locator.js';
 import {
@@ -36,6 +45,7 @@ import {
   toTriageScanEvidence,
   toTriageScanObservation,
 } from './mapping/protocol.js';
+import { createGithubRepositoryReader } from './repositories.js';
 import { runGithubTriageScan } from './scan/scan.js';
 import type { GithubTriageEntryLocalRefV1 } from './types.js';
 
@@ -131,6 +141,108 @@ async function openClient(
       ok: false as const,
       failure: toTriageFailure(classifyGithubTransportFailure(error)),
     });
+  }
+}
+
+/**
+ * Resolves the one GitHub route from the newest source locator, with a
+ * repository-scoped configured instance as the same first-read fallback `get`
+ * already owns. Account-wide instances have no configured repository and
+ * therefore fail closed when their locator cannot name one.
+ */
+function resolveGithubTriageRoutingToken(
+  configuration: GithubTriageConfigurationV1,
+  lastKnownLocator: Readonly<{ routingToken?: unknown }> | undefined,
+): string | null {
+  const observedRoute = parseGithubRoutingToken(lastKnownLocator?.routingToken);
+  return observedRoute === null
+    ? readGithubScanRepositoryKey(configuration)
+    : buildGithubRepositoryKey(observedRoute);
+}
+
+function isGithubPullRequestEntryRef(entryRef: Readonly<{
+  source: Readonly<{ pluginId: string; localId: string }>;
+  kindId: string;
+}>): boolean {
+  return entryRef.source.pluginId === GITHUB_PLUGIN_ID
+    && entryRef.source.localId === GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1
+    && entryRef.kindId === 'pull-request';
+}
+
+function hasSameGithubLocalRef(
+  left: GithubTriageEntryLocalRefV1,
+  right: GithubTriageEntryLocalRefV1,
+): boolean {
+  return left.kindId === right.kindId
+    && left.collisionScope === right.collisionScope
+    && left.entryId === right.entryId;
+}
+
+const GIT_OBJECT_ID_PATTERN = /^[0-9a-fA-F]{7,64}$/u;
+
+/**
+ * Projects only the editable source-side facts GitHub returned from its one
+ * current PR reread. The target/base repository and GitHub's synthetic PR ref
+ * never enter this boundary.
+ */
+function toGithubReviewWorkspaceSourceTip(
+  source: GithubPullRequestSourceTipV1,
+): Readonly<{
+  repository: Readonly<{
+    kind: 'github';
+    deployment: string;
+    repository: string;
+  }>;
+  cloneUrl: string;
+  branch: string;
+  sourceHeadSha: string;
+  fetchRef: string;
+}> | null {
+  // The source endpoint says which clone URL it means. It must at least agree
+  // with the GitHub deployment it declares; a malformed or cross-origin URL is
+  // not repaired into a guessed remote.
+  let cloneUrl: URL;
+  try {
+    cloneUrl = new URL(source.cloneUrl);
+  } catch {
+    return null;
+  }
+  if (
+    cloneUrl.origin !== GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1
+    || cloneUrl.username
+    || cloneUrl.password
+    || cloneUrl.search
+    || cloneUrl.hash
+    || buildGithubRepositoryKey({ owner: source.owner, name: source.name }) === null
+    || !GIT_OBJECT_ID_PATTERN.test(source.sourceHeadSha)
+  ) {
+    return null;
+  }
+  return Object.freeze({
+    repository: Object.freeze({
+      kind: 'github' as const,
+      deployment: GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1,
+      repository: `${source.owner}/${source.name}`,
+    }),
+    // Keep the provider-returned URL rather than constructing an equivalent
+    // path: the generic SCM owner proves it matches a local source remote.
+    cloneUrl: source.cloneUrl,
+    branch: source.branch,
+    sourceHeadSha: source.sourceHeadSha,
+    fetchRef: `refs/heads/${source.branch}`,
+  });
+}
+
+function mapGithubReviewWorkspaceMaterializationFailure(
+  errorCode: string,
+): TriagePrepareReviewWorkspaceResultV1 {
+  switch (errorCode) {
+    case 'NOT_REPOSITORY':
+    case 'INVALID_PATH':
+    case 'REMOTE_NOT_FOUND':
+      return Object.freeze({ kind: 'workspaceMismatch' as const });
+    default:
+      return Object.freeze({ kind: 'unavailable' as const, reason: 'scmResolver' as const });
   }
 }
 
@@ -240,22 +352,16 @@ export async function getGithubTriageEntry(
       failure: resolved.failure,
     });
   }
-  // The route comes only from current source evidence, in one order.
-  //
   // `lastKnownLocator` is the newest locator the target observed for THIS entry, and
   // it is the only evidence that can name the repository of an entry an account-wide
   // scan discovered: the configured instance names no repository at all, and §6 forbids
-  // recovering one by parsing `collisionScope`. This source stays the only parser of
-  // its own opaque token, and the locator grants no authority — the account is
-  // rematerialized and the response is validated against the requested ref before
-  // anything is called `present`, so a stale token yields `unresolved`, never a wrong
-  // `present`. A repository-scoped configured instance is the fallback for a first read
-  // the target has never observed. With neither, the answer is `unresolved` with no
-  // outbound call, and no path is guessed from identity or display text.
-  const observedRoute = parseGithubRoutingToken(getInput.lastKnownLocator?.routingToken);
-  const routingToken = observedRoute === null
-    ? readGithubScanRepositoryKey(resolved.configuration)
-    : buildGithubRepositoryKey(observedRoute);
+  // recovering one by parsing `collisionScope`. The same owner resolves this route for
+  // `get` and review-workspace preparation, so either path fails closed rather than
+  // guessing from identity or display text.
+  const routingToken = resolveGithubTriageRoutingToken(
+    resolved.configuration,
+    getInput.lastKnownLocator,
+  );
   if (routingToken === null) {
     return Object.freeze({
       kind: 'unresolved' as const,
@@ -279,4 +385,114 @@ export async function getGithubTriageEntry(
     signal: context.signal,
   });
   return toTriageObservation(observation);
+}
+
+/**
+ * Reauthorizes and rereads one selected GitHub pull request before it invokes
+ * exactly one source-neutral local materialization action. GitHub owns all
+ * provider/currentness facts above; generic SCM owns every filesystem, remote,
+ * fetch and worktree decision below.
+ */
+export async function prepareGithubTriageReviewWorkspace(
+  input: unknown,
+  context: PluginInvocationContext,
+  dependencies: GithubTriageOperationDependenciesV1 = {},
+): Promise<TriagePrepareReviewWorkspaceResultV1> {
+  const parsed = TriagePrepareReviewWorkspaceInputV1Schema.safeParse(input);
+  if (!parsed.success) return Object.freeze({ kind: 'unsupported' as const });
+  const preparation = parsed.data;
+
+  context.signal.throwIfAborted();
+  if (preparation.workspace === null) {
+    // No local state was selected, so no credential, network, local-SCM or
+    // fallback path may be touched.
+    return Object.freeze({ kind: 'workspaceRequired' as const });
+  }
+  if (!isGithubPullRequestEntryRef(preparation.entryRef)) {
+    return Object.freeze({ kind: 'unsupported' as const });
+  }
+
+  const resolved = resolveInstance(preparation.instance);
+  if (!resolved.ok) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'instanceMoved' as const });
+  }
+  const routingToken = resolveGithubTriageRoutingToken(
+    resolved.configuration,
+    preparation.lastKnownLocator,
+  );
+  const route = routingToken === null ? null : parseGithubRoutingToken(routingToken);
+  if (route === null) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
+  }
+
+  const localRef: GithubTriageEntryLocalRefV1 = Object.freeze({
+    kindId: 'pull-request',
+    collisionScope: preparation.entryRef.collisionScope,
+    entryId: preparation.entryRef.entryId,
+  });
+  const opened = await openClient(preparation.instance, context);
+  context.signal.throwIfAborted();
+  if (!opened.ok) {
+    return Object.freeze({ kind: 'unavailable' as const, reason: 'account' as const });
+  }
+
+  const reread = await readGithubPullRequest(
+    localRef,
+    route,
+    createGithubRepositoryReader({ client: opened.client, now: dependencies.now ?? Date.now }),
+    { client: opened.client, now: dependencies.now ?? Date.now, signal: context.signal },
+  );
+  context.signal.throwIfAborted();
+  if (
+    reread.observation.kind !== 'present'
+    || reread.facts === null
+    || !hasSameGithubLocalRef(reread.observation.localRef, localRef)
+    || reread.facts.reviewRevision === null
+    || reread.facts.sourceTip === null
+  ) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
+  }
+
+  const reviewRevision = reread.facts.reviewRevision;
+  if (
+    reviewRevision.baseSha !== preparation.observed.baseSha
+    || reviewRevision.headSha !== preparation.observed.headSha
+    || reviewRevision.nativeRevision !== preparation.observed.nativeRevision
+  ) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'observedHeadMoved' as const });
+  }
+  const sourceTip = toGithubReviewWorkspaceSourceTip(reread.facts.sourceTip);
+  if (sourceTip === null) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
+  }
+
+  let materialized;
+  try {
+    materialized = await context.services.actions.execute(
+      'scm.reviewWorkspace.materializePrepared',
+      {
+        cwd: preparation.workspace.rootPath,
+        displayName: sourceTip.branch,
+        sourceTip,
+      },
+      { signal: context.signal },
+    );
+  } catch {
+    context.signal.throwIfAborted();
+    return Object.freeze({ kind: 'unavailable' as const, reason: 'scmResolver' as const });
+  }
+  context.signal.throwIfAborted();
+  if (!materialized.success) {
+    return mapGithubReviewWorkspaceMaterializationFailure(materialized.errorCode);
+  }
+  return Object.freeze({
+    kind: 'prepared' as const,
+    repositoryPath: materialized.targetPath,
+    branch: materialized.branchName,
+    created: materialized.created,
+    currentness: materialized.currentness,
+    // The source only transports the exact reread number. Generic SCM/Reviews
+    // remains the one parser and validity owner for the reference grammar.
+    pullRequest: Object.freeze({ number: reread.facts.number }),
+  });
 }

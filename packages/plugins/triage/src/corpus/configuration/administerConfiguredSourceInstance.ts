@@ -43,21 +43,6 @@ import { deriveConfiguredSourceInstanceTag } from '../identity/tags.js';
 
 type InstanceCollections = Pick<CorpusCollectionsV1, 'sourceInstances'>;
 
-/**
- * How many source instances may be configured at once.
- *
- * This is a product bound with one owner, and it is checked here because this
- * is the only writer that can add one.
- *
- * Its value is a picked product count shared with the read-side wire array; no
- * transport, storage, or provider boundary currently derives thirty-two.
- *
- * Only active rows count. A retired row holds the history an explicit
- * reactivation needs and reaches no provider, so counting it would let a user
- * who reconfigured a connection lose a slot they are not using.
- */
-export const MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 = 32;
-
 /** The four source-lifecycle intents, exactly as the public Action declares them. */
 export type CorpusSourceInstanceAdministrationV1 =
     | Readonly<{ kind: 'create'; draft: TriageSourceInstanceDraftV1 }>
@@ -76,13 +61,7 @@ export type CorpusSourceInstanceAdministrationResultV1 =
         sourceInstanceId: string;
     }>
     | Readonly<{ kind: 'invalidCaller' }>
-    | Readonly<{ kind: 'conflict' }>
-    /**
-     * The configured set is full. It is a settled answer a Settings page can
-     * explain — remove a source you no longer use — and deliberately not a
-     * `conflict`, which means another writer won and re-reading resolves it.
-     */
-    | Readonly<{ kind: 'atMaximum' }>;
+    | Readonly<{ kind: 'conflict' }>;
 
 export type CorpusAdministerConfiguredSourceInstanceInputV1 = Readonly<{
     collections: InstanceCollections;
@@ -100,41 +79,6 @@ export type CorpusAdministerConfiguredSourceInstanceInputV1 = Readonly<{
 
 const INVALID_CALLER: CorpusSourceInstanceAdministrationResultV1 = Object.freeze({ kind: 'invalidCaller' });
 const CONFLICT: CorpusSourceInstanceAdministrationResultV1 = Object.freeze({ kind: 'conflict' });
-const AT_MAXIMUM: CorpusSourceInstanceAdministrationResultV1 = Object.freeze({ kind: 'atMaximum' });
-
-/**
- * Whether the active set has already reached the configured maximum.
- *
- * It reads one bounded page rather than counting the whole Collection. The
- * question is only whether the maximum is already reached, so a page of exactly
- * that size answers it without ever walking a set this maximum already bounds.
- *
- * **This is an admission check, not a set-level guard, and the difference is
- * load-bearing.** Every durable write here is a single-row CAS against a
- * tuple-addressed row (`core/CORPUS.md` §2.4); there is no CAS over the set. Two
- * creates for two different tuples racing at the boundary can therefore each
- * observe room and each commit, leaving the set one or two rows past the
- * maximum. Nothing may depend on the bound holding exactly:
- * `actions/listEntries.ts` reads one row past it and reports the surplus rather
- * than assuming this check kept the set small enough to carry.
- *
- * Closing that gap would take a compensating delete of a row the user just
- * created, which is a worse failure than the state it prevents — the overshoot
- * is bounded by concurrent explicit user actions, visible as truthful partial
- * coverage, and removable by the user. It is left open deliberately.
- */
-async function activeSetIsFull(
-    sourceInstances: CorpusCollectionHandleV1,
-    options?: PluginCancellationOptions,
-): Promise<boolean> {
-    const page = await sourceInstances.query({
-        index: CORPUS_SOURCE_INSTANCES_INDEX_ID.byLifecycle,
-        prefix: [CORPUS_SOURCE_INSTANCE_LIFECYCLE.active],
-        order: 'asc',
-        limit: MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
-    }, options);
-    return page.rows.length >= MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1;
-}
 
 function configuredFrom(
     source: PluginContributionIdentity,
@@ -219,17 +163,12 @@ async function readRow(
  * E2EE Account, and the stable id is deliberately private. It must include
  * retired rows so that an explicit reactivation stays possible at all.
  *
- * Its scale is therefore not `MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1`, and
- * that is the deliberate decision rather than an oversight. Active rows are
- * capped; retired rows are not, because a retired row is the record an explicit
- * reactivation restores and deleting one would lose durable user intent with no
- * upstream owner to recover it from. What bounds them instead is that a row is
- * addressed by the exact private match tuple, so retirement only accumulates a
- * row when the user reconfigures a connection onto a genuinely different
- * account or source-native key — and the Collection's own row quota
- * (`collection_quota_exceeded`) is the backstop if a user ever reaches it. The
- * walk is cursor-paged for exactly that reason: it reads whatever the set
- * actually holds instead of one page of it.
+ * A row is addressed by the exact private match tuple, so retirement only
+ * accumulates a row when the user reconfigures a connection onto a genuinely
+ * different account or source-native key. The Collection's own row quota
+ * (`collection_quota_exceeded`) is the storage backstop, and this walk is
+ * cursor-paged so it reads whatever the set actually holds rather than one
+ * arbitrary page of it.
  */
 export async function findConfiguredSourceInstanceRow(
     // Only the paged read; the narrow type is what lets a read-only caller pass
@@ -290,9 +229,6 @@ async function createInstance(
             ? { kind: 'reused', sourceInstanceId: existing.value.configured.instance.sourceInstanceId }
             : CONFLICT;
     }
-
-    // The row is genuinely absent, so committing it adds one to the active set.
-    if (await activeSetIsFull(sourceInstances, options)) return AT_MAXIMUM;
 
     const written = await putRow(sourceInstances, activeRow({
         instanceTag,
@@ -395,10 +331,6 @@ async function reactivateInstance(
     if (current.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active) {
         return { kind: 'active', sourceInstanceId };
     }
-    // Restoring a retired row adds one to the active set, exactly as a create
-    // does, so it meets the same maximum.
-    if (await activeSetIsFull(input.collections.sourceInstances, options)) return AT_MAXIMUM;
-
     const written = await putRow(input.collections.sourceInstances, activeRow({
         instanceTag: current.rowId,
         source: input.source,

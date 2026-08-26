@@ -74,4 +74,17 @@ describe('the V1 source descriptor', () => {
 
         expect(admitted).toEqual({ ok: false, reason: 'duplicateKindId' });
     });
+
+    it('does not reject a descriptor solely because it has more than thirty-two kinds', () => {
+        const parsed = TriageSourceDescriptorV1Schema.safeParse({
+            ...MINIMAL,
+            kinds: Array.from({ length: 33 }, (_unused, index) => ({
+                id: `kind-${index + 1}`,
+                workflowSubject: 'issue',
+                displayName: `Kind ${index + 1}`,
+            })),
+        });
+
+        expect(parsed.success).toBe(true);
+    });
 });

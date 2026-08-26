@@ -169,6 +169,8 @@ export type TriageDetailHeaderViewProps = Readonly<{
   lastKnown?: boolean;
   /** Visible direct Pin/Unpin for the selected entry. */
   pin?: TriageDetailPinActionV1;
+  linkedSessionsPageState?: 'idle' | 'loading' | 'failed';
+  onLoadMoreLinkedSessions?: () => void;
 }>;
 
 export type TriageDetailPinActionV1 = Readonly<{
@@ -253,7 +255,12 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
         />
       )}
 
-      <TriageLinkedSessions sessions={header.linkedSessions} hasMore={header.linkedSessionsHasMore} />
+      <TriageLinkedSessions
+        sessions={header.linkedSessions}
+        hasMore={header.linkedSessionsHasMore}
+        pageState={props.linkedSessionsPageState}
+        onLoadMore={props.onLoadMoreLinkedSessions}
+      />
     </>
   );
 }
@@ -290,9 +297,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const detail = useTriageEntryDetail(
     selection === null || observation === null ? null : { selection, observation },
   );
-  const linkedSessions = detail?.kind === 'ready' ? detail.input.linkedSessions : EMPTY_SESSIONS;
+  const linkedSessions = detail?.kind === 'ready' ? detail.linkedSessions : EMPTY_SESSIONS;
   const linkedSessionsHasMore = detail?.kind === 'ready'
-    ? detail.input.linkedSessionsHasMore === true
+    ? detail.linkedSessionsNextCursor !== undefined
     : false;
   const sourceDescriptor = detail?.kind === 'ready' ? detail.sourceDescriptor : null;
   const header = React.useMemo(() => projectTriageDetailHeaderV1({
@@ -376,7 +383,15 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
 
   return (
     <Stack gap="small">
-      <TriageDetailHeaderView header={header} pin={props.pin} onClose={props.onClose} />
+      <TriageDetailHeaderView
+        header={header}
+        pin={props.pin}
+        onClose={props.onClose}
+        {...(detail?.kind === 'ready' ? {
+          linkedSessionsPageState: detail.linkedSessionsPageState,
+          onLoadMoreLinkedSessions: detail.loadMoreLinkedSessions,
+        } : {})}
+      />
 
       {workflowSubject === null || display === null ? null : (
         <Stack gap="small">

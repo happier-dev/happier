@@ -13,6 +13,7 @@ import {
     TriageSourceDescriptorV1Schema,
     TriageSourceInstanceIdV1Schema,
 } from '@happier-dev/triage-protocol/v1';
+import { TriageCollectionCursorV1Schema } from './collectionCursorProtocol.js';
 
 /**
  * The durable half of one mounted detail input.
@@ -42,6 +43,8 @@ export const TriageReadEntryDetailInputV1Schema = defineProtocolObject({
      * choosing "the first" would silently show a different provider's truth.
      */
     sourceInstanceId: TriageSourceInstanceIdV1Schema,
+    /** Absent reads the first linked-Session page; present continues it opaquely. */
+    linkedSessionsCursor: TriageCollectionCursorV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageReadEntryDetailInputV1 = ReturnType<
     typeof TriageReadEntryDetailInputV1Schema.parse
@@ -83,10 +86,8 @@ export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
         linkedSessions: defineProtocolArray(TriageLinkedSessionProjectionV1Schema, {
             maxItems: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
         }),
-        linkedSessionsHasMore: defineProtocolUnion([
-            defineProtocolLiteral(true),
-            defineProtocolLiteral(false),
-        ]),
+        /** The Collection owner's opaque continuation; absent means this page completed the relation. */
+        linkedSessionsNextCursor: TriageCollectionCursorV1Schema.optional(),
         sourceDescriptor: TriageSourceDescriptorV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({

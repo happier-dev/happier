@@ -22,6 +22,7 @@
 
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import { useTriageEvidenceDisclosure } from '@happier-dev/triage-sources/ui';
 import {
     Badge,
     Banner,
@@ -64,6 +65,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
+import { createPosthogEvidenceCandidate } from '../composer/candidate.js';
 import {
     buildPosthogDetailGetRequest,
     projectPosthogDetailSurface,
@@ -422,9 +424,58 @@ function OccurrencesPanel({
     );
 }
 
-function StackTracePanel({
+function SelectedEvidenceDisclosure({
+    input,
     controller,
-}: Readonly<{ controller: PosthogOccurrenceControllerV1 }>): React.ReactElement {
+}: Readonly<{
+    input: TriageDetailSurfaceInputV1;
+    controller: PosthogOccurrenceControllerV1;
+}>): React.ReactElement | null {
+    const disclosure = useTriageEvidenceDisclosure();
+    const selected = controller.selectedEvent;
+    const frozenRequest = controller.selectedFrozenRequest;
+    const selectedAbsoluteOffset = controller.selectedAbsoluteOffset;
+
+    // The parent owns availability and the exact Composer transaction. A source only
+    // shows this affordance when it can form one opaque, provider-owned candidate.
+    if (!disclosure.available
+        || selected === undefined
+        || frozenRequest === undefined
+        || selectedAbsoluteOffset === undefined) {
+        return null;
+    }
+
+    return (
+        <Button
+            title="Add selected occurrence to message"
+            variant="secondary"
+            onPress={() => {
+                void disclosure.disclose(async (signal) => {
+                    if (signal.aborted) return null;
+                    return createPosthogEvidenceCandidate({
+                        instance: input.instance,
+                        localRef: {
+                            kindId: input.observation.entryRef.kindId,
+                            collisionScope: input.observation.entryRef.collisionScope,
+                            entryId: input.observation.entryRef.entryId,
+                        },
+                        selected,
+                        frozenRequest,
+                        selectedAbsoluteOffset,
+                    });
+                });
+            }}
+        />
+    );
+}
+
+function StackTracePanel({
+    input,
+    controller,
+}: Readonly<{
+    input: TriageDetailSurfaceInputV1;
+    controller: PosthogOccurrenceControllerV1;
+}>): React.ReactElement {
     const trace = useActiveDerivation(
         () => posthogStackTrace(controller.selectedEvent),
         [controller.selectedEvent],
@@ -470,6 +521,7 @@ function StackTracePanel({
                             />
                         )
                         : null}
+                    <SelectedEvidenceDisclosure input={input} controller={controller} />
                 </Stack>
             )}
             empty={(
@@ -755,7 +807,7 @@ function PosthogDetailBody({
         occurrences: (
             <OccurrencesPanel controller={controller} locale={locale} nowMs={nowMs} />
         ),
-        'stack-trace': <StackTracePanel controller={controller} />,
+        'stack-trace': <StackTracePanel input={input} controller={controller} />,
         'affected-sessions': <AffectedSessionsPanel controller={controller} />,
         // The Activity controller is created inside its own panel: its lifetime is the
         // panel's active interval, so hoisting it here would outlive the leave the

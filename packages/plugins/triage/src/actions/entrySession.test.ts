@@ -21,9 +21,14 @@ import {
 } from '../corpus/testkit/observations.test-support.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
+import { startTriageEntrySession } from './entrySession.js';
 import {
     TESTKIT_LINK_DISPLAY,
     TESTKIT_SPAWN_REQUEST,
+    TESTKIT_OBSERVED_REVISION,
+    TESTKIT_SELECTED_WORKSPACE,
+    createTestkitPrepareReviewWorkspace,
+    testkitConfiguredInstance,
     createTestkitActionInvoker,
     spawnSuccess,
     type TestkitActionInvoker,
@@ -32,6 +37,7 @@ import {
     TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
     TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
     TriageStartEntrySessionInputV1Schema,
+    TriageStartPullRequestReviewInputV1Schema,
 } from './entrySessionProtocol.js';
 
 /**
@@ -459,14 +465,55 @@ describe('the explicit unlink Action', () => {
 });
 
 describe('the Session-start wire', () => {
-    /**
-     * The pull-request materialization is deliberately unreachable from this
-     * Action: preparing one needs the selected source's admitted
-     * `prepareReviewWorkspace` operation, and no shipped source binds it. A wire
-     * that accepted the request would put a control in the product that always
-     * resolves the workspace refusal.
-     */
-    it('cannot carry a review-workspace request while nothing can prepare one', () => {
+    it('admits and preserves every selected review engine beyond the former local cap', () => {
+        const engineIds = Array.from({ length: 17 }, (_, index) => `review-engine-${index + 1}`);
+
+        const parsed = TriageStartPullRequestReviewInputV1Schema.safeParse({
+            v: 1,
+            sessionId: 'session-a',
+            review: {
+                instance: testkitConfiguredInstance(),
+                entryRef: START_INPUT_BASE.entryRef,
+                lastKnownLocator: START_INPUT_BASE.display.locator,
+                observed: TESTKIT_OBSERVED_REVISION,
+                pullRequest: { number: 17 },
+            },
+            engineIds,
+            instructions: 'Review the selected pull request.',
+        });
+
+        expect(parsed.success).toBe(true);
+        if (parsed.success) expect(parsed.data.engineIds).toEqual(engineIds);
+    });
+
+    it('admits the selected prepare-operation payload only as a transient carrier relay', () => {
+        const selection = {
+            target: { pluginId: 'happier.triage', immutableGenerationId: 'triage-generation-1' },
+            point: {
+                pointId: 'sources',
+                protocol: { id: 'happier.triage.sources', version: 1 },
+            },
+            contributor: {
+                pluginId: START_INPUT_BASE.entryRef.source.pluginId,
+                contributionId: START_INPUT_BASE.entryRef.source.localId,
+                immutableGenerationId: 'source-generation-1',
+            },
+        } as const;
+        const selectedInput = {
+            v: 1,
+            instance: {
+                instance: {
+                    source: START_INPUT_BASE.entryRef.source,
+                    sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+                },
+                binding: {},
+            },
+            entryRef: START_INPUT_BASE.entryRef,
+            lastKnownLocator: START_INPUT_BASE.display.locator,
+            observed: TESTKIT_OBSERVED_REVISION,
+            workspace: TESTKIT_SELECTED_WORKSPACE,
+        } as const;
+
         expect(TriageStartEntrySessionInputV1Schema.safeParse({
             ...START_INPUT_BASE,
             workspaceMode: 'pull_request',
@@ -474,9 +521,93 @@ describe('the Session-start wire', () => {
                 kind: 'new',
                 creationKey: 'creation-key-1',
                 spawn: TESTKIT_SPAWN_REQUEST,
-                materialization: { kind: 'reviewWorkspace' },
+                materialization: {
+                    kind: 'reviewWorkspace',
+                    request: {
+                        instance: testkitConfiguredInstance(),
+                        entryRef: START_INPUT_BASE.entryRef,
+                        workflowSubject: 'pullRequest',
+                        lastKnownLocator: START_INPUT_BASE.display.locator,
+                        observed: TESTKIT_OBSERVED_REVISION,
+                        workspace: TESTKIT_SELECTED_WORKSPACE,
+                    },
+                },
             },
-        }).success).toBe(false);
+            prepareReviewWorkspaceSelection: {
+                selection,
+                input: selectedInput,
+                credentialRef: testkitConfiguredInstance().binding.account,
+            },
+        }).success).toBe(true);
+    });
+
+    it('carries an exact selected-PR workspace request only to the supplied admitted operation', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
+        const source = createTestkitPrepareReviewWorkspace({
+            results: [{
+                kind: 'prepared',
+                repositoryPath: '/workspaces/example-review',
+                branch: 'pr-17',
+                created: true,
+                pullRequest: { number: 17 },
+                currentness: { kind: 'currentAtObservedHead' },
+            }],
+        });
+        const input = TriageStartEntrySessionInputV1Schema.parse({
+            ...START_INPUT_BASE,
+            workspaceMode: 'pull_request',
+            destination: {
+                kind: 'new',
+                creationKey: 'creation-key-1',
+                spawn: TESTKIT_SPAWN_REQUEST,
+                materialization: {
+                    kind: 'reviewWorkspace',
+                    request: {
+                        instance: testkitConfiguredInstance(),
+                        entryRef: START_INPUT_BASE.entryRef,
+                        workflowSubject: 'pullRequest',
+                        lastKnownLocator: START_INPUT_BASE.display.locator,
+                        observed: TESTKIT_OBSERVED_REVISION,
+                        workspace: TESTKIT_SELECTED_WORKSPACE,
+                    },
+                },
+            },
+        });
+
+        const result = await startTriageEntrySession(input, {
+            collections: { sessionLinks: collections.sessionLinks },
+            execute: invoker.execute,
+            nowMs: () => 1_760_000_900_000,
+            prepareReviewWorkspace: source.deps,
+        } as Parameters<typeof startTriageEntrySession>[1]);
+
+        expect(result).toMatchObject({
+            v: 1,
+            type: 'opened',
+            sessionId: 'session-a',
+            disposition: 'created',
+            // A Session that did open from a prepared selected-PR workspace
+            // exposes only the bounded continuation needed to select engines.
+            // It never exposes source tips or a second SCM route.
+            review: {
+                instance: testkitConfiguredInstance(),
+                entryRef: START_INPUT_BASE.entryRef,
+                lastKnownLocator: START_INPUT_BASE.display.locator,
+                observed: TESTKIT_OBSERVED_REVISION,
+                pullRequest: { number: 17 },
+            },
+        });
+        expect(source.calls).toHaveLength(1);
+        expect(source.calls[0]?.input).toMatchObject({
+            entryRef: START_INPUT_BASE.entryRef,
+            lastKnownLocator: START_INPUT_BASE.display.locator,
+            observed: TESTKIT_OBSERVED_REVISION,
+            workspace: TESTKIT_SELECTED_WORKSPACE,
+        });
+        expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
+            directory: '/workspaces/example-review',
+        });
     });
 
     it('cannot carry a caller\'s own prose into the Session it creates', () => {

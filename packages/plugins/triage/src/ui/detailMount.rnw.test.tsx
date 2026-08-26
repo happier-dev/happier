@@ -11,6 +11,7 @@ import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1,
+    MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
     TriageConfiguredSourceInstanceV1Schema,
     TriageDetailSurfaceInputV1JsonSchema,
     TriageEntryRefV1Schema,
@@ -36,8 +37,9 @@ import {
     TriageListPinnedEntriesInputV1Schema,
 } from '../actions/userMarksProtocol.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
-import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
-import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
+import { fromCorpusStoredRow, toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
+import type { CorpusSessionLinkRowV1, CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
+import { deriveSessionLinkEntryTag, deriveSessionLinkTag } from '../corpus/identity/tags.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import {
     testkitLocator,
@@ -330,6 +332,8 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
     /** Makes one same-entry pass publish a genuinely newer observation. */
     const observationRevision = { current: 3_000 };
     let blockedDetailRead: Readonly<{ promise: Promise<void>; release: () => void }> | null = null;
+    let failNextLinkedSessionPage = false;
+    let finalLinkedSessionId: string | null = null;
 
     const admitted = [{
         contributor: CONTRIBUTOR,
@@ -381,6 +385,10 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
             // The real handler over the real Collections; only the invocation
             // context's caller stamp is the host's to supply.
             const detailInput = TriageReadEntryDetailInputV1Schema.parse(request.input);
+            if (detailInput.linkedSessionsCursor !== undefined && failNextLinkedSessionPage) {
+                failNextLinkedSessionPage = false;
+                throw new Error('linked Session page unavailable');
+            }
             readDetailInstanceIds.push(detailInput.sourceInstanceId);
             const blocked = blockedDetailRead;
             blockedDetailRead = null;
@@ -390,7 +398,11 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
                 {
                     sourceInstances: collections.sourceInstances,
                     sessionLinks: collections.sessionLinks,
-                    readSessionSummary: async () => null,
+                    readSessionSummary: async (sessionId) => ({
+                        title: sessionId === finalLinkedSessionId
+                            ? 'Linked Session 201'
+                            : `Linked ${sessionId}`,
+                    }),
                     readAdmittedSources: async () => admitted,
                 },
             );
@@ -408,6 +420,49 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
         executeAction,
         observes,
         readDetailInstanceIds,
+        async seedLinkedSessions(count: number): Promise<void> {
+            const entryRef = TriageEntryRefV1Schema.parse({
+                source: SOURCE,
+                kindId: 'pull-request',
+                collisionScope: 'example/repository',
+                entryId: '17',
+            });
+            const entryTag = await deriveSessionLinkEntryTag(collections.sessionLinks, entryRef);
+            const links = await Promise.all(Array.from({ length: count }, async (_unused, index) => {
+                const sessionId = `session-linked-${String(index + 1).padStart(3, '0')}`;
+                const linkTag = await deriveSessionLinkTag(collections.sessionLinks, entryRef, sessionId);
+                return {
+                    linkTag,
+                    entryTag,
+                    sessionId,
+                    linkedAtMs: 4_000 + index,
+                    entryRef,
+                    identityEntryRef: entryRef,
+                    displayPathAtLink: 'example/repository#17',
+                } satisfies CorpusSessionLinkRowV1;
+            }));
+            for (const link of links) control.sessionLinks.seed(toCorpusStoredValue(link));
+            const first = await collections.sessionLinks.query({
+                index: 'by-entry',
+                prefix: [entryTag],
+                order: 'asc',
+                limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
+            });
+            if (first.nextCursor === undefined) throw new Error('Expected a second linked Session page.');
+            const second = await collections.sessionLinks.query({
+                index: 'by-entry',
+                prefix: [entryTag],
+                order: 'asc',
+                cursor: first.nextCursor,
+                limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
+            });
+            const finalRow = second.rows[0];
+            if (finalRow === undefined) throw new Error('Expected the final linked Session row.');
+            finalLinkedSessionId = fromCorpusStoredRow<CorpusSessionLinkRowV1>(finalRow).value.sessionId;
+        },
+        failNextLinkedSessionPage(): void {
+            failNextLinkedSessionPage = true;
+        },
         publishNewerObservation(): void {
             observationRevision.current += 1;
         },
@@ -438,12 +493,16 @@ async function mountShell(
         subPath?: string;
         launchInput?: JsonValue;
         secondInstance?: boolean;
+        linkedSessionCount?: number;
     }> = {},
 ): Promise<PluginUiTestkit> {
     const harness = createHarness(
         options.secondInstance === undefined ? {} : { secondInstance: options.secondInstance },
     );
     currentHarness = harness;
+    if (options.linkedSessionCount !== undefined) {
+        await harness.seedLinkedSessions(options.linkedSessionCount);
+    }
     lastPageLocation = null;
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -479,7 +538,7 @@ async function mountShell(
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view'); });
+    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
     return fixture;
 }
 
@@ -528,6 +587,52 @@ afterEach(async () => {
 });
 
 describe('opening a row into the source detail', () => {
+    it('loads another linked-Session page without dropping or duplicating earlier rows, and retries a failed page', async () => {
+        const shell = await mountShell({ linkedSessionCount: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1 });
+        await openTheRow(shell);
+
+        const initialLinkedSessionNames = (await shell.getAllByRole('button'))
+            .map((button) => button.name)
+            .filter((name) => name.startsWith('Linked session-linked-'));
+        expect(initialLinkedSessionNames).toHaveLength(MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1);
+        const firstLinkedSessionName = initialLinkedSessionNames[0];
+        if (firstLinkedSessionName === undefined) throw new Error('The first linked Session page was empty.');
+        const firstLinkedSessionNode = Array.from(document.querySelectorAll('*')).find(
+            (candidate) => candidate.textContent === firstLinkedSessionName
+                && !Array.from(candidate.children).some((child) => child.textContent === firstLinkedSessionName),
+        );
+        if (firstLinkedSessionNode === undefined) throw new Error('The first linked Session row was not mounted.');
+        const harness = currentHarness;
+        if (harness === null) throw new Error('the shell was not mounted');
+        harness.failNextLinkedSessionPage();
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Load more' }));
+        });
+        await expect(shell.getByText('More linked Sessions could not be loaded.')).resolves.toBeDefined();
+        await expect(shell.queryByText('Linked Session 201')).resolves.toBeUndefined();
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Retry' }));
+        });
+
+        await expect(shell.getByRole('button', { name: 'Linked Session 201' })).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: firstLinkedSessionName })).resolves.toBeDefined();
+        const retainedFirstLinkedSessionNode = Array.from(document.querySelectorAll('*')).find(
+            (candidate) => candidate.textContent === firstLinkedSessionName
+                && !Array.from(candidate.children).some((child) => child.textContent === firstLinkedSessionName),
+        );
+        expect(retainedFirstLinkedSessionNode).toBe(firstLinkedSessionNode);
+        const loadedLinkedSessionNames = (await shell.getAllByRole('button'))
+            .map((button) => button.name)
+            .filter((name) => name === 'Linked Session 201' || name.startsWith('Linked session-linked-'));
+        expect(loadedLinkedSessionNames).toHaveLength(MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1);
+        expect(new Set(loadedLinkedSessionNames).size)
+            .toBe(MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1);
+        await expect(shell.queryByRole('button', { name: 'Load more' })).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
+    });
+
     it('mounts the admitted source detail contribution', async () => {
         const shell = await mountShell();
 
@@ -551,7 +656,7 @@ describe('opening a row into the source detail', () => {
         const releaseDetailRead = harness.blockNextDetailRead();
         harness.publishNewerObservation();
 
-        await act(async () => { await refreshTriageListWindow('manual'); });
+        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi); });
         await act(async () => { await Promise.resolve(); });
 
         // A background reread may update the mounted input when it settles, but
@@ -676,7 +781,7 @@ describe('opening a row into the source detail', () => {
         // while the selection — which is the reader's, not the window's —
         // stays. `core/SURFACE.md` §3.1 keeps it for exactly this.
         if (currentHarness !== null) currentHarness.observes.current = false;
-        await act(async () => { await refreshTriageListWindow('manual'); });
+        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi); });
         await act(async () => { await Promise.resolve(); });
 
         await expect(shell.getByText('This entry is no longer in the list')).resolves.toBeDefined();
@@ -819,7 +924,7 @@ describe('opening a row into the source detail', () => {
                 sourceInstance: { source: SOURCE, sourceInstanceId: SECOND_INSTANCE },
             }) as unknown as JsonValue,
         });
-        await act(async () => { await refreshTriageListWindow('manual'); });
+        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi); });
         await act(async () => { await Promise.resolve(); });
         await act(async () => { await Promise.resolve(); });
 

@@ -33,6 +33,14 @@ export const POSTHOG_ISSUE_EVENTS_INCLUDE = [
     'correlation',
 ] as const;
 
+/** True only for the one explicit include policy this source ships. */
+export function isPosthogIssueEventsInclude(
+    value: readonly string[],
+): value is typeof POSTHOG_ISSUE_EVENTS_INCLUDE {
+    return value.length === POSTHOG_ISSUE_EVENTS_INCLUDE.length
+        && value.every((entry, index) => entry === POSTHOG_ISSUE_EVENTS_INCLUDE[index]);
+}
+
 /** One raw sampled event, still carrying its unbounded provider properties bag. */
 export type PosthogRawIssueEvent = Readonly<{
     uuid: string;

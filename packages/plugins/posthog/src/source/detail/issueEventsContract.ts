@@ -26,12 +26,16 @@ import {
     defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
+    MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
     TriageConfiguredSourceInstanceV1Schema,
     TriageSourceEntryLocalRefV1Schema,
     TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import { POSTHOG_ISSUE_EVENTS_MAX_LIMIT } from '../../api/types/events.js';
+import {
+    POSTHOG_ISSUE_EVENTS_INCLUDE,
+    POSTHOG_ISSUE_EVENTS_MAX_LIMIT,
+} from '../../api/types/events.js';
 import { POSTHOG_SAMPLED_EVENT_BOUNDS_V1 } from '../../ui/detail/issueEventProjection.js';
 
 /** The largest continuation this source will mint or accept, in UTF-8 bytes. */
@@ -132,6 +136,57 @@ export type PosthogSampledEventsInputV1 = ReturnType<
     typeof PosthogSampledEventsInputV1Schema.parse
 >;
 
+/**
+ * The non-sensitive geometry that produced one mounted sample page.
+ *
+ * The detail controller retains it only beside the rows that page produced, so a later
+ * disclosure can name the exact frozen query without retaining provider response bytes.
+ * Its explicit privacy filters travel with the dynamic request geometry; the bounded
+ * Composer candidate compacts that known fixed profile and the canonical issue-events
+ * builder remains the only code that reconstructs the provider body at resolution.
+ */
+export const PosthogFrozenIssueEventsRequestV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    issueId: defineProtocolUtf8String({
+        maxUtf8Bytes: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.identifierUtf8Bytes,
+        minLength: 1,
+    }),
+    from: defineProtocolUtf8String({
+        maxUtf8Bytes: MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
+        minLength: 1,
+    }),
+    to: defineProtocolUnion([
+        defineProtocolLiteral(null),
+        defineProtocolUtf8String({
+            maxUtf8Bytes: MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
+            minLength: 1,
+        }),
+    ]),
+    filterTestAccounts: defineProtocolLiteral(false),
+    onlyAppFrames: defineProtocolLiteral(false),
+    include: defineProtocolArray(
+        defineProtocolUnion([
+            defineProtocolLiteral(POSTHOG_ISSUE_EVENTS_INCLUDE[0]),
+            defineProtocolLiteral(POSTHOG_ISSUE_EVENTS_INCLUDE[1]),
+            defineProtocolLiteral(POSTHOG_ISSUE_EVENTS_INCLUDE[2]),
+            defineProtocolLiteral(POSTHOG_ISSUE_EVENTS_INCLUDE[3]),
+        ]),
+        {
+            minItems: POSTHOG_ISSUE_EVENTS_INCLUDE.length,
+            maxItems: POSTHOG_ISSUE_EVENTS_INCLUDE.length,
+        },
+    ),
+    limit: defineProtocolNumber({
+        integer: true,
+        minimum: 1,
+        maximum: POSTHOG_ISSUE_EVENTS_MAX_LIMIT,
+    }),
+    offset: defineProtocolNumber({ integer: true, minimum: 0 }),
+}, { policy: 'closed' });
+export type PosthogFrozenIssueEventsRequestV1 = ReturnType<
+    typeof PosthogFrozenIssueEventsRequestV1Schema.parse
+>;
+
 export const PosthogSampledEventsResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('sampled'),
@@ -153,6 +208,11 @@ export const PosthogSampledEventsResultV1Schema = defineProtocolUnion([
          * together with `continuation` is the provider's own end of the sample.
          */
         incomplete: defineProtocolLiteral(POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1).optional(),
+        /**
+         * Added as optional so a source detail paired with an older daemon still reads
+         * samples normally; only the selected-evidence control stays unavailable.
+         */
+        frozenRequest: PosthogFrozenIssueEventsRequestV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),

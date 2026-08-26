@@ -53,8 +53,6 @@ export const AZURE_DETAIL_BOUNDS_V1: AzureDetailBoundsV1 = Object.freeze({
 export const AZURE_MAX_DETAIL_ROWS_V1 = 100;
 /** Threads one read publishes; the documented endpoint returns all of them at once. */
 export const AZURE_MAX_THREAD_ROWS_V1 = 200;
-/** Comments published inside one thread. */
-export const AZURE_MAX_THREAD_COMMENTS_V1 = 60;
 /** Iterations published by the one shared iteration read. */
 export const AZURE_MAX_ITERATION_ROWS_V1 = 100;
 
@@ -145,7 +143,7 @@ export type AzurePageProjectionV1<TRow> = Readonly<{
 
 function projectRows<TRow>(
   body: unknown,
-  maxRows: number,
+  maxRows: number | null,
   projectOne: (row: JsonRecord) => Readonly<{ row: TRow; truncated: boolean }> | null,
 ): AzurePageProjectionV1<TRow> {
   // Azure wraps every collection as `{ count, value: [...] }`.
@@ -156,7 +154,7 @@ function projectRows<TRow>(
   let omitted = 0;
   let truncated = false;
   for (const candidate of values) {
-    if (rows.length >= maxRows || !isRecord(candidate)) {
+    if ((maxRows !== null && rows.length >= maxRows) || !isRecord(candidate)) {
       omitted += 1;
       continue;
     }
@@ -473,10 +471,9 @@ export function projectAzureThreadRows(
       : null;
 
     const allComments = Array.isArray(raw.comments) ? raw.comments : [];
-    const retainedComments = allComments.slice(-AZURE_MAX_THREAD_COMMENTS_V1);
     const comments = projectRows<AzureProjectedThreadCommentV1>(
-      { value: retainedComments },
-      AZURE_MAX_THREAD_COMMENTS_V1,
+      { value: allComments },
+      null,
       (comment) => {
         const commentId = readPositiveInteger(comment.id);
         if (commentId === null) return null;
@@ -510,8 +507,7 @@ export function projectAzureThreadRows(
         ...(path === null ? {} : { path: path.value }),
         ...(rightStart === null ? {} : { rightFileStartLine: rightStart }),
         comments: comments.rows,
-        omittedCommentCount:
-          Math.max(0, allComments.length - retainedComments.length) + comments.omittedRowCount,
+        omittedCommentCount: comments.omittedRowCount,
         ...(truncated ? { truncated: true as const } : {}),
       }),
       truncated,

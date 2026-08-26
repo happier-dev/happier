@@ -7,6 +7,11 @@ import {
     triageNewSessionWireMaterializationV1,
 } from './newSessionDestination.js';
 import type { TriageActionPlacementV1 } from '../../sessions/actionLaunch.js';
+import {
+    TESTKIT_OBSERVED_REVISION,
+    testkitConfiguredInstance,
+} from '../../sessions/testkit/entrySessionTestkit.test-support.js';
+import { testkitEntryRef, testkitLocator } from '../../corpus/testkit/observations.test-support.js';
 
 /**
  * The one projection from the host's own settled new-Session draft to the
@@ -108,16 +113,51 @@ describe('projecting the settled new-Session draft', () => {
             : null).toEqual(['directory', 'kind']);
     });
 
-    it('refuses a pull-request action before any Session surface is opened', () => {
-        // The reachable wire cannot request a prepared review workspace
-        // (`actions/entrySessionProtocol.ts`), so asking the reader to pick an
-        // Agent and a directory first would spend their choice on a start the
-        // gate refuses afterwards.
+    it('carries only the exact saved project/machine/root scope into selected-PR preparation', () => {
         expect(projectTriageNewSessionDestinationV1({
             workspaceMode: 'pull_request',
             creationKey: 'creation-key-4',
             settlement: SETTLED,
-        })).toEqual({ status: 'refused', reason: 'preparedWorkspaceUnsupported' });
+            reviewWorkspace: {
+                instance: testkitConfiguredInstance(),
+                entryRef: testkitEntryRef(),
+                lastKnownLocator: testkitLocator(),
+                observed: TESTKIT_OBSERVED_REVISION,
+            },
+            placementCandidates: [{
+                projectKey: { id: 'project-example' },
+                serverId: 'server-a',
+                machineId: 'machine-a',
+                rootPath: '/workspaces/example',
+                reachable: true,
+                worktrees: [],
+            }],
+        })).toEqual({
+            status: 'settled',
+            destination: {
+                kind: 'new',
+                creationKey: 'creation-key-4',
+                spawn: {
+                    executionTarget: SETTLED.executionTarget,
+                    agentTarget: SETTLED.agentTarget,
+                },
+                materialization: {
+                    kind: 'reviewWorkspace',
+                    request: {
+                        instance: testkitConfiguredInstance(),
+                        entryRef: testkitEntryRef(),
+                        workflowSubject: 'pullRequest',
+                        lastKnownLocator: testkitLocator(),
+                        observed: TESTKIT_OBSERVED_REVISION,
+                        workspace: {
+                            serverId: 'server-a',
+                            machineId: 'machine-a',
+                            rootPath: '/workspaces/example',
+                        },
+                    },
+                },
+            },
+        });
     });
 
     it('refuses a settlement whose Agent identity is not the one the creator requires', () => {
@@ -155,10 +195,10 @@ describe('the wire materialization a mode resolves to', () => {
      * surface and the projection consults after it settles. One reader for both
      * is what keeps the up-front refusal and the built request from drifting.
      */
-    it('answers the two directory materializations and refuses the prepared one', () => {
+    it('answers every materialization the start wire owns', () => {
         expect(triageNewSessionWireMaterializationV1('reference_only')).toBe('referenceOnly');
         expect(triageNewSessionWireMaterializationV1('repository')).toBe('selectedProject');
-        expect(triageNewSessionWireMaterializationV1('pull_request')).toBeNull();
+        expect(triageNewSessionWireMaterializationV1('pull_request')).toBe('reviewWorkspace');
     });
 });
 

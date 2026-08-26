@@ -12,11 +12,11 @@ import {
   normalizeGithubWebhookDelivery,
 } from './observations/githubWebhookNormalization.js';
 import {
-  GITHUB_AUTOMATION_REPOSITORY_EVENT_ID,
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
   GITHUB_PLUGIN_ID,
   GITHUB_WEBHOOK_CONTRIBUTION_ID,
 } from './observations/githubProviderContracts.js';
+import { isGithubAutomationEventLocalId } from './githubAutomationEvents.js';
 
 type GithubAutomationWebhookSourceListResultV1 = PluginActionResultById['automation.event.sources.list'];
 type GithubAutomationWebhookSourceDefinitionV1 = Extract<
@@ -56,7 +56,7 @@ export type GithubWebhookActionHandlerV1 = (
 ) => Promise<PluginWebhookActionResult>;
 
 function sourceSnapshotKey(endpointSourceInstanceId: string): string {
-  return `${GITHUB_PLUGIN_ID}\u0000${GITHUB_AUTOMATION_REPOSITORY_EVENT_ID}\u0000${endpointSourceInstanceId}`;
+  return `${GITHUB_PLUGIN_ID}\u0000${GITHUB_WEBHOOK_CONTRIBUTION_ID}\u0000${endpointSourceInstanceId}`;
 }
 
 function isWebhookIngressHostCaller(context: PluginInvocationContext): boolean {
@@ -85,12 +85,12 @@ function invalidWebhookCallerResult(): PluginWebhookActionResult {
   });
 }
 
-function isMatchingAutomationDefinition(
+function isGithubAutomationDefinitionForSource(
   definition: GithubAutomationWebhookSourceDefinitionV1,
   sourceInstanceId: string,
 ): boolean {
   return definition.eventRef.pluginId === GITHUB_PLUGIN_ID
-    && definition.eventRef.localId === GITHUB_AUTOMATION_REPOSITORY_EVENT_ID
+    && isGithubAutomationEventLocalId(definition.eventRef.localId)
     && definition.sourceContractVersion === GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION
     && definition.sourceInstanceId === sourceInstanceId
     && definition.observationTransport.kind === 'durablePush';
@@ -246,15 +246,19 @@ async function admitAutomationWebhookEvent(params: Readonly<{
     endpointSourceInstanceId: params.input.endpoint.sourceInstanceId,
     sourceSnapshots: params.sourceSnapshots,
   });
-  const definitions = read.snapshot.definitions.filter((definition) => (
-    isMatchingAutomationDefinition(definition, params.normalized.sourceInstanceId)
+  const providerDefinitions = read.snapshot.definitions.filter((definition) => (
+    isGithubAutomationDefinitionForSource(definition, params.normalized.sourceInstanceId)
+  ));
+  const catalogReports = read.adoptedRevision
+    ? catalogStatusReports({ definitions: providerDefinitions, revision: read.snapshot.revision })
+    : [];
+  const definitions = providerDefinitions.filter((definition) => (
+    definition.eventRef.localId === params.normalized.eventRef.localId
   ));
   if (definitions.length === 0) {
+    await reportAutomationWebhookStatus({ context: params.context, reports: catalogReports });
     return PluginWebhookActionResultSchema.parse({ kind: 'settled', disposition: 'ignored' });
   }
-  const catalogReports = read.adoptedRevision
-    ? catalogStatusReports({ definitions, revision: read.snapshot.revision })
-    : [];
   const reportHealth = async (admitted: boolean): Promise<void> => {
     await reportAutomationWebhookStatus({
       context: params.context,
@@ -273,8 +277,8 @@ async function admitAutomationWebhookEvent(params: Readonly<{
     params.context.signal.throwIfAborted();
     const admitted = await params.context.services.actions.execute('automation.event.admit', {
       eventRef: {
-        pluginId: GITHUB_PLUGIN_ID,
-        localId: GITHUB_AUTOMATION_REPOSITORY_EVENT_ID,
+        pluginId: params.normalized.eventRef.pluginId,
+        localId: params.normalized.eventRef.localId,
       },
       occurrenceId: params.normalized.occurrenceId,
       occurredAt: params.normalized.occurredAtMs,

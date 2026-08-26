@@ -16,6 +16,8 @@ import type { BitbucketSourceRuntime } from './authorization.js';
 export type StubReply = Readonly<{
   status?: number;
   body?: unknown;
+  /** A provider transport failure after the request reached the HTTP boundary. */
+  error?: unknown;
   /** Exact response bytes for non-JSON provider resources such as Bitbucket's raw diff. */
   bodyBytes?: string | Uint8Array;
   headers?: Readonly<Record<string, string>>;
@@ -61,6 +63,7 @@ export function createHttpStub(
       });
       const reply = route(input.url, { method, body })
         ?? { status: 404, body: { error: { message: 'not routed' } } };
+      if (reply.error !== undefined) throw reply.error;
       return {
         status: reply.status ?? 200,
         finalUrl: reply.finalUrl ?? input.url,

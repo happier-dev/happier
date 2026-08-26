@@ -147,7 +147,7 @@ async function mountShell(options: Readonly<{
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view'); });
+    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
     return fixture;
 }
 

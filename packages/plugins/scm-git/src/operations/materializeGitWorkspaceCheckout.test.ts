@@ -6,11 +6,14 @@ import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+
 import { inspectGitCheckoutIdentity } from '../checkoutIdentity.js';
 import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import {
     createGitWorkspaceCheckoutAtDefaultPath,
     materializeGitWorkspaceCheckoutAtPath,
+    prepareGitReviewWorkspace,
 } from './materializeGitWorkspaceCheckout.js';
 
 const execFile = promisify(execFileCallback);
@@ -35,6 +38,97 @@ async function writeTrackedFile(cwd: string, relativePath: string, contents: str
 }
 
 describe('materializeGitWorkspaceCheckout', () => {
+    it('classifies a selected root without the provider-authorized source remote as a remote mismatch', async () => {
+        const selectedRoot = await makeTempDir('git-review-workspace-remote-mismatch-');
+
+        try {
+            await runGit(selectedRoot, ['init']);
+            await configureGitRepo(selectedRoot);
+            await runGit(selectedRoot, ['branch', '-M', 'main']);
+            await writeTrackedFile(selectedRoot, 'README.md', 'main\n');
+            await runGit(selectedRoot, ['commit', '-m', 'initial']);
+            await runGit(selectedRoot, ['remote', 'add', 'origin', 'https://forge.example/target/repository.git']);
+
+            await expect(runWithRealGitScmRuntime(() => prepareGitReviewWorkspace({
+                repoRoot: selectedRoot,
+                sourceTip: {
+                    repository: {
+                        kind: 'github',
+                        deployment: 'https://forge.example',
+                        repository: 'contributor/repository',
+                    },
+                    cloneUrl: 'https://forge.example/contributor/repository.git',
+                    branch: 'feature/auth',
+                    sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+                    fetchRef: 'refs/heads/feature/auth',
+                },
+            }))).rejects.toMatchObject({ errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND });
+        } finally {
+            await rm(selectedRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('fetches the provider-authorized source tip into a linked worktree without switching the selected root', async () => {
+        const remoteRoot = await makeTempDir('git-review-workspace-remote-');
+        const authorRoot = await makeTempDir('git-review-workspace-author-');
+        const selectedRoot = await makeTempDir('git-review-workspace-selected-');
+        const sourceUrl = 'https://forge.example/contributor/repository.git';
+
+        try {
+            await runGit(remoteRoot, ['init', '--bare']);
+            await runGit(authorRoot, ['init']);
+            await configureGitRepo(authorRoot);
+            await runGit(authorRoot, ['branch', '-M', 'main']);
+            await writeTrackedFile(authorRoot, 'README.md', 'main\n');
+            await runGit(authorRoot, ['commit', '-m', 'initial']);
+            await runGit(authorRoot, ['remote', 'add', 'origin', remoteRoot]);
+            await runGit(authorRoot, ['push', 'origin', 'main']);
+            await runGit(authorRoot, ['switch', '-c', 'feature/auth']);
+            await writeTrackedFile(authorRoot, 'feature.txt', 'feature\n');
+            await runGit(authorRoot, ['commit', '-m', 'feature']);
+            const sourceHeadSha = await runGit(authorRoot, ['rev-parse', 'HEAD']);
+            await runGit(authorRoot, ['push', 'origin', 'feature/auth']);
+
+            await runGit(selectedRoot, ['init']);
+            await configureGitRepo(selectedRoot);
+            await runGit(selectedRoot, ['branch', '-M', 'main']);
+            await writeTrackedFile(selectedRoot, 'README.md', 'main\n');
+            await runGit(selectedRoot, ['commit', '-m', 'selected-initial']);
+            const selectedHeadBefore = await runGit(selectedRoot, ['rev-parse', 'HEAD']);
+            await runGit(selectedRoot, ['remote', 'add', 'fork', sourceUrl]);
+            await runGit(selectedRoot, ['config', `url.file://${remoteRoot}.insteadOf`, sourceUrl]);
+
+            const prepared = await runWithRealGitScmRuntime(() => prepareGitReviewWorkspace({
+                repoRoot: selectedRoot,
+                sourceTip: {
+                    repository: {
+                        kind: 'github',
+                        deployment: 'https://forge.example',
+                        repository: 'contributor/repository',
+                    },
+                    cloneUrl: sourceUrl,
+                    branch: 'feature/auth',
+                    sourceHeadSha,
+                    fetchRef: 'refs/heads/feature/auth',
+                },
+            }));
+
+            expect(prepared).toMatchObject({
+                branchName: 'feature/auth',
+                created: true,
+                currentness: { kind: 'currentAtObservedHead' },
+            });
+            expect(await realpath(prepared.targetPath)).not.toBe(await realpath(selectedRoot));
+            await expect(runGit(prepared.targetPath, ['rev-parse', 'HEAD'])).resolves.toBe(sourceHeadSha);
+            await expect(runGit(selectedRoot, ['rev-parse', 'HEAD'])).resolves.toBe(selectedHeadBefore);
+            await expect(runGit(selectedRoot, ['branch', '--show-current'])).resolves.toBe('main');
+        } finally {
+            await rm(remoteRoot, { recursive: true, force: true });
+            await rm(authorRoot, { recursive: true, force: true });
+            await rm(selectedRoot, { recursive: true, force: true });
+        }
+    });
+
     it('rejects forbidden worktree display names before materializing a checkout', async () => {
         const repoRoot = await makeTempDir('git-materialize-forbidden-name-repo-');
 

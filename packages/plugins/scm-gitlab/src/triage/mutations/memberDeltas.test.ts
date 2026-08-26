@@ -31,6 +31,7 @@ const ISSUE_REF = Object.freeze({
 function mrBody(overrides: Readonly<Record<string, unknown>> = {}): unknown {
   return {
     iid: 7,
+    project_id: 3,
     state: 'opened',
     draft: false,
     updated_at: ISSUE_REVISION,
@@ -44,6 +45,7 @@ function mrBody(overrides: Readonly<Record<string, unknown>> = {}): unknown {
 function issueBody(overrides: Readonly<Record<string, unknown>> = {}): unknown {
   return {
     iid: 42,
+    project_id: 3,
     state: 'opened',
     updated_at: ISSUE_REVISION,
     references: { full: 'group/project#42' },

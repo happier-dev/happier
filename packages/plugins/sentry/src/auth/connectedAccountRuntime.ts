@@ -23,7 +23,7 @@ import type {
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
-import { boundSentryInvocation } from '../api/sentryInvocationDeadline.js';
+import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
 import {
   SENTRY_CLOUD_REGION_ORIGINS,
   SENTRY_FAILURE_CODES,
@@ -167,96 +167,103 @@ async function confirmSentryIdentity(
   // One bound for the whole confirmation, so a deployment that accepts the
   // connection and then goes silent settles as an answer rather than as no
   // answer at all.
-  const signal = boundSentryInvocation(callerSignal, SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS);
-  let response: Awaited<ReturnType<typeof context.services.http.request>>;
+  const bounded = createBoundedInvocation({
+    callerSignal,
+    timeoutMs: SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS,
+  });
   try {
-    response = await context.services.http.request({
-      url: `${input.origin}${SENTRY_CONFIRMATION_PATH}`,
-      method: 'GET',
-      headers: { Accept: 'application/json', Authorization: `Bearer ${input.token}` },
-      redirect: 'error',
-    }, { signal });
-  } catch (error) {
-    // Only the CALLER abandoning this work is a cancellation to propagate. Our
-    // own deadline elapsing aborts a signal the caller does not hold, so it
-    // falls through to the stated answer below rather than being rethrown as if
-    // the person had walked away.
-    if (callerSignal.aborted) throw error;
-    return {
-      status: 'unavailable',
-      diagnostic: diagnostic(
-        SENTRY_FAILURE_CODES.verificationUnavailable,
-        'Sentry could not be reached to confirm this connection.',
-      ),
-    };
-  }
+    let response: Awaited<ReturnType<typeof context.services.http.request>>;
+    try {
+      response = await context.services.http.request({
+        url: `${input.origin}${SENTRY_CONFIRMATION_PATH}`,
+        method: 'GET',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${input.token}` },
+        redirect: 'error',
+      }, { signal: bounded.signal });
+    } catch (error) {
+      // Only the CALLER abandoning this work is a cancellation to propagate. Our
+      // own deadline elapsing aborts a signal the caller does not hold, so it
+      // falls through to the stated answer below rather than being rethrown as if
+      // the person had walked away.
+      if (callerSignal.aborted) throw error;
+      return {
+        status: 'unavailable',
+        diagnostic: diagnostic(
+          SENTRY_FAILURE_CODES.verificationUnavailable,
+          'Sentry could not be reached to confirm this connection.',
+        ),
+      };
+    }
 
-  if (response.status === 401) {
-    return {
-      status: 'rejected',
-      diagnostic: diagnostic(
-        SENTRY_FAILURE_CODES.tokenInvalid,
-        'Sentry rejected this auth token.',
-      ),
-    };
-  }
-  if (response.status === 403) {
-    return {
-      status: 'rejected',
-      diagnostic: diagnostic(
-        SENTRY_FAILURE_CODES.insufficientPermission,
-        'This Sentry token is missing the org:read capability.',
-      ),
-    };
-  }
-  if (response.status === 429) {
-    return {
-      status: 'unavailable',
-      diagnostic: diagnostic(
-        SENTRY_FAILURE_CODES.rateLimited,
-        'Sentry is rate limiting this connection; try again shortly.',
-      ),
-    };
-  }
-  if (response.status === 404 || response.status >= 500) {
-    return {
-      status: 'unavailable',
-      diagnostic: diagnostic(
-        SENTRY_FAILURE_CODES.verificationUnavailable,
-        'Sentry could not be reached to confirm this connection.',
-      ),
-    };
-  }
-  if (response.status !== 200) {
-    return {
-      status: 'unavailable',
-      diagnostic: diagnostic(
-        SENTRY_FAILURE_CODES.verificationUnknown,
-        'Sentry returned an unrecognized confirmation response.',
-      ),
-    };
-  }
-  switch (readOrganizationListing(response.body)) {
-    case 'present':
-      return { status: 'confirmed', origin: input.origin };
-    case 'empty':
-      // An empty organization list cannot produce a V1 source instance, so the
-      // connection is not staged rather than staged and later found useless.
+    if (response.status === 401) {
       return {
         status: 'rejected',
         diagnostic: diagnostic(
-          SENTRY_FAILURE_CODES.noAccessibleOrganizations,
-          'This Sentry token can read no organization.',
+          SENTRY_FAILURE_CODES.tokenInvalid,
+          'Sentry rejected this auth token.',
         ),
       };
-    case 'unparseable':
+    }
+    if (response.status === 403) {
       return {
         status: 'rejected',
         diagnostic: diagnostic(
-          SENTRY_FAILURE_CODES.responseUnparseable,
-          'Sentry returned an organization list this connection could not read.',
+          SENTRY_FAILURE_CODES.insufficientPermission,
+          'This Sentry token is missing the org:read capability.',
         ),
       };
+    }
+    if (response.status === 429) {
+      return {
+        status: 'unavailable',
+        diagnostic: diagnostic(
+          SENTRY_FAILURE_CODES.rateLimited,
+          'Sentry is rate limiting this connection; try again shortly.',
+        ),
+      };
+    }
+    if (response.status === 404 || response.status >= 500) {
+      return {
+        status: 'unavailable',
+        diagnostic: diagnostic(
+          SENTRY_FAILURE_CODES.verificationUnavailable,
+          'Sentry could not be reached to confirm this connection.',
+        ),
+      };
+    }
+    if (response.status !== 200) {
+      return {
+        status: 'unavailable',
+        diagnostic: diagnostic(
+          SENTRY_FAILURE_CODES.verificationUnknown,
+          'Sentry returned an unrecognized confirmation response.',
+        ),
+      };
+    }
+    switch (readOrganizationListing(response.body)) {
+      case 'present':
+        return { status: 'confirmed', origin: input.origin };
+      case 'empty':
+        // An empty organization list cannot produce a V1 source instance, so the
+        // connection is not staged rather than staged and later found useless.
+        return {
+          status: 'rejected',
+          diagnostic: diagnostic(
+            SENTRY_FAILURE_CODES.noAccessibleOrganizations,
+            'This Sentry token can read no organization.',
+          ),
+        };
+      case 'unparseable':
+        return {
+          status: 'rejected',
+          diagnostic: diagnostic(
+            SENTRY_FAILURE_CODES.responseUnparseable,
+            'Sentry returned an organization list this connection could not read.',
+          ),
+        };
+    }
+  } finally {
+    bounded.dispose();
   }
 }
 

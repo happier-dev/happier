@@ -11,8 +11,6 @@ import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/conn
 import {
     MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-    MAX_TRIAGE_INSTANCE_DRAFTS_V1,
-    MAX_TRIAGE_INSTANCE_FAILURES_V1,
     TRIAGE_SOURCE_INSTANCE_KEY_STABILITY_V1,
 } from './bounds.js';
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
@@ -161,21 +159,15 @@ export type TriageListInstancesInputV1 = ReturnType<
     typeof TriageListInstancesInputV1Schema.parse
 >;
 
-const triageInstanceCandidatesV1 = defineProtocolArray(TriageSourceInstanceDraftV1Schema, {
-    maxItems: MAX_TRIAGE_INSTANCE_DRAFTS_V1,
-});
-const triageInstanceFailuresV1 = defineProtocolArray(TriageSourceInstanceFailureV1ProtocolSchema, {
-    maxItems: MAX_TRIAGE_INSTANCE_FAILURES_V1,
-});
+const triageInstanceCandidatesV1 = defineProtocolArray(TriageSourceInstanceDraftV1Schema);
+const triageInstanceFailuresV1 = defineProtocolArray(TriageSourceInstanceFailureV1ProtocolSchema);
 
 /**
  * `complete` means account enumeration was complete and per-account instance
  * discovery either finished or has an explicit exact-binding failure.
  * `incomplete` means some account or instance may be unrepresented — including
- * a truncated metadata listing, which the incumbent owner cannot resume, and a
- * bounded discovery cap, whose one top-level `failure` stays representable even
- * when the exact-binding array is already saturated. `failed` means the source
- * learned nothing (`CONTRACT.md` §3.1).
+ * a truncated metadata listing, which the incumbent owner cannot resume.
+ * `failed` means the source learned nothing (`CONTRACT.md` §3.1).
  */
 export const TriageListInstancesResultV1Schema = defineProtocolUnion([
     defineProtocolObject({

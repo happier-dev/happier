@@ -11,6 +11,7 @@ import {
   classifyGithubResponseFailure,
   classifyGithubTransportFailure,
   isGithubSuccessStatus,
+  isGithubWriteResponseAmbiguous,
 } from '../errors.js';
 import { readGithubPullRequest } from '../get.js';
 import { buildGithubApiUrl, type GithubRepositoryRouteV1 } from '../locator.js';
@@ -247,13 +248,34 @@ async function applyGithubPullRequestReviewerDelta(
     }
   };
 
+  /**
+   * This is the one post-write reviewer reconciliation for both a successful
+   * request and an ambiguous response. It checks only the named delta, so a
+   * concurrent unrelated reviewer remains neither a failure nor a replacement.
+   */
+  const reconcile = async (): Promise<GithubReviewerDeltaOutcomeV1> => {
+    const confirmed = await readRequestedReviewers(url, dependencies);
+    if (!confirmed.ok) {
+      return Object.freeze({ kind: 'uncertain' as const, failure: confirmed.failure });
+    }
+    return satisfies(confirmed.reviewers, input, direction.requestedAfterwards)
+      ? Object.freeze({
+        kind: 'applied' as const,
+        effect: 'changed' as const,
+        requestedReviewers: confirmed.reviewers,
+      })
+      : Object.freeze({ kind: 'uncertain' as const, requestedReviewers: confirmed.reviewers });
+  };
+
   let response: GithubApiResponseV1;
   // Requesting review is at-most-once because a second POST re-notifies people.
   // Withdrawal is naturally idempotent and retains its ordinary response path.
   if (direction.requestedAfterwards) {
     const settlement = await settleAtMostOnceProviderWrite({
       dispatch,
-      mayHaveChanged: (result) => !result.ok,
+      mayHaveChanged: (result) => result.ok
+        ? isGithubWriteResponseAmbiguous(result.response)
+        : true,
       confirm: async () => {
         const confirmed = await readRequestedReviewers(url, dependencies);
         if (!confirmed.ok) {
@@ -295,7 +317,10 @@ async function applyGithubPullRequestReviewerDelta(
   } else {
     const written = await dispatch();
     if (!written.ok) {
-      return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+      return await reconcile();
+    }
+    if (isGithubWriteResponseAmbiguous(written.response)) {
+      return await reconcile();
     }
     response = written.response;
   }
@@ -307,20 +332,7 @@ async function applyGithubPullRequestReviewerDelta(
   }
 
   // The write's own response body is not the claim: the confirming read is.
-  const confirmed = await readRequestedReviewers(url, dependencies);
-  if (!confirmed.ok) {
-    return Object.freeze({ kind: 'uncertain' as const, failure: confirmed.failure });
-  }
-  return satisfies(confirmed.reviewers, input, direction.requestedAfterwards)
-    ? Object.freeze({
-      kind: 'applied' as const,
-      effect: 'changed' as const,
-      requestedReviewers: confirmed.reviewers,
-    })
-    // Accepted, and the change was not observed. It is never reported as success
-    // and never automatically retried: a retried addition would re-notify, and a
-    // retried withdrawal would re-decide against state the user never saw.
-    : Object.freeze({ kind: 'uncertain' as const, requestedReviewers: confirmed.reviewers });
+  return await reconcile();
 }
 
 /** Requests review from exactly the named users and teams. */

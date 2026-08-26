@@ -124,6 +124,11 @@ const PRESENT_OBSERVATION = Object.freeze({
                 value: Object.freeze({ kind: 'detailOnly' }),
             }),
         ]),
+        reviewRevision: Object.freeze({
+            baseSha: 'a1b2c3d4e5f6',
+            headSha: 'b3f1c0a9d2e4',
+            nativeRevision: 'b3f1c0a9d2e4',
+        }),
     }),
     viewer: Object.freeze({
         involvement: Object.freeze(['reviewRequested']),
@@ -201,6 +206,7 @@ export function createTriageSourceV1Fixture(): TriageSourceV1Fixture {
             v: 1,
             instance: CONFIGURED_INSTANCE,
             entryRef: ENTRY_REF,
+            lastKnownLocator: PRESENT_OBSERVATION.locator,
             observed: {
                 baseSha: 'a1b2c3d4e5f6',
                 headSha: 'b3f1c0a9d2e4',
@@ -219,6 +225,7 @@ export function createTriageSourceV1Fixture(): TriageSourceV1Fixture {
             branch: 'review/pull-17',
             created: true,
             currentness: { kind: 'currentAtObservedHead' },
+            pullRequest: { number: 17 },
         }),
         administrationInput: TriageSourceAdministrationActionInputV1Schema.parse({
             v: 1,

@@ -25,8 +25,20 @@ import {
     TriageSourceViewerFactsV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import { MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import { TriageCollectionCursorV1Schema } from './collectionCursorProtocol.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
+
+/**
+ * The most configured sources one `entries/list-v1` invocation carries.
+ *
+ * This is a transport batch, not a configured-source membership limit. The
+ * schema-derived worst-case response for this shape is 20,121,056 bytes
+ * (`maximumEncodedActionValue.test.ts`), below the host Action response's
+ * 24,000,000-byte serialized limit and its 25,000,000-byte relay buffer. A
+ * mounted store pages the Collection through this same Action and schedules
+ * successive selected batches through its one refresh coordinator.
+ */
+export const MAX_TRIAGE_LIST_SOURCE_BATCH_V1 = 32;
 
 /**
  * The strict input and result contract of the one aggregate PRs & Issues list
@@ -138,11 +150,13 @@ export const TriageSmartPolicyV1Schema = defineProtocolObject({
 const TriageListSourceSelectionV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('allConfigured'),
+        /** Opaque Collection continuation for the next configured-source batch. */
+        cursor: TriageCollectionCursorV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('selected'),
         sourceInstanceIds: defineProtocolArray(TriageSourceInstanceIdV1Schema, {
-            maxItems: MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+            maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
         }),
     }, { policy: 'closed' }),
 ]);
@@ -165,9 +179,10 @@ const TriageLaneContinuationV1Schema = defineProtocolObject({
 
 /**
  * The explicit page-size contract, independent of how many lane continuations
- * accompany the result. Strict Action JSON admission has no aggregate byte
- * quota, so shrinking a page to pay for continuation bytes would manufacture a
- * second, unsupported limit beneath `MAX_TRIAGE_LIST_WINDOW_ROWS_V1`.
+ * accompany the result. The host Action response has one aggregate transport
+ * boundary, proven by the schema-derived maximum for this fixed batch shape;
+ * shrinking rows further to reserve a separate continuation budget would add a
+ * second unsupported product limit beneath `MAX_TRIAGE_LIST_WINDOW_ROWS_V1`.
  */
 export function triageListRowBudgetV1(_laneCount: number): number {
     return MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
@@ -210,12 +225,12 @@ export const TriageListEntriesInputV1Schema = defineProtocolObject({
      * through the same `scanPass` rotation, with every lane resuming its own
      * frontier. The predecessor admitted a single token only for a request that
      * selected exactly one instance, on the arithmetic that thirty-two maximal
-     * tokens would exceed the host byte gate. That derivation was circular:
+     * tokens would exceed a stale host gate. That derivation was circular:
      * `MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1` is generous precisely because it
      * is "never multiplied", and multiplying it to manufacture a product
-     * restriction is what the ruling in `PLAN.md` §0a A9 withdrew. The whole
-     * set is paid for against the one real boundary instead, before the walk —
-     * see `triageListRowBudgetV1`.
+     * restriction is what the ruling in `PLAN.md` §0a A9 withdrew. The fixed
+     * Action batch is instead measured against the real response transport
+     * boundary before the walk — see `triageListRowBudgetV1`.
      *
      * A token naming a connection this request does not walk is ignored rather
      * than refused. It is a stale frontier, not a malformed request, and
@@ -224,9 +239,9 @@ export const TriageListEntriesInputV1Schema = defineProtocolObject({
      * The row bound is unchanged and deliberately not the paging mechanism: a
      * deeper window is successive bounded invocations appended by the caller,
      * never a larger `limit`.
-     */
+    */
     resume: defineProtocolArray(TriageLaneContinuationV1Schema, {
-        maxItems: MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+        maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
     }).optional(),
     /** The settled search text. */
     query: triageText.optional(),
@@ -235,13 +250,6 @@ export const TriageListEntriesInputV1Schema = defineProtocolObject({
 export type TriageListEntriesInputV1 = ReturnType<typeof TriageListEntriesInputV1Schema.parse>;
 export const TriageListEntriesInputV1JsonSchema: PluginJsonSchema =
     TriageListEntriesInputV1Schema.jsonSchema;
-
-const TriageObservationKindV1Schema = defineProtocolUnion([
-    defineProtocolLiteral('present'),
-    defineProtocolLiteral('absent'),
-    defineProtocolLiteral('merged'),
-    defineProtocolLiteral('unresolved'),
-]);
 
 /**
  * One connection's complete answer for one entry.
@@ -286,39 +294,19 @@ export type TriageProjectedObservationV1 = ReturnType<
 >;
 
 /**
- * How many *other* connections one row reports individually.
+ * The complete folded answer from every connection other than the one the row
+ * renders from.
  *
- * `REQ-03` is what makes this member exist at all: an entry observed through
- * two configured connections is one entry with two observations, and a row that
- * named only one of them would erase the second connection from the product.
+ * `REQ-03` makes this member necessary: an entry observed through two configured
+ * connections is one entry with two observations. The mounted store receives
+ * one mixed Action result and rehydrates it through the canonical fold, so a
+ * compact marker would erase the facts that determine attention and selection
+ * for every non-rendered connection.
  *
- * The compact projection avoids multiplying full provider content into every
- * row. What the row carries instead is the rendered
- * connection's answer in full and every other connection's answer in one line;
- * the full per-connection content is a detail read, under the exact connection
- * chosen, which is where the account authority to make it lives anyway.
- *
- * Four is a picked presentation count, and `observedByCount` is what keeps a
- * wider set honest rather than silent: a row observed through more connections
- * than this still says how many.
+ * It remains bounded by the source batch this one Action invocation carries.
+ * The fixed batch is measured against the host Action response transport rather
+ * than being a configured-source product ceiling.
  */
-export const MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1 = 4;
-
-/**
- * What one other connection answered, without repeating the row's content.
- *
- * It is deliberately the outcome *kind* and nothing more. A successor ref, a
- * failure or a snapshot on this member would be per-connection detail content
- * multiplied by the row count, which is exactly the shape the byte gate
- * rejects; the row's own `presence`, `attention` and `selected` members already
- * carry every cross-connection conclusion the list itself draws.
- */
-const TriageRowOtherObservationV1Schema = defineProtocolObject({
-    sourceInstanceId: TriageSourceInstanceIdV1Schema,
-    observedAtMs: defineProtocolNumber({ integer: true, minimum: 0 }),
-    kind: TriageObservationKindV1Schema,
-}, { policy: 'closed' });
-
 const TriageListRowV1Schema = defineProtocolObject({
     entryRef: TriageEntryRefV1Schema,
     lane: defineProtocolUnion([
@@ -371,20 +359,17 @@ const TriageListRowV1Schema = defineProtocolObject({
      * because some connection answered for it, so this member is never absent.
      */
     observation: TriageProjectedObservationV1Schema,
-    /** Every other connection that answered, newest answer first. */
-    otherObservations: defineProtocolArray(TriageRowOtherObservationV1Schema, {
-        maxItems: MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1,
+    /** Every other connection's complete folded answer. */
+    otherObservations: defineProtocolArray(TriageProjectedObservationV1Schema, {
+        maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 - 1,
     }),
     /**
-     * How many distinct connections answered for this entry. It is stated
-     * rather than inferred from the array above so that a row observed through
-     * more connections than the row reports individually is visibly, not
-     * silently, incomplete.
+     * How many distinct connections answered for this entry.
      */
     observedByCount: defineProtocolNumber({
         integer: true,
         minimum: 1,
-        maximum: MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+        maximum: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
     }),
 }, { policy: 'closed' });
 
@@ -428,29 +413,25 @@ const TriageConfiguredSourceSummaryV1Schema = defineProtocolObject({
 export const TriageListEntriesResultV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     configuredSources: defineProtocolArray(TriageConfiguredSourceSummaryV1Schema, {
-        maxItems: MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+        maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
     }),
     /**
-     * Whether the array above names the whole active configured set.
-     *
-     * The array's bound and the lifecycle writer's admission bound are one
-     * number, so a set that exceeded the writer's bound cannot be carried here
-     * at all. `truncated` says so — reusing the same `complete`/`truncated`
-     * vocabulary the generic Connected Accounts listing already answers with —
-     * rather than letting the surplus vanish behind a window that reports a
-     * finished walk.
+     * Whether this Action invocation names the whole configured-source
+     * Collection, or only its current transport batch.
      */
     configuredSourcesStatus: defineProtocolUnion([
         defineProtocolLiteral('complete'),
         defineProtocolLiteral('truncated'),
     ]),
+    /** The opaque Collection cursor for the next configured-source batch. */
+    configuredSourcesNextCursor: TriageCollectionCursorV1Schema.optional(),
     window: defineProtocolObject({
         v: defineProtocolLiteral(1),
         rows: defineProtocolArray(TriageListRowV1Schema, {
             maxItems: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
         }),
         lanes: defineProtocolArray(TriageListLaneV1Schema, {
-            maxItems: MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+            maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
         }),
         coverage: defineProtocolUnion([
             defineProtocolLiteral('complete'),
@@ -475,7 +456,7 @@ export const TriageListEntriesResultV1Schema = defineProtocolObject({
          * token either: whole-result rejection is the other harm.
          */
         continuations: defineProtocolArray(TriageLaneContinuationV1Schema, {
-            maxItems: MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+            maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
         }).optional(),
         assembledAtMs: defineProtocolNumber({ integer: true, minimum: 0 }),
     }, { policy: 'closed' }),

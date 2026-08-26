@@ -31,16 +31,23 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
       id: 'happier.scm.forge.azure-devops',
       entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: { required: expect.arrayContaining([
-        // The Triage source reads the deployment the Connected Account was configured with, so
-        // the same grant now names that origin beside the incumbent hosting-provider one.
+        // The public hosting-provider origin remains on its own public-only grant. The Triage
+        // source's configured account origin is admitted by the separate account grant below.
         expect.objectContaining({
           id: 'azure-devops-api',
           capability: 'network',
           scope: expect.objectContaining({
-            targets: expect.arrayContaining([
-              { kind: 'scmProviderOrigin', provider: 'azure-devops' },
-              { kind: 'connectedAccountOrigin', service: 'azure-devops-account' },
-            ]),
+            targets: [{ kind: 'scmProviderOrigin', provider: 'azure-devops' }],
+            methods: ['GET', 'PATCH', 'POST'],
+          }),
+        }),
+        expect.objectContaining({
+          id: 'azure-devops-account-api',
+          capability: 'network',
+          scope: expect.objectContaining({
+            targets: [{ kind: 'connectedAccountOrigin', service: 'azure-devops-account' }],
+            methods: ['GET', 'PATCH', 'POST'],
+            privateNetwork: true,
           }),
         }),
         expect.objectContaining({

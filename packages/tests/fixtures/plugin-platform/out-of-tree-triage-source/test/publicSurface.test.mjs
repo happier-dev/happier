@@ -131,17 +131,20 @@ test('QB-08: exactly one plugin package declares the Triage sources contribution
     for (const entry of pluginPackages) {
         if (!entry.isDirectory() || SKIPPED_DIRECTORIES.has(entry.name)) continue;
         const sources = await collectSourceFiles(join(repoRoot, 'packages', 'plugins', entry.name, 'src'));
+        let declaresContributionPoints = false;
+        let bindsTriageSourcePoint = false;
         for (const absolute of sources) {
             if (absolute.endsWith('.test.ts') || absolute.endsWith('.test.mjs')) continue;
             const text = await readFile(absolute, 'utf8');
-            // Ownership, not symbol presence: a declarer passes the point value
-            // into its own `contributionPoints` declaration.
-            if (/contributionPoints\s*:/u.test(text)
-                && text.includes('TriageSourcesContributionPointV1')) {
-                declaringPackages.push(entry.name);
-                break;
-            }
+            // The canonical target deliberately keeps the executable point map
+            // beside the protocol import and passes that map to `definePlugin`
+            // from its manifest module. Census the package-level declaration,
+            // not an obsolete same-file spelling of those two responsibilities.
+            declaresContributionPoints ||= /contributionPoints\s*:/u.test(text);
+            bindsTriageSourcePoint ||= text.includes('TriageSourcesContributionPointV1')
+                && text.includes('TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1');
         }
+        if (declaresContributionPoints && bindsTriageSourcePoint) declaringPackages.push(entry.name);
     }
 
     assert.deepEqual(declaringPackages, ['triage']);

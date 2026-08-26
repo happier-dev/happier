@@ -27,6 +27,9 @@ export const POSTHOG_NETWORK_HOST_ACCESS_ID = 'posthog-network';
 /** The native detail renderer bound to the source's `detail` surface. */
 export const POSTHOG_DETAIL_RENDERER_ID = 'posthog-issue-detail';
 
+/** The direct-disclosure Composer reference for one selected PostHog occurrence. */
+export const POSTHOG_EVIDENCE_REFERENCE_ID = 'posthog-evidence';
+
 /**
  * The React Native artifact the native renderer mounts.
  *

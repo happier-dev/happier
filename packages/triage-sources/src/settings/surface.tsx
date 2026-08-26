@@ -56,6 +56,7 @@
  */
 
 import * as React from 'react';
+import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
 import type { RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
   Badge,
@@ -138,6 +139,9 @@ type DraftEdit = Readonly<{
   control: Exclude<TriageSourceSettingsRowControlV1['id'], 'remove'>;
 }>;
 
+/** Private per-invocation deadline; owner tests inject a short duration. */
+const TRIAGE_SOURCE_SETTINGS_DISCOVERY_DEADLINE_MS = 10_000;
+
 function isSettledConfigurationSuccess(outcome: TriageSourceSettingsConfigurationV1): boolean {
   return outcome.kind === 'configured'
     || outcome.kind === 'alreadyConfigured'
@@ -154,6 +158,24 @@ function isSettledConfigurationSuccess(outcome: TriageSourceSettingsConfiguratio
  */
 export function createTriageSourceSettingsSurface(
   identity: TriageSourceSettingsSurfaceIdentityV1,
+): RenderSurface {
+  return createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
+    identity,
+    TRIAGE_SOURCE_SETTINGS_DISCOVERY_DEADLINE_MS,
+  );
+}
+
+/** Test-only source-module seam; intentionally not re-exported by this package. */
+export function createTriageSourceSettingsSurfaceForTesting(
+  identity: TriageSourceSettingsSurfaceIdentityV1,
+  input: Readonly<{ discoveryDeadlineMs: number }>,
+): RenderSurface {
+  return createTriageSourceSettingsSurfaceWithDiscoveryDeadline(identity, input.discoveryDeadlineMs);
+}
+
+function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
+  identity: TriageSourceSettingsSurfaceIdentityV1,
+  discoveryDeadlineMs: number,
 ): RenderSurface {
   const { sourceDisplayName } = identity;
   const DraftEditor = identity.DraftEditor;
@@ -179,6 +201,40 @@ export function createTriageSourceSettingsSurface(
 
     const runDiscovery = discovery.execute;
     const runConfiguredRead = configuredRead.execute;
+    const activeDiscoveryDeadline = React.useRef<AbortController | null>(null);
+    React.useEffect(() => () => {
+      const active = activeDiscoveryDeadline.current;
+      activeDiscoveryDeadline.current = null;
+      active?.abort();
+    }, []);
+
+    const startDiscovery = React.useCallback(() => {
+      // `useExecutePluginAction` owns the action's in-flight guard. Keeping the
+      // controller until that execution settles means a Refresh cannot start a
+      // second request in the small cancellation-to-settlement gap.
+      if (activeDiscoveryDeadline.current !== null) return;
+      const deadline = new AbortController();
+      activeDiscoveryDeadline.current = deadline;
+      const invocation = runDiscovery({ v: 1 }, { signal: deadline.signal });
+      void invocation.then(
+        () => {
+          if (activeDiscoveryDeadline.current === deadline) activeDiscoveryDeadline.current = null;
+        },
+        () => {
+          if (activeDiscoveryDeadline.current === deadline) activeDiscoveryDeadline.current = null;
+        },
+      );
+      void (async () => {
+        try {
+          await raceWithTimeout(invocation, discoveryDeadlineMs);
+        } finally {
+          // This invocation is no longer current to this page. The mounted
+          // host/action boundary owns the resulting outcome-unknown state.
+          deadline.abort();
+        }
+      })();
+    }, [discoveryDeadlineMs, runDiscovery]);
+
     const read = React.useCallback(() => {
       // Both reads run once on mount and again only on an explicit press. A
       // settings page that polled would spend the account's provider rate budget
@@ -187,9 +243,9 @@ export function createTriageSourceSettingsSurface(
       // They are independent on purpose: what this source can reach and what it has
       // already configured are different questions with different failure modes, and
       // a page that waited for both would hide the answer it did get.
-      void runDiscovery({ v: 1 });
+      startDiscovery();
       void runConfiguredRead({ v: 1 });
-    }, [runConfiguredRead, runDiscovery]);
+    }, [runConfiguredRead, startDiscovery]);
 
     React.useEffect(() => {
       read();

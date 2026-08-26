@@ -82,13 +82,14 @@ describe('GitHub webhook normalization', () => {
       eventType: 'push',
       comment: null,
       automationEvent: {
+        eventRef: {
+          pluginId: 'happier.scm.forge.github',
+          localId: 'automation/repository-pushed-v1',
+        },
         sourceInstanceId: 'github:repository:77',
         occurrenceId: 'github:repository:77:delivery:delivery-push',
         occurredAtMs: Date.parse('2026-08-10T12:01:02Z'),
         payload: {
-          kind: 'push',
-          eventId: 'delivery-push',
-          occurredAtMs: Date.parse('2026-08-10T12:01:02Z'),
           repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' },
           ref: 'refs/heads/main',
           before: 'a'.repeat(40),
@@ -98,7 +99,7 @@ describe('GitHub webhook normalization', () => {
     });
   });
 
-  it('normalizes the remaining declared issue-opened and pull-request-merged payload variants', () => {
+  it('normalizes issue-opened, pull-request-opened, and pull-request-merged through semantic Event refs', () => {
     const issueOpened = normalizeGithubWebhookDelivery({
       rawBody: new TextEncoder().encode(JSON.stringify({
         action: 'opened',
@@ -112,6 +113,21 @@ describe('GitHub webhook normalization', () => {
       })),
       eventType: 'issues',
       providerDeliveryId: 'delivery-issue-opened',
+    });
+    const pullRequestOpened = normalizeGithubWebhookDelivery({
+      rawBody: new TextEncoder().encode(JSON.stringify({
+        action: 'opened',
+        repository: { id: 77, full_name: 'acme/widgets' },
+        pull_request: {
+          id: 455,
+          number: 33,
+          title: 'Add semantic GitHub Events',
+          created_at: '2026-08-10T12:04:05Z',
+          merged: false,
+        },
+      })),
+      eventType: 'pull_request',
+      providerDeliveryId: 'delivery-pr-opened',
     });
     const pullRequestMerged = normalizeGithubWebhookDelivery({
       rawBody: new TextEncoder().encode(JSON.stringify({
@@ -130,21 +146,34 @@ describe('GitHub webhook normalization', () => {
     });
 
     expect(issueOpened.automationEvent).toMatchObject({
+      eventRef: {
+        pluginId: 'happier.scm.forge.github',
+        localId: 'automation/issue-opened-v1',
+      },
       occurrenceId: 'github:repository:77:delivery:delivery-issue-opened',
       payload: {
-        kind: 'issueOpened',
-        eventId: 'delivery-issue-opened',
-        occurredAtMs: Date.parse('2026-08-10T12:03:04Z'),
         repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' },
         issue: { id: '123', number: 12, title: 'Document exact delivery scope' },
       },
     });
+    expect(pullRequestOpened.automationEvent).toMatchObject({
+      eventRef: {
+        pluginId: 'happier.scm.forge.github',
+        localId: 'automation/pull-request-opened-v1',
+      },
+      occurrenceId: 'github:repository:77:delivery:delivery-pr-opened',
+      payload: {
+        repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' },
+        pullRequest: { id: '455', number: 33, title: 'Add semantic GitHub Events' },
+      },
+    });
     expect(pullRequestMerged.automationEvent).toMatchObject({
+      eventRef: {
+        pluginId: 'happier.scm.forge.github',
+        localId: 'automation/pull-request-merged-v1',
+      },
       occurrenceId: 'github:repository:77:delivery:delivery-pr-merged',
       payload: {
-        kind: 'pullRequestMerged',
-        eventId: 'delivery-pr-merged',
-        occurredAtMs: Date.parse('2026-08-10T12:05:06Z'),
         repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' },
         pullRequest: { id: '456', number: 34, mergeCommitSha: 'c'.repeat(40) },
       },

@@ -10,10 +10,7 @@ import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../collections/ids.js';
 import { fromCorpusStoredRow } from '../collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../collections/rows.js';
 import { createTestkitCorpusCollections } from '../testkit/corpusCollections.test-support.js';
-import {
-    MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
-    administerConfiguredSourceInstance,
-} from './administerConfiguredSourceInstance.js';
+import { administerConfiguredSourceInstance } from './administerConfiguredSourceInstance.js';
 
 /**
  * The one canonical `source-instances` lifecycle writer.
@@ -386,15 +383,10 @@ describe('the canonical configured source instance writer', () => {
     });
 });
 
-describe('the configured maximum', () => {
-    /**
-     * The falsifier here is silence. The aggregate reads one bounded page of
-     * active rows, so a writer with no maximum lets a user configure a source
-     * that then never appears in the list, never reports an error, and never
-     * comes back — which is indistinguishable from the source being broken.
-     */
-    async function fill(collections: ReturnType<typeof createTestkitCorpusCollections>['collections']): Promise<void> {
-        for (let index = 0; index < MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1; index += 1) {
+describe('configured source membership', () => {
+    it('admits a source past the former thirty-two-source batch threshold', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        for (let index = 0; index < 33; index += 1) {
             const result = await administerConfiguredSourceInstance({
                 collections,
                 source: SOURCE,
@@ -405,58 +397,8 @@ describe('the configured maximum', () => {
             });
             expect(result.kind, `create ${String(index)}`).toBe('active');
         }
-    }
 
-    it('refuses to configure one past the maximum, with a settled answer of its own', async () => {
-        const { collections } = createTestkitCorpusCollections();
-        await fill(collections);
-
-        expect(await administerConfiguredSourceInstance({
-            collections,
-            source: SOURCE,
-            declaredPurpose: PURPOSE,
-            request: { kind: 'create', draft: draft({ localInstanceKey: 'example/one-too-many' }) },
-            nowMs: 1_000,
-            mintSourceInstanceId: () => ID_C,
-        })).toEqual({ kind: 'atMaximum' });
-
-        // The refusal wrote nothing: the set is exactly what the user chose.
-        expect(await liveRows(collections.sourceInstances)).toHaveLength(
-            MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
-        );
-    });
-
-    it('meets the same maximum when restoring a removed connection', async () => {
-        const { collections } = createTestkitCorpusCollections();
-        const common = {
-            collections,
-            source: SOURCE,
-            declaredPurpose: PURPOSE,
-            mintSourceInstanceId: mintSequence(ID_A),
-        } as const;
-
-        await administerConfiguredSourceInstance({
-            ...common,
-            request: { kind: 'create', draft: draft({ localInstanceKey: 'example/removed' }) },
-            nowMs: 1,
-        });
-        await administerConfiguredSourceInstance({
-            ...common,
-            request: { kind: 'remove', sourceInstanceId: ID_A },
-            nowMs: 2,
-        });
-        // The retired row is still there, and it does not occupy a slot.
-        await fill(collections);
-
-        expect(await administerConfiguredSourceInstance({
-            ...common,
-            request: {
-                kind: 'reactivate',
-                sourceInstanceId: ID_A,
-                draft: draft({ localInstanceKey: 'example/removed' }),
-            },
-            nowMs: 3,
-        })).toEqual({ kind: 'atMaximum' });
+        expect(await liveRows(collections.sourceInstances)).toHaveLength(33);
     });
 
     it('lets a retired row be restored while the active set has room', async () => {

@@ -3,6 +3,7 @@ import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
+import { sameTriageEntryReference } from '../corpus/identity/components.js';
 import {
     linkEntryToSession,
     type TriageEntrySessionLinkDisplayV1,
@@ -95,6 +96,13 @@ export type TriageEntrySessionDestinationV1 =
         materialization: TriageWorkspaceMaterializationV1;
     }>;
 
+/**
+ * A bulk owner may retain the final navigation while it finishes the rest of a
+ * unit or batch. Omitting this keeps the ordinary single-entry contract:
+ * link, deliver, then immediately open.
+ */
+export type TriageEntrySessionFinalOpenV1 = 'deferred' | 'suppressed';
+
 export type TriageEntrySessionStartRequestV1 = Readonly<{
     entryRef: TriageEntryRefV1;
     /**
@@ -118,12 +126,20 @@ export type TriageEntrySessionStartRequestV1 = Readonly<{
      * and attachment in that Session's own composer and sends nothing.
      */
     delivery?: TriageEntrySessionDeliveryRequestV1;
+    /**
+     * Retains the generic final-open phase for the caller that owns a real
+     * batch. `deferred` means that caller opens this exact linked Session after
+     * its remaining unit work settles; `suppressed` means the batch has no
+     * honest single Session to open. Ordinary starts omit it and still open.
+     */
+    finalOpen?: TriageEntrySessionFinalOpenV1;
 }>;
 
 export type TriageEntrySessionRejectionReasonV1 =
     | 'existingSessionRequiresReferenceOnlyMode'
     | 'referenceOnlyModeRequiresReferenceOnlyWorkspace'
     | 'pullRequestModeRequiresPreparedWorkspace'
+    | 'pullRequestWorkspaceEntryMismatch'
     | 'repositoryModeRequiresSelectedProject';
 
 export type TriageEntrySessionDispositionV1 = 'created' | 'rejoined' | 'existing';
@@ -136,6 +152,15 @@ export type TriageEntrySessionStartResultV1 =
         workspace: TriageEntrySessionWorkspaceFactsV1;
         /** The admission owner's own verdict on the structured delivery. */
         delivery: TriageEntrySessionDeliveryOutcomeV1;
+    }>
+    | Readonly<{
+        /** Linked and delivered; this caller explicitly retained final navigation. */
+        type: 'linked';
+        sessionId: SessionId;
+        disposition: TriageEntrySessionDispositionV1;
+        workspace: TriageEntrySessionWorkspaceFactsV1;
+        delivery: TriageEntrySessionDeliveryOutcomeV1;
+        finalOpen: TriageEntrySessionFinalOpenV1;
     }>
     | Readonly<{
         type: 'linkPending';
@@ -183,7 +208,7 @@ export type TriageEntrySessionDepsV1 = Readonly<{
 }>;
 
 /**
- * Link, then deliver, then open — the approved order, in one place.
+ * Link, then deliver, then open — unless the batch owner retained final open.
  *
  * The delivery sits between the link and the open on purpose (`PLAN.md` §0a
  * A4a). Opening a Session navigates the client away from Triage and retires the
@@ -205,6 +230,7 @@ async function linkDeliverThenOpen(
         disposition: TriageEntrySessionDispositionV1;
         workspace: TriageEntrySessionWorkspaceFactsV1;
         delivery?: TriageEntrySessionDeliveryRequestV1;
+        finalOpen?: TriageEntrySessionFinalOpenV1;
     }>,
 ): Promise<TriageEntrySessionStartResultV1> {
     const link = await linkEntryToSession({
@@ -234,6 +260,20 @@ async function linkDeliverThenOpen(
             delivery: input.delivery,
             ...(deps.signal ? { signal: deps.signal } : {}),
         });
+    if (input.finalOpen !== undefined) {
+        // This is not an `openPending`: the canonical open phase has not been
+        // attempted or failed. The start owner has linked and delivered all it
+        // owns, and hands the exact linked Session back to the batch sequence
+        // that deliberately retained final navigation.
+        return {
+            type: 'linked',
+            sessionId: input.sessionId,
+            disposition: input.disposition,
+            workspace: input.workspace,
+            delivery,
+            finalOpen: input.finalOpen,
+        };
+    }
     const opened = await openLinkedSession({
         execute: deps.execute,
         sessionId: input.sessionId,
@@ -358,9 +398,17 @@ function rejectionFor(
             : 'existingSessionRequiresReferenceOnlyMode';
     }
     const required = TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1[request.workspaceMode];
-    return destination.materialization.kind === required
-        ? null
-        : MODE_MISMATCH_REJECTION_V1[request.workspaceMode];
+    if (destination.materialization.kind !== required) {
+        return MODE_MISMATCH_REJECTION_V1[request.workspaceMode];
+    }
+    if (destination.materialization.kind === 'reviewWorkspace'
+        && !sameTriageEntryReference(
+            request.entryRef,
+            destination.materialization.request.entryRef,
+        )) {
+        return 'pullRequestWorkspaceEntryMismatch';
+    }
+    return null;
 }
 
 type ResolvedMaterialization =
@@ -412,6 +460,7 @@ export async function startEntrySession(
             disposition: 'existing',
             workspace: { kind: 'referenceOnly' },
             ...(request.delivery === undefined ? {} : { delivery: request.delivery }),
+            ...(request.finalOpen === undefined ? {} : { finalOpen: request.finalOpen }),
         });
     }
 
@@ -466,5 +515,6 @@ export async function startEntrySession(
         disposition: result.disposition,
         workspace,
         ...(request.delivery === undefined ? {} : { delivery: request.delivery }),
+        ...(request.finalOpen === undefined ? {} : { finalOpen: request.finalOpen }),
     });
 }

@@ -7,10 +7,12 @@ describe('PostHog plugin activation', () => {
     it('registers its generated actions and Connected Account runtime', async () => {
         const registerAction = vi.fn();
         const registerAccount = vi.fn();
+        const registerComposerReference = vi.fn();
 
         await activate({
             actions: { register: registerAction },
             connectedAccounts: { register: registerAccount },
+            composerReferences: { register: registerComposerReference },
         } as never);
 
         expect(registerAction.mock.calls.map(([id]) => id).sort()).toEqual(
@@ -21,5 +23,9 @@ describe('PostHog plugin activation', () => {
         // rejected by the canonical local-id pattern.
         expect(registerAccount)
             .toHaveBeenCalledWith(POSTHOG_CONNECTED_ACCOUNT_PURPOSE, expect.any(Object));
+        expect(registerComposerReference).toHaveBeenCalledWith('posthog-evidence', {
+            search: expect.any(Function),
+            resolve: expect.any(Function),
+        });
     });
 });

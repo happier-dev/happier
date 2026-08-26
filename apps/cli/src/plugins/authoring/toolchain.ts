@@ -22,6 +22,7 @@ import {
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import {
+  bundleWorkspacePackageWithRuntimeDependencies,
   findRepoRoot,
   materializePrepublicationWorkspacePackageRoots,
   readBundledWorkspacePackageNames,
@@ -144,17 +145,17 @@ function resolveProjectRoot(pathLike: string): string {
 
 const PLUGIN_SDK_PACKAGE_NAME = '@happier-dev/plugin-sdk';
 const PLUGIN_UI_PACKAGE_NAME = '@happier-dev/plugin-ui';
+const TRIAGE_PROTOCOL_PACKAGE_NAME = '@happier-dev/triage-protocol';
 /**
- * Every workspace package the public scaffold can declare at the prepublication
- * version. `plugins create --ui reactNative` emits the Plugin UI package next to
- * the SDK and neither is published to the public registry yet, so dependency
- * preparation recognizes those author declarations without a registry origin.
+ * Every public author package the managed prepublication toolchain supplies
+ * without a registry origin.
  */
 const PREPUBLICATION_AUTHOR_PACKAGE_NAMES = [
   PLUGIN_SDK_PACKAGE_NAME,
   PLUGIN_UI_PACKAGE_NAME,
+  TRIAGE_PROTOCOL_PACKAGE_NAME,
 ] as const;
-const PREPUBLICATION_PLUGIN_SDK_VERSION = '0.0.0';
+const PREPUBLICATION_AUTHOR_PACKAGE_VERSION = '0.0.0';
 const TRANSIENT_PNPM_WORKSPACE_FILE_NAME = 'pnpm-workspace.yaml';
 const PLUGIN_AUTHOR_TYPECHECK_BUILD_INFO_PATH =
   'node_modules/.cache/happier/plugin-author.typecheck.tsbuildinfo';
@@ -319,9 +320,18 @@ async function materializePrepublicationAuthorWorkspacePackages(params: Readonly
 }>): Promise<PluginAuthorBundledPrepublicationMaterialization> {
   const materializationRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-prepublication-'));
   try {
+    const bundles = remapWorkspaceBundleDestinations({ materializationRoot, bundles: params.bundles });
     materializePrepublicationWorkspacePackageRoots({
-      bundles: remapWorkspaceBundleDestinations({ materializationRoot, bundles: params.bundles }),
+      bundles,
     });
+    // Feature protocols intentionally do not carry the SDK release marker that
+    // identifies the SDK/UI roots above, but a source author still receives
+    // this CLI-bundled package through the same transient override closure.
+    const triageProtocolBundle = bundles.find((bundle) => bundle.packageName === TRIAGE_PROTOCOL_PACKAGE_NAME);
+    if (!triageProtocolBundle) {
+      throw new Error(`The running Happier CLI does not bundle '${TRIAGE_PROTOCOL_PACKAGE_NAME}'`);
+    }
+    bundleWorkspacePackageWithRuntimeDependencies(triageProtocolBundle);
     return Object.freeze({
       packageRootsByName: resolveMaterializedPrepublicationAuthorPackageRoots(materializationRoot),
       cleanup: async () => await rm(materializationRoot, { recursive: true, force: true }),
@@ -407,7 +417,7 @@ async function requiresBundledPrepublicationResolution(params: Readonly<{
   try {
     const packageJson = JSON.parse(await readFile(join(params.projectRoot, 'package.json'), 'utf8')) as unknown;
     return PREPUBLICATION_AUTHOR_PACKAGE_NAMES.some((packageName) => (
-      readDependencySpecifier(packageJson, packageName) === PREPUBLICATION_PLUGIN_SDK_VERSION
+      readDependencySpecifier(packageJson, packageName) === PREPUBLICATION_AUTHOR_PACKAGE_VERSION
     ));
   } catch {
     // Let the managed package materializer report malformed or missing author

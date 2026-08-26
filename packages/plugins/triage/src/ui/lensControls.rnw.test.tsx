@@ -163,7 +163,7 @@ async function mountShell(subPath?: string): Promise<Readonly<{
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view'); });
+    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
     return { shell: fixture, locations };
 }
 

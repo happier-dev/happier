@@ -15,6 +15,7 @@ import {
 import {
     TESTKIT_OBSERVED_REVISION,
     TESTKIT_SELECTED_WORKSPACE,
+    TESTKIT_LINK_DISPLAY,
     createTestkitPrepareReviewWorkspace,
     testkitConfiguredInstance,
 } from './testkit/entrySessionTestkit.test-support.js';
@@ -35,6 +36,7 @@ const REQUEST: TriageReviewWorkspacePreparationRequestV1 = Object.freeze({
     instance: testkitConfiguredInstance(),
     entryRef: testkitEntryRef(),
     workflowSubject: 'pullRequest',
+    lastKnownLocator: TESTKIT_LINK_DISPLAY.locator,
     observed: TESTKIT_OBSERVED_REVISION,
     workspace: TESTKIT_SELECTED_WORKSPACE,
 });
@@ -44,6 +46,10 @@ const PREPARED_CURRENT: TriagePrepareReviewWorkspaceResultV1 = {
     repositoryPath: '/workspaces/example-review',
     branch: 'pr-17',
     created: true,
+    // The source owns this opaque canonical reference. Triage retains it only
+    // long enough for the generic SCM/Reviews scope producer to validate it
+    // after the stable Session exists.
+    pullRequest: { number: 17 },
     currentness: { kind: 'currentAtObservedHead' },
 };
 
@@ -61,6 +67,7 @@ describe('resolveEntrySessionWorkspace', () => {
             v: 1,
             instance: REQUEST.instance,
             entryRef: REQUEST.entryRef,
+            lastKnownLocator: TESTKIT_LINK_DISPLAY.locator,
             observed: TESTKIT_OBSERVED_REVISION,
             workspace: TESTKIT_SELECTED_WORKSPACE,
         });
@@ -110,6 +117,7 @@ describe('resolveEntrySessionWorkspace', () => {
                 directory: '/workspaces/example-review',
                 branch: 'pr-17',
                 created: true,
+                pullRequest: { number: 17 },
                 currentness: { kind: 'currentAtObservedHead' },
                 reviewEligibility: {
                     status: 'eligible',

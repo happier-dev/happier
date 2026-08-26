@@ -20,6 +20,7 @@ import {
   buildGithubPullRequestTargetInputV1,
   buildGithubPullRequestThreadResolutionInputV1,
   buildGithubPullRequestUpdateBranchInputV1,
+  githubMutationMayHaveChangedProviderStateV1,
   githubOfferedMutationsV1,
   projectGithubMutationOutcomeV1,
   readGithubLabelsV1,
@@ -409,5 +410,31 @@ describe('projectGithubMutationOutcomeV1', () => {
       code: 'timeout',
       message: 'The action did not complete.',
     }, null)).toEqual({ kind: 'uncertain', failure: null });
+  });
+});
+
+describe('GitHub post-mutation provider semantics', () => {
+  it('reconciles only the published outcomes which can follow a provider write', () => {
+    expect(githubMutationMayHaveChangedProviderStateV1({ kind: 'applied', effect: 'changed' }))
+      .toBe(true);
+    expect(githubMutationMayHaveChangedProviderStateV1({ kind: 'pending' })).toBe(true);
+    expect(githubMutationMayHaveChangedProviderStateV1({ kind: 'uncertain', failure: null }))
+      .toBe(true);
+    expect(githubMutationMayHaveChangedProviderStateV1({ kind: 'unreadable' })).toBe(true);
+    expect(githubMutationMayHaveChangedProviderStateV1({
+      kind: 'applied',
+      effect: 'alreadySatisfied',
+    })).toBe(false);
+    expect(githubMutationMayHaveChangedProviderStateV1({ kind: 'refused', reason: 'state_changed' }))
+      .toBe(false);
+    expect(githubMutationMayHaveChangedProviderStateV1({
+      kind: 'failed',
+      failure: { class: 'permission', code: 'github-write-forbidden' },
+    })).toBe(false);
+    expect(githubMutationMayHaveChangedProviderStateV1({
+      kind: 'rejected',
+      code: 'plugin_action_current_intent_rejected',
+      message: 'The confirmation was declined.',
+    })).toBe(false);
   });
 });

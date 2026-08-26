@@ -63,7 +63,11 @@ const ACCOUNT_REF: ConnectedAccountRef = Object.freeze({
 
 describe('GitHub API URL admission', () => {
   it('sends the credential only to an admissible github.com API URL', async () => {
-    const attempted: string[] = [];
+    const attempted: Array<Readonly<{
+      url: string;
+      method?: string;
+      headers?: Readonly<Record<string, string>>;
+    }>> = [];
     const context = {
       signal: new AbortController().signal,
       plugin: { id: 'happier.scm.forge.github' },
@@ -74,8 +78,12 @@ describe('GitHub API URL admission', () => {
           },
         },
         http: {
-          async request(input: Readonly<{ url: string }>) {
-            attempted.push(input.url);
+          async request(input: Readonly<{
+            url: string;
+            method?: string;
+            headers?: Readonly<Record<string, string>>;
+          }>) {
+            attempted.push(input);
             return { status: 200, headers: {}, body: new TextEncoder().encode('{}') };
           },
         },
@@ -101,7 +109,11 @@ describe('GitHub API URL admission', () => {
         code: 'github_api_origin_invalid',
       });
     }
-    expect(attempted).toEqual(['https://api.github.com/repos/o/r']);
+    expect(attempted).toEqual([expect.objectContaining({
+      url: 'https://api.github.com/repos/o/r',
+      method: 'GET',
+      headers: expect.objectContaining({ Authorization: 'Bearer t' }),
+    })]);
   });
 });
 

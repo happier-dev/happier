@@ -144,10 +144,9 @@ export const MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1 = 192;
 /**
  * Source-private configured-instance token.
  *
- * `listInstances` multiplies it by `MAX_TRIAGE_INSTANCE_DRAFTS_V1`, so it is
- * sized for what a real configured instance encodes — a codec version plus one
- * selected scope, key, or project id — and not for a provider inventory. The
- * first-party encoders produce well under a tenth of it.
+ * It is sized for what a real configured instance encodes — a codec version
+ * plus one selected scope, key, or project id — and not for a provider
+ * inventory. The first-party encoders produce well under a tenth of it.
  */
 export const MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 = 1024;
 /**
@@ -187,36 +186,6 @@ export const MAX_TRIAGE_ROW_FACTS_V1 = 4;
  * the global count of sixty-four.
  */
 export const MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1 = 64;
-/**
- * Bounded discovery result. Thirty-two is a picked global count; excess valid
- * drafts make the result schema reject the whole result.
- */
-export const MAX_TRIAGE_INSTANCE_DRAFTS_V1 = 32;
-/** Bounded discovery failure result. */
-export const MAX_TRIAGE_INSTANCE_FAILURES_V1 = 32;
-/**
- * Configured instances one caller-scoped read can carry.
- *
- * It bounds the same per-instance payload `MAX_TRIAGE_INSTANCE_DRAFTS_V1`
- * bounds — one account binding, one locator, one configuration token — and is
- * currently the same picked count.
- *
- * It is NOT the target's active-set maximum, which is an Account-wide product
- * bound owned by the configured-instance writer and is never larger than this
- * count. What can exceed it is the caller's RETIRED rows: a retired row is the
- * record an explicit reactivation restores, so it is never deleted. The read
- * reports `truncated` when that happens rather than presenting a short page as
- * the whole set.
- */
-export const MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1 = 32;
-/**
- * Bounded descriptor kind vocabulary.
- *
- * This is a picked global descriptor count. A source declaring more makes its
- * descriptor fail schema admission whole; no transport, storage, or provider
- * boundary currently derives thirty-two.
- */
-export const MAX_TRIAGE_KINDS_V1 = 32;
 /**
  * One page of the canonical entry-to-Session relation.
  *

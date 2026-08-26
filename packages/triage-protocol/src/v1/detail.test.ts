@@ -5,7 +5,10 @@ import {
     TriageDetailSurfaceInputV1JsonSchema,
     TriageDetailSurfaceInputV1Schema,
 } from './detail.js';
-import { TriagePrepareReviewWorkspaceResultV1Schema } from './workspace.js';
+import {
+    TriagePrepareReviewWorkspaceInputV1Schema,
+    TriagePrepareReviewWorkspaceResultV1Schema,
+} from './workspace.js';
 
 const fixture = createTriageSourceV1Fixture();
 
@@ -100,6 +103,24 @@ describe('the Composer-origin address', () => {
 });
 
 describe('Triage review-workspace result', () => {
+    it('carries the source route into preparation and its canonical pull-request reference back out', () => {
+        expect(TriagePrepareReviewWorkspaceInputV1Schema.safeParse({
+            ...fixture.prepareReviewWorkspaceInput,
+            lastKnownLocator: fixture.getResult.kind === 'present'
+                ? fixture.getResult.locator
+                : undefined,
+        }).success).toBe(true);
+
+        expect(TriagePrepareReviewWorkspaceResultV1Schema.safeParse({
+            kind: 'prepared',
+            repositoryPath: '/workspaces/example-repository',
+            branch: 'review/pull-17',
+            created: true,
+            currentness: { kind: 'currentAtObservedHead' },
+            pullRequest: { number: 17 },
+        }).success).toBe(true);
+    });
+
     it('keeps `created` the sole rollback authority on the only Session-composing arm', () => {
         expect(TriagePrepareReviewWorkspaceResultV1Schema.safeParse({
             kind: 'prepared',
@@ -128,6 +149,7 @@ describe('Triage review-workspace result', () => {
                 observedHeadSha: 'bbbb',
                 reason: 'dirtyWorktree',
             },
+            pullRequest: { number: 17 },
         }).success).toBe(true);
     });
 

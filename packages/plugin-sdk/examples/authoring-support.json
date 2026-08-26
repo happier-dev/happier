@@ -3,6 +3,7 @@
   "assets": {
     "examples/action-contract-producer": "first-party-preview",
     "examples/action-contract-consumer": "first-party-preview",
+    "examples/operation-only-channel-provider": "external-author-supported",
     "examples/triage-source-target": "first-party-preview",
     "examples/triage-source-contributor": "first-party-preview",
     "fixtures/authoring-inference": "SDK-inference-fixture",

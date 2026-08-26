@@ -10,7 +10,6 @@ import {
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
-import { MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
@@ -24,9 +23,10 @@ import {
     type TriageAdmittedOperationExecutorV1,
     type TriageAdmittedSourceV1,
 } from './listEntries.js';
-import type {
-    TriageListEntriesInputV1,
-    TriageListEntriesResultV1,
+import {
+    MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
+    type TriageListEntriesInputV1,
+    type TriageListEntriesResultV1,
 } from './listEntriesProtocol.js';
 
 /**
@@ -409,12 +409,9 @@ describe('the aggregate list coverage claim', () => {
         expect(result.window.coverage).toBe('partial');
     });
 
-    it('reports partial coverage when more sources are configured than one result can name', async () => {
+    it('pages configured source summaries through the Collection cursor without reading providers', async () => {
         const { collections, control } = createTestkitCorpusCollections();
-        // One past the maximum. Two racing creates at the boundary can leave the
-        // durable set here, and the read must not answer as if the surplus row
-        // did not exist.
-        for (let index = 0; index <= MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1; index += 1) {
+        for (let index = 0; index <= MAX_TRIAGE_LIST_SOURCE_BATCH_V1; index += 1) {
             control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
                 instanceTag: paddedInstanceTag(`s${String(index).padStart(3, '0')}`),
                 sourceInstanceId: numberedInstanceId(index),
@@ -422,10 +419,31 @@ describe('the aggregate list coverage claim', () => {
             })));
         }
 
-        const result = await listTriageEntries({
+        const first = await listTriageEntries({
             v: 1,
             sources: { kind: 'allConfigured' },
-            limit: 10,
+            limit: 0,
+            order: 'newest',
+        }, {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            executeScan: finishedWalk,
+            nowMs: () => 1_760_000_000_000,
+        });
+        expect(first.configuredSources).toHaveLength(MAX_TRIAGE_LIST_SOURCE_BATCH_V1);
+        expect(first.configuredSourcesStatus).toBe('truncated');
+        expect(first.configuredSourcesNextCursor).toBeDefined();
+        expect(first.window.rows).toEqual([]);
+        const cursor = first.configuredSourcesNextCursor;
+        if (cursor === undefined) throw new Error('The first configured-source page must carry its cursor.');
+
+        const second = await listTriageEntries({
+            v: 1,
+            sources: {
+                kind: 'allConfigured',
+                cursor,
+            },
+            limit: 0,
             order: 'newest',
         }, {
             sourceInstances: collections.sourceInstances,
@@ -434,11 +452,10 @@ describe('the aggregate list coverage claim', () => {
             nowMs: () => 1_760_000_000_000,
         });
 
-        // The result stays inside the array bound its own schema declares — and
-        // says so through coverage instead of silently dropping the surplus.
-        expect(result.configuredSources).toHaveLength(MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1);
-        expect(result.window.lanes.every((lane) => lane.exhausted)).toBe(true);
-        expect(result.window.coverage).toBe('partial');
+        expect(second.configuredSources).toHaveLength(1);
+        expect(second.configuredSourcesStatus).toBe('complete');
+        expect(second.configuredSourcesNextCursor).toBeUndefined();
+        expect(second.window.rows).toEqual([]);
     });
 });
 
@@ -580,7 +597,7 @@ describe('the aggregate list continuation set', () => {
      */
     it('reaches a deeper lane\'s older rows instead of starving the tail of the rotation', async () => {
         const { collections, control } = createTestkitCorpusCollections();
-        const ids = seedInstances(control, MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1);
+        const ids = seedInstances(control, MAX_TRIAGE_LIST_SOURCE_BATCH_V1);
         const tail = ids[ids.length - 1] ?? '';
         const pages = new Map<string, number>();
         // Every lane spends its whole published frontier on every page — the
@@ -655,7 +672,7 @@ describe('the aggregate list continuation set', () => {
             // Nothing is dropped: every lane that stopped with more to give
             // carries its own frontier, all thirty-two of them.
             expect(result.window.continuations ?? []).toHaveLength(
-                MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+                MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
             );
             const returnedThisPress = new Set(result.window.rows.map((row) => row.entryRef.entryId));
             const lostThisPress = [...fetchedThisPress].filter((entryId) => !returnedThisPress.has(entryId));

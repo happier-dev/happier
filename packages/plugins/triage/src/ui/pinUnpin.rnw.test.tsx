@@ -192,7 +192,7 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view'); });
+    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
     return fixture;
 }
 
@@ -324,7 +324,7 @@ describe('the mounted Pin/Unpin affordance', () => {
         });
 
         harness.state.includeEntry = false;
-        await act(async () => { await refreshTriageListWindow('manual'); });
+        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi); });
         await expect(shell.getByText('This entry is no longer in the list')).resolves.toBeDefined();
 
         await act(async () => {

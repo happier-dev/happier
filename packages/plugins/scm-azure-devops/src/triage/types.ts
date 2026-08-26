@@ -61,9 +61,9 @@ export type AzureDevOpsRoute =
   | Readonly<{
     resource: Extract<AzureDevOpsResource, 'pullRequest'>;
     /**
-     * Optional, deliberately. The Git area addresses a repository by its immutable GUID with no
-     * project segment, which is the only route an authoritative `get` can build: its input is a
-     * local ref plus the configured instance, and neither carries a project name.
+     * Optional, deliberately. Locator-authorized `get` and review-workspace preparation route
+     * through the source's project/repository locator, while the retained mutation/detail route
+     * carries an already validated immutable repository GUID with no project segment.
      */
     project?: string;
     repositoryId: string;
@@ -355,6 +355,11 @@ export type AzurePullRequestRow = Readonly<{
   creationDate: string | null;
   closedDate: string | null;
   sourceRefName: string | null;
+  /**
+   * The provider-authoritative editable source repository URL. `forkSource.repository` wins when
+   * Azure supplies it; the target repository is intentionally never substituted here.
+   */
+  sourceRepositoryCloneUrl: string | null;
   targetRefName: string | null;
   mergeStatus: AzurePullRequestMergeStatus | null;
   mergeFailureType: string | null;
@@ -392,8 +397,6 @@ export type AzureConnectionData = Readonly<{
 
 /** Azure ships pull requests only. Work Items are a separate product domain. */
 export type AzureEntryKindId = 'pull-request';
-
-export type AzurePresentationState = 'active' | 'closed';
 
 export type AzureInvolvementLaneId = 'authored' | 'reviewer';
 
@@ -436,7 +439,6 @@ export type AzurePullRequestEntry = Readonly<{
   locator: AzureEntryLocator;
   title: string;
   state: AzurePullRequestStatus;
-  presentation: AzurePresentationState;
   nativeLabel: string;
   isDraft: boolean;
   authorId: string | null;
@@ -451,8 +453,6 @@ export type AzurePullRequestEntry = Readonly<{
   mergeStatus: AzurePullRequestMergeStatus | null;
   involvement: AzureInvolvement;
   facts: readonly AzureRowFact[];
-  /** True when display text or fact/label counts were shortened. The entry stays visible. */
-  projectionTruncated: boolean;
 }>;
 
 /* -------------------------------------------------------------------------- */

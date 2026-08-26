@@ -86,6 +86,31 @@ describe('Bitbucket pull-request row mapping', () => {
     expect(emptyReviewers.ok && emptyReviewers.entry.reviewers).toEqual([]);
   });
 
+  it('drops only malformed nested review items and records incomplete review evidence', () => {
+    const decoded = decodeBitbucketPullRequestRow({
+      ...pullRequestSelf,
+      reviewers: [
+        pullRequestSelf.reviewers[0],
+        { ...pullRequestSelf.reviewers[1], uuid: 'not-a-bitbucket-uuid' },
+      ],
+      participants: [
+        pullRequestSelf.participants[0],
+        { ...pullRequestSelf.participants[1], state: 'maybe' },
+        {
+          ...pullRequestSelf.participants[2],
+          user: { ...pullRequestSelf.participants[2].user, uuid: null },
+        },
+      ],
+    });
+
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    expect(decoded.entry.reviewers).toHaveLength(1);
+    expect(decoded.entry.participants).toHaveLength(1);
+    expect(decoded.entry.participants?.[0]?.state).toBe('approved');
+    expect(decoded.entry.reviewEvidenceIncomplete).toBe(true);
+  });
+
   it('carries draft and queued as read facts and never as a transition', () => {
     const draft = decodeBitbucketPullRequestRow(pullRequestSelf);
     expect(draft.ok && draft.entry.draft).toBe(true);

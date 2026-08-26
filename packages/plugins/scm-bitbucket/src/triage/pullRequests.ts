@@ -426,6 +426,9 @@ export async function scanBitbucketPullRequests(
       if (lane.projectsReviewEvidence && decoded.entry.participants === null) {
         health.add('review-evidence-unprojected');
       }
+      if (lane.projectsReviewEvidence && decoded.entry.reviewEvidenceIncomplete) {
+        health.add('undecodable-items');
+      }
       observations.push({ routeInvolvement: lane.routeInvolvement, entry: decoded.entry });
     }
 

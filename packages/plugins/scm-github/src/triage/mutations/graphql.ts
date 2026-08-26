@@ -9,6 +9,7 @@ import {
   classifyGithubResponseFailure,
   classifyGithubTransportFailure,
   isGithubSuccessStatus,
+  isGithubWriteResponseAmbiguous,
 } from '../errors.js';
 import { buildGithubApiUrl } from '../locator.js';
 import { toTriageFailure } from '../mapping/protocol.js';
@@ -78,7 +79,12 @@ function classifyGithubGraphqlError(errors: readonly unknown[]): TriageSourceFai
 
 export type GithubGraphqlOutcomeV1 =
   | Readonly<{ ok: true; data: Readonly<Record<string, unknown>> }>
-  | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
+  | Readonly<{
+    ok: false;
+    failure: TriageSourceFailureV1;
+    /** The request could have reached GitHub before this response was lost or malformed. */
+    mayHaveChanged: boolean;
+  }>;
 
 export async function sendGithubGraphqlRequest(
   request: Readonly<{
@@ -102,6 +108,7 @@ export async function sendGithubGraphqlRequest(
     return Object.freeze({
       ok: false as const,
       failure: toTriageFailure(classifyGithubTransportFailure(error)),
+      mayHaveChanged: true,
     });
   }
 
@@ -109,6 +116,7 @@ export async function sendGithubGraphqlRequest(
     return Object.freeze({
       ok: false as const,
       failure: toTriageFailure(classifyGithubResponseFailure(response, dependencies.now())),
+      mayHaveChanged: isGithubWriteResponseAmbiguous(response),
     });
   }
 
@@ -119,19 +127,37 @@ export async function sendGithubGraphqlRequest(
     return Object.freeze({
       ok: false as const,
       failure: toTriageFailure(classifyGithubTransportFailure(error)),
+      // A 2xx with an unreadable body can be an answer lost after the mutation
+      // ran, so a caller that wrote must reconcile rather than retry blindly.
+      mayHaveChanged: true,
     });
   }
   if (!isRecord(body)) {
-    return Object.freeze({ ok: false as const, failure: GRAPHQL_RESPONSE_INVALID_FAILURE });
+    return Object.freeze({
+      ok: false as const,
+      failure: GRAPHQL_RESPONSE_INVALID_FAILURE,
+      mayHaveChanged: true,
+    });
   }
   // `errors` decides before `data` does: a partial GraphQL response carries both,
   // and treating a populated `errors` array as success is the whole failure mode
   // this module exists to prevent.
   if (Array.isArray(body.errors) && body.errors.length > 0) {
-    return Object.freeze({ ok: false as const, failure: classifyGithubGraphqlError(body.errors) });
+    return Object.freeze({
+      ok: false as const,
+      failure: classifyGithubGraphqlError(body.errors),
+      // A null data root is GitHub's definite mutation rejection. A populated
+      // root can contain a partially resolved mutation field, which must be
+      // reconciled by the caller that issued the write.
+      mayHaveChanged: isRecord(body.data),
+    });
   }
   if (!isRecord(body.data)) {
-    return Object.freeze({ ok: false as const, failure: GRAPHQL_RESPONSE_INVALID_FAILURE });
+    return Object.freeze({
+      ok: false as const,
+      failure: GRAPHQL_RESPONSE_INVALID_FAILURE,
+      mayHaveChanged: true,
+    });
   }
   return Object.freeze({ ok: true as const, data: body.data });
 }

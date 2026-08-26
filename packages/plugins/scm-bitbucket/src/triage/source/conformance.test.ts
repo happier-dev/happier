@@ -63,12 +63,40 @@ describe('Bitbucket Triage source contribution conformance', () => {
     expect(contribution?.id).toBe('bitbucket-forge');
     expect(contribution?.target).toEqual({ pluginId: 'happier.triage', pointId: 'sources' });
     expect(contribution?.protocol).toEqual({ id: 'happier.triage/sources', version: 1 });
-    for (const actionId of Object.values(contribution?.operations ?? {})) {
+    for (const actionId of [
+      BITBUCKET_TRIAGE_ACTION_IDS.listInstances,
+      BITBUCKET_TRIAGE_ACTION_IDS.scan,
+      BITBUCKET_TRIAGE_ACTION_IDS.get,
+    ]) {
       const action = actions.get(actionId);
       expect(action?.surfaces).toEqual(['plugin']);
       expect(action?.dangerLevel).toBe('safe');
       expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);
     }
+  });
+
+  it('binds selected-PR workspace preparation to its writes-local source Action', () => {
+    const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
+    const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+    const declaration = TriageSourcesContributionProtocolV1.operations.prepareReviewWorkspace.declaration;
+
+    // This role is optional for a source, but once Bitbucket declares it the
+    // exact Action is the only local-write authority it may expose. A safe
+    // action or a provider-local schema would pass an incomplete manifest
+    // check while weakening the host admission boundary.
+    expect(contribution?.operations.prepareReviewWorkspace)
+      .toBe('triage-prepare-review-workspace');
+    const action = actions.get('triage-prepare-review-workspace');
+    expect(action, 'workspace preparation Action must be declared').toBeDefined();
+    expect(action?.surfaces).toEqual(declaration.surfaces);
+    expect(action?.dangerLevel).toBe('writesLocal');
+    expect(action?.inputSchema).toEqual(declaration.input.schema.jsonSchema);
+    expect(action?.resultSchema).toEqual(declaration.resultSchema.jsonSchema);
+    expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);
+    expect(action?.connectedAccountPurposeBindings).toEqual([{
+      path: 'instance.binding.account',
+      purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
+    }]);
   });
 
   it('declares each source-native detail plane as a plugin-surfaced account-bound read', () => {
@@ -92,22 +120,25 @@ describe('Bitbucket Triage source contribution conformance', () => {
         purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
       }]);
     }
-    // They are NOT source-protocol roles: the contribution binds three operations,
-    // and adding a fourth would publish Bitbucket vocabulary into a shared
-    // contract that has no such role.
+    // The provider-specific detail planes remain outside the source protocol;
+    // selected-PR preparation is the one optional shared source role.
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
-      .toEqual(['get', 'listInstances', 'scan']);
+      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan']);
   });
 
-  it('binds the exact account path on every read Action that receives one', () => {
+  it('binds the exact account path on every configured source Action that receives one', () => {
     const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
     const binding = [{
       path: 'instance.binding.account',
       purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
     }];
 
-    for (const id of [BITBUCKET_TRIAGE_ACTION_IDS.scan, BITBUCKET_TRIAGE_ACTION_IDS.get]) {
+    for (const id of [
+      BITBUCKET_TRIAGE_ACTION_IDS.scan,
+      BITBUCKET_TRIAGE_ACTION_IDS.get,
+      'triage-prepare-review-workspace',
+    ]) {
       expect(actions.get(id)?.connectedAccountPurposeBindings).toEqual(binding);
     }
     // Discovery produces account references rather than receiving one, so it has no account path

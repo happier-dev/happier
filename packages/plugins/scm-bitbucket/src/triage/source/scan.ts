@@ -186,6 +186,7 @@ export async function scanBitbucketSource(
   // carries — exactly, since a participant's identity and their approval are properties of one
   // object. A pull request this credential is proven to have no relationship to is not this
   // account's triage row, so it is not published as one.
+  let omittedItemCount = outcome.omittedItemCount;
   const observations: TriageSourceScanObservationV1[] = outcome.observations.flatMap(
     (observation) => {
       const projected = toBitbucketPresentObservation(observation.entry, {
@@ -194,7 +195,12 @@ export async function scanBitbucketSource(
           : { laneInvolvement: observation.routeInvolvement }),
         viewerAccountUuid: accountUuid,
       });
-      return projected.viewer.involvement.length === 0 ? [] : [projected];
+      if (projected.viewer.involvement.length > 0) return [projected];
+      // The unfiltered review route legitimately returns unrelated rows, which are not omissions.
+      // Count one only when undecodable nested review evidence is what prevents this otherwise
+      // identity-valid row from proving involvement for the viewer.
+      if (observation.entry.reviewEvidenceIncomplete) omittedItemCount += 1;
+      return [];
     },
   );
 
@@ -220,7 +226,7 @@ export async function scanBitbucketSource(
 
   const evidence = resolveScanEvidence({
     walkHealth: outcome.walkHealth,
-    omittedItemCount: outcome.omittedItemCount,
+    omittedItemCount,
     projectionBudget: outcome.projectionBudget,
     // A frontier the token cannot hold ends the walk here rather than being truncated into one
     // that addresses the wrong repository, and the result says so.

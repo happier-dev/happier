@@ -67,6 +67,13 @@ export type GithubTriageEntryStateV1 = Readonly<{
   nativeLabel: string;
 }>;
 
+/** The one provider read's base/head/native revision for a pull request. */
+export type GithubTriageReviewRevisionV1 = Readonly<{
+  baseSha: string;
+  headSha: string;
+  nativeRevision: string;
+}>;
+
 export type GithubTriageEntrySnapshotV1 = Readonly<{
   kindId: GithubTriageKindIdV1;
   title: string;
@@ -84,6 +91,8 @@ export type GithubTriageEntrySnapshotV1 = Readonly<{
   createdAtMs: number;
   sourceUpdatedAtMs: number;
   nativeRevision: string | null;
+  /** Present only on an authoritative pull-request read with all three revisions. */
+  reviewRevision?: GithubTriageReviewRevisionV1;
   state: GithubTriageEntryStateV1;
   rowFacts: readonly GithubTriageRowFactV1[];
   projectionTruncated: boolean;

@@ -12,6 +12,7 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
+  isBoundedInvocationDeadline,
   materializeTriageSourceAuthorizationV1,
   type TriageSourceAuthorizationFailureReasonV1,
 } from '@happier-dev/triage-sources/runtime';
@@ -25,7 +26,6 @@ import {
 import type { SentryDeploymentV1 } from '../auth/sentryOrigin.js';
 
 import { classifySentryFailure } from './sentryFailure.js';
-import { isSentryDeadlineAbort } from './sentryInvocationDeadline.js';
 
 export type SentryApiResponseV1 = Readonly<{
   status: number;
@@ -122,7 +122,7 @@ export async function createSentryApiClient(
    * says nothing is wrong.
    */
   const abortFailure = (operation: SentryOperationV1): SentryFailureV1 => classifySentryFailure(
-    isSentryDeadlineAbort(signal)
+    isBoundedInvocationDeadline(signal.reason)
       ? { kind: 'deadline', operation }
       : { kind: 'cancelled', operation },
   );

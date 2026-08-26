@@ -184,6 +184,7 @@ export function decodeAzurePullRequestRow(raw: unknown): AzurePullRequestRow | n
     creationDate: readString(record.creationDate),
     closedDate: readString(record.closedDate),
     sourceRefName: readString(record.sourceRefName),
+    sourceRepositoryCloneUrl: readAzurePullRequestSourceRepositoryCloneUrl(record),
     targetRefName: readString(record.targetRefName),
     mergeStatus: mergeStatus !== null && (MERGE_STATUSES as readonly string[]).includes(mergeStatus)
       ? mergeStatus as AzurePullRequestMergeStatus
@@ -203,6 +204,25 @@ export function decodeAzurePullRequestRow(raw: unknown): AzurePullRequestRow | n
     completionOptions: decodeCompletionOptions(record.completionOptions),
     url: readAbsoluteUrl(record.url),
   };
+}
+
+/**
+ * Azure keeps the editable source repository separate from `repository`, which is always the
+ * pull request target. A fork's nested `forkSource.repository` is authoritative when present;
+ * falling through to `sourceRepository` after a malformed fork record would quietly check out
+ * the target-side source instead, so it deliberately yields no source URL.
+ */
+function readAzurePullRequestSourceRepositoryCloneUrl(
+  record: Readonly<Record<string, unknown>>,
+): string | null {
+  const forkSourceValue = record.forkSource;
+  const sourceRepository = forkSourceValue === undefined || forkSourceValue === null
+    ? readRecord(record.sourceRepository)
+    : (() => {
+      const forkSource = readRecord(forkSourceValue);
+      return forkSource === null ? null : readRecord(forkSource.repository);
+    })();
+  return sourceRepository === null ? null : readString(sourceRepository.remoteUrl);
 }
 
 /**

@@ -138,6 +138,12 @@ export type GitlabEntrySnapshot = Readonly<{
    * normalized: a shortened revision is a DIFFERENT revision.
    */
   nativeRevision: string | null;
+  /** The complete merge-request review tuple, or null when GitLab supplied no exact base/head. */
+  reviewRevision: Readonly<{
+    baseSha: string;
+    headSha: string;
+    nativeRevision: string;
+  }> | null;
   sourceCreatedAtMs: number | null;
   author: GitlabActor | null;
   assignees: readonly GitlabActor[];

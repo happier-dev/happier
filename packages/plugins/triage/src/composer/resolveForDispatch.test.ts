@@ -5,6 +5,7 @@ import {
     type TriageGetInputV1,
     type TriageGetResultV1,
 } from '@happier-dev/triage-protocol/v1';
+import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 
 import type { TriageAdmittedSourceV1 } from '../actions/listEntries.js';
@@ -83,7 +84,10 @@ function instanceRow(
     };
 }
 
-type GetFn = (input: TriageGetInputV1) => Promise<TriageGetResultV1>;
+type GetFn = (
+    input: TriageGetInputV1,
+    options?: PluginCancellationOptions,
+) => Promise<TriageGetResultV1>;
 
 function createHarness(options: Readonly<{
     rows?: readonly CorpusSourceInstanceRowV1[];
@@ -145,12 +149,16 @@ function createHarness(options: Readonly<{
             sourceInstances: collections.sourceInstances,
             sessionLinks: collections.sessionLinks,
             readAdmittedSources: async () => admitted,
-            executeGet: async (operation: unknown, input: TriageGetInputV1) => {
+            executeGet: async (
+                operation: unknown,
+                input: TriageGetInputV1,
+                operationOptions?: PluginCancellationOptions,
+            ) => {
                 if (!handles.has(operation as object)) {
                     throw new Error('No admitted get handle for this operation.');
                 }
                 calls.push(input);
-                return await get(input);
+                return await get(input, operationOptions);
             },
         },
     };
@@ -312,6 +320,42 @@ describe('resolving an attached Triage entry for dispatch', () => {
 
         expect(result.attachments[0]).toMatchObject({ status: 'failed', retryable: false });
     });
+
+    it('settles an unanswered get at the Triage deadline and ignores its late answer', async () => {
+        let sourceSignal: AbortSignal | undefined;
+        let resolveLate: ((result: TriageGetResultV1) => void) | undefined;
+        const harness = createHarness({
+            get: async (_input, options) => {
+                sourceSignal = options?.signal;
+                return await new Promise<TriageGetResultV1>((resolve) => {
+                    resolveLate = resolve;
+                });
+            },
+        });
+
+        const result = await resolveTriageEntryForDispatch(
+            { attachments: [attachment()] },
+            { ...harness.deps, getDeadlineMs: 5 } as never,
+        );
+
+        expect(result.attachments).toEqual([{
+            instanceId: 'attachment-1',
+            status: 'failed',
+            retryable: true,
+            message: 'This entry could not be read.',
+        }]);
+        expect(sourceSignal?.aborted).toBe(true);
+
+        resolveLate?.({
+            kind: 'present',
+            localRef: LOCAL_REF,
+            locator: testkitLocator(),
+            snapshot: testkitSnapshot(),
+            viewer: testkitViewer(),
+        });
+        await Promise.resolve();
+        expect(result.attachments[0]).toMatchObject({ status: 'failed', retryable: true });
+    }, 1_000);
 
     it('refuses a response that answers about a different entry', async () => {
         const harness = createHarness({

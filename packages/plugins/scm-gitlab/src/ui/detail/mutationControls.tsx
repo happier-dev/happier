@@ -43,6 +43,10 @@ import {
   type TextTone,
 } from '@happier-dev/plugin-ui';
 import {
+  completeTriagePostMutationIfNeeded,
+  useTriagePostMutationCompletion,
+} from '@happier-dev/triage-sources/ui';
+import {
   describeTriageSourceFailureV1,
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -64,6 +68,7 @@ import {
   buildGitlabIssueLabelInputV1,
   gitlabOfferedIssueWritesV1,
   gitlabOfferedMergeRequestWritesV1,
+  gitlabWriteMayHaveChangedProviderStateV1,
   projectGitlabWriteOutcomeV1,
   type GitlabWriteIdV1,
   type GitlabWriteEffectV1,
@@ -357,9 +362,20 @@ function GitlabWriteControl({
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const controller = useExecutePluginAction(ACTION_BY_WRITE[write]);
+  const completePostMutation = useTriagePostMutationCompletion();
   const run = React.useCallback(() => {
-    if (input !== null) void controller.execute(input);
-  }, [controller, input]);
+    if (input === null) return;
+    void (async () => {
+      const execution = await controller.execute(input);
+      await completeTriagePostMutationIfNeeded(
+        completePostMutation,
+        execution,
+        (settled) => gitlabWriteMayHaveChangedProviderStateV1(
+          projectGitlabWriteOutcomeV1(write, settled),
+        ),
+      );
+    })();
+  }, [completePostMutation, controller, input, write]);
 
   const settled = projectSettledWrite(
     write,

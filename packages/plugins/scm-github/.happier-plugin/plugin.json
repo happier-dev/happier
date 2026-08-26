@@ -330,7 +330,6 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 32,
                   "type": "array"
                 },
                 "failures": {
@@ -453,7 +452,6 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 32,
                   "type": "array"
                 },
                 "kind": {
@@ -608,7 +606,6 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 32,
                   "type": "array"
                 },
                 "failure": {
@@ -780,7 +777,6 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 32,
                   "type": "array"
                 },
                 "kind": {
@@ -1697,6 +1693,35 @@
                               "projectionTruncated": {
                                 "const": true
                               },
+                              "reviewRevision": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "baseSha": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "headSha": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "nativeRevision": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  }
+                                },
+                                "required": [
+                                  "baseSha",
+                                  "headSha",
+                                  "nativeRevision"
+                                ],
+                                "type": "object"
+                              },
                               "scopeLabel": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -2420,6 +2445,35 @@
                               },
                               "projectionTruncated": {
                                 "const": true
+                              },
+                              "reviewRevision": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "baseSha": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "headSha": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "nativeRevision": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  }
+                                },
+                                "required": [
+                                  "baseSha",
+                                  "headSha",
+                                  "nativeRevision"
+                                ],
+                                "type": "object"
                               },
                               "scopeLabel": {
                                 "minLength": 1,
@@ -3406,6 +3460,35 @@
                     "projectionTruncated": {
                       "const": true
                     },
+                    "reviewRevision": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "baseSha": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "headSha": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "nativeRevision": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        }
+                      },
+                      "required": [
+                        "baseSha",
+                        "headSha",
+                        "nativeRevision"
+                      ],
+                      "type": "object"
+                    },
                     "scopeLabel": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -3786,6 +3869,590 @@
           "plugin"
         ],
         "title": "Read one GitHub pull request or issue"
+      },
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "instance.binding.account",
+            "purpose": "github-connected-account"
+          }
+        ],
+        "dangerLevel": "writesLocal",
+        "description": "Rereads one GitHub pull request and prepares its source branch in the selected workspace.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "github-api",
+          "github-connected-account"
+        ],
+        "id": "triage/prepare-github-review-workspace",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "entryRef": {
+              "additionalProperties": false,
+              "properties": {
+                "collisionScope": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 192
+                },
+                "entryId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "kindId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "source": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "source",
+                "kindId",
+                "collisionScope",
+                "entryId"
+              ],
+              "type": "object"
+            },
+            "instance": {
+              "additionalProperties": false,
+              "properties": {
+                "binding": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "account": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accountId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                          "type": "string"
+                        },
+                        "service": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "accountId"
+                      ],
+                      "type": "object"
+                    },
+                    "purpose": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    }
+                  },
+                  "required": [
+                    "purpose",
+                    "account"
+                  ],
+                  "type": "object"
+                },
+                "configuration": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "token": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 1024
+                    },
+                    "v": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "token"
+                  ],
+                  "type": "object"
+                },
+                "instance": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "localId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "type": "object"
+                    },
+                    "sourceInstanceId": {
+                      "maxLength": 36,
+                      "minLength": 36,
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "sourceInstanceId"
+                  ],
+                  "type": "object"
+                },
+                "localInstanceKey": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "locator": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "displayLabel": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "displayPath": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "v": {
+                      "const": 1
+                    },
+                    "webUrl": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 384
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "displayLabel"
+                  ],
+                  "type": "object"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "instance",
+                "binding",
+                "localInstanceKey",
+                "configuration"
+              ],
+              "type": "object"
+            },
+            "lastKnownLocator": {
+              "additionalProperties": false,
+              "properties": {
+                "displayPath": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 512
+                },
+                "routingToken": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 192
+                },
+                "v": {
+                  "const": 1
+                },
+                "webUrl": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 384
+                }
+              },
+              "required": [
+                "v"
+              ],
+              "type": "object"
+            },
+            "observed": {
+              "additionalProperties": false,
+              "properties": {
+                "baseSha": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "headSha": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "nativeRevision": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "observedAtMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": -9007199254740991,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "baseSha",
+                "headSha",
+                "nativeRevision",
+                "observedAtMs"
+              ],
+              "type": "object"
+            },
+            "v": {
+              "const": 1
+            },
+            "workspace": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "machineId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "rootPath": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 384
+                    },
+                    "serverId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    }
+                  },
+                  "required": [
+                    "serverId",
+                    "machineId",
+                    "rootPath"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "instance",
+            "entryRef",
+            "lastKnownLocator",
+            "observed",
+            "workspace"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "branch": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 512
+                },
+                "created": {
+                  "anyOf": [
+                    {
+                      "const": true
+                    },
+                    {
+                      "const": false
+                    }
+                  ]
+                },
+                "currentness": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "currentAtObservedHead"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "fromSha": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "kind": {
+                          "const": "movedToObservedHead"
+                        },
+                        "observedHeadSha": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "recoveryRef": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "fromSha",
+                        "observedHeadSha",
+                        "recoveryRef"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "kind": {
+                          "const": "preservedStale"
+                        },
+                        "observedHeadSha": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "reason": {
+                          "anyOf": [
+                            {
+                              "const": "localCommits"
+                            },
+                            {
+                              "const": "dirtyWorktree"
+                            },
+                            {
+                              "const": "unresolvedHead"
+                            }
+                          ]
+                        },
+                        "resolvedHeadSha": {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 128
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "resolvedHeadSha",
+                        "observedHeadSha",
+                        "reason"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "kind": {
+                  "const": "prepared"
+                },
+                "pullRequest": {
+                  "x-happier-max-serialized-utf8-bytes": 512
+                },
+                "repositoryPath": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 384
+                }
+              },
+              "required": [
+                "kind",
+                "repositoryPath",
+                "branch",
+                "created",
+                "currentness",
+                "pullRequest"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "workspaceRequired"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "workspaceMismatch"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "unsupported"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "account"
+                    },
+                    {
+                      "const": "machine"
+                    },
+                    {
+                      "const": "scmResolver"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "refused"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "instanceMoved"
+                    },
+                    {
+                      "const": "pullRequestMoved"
+                    },
+                    {
+                      "const": "observedHeadMoved"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Prepare a GitHub pull-request review workspace"
       },
       {
         "connectedAccountPurposeBindings": [
@@ -7738,6 +8405,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -8439,6 +9135,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -9205,6 +9930,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -10240,6 +10994,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -10941,6 +11724,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -11694,6 +12506,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -12729,6 +13570,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -13430,6 +14300,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -14183,6 +15082,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -15225,6 +16153,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -15926,6 +16883,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -16686,6 +17672,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -17728,6 +18743,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -18430,6 +19474,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -19130,6 +20203,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -19890,6 +20992,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -22381,6 +23512,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -23082,6 +24242,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -23835,6 +25024,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -24870,6 +26088,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -25571,6 +26818,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -26324,6 +27600,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -27372,6 +28677,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -28122,6 +29456,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -29170,6 +30533,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -29920,6 +31312,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -30966,6 +32387,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -31716,6 +33166,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -32757,6 +34236,35 @@
                             "projectionTruncated": {
                               "const": true
                             },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
+                            },
                             "scopeLabel": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -33507,6 +35015,35 @@
                             },
                             "projectionTruncated": {
                               "const": true
+                            },
+                            "reviewRevision": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "baseSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "headSha": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "nativeRevision": {
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "type": "string",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "baseSha",
+                                "headSha",
+                                "nativeRevision"
+                              ],
+                              "type": "object"
                             },
                             "scopeLabel": {
                               "minLength": 1,
@@ -38633,6 +40170,7 @@
         "operations": {
           "get": "triage/get-github-entry",
           "listInstances": "triage/list-github-instances",
+          "prepareReviewWorkspace": "triage/prepare-github-review-workspace",
           "scan": "triage/scan-github"
         },
         "protocol": {

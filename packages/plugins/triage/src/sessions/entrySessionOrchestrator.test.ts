@@ -35,6 +35,7 @@ const PREPARED_RESULT = {
     repositoryPath: '/workspaces/example-review',
     branch: 'pr-17',
     created: true,
+    pullRequest: { number: 17 },
     currentness: { kind: 'currentAtObservedHead' },
 } as const;
 
@@ -44,6 +45,7 @@ const REVIEW_WORKSPACE: TriageWorkspaceMaterializationV1 = {
         instance: testkitConfiguredInstance(),
         entryRef: testkitEntryRef(),
         workflowSubject: 'pullRequest',
+        lastKnownLocator: TESTKIT_LINK_DISPLAY.locator,
         observed: TESTKIT_OBSERVED_REVISION,
         workspace: TESTKIT_SELECTED_WORKSPACE,
     },
@@ -54,6 +56,7 @@ const PREPARED_FACTS = {
     directory: '/workspaces/example-review',
     branch: 'pr-17',
     created: true,
+    pullRequest: { number: 17 },
     currentness: { kind: 'currentAtObservedHead' },
     reviewEligibility: {
         status: 'eligible',
@@ -308,6 +311,31 @@ describe('startEntrySession', () => {
             type: 'rejected',
             reason: 'pullRequestModeRequiresPreparedWorkspace',
         });
+        expect(invoker.calls).toEqual([]);
+    });
+
+    it('rejects a selected-PR workspace whose nested entry is not the linked entry', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const invoker = createTestkitActionInvoker();
+        const source = createTestkitPrepareReviewWorkspace({ results: [PREPARED_RESULT] });
+
+        const result = await startEntrySession(deps(fixture, invoker, source), {
+            entryRef: testkitEntryRef({ entryId: '18' }),
+            display: TESTKIT_LINK_DISPLAY,
+            workspaceMode: 'pull_request',
+            destination: {
+                kind: 'new',
+                creationKey: 'creation-key-a',
+                spawn: TESTKIT_SPAWN_REQUEST,
+                materialization: REVIEW_WORKSPACE,
+            },
+        });
+
+        expect(result).toEqual({
+            type: 'rejected',
+            reason: 'pullRequestWorkspaceEntryMismatch',
+        });
+        expect(source.calls).toEqual([]);
         expect(invoker.calls).toEqual([]);
     });
 

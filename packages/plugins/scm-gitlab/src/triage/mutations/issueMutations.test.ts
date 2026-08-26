@@ -199,6 +199,23 @@ describe('gitlab/issue/close', () => {
     expect(result).toMatchObject({ kind: 'unconfirmed', observed: { state: 'opened' } });
   });
 
+  it('never confirms a same-IID issue returned from another project', async () => {
+    const transport = scriptedTransport({
+      [`GET ${ISSUE_URL}`]: [
+        { status: 200, body: issueBody() },
+        { status: 200, body: issueBody({ project_id: 99, state: 'closed' }) },
+      ],
+      [`PUT ${ISSUE_URL}`]: [{ status: 200, body: issueBody({ state: 'closed' }) }],
+    });
+
+    const result = await closeGitlabIssue(issueInput(), transport.context);
+
+    expect(result).toMatchObject({
+      kind: 'unconfirmed',
+      failure: { class: 'unsupportedContract', code: 'identity-mismatch' },
+    });
+  });
+
   it('refuses an input that carries anything beyond the entry and its revision', async () => {
     // The closed schema is the gate. `labels` smuggled in beside the ref would
     // REPLACE every label on the issue; it is refused before a credential is
@@ -319,8 +336,9 @@ describe('gitlab/issue/reopen', () => {
 
 /**
  * The issue half of the same rule: a state write that was DISPATCHED and then lost its answer to
- * this source's own deadline may already have transitioned the issue, so it is settled by the one
- * confirming read every Action performs — never by reporting that nothing was attempted.
+ * this source's own deadline may already have transitioned the issue. The same absolute deadline
+ * also bounds confirmation, so once it is spent the honest result is `unconfirmed`; no second
+ * timer or blind retry manufactures certainty.
  */
 describe('an issue write whose answer this source’s deadline took', () => {
   afterEach(() => {
@@ -334,7 +352,7 @@ describe('an issue write whose answer this source’s deadline took', () => {
     return pending;
   }
 
-  it('reports a close GitLab performed as closed, never as nothing attempted', async () => {
+  it('reports a timed-out close as unconfirmed when the spent deadline prevents confirmation', async () => {
     const transport = scriptedTransport({
       [`GET ${ISSUE_URL}`]: [
         { status: 200, body: issueBody({ state: 'opened' }) },
@@ -347,11 +365,14 @@ describe('an issue write whose answer this source’s deadline took', () => {
       () => closeGitlabIssue(issueInput(), transport.context),
     );
 
-    expect(result).toMatchObject({ kind: 'closed', item: { state: 'closed' } });
+    expect(result).toMatchObject({
+      kind: 'unconfirmed',
+      failure: { class: 'transient', code: 'deadline-exceeded' },
+    });
     expect(transport.requests.filter((request) => request.method === 'PUT')).toHaveLength(1);
   });
 
-  it('reports a reopen GitLab performed as reopened, never as nothing attempted', async () => {
+  it('reports a timed-out reopen as unconfirmed when the spent deadline prevents confirmation', async () => {
     const transport = scriptedTransport({
       [`GET ${ISSUE_URL}`]: [
         { status: 200, body: issueBody({ state: 'closed' }) },
@@ -364,6 +385,9 @@ describe('an issue write whose answer this source’s deadline took', () => {
       () => reopenGitlabIssue(issueInput(), transport.context),
     );
 
-    expect(result).toMatchObject({ kind: 'reopened', item: { state: 'opened' } });
+    expect(result).toMatchObject({
+      kind: 'unconfirmed',
+      failure: { class: 'transient', code: 'deadline-exceeded' },
+    });
   });
 });

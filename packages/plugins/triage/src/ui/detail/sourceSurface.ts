@@ -27,6 +27,7 @@ import {
  * before a press rather than after one.
  */
 const TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1 = 'prepareReviewWorkspace';
+const TRIAGE_GET_SOURCE_ENTRY_ROLE_V1 = 'get';
 
 /**
  * The one place the aggregate turns "this row belongs to that source" into the
@@ -111,10 +112,18 @@ export function resolveTriageSourcePreparesReviewWorkspaceV1(
   targetedContributions: PluginUiTargetedContributionsV1,
   source: TriageEntryRefV1['source'],
 ): boolean {
+  return resolveTriageSourcePrepareReviewWorkspaceOperationV1(targetedContributions, source) !== undefined;
+}
+
+/** The exact host-created source handle a selected-PR start must carry. */
+export function resolveTriageSourcePrepareReviewWorkspaceOperationV1(
+  targetedContributions: PluginUiTargetedContributionsV1,
+  source: TriageEntryRefV1['source'],
+) {
   return selectTargetedContributionOperation(targetedContributions, {
     ...triageSourceSelectorV1(source),
     role: TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1,
-  }) !== undefined;
+  });
 }
 
 /**
@@ -148,4 +157,23 @@ export function readTriageSourcePreparesReviewWorkspaceV1(
   source: TriageEntryRefV1['source'],
 ): boolean {
   return resolveTriageSourcePreparesReviewWorkspaceV1(context.targetedContributions, source);
+}
+
+/** The same exact optional preparation handle from this mounted surface context. */
+export function readTriageSourcePrepareReviewWorkspaceOperationV1(
+  context: SurfaceContext,
+  source: TriageEntryRefV1['source'],
+) {
+  return resolveTriageSourcePrepareReviewWorkspaceOperationV1(context.targetedContributions, source);
+}
+
+/** The exact current source reread handle consumed immediately before formal review start. */
+export function readTriageSourceGetOperationV1(
+  context: SurfaceContext,
+  source: TriageEntryRefV1['source'],
+) {
+  return selectTargetedContributionOperation(context.targetedContributions, {
+    ...triageSourceSelectorV1(source),
+    role: TRIAGE_GET_SOURCE_ENTRY_ROLE_V1,
+  });
 }

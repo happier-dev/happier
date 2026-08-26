@@ -203,7 +203,7 @@ function observe(mutation: MutationContext): Promise<AzureEntryObservation> {
     client: mutation.client,
     viewerId: mutation.viewerId,
     origin: mutation.origin,
-    address: mutation.address,
+    route: { kind: 'identity', ...mutation.address },
     localRef: mutation.localRef,
     signal: mutation.signal,
   });

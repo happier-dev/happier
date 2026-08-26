@@ -1,7 +1,5 @@
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import {
-  MAX_TRIAGE_INSTANCE_DRAFTS_V1,
-  MAX_TRIAGE_INSTANCE_FAILURES_V1,
   type TriageListInstancesResultV1,
   type TriageSourceAccountBindingV1,
   type TriageSourceFailureV1,
@@ -82,14 +80,6 @@ export async function listBitbucketSourceInstances(
     failure: TriageSourceFailureV1,
     localInstanceKey?: string,
   ): void => {
-    if (failures.length >= MAX_TRIAGE_INSTANCE_FAILURES_V1) {
-      complete = false;
-      incompleteFailure ??= {
-        class: 'unsupportedContract',
-        code: 'instance-failure-bound-reached',
-      };
-      return;
-    }
     failures.push({
       binding,
       ...(localInstanceKey === undefined ? {} : { localInstanceKey }),
@@ -136,14 +126,6 @@ export async function listBitbucketSourceInstances(
     }
 
     for (const workspace of workspaces.workspaces) {
-      if (candidates.length >= MAX_TRIAGE_INSTANCE_DRAFTS_V1) {
-        complete = false;
-        incompleteFailure ??= {
-          class: 'unsupportedContract',
-          code: 'instance-candidate-bound-reached',
-        };
-        break;
-      }
       const configuration = encodeBitbucketConfiguration({ v: 1, workspaceUuid: workspace.uuid });
       if (!configuration.ok) {
         recordFailure(

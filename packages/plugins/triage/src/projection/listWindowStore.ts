@@ -16,11 +16,11 @@ import {
 } from '../refresh/refreshEligibility.js';
 
 import {
+    MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
     triageListRowBudgetV1,
     type TriageListEntriesInputV1,
     type TriageListEntriesResultV1,
 } from '../actions/listEntriesProtocol.js';
-import { MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import {
     TRIAGE_LIST_DEFAULT_LENS_V1,
     foldTriageListWindow,
@@ -216,6 +216,16 @@ type LaneState = {
 
 type LaneContinuation = NonNullable<TriageListEntriesInputV1['resume']>[number];
 
+function sameConfiguredSourceIdentitySet(
+    left: TriageListEntriesResultV1['configuredSources'],
+    right: TriageListEntriesResultV1['configuredSources'],
+): boolean {
+    const leftSourceInstanceIds = new Set(left.map((summary) => summary.sourceInstanceId));
+    const rightSourceInstanceIds = new Set(right.map((summary) => summary.sourceInstanceId));
+    return leftSourceInstanceIds.size === rightSourceInstanceIds.size
+        && [...leftSourceInstanceIds].every((sourceInstanceId) => rightSourceInstanceIds.has(sourceInstanceId));
+}
+
 function errorFrom(cause: unknown): TriageListWindowErrorV1 {
     if (cause instanceof Error) {
         return { code: 'plugin_action_failed', message: cause.message };
@@ -263,7 +273,7 @@ const TRIAGE_LIST_REFERENCE_WORKLOAD_ENTRIES_V1 = 2_000;
  */
 export const MAX_TRIAGE_MOUNTED_WINDOWS_V1 = Math.ceil(
     TRIAGE_LIST_REFERENCE_WORKLOAD_ENTRIES_V1
-    / triageListRowBudgetV1(MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1),
+    / triageListRowBudgetV1(MAX_TRIAGE_LIST_SOURCE_BATCH_V1),
 );
 
 export function createTriageListWindowStore(deps: Readonly<{
@@ -296,7 +306,7 @@ export function createTriageListWindowStore(deps: Readonly<{
     let windowsRequested = 1;
     /** A refresh/order-generation change resets depth at the next cycle boundary. */
     let pagingResetPending = false;
-    /** Order/Smart changes keep replacing the old cut until a reset read succeeds. */
+    /** An acquisition-generation change keeps replacing the old cut until a reset read succeeds. */
     let generationReplacementPending = false;
     /** Captured at the cycle boundary so demand queued during a read cannot change that read's mode. */
     let activeCycleIsAppend = false;
@@ -678,10 +688,83 @@ export function createTriageListWindowStore(deps: Readonly<{
         };
     }
 
-    function syncConfiguredSources(result: TriageListEntriesResultV1): void {
-        configuredSources = result.configuredSources;
-        configuredSourcesStatus = result.configuredSourcesStatus;
-        const known = new Set(result.configuredSources.map((summary) => summary.sourceInstanceId));
+    /**
+     * The Collection-only Action page that discovers the durable source set.
+     *
+     * It uses the same Action and same mounted acquisition owner as a scan, but
+     * asks for zero rows so the Action returns its configured-source transport
+     * batch without reaching a provider. The opaque cursor stays only in this
+     * running cycle; it is neither a second cache nor durable paging custody.
+     */
+    function configuredSourcePageInput(cursor?: string): TriageListEntriesInputV1 {
+        return {
+            v: 1,
+            sources: {
+                kind: 'allConfigured',
+                ...(cursor === undefined ? {} : { cursor }),
+            },
+            limit: 0,
+            order: lens.order,
+            smartPolicy: lens.smartPolicy,
+        };
+    }
+
+    async function enumerateConfiguredSources(): Promise<Readonly<{
+        configuredSources: TriageListEntriesResultV1['configuredSources'];
+        configuredSourcesStatus: 'complete';
+    }>> {
+        const all: TriageListEntriesResultV1['configuredSources'][number][] = [];
+        let cursor: string | undefined;
+        do {
+            const result = await deps.readEntries(configuredSourcePageInput(cursor));
+            all.push(...result.configuredSources);
+            if (result.configuredSourcesStatus === 'complete') {
+                if (result.configuredSourcesNextCursor !== undefined) {
+                    throw new Error('Configured-source enumeration returned a cursor after its final page.');
+                }
+                cursor = undefined;
+            } else {
+                if (result.configuredSourcesNextCursor === undefined) {
+                    throw new Error('Configured-source enumeration truncated without a continuation cursor.');
+                }
+                cursor = result.configuredSourcesNextCursor;
+            }
+        } while (cursor !== undefined);
+        return Object.freeze({
+            configuredSources: Object.freeze(all),
+            configuredSourcesStatus: 'complete',
+        });
+    }
+
+    /**
+     * Reset the one mounted page generation.
+     *
+     * A configured-source identity change invalidates every frontier together:
+     * a new source cannot inherit another source's depth, and a removed source
+     * must not leave a retained page claiming the old mixed cut is current.
+     * Keeping this at the store boundary preserves one acquisition owner rather
+     * than giving a caller a separate reset path.
+     */
+    function resetPagingGeneration(input: Readonly<{ replacesGeneration: boolean }>): void {
+        windowsRequested = 1;
+        continuations.clear();
+        pagingResetPending = false;
+        appendFailed = false;
+        appending = false;
+        if (input.replacesGeneration) generationReplacementPending = true;
+    }
+
+    function syncConfiguredSources(
+        nextConfiguredSources: TriageListEntriesResultV1['configuredSources'],
+        nextConfiguredSourcesStatus: TriageListEntriesResultV1['configuredSourcesStatus'],
+    ): boolean {
+        const identitySetChanged = !sameConfiguredSourceIdentitySet(
+            configuredSources,
+            nextConfiguredSources,
+        );
+        configuredSources = nextConfiguredSources;
+        configuredSourcesStatus = nextConfiguredSourcesStatus;
+        const known = new Set(nextConfiguredSources.map((summary) => summary.sourceInstanceId));
         for (const sourceInstanceId of [...lanes.keys()]) {
             if (known.has(sourceInstanceId)) continue;
             // The row is gone or retired: drop its lane and abort any pass it
@@ -691,6 +774,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             continuations.delete(sourceInstanceId);
             coordinator.retire(sourceInstanceId);
         }
+        return identitySetChanged;
     }
 
     /**
@@ -710,82 +794,96 @@ export function createTriageListWindowStore(deps: Readonly<{
         const admitted = new Map<string, CorpusQualifiedObservationV1[]>();
         const settled = new Map<string, TriageListLaneV1>();
         const outcomes = new Map<string, TriageRefreshPassOutcomeV1>();
-        const resume = activeCycleIsAppend
-            ? input.sourceInstanceIds.flatMap((sourceInstanceId) => {
-                const continuation = continuations.get(sourceInstanceId);
-                return continuation === undefined ? [] : [continuation];
-            })
-            : undefined;
-
         for (const sourceInstanceId of input.sourceInstanceIds) admitted.set(sourceInstanceId, []);
-
-        let result: TriageListEntriesResultV1;
-        try {
-            result = await deps.readEntries(
-                scanInputFor(input.sourceInstanceIds, resume),
-                { signal: input.signal },
-            );
-        } catch (cause) {
-            activeCycleAggregateFailed = true;
-            for (const sourceInstanceId of input.sourceInstanceIds) {
-                if (!input.signal.aborted) {
-                    recordLaneError(
-                        sourceInstanceId,
-                        errorFrom(cause),
-                        admitted.get(sourceInstanceId) ?? [],
-                    );
+        for (
+            let offset = 0;
+            offset < input.sourceInstanceIds.length;
+            offset += MAX_TRIAGE_LIST_SOURCE_BATCH_V1
+        ) {
+            if (!isCurrent() || input.signal.aborted) {
+                for (const sourceInstanceId of input.sourceInstanceIds) {
+                    if (!outcomes.has(sourceInstanceId)) outcomes.set(sourceInstanceId, { kind: 'interrupted' });
                 }
-                outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                return input.sourceInstanceIds.map((sourceInstanceId) => ({
+                    sourceInstanceId,
+                    outcome: outcomes.get(sourceInstanceId) ?? { kind: 'interrupted' },
+                }));
             }
-            return input.sourceInstanceIds.map((sourceInstanceId) => ({
-                sourceInstanceId,
-                outcome: outcomes.get(sourceInstanceId) ?? { kind: 'interrupted' },
-            }));
-        }
-        if (!isCurrent() || input.signal.aborted) {
-            for (const sourceInstanceId of input.sourceInstanceIds) {
-                outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-            }
-            return input.sourceInstanceIds.map((sourceInstanceId) => ({
-                sourceInstanceId,
-                outcome: outcomes.get(sourceInstanceId) ?? { kind: 'interrupted' },
-            }));
-        }
-
-        syncConfiguredSources(result);
-        const nextContinuations = new Map(
-            (result.window.continuations ?? []).map((entry) => [entry.sourceInstanceId, entry]),
-        );
-        for (const sourceInstanceId of input.sourceInstanceIds) {
-            continuations.delete(sourceInstanceId);
-            const next = nextContinuations.get(sourceInstanceId);
-            if (next !== undefined) continuations.set(sourceInstanceId, next);
-
-            const lane = result.window.lanes.find(
-                (candidate) => candidate.sourceInstanceId === sourceInstanceId,
+            const sourceInstanceIds = input.sourceInstanceIds.slice(
+                offset,
+                offset + MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
             );
-            const laneObservations = admitted.get(sourceInstanceId) ?? [];
-            laneObservations.push(...laneObservationsFromWire(result, sourceInstanceId));
-            admitted.set(sourceInstanceId, laneObservations);
-            if (lane === undefined) {
-                outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+            const resume = activeCycleIsAppend
+                ? sourceInstanceIds.flatMap((sourceInstanceId) => {
+                    const continuation = continuations.get(sourceInstanceId);
+                    return continuation === undefined ? [] : [continuation];
+                })
+                : undefined;
+
+            let result: TriageListEntriesResultV1;
+            try {
+                result = await deps.readEntries(
+                    scanInputFor(sourceInstanceIds, resume),
+                    { signal: input.signal },
+                );
+            } catch (cause) {
+                activeCycleAggregateFailed = true;
+                for (const sourceInstanceId of sourceInstanceIds) {
+                    if (!input.signal.aborted) {
+                        recordLaneError(
+                            sourceInstanceId,
+                            errorFrom(cause),
+                            admitted.get(sourceInstanceId) ?? [],
+                        );
+                    }
+                    outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                }
                 continue;
             }
-            if (lane.health.kind === 'failed') {
-                recordLaneFailure(sourceInstanceId, lane, {
-                    code: lane.health.failure.code,
-                    message: lane.health.failure.detail ?? lane.health.failure.class,
-                }, laneObservations);
-                outcomes.set(sourceInstanceId, { kind: 'failed', failure: lane.health.failure });
-                continue;
+            if (!isCurrent() || input.signal.aborted) {
+                for (const sourceInstanceId of input.sourceInstanceIds) {
+                    if (!outcomes.has(sourceInstanceId)) outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                }
+                return input.sourceInstanceIds.map((sourceInstanceId) => ({
+                    sourceInstanceId,
+                    outcome: outcomes.get(sourceInstanceId) ?? { kind: 'interrupted' },
+                }));
             }
-            if (lane.health.kind === 'unavailable') {
-                recordLaneFailure(sourceInstanceId, lane, UNREADABLE_IN_THIS_PASS_V1, laneObservations);
-                outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-                continue;
+
+            const nextContinuations = new Map(
+                (result.window.continuations ?? []).map((entry) => [entry.sourceInstanceId, entry]),
+            );
+            for (const sourceInstanceId of sourceInstanceIds) {
+                continuations.delete(sourceInstanceId);
+                const next = nextContinuations.get(sourceInstanceId);
+                if (next !== undefined) continuations.set(sourceInstanceId, next);
+
+                const lane = result.window.lanes.find(
+                    (candidate) => candidate.sourceInstanceId === sourceInstanceId,
+                );
+                const laneObservations = admitted.get(sourceInstanceId) ?? [];
+                laneObservations.push(...laneObservationsFromWire(result, sourceInstanceId));
+                admitted.set(sourceInstanceId, laneObservations);
+                if (lane === undefined) {
+                    outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                    continue;
+                }
+                if (lane.health.kind === 'failed') {
+                    recordLaneFailure(sourceInstanceId, lane, {
+                        code: lane.health.failure.code,
+                        message: lane.health.failure.detail ?? lane.health.failure.class,
+                    }, laneObservations);
+                    outcomes.set(sourceInstanceId, { kind: 'failed', failure: lane.health.failure });
+                    continue;
+                }
+                if (lane.health.kind === 'unavailable') {
+                    recordLaneFailure(sourceInstanceId, lane, UNREADABLE_IN_THIS_PASS_V1, laneObservations);
+                    outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                    continue;
+                }
+                settled.set(sourceInstanceId, retainedLane(lane, result));
+                outcomes.set(sourceInstanceId, { kind: 'completed' });
             }
-            settled.set(sourceInstanceId, retainedLane(lane, result));
-            outcomes.set(sourceInstanceId, { kind: 'completed' });
         }
 
         for (const sourceInstanceId of input.sourceInstanceIds) {
@@ -978,7 +1076,7 @@ export function createTriageListWindowStore(deps: Readonly<{
 
     async function runCycle(): Promise<void> {
         if (!isCurrent()) return;
-        const cycleWasAppend = appending && !pagingResetPending;
+        let cycleWasAppend = appending && !pagingResetPending;
         activeCycleIsAppend = cycleWasAppend;
         activeCycleReplacesGeneration = generationReplacementPending && !cycleWasAppend;
         activeCycleAggregateFailed = false;
@@ -999,9 +1097,21 @@ export function createTriageListWindowStore(deps: Readonly<{
             // Enumerating configured instances is a Collection read; it reaches no
             // provider, which is what lets a cold mount and the Composer picker
             // be visibly unsynchronized instead of falsely empty.
-            const enumeration = await deps.readEntries(scanInputFor([]));
+            const enumeration = await enumerateConfiguredSources();
             if (!isCurrent()) return;
-            syncConfiguredSources(enumeration);
+            const configuredSourceIdentityChanged = syncConfiguredSources(
+                enumeration.configuredSources,
+                enumeration.configuredSourcesStatus,
+            );
+            if (configuredSourceIdentityChanged && window !== null) {
+                // This check runs before asking the coordinator, so the first
+                // post-change invocation includes every available source with
+                // no predecessor frontier from the old mixed set.
+                resetPagingGeneration({ replacesGeneration: true });
+                cycleWasAppend = false;
+                activeCycleIsAppend = false;
+                activeCycleReplacesGeneration = true;
+            }
             error = null;
         } catch (cause) {
             error = errorFrom(cause);
@@ -1041,10 +1151,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             // a paced-away cycle consumes the intent while preserving custody.
             pagingResetPending = false;
             if (request.disposition === 'started') {
-                windowsRequested = 1;
-                continuations.clear();
-                appendFailed = false;
-                appending = false;
+                resetPagingGeneration({ replacesGeneration: false });
             }
         }
         await request.settled;

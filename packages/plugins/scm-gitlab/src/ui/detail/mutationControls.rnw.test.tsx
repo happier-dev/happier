@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import React, { act } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -108,6 +109,7 @@ const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
 
 let nextResult: JsonValue = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
+let completedMutations = 0;
 
 async function mountDetail(input: JsonValue = launchInput()): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
@@ -119,7 +121,13 @@ async function mountDetail(input: JsonValue = launchInput()): Promise<PluginUiTe
         viewId: 'gitlab-detail',
         generation: 'gitlab-detail-mount',
       },
-      surface: renderSurface,
+      surface: (context) => (
+        <TriagePostMutationCompletionProvider
+          onComplete={async () => { completedMutations += 1; }}
+        >
+          {renderSurface(context) as React.ReactNode}
+        </TriagePostMutationCompletionProvider>
+      ),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: input,
@@ -141,6 +149,7 @@ function actionRef(localId: string) {
 
 afterEach(async () => {
   recorded.splice(0);
+  completedMutations = 0;
   nextResult = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
@@ -271,6 +280,36 @@ describe('the mounted GitLab merge-request writes', () => {
     await expect(detail.queryByText(
       'GitLab received this and could not confirm the result. Reload before trying again — it may already have taken effect.',
     )).resolves.toBeDefined();
+  });
+
+  it('signals the target-owned reconciliation after every settled write outcome', async () => {
+    const detail = await mountDetail();
+
+    nextResult = { kind: 'merged', item: { ...STATE_ROW, state: 'merged' } } as JsonValue;
+    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+
+    nextResult = {
+      kind: 'unconfirmed',
+      failure: { class: 'transient', code: 'transport-failed' },
+    } as JsonValue;
+    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+
+    expect(completedMutations).toBe(2);
+  });
+
+  it('does not re-observe after a reconfirmation that wrote nothing', async () => {
+    const detail = await mountDetail();
+    nextResult = {
+      kind: 'reconfirmationRequired',
+      observed: { ...STATE_ROW, headSha: 'f'.repeat(40) },
+    } as JsonValue;
+
+    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+
+    // The currentness preflight refused before the provider write. The mounted
+    // source must not spend the target-owned exact-get trigger on an outcome
+    // that cannot have changed provider state.
+    expect(completedMutations).toBe(0);
   });
 
   it('offers close but withholds the head-pinned writes when GitLab reported no commit', async () => {

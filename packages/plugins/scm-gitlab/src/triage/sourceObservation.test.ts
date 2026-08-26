@@ -36,6 +36,10 @@ function mergeRequestRow(projectPath: string): Readonly<Record<string, unknown>>
     references: { full: `${projectPath}!7` },
     web_url: `https://gitlab.com/${projectPath}/-/merge_requests/7`,
     sha: 'b3f1c0a9d2e4a7b6c5d40918273645aabbccddee',
+    diff_refs: {
+      base_sha: '79c4ea1dc7f58e9d52af9a8b7a55e930665d197f',
+      head_sha: 'b3f1c0a9d2e4a7b6c5d40918273645aabbccddee',
+    },
     updated_at: '2026-08-01T10:00:00Z',
     created_at: '2026-07-30T10:00:00Z',
   };
@@ -117,6 +121,16 @@ describe('projectGitlabPresentObservation native revision', () => {
     expect(observation.sourceUpdatedAtMs).toBe(Date.parse('2026-08-01T10:00:00Z'));
   });
 
+  it('publishes the one reread base, source head, and native revision together', () => {
+    const observation = projectRow('example-group/example-project');
+
+    expect(observation.snapshot.reviewRevision).toEqual({
+      baseSha: '79c4ea1dc7f58e9d52af9a8b7a55e930665d197f',
+      headSha: 'b3f1c0a9d2e4a7b6c5d40918273645aabbccddee',
+      nativeRevision: 'b3f1c0a9d2e4a7b6c5d40918273645aabbccddee',
+    });
+  });
+
   it('never lets an edit that touched no commit move the pin', () => {
     // GitLab's entity revision moves on a title edit; its head does not. A pin
     // that moved here would refuse a merge nothing invalidated.
@@ -140,6 +154,7 @@ describe('projectGitlabPresentObservation native revision', () => {
   it('omits the revision when GitLab reported none, rather than inventing one', () => {
     const row = { ...mergeRequestRow('example-group/example-project') };
     delete (row as Record<string, unknown>).sha;
+    delete (row.diff_refs as Record<string, unknown>).head_sha;
     const decoded = decodeGitlabRow({
       kindId: 'merge-request',
       origin: GITLAB_COM,

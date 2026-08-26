@@ -2,7 +2,6 @@ import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import {
-  MAX_TRIAGE_INSTANCE_DRAFTS_V1,
   type TriageListInstancesResultV1,
   type TriageSourceInstanceDraftV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -147,7 +146,6 @@ export async function listGithubTriageInstances(
   const listing = await readTriageSourceAccountListingV1({
     connectedAccounts: context.services.connectedAccounts,
     purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
-    limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1,
     signal: context.signal,
   });
   if (listing.kind === 'failed') {

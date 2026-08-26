@@ -1,13 +1,28 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import {
+    selectCurrentTargetedContribution,
+    type JsonValue,
+    type PluginInvocationContext,
+} from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import type {
+    TriageGetResultV1,
+    TriagePrepareReviewWorkspaceInputV1,
+} from '@happier-dev/triage-protocol/v1';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
+import { produceScmPullRequestReviewScope } from '@happier-dev/plugin-sdk/reviews';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
+import { renderSourceQualifiedId } from '../corpus/identity/components.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
+import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import { unlinkEntryFromSession } from '../sessions/entrySessionLinks.js';
 import type { TriageSessionActionInvokerV1 } from '../sessions/entrySessionOpen.js';
 import {
     materializationWorkspaceFacts,
+    preparedReviewWorkspaceFactsFor,
+    type TriageReviewWorkspacePreparationDepsV1,
 } from '../sessions/entrySessionWorkspace.js';
 import {
     resumeEntrySessionStart,
@@ -19,6 +34,8 @@ import {
 import type {
     TriageStartEntrySessionInputV1,
     TriageStartEntrySessionResultV1,
+    TriageStartPullRequestReviewInputV1,
+    TriageStartPullRequestReviewResultV1,
     TriageUnlinkEntryFromSessionActionInputV1,
     TriageUnlinkEntryFromSessionActionResultV1,
 } from './entrySessionProtocol.js';
@@ -43,6 +60,8 @@ export type TriageEntrySessionActionDepsV1 = Readonly<{
     collections: Pick<CorpusCollectionsV1, 'sessionLinks'>;
     /** The host invoker for the two generic Session Actions this start consumes. */
     execute: TriageSessionActionInvokerV1;
+    /** The exact current selected source operation for a pull-request start. */
+    prepareReviewWorkspace?: TriageReviewWorkspacePreparationDepsV1;
     nowMs: () => number;
     signal?: AbortSignal;
 }>;
@@ -51,9 +70,9 @@ export type TriageEntrySessionActionDepsV1 = Readonly<{
  * Carries the caller's settled destination into the orchestrator's own
  * vocabulary.
  *
- * The two materialization arms travel unchanged; nothing here invents a
- * directory, upgrades a reference-only Ask into a project, or reaches for the
- * pull-request preparation the wire deliberately cannot request.
+ * The materialization arms travel unchanged; nothing here invents a directory,
+ * upgrades a reference-only Ask into a project, or constructs a pull-request
+ * preparation route outside the selected admitted source operation.
  */
 function destinationFrom(
     destination: TriageStartEntrySessionInputV1['destination'],
@@ -82,16 +101,17 @@ function destinationFrom(
 /**
  * Projects the orchestrator's verdict onto the wire.
  *
- * The prepared-workspace facts an arm can also carry are dropped rather than
- * restated: this Action cannot request that materialization, and the directory
- * the reachable arms would report is the one the caller just sent.
+ * Ordinary workspace facts stay at the start owner. A selected-PR open carries
+ * only its bounded continuation, and only when the source prepared a worktree
+ * whose local HEAD is eligible for the separately owned formal review start.
  */
 function projectStartResult(
     result: TriageEntrySessionStartResultV1,
+    input: TriageStartEntrySessionInputV1,
 ): TriageStartEntrySessionResultV1 {
     switch (result.type) {
-        case 'opened':
-        case 'openPending':
+        case 'opened': {
+            const review = reviewContinuationFor(input, result);
             return {
                 v: 1,
                 type: result.type,
@@ -101,16 +121,45 @@ function projectStartResult(
                 // carried out as it answered. The surface cannot ask again: the
                 // send happened inside this start, before the open.
                 delivery: result.delivery,
+                ...(review === undefined ? {} : { review }),
             };
-        case 'linkPending':
-            // Nothing was delivered, because nothing is delivered into a Session
-            // this entry is not linked to yet.
+        }
+        case 'openPending': {
+            const preparedReviewWorkspace = preparedReviewWorkspaceForWire(result.workspace);
             return {
                 v: 1,
                 type: result.type,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
+                delivery: result.delivery,
+                ...(preparedReviewWorkspace === undefined ? {} : { preparedReviewWorkspace }),
             };
+        }
+        case 'linked':
+            {
+                const review = reviewContinuationFor(input, result);
+            return {
+                v: 1,
+                type: 'linked',
+                sessionId: result.sessionId,
+                disposition: result.disposition,
+                delivery: result.delivery,
+                finalOpen: result.finalOpen,
+                ...(review === undefined ? {} : { review }),
+            };
+            }
+        case 'linkPending': {
+            // Nothing was delivered, because nothing is delivered into a Session
+            // this entry is not linked to yet.
+            const preparedReviewWorkspace = preparedReviewWorkspaceForWire(result.workspace);
+            return {
+                v: 1,
+                type: result.type,
+                sessionId: result.sessionId,
+                disposition: result.disposition,
+                ...(preparedReviewWorkspace === undefined ? {} : { preparedReviewWorkspace }),
+            };
+        }
         case 'creationPending':
             return { v: 1, type: 'creationPending', outcome: result.outcome };
         case 'creationFailed':
@@ -127,22 +176,293 @@ function projectStartResult(
     }
 }
 
+/** Carries source-returned facts across a link/open retry without rerunning SCM. */
+function preparedReviewWorkspaceForWire(
+    workspace: Extract<
+        TriageEntrySessionStartResultV1,
+        Readonly<{ type: 'linkPending' | 'openPending' }>
+    >['workspace'],
+) {
+    if (workspace.kind !== 'preparedReviewWorkspace') return undefined;
+    return {
+        repositoryPath: workspace.directory,
+        branch: workspace.branch,
+        created: workspace.created,
+        pullRequest: workspace.pullRequest,
+        currentness: workspace.currentness,
+    };
+}
+
+/**
+ * Projects the one live continuation from a source-prepared selected PR. This
+ * is deliberately narrower than the prepared workspace facts: review scope is
+ * recreated only after the source rereads the PR immediately before
+ * `review.start`, and its generic producer remains the sole parser of the
+ * opaque pull-request reference.
+ */
+function reviewContinuationFor(
+    input: TriageStartEntrySessionInputV1,
+    result: Extract<
+        TriageEntrySessionStartResultV1,
+        Readonly<{ type: 'opened' | 'linked' }>
+    >,
+): NonNullable<Extract<
+    TriageStartEntrySessionResultV1,
+    Readonly<{ type: 'opened' | 'linked' }>
+>['review']> | undefined {
+    if (input.destination.kind !== 'new'
+        || input.destination.materialization.kind !== 'reviewWorkspace'
+        || result.workspace.kind !== 'preparedReviewWorkspace'
+        || result.workspace.reviewEligibility.status !== 'eligible') {
+        return undefined;
+    }
+    const request = input.destination.materialization.request;
+    return {
+        instance: request.instance,
+        entryRef: request.entryRef,
+        lastKnownLocator: request.lastKnownLocator,
+        observed: request.observed,
+        pullRequest: result.workspace.pullRequest,
+    };
+}
+
 /**
  * The workspace facts a resumed phase re-reports, read from the one owner.
  *
  * A resume repeats a phase of a start that already happened, so the facts it
- * echoes are the ones that start settled on. They are derived from the caller's
- * own materialization through `materializationWorkspaceFacts` rather than sent
- * back across the wire, because a caller that could restate them is a caller
- * that could change them, and an existing-Session start is reference-only by
- * the gate's own rule.
+ * echoes are the ones that start settled on. Reference/project facts derive
+ * from the original materialization. A prepared selected-PR result is carried
+ * back only by the pending result itself, so retrying link/open cannot re-run
+ * a source-owned local materialization.
  */
 function resumedWorkspaceFacts(
     destination: TriageStartEntrySessionInputV1['destination'],
-): TriageEntrySessionPendingPhaseV1['workspace'] {
-    return destination.kind === 'existing'
-        ? { kind: 'referenceOnly' }
-        : materializationWorkspaceFacts(destination.materialization);
+    resume: NonNullable<TriageStartEntrySessionInputV1['resume']>,
+): TriageEntrySessionPendingPhaseV1['workspace'] | undefined {
+    if (destination.kind === 'existing') {
+        return { kind: 'referenceOnly' };
+    }
+    if (destination.materialization.kind !== 'reviewWorkspace') {
+        return materializationWorkspaceFacts(destination.materialization);
+    }
+    const prepared = resume.preparedReviewWorkspace;
+    if (prepared === undefined) return undefined;
+    return preparedReviewWorkspaceFactsFor({
+        kind: 'prepared',
+        repositoryPath: prepared.repositoryPath,
+        branch: prepared.branch,
+        created: prepared.created,
+        pullRequest: prepared.pullRequest,
+        currentness: prepared.currentness,
+    }, destination.materialization.request.observed);
+}
+
+type TriageReviewWorkspaceRequestV1 = Extract<
+    Extract<TriageStartEntrySessionInputV1['destination'], Readonly<{ kind: 'new' }>>['materialization'],
+    Readonly<{ kind: 'reviewWorkspace' }>
+>['request'];
+
+function isJsonRecord(value: JsonValue): value is Readonly<Record<string, JsonValue>> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The host separates the selected Connected Account from the submitted raw
+ * source input. Reconstruct it only to compare against the semantic request
+ * this start will materialize; the host performs the real reconstruction when
+ * the admitted operation consumes the carrier.
+ */
+function selectedPrepareInputMatchesRequest(
+    selection: NonNullable<TriageStartEntrySessionInputV1['prepareReviewWorkspaceSelection']>,
+    request: TriageReviewWorkspaceRequestV1,
+): boolean {
+    if (!isJsonRecord(selection.input)) return false;
+    const instance = selection.input.instance;
+    if (!isJsonRecord(instance)) return false;
+    const binding = instance.binding;
+    if (!isJsonRecord(binding) || Object.hasOwn(binding, 'account')) return false;
+
+    const reconstructed: JsonValue = {
+        ...selection.input,
+        instance: {
+            ...instance,
+            binding: {
+                ...binding,
+                account: selection.credentialRef,
+            },
+        },
+    };
+    const expected: JsonValue = {
+        v: 1,
+        instance: request.instance,
+        entryRef: request.entryRef,
+        lastKnownLocator: request.lastKnownLocator,
+        observed: request.observed,
+        workspace: request.workspace,
+    };
+    return pluginJsonValuesEqual(reconstructed, expected);
+}
+
+/**
+ * Reads the one current source contribution that owns a selected PR's
+ * preparation. The outer Action never reconstructs a provider route, action
+ * id, or operation handle: it reaches only the host-created handle published
+ * by the current target-owned contribution snapshot.
+ */
+async function readCurrentPrepareReviewWorkspace(
+    input: TriageStartEntrySessionInputV1,
+    context: PluginInvocationContext,
+): Promise<TriageReviewWorkspacePreparationDepsV1 | undefined> {
+    if (input.destination.kind !== 'new'
+        || input.destination.materialization.kind !== 'reviewWorkspace') {
+        return undefined;
+    }
+    const selected = input.prepareReviewWorkspaceSelection;
+    const request = input.destination.materialization.request;
+    if (selected === undefined || !selectedPrepareInputMatchesRequest(selected, request)) {
+        return undefined;
+    }
+
+    const current = await selectCurrentTargetedContribution({
+        service: context.services.targetedContributions,
+        point: TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
+        selection: selected.selection,
+        ...(context.signal === undefined ? {} : { signal: context.signal }),
+    });
+    if (current.kind !== 'selected') return undefined;
+    const contribution = current.contribution;
+    if (contribution.contributor.pluginId !== request.entryRef.source.pluginId
+        || contribution.contributor.contributionId !== request.entryRef.source.localId) {
+        return undefined;
+    }
+    const operation = contribution.operations.prepareReviewWorkspace;
+    if (operation === undefined) return undefined;
+
+    // `selected.input` crossed the Host API as JSON and was just proven to be
+    // this exact source request after its account is restored. The host owns
+    // that restoration during execution; this narrow boundary cast keeps the
+    // raw selected representation intact so carrier equality can still hold.
+    const selectedInput = selected.input as TriagePrepareReviewWorkspaceInputV1;
+    return {
+        operation,
+        execute: async (selectedOperation, _expectedInput, options) => await context.services.actions
+            .executeAdmittedTargetedOperation(selectedOperation, selectedInput, {
+                expectedSelectedConnectedAccountRef: selected.credentialRef,
+                ...(options?.signal === undefined ? {} : { signal: options.signal }),
+            }),
+        ...(context.signal ? { signal: context.signal } : {}),
+    };
+}
+
+/** Reads the selected source's one current authoritative get operation. */
+async function readCurrentGetOperation(
+    source: TriageStartPullRequestReviewInputV1['review']['entryRef']['source'],
+    context: PluginInvocationContext,
+) {
+    const observation = context.services.targetedContributions.observeForSelf(
+        TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
+        { onInvalidated: () => {} },
+    );
+    try {
+        const snapshot = await observation.readCurrent(
+            context.signal === undefined ? undefined : { signal: context.signal },
+        );
+        return indexTriageAdmittedSourcesV1(snapshot.contributions).get(
+            renderSourceQualifiedId(source),
+        )?.operations.get;
+    } finally {
+        observation.dispose();
+    }
+}
+
+function matchesReviewEntry(
+    result: TriageGetResultV1,
+    review: TriageStartPullRequestReviewInputV1['review'],
+): result is Extract<TriageGetResultV1, Readonly<{ kind: 'present' }>> {
+    return result.kind === 'present'
+        && result.localRef.kindId === review.entryRef.kindId
+        && result.localRef.collisionScope === review.entryRef.collisionScope
+        && result.localRef.entryId === review.entryRef.entryId;
+}
+
+function matchesReviewRevision(
+    result: Extract<TriageGetResultV1, Readonly<{ kind: 'present' }>>,
+    review: TriageStartPullRequestReviewInputV1['review'],
+): boolean {
+    const revision = result.snapshot.reviewRevision;
+    return revision !== undefined
+        && revision.baseSha === review.observed.baseSha
+        && revision.headSha === review.observed.headSha
+        && revision.nativeRevision === review.observed.nativeRevision;
+}
+
+/**
+ * The terminal selected-PR review transition: one carrier-backed reread,
+ * generic scope production, then the incumbent generic review fan-out. The
+ * engine list and human choice deliberately happened on the mounted surface
+ * before this function, so the reread remains immediately adjacent to start.
+ */
+export function createTriageStartPullRequestReviewActionHandler(): ActionHandler<
+    TriageStartPullRequestReviewInputV1,
+    TriageStartPullRequestReviewResultV1
+> {
+    return async (input, context: PluginInvocationContext) => {
+        if (new Set(input.engineIds).size !== input.engineIds.length) {
+            return { v: 1, status: 'refused', reason: 'reviewRejected' };
+        }
+        const operation = await readCurrentGetOperation(input.review.entryRef.source, context);
+        if (operation === undefined) return { v: 1, status: 'refused', reason: 'sourceUnavailable' };
+
+        const observed = await context.services.actions.executeAdmittedTargetedOperation(
+            operation,
+            {
+                v: 1,
+                instance: input.review.instance,
+                localRef: {
+                    kindId: input.review.entryRef.kindId,
+                    collisionScope: input.review.entryRef.collisionScope,
+                    entryId: input.review.entryRef.entryId,
+                },
+                lastKnownLocator: input.review.lastKnownLocator,
+            },
+            {
+                expectedSelectedConnectedAccountRef: input.review.instance.binding.account,
+                ...(context.signal === undefined ? {} : { signal: context.signal }),
+            },
+        );
+        if (!matchesReviewEntry(observed, input.review)) {
+            return { v: 1, status: 'refused', reason: 'sourceMismatch' };
+        }
+        if (!matchesReviewRevision(observed, input.review)) {
+            return { v: 1, status: 'refused', reason: 'revisionMismatch' };
+        }
+
+        const scope = produceScmPullRequestReviewScope({
+            authoritative: {
+                account: input.review.instance.binding.account,
+                pullRequest: input.review.pullRequest,
+                observed: input.review.observed,
+            },
+            expected: {
+                account: input.review.instance.binding.account,
+                baseSha: input.review.observed.baseSha,
+                headSha: input.review.observed.headSha,
+            },
+        });
+        if (scope.status === 'refused') {
+            return { v: 1, status: 'refused', reason: 'scopeRefused' };
+        }
+
+        await context.services.actions.execute('review.start', {
+            sessionId: input.sessionId,
+            engineIds: [...input.engineIds],
+            instructions: input.instructions,
+            changeType: 'committed',
+            base: { kind: 'commit', baseCommit: input.review.observed.baseSha },
+            scmPullRequestReviewScope: scope.scope,
+        }, context.signal === undefined ? undefined : { signal: context.signal });
+        return { v: 1, status: 'started' };
+    };
 }
 
 export async function startTriageEntrySession(
@@ -153,6 +473,9 @@ export async function startTriageEntrySession(
         collections: deps.collections,
         execute: deps.execute,
         nowMs: deps.nowMs(),
+        ...(deps.prepareReviewWorkspace === undefined
+            ? {}
+            : { prepareReviewWorkspace: deps.prepareReviewWorkspace }),
         ...(deps.signal ? { signal: deps.signal } : {}),
     };
     const delivery = input.delivery === undefined
@@ -165,10 +488,19 @@ export async function startTriageEntrySession(
 
     // A resume is not a second start path. It reaches the incumbent phase-retry
     // owner with the caller's retained identity, so nothing respawns, nothing
-    // rematerializes and no new creation key is minted for a Session that
-    // already exists — which is what the "pressing again resumes the same one"
-    // copy has been promising with nothing behind it.
+    // rematerializes, and no new creation key is minted. A selected-PR retry
+    // carries the source result that its own previous pending response returned;
+    // a raw caller that lacks it fails closed rather than invoking SCM again.
     if (input.resume) {
+        const workspace = resumedWorkspaceFacts(input.destination, input.resume);
+        if (workspace === undefined) {
+            return {
+                v: 1,
+                type: 'workspacePreparationFailed',
+                reason: 'refused',
+                retryable: false,
+            };
+        }
         return projectStartResult(await resumeEntrySessionStart(orchestratorDeps, {
             entryRef: input.entryRef,
             display: input.display,
@@ -176,10 +508,10 @@ export async function startTriageEntrySession(
                 type: input.resume.phase,
                 sessionId: input.resume.sessionId,
                 disposition: input.resume.disposition,
-                workspace: resumedWorkspaceFacts(input.destination),
+                workspace,
             },
             ...(delivery === undefined ? {} : { delivery }),
-        }));
+        }), input);
     }
 
     const result = await startEntrySession(orchestratorDeps, {
@@ -192,8 +524,9 @@ export async function startTriageEntrySession(
         workspaceMode: input.workspaceMode,
         destination: destinationFrom(input.destination),
         ...(delivery === undefined ? {} : { delivery }),
+        ...(input.finalOpen === undefined ? {} : { finalOpen: input.finalOpen }),
     });
-    return projectStartResult(result);
+    return projectStartResult(result, input);
 }
 
 export async function unlinkTriageEntryFromSession(
@@ -215,16 +548,20 @@ export function createTriageStartEntrySessionActionHandler(): ActionHandler<
     TriageStartEntrySessionInputV1,
     TriageStartEntrySessionResultV1
 > {
-    return async (input, context: PluginInvocationContext) => await startTriageEntrySession(input, {
-        collections: bindCorpusCollections(requireTriageAccountStorage(context)),
-        execute: async (actionId, actionInput, options) => await context.services.actions.execute(
-            actionId,
-            actionInput,
-            options ?? {},
-        ),
-        nowMs: () => Date.now(),
-        ...(context.signal ? { signal: context.signal } : {}),
-    });
+    return async (input, context: PluginInvocationContext) => {
+        const prepareReviewWorkspace = await readCurrentPrepareReviewWorkspace(input, context);
+        return await startTriageEntrySession(input, {
+            collections: bindCorpusCollections(requireTriageAccountStorage(context)),
+            execute: async (actionId, actionInput, options) => await context.services.actions.execute(
+                actionId,
+                actionInput,
+                options ?? {},
+            ),
+            nowMs: () => Date.now(),
+            ...(prepareReviewWorkspace === undefined ? {} : { prepareReviewWorkspace }),
+            ...(context.signal ? { signal: context.signal } : {}),
+        });
+    };
 }
 
 export function createTriageUnlinkEntryFromSessionActionHandler(): ActionHandler<

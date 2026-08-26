@@ -8,7 +8,7 @@ import {
   decodeAzureRowPage,
   truncateUtf8,
 } from './decode.js';
-import { MAX_AZURE_ROW_FACTS, MAX_AZURE_TEXT_UTF8_BYTES, mapAzurePullRequestEntry } from './mapping.js';
+import { mapAzurePullRequestEntry } from './mapping.js';
 import { normalizeAzureDevOpsBaseUrl } from './origin.js';
 import type {
   AzureDevOpsOrigin,
@@ -151,7 +151,7 @@ describe('mapAzurePullRequestEntry', () => {
     expect(entry?.collisionScope).not.toContain('Payments');
     expect(entry?.involvement).toBe('author');
     expect(entry?.locator.repositoryKey).toBe('AcmeOrg/Payments/gateway');
-    expect(entry?.presentation).toBe('active');
+    expect(entry).not.toHaveProperty('presentation');
     expect(entry?.nativeLabel).toBe('Active');
     expect(entry?.headCommitId).toBe('b60280bc6e62e2f880f1b63c1e24987664d3bda3');
     expect(entry?.baseCommitId).toBe('f8e5f8b3a1c0d4e7b26a19f0c53d7188a4e6c2b9');
@@ -214,21 +214,21 @@ describe('mapAzurePullRequestEntry', () => {
   });
 
   it.each([
-    ['active', 'active', 'Active'],
-    ['completed', 'closed', 'Completed'],
-    ['abandoned', 'closed', 'Abandoned'],
-  ] as const)('maps native %s to %s presentation', (status, presentation, nativeLabel) => {
+    ['active', 'Active'],
+    ['completed', 'Completed'],
+    ['abandoned', 'Abandoned'],
+  ] as const)('keeps native %s for the observation owner', (status, nativeLabel) => {
     const entry = mapAzurePullRequestEntry({
       ...base,
       row: { ...rowAt(authoredPage, 0), status },
       lane: 'authored',
       viewerId: VIEWER_ID,
     });
-    expect(entry?.presentation).toBe(presentation);
     expect(entry?.nativeLabel).toBe(nativeLabel);
+    expect(entry).not.toHaveProperty('presentation');
   });
 
-  it('keeps an oversize valid entry visible, bounded, and flagged as truncated', () => {
+  it('keeps the complete provider row for the observation owner to project once', () => {
     const row = rowAt(authoredPage, 0);
     const entry = mapAzurePullRequestEntry({
       ...base,
@@ -243,9 +243,9 @@ describe('mapAzurePullRequestEntry', () => {
 
     expect(entry).not.toBeNull();
     expect(entry?.entryId).toBe('22');
-    expect(new TextEncoder().encode(entry?.title ?? '').length).toBeLessThanOrEqual(MAX_AZURE_TEXT_UTF8_BYTES);
-    expect(entry?.facts.length).toBeLessThanOrEqual(MAX_AZURE_ROW_FACTS);
-    expect(entry?.projectionTruncated).toBe(true);
+    expect(entry?.title).toHaveLength(20_000);
+    expect(entry?.facts.filter((fact) => fact.kind === 'label')).toHaveLength(300);
+    expect(entry).not.toHaveProperty('projectionTruncated');
   });
 
   it('refuses a row that names a different repository than the one being walked', () => {

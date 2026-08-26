@@ -1,6 +1,5 @@
 /**
- * The sole PostHog request, credential, private-deadline, and throttle-classification
- * path.
+ * The sole PostHog request, credential, caller-signal, and throttle-classification path.
  *
  * Everything the source sends to PostHog goes through here, so this is the one place
  * that reads a credential, decides what a failure means, and decides whether a
@@ -11,7 +10,10 @@
  * view-driven refresh may consult.
  */
 
-import { admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
+import {
+    admitForgeRequestUrl,
+    isBoundedInvocationDeadline,
+} from '@happier-dev/triage-sources/runtime';
 
 import type { PosthogApiOrigin } from '../connect/origin.js';
 import { classifyPosthogResponseStatus, type PosthogFailure } from './errors.js';
@@ -38,9 +40,9 @@ export type PosthogMaterializationOutcome =
  * The Connected-Accounts-owned credential seam. The source never stores, logs, or
  * inspects the value; it reaches only the outbound authorization header.
  *
- * The signal it receives is the request's own composed boundary — caller
- * cancellation OR this path's private deadline — so a materialization that outlives
- * the request this source already abandoned is ended rather than left running
+ * The signal it receives is the invocation's composed boundary — caller cancellation
+ * and, where the source owns one, its whole-action deadline — so a materialization that
+ * outlives the request this source already abandoned is ended rather than left running
  * against the account.
  */
 export type PosthogHeaderMaterializer = (
@@ -71,17 +73,11 @@ export type PosthogJsonRequest = Readonly<{
 
 export type PosthogRequestOptions = Readonly<{
     /**
-     * The caller's cancellation/deadline signal. Aggregate-driven operations pass the
-     * aggregate signal unchanged and supply no private deadline, so no second timer is
-     * layered over them.
+     * The caller's cancellation/deadline signal. Aggregate-driven operations pass their
+     * signal unchanged; mounted and exact provider actions pass the one source-owned
+     * bounded-invocation signal they created before their first provider call.
      */
     signal?: AbortSignal;
-    /**
-     * A positive private deadline for a path that has no aggregate deadline of its own
-     * (configuration browsing, capability read, mounted detail, Activity, code-variable
-     * reveal, Composer reread).
-     */
-    privateDeadlineMs?: number;
 }>;
 
 export type PosthogResult<T> =
@@ -116,9 +112,35 @@ export type PosthogApiClientDependencies = Readonly<{
     now?: () => number;
 }>;
 
-type Settlement =
-    | Readonly<{ kind: 'timeout' }>
-    | Readonly<{ kind: 'cancelled' }>;
+function signalFailure(signal: AbortSignal): PosthogFailure | null {
+    if (!signal.aborted) return null;
+    return isBoundedInvocationDeadline(signal.reason)
+        ? { kind: 'timeout' }
+        : { kind: 'cancelled' };
+}
+
+/**
+ * Returns the provider boundary promptly when its owner cancels, even if a host adapter
+ * ignores the supplied signal. This owns no timer: the invocation's signal is the sole
+ * deadline authority and is handed unchanged to materialization and transport.
+ */
+async function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+    const alreadyAborted = signalFailure(signal);
+    if (alreadyAborted !== null) throw signal.reason;
+
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_resolve, reject) => {
+        onAbort = () => {
+            reject(signal.reason ?? new DOMException('The PostHog request was cancelled.', 'AbortError'));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+        return await Promise.race([promise, aborted]);
+    } finally {
+        if (onAbort !== undefined) signal.removeEventListener('abort', onAbort);
+    }
+}
 
 function buildUrl(
     origin: PosthogApiOrigin,
@@ -146,77 +168,33 @@ export function createPosthogApiClient(
         parse: PosthogBodyParser<T>,
         options: PosthogRequestOptions,
     ): Promise<PosthogResult<T>> {
-        const { privateDeadlineMs } = options;
-        if (privateDeadlineMs !== undefined
-            && (!Number.isFinite(privateDeadlineMs) || privateDeadlineMs <= 0)) {
-            return { ok: false, failure: { kind: 'requestInvalid', at: 'privateDeadlineMs' } };
-        }
-        if (options.signal?.aborted === true) {
-            return { ok: false, failure: { kind: 'cancelled' } };
-        }
+        // Direct client tests may omit a signal. Every real invocation supplies one,
+        // and in that path this fallback is never used: materialization and transport
+        // observe the exact same source-owned signal.
+        const signal = options.signal ?? new AbortController().signal;
+        const beforeStart = signalFailure(signal);
+        if (beforeStart !== null) return { ok: false, failure: beforeStart };
 
-        const controller = new AbortController();
-        let settlement: Settlement | null = null;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-
-        const onCallerAbort = (): void => {
-            if (settlement === null) {
-                settlement = { kind: 'cancelled' };
-            }
-            controller.abort();
-        };
-        options.signal?.addEventListener('abort', onCallerAbort, { once: true });
-
-        const boundary = new Promise<Settlement>((resolve) => {
-            if (privateDeadlineMs !== undefined) {
-                timer = setTimeout(() => {
-                    if (settlement === null) {
-                        settlement = { kind: 'timeout' };
-                    }
-                    controller.abort();
-                    resolve(settlement);
-                }, privateDeadlineMs);
-            }
-            options.signal?.addEventListener('abort', () => {
-                resolve({ kind: 'cancelled' });
-            }, { once: true });
-        });
-
-        const release = (): void => {
-            if (timer !== undefined) {
-                clearTimeout(timer);
-                timer = undefined;
-            }
-            options.signal?.removeEventListener('abort', onCallerAbort);
-        };
-
-        try {
+        {
             let materialized: PosthogMaterializationOutcome;
             try {
-                materialized = await Promise.race([
+                materialized = await awaitWithSignal(
                     materializeHeaders(
                         { origin: origin as string },
-                        { signal: controller.signal },
+                        { signal },
                     ),
-                    boundary.then((reached): never => {
-                        throw reached;
-                    }),
-                ]);
-            } catch (error) {
-                if (settlement !== null) {
-                    return { ok: false, failure: settlement };
-                }
-                if (error !== null && typeof error === 'object' && 'kind' in error) {
-                    return { ok: false, failure: error as Settlement };
-                }
+                    signal,
+                );
+            } catch {
+                const aborted = signalFailure(signal);
+                if (aborted !== null) return { ok: false, failure: aborted };
                 // The materializer settles its own failures, so reaching here means it
                 // threw outside its contract. That is still the account boundary rather
                 // than a transport fault.
                 return { ok: false, failure: { kind: 'unauthorized', status: 0 } };
             }
-            if (settlement !== null) {
-                return { ok: false, failure: settlement };
-            }
+            const afterMaterialization = signalFailure(signal);
+            if (afterMaterialization !== null) return { ok: false, failure: afterMaterialization };
             if (!materialized.ok) {
                 return { ok: false, failure: materialized.failure };
             }
@@ -234,7 +212,7 @@ export function createPosthogApiClient(
 
             let response: Response;
             try {
-                response = await Promise.race([
+                response = await awaitWithSignal(
                     transport(url, {
                         method: request.method,
                         headers: requestHeaders,
@@ -242,23 +220,19 @@ export function createPosthogApiClient(
                         // different issue, and following it silently would return the
                         // wrong entity under the requested id.
                         redirect: 'manual',
-                        signal: controller.signal,
+                        signal,
                         ...(body === undefined ? {} : { body }),
                     }),
-                    boundary.then((reached): never => {
-                        throw reached;
-                    }),
-                ]);
+                    signal,
+                );
             } catch {
-                if (settlement !== null) {
-                    return { ok: false, failure: settlement };
-                }
+                const aborted = signalFailure(signal);
+                if (aborted !== null) return { ok: false, failure: aborted };
                 return { ok: false, failure: { kind: 'transport' } };
             }
 
-            if (settlement !== null) {
-                return { ok: false, failure: settlement };
-            }
+            const afterTransport = signalFailure(signal);
+            if (afterTransport !== null) return { ok: false, failure: afterTransport };
 
             const failure = classifyPosthogResponseStatus(response.status, response.headers, now());
             if (failure !== null) {
@@ -267,11 +241,10 @@ export function createPosthogApiClient(
 
             let decoded: unknown;
             try {
-                decoded = await response.json();
+                decoded = await awaitWithSignal(response.json(), signal);
             } catch {
-                if (settlement !== null) {
-                    return { ok: false, failure: settlement };
-                }
+                const aborted = signalFailure(signal);
+                if (aborted !== null) return { ok: false, failure: aborted };
                 return { ok: false, failure: { kind: 'malformedResponse', at: 'body' } };
             }
 
@@ -280,8 +253,6 @@ export function createPosthogApiClient(
                 return { ok: false, failure: { kind: 'malformedResponse', at: 'schema' } };
             }
             return { ok: true, value };
-        } finally {
-            release();
         }
     }
 

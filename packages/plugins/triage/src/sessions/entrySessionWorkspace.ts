@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/plugin-sdk/actions';
 import type {
     TriageConfiguredSourceInstanceV1,
+    TriageEntryLocatorV1,
     TriageEntryRefV1,
     TriagePrepareReviewWorkspaceInputV1,
     TriagePrepareReviewWorkspaceResultV1,
@@ -36,11 +37,12 @@ export type TriagePreparedReviewWorkspaceOutcomeV1 = Extract<
  * The bounded projection Triage keeps once preparation has succeeded.
  *
  * `directory` is the prepared path handed to the already selected generic
- * Session target, `branch`/`created` are the user-visible worktree result, and
- * `currentness` is the source's own resolved-head fact — the exact input the
- * separate SCM/Reviews scope producer needs later (`CONTRACT.md` §5.4). No
- * clone URL, fetch ref, remote, push target or provider repository identity is
- * retained, because the source operation never returns one.
+ * Session target, `branch`/`created` are the user-visible worktree result,
+ * `pullRequest` is the source-owned opaque canonical reference the generic
+ * SCM/Reviews producer validates later, and `currentness` is the source's own
+ * resolved-head fact. No clone URL, fetch ref, remote, push target or provider
+ * repository identity is retained, because the source operation never returns
+ * one.
  *
  * This is live orchestration and result-display state only. It is never copied
  * into the corpus, a Session record, a Message, or retained source detail.
@@ -50,9 +52,30 @@ export type TriagePreparedReviewWorkspaceFactsV1 = Readonly<{
     directory: string;
     branch: string;
     created: boolean;
+    pullRequest: TriagePreparedReviewWorkspaceOutcomeV1['pullRequest'];
     currentness: TriagePreparedReviewWorkspaceOutcomeV1['currentness'];
     reviewEligibility: TriageReviewStartEligibilityV1;
 }>;
+
+/**
+ * The one projection from a source-owned prepared result into the Session
+ * facts carried through link/open retries. Keeping it here ensures initial
+ * preparation and a retry use the same local-head eligibility decision.
+ */
+export function preparedReviewWorkspaceFactsFor(
+    result: TriagePreparedReviewWorkspaceOutcomeV1,
+    observed: TriageReviewWorkspaceObservedRevisionV1,
+): TriagePreparedReviewWorkspaceFactsV1 {
+    return {
+        kind: 'preparedReviewWorkspace',
+        directory: result.repositoryPath,
+        branch: result.branch,
+        created: result.created,
+        pullRequest: result.pullRequest,
+        currentness: result.currentness,
+        reviewEligibility: reviewEligibilityFor(result.currentness, observed),
+    };
+}
 
 type TriagePreservedStaleCurrentnessV1 = Extract<
     TriageReviewWorkspaceCurrentnessV1,
@@ -198,6 +221,7 @@ export type TriageReviewWorkspacePreparationRequestV1 = Readonly<{
     instance: TriageConfiguredSourceInstanceV1;
     entryRef: TriageEntryRefV1;
     workflowSubject: TriageSourceWorkflowSubjectV1;
+    lastKnownLocator: TriageEntryLocatorV1;
     observed: TriageReviewWorkspaceObservedRevisionV1;
     workspace: TriageSelectedWorkspaceScopeV1 | null;
 }>;
@@ -293,6 +317,7 @@ export async function resolveEntrySessionWorkspace(
             v: 1,
             instance: request.instance,
             entryRef: request.entryRef,
+            lastKnownLocator: request.lastKnownLocator,
             observed: request.observed,
             workspace: request.workspace,
         },
@@ -304,14 +329,7 @@ export async function resolveEntrySessionWorkspace(
     if (result.kind !== 'prepared') return failureFor(result);
     return {
         status: 'prepared',
-        facts: {
-            kind: 'preparedReviewWorkspace',
-            directory: result.repositoryPath,
-            branch: result.branch,
-            created: result.created,
-            currentness: result.currentness,
-            reviewEligibility: reviewEligibilityFor(result.currentness, request.observed),
-        },
+        facts: preparedReviewWorkspaceFactsFor(result, request.observed),
     };
 }
 

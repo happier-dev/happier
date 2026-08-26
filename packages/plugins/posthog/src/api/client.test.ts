@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
 
 import { normalizePosthogApiOrigin, type PosthogApiOrigin } from '../connect/origin.js';
 import {
@@ -42,7 +43,7 @@ function setup(options?: Readonly<{
     materialize?: () => Promise<PosthogMaterializationOutcome>;
 }>) {
     const calls: Recorded[] = [];
-    const materializeCalls: { origin: string }[] = [];
+    const materializeCalls: { origin: string; signal: AbortSignal }[] = [];
     const client = createPosthogApiClient({
         origin: ORIGIN,
         now: () => NOW,
@@ -50,7 +51,7 @@ function setup(options?: Readonly<{
         // and whether a withdrawn call is a cancellation or a refused account, belong
         // to `@happier-dev/triage-sources`, not to this client.
         materializeHeaders: async (request, transportOptions) => {
-            materializeCalls.push({ origin: request.origin });
+            materializeCalls.push({ origin: request.origin, signal: transportOptions.signal });
             transportOptions.signal.throwIfAborted();
             if (options?.materialize !== undefined) {
                 return await options.materialize();
@@ -90,7 +91,10 @@ describe('createPosthogApiClient request construction', () => {
             'content-type': 'application/json',
         });
         expect(call?.request.body).toBe(JSON.stringify({ limit: 100 }));
-        expect(materializeCalls).toEqual([{ origin: 'https://eu.posthog.com' }]);
+        expect(materializeCalls).toEqual([{
+            origin: 'https://eu.posthog.com',
+            signal: expect.any(AbortSignal),
+        }]);
     });
 
     it('never follows a redirect, because a followed 3xx would read a different resource', async () => {
@@ -174,7 +178,7 @@ describe('createPosthogApiClient throttle classification', () => {
     });
 });
 
-describe('createPosthogApiClient deadlines and cancellation', () => {
+describe('createPosthogApiClient owner-provided cancellation', () => {
     beforeEach(() => {
         vi.useFakeTimers();
     });
@@ -183,8 +187,7 @@ describe('createPosthogApiClient deadlines and cancellation', () => {
     });
 
     it('layers no timer over an aggregate-driven read and resolves as cancelled on caller abort', async () => {
-        let observedSignal: AbortSignal | undefined;
-        const { client } = setup({
+        const { client, calls, materializeCalls } = setup({
             respond: async () => await new Promise<Response>(() => {
                 // never settles
             }),
@@ -197,46 +200,54 @@ describe('createPosthogApiClient deadlines and cancellation', () => {
         }, readObject, { signal: controller.signal });
 
         await vi.advanceTimersByTimeAsync(600_000);
+        expect(calls[0]?.request.signal).toBe(controller.signal);
+        expect(materializeCalls[0]?.signal).toBe(controller.signal);
         controller.abort();
 
         await expect(pending).resolves.toEqual({ ok: false, failure: { kind: 'cancelled' } });
-        expect(observedSignal).toBeUndefined();
     });
 
-    it('resolves a never-settling transport as a typed timeout once its private deadline elapses', async () => {
+    it('uses the source invocation deadline signal without allocating a request timer', async () => {
         const { client } = setup({
             respond: async () => await new Promise<Response>(() => {
                 // never settles
             }),
         });
 
+        const invocation = createBoundedInvocation({ timeoutMs: 5_000 });
         const pending = client.requestJson({
             method: 'GET',
             path: '/api/organizations/',
-        }, readObject, { privateDeadlineMs: 5_000 });
+        }, readObject, { signal: invocation.signal });
 
         await vi.advanceTimersByTimeAsync(5_000);
 
         await expect(pending).resolves.toEqual({ ok: false, failure: { kind: 'timeout' } });
+        invocation.dispose();
     });
 
-    it('keeps caller cancellation distinct from a private deadline timeout', async () => {
+    it('keeps caller cancellation distinct from the source invocation deadline', async () => {
         const { client } = setup({
             respond: async () => await new Promise<Response>(() => {
                 // never settles
             }),
         });
         const controller = new AbortController();
+        const invocation = createBoundedInvocation({
+            callerSignal: controller.signal,
+            timeoutMs: 30_000,
+        });
 
         const pending = client.requestJson({
             method: 'GET',
             path: '/api/organizations/',
-        }, readObject, { signal: controller.signal, privateDeadlineMs: 30_000 });
+        }, readObject, { signal: invocation.signal });
 
         await vi.advanceTimersByTimeAsync(1_000);
         controller.abort();
 
         await expect(pending).resolves.toEqual({ ok: false, failure: { kind: 'cancelled' } });
+        invocation.dispose();
     });
 
     it('makes a late transport resolve after the deadline inert', async () => {
@@ -247,10 +258,11 @@ describe('createPosthogApiClient deadlines and cancellation', () => {
             }),
         });
 
+        const invocation = createBoundedInvocation({ timeoutMs: 1_000 });
         const pending = client.requestJson({
             method: 'GET',
             path: '/api/organizations/',
-        }, readObject, { privateDeadlineMs: 1_000 });
+        }, readObject, { signal: invocation.signal });
 
         await vi.advanceTimersByTimeAsync(1_000);
         await expect(pending).resolves.toEqual({ ok: false, failure: { kind: 'timeout' } });
@@ -258,6 +270,7 @@ describe('createPosthogApiClient deadlines and cancellation', () => {
         settle?.(jsonResponse({ late: true }));
         await vi.advanceTimersByTimeAsync(1_000);
         await expect(pending).resolves.toEqual({ ok: false, failure: { kind: 'timeout' } });
+        invocation.dispose();
     });
 
     it('makes a late transport rejection after cancellation inert', async () => {
@@ -280,19 +293,6 @@ describe('createPosthogApiClient deadlines and cancellation', () => {
         fail?.(new Error('late transport failure'));
         await vi.advanceTimersByTimeAsync(1_000);
         await expect(pending).resolves.toEqual({ ok: false, failure: { kind: 'cancelled' } });
-    });
-
-    it('rejects a non-positive private deadline instead of running unbounded', async () => {
-        const { client, calls } = setup();
-
-        await expect(client.requestJson({
-            method: 'GET',
-            path: '/api/organizations/',
-        }, readObject, { privateDeadlineMs: 0 })).resolves.toEqual({
-            ok: false,
-            failure: { kind: 'requestInvalid', at: 'privateDeadlineMs' },
-        });
-        expect(calls).toHaveLength(0);
     });
 
     it('returns cancelled without materializing a credential when already aborted', async () => {

@@ -1,4 +1,4 @@
-import type { AzureDevOpsOriginResult } from './types.js';
+import type { AzureDevOpsOrigin, AzureDevOpsOriginResult } from './types.js';
 
 /**
  * Normalize the explicitly configured Azure DevOps base.
@@ -69,6 +69,33 @@ export function buildAzureRepositoryKey(input: Readonly<{
 }>): string {
   const organization = input.organizationOrCollection ?? input.forgeHostId;
   return `${organization}/${input.projectName}/${input.repositoryName}`;
+}
+
+/** One Azure source-owned decoding of its opaque `repositoryKey` locator token. */
+export function parseAzureRepositoryKey(input: Readonly<{
+  origin: AzureDevOpsOrigin;
+  repositoryKey: string;
+}>): Readonly<{ projectName: string; repositoryName: string }> | null {
+  const organization = input.origin.organizationOrCollection ?? input.origin.forgeHostId;
+  const prefix = `${organization}/`;
+  if (!input.repositoryKey.startsWith(prefix)) return null;
+
+  const segments = input.repositoryKey.slice(prefix.length).split('/');
+  if (segments.length !== 2) return null;
+  const [projectName, repositoryName] = segments;
+  if (projectName === undefined || projectName.length === 0) return null;
+  if (repositoryName === undefined || repositoryName.length === 0) return null;
+
+  // Rebuild through the one encoder before using the values in a provider route. A locator that
+  // is merely similar to our source-minted key is stale or foreign, not an alternate grammar.
+  return buildAzureRepositoryKey({
+    organizationOrCollection: input.origin.organizationOrCollection,
+    forgeHostId: input.origin.forgeHostId,
+    projectName,
+    repositoryName,
+  }) === input.repositoryKey
+    ? { projectName, repositoryName }
+    : null;
 }
 
 function decodePathSegment(segment: string): string {

@@ -67,6 +67,7 @@ function projectSnapshot(
   locatorTruncated: boolean,
 ): TriageSourceEntrySnapshotV1 {
   const scopeLabel = boundGitlabText(entry.locator.repositoryKey);
+  const reviewRevision = projectReviewRevision(entry);
   return {
     v: 1,
     // A GitLab item can be saved with an empty title. Display text is bounded
@@ -85,10 +86,33 @@ function projectSnapshot(
       nativeLabel: entry.snapshot.state.nativeLabel,
     },
     facts: entry.rowFacts.map(projectRowFact),
+    ...(reviewRevision === undefined ? {} : { reviewRevision }),
     ...(entry.projectionTruncated || scopeLabel.truncated || locatorTruncated
       ? { projectionTruncated: true }
       : {}),
   };
+}
+
+/**
+ * Review preparation needs every provider revision fact from one read. Dropping
+ * the whole tuple is safer than publishing a partial tuple a consumer could
+ * accidentally complete with a different read.
+ */
+function projectReviewRevision(
+  entry: GitlabMappedEntry,
+): TriageSourceEntrySnapshotV1['reviewRevision'] | undefined {
+  const revision = entry.snapshot.reviewRevision;
+  if (revision === null) return undefined;
+
+  const baseSha = fittingGitlabLocation(revision.baseSha, MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1);
+  const headSha = fittingGitlabLocation(revision.headSha, MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1);
+  const nativeRevision = fittingGitlabLocation(
+    revision.nativeRevision,
+    MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  );
+  if (baseSha === null || headSha === null || nativeRevision === null) return undefined;
+
+  return { baseSha, headSha, nativeRevision };
 }
 
 /**

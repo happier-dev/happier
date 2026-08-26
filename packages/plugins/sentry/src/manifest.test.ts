@@ -64,9 +64,15 @@ describe('Sentry plugin manifest', () => {
     });
   });
 
-  it('contributes no Composer surface and no review-workspace role', () => {
+  it('contributes only the selected-evidence Composer reference and no review-workspace role', () => {
     const contributes = PLUGIN_MANIFEST.contributes as Readonly<Record<string, unknown>>;
-    for (const family of ['composerReferences', 'composerAttachments', 'composerControls']) {
+    // A selected Sentry occurrence is a reference whose fresh resolver re-reads
+    // the approved Tier-B projection. It must not turn this source into the
+    // owner of Triage's whole-entry attachment or its Composer control.
+    expect(contributes.composerReferences).toEqual([
+      expect.objectContaining({ id: 'sentry-evidence' }),
+    ]);
+    for (const family of ['composerAttachments', 'composerControls']) {
       expect(contributes[family] ?? []).toEqual([]);
     }
     const [contribution] = PLUGIN_MANIFEST.contributes.targetedPluginContributions;
@@ -121,10 +127,9 @@ describe('Sentry plugin manifest', () => {
     // A self-hosted Sentry may live on a private network, so the grant holding
     // only the host-published account origin declares it...
     expect(byId.get(SENTRY_ACCOUNT_NETWORK_HOST_ACCESS_ID)?.scope.privateNetwork).toBe(true);
-    // ...and the grant holding the two Cloud origins must not. Declaring the
-    // flag on a scope that also carries a fixed public origin is the DNS
-    // rebinding case the flag exists to prevent, and is precisely what a
-    // one-line fix to the previously single grant would have produced.
+    // ...and the grant holding the two Cloud origins must not. Final host
+    // admission resolves and pins each selected origin, so the split prevents
+    // the self-hosted private-network capability from widening Cloud.
     expect(byId.get(SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID)?.scope.privateNetwork).not.toBe(true);
 
     // The same invariant stated independently of the two ids, so a later grant

@@ -159,6 +159,8 @@ export type TriageSessionLinkedEntriesV1 = Readonly<{
     view: TriageSessionLinkedEntriesViewV1;
     /** Re-reads the current page through the Data pager; reaches no provider. */
     refresh: () => Promise<void>;
+    /** Appends the Data pager's next retained page; owns no cursor here. */
+    loadMore: () => Promise<void>;
 }>;
 
 /**
@@ -198,7 +200,7 @@ export function useTriageSessionLinkedEntries(sessionId: string): TriageSessionL
     );
 
     return React.useMemo(
-        () => Object.freeze({ view, refresh: query.refresh }),
-        [query.refresh, view],
+        () => Object.freeze({ view, refresh: query.refresh, loadMore: query.loadMore }),
+        [query.loadMore, query.refresh, view],
     );
 }

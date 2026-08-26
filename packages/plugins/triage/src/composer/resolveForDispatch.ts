@@ -1,6 +1,10 @@
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import {
-    MAX_TRIAGE_INSTANCE_DRAFTS_V1,
+    raceWithTimeout,
+    throwIfAborted,
+    type RaceWithTimeoutResult,
+} from '@happier-dev/plugin-sdk/async';
+import {
     normalizeTriageSingleLineV1,
     truncateTriageUtf8V1,
     type TriageConfiguredSourceInstanceV1,
@@ -17,12 +21,7 @@ import {
 } from '../actions/listEntries.js';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
-import {
-    CORPUS_SOURCE_INSTANCES_INDEX_ID,
-    CORPUS_SOURCE_INSTANCE_LIFECYCLE,
-} from '../corpus/collections/ids.js';
-import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
-import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
+import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
 import { qualifyEntryLocalRef } from '../corpus/fold/qualify.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { reconcileMergedSuccessor } from '../sessions/reconcileMergedSuccessor.js';
@@ -98,7 +97,12 @@ export type TriageEntryDispatchDepsV1 = Readonly<{
     readAdmittedSources: (options?: PluginCancellationOptions) => Promise<readonly TriageAdmittedSourceV1[]>;
     executeGet: TriageAdmittedGetExecutorV1;
     signal?: AbortSignal;
+    /** Owner-private test injection; never a source-facing deadline override. */
+    getDeadlineMs?: number;
 }>;
+
+/** Private per-invocation deadline; owner tests inject a short duration. */
+const TRIAGE_DISPATCH_GET_DEADLINE_MS = 10_000;
 
 /** One attached record as the canonical resolve request carries it. */
 export type TriageEntryDispatchAttachmentV1 = Readonly<{
@@ -178,19 +182,13 @@ async function readActiveConfiguredInstances(
     deps: TriageEntryDispatchDepsV1,
 ): Promise<ReadonlyMap<string, TriageConfiguredSourceInstanceV1>> {
     const options: PluginCancellationOptions | undefined = deps.signal ? { signal: deps.signal } : undefined;
-    const page = await deps.sourceInstances.query({
-        index: CORPUS_SOURCE_INSTANCES_INDEX_ID.byLifecycle,
-        prefix: [CORPUS_SOURCE_INSTANCE_LIFECYCLE.active],
-        order: 'asc',
-        limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1,
-    }, options);
+    const page = await readActiveConfiguredSourceRows(deps.sourceInstances, options);
 
     // Keyed by the stable target-minted id the attachment carries. A storage
     // tag is never the lookup: it is mode-dependent and reprojected, while the
     // attached ref is neither.
     const configured = new Map<string, TriageConfiguredSourceInstanceV1>();
-    for (const stored of page.rows) {
-        const row = fromCorpusStoredRow<CorpusSourceInstanceRowV1>(stored).value;
+    for (const row of page.rows) {
         configured.set(row.configured.instance.sourceInstanceId, row.configured);
     }
     return configured;
@@ -209,21 +207,26 @@ export async function resolveTriageEntryForDispatch(
     request: TriageEntryDispatchRequestV1,
     deps: TriageEntryDispatchDepsV1,
 ): Promise<TriageEntryDispatchResultV1> {
+    throwIfAborted(deps.signal);
     const options: PluginCancellationOptions | undefined = deps.signal ? { signal: deps.signal } : undefined;
     const [configured, admitted] = await Promise.all([
         readActiveConfiguredInstances(deps),
         deps.readAdmittedSources(options),
     ]);
+    throwIfAborted(deps.signal);
     const admittedByQualifiedId = indexTriageAdmittedSourcesV1(admitted);
 
     const attachments: TriageEntryDispatchOutcomeV1[] = [];
     for (const attachment of request.attachments) {
+        throwIfAborted(deps.signal);
         attachments.push(await resolveOne(attachment, {
             configured,
             admittedByQualifiedId,
             executeGet: deps.executeGet,
             sessionLinks: deps.sessionLinks,
             options,
+            callerSignal: deps.signal,
+            getDeadlineMs: deps.getDeadlineMs ?? TRIAGE_DISPATCH_GET_DEADLINE_MS,
         }));
     }
     return { attachments };
@@ -237,6 +240,8 @@ async function resolveOne(
         executeGet: TriageAdmittedGetExecutorV1;
         sessionLinks: CorpusCollectionsV1['sessionLinks'];
         options: PluginCancellationOptions | undefined;
+        callerSignal: AbortSignal | undefined;
+        getDeadlineMs: number;
     }>,
 ): Promise<TriageEntryDispatchOutcomeV1> {
     const parsed = parseTriageComposerEntryAttachmentValue(attachment.value);
@@ -275,28 +280,47 @@ async function resolveOne(
     //    resolver is not the parser of a source's own opaque token, so it never
     //    rewrites, shortens or re-derives one. An absent hint stays absent
     //    rather than becoming an empty locator the source would interpret.
-    let observation: TriageGetResultV1;
+    const deadline = new AbortController();
+    const getOptions: PluginCancellationOptions = {
+        signal: context.callerSignal === undefined
+            ? deadline.signal
+            : AbortSignal.any([context.callerSignal, deadline.signal]),
+    };
+    let settled: RaceWithTimeoutResult<TriageGetResultV1>;
     try {
-        observation = await context.executeGet(
-            contribution.operations.get,
-            {
-                v: 1,
-                instance,
-                localRef: {
-                    kindId: entryRef.kindId,
-                    collisionScope: entryRef.collisionScope,
-                    entryId: entryRef.entryId,
+        settled = await raceWithTimeout(
+            context.executeGet(
+                contribution.operations.get,
+                {
+                    v: 1,
+                    instance,
+                    localRef: {
+                        kindId: entryRef.kindId,
+                        collisionScope: entryRef.collisionScope,
+                        entryId: entryRef.entryId,
+                    },
+                    ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
                 },
-                ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
-            },
-            context.options,
+                getOptions,
+            ),
+            context.getDeadlineMs,
         );
-    } catch {
+    } catch (error) {
+        // A synchronous invocation failure has the same caller-visible path as
+        // a rejected source read.
+        settled = { type: 'rejected', error };
+    } finally {
+        deadline.abort();
+    }
+
+    throwIfAborted(context.callerSignal);
+    if (settled.type === 'timeout' || settled.type === 'rejected') {
         // An invocation that never produced an observation is a failure of the
         // read, not a conclusion about the entry — it is retryable precisely
         // because nothing was learned.
         return blocked(attachment.instanceId, 'failed', true, 'This entry could not be read.');
     }
+    const observation = settled.value;
 
     // 4. Typed outcomes only. Nothing here rebinds, follows or repairs.
     //

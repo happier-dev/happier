@@ -360,6 +360,27 @@ describe('Azure policies plane', () => {
     expect(settled.evaluationsPartial).toBe(true);
   });
 
+  it('does not publish stale statuses as partial when cancellation wins during evaluation paging', async () => {
+    const caller = new AbortController();
+    const otherRoutes = respondWith(collection([]));
+    const seam = harness((url) => {
+      if (!url.includes('/policy/evaluations')) return otherRoutes(url);
+      // The transport race is deliberate: an already-started request can still resolve after
+      // navigation. A cancellation is not an ordinary later-page failure the Policies tab may
+      // retain as partial evidence.
+      caller.abort();
+      return collection([]);
+    });
+    const context = { ...seam.context, signal: caller.signal } as PluginInvocationContext;
+
+    const settled = AzurePoliciesResultV1Schema.parse(
+      await readAzureDevOpsPolicies(planeInput(), context),
+    );
+
+    if (settled.kind !== 'unavailable') throw new Error('cancellation must prevent publication');
+    expect(settled.failure.code).toBe('azure-devops/cancelled');
+  });
+
   it('addresses policy evaluations through the project, not the Git repository', async () => {
     const seam = harness(respondWith(collection([])));
     await readAzureDevOpsPolicies(planeInput(), seam.context);
@@ -429,8 +450,8 @@ describe('Azure threads read', () => {
     expect(settled.omittedRowCount).toBe(0);
   });
 
-  it('retains the newest bounded comment window when a thread has more comments than fit', async () => {
-    const comments = Array.from({ length: 62 }, (_, index) => ({
+  it('keeps every admitted embedded comment from the one thread response', async () => {
+    const comments = Array.from({ length: 101 }, (_, index) => ({
       id: index + 1,
       content: `reply-${String(index + 1)}`,
       author: { displayName: 'Reviewer' },
@@ -446,11 +467,11 @@ describe('Azure threads read', () => {
     );
 
     if (settled.kind !== 'threads') throw new Error('the threads read must settle');
-    expect(settled.rows[0]?.comments).toHaveLength(60);
-    expect(settled.rows[0]?.comments[0]?.content).toBe('reply-3');
+    expect(settled.rows[0]?.comments).toHaveLength(101);
+    expect(settled.rows[0]?.comments[0]?.content).toBe('reply-1');
     expect(settled.rows[0]?.comments.slice(-2).map((comment) => comment.content))
-      .toEqual(['reply-61', 'reply-62']);
-    expect(settled.rows[0]?.omittedCommentCount).toBe(2);
+      .toEqual(['reply-100', 'reply-101']);
+    expect(settled.rows[0]?.omittedCommentCount).toBe(0);
   });
 
   it('publishes no cursor, because the documented endpoint issues none', async () => {

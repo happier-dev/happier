@@ -32,6 +32,7 @@ import { POSTHOG_ISSUE_EVENTS_MAX_LIMIT } from '../../api/types/events.js';
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../../posthogContracts.js';
 import {
     PosthogSampledEventsResultV1Schema,
+    type PosthogFrozenIssueEventsRequestV1,
     type PosthogSampleIncompleteV1,
     type PosthogSampledEventsResultV1,
 } from '../../source/detail/issueEventsContract.js';
@@ -53,7 +54,15 @@ export type PosthogSampleStateV1 = TriagePagedPanelStateV1<
     PosthogProjectedIssueEvent,
     TriageSourceFailureV1,
     PosthogSampleIncompleteV1
-> & Readonly<{ selectedUuid: string | null }>;
+> & Readonly<{
+    selectedUuid: string | null;
+    /** Frozen request geometry beside, never inside, the sample rows it produced. */
+    frozenPages: readonly Readonly<{
+        start: number;
+        end: number;
+        request: PosthogFrozenIssueEventsRequestV1;
+    }>[];
+}>;
 
 export type PosthogSampleEventV1 =
     | Readonly<{ kind: 'requestStarted'; token: number }>
@@ -63,6 +72,8 @@ export type PosthogSampleEventV1 =
         events: readonly PosthogProjectedIssueEvent[];
         omittedRowCount: number;
         continuation: string | null;
+        /** Absent only when an older daemon cannot supply selected-evidence geometry. */
+        frozenRequest?: PosthogFrozenIssueEventsRequestV1;
         /**
          * Why the walk stopped short of what the provider offered, when it did. A page
          * with neither this nor a continuation is the provider's own end of the sample.
@@ -80,6 +91,7 @@ const INITIAL: PosthogSampleStateV1 = Object.freeze({
         PosthogSampleIncompleteV1
     >(),
     selectedUuid: null,
+    frozenPages: [],
 });
 
 export function posthogSampleInitialState(): PosthogSampleStateV1 {
@@ -138,19 +150,57 @@ export function posthogSampleReducer(
         PosthogSampleIncompleteV1
     >);
     if (paged === state) return state;
+    const frozenPages = event.kind === 'pageSettled'
+        && event.frozenRequest !== undefined
+        && event.events.length > 0
+        ? [...state.frozenPages, {
+            start: state.rows.length,
+            end: state.rows.length + event.events.length,
+            request: event.frozenRequest,
+        }]
+        : state.frozenPages;
     // The reader's selection survives an append; only a first page supplies one.
     return {
         ...paged,
         selectedUuid: state.selectedUuid ?? paged.rows[0]?.uuid ?? null,
+        frozenPages,
     };
 }
 
 export type PosthogOccurrenceControllerV1 = Readonly<{
     state: PosthogSampleStateV1;
     selectedEvent: PosthogProjectedIssueEvent | undefined;
+    selectedFrozenRequest: PosthogFrozenIssueEventsRequestV1 | undefined;
+    selectedAbsoluteOffset: number | undefined;
     select: (uuid: string) => void;
     loadMore: () => void;
 }>;
+
+/**
+ * The exact selected row and the frozen native query geometry that produced it.
+ *
+ * Pages can begin at a nonzero provider offset after "Load more", so a selected row
+ * must carry its own absolute offset rather than asking the evidence resolver to infer
+ * it from the page start or a later, mutable list position.
+ */
+export function resolvePosthogSelectedEvidence(state: PosthogSampleStateV1): Readonly<{
+    event: PosthogProjectedIssueEvent;
+    frozenRequest: PosthogFrozenIssueEventsRequestV1;
+    selectedAbsoluteOffset: number;
+}> | undefined {
+    const selectedIndex = state.rows.findIndex((candidate) => candidate.uuid === state.selectedUuid);
+    if (selectedIndex < 0) return undefined;
+    const page = state.frozenPages.find((candidate) => (
+        selectedIndex >= candidate.start && selectedIndex < candidate.end
+    ));
+    const event = state.rows[selectedIndex];
+    if (page === undefined || event === undefined) return undefined;
+    return Object.freeze({
+        event,
+        frozenRequest: page.request,
+        selectedAbsoluteOffset: page.request.offset + selectedIndex - page.start,
+    });
+}
 
 function detailIdentity(input: TriageDetailSurfaceInputV1): string {
     const { entryRef } = input.observation;
@@ -242,6 +292,7 @@ export function usePosthogOccurrenceController(
             token,
             events: parsed.events,
             omittedRowCount: parsed.omittedRowCount,
+            ...(parsed.frozenRequest === undefined ? {} : { frozenRequest: parsed.frozenRequest }),
             continuation: parsed.continuation ?? null,
             incomplete: parsed.incomplete ?? null,
         });
@@ -278,9 +329,22 @@ export function usePosthogOccurrenceController(
         () => state.rows.find((candidate) => candidate.uuid === state.selectedUuid),
         [state.rows, state.selectedUuid],
     );
+    const selectedEvidence = useMemo(
+        () => resolvePosthogSelectedEvidence(state),
+        [state],
+    );
+    const selectedFrozenRequest = selectedEvidence?.frozenRequest;
+    const selectedAbsoluteOffset = selectedEvidence?.selectedAbsoluteOffset;
 
     return useMemo(
-        () => ({ state, selectedEvent, select, loadMore }),
-        [loadMore, select, selectedEvent, state],
+        () => ({
+            state,
+            selectedEvent,
+            selectedFrozenRequest,
+            selectedAbsoluteOffset,
+            select,
+            loadMore,
+        }),
+        [loadMore, select, selectedAbsoluteOffset, selectedEvent, selectedFrozenRequest, state],
     );
 }

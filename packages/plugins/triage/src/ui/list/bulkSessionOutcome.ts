@@ -36,7 +36,9 @@ function sessionOutcome(result: TriageStartEntrySessionResultV1): TriageBulkEntr
 function directSendOutcome(
     result: TriageStartEntrySessionResultV1,
 ): TriageBulkEntryOutcomeV1['directSend'] {
-    if (result.type !== 'opened' && result.type !== 'openPending') return 'notRequested';
+    if (result.type !== 'opened' && result.type !== 'openPending' && result.type !== 'linked') {
+        return 'notRequested';
+    }
     if (result.delivery === 'accepted' || result.delivery === 'alreadyAccepted') return 'applied';
     if (result.delivery === 'outcomeUnknown') return 'uncertain';
     if (result.delivery === 'rejected' || result.delivery === 'none') return 'refused';
@@ -52,7 +54,7 @@ export function projectTriageBulkEntryOutcomesV1(input: Readonly<{
     const send = directSendOutcome(input.start);
     return input.entries.map((entry, index) => {
         const link: TriageBulkEntryOutcomeV1['link'] = index === 0
-            ? input.start.type === 'opened' || input.start.type === 'openPending'
+            ? input.start.type === 'opened' || input.start.type === 'openPending' || input.start.type === 'linked'
                 ? 'created'
                 : input.start.type === 'linkPending'
                     ? 'conflictedOrUnavailable'

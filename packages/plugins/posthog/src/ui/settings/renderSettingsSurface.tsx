@@ -186,6 +186,8 @@ function PosthogDraftEditor({
   const [loading, setLoading] = React.useState(false);
   const mountedGeneration = React.useRef(0);
   const pendingCapability = React.useRef<AbortController | null>(null);
+  const environmentDirectoryGeneration = React.useRef(0);
+  const pendingEnvironmentDirectory = React.useRef<AbortController | null>(null);
 
   React.useEffect(() => {
     mountedGeneration.current += 1;
@@ -193,29 +195,42 @@ function PosthogDraftEditor({
       mountedGeneration.current += 1;
       pendingCapability.current?.abort();
       pendingCapability.current = null;
+      environmentDirectoryGeneration.current += 1;
+      pendingEnvironmentDirectory.current?.abort();
+      pendingEnvironmentDirectory.current = null;
     };
   }, []);
 
   const execute = directory.execute;
   const readPage = React.useCallback(async (
     input: PosthogConfigurationDirectoryInputV1,
+    current?: Readonly<{
+      signal: AbortSignal;
+      isCurrent: () => boolean;
+    }>,
   ): Promise<PosthogConfigurationDirectoryResultV1 | null> => {
     setLoading(true);
-    const execution = await execute(input);
-    setLoading(false);
-    if (execution.status !== 'success') {
-      setMessage('PostHog could not read this configuration page.');
-      return null;
+    try {
+      const execution = current === undefined
+        ? await execute(input)
+        : await execute(input, { signal: current.signal });
+      if (current !== undefined && !current.isCurrent()) return null;
+      if (execution.status !== 'success') {
+        setMessage('PostHog could not read this configuration page.');
+        return null;
+      }
+      const parsed = PosthogConfigurationDirectoryResultV1Schema.safeParse(execution.result);
+      if (!parsed.success || parsed.data.kind === 'unavailable') {
+        setMessage('PostHog could not read this configuration page.');
+        return null;
+      }
+      setMessage(parsed.data.incomplete === true
+        ? 'Some provider rows or paging information could not be read; the visible choices remain usable.'
+        : null);
+      return parsed.data;
+    } finally {
+      if (current === undefined || current.isCurrent()) setLoading(false);
     }
-    const parsed = PosthogConfigurationDirectoryResultV1Schema.safeParse(execution.result);
-    if (!parsed.success || parsed.data.kind === 'unavailable') {
-      setMessage('PostHog could not read this configuration page.');
-      return null;
-    }
-    setMessage(parsed.data.incomplete === true
-      ? 'Some provider rows or paging information could not be read; the visible choices remain usable.'
-      : null);
-    return parsed.data;
   }, [execute]);
 
   const loadOrganizations = React.useCallback(async (next: string | null) => {
@@ -232,16 +247,31 @@ function PosthogDraftEditor({
 
   const loadEnvironments = React.useCallback(async (uuid: string, next: string | null) => {
     if (uuid.length === 0) return;
-    const result = await readPage({
-      v: 1,
-      kind: 'environments',
-      binding: draft.binding,
-      organizationUuid: uuid,
-      page: next === null ? { kind: 'initial' } : { kind: 'continuation', next },
-    });
-    if (result?.kind !== 'environments' || result.organizationUuid !== uuid) return;
-    setEnvironments((previous) => mergeEnvironments(previous, result.rows));
-    setEnvironmentNext(result.next ?? null);
+    pendingEnvironmentDirectory.current?.abort();
+    const controller = new AbortController();
+    pendingEnvironmentDirectory.current = controller;
+    const mountGeneration = mountedGeneration.current;
+    const generation = environmentDirectoryGeneration.current;
+    const isCurrent = () => (
+      !controller.signal.aborted
+      && pendingEnvironmentDirectory.current === controller
+      && mountedGeneration.current === mountGeneration
+      && environmentDirectoryGeneration.current === generation
+    );
+    try {
+      const result = await readPage({
+        v: 1,
+        kind: 'environments',
+        binding: draft.binding,
+        organizationUuid: uuid,
+        page: next === null ? { kind: 'initial' } : { kind: 'continuation', next },
+      }, { signal: controller.signal, isCurrent });
+      if (!isCurrent() || result?.kind !== 'environments' || result.organizationUuid !== uuid) return;
+      setEnvironments((previous) => mergeEnvironments(previous, result.rows));
+      setEnvironmentNext(result.next ?? null);
+    } finally {
+      if (pendingEnvironmentDirectory.current === controller) pendingEnvironmentDirectory.current = null;
+    }
   }, [draft.binding, readPage]);
 
   React.useEffect(() => {
@@ -340,12 +370,16 @@ function PosthogDraftEditor({
         value={organizationUuid}
         onChange={(value) => {
           if (typeof value !== 'string') return;
+          if (value === organizationUuid) return;
+          environmentDirectoryGeneration.current += 1;
+          pendingEnvironmentDirectory.current?.abort();
+          pendingEnvironmentDirectory.current = null;
           setOrganizationUuid(value);
           setSelected([]);
           setEnvironments([]);
           setEnvironmentNext(null);
         }}
-        disabled={busy || loading}
+        disabled={busy}
       />
       {organizationNext === null ? null : (
         <Button

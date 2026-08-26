@@ -29,6 +29,7 @@ import {
     TriageTextV1ProtocolSchema,
 } from './identity.js';
 import { defineTriageSingleLineStringV1 } from './strings.js';
+import { TriagePullRequestReviewRevisionV1Schema } from './workspace.js';
 
 const triageRowFactTextV1 = defineTriageSingleLineStringV1(
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
@@ -156,6 +157,12 @@ export const TriageSourceEntrySnapshotV1Schema = defineProtocolObject({
     createdAtMs: defineProtocolNumber({ integer: true }).optional(),
     state: TriageEntryStateV1ProtocolSchema,
     facts: defineProtocolArray(TriageRowFactV1Schema, { maxItems: MAX_TRIAGE_ROW_FACTS_V1 }),
+    /**
+     * Present only for source rows that are pull/merge requests. This carries
+     * the one provider read's base/head/native revision; target stamping adds
+     * `observedAtMs` before it can request local preparation.
+     */
+    reviewRevision: TriagePullRequestReviewRevisionV1Schema.optional(),
     projectionTruncated: triageProtocolTrue.optional(),
 }, { policy: 'additive-open/drop' });
 export type TriageSourceEntrySnapshotV1 = ReturnType<

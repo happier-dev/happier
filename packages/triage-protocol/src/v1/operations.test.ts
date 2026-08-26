@@ -7,6 +7,7 @@ import {
     TriageListInstancesResultV1Schema,
     TriageSourceInstanceDraftV1Schema,
 } from './instances.js';
+import { TriageReadConfiguredSourceInstancesResultV1Schema } from './configuredInstances.js';
 import {
     TriageGetInputV1Schema,
     TriageGetResultV1Schema,
@@ -195,6 +196,42 @@ describe('Triage listInstances', () => {
             candidates: [],
             failures: [{ failure }],
         }).success).toBe(false);
+    });
+
+    it('does not reject a source discovery result solely because it has more than thirty-two candidates or failures', () => {
+        const candidate = TriageSourceInstanceDraftV1Schema.parse({
+            v: 1,
+            binding: instance.binding,
+            localInstanceKey: 'example-scope',
+            keyStability: 'locatorDerived',
+            configuration: instance.configuration,
+            locator: { v: 1, displayLabel: 'Example scope' },
+        });
+        const candidates = Array.from({ length: 33 }, () => candidate);
+        const failures = Array.from({ length: 33 }, () => ({
+            binding: instance.binding,
+            failure: { class: 'permission' as const, code: 'example-forbidden' },
+        }));
+
+        expect(TriageListInstancesResultV1Schema.safeParse({
+            kind: 'complete',
+            candidates,
+            failures,
+        }).success).toBe(true);
+    });
+});
+
+describe('the caller-scoped configured-instance read', () => {
+    it('does not reject durable rows solely because a source owns more than thirty-two', () => {
+        expect(TriageReadConfiguredSourceInstancesResultV1Schema.safeParse({
+            kind: 'read',
+            instances: Array.from({ length: 33 }, () => ({
+                v: 1,
+                lifecycle: 'active',
+                configured: instance,
+            })),
+            status: 'complete',
+        }).success).toBe(true);
     });
 });
 

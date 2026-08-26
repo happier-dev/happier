@@ -222,7 +222,7 @@ async function mountShell(options: Readonly<{
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view'); });
+    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
     // Let the saved-view read settle before anything is asserted about it.
     await act(async () => { await Promise.resolve(); });
     return { shell: fixture, locations, settings: harness.settings };

@@ -16,11 +16,14 @@ import { AZURE_DEVOPS_BASE_CONFIGURATION_FIELD } from '../auth/azureDevopsConnec
 import { AZURE_DEVOPS_TRIAGE_ACTION_IDS } from './actions.js';
 import { AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS } from './detailActions.js';
 import {
+  AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
   AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
   AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID,
   AZURE_DEVOPS_TRIAGE_DESCRIPTOR,
   AZURE_DEVOPS_TRIAGE_PURPOSE,
 } from './descriptor.js';
+
+const PREPARE_REVIEW_WORKSPACE_ACTION_ID = 'triage-prepare-review-workspace';
 
 /**
  * The manifest as the host actually receives it.
@@ -38,7 +41,7 @@ function serializedManifest(): unknown {
 }
 
 describe('Azure DevOps Triage source contribution conformance', () => {
-  it('declares the descriptor, protocol identity and all three required role Actions', () => {
+  it('declares the descriptor, protocol identity and all required source read Actions', () => {
     const result = checkTriageSourceContributionV1(serializedManifest());
 
     // Admission is the whole contribution, not a subset of it: a source whose detail surface is
@@ -47,6 +50,29 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     // regression names itself.
     expect(result.ok ? [] : result.errors).toEqual([]);
     expect(result.ok).toBe(true);
+  });
+
+  it('binds the provider-owned writesLocal review-workspace preparation Action', () => {
+    const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
+    const action = PLUGIN_MANIFEST.contributes.actions.find(
+      (candidate) => candidate.id === PREPARE_REVIEW_WORKSPACE_ACTION_ID,
+    );
+
+    expect(contribution?.operations?.prepareReviewWorkspace).toBe(PREPARE_REVIEW_WORKSPACE_ACTION_ID);
+    expect(action).toMatchObject({
+      id: PREPARE_REVIEW_WORKSPACE_ACTION_ID,
+      surfaces: ['plugin'],
+      dangerLevel: 'writesLocal',
+      hostAccess: [
+        AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID,
+        AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+        AZURE_DEVOPS_TRIAGE_PURPOSE,
+      ],
+      connectedAccountPurposeBindings: [{
+        path: 'instance.binding.account',
+        purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
+      }],
+    });
   });
 
   it('is admitted by the canonical manifest parser with its account descriptor and system tool', () => {
@@ -75,7 +101,11 @@ describe('Azure DevOps Triage source contribution conformance', () => {
       expect(action?.surfaces).toEqual(['plugin']);
       expect(action?.dangerLevel).toBe('safe');
       expect(action?.hostAccess)
-        .toEqual([AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID, AZURE_DEVOPS_TRIAGE_PURPOSE]);
+        .toEqual([
+          AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID,
+          AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+          AZURE_DEVOPS_TRIAGE_PURPOSE,
+        ]);
       // Every detail plane carries a configured instance, so every one binds the
       // exact account leaf the host revalidates.
       expect(action?.connectedAccountPurposeBindings).toEqual([{
@@ -83,12 +113,11 @@ describe('Azure DevOps Triage source contribution conformance', () => {
         purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
       }]);
     }
-    // They are NOT source-protocol roles: the contribution binds three operations
-    // and adding a fourth here would publish GitLab-style vocabulary into a
-    // shared contract that has no such role.
+    // They are NOT source-protocol roles. The contribution also binds the one optional
+    // source-owned materialization role, but no detail plane becomes a provider operation.
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
-      .toEqual(['get', 'listInstances', 'scan']);
+      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan']);
   });
 
   it('declares the deployment field as a configured service base, not a bare origin', () => {
@@ -120,7 +149,7 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     expect(declared).not.toContain('WorkItem');
   });
 
-  it('binds each role Action to the exact published schemas and both read grants', () => {
+  it('binds each role Action to the exact published schemas and required host grants', () => {
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
 
@@ -134,9 +163,17 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     for (const actionId of Object.values(contribution?.operations ?? {})) {
       const action = actions.get(actionId);
       expect(action?.surfaces).toEqual(['plugin']);
-      expect(action?.dangerLevel).toBe('safe');
+      expect(action?.dangerLevel).toBe(
+        actionId === AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace
+          ? 'writesLocal'
+          : 'safe',
+      );
       expect(action?.hostAccess)
-        .toEqual([AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID, AZURE_DEVOPS_TRIAGE_PURPOSE]);
+        .toEqual([
+          AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID,
+          AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+          AZURE_DEVOPS_TRIAGE_PURPOSE,
+        ]);
     }
     // §3.1: both account-reaching roles carry the exact account path, so both declare the purpose
     // binding the host cross-checks at declaration time. `listInstances` produces account refs
@@ -148,6 +185,9 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.get)?.connectedAccountPurposeBindings)
       .toEqual(expectedAccountBindings);
     expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.scan)?.connectedAccountPurposeBindings)
+      .toEqual(expectedAccountBindings);
+    expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace)
+      ?.connectedAccountPurposeBindings)
       .toEqual(expectedAccountBindings);
     expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances))
       .not.toHaveProperty('connectedAccountPurposeBindings');

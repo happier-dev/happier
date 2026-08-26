@@ -309,7 +309,7 @@ async function mountPicker(
     environment: Readonly<{ direction?: 'ltr' | 'rtl'; textScale?: number }> = {},
 ): Promise<PluginUiTestkit> {
     const fixture = await openPicker(harness, composer, viewId, environment);
-    await act(async () => { await refreshTriageListWindow('view'); });
+    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
     await act(async () => { await Promise.resolve(); });
     return fixture;
 }

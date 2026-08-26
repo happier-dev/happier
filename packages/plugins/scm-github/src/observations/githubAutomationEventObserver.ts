@@ -12,6 +12,13 @@ import { parseForgeLinkHeader } from '@happier-dev/triage-sources/runtime';
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
+  isGithubAutomationEventLocalId,
+  normalizeGithubAutomationEvent,
+  type GithubAutomationEventLocalIdV1,
+  type GithubAutomationEventPayloadV1,
+  type GithubAutomationEventRefV1,
+} from '../githubAutomationEvents.js';
+import {
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD,
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_INDEX_ID,
@@ -29,7 +36,6 @@ import {
 import {
   GITHUB_API_ORIGIN,
   GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID,
-  GITHUB_AUTOMATION_REPOSITORY_EVENT_ID,
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID,
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
   GITHUB_PLUGIN_ID,
@@ -75,7 +81,6 @@ type AutomationEventAdmitItemResultV1 = PluginActionResultById['automation.event
  * observer names that contract instead of a second SDK JSON projection, so a
  * payload it mints can never drift out of what `automation.event.admit` takes.
  */
-type AutomationEventAdmitPayloadV1 = PluginActionInputById['automation.event.admit']['payload'];
 type AutomationEventSourceStatusReportV1 = PluginActionInputById['automation.event.source.status.report'];
 type AutomationEventSourceStatusInputV1 = Extract<
   AutomationEventSourceStatusReportV1,
@@ -92,13 +97,14 @@ type AutomationEventCheckpointRetirementCandidateV1 = NonNullable<
 >[number];
 
 type GithubAutomationRepositoryEventObservationV1 = Readonly<{
+  eventRef: GithubAutomationEventRefV1;
   occurrenceId: string;
   occurredAtMs: number;
-  payload: AutomationEventAdmitPayloadV1;
+  payload: GithubAutomationEventPayloadV1;
 }>;
 
 type GithubAutomationObservedSourceV1 = Readonly<{
-  definition: GithubAutomationEventSourceDefinitionV1;
+  definition: GithubCheckpointedPullSourceDefinitionV1;
   credentialRef: ConnectedAccountRef;
   repository: GithubRepositorySourceConfigV1;
   daemonMaterializationRef: string;
@@ -117,6 +123,7 @@ type GithubAutomationObservedSourceCandidateV1 =
   | Readonly<{ kind: 'incompatible'; definition: GithubAutomationEventSourceDefinitionV1 }>;
 
 type GithubCheckpointedPullSourceDefinitionV1 = GithubAutomationEventSourceDefinitionV1 & Readonly<{
+  eventRef: GithubAutomationEventRefV1;
   observationTransport: Extract<
     GithubAutomationEventSourceDefinitionV1['observationTransport'],
     Readonly<{ kind: 'checkpointedPull' }>
@@ -399,7 +406,7 @@ function parseRepositoryEventPayload(input: Readonly<{
   occurredAtMs: number;
   raw: JsonRecord;
   repository: GithubRepositorySourceConfigV1;
-}>): AutomationEventAdmitPayloadV1 | null {
+}>): ReturnType<typeof normalizeGithubAutomationEvent> | null {
   const rawPayload = isRecord(input.raw.payload) ? input.raw.payload : null;
   if (rawPayload === null) {
     if (
@@ -416,16 +423,13 @@ function parseRepositoryEventPayload(input: Readonly<{
     nameWithOwner: input.repository.nameWithOwner,
   });
   if (input.raw.type === 'PushEvent') {
-    const payload = Object.freeze({
+    return normalizeGithubAutomationEvent(Object.freeze({
       kind: 'push' as const,
-      eventId: input.eventId,
-      occurredAtMs: input.occurredAtMs,
       repository,
       ref: readBoundedString(rawPayload.ref, 'PushEvent ref'),
       before: readBoundedString(rawPayload.before, 'PushEvent before SHA'),
       after: readBoundedString(rawPayload.head, 'PushEvent head SHA'),
-    });
-    return payload satisfies AutomationEventAdmitPayloadV1;
+    }));
   }
   if (input.raw.type === 'IssuesEvent' && rawPayload.action === 'opened') {
     const issue = isRecord(rawPayload.issue) ? rawPayload.issue : null;
@@ -435,34 +439,46 @@ function parseRepositoryEventPayload(input: Readonly<{
     if (typeof issue.title !== 'string' || issue.title.length > 1_024) {
       throw new GithubRepositoryEventsHistoryGapError('GitHub opened issue Event has an invalid title');
     }
-    const payload = Object.freeze({
+    return normalizeGithubAutomationEvent(Object.freeze({
       kind: 'issueOpened' as const,
-      eventId: input.eventId,
-      occurredAtMs: input.occurredAtMs,
       repository,
       issue: Object.freeze({
         id: readGithubPositiveDecimal(issue.id, 'issue ID'),
         number: readPositiveSafeInteger(issue.number, 'issue number'),
         title: issue.title,
       }),
-    });
-    return payload satisfies AutomationEventAdmitPayloadV1;
+    }));
+  }
+  if (input.raw.type === 'PullRequestEvent' && rawPayload.action === 'opened') {
+    const pullRequest = isRecord(rawPayload.pull_request) ? rawPayload.pull_request : null;
+    if (pullRequest === null) {
+      throw new GithubRepositoryEventsHistoryGapError('GitHub opened pull request Event lacks pull request facts');
+    }
+    if (typeof pullRequest.title !== 'string' || pullRequest.title.length > 1_024) {
+      throw new GithubRepositoryEventsHistoryGapError('GitHub opened pull request Event has an invalid title');
+    }
+    return normalizeGithubAutomationEvent(Object.freeze({
+      kind: 'pullRequestOpened' as const,
+      repository,
+      pullRequest: Object.freeze({
+        id: readGithubPositiveDecimal(pullRequest.id, 'pull request ID'),
+        number: readPositiveSafeInteger(pullRequest.number, 'pull request number'),
+        title: pullRequest.title,
+      }),
+    }));
   }
   if (input.raw.type === 'PullRequestEvent' && rawPayload.action === 'closed') {
     const pullRequest = isRecord(rawPayload.pull_request) ? rawPayload.pull_request : null;
     if (pullRequest === null || pullRequest.merged !== true) return null;
-    const payload = Object.freeze({
+    return normalizeGithubAutomationEvent(Object.freeze({
       kind: 'pullRequestMerged' as const,
-      eventId: input.eventId,
-      occurredAtMs: input.occurredAtMs,
       repository,
       pullRequest: Object.freeze({
         id: readGithubPositiveDecimal(pullRequest.id, 'pull request ID'),
         number: readPositiveSafeInteger(pullRequest.number, 'pull request number'),
         mergeCommitSha: readBoundedString(pullRequest.merge_commit_sha, 'pull request merge SHA'),
       }),
-    });
-    return payload satisfies AutomationEventAdmitPayloadV1;
+    }));
   }
   return null;
 }
@@ -470,6 +486,7 @@ function parseRepositoryEventPayload(input: Readonly<{
 function normalizeRepositoryEvent(
   value: unknown,
   repository: GithubRepositorySourceConfigV1,
+  eventLocalId: GithubAutomationEventLocalIdV1,
 ): GithubRepositoryTimelineEntryV1<GithubAutomationRepositoryEventObservationV1> {
   if (!isRecord(value)) {
     throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events entry is invalid');
@@ -493,16 +510,17 @@ function normalizeRepositoryEvent(
   ) {
     throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events entry changed its immutable repository');
   }
-  const payload = parseRepositoryEventPayload({ eventId, occurredAtMs, raw: value, repository });
+  const normalized = parseRepositoryEventPayload({ eventId, occurredAtMs, raw: value, repository });
   return Object.freeze({
     eventId,
     createdAtMs: occurredAtMs,
-    observation: payload === null
+    observation: normalized === null || normalized.eventRef.localId !== eventLocalId
       ? null
       : Object.freeze({
+        eventRef: normalized.eventRef,
         occurrenceId: createOccurrenceId(repository.repositoryId, eventId),
         occurredAtMs,
-        payload,
+        payload: normalized.payload,
       }),
   });
 }
@@ -554,7 +572,11 @@ async function pollRepositoryEvents(input: Readonly<{
         kind: 'page' as const,
         etag: readTriageResponseHeaderV1(response.headers, 'etag'),
         nextUrl: parseNextPageUrl(response.headers, input.source.repository),
-        events: Object.freeze(payload.map((event) => normalizeRepositoryEvent(event, input.source.repository))),
+        events: Object.freeze(payload.map((event) => normalizeRepositoryEvent(
+          event,
+          input.source.repository,
+          input.source.definition.eventRef.localId,
+        ))),
         pollIntervalMs: readGithubPollIntervalMs(response.headers),
       });
     },
@@ -582,6 +604,7 @@ function loadCheckpoint(input: Readonly<{
   const continuity = parseRepositoryEventsContinuity(payload.continuity, source.repository.repositoryId);
   if (
     checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId] !== source.definition.automationId
+    || checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId] !== source.definition.eventRef.localId
     || checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId] !== source.definition.sourceSelectorId
     || payload.sourceInstanceId !== source.definition.sourceInstanceId
     || payload.sourceContractVersion !== source.definition.sourceContractVersion
@@ -609,6 +632,7 @@ function createCheckpointRow(input: Readonly<{
 }>): GithubAutomationEventCheckpointRowV1 {
   return createGithubAutomationEventCheckpointRowV1({
     automationId: input.source.definition.automationId,
+    eventRef: input.source.definition.eventRef,
     sourceSelectorId: input.source.definition.sourceSelectorId,
     sourceInstanceId: input.source.definition.sourceInstanceId,
     sourceContractVersion: input.source.definition.sourceContractVersion,
@@ -974,7 +998,7 @@ function isGithubCheckpointedPullDefinition(
   definition: GithubAutomationEventSourceDefinitionV1,
 ): definition is GithubCheckpointedPullSourceDefinitionV1 {
   return definition.eventRef.pluginId === GITHUB_PLUGIN_ID
-    && definition.eventRef.localId === GITHUB_AUTOMATION_REPOSITORY_EVENT_ID
+    && isGithubAutomationEventLocalId(definition.eventRef.localId)
     && definition.observationTransport.kind === 'checkpointedPull';
 }
 

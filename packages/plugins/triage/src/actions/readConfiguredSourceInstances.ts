@@ -2,7 +2,6 @@ import type { PluginCancellationOptions, PluginInvocationContext } from '@happie
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import {
-    MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1,
     type TriageConfiguredSourceInstanceRecordV1,
     type TriageReadConfiguredSourceInstancesInputV1,
     type TriageReadConfiguredSourceInstancesResultV1,
@@ -67,11 +66,9 @@ export type TriageReadConfiguredSourceInstancesDepsV1 = Readonly<{
  * on an E2EE Account, and adding one would publish which sources an Account has
  * configured to the server. The set it walks is the one the writer already
  * bounds — active rows are capped, and retired rows accumulate only when a user
- * reconfigures a connection onto a genuinely different account or key.
- *
- * It stops as soon as one row past the carryable maximum has been collected, so
- * a caller that owns more than the result can name is reported as `truncated`
- * rather than silently shortened.
+ * reconfigures a connection onto a genuinely different account or key. It
+ * returns every caller-owned record; this Action is the Settings read that
+ * gives the source its stable ids for later lifecycle operations.
  */
 export async function readTriageConfiguredSourceInstances(
     source: PluginContributionIdentity,
@@ -92,17 +89,14 @@ export async function readTriageConfiguredSourceInstances(
             const row = fromCorpusStoredRow<CorpusSourceInstanceRowV1>(stored).value;
             if (!configuredSourceInstanceIsOwnedBy(row, source)) continue;
             owned.push(recordFrom(row));
-            if (owned.length > MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1) break;
         }
-        cursor = owned.length > MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1
-            ? undefined
-            : page.nextCursor;
+        cursor = page.nextCursor;
     } while (cursor !== undefined);
 
     return Object.freeze({
         kind: 'read',
-        instances: Object.freeze(owned.slice(0, MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1)),
-        status: owned.length > MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1 ? 'truncated' : 'complete',
+        instances: Object.freeze(owned),
+        status: 'complete',
     });
 }
 

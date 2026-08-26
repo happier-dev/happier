@@ -19,11 +19,12 @@ import type { GithubTriageKindIdV1 } from './types.js';
 /** The contribution's local id inside `contributesTo['happier.triage'].sources`. */
 export const GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 = 'github-forge';
 
-/** The three Action ids the contribution's operation roles bind to. */
+/** The four Action ids the contribution's operation roles bind to. */
 export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
   listInstances: 'triage/list-github-instances',
   scan: 'triage/scan-github',
   get: 'triage/get-github-entry',
+  prepareReviewWorkspace: 'triage/prepare-github-review-workspace',
 });
 
 /**

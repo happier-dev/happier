@@ -235,7 +235,21 @@ describe('the entry detail read', () => {
         expect(result.kind).toBe('read');
         if (result.kind !== 'read') return;
         expect(result.linkedSessions).toHaveLength(MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1);
-        expect(result.linkedSessionsHasMore).toBe(true);
+        expect(result.linkedSessionsNextCursor).toBeDefined();
+        if (result.linkedSessionsNextCursor === undefined) return;
+
+        const continued = TriageReadEntryDetailResultV1Schema.parse(
+            await createTriageReadEntryDetailActionHandler()(
+                { ...detailInput(INSTANCE_A), linkedSessionsCursor: result.linkedSessionsNextCursor },
+                createContext({ collections }),
+            ),
+        );
+        expect(continued.kind).toBe('read');
+        if (continued.kind !== 'read') return;
+        expect(continued.linkedSessions).toHaveLength(1);
+        expect(continued.linkedSessionsNextCursor).toBeUndefined();
+        expect(result.linkedSessions.map((session) => session.sessionId))
+            .not.toContain(continued.linkedSessions[0]?.sessionId);
     });
 
     it('returns the exact selected connection when several observe one entry', async () => {
@@ -298,7 +312,7 @@ describe('the entry detail read', () => {
                 viewer: testkitViewer(),
             },
             linkedSessions: result.linkedSessions,
-            linkedSessionsHasMore: result.linkedSessionsHasMore,
+            linkedSessionsHasMore: result.linkedSessionsNextCursor !== undefined,
         })).not.toThrow();
     });
 

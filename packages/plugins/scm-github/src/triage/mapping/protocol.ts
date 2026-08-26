@@ -181,6 +181,9 @@ export function toTriageSnapshot(
       ...(nativeLabel.value.length === 0 ? {} : { nativeLabel: nativeLabel.value }),
     }),
     facts: facts.facts,
+    ...(snapshot.reviewRevision === undefined
+      ? {}
+      : { reviewRevision: snapshot.reviewRevision }),
     ...(truncated ? { projectionTruncated: true as const } : {}),
   });
 }

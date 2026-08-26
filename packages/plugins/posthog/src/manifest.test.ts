@@ -108,25 +108,20 @@ describe('PostHog plugin manifest', () => {
         });
     });
 
-    it('declares one conforming Triage source contribution and no Composer surface', () => {
+    it('declares one conforming Triage source contribution and its direct-disclosure Composer reference only', () => {
         expect(() => assertTriageSourceContributionV1(PLUGIN_MANIFEST)).not.toThrow();
-        // The claim is that this plugin contributes NOTHING to any Composer family:
-        // `happier.triage` owns the one whole-entry attachment and control, and a
-        // second owner here would make the aggregate ambiguous about what a row is.
-        //
-        // It is asserted over whatever families the projection actually emits rather
-        // than over four hard-coded key names. Two things changed underneath that
-        // spelling — an omitted family now projects as absent rather than as `[]`, and
-        // the authorable key names are the SDK's to move — and neither is a fact about
-        // PostHog. The substring guard is what keeps this from passing vacuously: a
-        // declared composer contribution puts its family name in these bytes under any
-        // spelling, including the attachment and region families.
         const contributes = PLUGIN_MANIFEST.contributes as Readonly<Record<string, unknown>>;
-        for (const [family, declared] of Object.entries(contributes)) {
-            if (!family.toLowerCase().startsWith('composer')) continue;
-            expect(declared, family).toEqual([]);
-        }
-        expect(JSON.stringify(contributes).toLowerCase()).not.toContain('composer');
+        // PostHog may resolve one already-selected opaque evidence candidate. It owns
+        // no attachment, control, or region: `happier.triage` remains the sole owner
+        // of the exact draft transaction and the aggregate's whole-entry attachment.
+        expect(contributes.composerReferences).toEqual([{
+            id: 'posthog-evidence',
+            title: 'PostHog occurrence',
+            icon: 'error',
+        }]);
+        expect(contributes.composerAttachments).toBeUndefined();
+        expect(contributes.composerControls).toBeUndefined();
+        expect(contributes.composerRegions).toBeUndefined();
     });
 
     it('authorizes exact account materialization and GET+POST to its origin, including the PAT pilot', () => {

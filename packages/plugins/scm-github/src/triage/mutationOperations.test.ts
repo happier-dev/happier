@@ -558,6 +558,25 @@ describe('GitHub pull-request merge', () => {
     expect(writes(stub)).toHaveLength(1);
   });
 
+  it('reconciles a server error after dispatch before reporting the merge outcome', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody({ state: 'closed', merged: true })],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubPullRequestMergeResultV1Schema.parse(
+      await mergeGithubPullRequestAction(mergeInput(), stub.context),
+    );
+
+    expect(result.kind).toBe('applied');
+    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
+    expect(result.effect).toBe('changed');
+    // A 5xx can arrive after GitHub applied the merge. The authoritative reread,
+    // rather than the failed response, decides the one outcome we report.
+    expect(entryReads(stub)).toHaveLength(2);
+    expect(writes(stub)).toHaveLength(1);
+  });
+
   it('makes no request at all for a ref this write does not apply to', async () => {
     const stub = transportFor({ reads: [pullRequestBody()] });
 
@@ -645,6 +664,23 @@ describe('GitHub pull-request close and reopen', () => {
     );
     if (result.kind !== 'failed') throw new Error(`expected failed, got ${result.kind}`);
     expect(result.failure).toEqual({ class: 'permission', code: 'insufficient_scope' });
+  });
+
+  it('reconciles a possibly-applied state patch after a server error', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody({ state: 'closed' })],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubPullRequestStateResultV1Schema.parse(
+      await closeGithubPullRequestAction(stateInput(), stub.context),
+    );
+
+    expect(result.kind).toBe('applied');
+    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
+    expect(result.effect).toBe('changed');
+    expect(entryReads(stub)).toHaveLength(2);
+    expect(writes(stub)).toHaveLength(1);
   });
 
   it('rebinds the exact configured account on every write invocation', async () => {
@@ -787,6 +823,23 @@ describe('GitHub pull-request mark ready for review', () => {
     // One request, and no retry: a retry would re-decide on the user's behalf.
     expect(writes(stub)).toHaveLength(1);
   });
+
+  it('reconciles a server error after GitHub may have marked the pull request ready', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody({ draft: true }), pullRequestBody({ draft: false })],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubPullRequestMarkReadyResultV1Schema.parse(
+      await markGithubPullRequestReadyAction(stateInput({ headRevision: OBSERVED_HEAD }), stub.context),
+    );
+
+    expect(result.kind).toBe('applied');
+    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
+    expect(result.effect).toBe('changed');
+    expect(entryReads(stub)).toHaveLength(2);
+    expect(writes(stub)).toHaveLength(1);
+  });
 });
 
 /* -------------------------------------------------------------- update branch */
@@ -894,6 +947,26 @@ describe('GitHub pull-request update branch', () => {
     );
     if (result.kind !== 'refused') throw new Error(`expected a refusal, got ${result.kind}`);
     expect(result.reason).toBe('head_advanced');
+    expect(writes(stub)).toHaveLength(1);
+  });
+
+  it('reconciles a server error after GitHub may have accepted an update branch request', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody({ headSha: ADVANCED_HEAD })],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubPullRequestUpdateBranchResultV1Schema.parse(
+      await updateGithubPullRequestBranchAction(
+        stateInput({ headRevision: OBSERVED_HEAD }),
+        stub.context,
+      ),
+    );
+
+    expect(result.kind).toBe('applied');
+    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
+    expect(result.effect).toBe('changed');
+    expect(entryReads(stub)).toHaveLength(2);
     expect(writes(stub)).toHaveLength(1);
   });
 
@@ -1080,6 +1153,29 @@ describe('GitHub pull-request reviewer requests', () => {
     ))).toHaveLength(2);
   });
 
+  it('reconciles a server error after a reviewer request may have been applied', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody()],
+      reviewerReads: [reviewerCollection({}), reviewerCollection({ users: ['octocat'] })],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubPullRequestReviewersResultV1Schema.parse(
+      await addGithubPullRequestReviewersAction(
+        stateInput({ users: ['octocat'] }),
+        stub.context,
+      ),
+    );
+
+    expect(result.kind).toBe('applied');
+    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
+    expect(result.effect).toBe('changed');
+    expect(writes(stub)).toHaveLength(1);
+    expect(stub.requests.filter((request) => (
+      request.method === 'GET' && new URL(request.url).pathname === REVIEWERS_PATH
+    ))).toHaveLength(2);
+  });
+
   it('never requests reviewers on a route whose entry identity no longer validates', async () => {
     // A stale routing token that resolves to another repository's pull request
     // would otherwise summon strangers to somebody else's code.
@@ -1226,6 +1322,29 @@ describe('GitHub pull-request reviewer withdrawal', () => {
     expect(result.requestedReviewers).toEqual({ users: ['octocat'], teams: [] });
     // Accepted and unconfirmed is never retried on the user's behalf.
     expect(writes(stub)).toHaveLength(1);
+  });
+
+  it('reconciles a server error after a reviewer withdrawal may have been applied', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody()],
+      reviewerReads: [reviewerCollection({ users: ['octocat'] }), reviewerCollection({})],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubPullRequestReviewersResultV1Schema.parse(
+      await removeGithubPullRequestReviewersAction(
+        stateInput({ users: ['octocat'] }),
+        stub.context,
+      ),
+    );
+
+    expect(result.kind).toBe('applied');
+    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
+    expect(result.effect).toBe('changed');
+    expect(writes(stub)).toHaveLength(1);
+    expect(stub.requests.filter((request) => (
+      request.method === 'GET' && new URL(request.url).pathname === REVIEWERS_PATH
+    ))).toHaveLength(2);
   });
 
   it('never withdraws reviewers on a route whose entry identity no longer validates', async () => {
@@ -1398,6 +1517,24 @@ describe('GitHub issue close and reopen', () => {
     expect(writes(stub)).toHaveLength(1);
   });
 
+  it('reconciles a possibly-applied issue close after a server error', async () => {
+    const stub = issueTransportFor({
+      reads: [issueBody(), issueBody({ state: 'closed' })],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubPullRequestStateResultV1Schema.parse(
+      await closeGithubIssueAction(issueInput({ stateReason: 'completed' }), stub.context),
+    );
+
+    expect(result.kind).toBe('applied');
+    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
+    expect(result.effect).toBe('changed');
+    expect(writes(stub)).toHaveLength(1);
+    expect(stub.requests.filter((request) => request.method === 'GET'
+      && new URL(request.url).pathname === ISSUE_PATH)).toHaveLength(2);
+  });
+
   it('never writes an issue transition on a route whose entry identity no longer validates', async () => {
     const stub = issueTransportFor({ reads: [issueBody()] });
 
@@ -1547,6 +1684,24 @@ describe('GitHub issue assignee and label deltas', () => {
     );
     expect(result.kind).toBe('uncertain');
     expect(writes(stub)).toHaveLength(1);
+  });
+
+  it('reconciles a possibly-applied delta after a server error', async () => {
+    const stub = issueTransportFor({
+      reads: [issueBody({ labels: ['bug'] }), issueBody({ labels: ['bug', 'needs triage'] })],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubIssueDeltaResultV1Schema.parse(
+      await addGithubIssueLabelsAction(issueInput({ labels: ['needs triage'] }), stub.context),
+    );
+
+    expect(result.kind).toBe('applied');
+    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
+    expect(result.effect).toBe('changed');
+    expect(writes(stub)).toHaveLength(1);
+    expect(stub.requests.filter((request) => request.method === 'GET'
+      && new URL(request.url).pathname === ISSUE_PATH)).toHaveLength(2);
   });
 
   it('rebinds the exact configured account on an issue delta', async () => {
@@ -1792,6 +1947,23 @@ describe('GitHub review-thread resolution', () => {
     // Accepted and unobserved is never retried: a second dispatch would re-decide
     // against state the user never saw.
     expect(threadMutations(stub)).toHaveLength(1);
+  });
+
+  it('reconciles a server error after GitHub may have resolved the thread', async () => {
+    const stub = threadTransportFor({
+      reads: [threadNode({ isResolved: false }), threadNode({ isResolved: true })],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubPullRequestThreadResolutionResultV1Schema.parse(
+      await setGithubPullRequestThreadResolutionAction(threadInput(), stub.context),
+    );
+
+    expect(result.kind).toBe('applied');
+    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
+    expect(result.effect).toBe('changed');
+    expect(threadMutations(stub)).toHaveLength(1);
+    expect(graphqlDocuments(stub)).toHaveLength(3);
   });
 
   it('refuses an issue ref on a thread write and calls nothing at all', async () => {

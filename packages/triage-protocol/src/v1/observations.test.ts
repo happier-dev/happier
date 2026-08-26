@@ -112,6 +112,31 @@ describe('Triage source observation union', () => {
 });
 
 describe('Triage snapshot and row facts', () => {
+    it('preserves a recognized pull-request revision without making it an arbitrary source bag', () => {
+        const parsed = TriageSourceEntrySnapshotV1Schema.parse({
+            ...present.snapshot,
+            reviewRevision: {
+                baseSha: '1111111111111111111111111111111111111111',
+                headSha: '2222222222222222222222222222222222222222',
+                nativeRevision: 'github-node-17',
+            },
+        });
+        expect(parsed.reviewRevision).toEqual({
+            baseSha: '1111111111111111111111111111111111111111',
+            headSha: '2222222222222222222222222222222222222222',
+            nativeRevision: 'github-node-17',
+        });
+        expect(TriageSourceEntrySnapshotV1Schema.safeParse({
+            ...present.snapshot,
+            reviewRevision: {
+                baseSha: '1111111111111111111111111111111111111111',
+                headSha: '2222222222222222222222222222222222222222',
+                nativeRevision: 'github-node-17',
+                replacementSource: 'forbidden',
+            },
+        }).success).toBe(false);
+    });
+
     it('drops an unknown outer presentation field but rejects an unknown known-child field', () => {
         const parsed = TriageSourceEntrySnapshotV1Schema.parse({
             ...present.snapshot,

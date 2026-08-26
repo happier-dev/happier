@@ -865,6 +865,7 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
           listCandidates: async (request) => await ops.listCandidates({
             source,
             ...request,
+            searchMode: 'fast',
             maxBytes,
             signal,
           }),

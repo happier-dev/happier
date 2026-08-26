@@ -17,7 +17,6 @@ import {
   AZURE_DETAIL_BOUNDS_V1,
   AZURE_MAX_DETAIL_ROWS_V1,
   AZURE_MAX_ITERATION_ROWS_V1,
-  AZURE_MAX_THREAD_COMMENTS_V1,
   AZURE_MAX_THREAD_ROWS_V1,
 } from './projection.js';
 
@@ -303,9 +302,10 @@ export const AzureProjectedThreadRowV1Schema = defineProtocolObject({
   /** Absent on an unanchored remark, which is kept rather than dropped. */
   path: PathSchema.optional(),
   rightFileStartLine: defineProtocolNumber({ integer: true, minimum: 1 }).optional(),
-  comments: defineProtocolArray(AzureProjectedThreadCommentV1Schema, {
-    maxItems: AZURE_MAX_THREAD_COMMENTS_V1,
-  }),
+  // Azure embeds the finite comment array in the one thread response and publishes no
+  // per-thread cursor or documented count ceiling. Per-comment fields stay strictly bounded;
+  // the Action value boundary, not a source-invented row count, owns aggregate admission.
+  comments: defineProtocolArray(AzureProjectedThreadCommentV1Schema),
   omittedCommentCount: CountSchema,
   truncated: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });

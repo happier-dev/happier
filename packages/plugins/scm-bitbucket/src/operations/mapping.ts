@@ -8,6 +8,7 @@ import type {
 } from '@happier-dev/plugin-sdk/scm';
 import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
+import { readBitbucketCloneUrl } from '../bitbucketCloneUrl.js';
 import {
   buildBitbucketRepositoryWebUrl,
   readBitbucketRepositoryCoordinates,
@@ -134,19 +135,6 @@ export function decodeBitbucketPullRequestList(
   return { pullRequests, diagnostics };
 }
 
-function readCloneUrl(raw: unknown, kind: 'https' | 'ssh'): string | null {
-  const cloneLinks = readNestedRecord(raw, 'links')?.clone;
-  if (!Array.isArray(cloneLinks)) return null;
-  for (const link of cloneLinks) {
-    if (!isRecord(link)) continue;
-    if (readString(link.name)?.toLowerCase() === kind) {
-      const href = readString(link.href);
-      if (href) return href;
-    }
-  }
-  return null;
-}
-
 function visibilityFromRaw(
   raw: Record<string, unknown>,
   fallback: ScmHostingRepositoryVisibility,
@@ -172,8 +160,8 @@ export function mapBitbucketRepositorySummary(input: Readonly<{
       provider: input.provider,
       nameWithOwner,
     });
-  const cloneUrl = readCloneUrl(input.raw, 'https');
-  const sshUrl = readCloneUrl(input.raw, 'ssh');
+  const cloneUrl = readBitbucketCloneUrl(input.raw, 'https');
+  const sshUrl = readBitbucketCloneUrl(input.raw, 'ssh');
   const defaultBranch = readNestedString(input.raw, 'mainbranch', 'name');
 
   return {

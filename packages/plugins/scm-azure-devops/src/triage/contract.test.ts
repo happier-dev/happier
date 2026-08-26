@@ -241,6 +241,11 @@ describe('Azure DevOps present-observation projection', () => {
     expect(observation.locator.webUrl)
       .toBe('https://dev.azure.com/acme/Payments/_git/checkout/pullrequest/17');
     expect(observation.snapshot.scopeLabel).toBe('acme/Payments/checkout');
+    expect(observation.snapshot.reviewRevision).toEqual({
+      baseSha: 'a1b2c3d4e5f6',
+      headSha: 'b3f1c0a9d2e4',
+      nativeRevision: 'b3f1c0a9d2e4',
+    });
     expect(observation.viewer.involvement).toEqual(['reviewRequested']);
     expect(observation.nativeRevision).toBe('b3f1c0a9d2e4');
     expect(JSON.stringify(observation)).not.toContain('sourceAttention');

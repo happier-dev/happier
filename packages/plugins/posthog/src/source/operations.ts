@@ -21,12 +21,9 @@ import type {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
     admitForgeRequestUrl,
-    materializeTriageSourceAuthorizationV1,
     readTriageSourceAccountListingV1,
-    type TriageSourceAuthorizationOutcomeV1,
 } from '@happier-dev/triage-sources/runtime';
 import {
-    MAX_TRIAGE_INSTANCE_DRAFTS_V1,
     MAX_TRIAGE_ROW_FACTS_V1,
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
@@ -55,12 +52,6 @@ import {
     PosthogCapabilityProbeInputV1Schema,
     type PosthogCapabilityProbeResultV1,
 } from '../connect/capabilityProbe.js';
-import {
-    createPosthogApiClient,
-    type PosthogApiClient,
-    type PosthogMaterializationOutcome,
-    type PosthogTransportRequest,
-} from '../api/client.js';
 import type { PosthogFailure } from '../api/errors.js';
 import { organizationProjectsPath, organizationsListPath } from '../api/paths.js';
 import {
@@ -71,7 +62,6 @@ import {
 } from '../api/types/directory.js';
 import type { PosthogIssueRow } from '../api/types/issues.js';
 import {
-    normalizePosthogApiOrigin,
     selectPosthogApiOrigin,
     type PosthogApiOrigin,
 } from '../connect/origin.js';
@@ -99,16 +89,17 @@ import { getPosthogIssue } from './get.js';
 import {
     buildPosthogLocalInstanceKey,
     parsePosthogCollisionScope,
-    parsePosthogLocalInstanceKey,
 } from './identity.js';
 import {
     POSTHOG_DRAFT_WINDOW_POLICY,
-    decodePosthogConfiguration,
     encodePosthogConfiguration,
     resolvePosthogWindowPolicy,
     type PosthogConfigurationToken,
     type PosthogConfiguredEnvironment,
 } from './instance.js';
+import { createPosthogInvocationClient } from '../api/invocationClient.js';
+import { runPosthogBoundedInvocation } from './invocationDeadline.js';
+import { resolvePosthogInvocationScope } from './invocationScope.js';
 import type { PosthogProjectionBounds } from './map/bounds.js';
 import { POSTHOG_ENTRY_KIND, buildPosthogEntrySnapshot } from './map/entrySnapshot.js';
 import { buildPosthogPresentObservation } from './map/observation.js';
@@ -132,7 +123,6 @@ export const POSTHOG_FAILURE_CODES = {
     noSelectableEnvironment: 'posthog/no-selectable-environment',
     discoveryPageBounded: 'posthog/discovery-page-bounded',
     accountListTruncated: 'posthog/account-list-truncated',
-    instanceCapReached: 'posthog/instance-cap-reached',
     entryIdMalformed: 'posthog/entry-id-malformed',
     responseUnreadable: 'posthog/response-unreadable',
     serverError: 'posthog/server-error',
@@ -160,9 +150,6 @@ const PROJECTION_BOUNDS: PosthogProjectionBounds = Object.freeze({
 });
 
 const UNTITLED_ISSUE_LABEL = 'Untitled issue';
-
-/** Statuses whose HTTP semantics forbid a body; a response must not carry one. */
-const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([101, 204, 205, 304]);
 
 function sourceFailure(
     failureClass: TriageSourceFailureV1['class'],
@@ -227,90 +214,6 @@ export function toTriageSourceFailure(failure: PosthogFailure): TriageSourceFail
         case 'requestInvalid':
             return sourceFailure('unsupportedContract', POSTHOG_FAILURE_CODES.requestInvalid);
     }
-}
-
-/**
- * Projects the shared authorization owner's neutral reason into this source's own
- * request vocabulary.
- *
- * The three refusals are one condition for the reader — the account cannot authorize
- * this request — while a withdrawn materialization is the invocation ending, which the
- * client already keeps apart from a deadline. Wording the neutral reasons is exactly
- * what the shared owner leaves to each source.
- */
-function toMaterializationOutcome(
-    authorized: TriageSourceAuthorizationOutcomeV1,
-): PosthogMaterializationOutcome {
-    if (authorized.ok) {
-        return { ok: true, authorization: authorized.authorization };
-    }
-    return authorized.reason === 'cancelled'
-        ? { ok: false, failure: { kind: 'cancelled' } }
-        : { ok: false, failure: { kind: 'unauthorized', status: 0 } };
-}
-
-/**
- * Builds the one client an invocation may use against one exact account and origin.
- *
- * The credential is materialized inside the request closure and reaches nothing but the
- * outbound authorization header. The host reauthorizes the declared purpose and
- * revalidates that this exact account still owns this origin around every
- * materialization, so a stale configured origin fails at the account boundary rather
- * than sending a bearer token somewhere the account never authorized.
- */
-function createInvocationClient(
-    context: PluginInvocationContext,
-    account: ConnectedAccountRef,
-    origin: PosthogApiOrigin,
-): PosthogApiClient {
-    return createPosthogApiClient({
-        origin,
-        materializeHeaders: async (request, options) => {
-            // The admission rule — exact bound account, `httpHeaders`, a usable
-            // `authorization`, and a withdrawn call that is a cancellation rather than a
-            // refused account — is one owner for every first-party source. The local
-            // version this replaced admitted an empty header bag from a materialization
-            // of the wrong kind, so the read went out unauthenticated and came back as
-            // the provider's `401` about an account that had never been refused.
-            //
-            // It receives the request's own composed boundary, not the aggregate
-            // signal: a mounted-detail read has a private deadline, and a
-            // materialization handed the caller's signal alone kept running against the
-            // account after this source had already abandoned the request.
-            const authorized = await materializeTriageSourceAuthorizationV1({
-                connectedAccounts: context.services.connectedAccounts,
-                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
-                account,
-                origin: request.origin,
-                signal: options.signal,
-            });
-            return toMaterializationOutcome(authorized);
-        },
-        transport: async (url: string, request: PosthogTransportRequest) => {
-            const response = await context.services.http.request({
-                url,
-                method: request.method,
-                headers: request.headers,
-                redirect: request.redirect,
-                ...(request.body === undefined
-                    ? {}
-                    : { body: new TextEncoder().encode(request.body) }),
-            }, { signal: request.signal });
-            if (!Number.isInteger(response.status)
-                || response.status < 200
-                || response.status > 599) {
-                // A status outside the response range cannot be classified, so it is
-                // surfaced as a transport failure rather than guessed into a meaning.
-                throw new TypeError('PostHog response carried an uninterpretable status');
-            }
-            return new Response(
-                NULL_BODY_STATUSES.has(response.status)
-                    ? null
-                    : new TextDecoder().decode(response.body),
-                { status: response.status, headers: new Headers(response.headers) },
-            );
-        },
-    });
 }
 
 type PosthogAccountBinding = Readonly<{ purpose: string; account: ConnectedAccountRef }>;
@@ -383,12 +286,13 @@ export type PosthogConfigurationDirectoryReader = (
 
 /** One explicitly requested page of the mounted PostHog configuration browser. */
 export function createPosthogConfigurationDirectoryReader(
-    privateDeadlineMs: number,
+    deadlineMs: number,
 ): PosthogConfigurationDirectoryReader {
   return async function readConfigurationDirectory(
     input: unknown,
     context: PluginInvocationContext,
   ): Promise<PosthogConfigurationDirectoryResultV1> {
+    return await runPosthogBoundedInvocation(context, deadlineMs, async (signal) => {
     const parsed = PosthogConfigurationDirectoryInputV1Schema.parse(input);
     const unavailable = (failure: TriageSourceFailureV1): PosthogConfigurationDirectoryResultV1 => ({
         kind: 'unavailable',
@@ -400,7 +304,7 @@ export function createPosthogConfigurationDirectoryReader(
     const accountListing = await readTriageSourceAccountListingV1({
         connectedAccounts: context.services.connectedAccounts,
         purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
-        signal: context.signal,
+        signal,
     });
     if (accountListing.kind === 'failed') throw accountListing.error;
     if (accountListing.kind === 'unbound') {
@@ -417,7 +321,7 @@ export function createPosthogConfigurationDirectoryReader(
         return unavailable(sourceFailure('unsupportedContract', originFailureCode(selected.reason)));
     }
     const { origin } = selected;
-    const client = createInvocationClient(context, listed.account, origin);
+    const client = createPosthogInvocationClient(context, listed.account, origin);
     const readPage = async <T>(
         initialPath: string,
         parseRow: (value: unknown) => T | null,
@@ -433,12 +337,12 @@ export function createPosthogConfigurationDirectoryReader(
                     query: { limit: String(MAX_POSTHOG_DIRECTORY_ROWS_PER_PAGE_V1) },
                 },
                 (body) => parsePosthogDirectoryPage(body, parseRow),
-                { signal: context.signal, privateDeadlineMs },
+                { signal },
             )
             : await client.followJson(
                 parsed.page.next,
                 (body) => parsePosthogDirectoryPage(body, parseRow),
-                { signal: context.signal, privateDeadlineMs },
+                { signal },
             );
         return { result, requestedUrl };
     };
@@ -514,6 +418,7 @@ export function createPosthogConfigurationDirectoryReader(
         ...(next === null ? {} : { next }),
         ...(incomplete || rows.length !== page.rows.length ? { incomplete: true as const } : {}),
     };
+    });
   };
 }
 
@@ -545,7 +450,6 @@ export async function listPosthogInstances(
     const outcome = await readTriageSourceAccountListingV1({
         connectedAccounts: context.services.connectedAccounts,
         purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
-        limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1,
         signal: context.signal,
     });
     if (outcome.kind === 'failed') throw outcome.error;
@@ -556,13 +460,11 @@ export async function listPosthogInstances(
     const candidates: TriageSourceInstanceDraftV1[] = [];
     const failures: PosthogInstanceFailure[] = [];
     let bounded = false;
-    let capReached = false;
 
     const accounts = [...listed.accounts]
         .sort((left, right) => compareAccounts(left.account, right.account));
 
     for (const entry of accounts) {
-        if (capReached) break;
         const binding: PosthogAccountBinding = Object.freeze({
             purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
             account: entry.account,
@@ -576,7 +478,7 @@ export async function listPosthogInstances(
             continue;
         }
         const origin = selected.origin;
-        const client = createInvocationClient(context, entry.account, origin);
+        const client = createPosthogInvocationClient(context, entry.account, origin);
 
         const organizations = await client.requestJson(
             { method: 'GET', path: organizationsListPath() },
@@ -599,10 +501,6 @@ export async function listPosthogInstances(
         }
 
         for (const organization of organizations.value.rows) {
-            if (candidates.length >= MAX_TRIAGE_INSTANCE_DRAFTS_V1) {
-                capReached = true;
-                break;
-            }
             const localInstanceKey = buildPosthogLocalInstanceKey(
                 origin,
                 organization.organizationUuid,
@@ -688,20 +586,12 @@ export async function listPosthogInstances(
         }
     }
 
-    const boundedFailures = Object.freeze(failures.slice(0, MAX_TRIAGE_INSTANCE_DRAFTS_V1));
-    if (capReached) {
-        return Object.freeze({
-            kind: 'incomplete' as const,
-            candidates: Object.freeze(candidates),
-            failures: boundedFailures,
-            failure: sourceFailure('unknown', POSTHOG_FAILURE_CODES.instanceCapReached),
-        });
-    }
+    const frozenFailures = Object.freeze([...failures]);
     if (listed.status === 'truncated') {
         return Object.freeze({
             kind: 'incomplete' as const,
             candidates: Object.freeze(candidates),
-            failures: boundedFailures,
+            failures: frozenFailures,
             failure: sourceFailure('unknown', POSTHOG_FAILURE_CODES.accountListTruncated),
         });
     }
@@ -709,14 +599,14 @@ export async function listPosthogInstances(
         return Object.freeze({
             kind: 'incomplete' as const,
             candidates: Object.freeze(candidates),
-            failures: boundedFailures,
+            failures: frozenFailures,
             failure: sourceFailure('unknown', POSTHOG_FAILURE_CODES.discoveryPageBounded),
         });
     }
     return Object.freeze({
         kind: 'complete' as const,
         candidates: Object.freeze(candidates),
-        failures: boundedFailures,
+        failures: frozenFailures,
     });
 }
 
@@ -860,7 +750,7 @@ export async function scanPosthogSource(
         ));
     }
 
-    const client = createInvocationClient(context, parsed.instance.binding.account, origin);
+    const client = createPosthogInvocationClient(context, parsed.instance.binding.account, origin);
     const page = await scanPosthogIssuePage(
         client,
         {
@@ -1015,47 +905,25 @@ function resolveInvokedInstance(
         configuration: Readonly<{ v: 1; token: string }>;
     }>,
 ): InvokedInstance {
-    const key = parsePosthogLocalInstanceKey(instance.localInstanceKey);
-    if (key === null) {
+    const scope = resolvePosthogInvocationScope(instance);
+    if (!scope.ok) {
+        const code = scope.reason === 'instanceKeyUnreadable'
+            ? POSTHOG_FAILURE_CODES.instanceKeyUnreadable
+            : scope.reason === 'originInvalid'
+                ? POSTHOG_FAILURE_CODES.originInvalid
+                : scope.reason === 'configurationUndecodable'
+                    ? POSTHOG_FAILURE_CODES.configurationUndecodable
+                    : POSTHOG_FAILURE_CODES.instanceScopeMismatch;
         return Object.freeze({
             ok: false as const,
-            failure: sourceFailure(
-                'unsupportedContract',
-                POSTHOG_FAILURE_CODES.instanceKeyUnreadable,
-            ),
-        });
-    }
-    const origin = normalizePosthogApiOrigin(key.origin);
-    if (!origin.ok) {
-        return Object.freeze({
-            ok: false as const,
-            failure: sourceFailure('unsupportedContract', POSTHOG_FAILURE_CODES.originInvalid),
-        });
-    }
-    const configuration = decodePosthogConfiguration(instance.configuration);
-    if (configuration === null) {
-        return Object.freeze({
-            ok: false as const,
-            failure: sourceFailure(
-                'unsupportedContract',
-                POSTHOG_FAILURE_CODES.configurationUndecodable,
-            ),
-        });
-    }
-    if (configuration.organizationUuid !== key.organizationUuid) {
-        return Object.freeze({
-            ok: false as const,
-            failure: sourceFailure(
-                'unsupportedContract',
-                POSTHOG_FAILURE_CODES.instanceScopeMismatch,
-            ),
+            failure: sourceFailure('unsupportedContract', code),
         });
     }
     return Object.freeze({
         ok: true as const,
-        origin: origin.origin,
-        organizationUuid: key.organizationUuid,
-        configuration,
+        origin: scope.origin,
+        organizationUuid: scope.organizationUuid,
+        configuration: scope.configuration,
     });
 }
 
@@ -1066,12 +934,13 @@ export type PosthogCapabilityProbe = (
 ) => Promise<PosthogCapabilityProbeResultV1>;
 
 export function createPosthogCapabilityProbe(
-    privateDeadlineMs: number,
+    deadlineMs: number,
 ): PosthogCapabilityProbe {
   return async function probeCapability(
     input: unknown,
     context: PluginInvocationContext,
   ): Promise<PosthogCapabilityProbeResultV1> {
+    return await runPosthogBoundedInvocation(context, deadlineMs, async (signal) => {
     const parsed = PosthogCapabilityProbeInputV1Schema.parse(input);
     const routed = resolveInvokedInstance(parsed.draft);
     if (!routed.ok) return { kind: 'unavailable', failure: routed.failure };
@@ -1085,7 +954,7 @@ export function createPosthogCapabilityProbe(
             ),
         };
     }
-    const client = createInvocationClient(
+    const client = createPosthogInvocationClient(
         context,
         parsed.draft.binding.account,
         routed.origin,
@@ -1105,11 +974,12 @@ export function createPosthogCapabilityProbe(
             nativeLimit: 1,
             offset: 0,
         },
-        { signal: context.signal, privateDeadlineMs },
+        { signal },
     );
     return page.ok
         ? { kind: 'available' }
         : { kind: 'unavailable', failure: toTriageSourceFailure(page.failure) };
+    });
   };
 }
 
@@ -1130,7 +1000,7 @@ function isMountedPosthogUiRead(context: PluginInvocationContext): boolean {
 async function readPosthogSourceEntry(
     input: unknown,
     context: PluginInvocationContext,
-    privateDeadlineMs?: number,
+    signal: AbortSignal,
 ): Promise<TriageGetResultV1> {
     const parsed = TriageGetInputV1Schema.parse(input);
     const localRef = Object.freeze({
@@ -1177,7 +1047,7 @@ async function readPosthogSourceEntry(
         ));
     }
 
-    const client = createInvocationClient(context, parsed.instance.binding.account, origin);
+    const client = createPosthogInvocationClient(context, parsed.instance.binding.account, origin);
     const outcome = await getPosthogIssue(
         client,
         {
@@ -1185,9 +1055,7 @@ async function readPosthogSourceEntry(
             issueId: parsed.localRef.entryId,
             detailWindow: resolvePosthogWindowPolicy(configuration.detailWindowPolicy, Date.now()),
         },
-        privateDeadlineMs === undefined
-            ? { signal: context.signal }
-            : { signal: context.signal, privateDeadlineMs },
+        { signal },
     );
 
     if (outcome.kind === 'unresolved') {
@@ -1249,21 +1117,23 @@ export type PosthogSourceEntryReader = (
 ) => Promise<TriageGetResultV1>;
 
 export function createPosthogSourceEntryReader(
-    privateDeadlineMs: number,
+    deadlineMs: number,
 ): PosthogSourceEntryReader {
-    return async (input, context) => await readPosthogSourceEntry(
-        input,
+    return async (input, context) => await runPosthogBoundedInvocation(
         context,
-        privateDeadlineMs,
+        deadlineMs,
+        async (signal) => await readPosthogSourceEntry(input, context, signal),
     );
 }
 
 export const getPosthogSourceEntry: PosthogSourceEntryReader = async (input, context) => (
-    await readPosthogSourceEntry(
-        input,
-        context,
-        isMountedPosthogUiRead(context) ? POSTHOG_INTERACTIVE_READ_DEADLINE_MS : undefined,
-    )
+    isMountedPosthogUiRead(context)
+        ? await runPosthogBoundedInvocation(
+            context,
+            POSTHOG_INTERACTIVE_READ_DEADLINE_MS,
+            async (signal) => await readPosthogSourceEntry(input, context, signal),
+        )
+        : await readPosthogSourceEntry(input, context, context.signal)
 );
 
 /**
@@ -1295,12 +1165,13 @@ export type PosthogSampledEventsReader = (
  * nothing.
  */
 export function createPosthogSampledEventsReader(
-    privateDeadlineMs: number,
+    deadlineMs: number,
 ): PosthogSampledEventsReader {
     return async function readSampledEvents(
         input: unknown,
         context: PluginInvocationContext,
     ): Promise<PosthogSampledEventsResultV1> {
+        return await runPosthogBoundedInvocation(context, deadlineMs, async (signal) => {
         const parsed = PosthogSampledEventsInputV1Schema.parse(input);
         const unavailable = (
             failure: TriageSourceFailureV1,
@@ -1355,7 +1226,7 @@ export function createPosthogSampledEventsReader(
             ));
         }
 
-        const client = createInvocationClient(context, parsed.instance.binding.account, origin);
+        const client = createPosthogInvocationClient(context, parsed.instance.binding.account, origin);
         const page = await readPosthogSampledIssueEvents(
             client,
             {
@@ -1365,7 +1236,7 @@ export function createPosthogSampledEventsReader(
                 limit: frontier.limit,
                 offset: frontier.offset,
             },
-            { signal: context.signal, privateDeadlineMs },
+            { signal },
         );
         if (!page.ok) {
             return unavailable(toTriageSourceFailure(page.failure));
@@ -1384,8 +1255,20 @@ export function createPosthogSampledEventsReader(
             kind: 'sampled' as const,
             events: page.value.events,
             omittedRowCount: page.value.omittedRowCount,
+            frozenRequest: Object.freeze({
+                v: 1 as const,
+                issueId: page.value.request.issueId,
+                from: page.value.request.dateRange.date_from,
+                to: page.value.request.dateRange.date_to,
+                filterTestAccounts: page.value.request.filterTestAccounts,
+                onlyAppFrames: page.value.request.onlyAppFrames,
+                include: page.value.request.include,
+                limit: page.value.request.limit,
+                offset: page.value.request.offset,
+            }),
             ...(continuation === null ? {} : { continuation }),
             ...(stoppedShort ? { incomplete: POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1 } : {}),
+        });
         });
     };
 }
@@ -1414,12 +1297,13 @@ export type PosthogIssueActivityReader = (
  * characterized, so this operation never reinterprets that status as an empty page.
  */
 export function createPosthogIssueActivityReader(
-    privateDeadlineMs: number,
+    deadlineMs: number,
 ): PosthogIssueActivityReader {
     return async function readIssueActivity(
         input: unknown,
         context: PluginInvocationContext,
     ): Promise<PosthogIssueActivityResultV1> {
+        return await runPosthogBoundedInvocation(context, deadlineMs, async (signal) => {
         const parsed = PosthogIssueActivityInputV1Schema.parse(input);
         const unavailable = (
             failure: TriageSourceFailureV1,
@@ -1468,7 +1352,7 @@ export function createPosthogIssueActivityReader(
             ));
         }
 
-        const client = createInvocationClient(context, parsed.instance.binding.account, origin);
+        const client = createPosthogInvocationClient(context, parsed.instance.binding.account, origin);
         const page = await readPosthogIssueActivity(
             client,
             {
@@ -1477,7 +1361,7 @@ export function createPosthogIssueActivityReader(
                 limit: frontier.limit,
                 page: frontier.page,
             },
-            { signal: context.signal, privateDeadlineMs },
+            { signal },
         );
         if (!page.ok) {
             return unavailable(toTriageSourceFailure(page.failure));
@@ -1500,6 +1384,7 @@ export function createPosthogIssueActivityReader(
             ...(page.value.totalCount === null ? {} : { totalCount: page.value.totalCount }),
             ...(continuation === null ? {} : { continuation }),
             ...(stoppedShort ? { incomplete: POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1 } : {}),
+        });
         });
     };
 }

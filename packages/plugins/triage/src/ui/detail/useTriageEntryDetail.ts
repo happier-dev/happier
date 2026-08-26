@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { usePluginHostApi } from '@happier-dev/plugin-ui';
 import type {
   TriageDetailSurfaceInputV1,
+  TriageLinkedSessionProjectionV1,
   TriageSourceDescriptorV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -42,6 +43,12 @@ export type TriageEntryDetailStateV1 =
      * nothing here decodes it.
      */
     sourceDescriptor: TriageSourceDescriptorV1 | null;
+    /** Every linked Session page this mount has answered, in Collection order. */
+    linkedSessions: readonly TriageLinkedSessionProjectionV1[];
+    /** The opaque Collection continuation, held only for this mount. */
+    linkedSessionsNextCursor?: string;
+    linkedSessionsPageState: 'idle' | 'loading' | 'failed';
+    loadMoreLinkedSessions(): void;
   }>
   /** The selected connection is retired, removed, or no longer this source's. */
   | Readonly<{ kind: 'unavailable' }>
@@ -103,13 +110,19 @@ export async function readTriageEntryDetailState(
     instance: result.instance,
     observation: source.observation,
     linkedSessions: result.linkedSessions,
-    linkedSessionsHasMore: result.linkedSessionsHasMore,
+    linkedSessionsHasMore: result.linkedSessionsNextCursor !== undefined,
   });
   return built.kind === 'admitted'
     ? Object.freeze({
       kind: 'ready',
       input: built.input,
       sourceDescriptor: result.sourceDescriptor ?? null,
+      linkedSessions: result.linkedSessions,
+      ...(result.linkedSessionsNextCursor === undefined
+        ? {}
+        : { linkedSessionsNextCursor: result.linkedSessionsNextCursor }),
+      linkedSessionsPageState: 'idle',
+      loadMoreLinkedSessions: () => {},
     })
     : Object.freeze({ kind: 'refused', reason: built.reason });
 }
@@ -125,30 +138,122 @@ export function useTriageEntryDetail(
 ): TriageEntryDetailStateV1 | null {
   const hostApi = usePluginHostApi();
   const [state, setState] = useState<TriageEntryDetailStateV1 | null>(null);
+  const stateRef = useRef<TriageEntryDetailStateV1 | null>(null);
   // Reads settle out of order across a fast selection change; only the newest
   // one may publish, or a reader can end up looking at the entry they left.
   const generation = useRef(0);
+  const linkedSessionsController = useRef<AbortController | null>(null);
 
   const entryRef = source?.selection.entryRef;
   const sourceInstanceId = source?.selection.sourceInstanceId;
   const observation = source?.observation;
 
+  const publish = useCallback((next: TriageEntryDetailStateV1 | null): void => {
+    stateRef.current = next;
+    setState(next);
+  }, []);
+
+  const loadMoreLinkedSessions = useCallback((): void => {
+    const currentState = stateRef.current;
+    if (currentState?.kind !== 'ready'
+      || currentState.linkedSessionsNextCursor === undefined
+      || currentState.linkedSessionsPageState === 'loading'
+      || entryRef === undefined
+      || sourceInstanceId === undefined
+      || observation === undefined) return;
+
+    const currentGeneration = generation.current;
+    const cursor = currentState.linkedSessionsNextCursor;
+    const controller = new AbortController();
+    linkedSessionsController.current?.abort();
+    linkedSessionsController.current = controller;
+    publish(Object.freeze({ ...currentState, linkedSessionsPageState: 'loading' }));
+
+    void (async () => {
+      let result: ReturnType<typeof TriageReadEntryDetailResultV1Schema.parse>;
+      try {
+        result = TriageReadEntryDetailResultV1Schema.parse(await hostApi.executeAction(
+          TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1,
+          {
+            v: 1,
+            entryRef,
+            sourceInstanceId,
+            linkedSessionsCursor: cursor,
+          },
+          { signal: controller.signal },
+        ));
+      } catch {
+        if (controller.signal.aborted || currentGeneration !== generation.current) return;
+        const retained = stateRef.current;
+        if (retained?.kind === 'ready') {
+          publish(Object.freeze({ ...retained, linkedSessionsPageState: 'failed' }));
+        }
+        return;
+      }
+      if (controller.signal.aborted || currentGeneration !== generation.current) return;
+      if (result.kind !== 'read') {
+        const retained = stateRef.current;
+        if (retained?.kind === 'ready') {
+          publish(Object.freeze({ ...retained, linkedSessionsPageState: 'failed' }));
+        }
+        return;
+      }
+
+      const admittedPage = buildTriageDetailSurfaceInputV1({
+        selection: { entryRef, sourceInstanceId },
+        instance: result.instance,
+        observation,
+        linkedSessions: result.linkedSessions,
+        linkedSessionsHasMore: result.linkedSessionsNextCursor !== undefined,
+      });
+      if (admittedPage.kind !== 'admitted') {
+        const retained = stateRef.current;
+        if (retained?.kind === 'ready') {
+          publish(Object.freeze({ ...retained, linkedSessionsPageState: 'failed' }));
+        }
+        return;
+      }
+
+      const retained = stateRef.current;
+      if (retained?.kind !== 'ready') return;
+      const seen = new Set(retained.linkedSessions.map((session) => session.sessionId));
+      const appended = result.linkedSessions.filter((session) => !seen.has(session.sessionId));
+      const accumulated = Object.freeze({
+        ...retained,
+        linkedSessions: Object.freeze([...retained.linkedSessions, ...appended]),
+        linkedSessionsPageState: 'idle',
+      });
+      if (result.linkedSessionsNextCursor === undefined) {
+        const { linkedSessionsNextCursor: _completedCursor, ...completed } = accumulated;
+        publish(Object.freeze(completed));
+      } else {
+        publish(Object.freeze({
+          ...accumulated,
+          linkedSessionsNextCursor: result.linkedSessionsNextCursor,
+        }));
+      }
+    })();
+  }, [entryRef, hostApi, observation, publish, sourceInstanceId]);
+
   useEffect(() => {
     if (entryRef === undefined || sourceInstanceId === undefined || observation === undefined) {
       generation.current += 1;
-      setState(null);
+      linkedSessionsController.current?.abort();
+      publish(null);
       return undefined;
     }
     generation.current += 1;
+    linkedSessionsController.current?.abort();
     const current = generation.current;
     const controller = new AbortController();
-    setState((currentState) => (
-      currentState?.kind === 'ready'
-      && sameTriageEntryRefV1(currentState.input.observation.entryRef, entryRef)
-      && currentState.input.instance.instance.sourceInstanceId === sourceInstanceId
-        ? currentState
+    const retained = stateRef.current;
+    publish(
+      retained?.kind === 'ready'
+      && sameTriageEntryRefV1(retained.input.observation.entryRef, entryRef)
+      && retained.input.instance.instance.sourceInstanceId === sourceInstanceId
+        ? retained
         : READING
-    ));
+    );
     void (async () => {
       const next = await readTriageEntryDetailState(
         hostApi,
@@ -156,10 +261,17 @@ export function useTriageEntryDetail(
         { signal: controller.signal },
       );
       if (controller.signal.aborted || current !== generation.current) return;
-      setState(next);
+      publish(next);
     })();
-    return () => { controller.abort(); };
-  }, [entryRef, hostApi, observation, sourceInstanceId]);
+    return () => {
+      controller.abort();
+      linkedSessionsController.current?.abort();
+    };
+  }, [entryRef, hostApi, observation, publish, sourceInstanceId]);
 
-  return useMemo(() => state, [state]);
+  return useMemo(() => (
+    state?.kind === 'ready'
+      ? Object.freeze({ ...state, loadMoreLinkedSessions })
+      : state
+  ), [loadMoreLinkedSessions, state]);
 }

@@ -13,17 +13,18 @@
             "stop": true
           }
         },
+        "catalog": {
+          "vendorResume": {
+            "support": "unsupported"
+          }
+        },
         "cli": {
           "auth": {
+            "environmentVariables": [
+              "CODERABBIT_API_KEY"
+            ],
             "loginLaunches": [],
-            "probe": {
-              "backgroundChecks": "safe",
-              "envVars": [
-                "CODERABBIT_API_KEY"
-              ],
-              "parser": "unknown",
-              "statusArgs": null
-            },
+            "missingCredentialState": "unknown",
             "support": "status_only"
           },
           "executable": {

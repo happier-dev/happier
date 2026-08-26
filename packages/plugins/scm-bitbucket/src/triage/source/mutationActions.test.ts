@@ -120,6 +120,7 @@ function pullRequest(
 function harness(input: Readonly<{
   reads: readonly Readonly<Record<string, unknown>>[];
   write?: (url: string) => StubReply | undefined;
+  signal?: AbortSignal;
 }>) {
   let read = 0;
   const { http, requests } = createHttpStub((url) => {
@@ -136,7 +137,10 @@ function harness(input: Readonly<{
   const { connectedAccounts } = createConnectedAccountsStub({
     accounts: [{ accountId: 'account-1' }],
   });
-  return { context: createInvocationContext(connectedAccounts, http), requests };
+  return {
+    context: createInvocationContext(connectedAccounts, http, input.signal),
+    requests,
+  };
 }
 
 const writesTo = (requests: readonly { url: string; method: string }[], url: string): number =>
@@ -239,6 +243,30 @@ describe('Bitbucket pull-request merge', () => {
     expect(writesTo(requests, MERGE_URL)).toBe(1);
   });
 
+  it('does not reconcile a response that proves Bitbucket rejected the write before applying it', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('MERGED')],
+      write: (url) => (
+        url === MERGE_URL
+          ? { status: 401, body: { error: { message: 'credential expired' } } }
+          : undefined
+      ),
+    });
+
+    const settled = BitbucketMutationResultV1Schema.parse(
+      await mergeBitbucketPullRequestAction(mergeInput(), context),
+    );
+
+    if (settled.kind !== 'unavailable') {
+      throw new Error('an authentication refusal must not be reconciled as a possible merge');
+    }
+    expect(settled.failure.class).toBe('authentication');
+    // A generic `failed => confirm` fix would consume the second, MERGED read and falsely report
+    // this rejected request as applied. Only answer-loss failures earn the one exact confirmation.
+    expect(requests.filter((request) => request.url === PULL_REQUEST_URL)).toHaveLength(1);
+    expect(writesTo(requests, MERGE_URL)).toBe(1);
+  });
+
   it('confirms an answer-lost merge once instead of returning unavailable or writing again', async () => {
     const { context, requests } = harness({
       reads: [pullRequest('OPEN'), pullRequest('MERGED')],
@@ -252,6 +280,44 @@ describe('Bitbucket pull-request merge', () => {
     expect(settled.kind).toBe('applied');
     expect(writesTo(requests, MERGE_URL)).toBe(1);
     expect(requests.filter((request) => request.url === PULL_REQUEST_URL)).toHaveLength(2);
+  });
+
+  it('confirms one transport-answer-lost merge without writing a second time', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('MERGED')],
+      write: (url) => (url === MERGE_URL ? { error: new Error('socket reset') } : undefined),
+    });
+
+    const settled = BitbucketMutationResultV1Schema.parse(
+      await mergeBitbucketPullRequestAction(mergeInput(), context),
+    );
+
+    expect(settled.kind).toBe('applied');
+    expect(writesTo(requests, MERGE_URL)).toBe(1);
+    expect(requests.filter((request) => request.url === PULL_REQUEST_URL)).toHaveLength(2);
+  });
+
+  it('stops after caller cancellation racing a dispatched merge and reports the outcome as uncertain', async () => {
+    const caller = new AbortController();
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('MERGED')],
+      signal: caller.signal,
+      write: (url) => {
+        if (url !== MERGE_URL) return undefined;
+        caller.abort(new DOMException('The caller left the detail.', 'AbortError'));
+        return { status: 200, body: pullRequest('MERGED') };
+      },
+    });
+
+    const settled = BitbucketMutationResultV1Schema.parse(
+      await mergeBitbucketPullRequestAction(mergeInput(), context),
+    );
+
+    // The command may have reached Bitbucket, but cancellation bars its confirming GET from being
+    // sent. The Action therefore neither retries the merge nor claims that it applied.
+    expect(settled.kind).toBe('uncertain');
+    expect(writesTo(requests, MERGE_URL)).toBe(1);
+    expect(requests.filter((request) => request.url === PULL_REQUEST_URL)).toHaveLength(1);
   });
 });
 

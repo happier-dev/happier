@@ -5,6 +5,7 @@ import type {
   AgentExecutionRunRuntimeFactory,
   AgentRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import {
   REVIEW_SCM_SCOPE_INPUT_KEY,
   ReviewScmScopeV1Schema,
@@ -18,12 +19,15 @@ import type { DeepSecReviewMode } from './command.js';
 import { resolveDeepSecProfileMode } from './profileMode.js';
 import type { DeepSecCostWarningInput } from './costWarning.js';
 import { normalizeDeepSecFindings } from './findings.js';
-import { runDeepSecReview, type DeepSecReviewRunResult } from './run.js';
+import {
+  runDeepSecReview,
+  type DeepSecReviewRunResult,
+  type DeepSecScopedPathListDiagnostic,
+} from './run.js';
 import { createDeepSecTempFiles } from './tempFiles.js';
 
 type NormalizedDeepSecStart = Readonly<{
   mode: DeepSecReviewMode;
-  selectedFiles?: readonly string[];
   scmScope?: ReviewScmScopeV1 | null;
   confirmedCostWarning: boolean;
   preferredExecutablePath?: string | null;
@@ -59,12 +63,6 @@ function readNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-function readStringArray(value: unknown): readonly string[] | undefined {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === 'string')
-    : undefined;
-}
-
 function readAgentCli(value: unknown): DeepSecAgentCli | null {
   return value === 'claude' || value === 'codex' || value === 'both' ? value : null;
 }
@@ -77,11 +75,6 @@ function readDeepSecEngineConfig(intentRecord: Record<string, unknown>): Record<
 function readScmReviewScope(intentRecord: Record<string, unknown>): ReviewScmScopeV1 | null {
   const parsed = ReviewScmScopeV1Schema.safeParse(intentRecord[REVIEW_SCM_SCOPE_INPUT_KEY]);
   return parsed.success ? parsed.data : null;
-}
-
-function readScmReviewScopeSelectedFiles(scope: ReviewScmScopeV1 | null): readonly string[] | undefined {
-  if (!scope || scope.status !== 'supported') return undefined;
-  return scope.selectedPaths.length > 0 ? scope.selectedPaths : undefined;
 }
 
 function readMode(
@@ -145,15 +138,11 @@ function normalizeDeepSecStart(params: Readonly<{
   const reviewInput = normalizeReviewStartInput(params);
   const scmScope = readScmReviewScope(reviewInput);
   const engineConfig = readDeepSecEngineConfig(reviewInput);
-  const selectedFiles =
-    readStringArray(engineConfig.selectedFiles)
-    ?? readStringArray(reviewInput.selectedFiles)
-    ?? readScmReviewScopeSelectedFiles(scmScope);
+  const mode = readMode(engineConfig, reviewInput, params.profileId);
   const cost = readCost(engineConfig, reviewInput);
 
   return {
-    mode: readMode(engineConfig, reviewInput, params.profileId),
-    ...(selectedFiles ? { selectedFiles } : {}),
+    mode,
     ...(scmScope ? { scmScope } : {}),
     confirmedCostWarning:
       readBoolean(engineConfig.confirmedCostWarning)
@@ -168,6 +157,103 @@ function normalizeDeepSecStart(params: Readonly<{
     ...(readString(reviewInput.projectId) ? { projectId: readString(reviewInput.projectId) } : {}),
     ...(readString(reviewInput.workspaceId) ? { workspaceId: readString(reviewInput.workspaceId) } : {}),
   };
+}
+
+type SelectedScopeResolution =
+  | Readonly<{ status: 'ready'; paths: readonly string[] }>
+  | Readonly<{ status: 'failed'; diagnostics: readonly DeepSecScopedPathListDiagnostic[] }>;
+
+function selectedScopeUnavailable(path?: string): SelectedScopeResolution {
+  return {
+    status: 'failed',
+    diagnostics: [{
+      code: path ? 'scope_path_unavailable' : 'scope_unavailable',
+      severity: 'error',
+      messageKey: 'plugins.fs.scopedPathList.scopeUnavailable',
+      ...(path ? { path } : {}),
+    }],
+  };
+}
+
+function selectedScopePathEscape(path: string): SelectedScopeResolution {
+  return {
+    status: 'failed',
+    diagnostics: [{
+      code: 'path_escape',
+      severity: 'error',
+      messageKey: 'plugins.fs.scopedPathList.pathEscape',
+      path,
+    }],
+  };
+}
+
+function isSafeScopeRelativePath(path: string): boolean {
+  const normalized = path.trim().replace(/\\/g, '/');
+  if (!normalized || isAbsolute(path) || normalized.startsWith('/') || /^[A-Za-z]:\//.test(normalized)) {
+    return false;
+  }
+  return !normalized.split('/').some((segment) => segment === '..');
+}
+
+function isOutsideWorkspaceRelativePath(path: string): boolean {
+  return !path
+    || isAbsolute(path)
+    || path === '..'
+    || path.startsWith(`..${sep}`);
+}
+
+/**
+ * SCM owns selected paths relative to its worktree; the plugin runtime owns
+ * the admitted execution cwd. Bridge those two coordinate systems once, then
+ * ask the host filesystem boundary to prove each resolved path remains inside
+ * that cwd (including after symlink resolution).
+ */
+async function resolveSelectedScopePaths(params: Readonly<{
+  context: AgentRuntimeContext;
+  cwd: string;
+  scope: ReviewScmScopeV1 | null | undefined;
+  signal: AbortSignal;
+}>): Promise<SelectedScopeResolution> {
+  const scope = params.scope ?? null;
+  const worktreeRoot = typeof scope?.worktreeRoot === 'string' ? scope.worktreeRoot.trim() : '';
+  const cwd = params.cwd.trim();
+  if (!scope || !worktreeRoot || !cwd || !isAbsolute(worktreeRoot) || !isAbsolute(cwd)) {
+    return selectedScopeUnavailable();
+  }
+  if (params.context.services.availability('fs').status !== 'available') {
+    return selectedScopeUnavailable();
+  }
+  if (scope.selectedPaths.length === 0) return selectedScopeUnavailable();
+
+  const paths: string[] = [];
+  for (const selectedPath of scope.selectedPaths) {
+    if (params.signal.aborted) throw params.signal.reason;
+    if (!isSafeScopeRelativePath(selectedPath)) return selectedScopePathEscape(selectedPath);
+
+    const absolutePath = resolve(worktreeRoot, selectedPath);
+    const workspaceRelativePath = relative(cwd, absolutePath);
+    if (isOutsideWorkspaceRelativePath(workspaceRelativePath)) {
+      return selectedScopePathEscape(selectedPath);
+    }
+    const normalizedPath = workspaceRelativePath.replace(/\\/g, '/');
+    try {
+      const stat = await params.context.services.fs.stat({
+        root: 'workspace',
+        relativePath: normalizedPath,
+      }, { signal: params.signal });
+      if (params.signal.aborted) throw params.signal.reason;
+      if (stat.kind !== 'file') return selectedScopeUnavailable(selectedPath);
+    } catch {
+      if (params.signal.aborted) throw params.signal.reason;
+      // The host's scoped filesystem service resolves real paths before its
+      // containment check, so this also refuses symlink escapes without a
+      // plugin-owned filesystem policy.
+      return selectedScopeUnavailable(selectedPath);
+    }
+    paths.push(normalizedPath);
+  }
+
+  return { status: 'ready', paths: Object.freeze(paths) };
 }
 
 function assertSupportedScmReviewScope(start: NormalizedDeepSecStart): void {
@@ -343,6 +429,28 @@ function createRuntime(
         profileId: `${request.profile.pluginId}/${request.profile.localId}`,
       });
       assertSupportedScmReviewScope(startInput);
+      const selectedScope = startInput.mode === 'selected_files'
+        ? await resolveSelectedScopePaths({
+          context,
+          cwd: request.cwd,
+          scope: startInput.scmScope,
+          signal,
+        })
+        : null;
+      if (selectedScope?.status === 'failed') {
+        const runResult: DeepSecReviewRunResult = {
+          status: 'selected_scope_failed',
+          diagnostics: selectedScope.diagnostics,
+          commentOutMarkdown: '',
+        };
+        emit({
+          kind: 'output-delta',
+          channel: 'assistant',
+          text: createOutput({ runId: request.runId, findings: normalizeDeepSecFindings([]), runResult }),
+        });
+        emit({ kind: 'run-complete' });
+        return;
+      }
       const agentCli = await resolveAgentCliReadiness({
         context,
         configuredAgentCli: startInput.agentCli ?? null,
@@ -355,7 +463,7 @@ function createRuntime(
       const runResult = await runDeepSecReview({
         cwd: request.cwd,
         mode: startInput.mode,
-        selectedFiles: startInput.selectedFiles,
+        selectedFiles: selectedScope?.paths,
         confirmedCostWarning: startInput.confirmedCostWarning,
         cost: startInput.cost,
         preferredExecutablePath: startInput.preferredExecutablePath,

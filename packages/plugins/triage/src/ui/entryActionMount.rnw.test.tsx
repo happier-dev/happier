@@ -339,7 +339,7 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view'); });
+    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
     return fixture;
 }
 

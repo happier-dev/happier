@@ -21,10 +21,6 @@ import type {
   TriageSourceFailureV1,
   TriageSourceInstanceDraftV1,
 } from '@happier-dev/triage-protocol/v1';
-import {
-  MAX_TRIAGE_INSTANCE_DRAFTS_V1,
-  MAX_TRIAGE_INSTANCE_FAILURES_V1,
-} from '@happier-dev/triage-protocol/v1';
 
 import {
   GITLAB_CONFIGURATION_RECORD_V1,
@@ -86,7 +82,6 @@ export async function listGitlabTriageInstances(
 
   const candidates: TriageSourceInstanceDraftV1[] = [];
   const failures: InstanceFailure[] = [];
-  let capReached = false;
 
   for (const listed of listing.accounts) {
     const binding: TriageSourceAccountBindingV1 = {
@@ -133,10 +128,6 @@ export async function listGitlabTriageInstances(
         continue;
       }
 
-      if (candidates.length >= MAX_TRIAGE_INSTANCE_DRAFTS_V1) {
-        capReached = true;
-        continue;
-      }
       candidates.push({
         v: 1,
         binding,
@@ -158,27 +149,18 @@ export async function listGitlabTriageInstances(
     }
   }
 
-  const boundedFailures = failures.slice(0, MAX_TRIAGE_INSTANCE_FAILURES_V1);
-  if (boundedFailures.length < failures.length) capReached = true;
-
-  if (listing.status === 'truncated' || capReached) {
+  if (listing.status === 'truncated') {
     return {
       kind: 'incomplete',
       candidates,
-      failures: boundedFailures,
-      failure: listing.status === 'truncated'
-        ? {
-          class: 'unknown',
-          code: 'account-listing-truncated',
-          detail: 'The authorized GitLab account listing was truncated and cannot be resumed.',
-        }
-        : {
-          class: 'unknown',
-          code: 'discovery-cap-reached',
-          detail: 'More GitLab deployments were discovered than one result can carry.',
-        },
+      failures,
+      failure: {
+        class: 'unknown',
+        code: 'account-listing-truncated',
+        detail: 'The authorized GitLab account listing was truncated and cannot be resumed.',
+      },
     };
   }
 
-  return { kind: 'complete', candidates, failures: boundedFailures };
+  return { kind: 'complete', candidates, failures };
 }

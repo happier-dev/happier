@@ -5,11 +5,16 @@ import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
+import {
+    TriageEvidenceDisclosureProvider,
+    type TriageEvidenceCandidateV1,
+} from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../posthogContracts.js';
 import { POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1 } from '../source/detail/issueActivityContract.js';
 import { POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1 } from '../source/detail/issueEventsContract.js';
+import { encodePosthogConfiguration } from '../source/instance.js';
 
 import { renderSurface } from './renderSurface.js';
 
@@ -85,6 +90,56 @@ const SAMPLED_STOPPED_SHORT: JsonValue = {
     incomplete: POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1,
 };
 
+const SAMPLED_EVIDENCE: JsonValue = {
+    kind: 'sampled',
+    events: [{
+        uuid: '00000000-0000-4000-8000-0000000000f1',
+        exceptions: [],
+    }],
+    omittedRowCount: 0,
+    frozenRequest: {
+        v: 1,
+        issueId: ENTRY_ID,
+        from: '2026-07-16T00:00:00.000Z',
+        to: '2026-08-15T00:00:00.000Z',
+        filterTestAccounts: false,
+        onlyAppFrames: false,
+        include: ['exception', 'stacktrace', 'navigation', 'correlation'],
+        limit: 3,
+        offset: 0,
+    },
+};
+
+function evidenceDetailInput() {
+    const encoded = encodePosthogConfiguration({
+        v: 1,
+        organizationUuid: '00000000-0000-4000-8000-0000000000a1',
+        environments: [{
+            teamPathId: 4821,
+            teamUuid: '00000000-0000-4000-8000-0000000000d1',
+            displayName: 'Storefront production',
+        }],
+        scanWindowPolicy: {
+            kind: 'exact',
+            from: '2026-07-01T00:00:00.000Z',
+            to: '2026-08-15T00:00:00.000Z',
+        },
+        detailWindowPolicy: {
+            kind: 'exact',
+            from: '2026-07-16T00:00:00.000Z',
+            to: '2026-08-15T00:00:00.000Z',
+        },
+    });
+    if (!encoded.ok) throw new Error('evidence fixture configuration must encode');
+    return TriageDetailSurfaceInputV1Schema.parse({
+        ...DETAIL_INPUT,
+        instance: {
+            ...DETAIL_INPUT.instance,
+            configuration: { v: 1, token: encoded.token },
+        },
+    });
+}
+
 function activityResult(overrides: Readonly<Record<string, JsonValue>>): JsonValue {
     return {
         kind: 'activity',
@@ -137,6 +192,49 @@ async function mountDetail(
     });
     mounted.push(fixture);
     return fixture;
+}
+
+async function mountDetailWithEvidenceDisclosure(): Promise<Readonly<{
+    page: PluginUiTestkit;
+    disclosed: () => TriageEvidenceCandidateV1 | null;
+}>> {
+    let candidate: TriageEvidenceCandidateV1 | null = null;
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+        fixture = await createPluginUiTestkit({
+            identity: {
+                pluginId: POSTHOG_PLUGIN_ID,
+                pluginVersion: '0.0.0',
+                viewId: 'posthog-detail',
+                generation: 'posthog-detail-evidence-disclosure',
+            },
+            surface: (context) => (
+                <TriageEvidenceDisclosureProvider disclosure={{
+                    available: true,
+                    disclose: async (resolve) => {
+                        candidate = await resolve(new AbortController().signal);
+                        return candidate === null ? { kind: 'cancelled' } : { kind: 'applied' };
+                    },
+                }}>
+                    {renderSurface(context)}
+                </TriageEvidenceDisclosureProvider>
+            ),
+            surfaceContext: createSurfaceContextFixture(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            launchInput: evidenceDetailInput() as unknown as JsonValue,
+            handlers: {
+                executeAction: async ({ action }) => {
+                    const { localId } = action as Readonly<{ localId: string }>;
+                    if (localId === POSTHOG_ACTION_IDS.issueEvents) return SAMPLED_EVIDENCE;
+                    if (localId === POSTHOG_ACTION_IDS.get) return { kind: 'unreadable-by-design' };
+                    if (localId === POSTHOG_ACTION_IDS.issueActivity) return activityResult({});
+                    throw new Error(`unexpected action ${localId}`);
+                },
+            },
+        });
+    });
+    mounted.push(fixture);
+    return { page: fixture, disclosed: () => candidate };
 }
 
 async function selectTab(page: PluginUiTestkit, name: string): Promise<void> {
@@ -218,5 +316,25 @@ describe('the mounted PostHog Occurrences panel', () => {
         await expect(page.getByText(
             'PostHog offered more of this sample than this build could page, so it stops here.',
         )).rejects.toBeDefined();
+    });
+});
+
+describe('the mounted PostHog selected-evidence control', () => {
+    it('discloses the selected occurrence through Triage without receiving Composer authority', async () => {
+        const mountedEvidence = await mountDetailWithEvidenceDisclosure();
+        await selectTab(mountedEvidence.page, 'Stack trace');
+
+        await act(async () => {
+            await mountedEvidence.page.press(await mountedEvidence.page.findByRole('button', {
+                name: 'Add selected occurrence to message',
+            }));
+        });
+
+        expect(mountedEvidence.disclosed()).toMatchObject({
+            reference: { pluginId: POSTHOG_PLUGIN_ID, localId: 'posthog-evidence' },
+            candidate: {
+                label: 'PostHog occurrence 00000000-0000-4000-8000-0000000000f1',
+            },
+        });
     });
 });

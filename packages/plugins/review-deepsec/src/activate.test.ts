@@ -40,6 +40,11 @@ function processResult(exitCode = 0): PluginProcessResult {
 function createRuntimeContext(params?: Readonly<{
   resolvedTool?: PluginResolvedSystemTool;
   run?: (request: PluginExecSpawnRequest & { timeoutMs?: number }, options?: { signal?: AbortSignal }) => Promise<PluginProcessResult>;
+  stat?: (path: Readonly<{ root: 'workspace'; relativePath: string }>, options?: { signal?: AbortSignal }) => Promise<Readonly<{
+    kind: 'file' | 'directory';
+    size: number;
+    modifiedAtMs: number;
+  }>>;
   checkReadiness?: (request: Readonly<{
     candidates: readonly string[];
     requirement: 'any' | 'all';
@@ -52,6 +57,7 @@ function createRuntimeContext(params?: Readonly<{
   context: AgentRuntimeContext;
   resolve: ReturnType<typeof vi.fn>;
   run: ReturnType<typeof vi.fn>;
+  stat: ReturnType<typeof vi.fn>;
   checkReadiness: ReturnType<typeof vi.fn>;
 }> {
   const resolvedTool = params?.resolvedTool ?? {
@@ -60,11 +66,16 @@ function createRuntimeContext(params?: Readonly<{
   };
   const resolve = vi.fn(async () => resolvedTool);
   const run = vi.fn(params?.run ?? (async () => processResult()));
+  const stat = vi.fn(params?.stat ?? (async () => ({
+    kind: 'file' as const,
+    size: 0,
+    modifiedAtMs: 0,
+  })));
   const checkReadiness = vi.fn(params?.checkReadiness ?? (async () => ({
     launchable: [{ agentId: 'claude' }],
   })));
   const services = {
-    availability: (id: string) => id === 'exec'
+    availability: (id: string) => id === 'exec' || id === 'fs'
       ? { status: 'available' as const }
       : { status: 'unavailable' as const },
     exec: {
@@ -72,6 +83,7 @@ function createRuntimeContext(params?: Readonly<{
       systemTools: { resolve },
       run,
     },
+    fs: { stat },
   } as unknown as PluginServices;
   const unavailable = async (): Promise<never> => {
     throw new Error('unavailable');
@@ -100,6 +112,7 @@ function createRuntimeContext(params?: Readonly<{
     },
     resolve,
     run,
+    stat,
     checkReadiness,
   };
 }
@@ -121,7 +134,10 @@ async function createNativeDeepSecRuntime() {
   return { registrations, runtime };
 }
 
-function createSupportedScmReviewScope(paths: readonly string[] = ['src/auth.ts']): unknown {
+function createSupportedScmReviewScope(
+  paths: readonly string[] = ['src/auth.ts'],
+  worktreeRoot = '/repo',
+): Record<string, unknown> {
   const changedPaths = paths.map((path) => ({
     path,
     previousPath: null,
@@ -135,8 +151,8 @@ function createSupportedScmReviewScope(paths: readonly string[] = ['src/auth.ts'
     status: 'supported',
     scmBackendId: 'git',
     scmMode: '.git',
-    repositoryRoot: '/repo',
-    worktreeRoot: '/repo',
+    repositoryRoot: worktreeRoot,
+    worktreeRoot,
     baseRef: { source: 'branch_upstream', ref: 'origin/main' },
     selectedPaths: paths,
     committedPaths: [],
@@ -155,12 +171,14 @@ function createOpenRequest(params?: Readonly<{
   profileLocalId?: string;
   paths?: readonly string[];
   scmReviewScope?: unknown;
+  cwd?: string;
+  engineSelectedFiles?: readonly string[];
 }>): Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> {
   const paths = params?.paths ?? ['src/auth.ts'];
   return {
     kind: 'create',
     runId: params?.runId ?? 'run-1',
-    cwd: '/repo',
+    cwd: params?.cwd ?? '/repo',
     profile: {
       pluginId: 'happier.review.deepsec',
       localId: params?.profileLocalId ?? 'review',
@@ -185,6 +203,7 @@ function createOpenRequest(params?: Readonly<{
               ? {}
               : { mode: params?.mode ?? 'current_diff' }),
             ...(params?.confirmedCostWarning ? { confirmedCostWarning: true } : {}),
+            ...(params?.engineSelectedFiles ? { selectedFiles: params.engineSelectedFiles } : {}),
           },
         },
       },
@@ -292,7 +311,7 @@ describe('activate', () => {
     ]);
   });
 
-  it('uses host-resolved selected review-scope paths for selected-file reviews', async () => {
+  it('uses only host-resolved selected review-scope paths for selected-file reviews', async () => {
     let filesFromContents = '';
     const fixture = createRuntimeContext({
       async run(request) {
@@ -307,6 +326,7 @@ describe('activate', () => {
       runId: 'run-selected-scope',
       mode: 'selected_files',
       paths: ['src/auth.ts', 'src/api.ts'],
+      engineSelectedFiles: ['outside/engine-controlled.ts'],
     }), fixture.context);
     if (!opened) throw new Error('Expected native DeepSec execution run');
 
@@ -315,6 +335,82 @@ describe('activate', () => {
 
     expect(events.at(-1)?.kind).toBe('run-complete');
     expect(filesFromContents).toBe('src/auth.ts\nsrc/api.ts\n');
+    expect(fixture.stat).toHaveBeenNthCalledWith(1, {
+      root: 'workspace',
+      relativePath: 'src/auth.ts',
+    }, { signal: expect.any(AbortSignal) });
+    expect(fixture.stat).toHaveBeenNthCalledWith(2, {
+      root: 'workspace',
+      relativePath: 'src/api.ts',
+    }, { signal: expect.any(AbortSignal) });
+  });
+
+  it('maps host SCM paths from the worktree root into the admitted workspace before writing the file list', async () => {
+    let filesFromContents = '';
+    const fixture = createRuntimeContext({
+      async run(request) {
+        const filesFromIndex = request.args?.indexOf('--files-from') ?? -1;
+        const filesFromPath = filesFromIndex >= 0 ? request.args?.[filesFromIndex + 1] : undefined;
+        if (filesFromPath) filesFromContents = await readFile(filesFromPath, 'utf8');
+        return processResult();
+      },
+    });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
+      runId: 'run-selected-subdirectory',
+      cwd: '/repo/packages/mobile',
+      mode: 'selected_files',
+      scmReviewScope: createSupportedScmReviewScope(['packages/mobile/src/auth.ts']),
+    }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(filesFromContents).toBe('src/auth.ts\n');
+    expect(fixture.stat).toHaveBeenCalledWith({
+      root: 'workspace',
+      relativePath: 'src/auth.ts',
+    }, { signal: expect.any(AbortSignal) });
+  });
+
+  it('fails selected-file scope before readiness or process launch when host filesystem containment rejects a path', async () => {
+    const fixture = createRuntimeContext({
+      async stat() {
+        throw Object.assign(new Error('path resolves outside workspace'), {
+          code: 'plugin_fs_path_denied',
+        });
+      },
+    });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
+      runId: 'run-selected-symlink-escape',
+      mode: 'selected_files',
+      paths: ['src/link-outside.ts'],
+    }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(readStructuredOutput(events)).toMatchObject({
+      summary: 'DeepSec selected-file scope validation failed.',
+      diagnostics: [{
+        code: 'scope_path_unavailable',
+        severity: 'error',
+        messageKey: 'plugins.fs.scopedPathList.scopeUnavailable',
+        path: 'src/link-outside.ts',
+      }],
+    });
+    expect(fixture.stat).toHaveBeenCalledWith({
+      root: 'workspace',
+      relativePath: 'src/link-outside.ts',
+    }, { signal: expect.any(AbortSignal) });
+    expect(fixture.checkReadiness).not.toHaveBeenCalled();
+    expect(fixture.resolve).not.toHaveBeenCalled();
+    expect(fixture.run).not.toHaveBeenCalled();
   });
 
   it('rejects unsupported host SCM scope before readiness or executable resolution', async () => {

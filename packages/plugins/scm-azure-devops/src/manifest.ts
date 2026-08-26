@@ -34,6 +34,7 @@ import {
   AZURE_DEVOPS_TRIAGE_ACTION_IDS,
   getAzureDevOpsSourceEntryAction,
   listAzureDevOpsInstancesAction,
+  prepareAzureDevOpsReviewWorkspaceAction,
   scanAzureDevOpsSourceAction,
 } from './triage/actions.js';
 import {
@@ -74,6 +75,7 @@ import {
   AzureThreadStatusResultV1Schema,
 } from './triage/mutations/contracts.js';
 import {
+  AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
   AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
   AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID,
   AZURE_DEVOPS_TRIAGE_CONTRIBUTION_ID,
@@ -155,7 +157,11 @@ const TOKEN_FIELD = {
  * costs no declaration-time authority. `listInstances` carries no account at all, because producing
  * account references is what it performs.
  */
-const READ_HOST_ACCESS = [AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID, AZURE_DEVOPS_TRIAGE_PURPOSE];
+const READ_HOST_ACCESS = [
+  AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID,
+  AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+  AZURE_DEVOPS_TRIAGE_PURPOSE,
+];
 const INSTANCE_ACCOUNT_BINDINGS = [{
   path: 'instance.binding.account',
   purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
@@ -174,12 +180,9 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
     required: [{
       id: AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID,
       capability: 'network',
-      reason: 'Access the configured Azure DevOps organization or collection for the selected account.',
+      reason: 'Access the public Azure DevOps SCM provider origin.',
       scope: {
-        targets: [
-          { kind: 'scmProviderOrigin', provider: 'azure-devops' },
-          { kind: 'connectedAccountOrigin', service: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID },
-        ],
+        targets: [{ kind: 'scmProviderOrigin', provider: 'azure-devops' }],
         // `GET` serves every read and every confirming re-read. `PATCH` covers the four writes
         // Azure expresses as an update of an existing resource — complete, abandon and reactivate
         // on the pull request itself, plus one review thread's status — and `POST` covers exactly
@@ -189,6 +192,18 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
         // anything — `request-review` adds identities and never removes one — and a verb granted
         // for symmetry is authority the user approved for nothing.
         methods: ['GET', 'PATCH', 'POST'],
+      },
+    }, {
+      id: AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+      capability: 'network',
+      reason: 'Access the configured Azure DevOps organization or collection for the selected account, including private Azure DevOps Server deployments.',
+      scope: {
+        targets: [{ kind: 'connectedAccountOrigin', service: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID }],
+        // Azure DevOps Server may be hosted on a private network. This flag stays on the
+        // connected-account scope only; the fixed public SCM provider grant above remains
+        // public-only even when a private Server account is selected.
+        methods: ['GET', 'PATCH', 'POST'],
+        privateNetwork: true,
       },
     }, {
       id: AZURE_DEVOPS_TRIAGE_PURPOSE,
@@ -298,6 +313,19 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: getAzureDevOpsSourceEntryAction,
+    },
+    [AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace]: {
+      title: 'Prepare Azure DevOps review workspace',
+      description: 'Revalidates one selected pull request and materializes its source tip locally.',
+      scopes: ['global'],
+      surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
+      execution: { target: 'daemon' },
+      dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      inputSchema: sources.operations.prepareReviewWorkspace.declaration.input.schema.jsonSchema,
+      resultSchema: sources.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: prepareAzureDevOpsReviewWorkspaceAction,
     },
     // The five source-native detail planes. Their published surface is
     // `plugin`, so the only caller that reaches them is this plugin's own
@@ -563,9 +591,9 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
               .bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances),
             scan: sources.operations.scan.bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.scan),
             get: sources.operations.get.bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.get),
+            prepareReviewWorkspace: sources.operations.prepareReviewWorkspace
+              .bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace),
           },
-          // `prepareReviewWorkspace` is deliberately unbound: it is an optional role, and binding
-          // it would claim a worktree materialization contract this source has not implemented.
           surfaces: { detail: { renderer: AZURE_DEVOPS_TRIAGE_DETAIL_RENDERER_ID } },
         }),
       },

@@ -1,6 +1,7 @@
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type {
     ComposerAttachmentAuthorValueV1,
+    PluginUiSessionCheckoutIntentV1,
     PluginUiSessionPlacementCandidateV1,
 } from '@happier-dev/plugin-sdk/ui';
 
@@ -30,6 +31,8 @@ const NEW_SESSION_SEED_REQUEST = Object.freeze({
 export type TriageNewSessionSeedV1 = Readonly<{
     prompt?: Readonly<{ text: string; mode: 'replace' | 'append' }>;
     profileId?: string;
+    /** A resolved profile/action checkout answer for the host's New Session owner. */
+    checkoutIntent?: PluginUiSessionCheckoutIntentV1;
     placement?: Readonly<{ serverId?: string; machineId?: string; directory?: string }>;
     /** Exact choices for the New Session owner; never auto-selected by Triage. */
     candidates?: readonly PluginUiSessionPlacementCandidateV1[];

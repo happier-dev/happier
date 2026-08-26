@@ -6,7 +6,6 @@
 import {
   MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-  MAX_TRIAGE_INSTANCE_DRAFTS_V1,
   MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
   MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
   MAX_TRIAGE_ROW_FACTS_V1,
@@ -28,16 +27,10 @@ export const SENTRY_CONNECTED_ACCOUNT_PURPOSE = 'sentry-account-use';
  * Sentry widens only the account grant, and the Cloud origins never gain private
  * reach along with it.
  *
- * **Residual, stated plainly because this comment previously claimed otherwise:**
- * `privateNetwork` classifies the URL's HOST as written — literal `localhost`,
- * RFC1918 ranges, loopback, link-local and unique-local IPv6. It does NOT resolve
- * the name, so a PUBLIC hostname whose DNS answer points at a private address is
- * not caught here, and this split does not prevent that. Calling it rebinding
- * protection was wrong twice over: nothing resolves or pins the address, and
- * "DNS rebinding" conventionally names an INBOUND Host-header control rather than
- * outbound egress. The grant is a capability DECLARATION that makes a plugin's
- * private-network reach visible and reviewable — which is real value — not an
- * enforcement boundary against the plugin, which is trusted first-party code.
+ * Host admission resolves the selected origin, rejects mixed or private answers
+ * unless this exact grant permits them, and carries the admitted addresses to the
+ * pinned socket owner. The split therefore keeps Cloud public-only while allowing
+ * an explicitly configured self-hosted origin to reach its private endpoint.
  */
 export const SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID = 'sentry-cloud-api';
 export const SENTRY_ACCOUNT_NETWORK_HOST_ACCESS_ID = 'sentry-account-api';
@@ -111,7 +104,6 @@ export const SENTRY_MAX_ROW_FACTS = MAX_TRIAGE_ROW_FACTS_V1;
 export const SENTRY_MAX_CONFIGURATION_TOKEN_UTF8_BYTES =
   MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1;
 export const SENTRY_MAX_PAGING_TOKEN_UTF8_BYTES = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1;
-export const SENTRY_MAX_INSTANCE_DRAFTS = MAX_TRIAGE_INSTANCE_DRAFTS_V1;
 /** The aggregate's per-invocation scan page bound. */
 export const SENTRY_MAX_SCAN_PAGE_ENTRIES = MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1;
 
@@ -184,7 +176,6 @@ export const SENTRY_FAILURE_CODES = Object.freeze({
    */
   eventUnreadable: 'sentry-event-unreadable',
   malformedOrganizationRow: 'sentry-malformed-organization-row',
-  instanceCapReached: 'sentry-instance-cap-reached',
   accountListTruncated: 'sentry-account-list-truncated',
   regionOriginUndeclared: 'sentry-region-origin-undeclared',
   invokedOriginMismatch: 'sentry-invoked-origin-mismatch',

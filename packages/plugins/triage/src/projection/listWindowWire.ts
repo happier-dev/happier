@@ -1,7 +1,6 @@
 import type {
     TriageListEntriesResultV1,
 } from '../actions/listEntriesProtocol.js';
-import { MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1 } from '../actions/listEntriesProtocol.js';
 import type { ProjectedObservationV1 } from '../corpus/fold/projectedObservation.js';
 import type { CorpusQualifiedObservationV1 } from '../corpus/fold/qualify.js';
 import type { TriageListRowV1, TriageListWindowV1 } from './listWindow.js';
@@ -10,10 +9,10 @@ import type { TriageListRowV1, TriageListWindowV1 } from './listWindow.js';
  * The one projection between the assembled window and the list Action's wire.
  *
  * Both directions live here because they are one contract. The wire carries
- * the rendered connection's answer in full, every other connection's answer in
- * one line, and the count that keeps a wider set honest; complete per-connection
- * detail remains available from its owning detail read rather than being
- * duplicated into every list row.
+ * one complete folded answer for every connection that observed a row: the
+ * rendered answer first, then the remaining answers in a stable order. The
+ * mounted store rehydrates that complete set through the canonical fold, rather
+ * than making a second local attention or selection decision.
  *
  * Keeping the inverse beside it is what makes the mounted store's rehydration
  * checkable against the same rule instead of guessing at it.
@@ -89,13 +88,7 @@ function otherObservations(
     const attention = attentionInstanceId === undefined || attentionInstanceId === renderedInstanceId
         ? undefined
         : byConnection.get(attentionInstanceId);
-    return (attention === undefined ? rest : [attention, ...rest])
-        .slice(0, MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1)
-        .map((observation) => ({
-            sourceInstanceId: observation.sourceInstanceId,
-            observedAtMs: observation.observedAtMs,
-            kind: observation.outcome.kind,
-        }));
+    return attention === undefined ? rest : [attention, ...rest];
 }
 
 /** Project one assembled window's rows onto the list Action's wire. */
@@ -127,14 +120,14 @@ export function toTriageListWireRows(window: TriageListWindowV1): WireRows {
 }
 
 /**
- * The observations of one connection, rehydrated with the canonical ref each
- * row carries.
+ * The complete folded observations of one connection, rehydrated with the
+ * canonical ref each row carries.
  *
- * It reads only the rendered observation, and that is exact rather than lossy
- * for its one caller: the mounted store drives exactly one connection per pass,
- * so every observation in that result belongs to that connection and is the one
- * the row is rendered from. The compact members describe connections this store
- * reads through their own passes, which is where their content comes from.
+ * The mounted store drives one mixed Action pass for every included connection.
+ * A row is rendered from only one of those connections, but its other complete
+ * observations belong to the same pass and must re-enter the fold through their
+ * own lanes. Returning only the rendered answer would give the wire a second,
+ * lossy source-selection rule.
  */
 export function laneObservationsFromWire(
     result: TriageListEntriesResultV1,
@@ -142,8 +135,10 @@ export function laneObservationsFromWire(
 ): readonly CorpusQualifiedObservationV1[] {
     const observations: CorpusQualifiedObservationV1[] = [];
     for (const row of result.window.rows) {
-        if (row.observation.sourceInstanceId !== sourceInstanceId) continue;
-        observations.push({ ...row.observation, entryRef: row.entryRef });
+        for (const observation of [row.observation, ...row.otherObservations]) {
+            if (observation.sourceInstanceId !== sourceInstanceId) continue;
+            observations.push({ ...observation, entryRef: row.entryRef });
+        }
     }
     return observations;
 }

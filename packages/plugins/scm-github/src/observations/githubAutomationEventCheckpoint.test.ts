@@ -16,12 +16,12 @@ import {
 } from './githubAutomationEventCheckpoint.js';
 
 describe('GitHub Automation Event checkpoint identity', () => {
-  const checkpointRowId = (pluginId: string): string =>
+  const checkpointRowId = (pluginId: string, localId = 'automation/repository-pushed-v1'): string =>
     createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
       eventRef: {
         pluginId,
-        localId: 'automation/repository-event-v1',
+        localId,
       },
       sourceSelectorId: '00000000-0000-4000-8000-000000000001',
     });
@@ -34,9 +34,15 @@ describe('GitHub Automation Event checkpoint identity', () => {
   // `eventPluginId` is not the current `GITHUB_PLUGIN_ID`, so no stored row can
   // address the retired identity and a vector for it would only keep a retired
   // product identity alive in shipped source.
-  it('preserves the established canonical opaque row ID', () => {
-    expect(checkpointRowId('happier.scm.forge.github'))
-      .toBe('1qG7cjvTIW4qmiqAYEnbVsAMm4IdMyxlA7emUoyTQb0');
+  it('scopes the opaque row ID to each semantic trigger Event', () => {
+    const ids = [
+      'automation/repository-pushed-v1',
+      'automation/issue-opened-v1',
+      'automation/pull-request-opened-v1',
+      'automation/pull-request-merged-v1',
+    ].map((localId) => checkpointRowId('happier.scm.forge.github', localId));
+
+    expect(new Set(ids)).toHaveSize(4);
   });
 
   // The encoder is domain-separated by the contributing plugin identity, so an
@@ -49,27 +55,56 @@ describe('GitHub Automation Event checkpoint identity', () => {
   });
 
   it('produces rows accepted by the compiled declared checkpoint collection schema', () => {
-    const row = createGithubAutomationEventCheckpointRowV1({
-      automationId: 'automation-a',
-      sourceSelectorId: '00000000-0000-4000-8000-000000000001',
-      sourceInstanceId: 'github:repository:77',
-      sourceContractVersion: 1,
-      cursor: {
-        v: 1,
-        observationStartsAtMs: 1_000,
-        observedAtMs: 1_000,
-        seenEventIds: ['old'],
-        etag: 'initial',
-      },
-      lastContiguousOccurrenceId: null,
-      baseline: { kind: 'currentHead', establishedAt: 1_000 },
-      lastEvaluatedTemplateVersion: 1,
-      continuity: { v: 1, endpointKind: 'repositoryEvents', repositoryId: '77' },
-    });
     const validate = compilePluginJsonSchema(GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION.schema);
+    for (const localId of [
+      'automation/repository-pushed-v1',
+      'automation/issue-opened-v1',
+      'automation/pull-request-opened-v1',
+      'automation/pull-request-merged-v1',
+    ]) {
+      const row = createGithubAutomationEventCheckpointRowV1({
+        automationId: 'automation-a',
+        eventRef: { pluginId: 'happier.scm.forge.github', localId },
+        sourceSelectorId: '00000000-0000-4000-8000-000000000001',
+        sourceInstanceId: 'github:repository:77',
+        sourceContractVersion: 1,
+        cursor: {
+          v: 1,
+          observationStartsAtMs: 1_000,
+          observedAtMs: 1_000,
+          seenEventIds: ['old'],
+          etag: 'initial',
+        },
+        lastContiguousOccurrenceId: null,
+        baseline: { kind: 'currentHead', establishedAt: 1_000 },
+        lastEvaluatedTemplateVersion: 1,
+        continuity: { v: 1, endpointKind: 'repositoryEvents', repositoryId: '77' },
+      });
 
-    expect(isGithubAutomationEventCheckpointRowV1(row)).toBe(true);
-    expect(isValidPluginJsonSchemaValue(validate, row)).toBe(true);
+      expect(row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]).toBe(localId);
+      expect(isGithubAutomationEventCheckpointRowV1(row)).toBe(true);
+      expect(isValidPluginJsonSchemaValue(validate, row)).toBe(true);
+    }
+    const genericRow = {
+      ...createGithubAutomationEventCheckpointRowV1({
+        automationId: 'automation-a',
+        eventRef: {
+          pluginId: 'happier.scm.forge.github',
+          localId: 'automation/repository-pushed-v1',
+        },
+        sourceSelectorId: '00000000-0000-4000-8000-000000000001',
+        sourceInstanceId: 'github:repository:77',
+        sourceContractVersion: 1,
+        cursor: null,
+        lastContiguousOccurrenceId: null,
+        baseline: { kind: 'currentHead', establishedAt: 1_000 },
+        lastEvaluatedTemplateVersion: 1,
+        continuity: null,
+      }),
+      [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: 'automation/repository-event-v1',
+    };
+    expect(isGithubAutomationEventCheckpointRowV1(genericRow)).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validate, genericRow)).toBe(false);
   });
 
   it('declares the exact Automation/Event/source lookup within the Collection index ceiling', () => {

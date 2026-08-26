@@ -10,7 +10,7 @@ export const AGENT_DEFINITION = Object.freeze({
     flavorAliases: [],
     cloudConnect: null,
     connectedServices: null,
-    resume: { vendorResume: 'unsupported' },
+    resume: { vendorResume: 'unsupported' as const },
     sessionStorage: { direct: false, persisted: false },
     sessionCapabilities: {
       sessionListing: 'unsupported',

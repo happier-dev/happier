@@ -2,11 +2,8 @@
  * `qa/QA-PROTOCOL.md` QB-01's install half, and the deciding evidence for the
  * Plan's `U-QA-THIRD-PARTY-INSTALL`.
  *
- * The other three suites in this fixture answer "can an outside author write a
- * Triage source against the published contract" while resolving
- * `@happier-dev/triage-protocol` through the repository's own workspace
- * symlink. A symlinked workspace exposes the package's whole directory, so it
- * cannot answer the question an installed consumer actually asks: does the
+ * The other three suites answer the source-authoring and protocol contracts.
+ * This suite answers the package question they cannot: does the
  * *tarball* carry the modules the export map promises, and does this source
  * still load when nothing but that tarball is present?
  *
@@ -21,14 +18,15 @@
  * against it — asserting by measurement that every published entry point
  * resolved inside that consumer rather than back into the repository.
  *
- * The peer dependency is deliberately not packed. `@happier-dev/plugin-sdk` is
- * delivered by the published host, which bundles it, so it is linked here the
- * way an installed host provides it; `packages/triage-protocol`'s publication
- * boundary asserts that both travel that same route.
+ * All three author-facing packages are packed. In particular, the SDK comes
+ * from the canonical pack sandbox, whose prepublication step vendors its
+ * private workspace closure. A repository symlink would let Node walk back
+ * into private source dependencies and make this proof green for bytes an
+ * external author can never install.
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -36,8 +34,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const fixtureRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const repoRoot = resolve(fixtureRoot, '../../../../..');
-const protocolRoot = join(repoRoot, 'packages', 'triage-protocol');
-const sdkRoot = join(repoRoot, 'packages', 'plugin-sdk');
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 function runNpm(args, cwd) {
@@ -50,23 +46,6 @@ function runNpm(args, cwd) {
     });
 }
 
-async function newestModificationTime(directory, exclude) {
-    const entries = await readdir(directory, { recursive: true, withFileTypes: true });
-    const times = await Promise.all(entries
-        .filter((entry) => entry.isFile() && /\.(?:ts|js|json)$/u.test(entry.name))
-        .filter((entry) => !exclude.test(entry.name))
-        .map(async (entry) => (await stat(join(entry.parentPath, entry.name))).mtimeMs));
-    return times.length === 0 ? Number.NaN : Math.max(...times);
-}
-
-async function oldestModificationTime(directory) {
-    const entries = await readdir(directory, { recursive: true, withFileTypes: true });
-    const times = await Promise.all(entries
-        .filter((entry) => entry.isFile())
-        .map(async (entry) => (await stat(join(entry.parentPath, entry.name))).mtimeMs));
-    return times.length === 0 ? Number.NaN : Math.min(...times);
-}
-
 /**
  * Installs the packed protocol into a consumer outside the repository.
  *
@@ -74,12 +53,29 @@ async function oldestModificationTime(directory) {
  * tarball under test, and `--legacy-peer-deps` stops npm reaching for the peer
  * the published host supplies instead.
  */
-async function installPackedProtocolConsumer(consumerRoot) {
-    const tarball = runNpm(
+async function installPackedSourceConsumer(consumerRoot) {
+    const { exportPackSandboxTarball } = await import(pathToFileURL(
+        join(repoRoot, 'apps', 'stack', 'scripts', 'pack.mjs'),
+    ).href);
+    const sdkPacked = await exportPackSandboxTarball({
+        monorepoRoot: repoRoot,
+        packageRelDir: 'packages/plugin-sdk',
+        destinationDir: consumerRoot,
+    });
+    const protocolPacked = await exportPackSandboxTarball({
+        monorepoRoot: repoRoot,
+        packageRelDir: 'packages/triage-protocol',
+        destinationDir: consumerRoot,
+    });
+    const fixtureTarball = runNpm(
         ['pack', '--ignore-scripts', '--silent', '--pack-destination', consumerRoot],
-        protocolRoot,
+        fixtureRoot,
     ).trim().split(/\r?\n/u).at(-1);
-    assert.match(tarball, /^happier-dev-triage-protocol-.*\.tgz$/u);
+    const sdkTarball = sdkPacked.tarball?.name;
+    const protocolTarball = protocolPacked.tarball?.name;
+    assert.match(sdkTarball, /^happier-dev-plugin-sdk-.*\.tgz$/u);
+    assert.match(protocolTarball, /^happier-dev-triage-protocol-.*\.tgz$/u);
+    assert.match(fixtureTarball, /^happier-out-of-tree-triage-source-.*\.tgz$/u);
 
     await writeFile(join(consumerRoot, 'package.json'), `${JSON.stringify({
         name: 'out-of-tree-triage-source-installed-consumer',
@@ -90,7 +86,9 @@ async function installPackedProtocolConsumer(consumerRoot) {
 
     runNpm([
         'install',
-        `./${tarball}`,
+        `./${sdkTarball}`,
+        `./${protocolTarball}`,
+        `./${fixtureTarball}`,
         '--legacy-peer-deps',
         '--offline',
         '--ignore-scripts',
@@ -98,10 +96,6 @@ async function installPackedProtocolConsumer(consumerRoot) {
         '--no-audit',
         '--no-fund',
     ], consumerRoot);
-
-    await mkdir(join(consumerRoot, 'node_modules', '@happier-dev'), { recursive: true });
-    await symlink(sdkRoot, join(consumerRoot, 'node_modules', '@happier-dev', 'plugin-sdk'), 'junction');
-    await cp(join(fixtureRoot, 'src'), join(consumerRoot, 'src'), { recursive: true });
 
     // Resolution is measured from inside the consumer, because that is the only
     // place the question means anything: the test file's own resolution would
@@ -112,42 +106,40 @@ export const resolved = {
     v1: await import.meta.resolve('@happier-dev/triage-protocol/v1'),
     testingV1: await import.meta.resolve('@happier-dev/triage-protocol/testing/v1'),
     sdk: await import.meta.resolve('@happier-dev/plugin-sdk'),
+    sourcePackage: await import.meta.resolve('happier-out-of-tree-triage-source'),
 };
-export const source = await import('./src/index.mjs');
+export const source = await import('happier-out-of-tree-triage-source');
 export const { checkTriageSourceContributionV1 } = await import('@happier-dev/triage-protocol/testing/v1');
 `, 'utf8');
 
-    return tarball;
 }
 
-test('QB-01: the packed protocol installs out of tree and this source loads against it', async (t) => {
-    const [newestSource, oldestEmit] = await Promise.all([
-        newestModificationTime(join(protocolRoot, 'src'), /\.(?:test|spec)\.ts$/u),
-        oldestModificationTime(join(protocolRoot, 'dist')),
-    ]);
-    assert.ok(
-        oldestEmit >= newestSource,
-        'packages/triage-protocol/dist is older than its source, so this proof would certify bytes '
-            + 'nobody is shipping. Run `yarn --cwd packages/triage-protocol -s build` first.',
-    );
-
+test('QB-01: the prepublication closure installs out of tree and this packed source loads', async (t) => {
     const installRoot = await mkdtemp(join(tmpdir(), 'happier-triage-installed-consumer-'));
     t.after(() => rm(installRoot, { recursive: true, force: true, maxRetries: 3 }));
-    await installPackedProtocolConsumer(installRoot);
+    await installPackedSourceConsumer(installRoot);
 
     const consumerUrl = pathToFileURL(join(installRoot, 'probe.mjs')).href;
     const { resolved, source, checkTriageSourceContributionV1 } = await import(consumerUrl);
 
-    // Through `realpath`, because a temporary directory is itself commonly a
-    // symlink and the loader reports the resolved path.
+    // Through `realpath`, because a temporary directory may itself be an OS
+    // indirection and the loader reports the resolved path.
     const installedPrefix = pathToFileURL(join(await realpath(installRoot), 'node_modules')).href;
     for (const [subpath, target] of Object.entries(resolved)) {
-        if (subpath === 'sdk') continue;
+        const packageName = subpath === 'sdk'
+            ? 'plugin-sdk'
+            : subpath === 'sourcePackage'
+                ? 'happier-out-of-tree-triage-source'
+                : 'triage-protocol';
         assert.ok(
-            target.startsWith(`${installedPrefix}/@happier-dev/triage-protocol/`),
+            target.startsWith(subpath === 'sourcePackage'
+                ? `${installedPrefix}/happier-out-of-tree-triage-source/`
+                : `${installedPrefix}/@happier-dev/${packageName}/`),
             `${subpath} resolved to ${target}, which is not the installed package`,
         );
-        assert.ok(target.includes('/dist/'), `${subpath} resolved outside the published build output`);
+        if (subpath !== 'sourcePackage') {
+            assert.ok(target.includes('/dist/'), `${subpath} resolved outside the published build output`);
+        }
     }
 
     // The source this fixture ships really runs on the installed bytes, and the
@@ -155,12 +147,6 @@ test('QB-01: the packed protocol installs out of tree and this source loads agai
     const conformance = checkTriageSourceContributionV1(JSON.parse(JSON.stringify(source.manifest)));
     assert.deepEqual(conformance.ok === true ? [] : conformance.errors, []);
     assert.equal(typeof source.activate, 'function');
-});
-
-test('QB-01: the installed package is the built artifact, not this repository directory', async (t) => {
-    const installRoot = await mkdtemp(join(tmpdir(), 'happier-triage-installed-shape-'));
-    t.after(() => rm(installRoot, { recursive: true, force: true, maxRetries: 3 }));
-    await installPackedProtocolConsumer(installRoot);
 
     const installed = join(installRoot, 'node_modules', '@happier-dev', 'triage-protocol');
     const entries = (await readdir(installed)).sort();

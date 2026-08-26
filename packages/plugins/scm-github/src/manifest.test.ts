@@ -104,7 +104,7 @@ describe('GitHub SCM manifest', () => {
       .toContain(GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1);
   });
 
-  it('authorizes exact account materialization for every declared Triage read', () => {
+  it('authorizes exact account materialization for every declared Triage operation that needs it', () => {
     const actions = new Map(
       (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]),
     );
@@ -125,6 +125,14 @@ describe('GitHub SCM manifest', () => {
       .toEqual(expectedAccountBindings);
     expect(actions.get(GITHUB_TRIAGE_ACTION_IDS_V1.listInstances))
       .not.toHaveProperty('connectedAccountPurposeBindings');
+
+    // Preparation remains a source-owned credential reread followed by the one
+    // generic SCM local-write Action. It needs the same exact account binding,
+    // but its declared Triage role must preserve the local-write danger level.
+    const prepare = actions.get('triage/prepare-github-review-workspace');
+    expect(prepare?.hostAccess).toEqual(['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
+    expect(prepare?.connectedAccountPurposeBindings).toEqual(expectedAccountBindings);
+    expect(prepare?.dangerLevel).toBe('writesLocal');
   });
 
   it('declares the five source-native detail reads with the same account authority', () => {

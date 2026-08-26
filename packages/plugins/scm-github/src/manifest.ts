@@ -48,6 +48,7 @@ import {
   resetGithubRepositoryEventHistoryGap,
   setupGithubRepositoryEventSource,
 } from './githubAutomationEventActions.js';
+import { GITHUB_AUTOMATION_EVENT_CATALOG } from './githubAutomationEvents.js';
 import {
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION_ID,
@@ -58,7 +59,6 @@ import {
 } from './observations/githubAutomationEventObserver.js';
 import {
   GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID,
-  GITHUB_AUTOMATION_REPOSITORY_EVENT_ID,
   GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID,
   GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID,
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID,
@@ -149,6 +149,7 @@ import {
 import {
   getGithubTriageEntry,
   listGithubTriageInstancesOperation,
+  prepareGithubTriageReviewWorkspace,
   scanGithubTriageSource,
 } from './triage/operations.js';
 import { githubPullRequestAdapter } from './pullRequests/authChain.js';
@@ -361,73 +362,6 @@ const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_RESULT_SCHEMA = {
   required: ['sourceKey', 'nextEligibleAt'],
 } satisfies PluginJsonSchema;
 
-const GITHUB_AUTOMATION_REPOSITORY_EVENT_REPOSITORY_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    repositoryId: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[1-9][0-9]*$' },
-    nameWithOwner: { type: 'string', minLength: 3, maxLength: 512 },
-  },
-  required: ['repositoryId', 'nameWithOwner'],
-} satisfies PluginJsonSchema;
-
-const GITHUB_AUTOMATION_REPOSITORY_EVENT_PAYLOAD_SCHEMA = {
-  oneOf: [{
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      kind: { const: 'push' },
-      eventId: { type: 'string', minLength: 1, maxLength: 512 },
-      occurredAtMs: { type: 'integer', minimum: 0 },
-      repository: GITHUB_AUTOMATION_REPOSITORY_EVENT_REPOSITORY_SCHEMA,
-      ref: { type: 'string', minLength: 1, maxLength: 512 },
-      before: { type: 'string', minLength: 1, maxLength: 512 },
-      after: { type: 'string', minLength: 1, maxLength: 512 },
-    },
-    required: ['kind', 'eventId', 'occurredAtMs', 'repository', 'ref', 'before', 'after'],
-  }, {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      kind: { const: 'issueOpened' },
-      eventId: { type: 'string', minLength: 1, maxLength: 512 },
-      occurredAtMs: { type: 'integer', minimum: 0 },
-      repository: GITHUB_AUTOMATION_REPOSITORY_EVENT_REPOSITORY_SCHEMA,
-      issue: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          id: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[1-9][0-9]*$' },
-          number: { type: 'integer', minimum: 1 },
-          title: { type: 'string', maxLength: 1024 },
-        },
-        required: ['id', 'number', 'title'],
-      },
-    },
-    required: ['kind', 'eventId', 'occurredAtMs', 'repository', 'issue'],
-  }, {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      kind: { const: 'pullRequestMerged' },
-      eventId: { type: 'string', minLength: 1, maxLength: 512 },
-      occurredAtMs: { type: 'integer', minimum: 0 },
-      repository: GITHUB_AUTOMATION_REPOSITORY_EVENT_REPOSITORY_SCHEMA,
-      pullRequest: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          id: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[1-9][0-9]*$' },
-          number: { type: 'integer', minimum: 1 },
-          mergeCommitSha: { type: 'string', minLength: 1, maxLength: 512 },
-        },
-        required: ['id', 'number', 'mergeCommitSha'],
-      },
-    },
-    required: ['kind', 'eventId', 'occurredAtMs', 'repository', 'pullRequest'],
-  }],
-} satisfies PluginJsonSchema;
-
 function createGithubPlugin() {
   let activeGithubPluginRuntime: GithubPluginActivationRuntime | null = null;
 
@@ -616,6 +550,19 @@ function createGithubPlugin() {
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: getGithubTriageEntry,
+    },
+    [GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace]: {
+      title: 'Prepare a GitHub pull-request review workspace',
+      description: 'Rereads one GitHub pull request and prepares its source branch in the selected workspace.',
+      scopes: ['global'],
+      surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
+      dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      execution: { target: 'daemon' },
+      inputSchema: sources.operations.prepareReviewWorkspace.declaration.input.schema.jsonSchema,
+      resultSchema: sources.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: prepareGithubTriageReviewWorkspace,
     },
     // The five source-native detail planes. The published Triage roles declare
     // the `plugin` surface; these reads are invoked the same way, by this
@@ -1336,13 +1283,14 @@ function createGithubPlugin() {
       handlerAction: { localId: GITHUB_WEBHOOK_ACTION_ID },
     },
   },
-  events: {
-    [GITHUB_AUTOMATION_REPOSITORY_EVENT_ID]: {
+  events: Object.fromEntries(GITHUB_AUTOMATION_EVENT_CATALOG.map((event) => [
+    event.localId,
+    {
       declaration: {
         kind: 'event',
-        title: 'GitHub repository Event',
-        description: 'A GitHub repository occurrence observed through checkpointed polling or a best-effort webhook.',
-        payloadSchema: GITHUB_AUTOMATION_REPOSITORY_EVENT_PAYLOAD_SCHEMA,
+        title: event.title,
+        description: event.description,
+        payloadSchema: event.payloadSchema,
         automation: {
           v: 1,
           eligible: true,
@@ -1370,7 +1318,7 @@ function createGithubPlugin() {
         },
       },
     },
-  },
+  ])),
   backgroundServices: [{
     declaration: {
       id: GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID,
@@ -1431,10 +1379,9 @@ function createGithubPlugin() {
               .bind(GITHUB_TRIAGE_ACTION_IDS_V1.listInstances),
             scan: sources.operations.scan.bind(GITHUB_TRIAGE_ACTION_IDS_V1.scan),
             get: sources.operations.get.bind(GITHUB_TRIAGE_ACTION_IDS_V1.get),
+            prepareReviewWorkspace: sources.operations.prepareReviewWorkspace
+              .bind(GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace),
           },
-          // `prepareReviewWorkspace` is deliberately unbound: it is an optional role,
-          // and binding it would claim a worktree materialization contract this
-          // provider has not implemented.
           surfaces: { detail: { renderer: GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1 } },
         }),
       },

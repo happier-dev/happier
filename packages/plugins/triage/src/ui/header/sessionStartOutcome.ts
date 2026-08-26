@@ -55,6 +55,11 @@ const REJECTION_NOTICE_V1: Readonly<Record<
     'plugins.triage.surface.session.rejected.preparedWorkspace',
     'This action needs a review workspace prepared by the source, and none was.',
   ),
+  pullRequestWorkspaceEntryMismatch: notice(
+    'warning',
+    'plugins.triage.surface.session.rejected.preparedWorkspaceEntryMismatch',
+    'The selected review workspace did not belong to this pull request, so nothing was started.',
+  ),
   repositoryModeRequiresSelectedProject: notice(
     'warning',
     'plugins.triage.surface.session.rejected.selectedProject',
@@ -68,6 +73,12 @@ function settledNotice(
   switch (result.type) {
     case 'opened':
       return null;
+    case 'linked':
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.linkedNotOpened',
+        'The session was created and linked, but it was not opened.',
+      );
     case 'linkPending':
       return notice(
         'warning',
@@ -192,12 +203,6 @@ export function describeTriageEntrySessionPhaseV1(
             'warning',
             'plugins.triage.surface.session.preparationUnsupported',
             'This source cannot prepare a review workspace, so a pull request cannot be fixed here.',
-          );
-        case 'reviewStartUnsupported':
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.reviewStartUnsupported',
-            'A formal code review needs a workspace prepared from this pull request, and no configured source can prepare one \u2014 so nothing was started.',
           );
         // The four reference refusals. Each says which catalog, and each says
         // whether the fix is to repair the configuration or to try again —

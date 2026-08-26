@@ -6,14 +6,17 @@ import type {
   ConnectedAccountMaterialization,
   ConnectedAccountMetadataList,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ActionsService, PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
 import {
-  MAX_TRIAGE_INSTANCE_DRAFTS_V1,
   type TriageGetInputV1,
   type TriageGetResultV1,
   type TriageListInstancesResultV1,
+  type TriagePrepareReviewWorkspaceInputV1,
+  type TriagePrepareReviewWorkspaceResultV1,
   type TriageScanInputV1,
   type TriageScanResultV1,
   type TriageSourceAccountBindingV1,
+  type TriageSourceEntryLocalRefV1,
   type TriageSourceFailureV1,
   type TriageSourceInstanceDraftV1,
   type TriageSourceScanEvidenceV1,
@@ -22,6 +25,8 @@ import {
 
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 
+import { azureDevopsHostingProviderAdapter } from '../detection/adapter.js';
+import { stripAzureBranchRef } from '../parsing/azureDevopsCoordinates.js';
 import { materializeAzureDevOpsListedAuthorization } from './auth.js';
 import { createAzureDevOpsApiClient } from './client.js';
 import {
@@ -34,10 +39,14 @@ import { AZURE_DEVOPS_TRIAGE_PURPOSE } from './descriptor.js';
 import { createAzureSourceFailure, projectAzureSourceFailure } from './failureProjection.js';
 import { classifyAzureDevOpsTransportFailure } from './failures.js';
 import { isAzureGuid } from './identity.js';
-import { parseAzureEntryLocalRef } from './localRef.js';
+import { matchesAzureEntryLocalRef, parseAzureEntryLocalRef } from './localRef.js';
 import { mapAzurePullRequestEntry } from './mapping.js';
 import { projectAzurePresentObservation } from './observation.js';
-import { normalizeAzureDevOpsBaseUrl } from './origin.js';
+import {
+  buildAzureRepositoryKey,
+  normalizeAzureDevOpsBaseUrl,
+  parseAzureRepositoryKey,
+} from './origin.js';
 import {
   advanceAzureLane,
   advanceAzureLaneRotation,
@@ -99,6 +108,11 @@ export type AzureTriageReadServices = Readonly<{
   now: () => number;
 }>;
 
+/** The one host-owned local-materialization capability this source consumes after its reread. */
+export type AzureTriageReviewWorkspaceServices = AzureTriageReadServices & Readonly<{
+  actions: Pick<ActionsService, 'execute'>;
+}>;
+
 /* -------------------------------------------------------------------------- */
 /* listInstances                                                               */
 /* -------------------------------------------------------------------------- */
@@ -149,7 +163,6 @@ export async function runAzureTriageListInstances(input: Readonly<{
     localInstanceKey?: string;
     failure: TriageSourceFailureV1;
   }>> = [];
-  let bounded = false;
 
   for (const account of listing.accounts) {
     const binding: TriageSourceAccountBindingV1 = {
@@ -188,26 +201,8 @@ export async function runAzureTriageListInstances(input: Readonly<{
         });
         continue;
       }
-      if (candidates.length >= MAX_TRIAGE_INSTANCE_DRAFTS_V1) {
-        bounded = true;
-        break;
-      }
       candidates.push(candidate.draft);
     }
-    if (bounded) break;
-  }
-
-  if (bounded) {
-    return {
-      kind: 'incomplete',
-      candidates,
-      failures,
-      failure: createAzureSourceFailure({
-        class: 'unknown',
-        code: 'azure-devops/discovery-bounded',
-        detail: 'More Azure DevOps candidates exist than one discovery result can carry.',
-      }),
-    };
   }
   if (listing.status === 'truncated') {
     // The incumbent owner has no resumable cursor, so a truncated listing can only be reported
@@ -612,8 +607,8 @@ export async function runAzureTriageGet(input: Readonly<{
   const origin = resolveAzureConfiguredOrigin(request.instance.configuration);
   if (origin === null) return { kind: 'unresolved', localRef, failure: undecodableConfiguration() };
 
-  const address = parseAzureEntryLocalRef(localRef, origin);
-  if (address === null) {
+  const entryIdentity = parseAzureEntryLocalRef(localRef, origin);
+  if (entryIdentity === null) {
     return {
       kind: 'unresolved',
       localRef,
@@ -624,6 +619,12 @@ export async function runAzureTriageGet(input: Readonly<{
       }),
     };
   }
+  const route = readAzurePullRequestLocatorRoute({
+    origin,
+    locator: request.lastKnownLocator,
+    pullRequestId: entryIdentity.pullRequestId,
+  });
+  if (route === null) return { kind: 'unresolved', localRef, failure: unroutablePullRequest() };
 
   const client = await openClient({ services, instance: request.instance, origin, signal });
   if (!client.ok) return { kind: 'unresolved', localRef, failure: client.failure };
@@ -632,7 +633,7 @@ export async function runAzureTriageGet(input: Readonly<{
     client: client.client,
     viewerId: client.viewerId,
     origin,
-    address,
+    route,
     localRef,
     signal,
   })).observation;
@@ -658,39 +659,128 @@ export type AzureEntryObservation = Readonly<{
   row: AzurePullRequestRow | null;
 }>;
 
+/** One exact provider reread, shared by observation and review-workspace preparation. */
+type AzurePullRequestReread =
+  | Readonly<{
+    kind: 'resolved';
+    row: AzurePullRequestRow;
+    scope: AzurePullRequestScope;
+  }>
+  | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }>
+  | Readonly<{ kind: 'malformed' }>;
+
+/** The source-private locator route used to address one Azure pull request. */
+type AzurePullRequestLocatorRoute = Readonly<{
+  kind: 'locator';
+  project: string;
+  repositoryId: string;
+  pullRequestId: number;
+  routingToken: string;
+}>;
+
+/** The one reader accepts the route each operation's published contract authorizes. */
+type AzurePullRequestRoute = AzurePullRequestLocatorRoute | Readonly<{
+  kind: 'identity';
+  repositoryId: string;
+  pullRequestId: number;
+}>;
+
+/**
+ * Decodes the newest source-minted locator into the provider route.
+ *
+ * A collision scope stays identity-only: its repository GUID is never substituted into this
+ * route. It is checked after the provider returns its own immutable repository id below.
+ */
+function readAzurePullRequestLocatorRoute(input: Readonly<{
+  origin: AzureDevOpsOrigin;
+  locator: TriageGetInputV1['lastKnownLocator'];
+  pullRequestId: number;
+}>): AzurePullRequestLocatorRoute | null {
+  const routingToken = input.locator?.routingToken;
+  if (routingToken === undefined) return null;
+  const repository = parseAzureRepositoryKey({ origin: input.origin, repositoryKey: routingToken });
+  if (repository === null) return null;
+  return {
+    kind: 'locator',
+    project: repository.projectName,
+    repositoryId: repository.repositoryName,
+    pullRequestId: input.pullRequestId,
+    routingToken,
+  };
+}
+
+async function rereadAzurePullRequest(input: Readonly<{
+  client: AzureDevOpsApiClient;
+  origin: AzureDevOpsOrigin;
+  localRef: TriageSourceEntryLocalRefV1;
+  route: AzurePullRequestRoute;
+  signal: AbortSignal;
+}>): Promise<AzurePullRequestReread> {
+  const response = await input.client.request({
+    // This source's opaque locator is the only route input. Its current project/repository names
+    // reach Azure here; the existing mutation path carries an already validated immutable address.
+    // In both cases the public collision scope is checked only against the returned GUID.
+    route: {
+      resource: 'pullRequest',
+      ...(input.route.kind === 'locator' ? { project: input.route.project } : {}),
+      repositoryId: input.route.repositoryId,
+      pullRequestId: input.route.pullRequestId,
+    },
+    signal: input.signal,
+  });
+  if (!response.ok) return { kind: 'unavailable', failure: projectAzureSourceFailure(response.failure) };
+
+  const row = decodeAzurePullRequestRow(response.body);
+  const scope = readPullRequestScope(response.body);
+  if (row === null || scope === null) return { kind: 'malformed' };
+  const returnedRoutingToken = input.route.kind !== 'locator' ? null : buildAzureRepositoryKey({
+    organizationOrCollection: input.origin.organizationOrCollection,
+    forgeHostId: input.origin.forgeHostId,
+    projectName: scope.projectName,
+    repositoryName: scope.repository.name,
+  });
+  if (
+    row.repositoryId !== scope.repository.id
+    || row.pullRequestId !== input.route.pullRequestId
+    || (input.route.kind === 'identity' && row.repositoryId !== input.route.repositoryId)
+    || (input.route.kind === 'locator' && returnedRoutingToken !== input.route.routingToken)
+    || !matchesAzureEntryLocalRef({
+      localRef: input.localRef,
+      origin: input.origin,
+      repositoryId: row.repositoryId,
+      pullRequestId: row.pullRequestId,
+    })
+  ) {
+    // A stale locator or body that names another repository/number is never a redirect.
+    return { kind: 'malformed' };
+  }
+  return { kind: 'resolved', row, scope };
+}
+
 export async function observeAzureEntry(input: Readonly<{
   client: AzureDevOpsApiClient;
   viewerId: string;
   origin: AzureDevOpsOrigin;
-  address: Readonly<{ repositoryId: string; pullRequestId: number }>;
+  route: AzurePullRequestRoute;
   localRef: TriageGetInputV1['localRef'];
   signal: AbortSignal;
 }>): Promise<AzureEntryObservation> {
-  const { address, localRef, origin, viewerId } = input;
+  const { localRef, origin, viewerId } = input;
   const unresolved = (failure: TriageSourceFailureV1): AzureEntryObservation => ({
     observation: { kind: 'unresolved', localRef, failure },
     row: null,
   });
 
-  const response = await input.client.request({
-    // The Git area addresses a repository by GUID with no project segment, which is the only
-    // route this input can build: it carries no project name and must not guess one.
-    route: {
-      resource: 'pullRequest',
-      repositoryId: address.repositoryId,
-      pullRequestId: address.pullRequestId,
-    },
+  const reread = await rereadAzurePullRequest({
+    client: input.client,
+    origin,
+    localRef,
+    route: input.route,
     signal: input.signal,
   });
-  if (!response.ok) return unresolved(projectAzureSourceFailure(response.failure));
-
-  const row = decodeAzurePullRequestRow(response.body);
-  const scope = readPullRequestScope(response.body);
-  if (row === null || scope === null) return unresolved(malformedPullRequest());
-  if (row.repositoryId !== address.repositoryId || row.pullRequestId !== address.pullRequestId) {
-    // A body that names another repository or number is a routing error, never a redirect.
-    return unresolved(malformedPullRequest());
-  }
+  if (reread.kind === 'unavailable') return unresolved(reread.failure);
+  if (reread.kind === 'malformed') return unresolved(malformedPullRequest());
+  const { row, scope } = reread;
 
   const involvement = readViewerInvolvement(row, viewerId);
   const entry = mapAzurePullRequestEntry({
@@ -707,6 +797,157 @@ export async function observeAzureEntry(input: Readonly<{
   if (observation.kind !== 'present') return unresolved(malformedPullRequest());
   // The result's ref must equal the exact input ref; a different one is invalid, not a redirect.
   return { observation: { ...observation, localRef }, row };
+}
+
+/* -------------------------------------------------------------------------- */
+/* prepareReviewWorkspace                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Prepare the one user-selected root for the exact provider-authoritative Azure source tip.
+ *
+ * The source owns every precondition up to the generic SCM Action: decoding its configured
+ * instance, validating the source-local ref, reauthorizing that exact account, rereading that
+ * exact pull request, and comparing the observed base/head/native revision. The generic Action
+ * owns only selected-root SCM resolution, remote matching, Git mutation, and local currentness.
+ */
+export async function runAzureTriagePrepareReviewWorkspace(input: Readonly<{
+  services: AzureTriageReviewWorkspaceServices;
+  request: TriagePrepareReviewWorkspaceInputV1;
+  signal: AbortSignal;
+}>): Promise<TriagePrepareReviewWorkspaceResultV1> {
+  const { request } = input;
+  // There is no inferred/default root. This return happens before either provider authorization or
+  // the generic materializer, so a missing selection cannot become a filesystem probe.
+  if (request.workspace === null) return { kind: 'workspaceRequired' };
+
+  const origin = resolveAzureConfiguredOrigin(request.instance.configuration);
+  if (origin === null) return { kind: 'refused', reason: 'instanceMoved' };
+
+  const localRef: TriageSourceEntryLocalRefV1 = {
+    kindId: request.entryRef.kindId,
+    collisionScope: request.entryRef.collisionScope,
+    entryId: request.entryRef.entryId,
+  };
+  const entryIdentity = parseAzureEntryLocalRef(localRef, origin);
+  if (entryIdentity === null) return { kind: 'refused', reason: 'pullRequestMoved' };
+  const route = readAzurePullRequestLocatorRoute({
+    origin,
+    locator: request.lastKnownLocator,
+    pullRequestId: entryIdentity.pullRequestId,
+  });
+  if (route === null) return { kind: 'refused', reason: 'pullRequestMoved' };
+
+  const authorized = await authorizeClient({
+    services: input.services,
+    instance: request.instance,
+    origin,
+    signal: input.signal,
+  });
+  if (!authorized.ok) return { kind: 'unavailable', reason: 'account' };
+
+  const reread = await rereadAzurePullRequest({
+    client: authorized.client,
+    origin,
+    localRef,
+    route,
+    signal: input.signal,
+  });
+  if (reread.kind === 'unavailable') return { kind: 'unavailable', reason: 'account' };
+  if (reread.kind === 'malformed') return { kind: 'refused', reason: 'pullRequestMoved' };
+
+  const { row } = reread;
+  if (!sameAzureRevision(row.lastMergeTargetCommitId, request.observed.baseSha)) {
+    return { kind: 'refused', reason: 'pullRequestMoved' };
+  }
+  if (
+    !sameAzureRevision(row.lastMergeSourceCommitId, request.observed.headSha)
+    || !sameAzureRevision(row.lastMergeSourceCommitId, request.observed.nativeRevision)
+  ) {
+    return { kind: 'refused', reason: 'observedHeadMoved' };
+  }
+
+  const sourceTip = readAzurePreparedSourceTip(row);
+  if (sourceTip === null) return { kind: 'refused', reason: 'pullRequestMoved' };
+
+  const materialized = await input.services.actions.execute(
+    'scm.reviewWorkspace.materializePrepared',
+    {
+      cwd: request.workspace.rootPath,
+      displayName: sourceTip.branch,
+      sourceTip,
+    },
+    { signal: input.signal },
+  );
+  if (!materialized.success) {
+    // These codes mean the selected root was not a usable repository or lacks the matched remote.
+    // Other generic SCM failures have no source-specific interpretation and remain an SCM resolver
+    // unavailability rather than a provider-level retry or a local fallback.
+    if (
+      materialized.errorCode === 'NOT_REPOSITORY'
+      || materialized.errorCode === 'INVALID_PATH'
+      || materialized.errorCode === 'REMOTE_NOT_FOUND'
+    ) {
+      return { kind: 'workspaceMismatch' };
+    }
+    return { kind: 'unavailable', reason: 'scmResolver' };
+  }
+  return {
+    kind: 'prepared',
+    repositoryPath: materialized.targetPath,
+    branch: materialized.branchName,
+    created: materialized.created,
+    currentness: materialized.currentness,
+    // Transport only the canonical SCM reference from the authoritative reread;
+    // Triage remains opaque to its grammar.
+    pullRequest: { number: row.pullRequestId },
+  };
+}
+
+/** Azure commit identifiers are case-insensitive hexadecimal values. */
+function sameAzureRevision(current: string | null, observed: string): boolean {
+  return current !== null && current.toLowerCase() === observed.trim().toLowerCase();
+}
+
+/**
+ * Build the generic SCM checkout authority from Azure's editable source facts only.
+ *
+ * `repository` on a pull request is the target repository. Azure exposes a fork separately, and
+ * the source decoder intentionally gives it precedence over `sourceRepository`; this function
+ * never looks at the target-side row or at a generated pull-request merge ref.
+ */
+type AzurePreparedSourceTip = PluginActionInputById[
+  'scm.reviewWorkspace.materializePrepared'
+]['sourceTip'];
+
+function readAzurePreparedSourceTip(row: AzurePullRequestRow): AzurePreparedSourceTip | null {
+  const cloneUrl = row.sourceRepositoryCloneUrl;
+  const fetchRef = row.sourceRefName;
+  if (cloneUrl === null || fetchRef === null || !fetchRef.startsWith('refs/heads/')) return null;
+
+  const branch = stripAzureBranchRef(fetchRef);
+  if (branch === null || branch.length === 0) return null;
+  const sourceHeadSha = row.lastMergeSourceCommitId;
+  if (sourceHeadSha === null || !/^[0-9a-fA-F]{7,64}$/u.test(sourceHeadSha)) return null;
+
+  // This is the Azure plugin's own canonical remote parser, not an SCM provider registry or a
+  // default clone lookup. It keeps Services, legacy and Server clone URLs aligned with detection.
+  const repository = azureDevopsHostingProviderAdapter.detectRemote({ remoteName: null, remoteUrl: cloneUrl });
+  if (repository === null || repository.kind !== 'azure-devops' || repository.nameWithOwner === undefined) {
+    return null;
+  }
+
+  return {
+    repository: {
+      kind: 'azure-devops',
+      deployment: repository.baseUrl,
+      repository: repository.nameWithOwner,
+    },
+    cloneUrl,
+    branch,
+    sourceHeadSha: sourceHeadSha.toLowerCase(),
+    fetchRef,
+  };
 }
 
 /**
@@ -746,11 +987,13 @@ function readViewerInvolvement(
  * lives in, and that fact exists only in the pull-request body. One reader keeps
  * the two paths from disagreeing about what a malformed body is.
  */
-export function readPullRequestScope(raw: unknown): Readonly<{
+export type AzurePullRequestScope = Readonly<{
   repository: AzureRepositoryRow;
   projectId: string;
   projectName: string;
-}> | null {
+}>;
+
+export function readPullRequestScope(raw: unknown): AzurePullRequestScope | null {
   const record = readRecord(raw);
   const repository = record === null ? null : readRecord(record.repository);
   if (repository === null) return null;
@@ -977,5 +1220,13 @@ function malformedPullRequest(): TriageSourceFailureV1 {
     class: 'unsupportedContract',
     code: 'azure-devops/malformed-pull-request',
     detail: 'Azure DevOps returned a pull request this source could not route or map.',
+  });
+}
+
+function unroutablePullRequest(): TriageSourceFailureV1 {
+  return createAzureSourceFailure({
+    class: 'unsupportedContract',
+    code: 'azure-devops/pull-request-route-unavailable',
+    detail: 'This Azure DevOps pull request has no usable retained source route.',
   });
 }

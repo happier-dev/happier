@@ -3,13 +3,16 @@ import type {
   ConnectedAccountMaterialization,
   QualifiedConnectedAccountRef,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import {
   TriageGetResultV1Schema,
   TriageListInstancesResultV1Schema,
+  TriagePrepareReviewWorkspaceResultV1Schema,
   TriageScanResultV1Schema,
   type TriageConfiguredSourceInstanceV1,
+  type TriagePrepareReviewWorkspaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { encodeAzureSourceConfiguration } from './configuration.js';
 import { AZURE_DEVOPS_TRIAGE_PURPOSE } from './descriptor.js';
@@ -17,6 +20,7 @@ import {
   AZURE_NATIVE_PAGE_SIZE,
   runAzureTriageGet,
   runAzureTriageListInstances,
+  runAzureTriagePrepareReviewWorkspace,
   runAzureTriageScan,
   type AzureTriageAccountService,
   type AzureTriageReadServices,
@@ -33,6 +37,7 @@ const SERVER_BASE_URL = 'https://server.example/tfs/DefaultCollection';
 const VIEWER_ID = 'a0d31c2e-4f50-4a6b-8c7d-9e0f1a2b3c4d';
 const PROJECT_ID = '5feb1c2d-3e4f-4a5b-8c9d-0e1f2a3b4c5d';
 const REPOSITORY_ID = 'f4b7c1a2-3d4e-4f50-9a6b-7c8d9e0f1a2b';
+const FORK_REPOSITORY_ID = '4dc8d8ef-4a33-4179-9e5e-4774e4e84b77';
 
 function accountRef(accountId: string): QualifiedConnectedAccountRef {
   return {
@@ -325,6 +330,22 @@ describe('Azure DevOps Triage listInstances', () => {
       expect(candidate.configuration.token).not.toContain('account-');
       expect(candidate.keyStability).toBe('locatorDerived');
     }
+  });
+
+  it('carries every configured-base candidate instead of imposing a local thirty-two-instance ceiling', async () => {
+    const result = await runAzureTriageListInstances({
+      connectedAccounts: lister({
+        status: 'complete',
+        accounts: Array.from({ length: 33 }, (_unused, index) => listedAccount({
+          accountId: `account-${index + 1}`,
+        })),
+      }),
+      signal: new AbortController().signal,
+    });
+
+    expect(result.kind).toBe('complete');
+    if (result.kind !== 'complete') throw new Error('expected a complete result');
+    expect(result.candidates).toHaveLength(33);
   });
 
   it('maps a truncated listing to incomplete and a listing failure to failed, never complete', async () => {
@@ -1004,6 +1025,7 @@ describe('Azure DevOps Triage get', () => {
         v: 1,
         instance: configuredInstance(),
         localRef: { ...localRef, collisionScope: scope },
+        lastKnownLocator: { v: 1, routingToken: 'acme/Payments/checkout' },
       },
       signal: new AbortController().signal,
     });
@@ -1024,6 +1046,11 @@ describe('Azure DevOps Triage get', () => {
     expect(TriageGetResultV1Schema.parse(present.result)).toEqual(present.result);
     expect(present.result.kind).toBe('present');
     expect(present.result.localRef).toEqual({ ...localRef, collisionScope: scopeFor() });
+    // The opaque locator is this source's only endpoint route. The immutable collision scope is
+    // checked against the provider response, but it is never unpacked into a REST path.
+    expect(present.recorder.urls.join('\n')).toContain(
+      '/Payments/_apis/git/repositories/checkout/pullrequests/17?',
+    );
 
     const missing = await get(
       pullRequestRoute({ status: 404, body: { message: 'Not found.', typeKey: 'NotFound' } }),
@@ -1084,5 +1111,300 @@ describe('Azure DevOps Triage get', () => {
     );
     if (result.kind !== 'unresolved') throw new Error('expected unresolved');
     expect(result.failure.class).toBe('unsupportedContract');
+  });
+
+  it('fails a first read with no locator instead of reconstructing an endpoint from identity', async () => {
+    const recorder = createRecorder(pullRequestRoute({ body: pullRequest(17) }));
+    const result = await runAzureTriageGet({
+      services: recorder.services,
+      request: {
+        v: 1,
+        instance: configuredInstance(),
+        localRef: { ...localRef, collisionScope: scopeFor() },
+      },
+      signal: new AbortController().signal,
+    });
+
+    expect(result.kind).toBe('unresolved');
+    expect(recorder.urls).toHaveLength(0);
+  });
+});
+
+describe('Azure DevOps review-workspace preparation', () => {
+  function scopeFor(base = BASE_URL): string {
+    const origin = configuredOrigin(base);
+    return `azure-devops:${Buffer.from(origin.baseUrl, 'utf8').toString('base64url')}:${REPOSITORY_ID}`;
+  }
+
+  function input(overrides: Partial<TriagePrepareReviewWorkspaceInputV1> = {}) {
+    const instance = configuredInstance();
+    return {
+      v: 1 as const,
+      instance,
+      entryRef: {
+        source: instance.instance.source,
+        kindId: 'pull-request',
+        collisionScope: scopeFor(),
+        entryId: '17',
+      },
+      lastKnownLocator: { v: 1, routingToken: 'acme/Payments/checkout' },
+      observed: {
+        baseSha: 'a1b2c3d4e5f6789012345678901234567890abcd',
+        headSha: 'b3f1c0a9d2e4789012345678901234567890abcd',
+        nativeRevision: 'b3f1c0a9d2e4789012345678901234567890abcd',
+        observedAtMs: 1_760_000_000_000,
+      },
+      workspace: {
+        serverId: 'server-1',
+        machineId: 'machine-1',
+        rootPath: '/selected/workspace',
+      },
+      ...overrides,
+    } satisfies TriagePrepareReviewWorkspaceInputV1;
+  }
+
+  function workspaceServices(
+    recorder: Recorder,
+    execute: ReturnType<typeof vi.fn>,
+  ) {
+    return {
+      ...recorder.services,
+      actions: { execute } as unknown as ActionsService,
+    };
+  }
+
+  it('reauthorizes and rereads the exact PR before materializing its fork source tip', async () => {
+    const recorder = createRecorder((request) => {
+      if (!request.url.includes('/pullrequests/')) throw new Error(`unexpected request: ${request.url}`);
+      return {
+        body: pullRequest(17, {
+          sourceRefName: 'refs/heads/feature/fork',
+          lastMergeSourceCommit: { commitId: 'b3f1c0a9d2e4789012345678901234567890abcd' },
+          lastMergeTargetCommit: { commitId: 'a1b2c3d4e5f6789012345678901234567890abcd' },
+          // `forkSource` must win over this target-adjacent sourceRepository value.
+          sourceRepository: {
+            id: REPOSITORY_ID,
+            remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
+          },
+          forkSource: {
+            repository: {
+              id: FORK_REPOSITORY_ID,
+              remoteUrl: 'https://dev.azure.com/acme/Forks/_git/contributor',
+            },
+          },
+        }),
+      };
+    });
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      targetPath: '/selected/workspace/.happier/worktrees/feature-fork',
+      branchName: 'feature/fork',
+      created: true,
+      currentness: { kind: 'currentAtObservedHead' as const },
+    }));
+    const signal = new AbortController().signal;
+
+    const result = await runAzureTriagePrepareReviewWorkspace({
+      services: workspaceServices(recorder, execute),
+      request: input(),
+      signal,
+    });
+
+    expect(TriagePrepareReviewWorkspaceResultV1Schema.parse(result)).toEqual(result);
+    expect(result).toEqual({
+      kind: 'prepared',
+      repositoryPath: '/selected/workspace/.happier/worktrees/feature-fork',
+      branch: 'feature/fork',
+      created: true,
+      currentness: { kind: 'currentAtObservedHead' },
+      pullRequest: { number: 17 },
+    });
+    expect(recorder.materializedAccounts).toEqual([accountRef('account-1')]);
+    expect(recorder.urls.join('\n')).toContain(
+      '/Payments/_apis/git/repositories/checkout/pullrequests/17?',
+    );
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      'scm.reviewWorkspace.materializePrepared',
+      {
+        cwd: '/selected/workspace',
+        displayName: 'feature/fork',
+        sourceTip: {
+          repository: {
+            kind: 'azure-devops',
+            deployment: 'https://dev.azure.com/acme',
+            repository: 'acme/Forks/contributor',
+          },
+          cloneUrl: 'https://dev.azure.com/acme/Forks/_git/contributor',
+          branch: 'feature/fork',
+          sourceHeadSha: 'b3f1c0a9d2e4789012345678901234567890abcd',
+          fetchRef: 'refs/heads/feature/fork',
+        },
+      },
+      { signal },
+    );
+  });
+
+  it('refuses a moved observed head before the generic local materializer runs', async () => {
+    const recorder = createRecorder((request) => {
+      if (!request.url.includes('/pullrequests/')) throw new Error(`unexpected request: ${request.url}`);
+      return {
+        body: pullRequest(17, {
+          sourceRepository: {
+            id: REPOSITORY_ID,
+            remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
+          },
+          lastMergeSourceCommit: { commitId: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' },
+          lastMergeTargetCommit: { commitId: 'a1b2c3d4e5f6789012345678901234567890abcd' },
+        }),
+      };
+    });
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      targetPath: '/selected/workspace/.happier/worktrees/feature',
+      branchName: 'feature',
+      created: false,
+      currentness: { kind: 'currentAtObservedHead' as const },
+    }));
+
+    await expect(runAzureTriagePrepareReviewWorkspace({
+      services: workspaceServices(recorder, execute),
+      request: input(),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a moved observed base before the generic local materializer runs', async () => {
+    const recorder = createRecorder((request) => {
+      if (!request.url.includes('/pullrequests/')) throw new Error(`unexpected request: ${request.url}`);
+      return {
+        body: pullRequest(17, {
+          sourceRepository: {
+            id: REPOSITORY_ID,
+            remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
+          },
+          lastMergeSourceCommit: { commitId: 'b3f1c0a9d2e4789012345678901234567890abcd' },
+          lastMergeTargetCommit: { commitId: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' },
+        }),
+      };
+    });
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      targetPath: '/selected/workspace/.happier/worktrees/feature',
+      branchName: 'feature',
+      created: false,
+      currentness: { kind: 'currentAtObservedHead' as const },
+    }));
+
+    await expect(runAzureTriagePrepareReviewWorkspace({
+      services: workspaceServices(recorder, execute),
+      request: input(),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a mismatched observed native revision before the generic local materializer runs', async () => {
+    const recorder = createRecorder((request) => {
+      if (!request.url.includes('/pullrequests/')) throw new Error(`unexpected request: ${request.url}`);
+      return {
+        body: pullRequest(17, {
+          sourceRepository: {
+            id: REPOSITORY_ID,
+            remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
+          },
+          lastMergeSourceCommit: { commitId: 'b3f1c0a9d2e4789012345678901234567890abcd' },
+          lastMergeTargetCommit: { commitId: 'a1b2c3d4e5f6789012345678901234567890abcd' },
+        }),
+      };
+    });
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      targetPath: '/selected/workspace/.happier/worktrees/feature',
+      branchName: 'feature',
+      created: false,
+      currentness: { kind: 'currentAtObservedHead' as const },
+    }));
+
+    await expect(runAzureTriagePrepareReviewWorkspace({
+      services: workspaceServices(recorder, execute),
+      request: input({
+        observed: {
+          baseSha: 'a1b2c3d4e5f6789012345678901234567890abcd',
+          headSha: 'b3f1c0a9d2e4789012345678901234567890abcd',
+          nativeRevision: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+          observedAtMs: 1_760_000_000_000,
+        },
+      }),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stale source locator rather than accepting a response routed by identity', async () => {
+    const recorder = createRecorder((request) => {
+      if (!request.url.includes('/pullrequests/')) throw new Error(`unexpected request: ${request.url}`);
+      return {
+        body: pullRequest(17, {
+          sourceRepository: {
+            id: REPOSITORY_ID,
+            remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
+          },
+          lastMergeSourceCommit: { commitId: 'b3f1c0a9d2e4789012345678901234567890abcd' },
+          lastMergeTargetCommit: { commitId: 'a1b2c3d4e5f6789012345678901234567890abcd' },
+        }),
+      };
+    });
+    const execute = vi.fn();
+
+    await expect(runAzureTriagePrepareReviewWorkspace({
+      services: workspaceServices(recorder, execute),
+      request: input({ lastKnownLocator: { v: 1, routingToken: 'acme/Payments/renamed' } }),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('maps a missing matched workspace remote to workspaceMismatch', async () => {
+    const recorder = createRecorder((request) => {
+      if (!request.url.includes('/pullrequests/')) throw new Error(`unexpected request: ${request.url}`);
+      return {
+        body: pullRequest(17, {
+          sourceRepository: {
+            id: REPOSITORY_ID,
+            remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
+          },
+          lastMergeSourceCommit: { commitId: 'b3f1c0a9d2e4789012345678901234567890abcd' },
+          lastMergeTargetCommit: { commitId: 'a1b2c3d4e5f6789012345678901234567890abcd' },
+        }),
+      };
+    });
+    const execute = vi.fn(async () => ({
+      success: false as const,
+      error: 'The selected workspace has no matching remote.',
+      errorCode: 'REMOTE_NOT_FOUND' as const,
+    }));
+
+    await expect(runAzureTriagePrepareReviewWorkspace({
+      services: workspaceServices(recorder, execute),
+      request: input(),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'workspaceMismatch' });
+  });
+
+  it('requires an explicit selected workspace without provider or local work', async () => {
+    const recorder = createRecorder((request) => {
+      throw new Error(`workspaceRequired must not read the provider: ${request.url}`);
+    });
+    const execute = vi.fn();
+
+    await expect(runAzureTriagePrepareReviewWorkspace({
+      services: workspaceServices(recorder, execute),
+      request: input({ workspace: null }),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'workspaceRequired' });
+    expect(recorder.materializedAccounts).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
   });
 });

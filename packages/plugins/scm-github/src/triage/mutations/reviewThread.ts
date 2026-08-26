@@ -232,7 +232,9 @@ export async function setGithubReviewThreadResolution(
     query: input.resolved ? RESOLVE_THREAD_MUTATION : UNRESOLVE_THREAD_MUTATION,
     variables: { threadId: input.threadId },
   }, dependencies);
-  if (!written.ok) return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+  if (!written.ok && !written.mayHaveChanged) {
+    return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+  }
 
   const confirmed = await readGithubReviewThread(input.threadId, dependencies);
   if (!confirmed.ok) {

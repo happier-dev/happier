@@ -28,11 +28,9 @@ export const TRIAGE_SESSION_LINKED_ENTRIES_UI_QUERY_ID_V1 =
 export const TRIAGE_SESSION_LINKED_ENTRIES_PARAMETER_ID_V1 = CORPUS_SESSION_LINKS_FIELD.sessionId;
 
 /**
- * The declared page size, mirrored here as the presentation ceiling.
- *
- * The cockpit renders one page and says so when more links exist, rather than
- * accumulating pages: a Session with hundreds of links must not turn a sidebar
- * tab into an unbounded list, and every rendered row costs one private row read.
+ * The declared page size. The Data pager appends one page at a time and owns the
+ * accumulated bounded query window; the cockpit must not apply this value again
+ * as a presentation ceiling or links after page one become unreachable.
  */
 export const MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 = CORPUS_SESSION_LINKS_UI_QUERY_PAGE_SIZE;
 

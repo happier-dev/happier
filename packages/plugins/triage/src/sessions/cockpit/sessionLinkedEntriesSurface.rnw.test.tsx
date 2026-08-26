@@ -67,11 +67,20 @@ function linkRow(overrides: Partial<CorpusSessionLinkRowV1> = {}): CorpusSession
 type PagerControl = Readonly<{
     pager: PluginUiCollectionQueryPager;
     publish(snapshot: PluginUiCollectionQuerySnapshot): void;
+    loadMoreCalls(): number;
 }>;
 
-function createPagerControl(initial: PluginUiCollectionQuerySnapshot): PagerControl {
+function createPagerControl(
+    initial: PluginUiCollectionQuerySnapshot,
+    onLoadMore: ((publish: (snapshot: PluginUiCollectionQuerySnapshot) => void) => Promise<void>) | undefined,
+): PagerControl {
     const listeners = new Set<() => void>();
     let current = initial;
+    let loadMoreCallCount = 0;
+    const publish = (snapshot: PluginUiCollectionQuerySnapshot): void => {
+        current = snapshot;
+        for (const listener of listeners) listener();
+    };
     return {
         pager: {
             getSnapshot: () => current,
@@ -80,13 +89,14 @@ function createPagerControl(initial: PluginUiCollectionQuerySnapshot): PagerCont
                 return () => { listeners.delete(listener); };
             },
             refresh: async () => {},
-            loadMore: async () => {},
+            loadMore: async () => {
+                loadMoreCallCount += 1;
+                await onLoadMore?.(publish);
+            },
             dispose: () => { listeners.clear(); },
         },
-        publish(snapshot) {
-            current = snapshot;
-            for (const listener of listeners) listener();
-        },
+        publish,
+        loadMoreCalls: () => loadMoreCallCount,
     };
 }
 
@@ -119,12 +129,13 @@ function createDataHarness(input: Readonly<{
     rowsById?: ReadonlyMap<string, CorpusSessionLinkRowV1>;
     failingRowIds?: ReadonlySet<string>;
     deleteFails?: boolean;
+    onLoadMore?: (publish: (snapshot: PluginUiCollectionQuerySnapshot) => void) => Promise<void>;
 }>): DataHarness {
     const opened: PluginUiCollectionQueryInput[] = [];
     const gets: string[] = [];
     const identityRequests: Array<Readonly<{ field: string; components: readonly string[] }>> = [];
     const deletes: Array<Readonly<{ rowId: string; expectedRevision: number }>> = [];
-    const control = createPagerControl(input.snapshot);
+    const control = createPagerControl(input.snapshot, input.onLoadMore);
     const rowsById = input.rowsById ?? new Map<string, CorpusSessionLinkRowV1>();
     const failingRowIds = input.failingRowIds ?? new Set<string>();
 
@@ -244,6 +255,136 @@ afterEach(async () => {
 });
 
 describe('the mounted Session cockpit', () => {
+    it('loads and retains every linked-entry page so link 51 can be inspected and unlinked', async () => {
+        const firstPage = Array.from({ length: 50 }, (_, index) => (
+            queryRow(`link-${index + 1}`, 100 - index)
+        ));
+        // The appended row is newest, so the real virtualized List mounts it
+        // without the test pretending every retained row is simultaneously in
+        // the viewport. Link 1 remaining mounted proves page-one retention.
+        const allRows = [...firstPage, queryRow('link-51', 101)];
+        const rowsById = new Map(allRows.map((row, index) => [
+            row.context.rowId,
+            linkRow({
+                displayPathAtLink: `example/repository#${index + 1}`,
+                entryRef: {
+                    source: { pluginId: 'happier.example.source', localId: 'example-forge' },
+                    kindId: 'pull-request',
+                    collisionScope: 'example/repository',
+                    entryId: `${index + 1}`,
+                },
+                identityEntryRef: {
+                    source: { pluginId: 'happier.example.source', localId: 'example-forge' },
+                    kindId: 'pull-request',
+                    collisionScope: 'example/repository',
+                    entryId: `${index + 1}`,
+                },
+            }),
+        ]));
+        const harness = createDataHarness({
+            snapshot: { rows: firstPage, hasMore: true, status: 'ready' },
+            rowsById,
+            onLoadMore: async (publish) => {
+                publish({ rows: allRows, hasMore: false, status: 'ready' });
+            },
+        });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
+
+        await expect(fixture.getByText('example/repository#1')).resolves
+            .toEqual({ content: 'example/repository#1' });
+        await expect(fixture.queryByText('example/repository#51')).resolves.toBeUndefined();
+
+        await act(async () => {
+            await fixture.press(await fixture.getByRole('button', { name: 'Load more' }));
+        });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(harness.control.loadMoreCalls()).toBe(1);
+        await expect(fixture.getByText('example/repository#1')).resolves
+            .toEqual({ content: 'example/repository#1' });
+        await expect(fixture.getByText('example/repository#51')).resolves
+            .toEqual({ content: 'example/repository#51' });
+
+        const unlinkButtons = (await fixture.queryAllByRole('button'))
+            .filter((button) => button.name === 'Unlink');
+        await act(async () => { await fixture.press(unlinkButtons[0]!); });
+        await act(async () => { await Promise.resolve(); });
+
+        const link51 = rowsById.get('link-51')!;
+        expect(harness.identityRequests).toContainEqual({
+            field: CORPUS_SESSION_LINKS_FIELD.linkTag,
+            components: sessionLinkTagComponents(link51.identityEntryRef, SESSION_ID),
+        });
+    }, 15_000);
+
+    it('keeps retained links visible while loading and after an error, then retries the same pager', async () => {
+        const firstRows = [queryRow('link-a', 2)];
+        const appendedRows = [...firstRows, queryRow('link-b', 1)];
+        let attempt = 0;
+        const harness = createDataHarness({
+            snapshot: { rows: firstRows, hasMore: true, status: 'ready' },
+            rowsById: new Map([
+                ['link-a', linkRow({ displayPathAtLink: 'example/repository#1' })],
+                ['link-b', linkRow({ displayPathAtLink: 'example/repository#2' })],
+            ]),
+            onLoadMore: async (publish) => {
+                attempt += 1;
+                publish(attempt === 1
+                    ? { rows: firstRows, hasMore: true, status: 'error' }
+                    : { rows: appendedRows, hasMore: false, status: 'ready' });
+            },
+        });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
+
+        await act(async () => {
+            await fixture.press(await fixture.getByRole('button', { name: 'Load more' }));
+        });
+        await expect(fixture.getByText('example/repository#1')).resolves
+            .toEqual({ content: 'example/repository#1' });
+        await expect(fixture.getByText('More entries could not be loaded')).resolves
+            .toEqual({ content: 'More entries could not be loaded' });
+
+        await act(async () => {
+            await fixture.press(await fixture.getByRole('button', { name: 'Try again' }));
+        });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(harness.control.loadMoreCalls()).toBe(2);
+        await expect(fixture.getByText('example/repository#1')).resolves
+            .toEqual({ content: 'example/repository#1' });
+        await expect(fixture.getByText('example/repository#2')).resolves
+            .toEqual({ content: 'example/repository#2' });
+    });
+
+    it('keeps retained links visible during a pending page and ignores its completion after disposal', async () => {
+        const rows = [queryRow('link-a', 1)];
+        let settle!: () => void;
+        const pending = new Promise<void>((resolve) => { settle = resolve; });
+        const harness = createDataHarness({
+            snapshot: { rows, hasMore: true, status: 'ready' },
+            rowsById: new Map([['link-a', linkRow({ displayPathAtLink: 'example/repository#1' })]]),
+            onLoadMore: async () => { await pending; },
+        });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
+
+        await act(async () => {
+            await fixture.press(await fixture.getByRole('button', { name: 'Load more' }));
+        });
+        const loadingButton = await fixture.getByRole('button', { name: 'Load more' });
+        expect(loadingButton.state).toMatchObject({ busy: true, disabled: true });
+        await expect(fixture.getByText('example/repository#1')).resolves
+            .toEqual({ content: 'example/repository#1' });
+
+        await fixture.dispose();
+        await act(async () => {
+            settle();
+            await pending;
+        });
+        expect(harness.control.loadMoreCalls()).toBe(1);
+    });
+
     it('describes a bounded query page without claiming its client-side sort is globally recent', async () => {
         const harness = createDataHarness({
             snapshot: {

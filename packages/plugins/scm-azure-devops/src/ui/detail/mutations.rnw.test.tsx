@@ -12,8 +12,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
 import { AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS } from '../../triage/detailActions.js';
 import { AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS } from '../../triage/mutationActions.js';
+import type { AzureProjectedThreadRowV1 } from '../../triage/detail/projection.js';
 
-import { renderSurface } from '../renderSurface.js';
+import {
+  advanceAzureThreadReplyWindow,
+  projectAzureThreadSubtitle,
+  renderSurface,
+} from '../renderSurface.js';
 import { readReviewerIds } from './mutations.js';
 
 /**
@@ -37,6 +42,7 @@ const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
 
 let nextResult: JsonValue = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
+let nextActionError: unknown | null = null;
 let completedMutations = 0;
 
 /**
@@ -56,6 +62,46 @@ const THREADS_RESULT = {
     comments: [{ id: '1', author: 'Reviewer', content: 'Please rename this' }],
     omittedCommentCount: 0,
   }],
+  omittedRowCount: 0,
+  projectionTruncated: false,
+} as unknown as JsonValue;
+
+const LONG_THREAD_RESULT = {
+  kind: 'threads',
+  rows: [{
+    id: '8',
+    status: 'active',
+    comments: Array.from({ length: 101 }, (_, index) => ({
+      id: String(index + 1),
+      author: 'Reviewer',
+      content: `reply-${String(index + 1)}`,
+    })),
+    omittedCommentCount: 0,
+  }],
+  omittedRowCount: 0,
+  projectionTruncated: false,
+} as unknown as JsonValue;
+
+const POLICIES_RESULT = {
+  kind: 'policies',
+  statuses: [{ id: 'status-1', state: 'succeeded', contextName: 'CI/status' }],
+  evaluations: [
+    {
+      evaluationId: 'ordinary-required',
+      status: 'approved',
+      displayName: 'Required reviewers',
+      isBlocking: true,
+      isBuildValidation: false,
+    },
+    {
+      evaluationId: 'build-optional',
+      status: 'queued',
+      displayName: 'Compile',
+      isBlocking: false,
+      isBuildValidation: true,
+    },
+  ],
+  evaluationsPartial: false,
   omittedRowCount: 0,
   projectionTruncated: false,
 } as unknown as JsonValue;
@@ -103,6 +149,7 @@ async function mountDetail(
       handlers: {
         executeAction: async ({ action, input }) => {
           recorded.push({ action, input });
+          if (nextActionError !== null) throw nextActionError;
           const localId = (action as Readonly<{ localId?: string }>).localId ?? '';
           return readResults[localId] ?? nextResult;
         },
@@ -124,6 +171,7 @@ function recordedWrites(): { action: unknown; input: unknown }[] {
 afterEach(async () => {
   recorded.splice(0);
   readResults = {};
+  nextActionError = null;
   completedMutations = 0;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
@@ -136,6 +184,19 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     await detail.press(await detail.getByRole('button', { name: 'Abandon' }));
 
     expect(completedMutations).toBe(1);
+  });
+
+  it('hands an unknown dispatch outcome to the target-owned re-observation seam', async () => {
+    const detail = await mountDetail();
+    nextActionError = Object.assign(
+      new Error('The Action timed out after dispatch.'),
+      { code: 'timeout' },
+    );
+
+    await detail.press(await detail.getByRole('button', { name: 'Abandon' }));
+
+    expect(completedMutations).toBe(1);
+    expect(recordedWrites()).toHaveLength(1);
   });
 
   it('offers Abandon and sends the exact entry it is mounted on', async () => {
@@ -210,6 +271,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     await expect(detail.queryByText(
       'Nothing was written: this pull request is no longer active.',
     )).resolves.toBeDefined();
+    expect(completedMutations).toBe(0);
   });
 
   it('refuses to offer a completion Azure DevOps gave it no merge source for', async () => {
@@ -443,5 +505,60 @@ describe('the mounted Azure DevOps thread status', () => {
     await expect(detail.queryByText(
       'Azure DevOps answered success but this thread still reads active.',
     )).resolves.toBeDefined();
+  });
+});
+
+describe('the mounted Azure DevOps detail read presentation', () => {
+  it('expands one embedded thread by two until its first reply is visible without another provider read', async () => {
+    readResults = { [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads]: LONG_THREAD_RESULT };
+    const detail = await mountDetail();
+
+    await detail.press(await detail.getByRole('tab', { name: 'Threads' }));
+    await expect(detail.queryByText(/reply-1(?:\D|$)/)).resolves.toBeUndefined();
+
+    const row = (LONG_THREAD_RESULT as unknown as Readonly<{
+      rows: readonly AzureProjectedThreadRowV1[];
+    }>).rows[0];
+    if (row === undefined) throw new Error('the long-thread fixture must contain one row');
+    let replyWindow = 2;
+    while (replyWindow < row.comments.length) {
+      replyWindow = advanceAzureThreadReplyWindow(replyWindow, row.comments.length);
+    }
+
+    expect(projectAzureThreadSubtitle(row, replyWindow)).toMatch(/reply-1(?:\D|$)/);
+    await detail.press(await detail.getByRole('button', { name: /Show 2 earlier replies/ }));
+    await expect(detail.queryByText(/reply-99(?:\D|$)/)).resolves.toBeDefined();
+    expect(recorded.filter(({ action }) => (
+      (action as Readonly<{ localId?: string }>).localId
+        === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads
+    ))).toHaveLength(1);
+  });
+
+  it('renders statuses, ordinary policies, and build validations as separate accessible sections', async () => {
+    readResults = { [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies]: POLICIES_RESULT };
+    const detail = await mountDetail();
+
+    await detail.press(await detail.getByRole('tab', { name: 'Policies' }));
+
+    await expect(detail.getByRole('list', {
+      name: 'Statuses reported against this Azure DevOps pull request',
+    })).resolves.toMatchObject({
+      role: 'list',
+      label: 'Statuses reported against this Azure DevOps pull request',
+    });
+    await expect(detail.getByRole('list', {
+      name: 'Policies for this Azure DevOps pull request',
+    })).resolves.toMatchObject({
+      role: 'list',
+      label: 'Policies for this Azure DevOps pull request',
+    });
+    await expect(detail.getByRole('list', {
+      name: 'Build validations for this Azure DevOps pull request',
+    })).resolves.toMatchObject({
+      role: 'list',
+      label: 'Build validations for this Azure DevOps pull request',
+    });
+    await expect(detail.queryByText('approved · required')).resolves.toBeDefined();
+    await expect(detail.queryByText('queued · optional')).resolves.toBeDefined();
   });
 });

@@ -12,10 +12,11 @@ import {
   TriageSourceAdministrationActionInputV1Schema,
   TriageSourceInstanceDraftV1Schema,
 } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createTriageSourceSettingsSurface,
+  createTriageSourceSettingsSurfaceForTesting,
   type TriageSourceSettingsDraftEditorPropsV1,
 } from './surface.js';
 
@@ -103,7 +104,7 @@ type Recorded = Readonly<{ action: unknown; input: unknown }>;
 type Confirmation = Readonly<{ message: string; title?: string }>;
 
 function createHarness(options: Readonly<{
-  discovery: JsonValue;
+  discovery: JsonValue | ((signal: AbortSignal) => Promise<JsonValue>);
   /**
    * What the user answers the removal question. `unavailable` mounts a host that
    * does not advertise `confirm` at all, which is how a page reaches the arm
@@ -131,11 +132,15 @@ function createHarness(options: Readonly<{
   let configuredReads = 0;
 
   async function executeAction(
-    { action, input }: Readonly<{ action: unknown; input: unknown }>,
+    { action, input, signal }: Readonly<{ action: unknown; input: unknown; signal: AbortSignal }>,
   ): Promise<JsonValue> {
     recorded.push({ action, input });
     const ref = action as Readonly<{ pluginId?: string; localId?: string }>;
-    if (ref.localId === LIST_INSTANCES_LOCAL_ACTION_ID) return options.discovery;
+    if (ref.localId === LIST_INSTANCES_LOCAL_ACTION_ID) {
+      return typeof options.discovery === 'function'
+        ? await options.discovery(signal)
+        : options.discovery;
+    }
     if (
       ref.pluginId === TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1.pluginId
       && ref.localId === TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1.localId
@@ -188,6 +193,7 @@ const mounted: PluginUiTestkit[] = [];
 async function mountSettings(
   harness: ReturnType<typeof createHarness>,
   translations: Readonly<Record<string, string>> = {},
+  surface: typeof renderSurface = renderSurface,
 ): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
@@ -198,11 +204,11 @@ async function mountSettings(
         viewId: 'triage-sources',
         generation: 'triage-sources-mount',
       },
-      surface: renderSurface,
+      surface,
       surfaceContext: createSurfaceContextFixture({ translations }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
-        executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+        executeAction: async ({ action, input, signal }) => await harness.executeAction({ action, input, signal }),
         // Installed only when the case wants a host that advertises `confirm`.
         // The testkit advertises exactly the methods it was given a handler for,
         // so omitting it is the real "this host cannot ask" mount.
@@ -255,7 +261,7 @@ describe('the mounted PRs & Issues source settings page', () => {
         surfaceContext: createSurfaceContextFixture(),
         adapter: createPluginUiRnwSemanticSurfaceAdapter(),
         handlers: {
-          executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+          executeAction: async ({ action, input, signal }) => await harness.executeAction({ action, input, signal }),
           confirm: harness.confirmHandler,
         },
       });
@@ -735,6 +741,37 @@ describe('the mounted PRs & Issues source settings page', () => {
     await expect(page.getByText(`${SOURCE_DISPLAY_NAME} could not be read`))
       .resolves.toEqual({ content: `${SOURCE_DISPLAY_NAME} could not be read` });
     await expect(page.queryByText(`No ${SOURCE_DISPLAY_NAME} scopes to add`)).resolves.toBeUndefined();
+  });
+
+  it('settles an unanswered source discovery at the Triage deadline and ignores its late answer', async () => {
+    let sourceSignal: AbortSignal | undefined;
+    let resolveLate: ((result: JsonValue) => void) | undefined;
+    const harness = createHarness({
+      discovery: async (signal) => await new Promise<JsonValue>((resolve) => {
+        sourceSignal = signal;
+        resolveLate = resolve;
+      }),
+    });
+    const deadlineSurface = createTriageSourceSettingsSurfaceForTesting({
+      pluginId: PLUGIN_ID,
+      listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
+      sourceDisplayName: SOURCE_DISPLAY_NAME,
+    }, {
+      discoveryDeadlineMs: 5,
+    });
+    const page = await mountSettings(harness, {}, deadlineSurface);
+
+    await vi.waitFor(async () => {
+      expect(await page.queryByText('This read did not finish')).toBeDefined();
+    });
+    expect(sourceSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      resolveLate?.({ kind: 'complete', candidates: [candidate('acme/api')], failures: [] });
+      await Promise.resolve();
+    });
+    await expect(page.getByText('This read did not finish')).resolves.toBeDefined();
+    await expect(page.queryByText('acme/api')).resolves.toBeUndefined();
   });
 
   it('tells the user a source the host no longer admits cannot be configured', async () => {

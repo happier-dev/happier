@@ -21,11 +21,16 @@ export {
 export { toTriageSourceFailure } from './failures.js';
 export {
   buildBitbucketLocalRef,
+  matchesBitbucketEntryLocator,
   toBitbucketPresentObservation,
 } from './observations.js';
 export { listBitbucketSourceInstances } from './listInstances.js';
 export { scanBitbucketSource } from './scan.js';
 export { getBitbucketSourceEntry } from './get.js';
+export {
+  prepareBitbucketReviewWorkspace,
+  type BitbucketReviewWorkspaceRuntime,
+} from './prepareReviewWorkspace.js';
 export {
   projectBitbucketDetailOverview,
   type BitbucketDetailFieldV1,
@@ -35,5 +40,6 @@ export {
   BITBUCKET_TRIAGE_ACTION_IDS,
   getBitbucketSourceEntryAction,
   listBitbucketInstancesAction,
+  prepareBitbucketReviewWorkspaceAction,
   scanBitbucketSourceAction,
 } from './actions.js';

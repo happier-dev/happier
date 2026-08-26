@@ -18,8 +18,8 @@ import {
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import {
+  completeTriagePostMutationIfNeeded,
   useTriagePostMutationCompletion,
-  type TriagePostMutationCompletionV1,
 } from '@happier-dev/triage-sources/ui';
 
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
@@ -259,30 +259,30 @@ function unreadableResult(text: PluginTranslate): SettledMutationV1 {
   };
 }
 
-async function completeAfterEntryWrite(
+/** Whether Azure's pull-request result established that provider state may have changed. */
+export function azureEntryWriteMayHaveChangedProviderStateV1(
   execution: PluginActionExecution<unknown>,
-  complete: TriagePostMutationCompletionV1,
-): Promise<void> {
-  if (execution.status !== 'success') return;
+): boolean {
+  if (execution.status !== 'success') return false;
   const parsed = AzureMutationResultV1Schema.safeParse(execution.result);
-  if (parsed.success && (
+  return parsed.success && (
     parsed.data.kind === 'applied'
     || parsed.data.kind === 'pending'
     || parsed.data.kind === 'uncertain'
-  )) await complete();
+  );
 }
 
-async function completeAfterThreadWrite(
+/** Whether Azure's thread-status result established that provider state may have changed. */
+export function azureThreadWriteMayHaveChangedProviderStateV1(
   execution: PluginActionExecution<unknown>,
-  complete: TriagePostMutationCompletionV1,
-): Promise<void> {
-  if (execution.status !== 'success') return;
+): boolean {
+  if (execution.status !== 'success') return false;
   const parsed = AzureThreadStatusResultV1Schema.safeParse(execution.result);
-  if (parsed.success && (
+  return parsed.success && (
     parsed.data.kind === 'applied'
     || parsed.data.kind === 'rejected'
     || parsed.data.kind === 'uncertain'
-  )) await complete();
+  );
 }
 
 function projectSettledMutation(
@@ -428,17 +428,29 @@ export function AzureMutationControls({
       localRef,
       observedSourceCommitId,
       deleteSourceBranch,
-    }).then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+    }).then((execution) => completeTriagePostMutationIfNeeded(
+      completeMutation,
+      execution,
+      azureEntryWriteMayHaveChangedProviderStateV1,
+    ));
   }, [complete, completeMutation, deleteSourceBranch, input.instance, localRef, observedSourceCommitId]);
 
   const runAbandon = React.useCallback(() => {
     void abandon.execute({ v: 1, instance: input.instance, localRef })
-      .then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+      .then((execution) => completeTriagePostMutationIfNeeded(
+        completeMutation,
+        execution,
+        azureEntryWriteMayHaveChangedProviderStateV1,
+      ));
   }, [abandon, completeMutation, input.instance, localRef]);
 
   const runReactivate = React.useCallback(() => {
     void reactivate.execute({ v: 1, instance: input.instance, localRef })
-      .then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+      .then((execution) => completeTriagePostMutationIfNeeded(
+        completeMutation,
+        execution,
+        azureEntryWriteMayHaveChangedProviderStateV1,
+      ));
   }, [completeMutation, input.instance, localRef, reactivate]);
 
   const runRequestReview = React.useCallback(() => {
@@ -451,7 +463,11 @@ export function AzureMutationControls({
       localRef,
       observedSourceCommitId,
       reviewerIds: ids,
-    }).then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+    }).then((execution) => completeTriagePostMutationIfNeeded(
+      completeMutation,
+      execution,
+      azureEntryWriteMayHaveChangedProviderStateV1,
+    ));
   }, [completeMutation, input.instance, localRef, observedSourceCommitId, requestReview, reviewerIdsValue]);
 
   if (overview.state.presentation !== 'active') {
@@ -738,7 +754,11 @@ export function AzureThreadStatusControl({
       localRef,
       threadId: thread.id,
       status,
-    }).then(async (execution) => await completeAfterThreadWrite(execution, completeMutation));
+    }).then((execution) => completeTriagePostMutationIfNeeded(
+      completeMutation,
+      execution,
+      azureThreadWriteMayHaveChangedProviderStateV1,
+    ));
   }, [completeMutation, input.instance, localRef, status, thread.id, threadStatus]);
 
   return (

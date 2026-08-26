@@ -3,10 +3,16 @@ import type {
   PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import {
+  raceWithTimeout,
+  throwIfAborted,
+  type RaceWithTimeoutResult,
+} from '@happier-dev/plugin-sdk/async';
 import type {
   TriageConfiguredSourceInstanceV1,
   TriageEntryLocatorV1,
   TriageEntryRefV1,
+  TriageGetResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -52,7 +58,12 @@ export type TriageReobserveEntryDepsV1 = Readonly<{
   executeGet: TriageAdmittedGetExecutorV1;
   nowMs(): number;
   signal?: AbortSignal;
+  /** Owner-private test injection; never a source-facing deadline override. */
+  getDeadlineMs?: number;
 }>;
+
+/** Private per-invocation deadline; owner tests inject a short duration. */
+const TRIAGE_REOBSERVE_GET_DEADLINE_MS = 10_000;
 
 function sameSource(
   configured: TriageConfiguredSourceInstanceV1,
@@ -74,11 +85,13 @@ export async function reobserveTriageEntry(
   input: TriageReobserveEntryInputV1,
   deps: TriageReobserveEntryDepsV1,
 ): Promise<TriageReobserveEntryResultV1> {
+  throwIfAborted(deps.signal);
   const options = deps.signal === undefined ? undefined : { signal: deps.signal };
   const [configured, admitted] = await Promise.all([
     deps.readConfiguredInstance(input.sourceInstanceId, options),
     deps.readAdmittedSources(options),
   ]);
+  throwIfAborted(deps.signal);
   if (configured === null || !sameSource(configured, input.entryRef)) {
     return { kind: 'unavailable' };
   }
@@ -87,18 +100,41 @@ export async function reobserveTriageEntry(
     .get(renderSourceQualifiedId(input.entryRef.source));
   if (contribution === undefined) return { kind: 'unavailable' };
 
-  const observed = await deps.executeGet(contribution.operations.get, {
-    v: 1,
-    instance: configured,
-    localRef: {
-      kindId: input.entryRef.kindId,
-      collisionScope: input.entryRef.collisionScope,
-      entryId: input.entryRef.entryId,
-    },
-    ...(input.lastKnownLocator === undefined
-      ? {}
-      : { lastKnownLocator: input.lastKnownLocator }),
-  }, options);
+  const deadline = new AbortController();
+  const getOptions: PluginCancellationOptions = {
+    signal: deps.signal === undefined
+      ? deadline.signal
+      : AbortSignal.any([deps.signal, deadline.signal]),
+  };
+  let settled: RaceWithTimeoutResult<TriageGetResultV1>;
+  try {
+    settled = await raceWithTimeout(
+      deps.executeGet(contribution.operations.get, {
+        v: 1,
+        instance: configured,
+        localRef: {
+          kindId: input.entryRef.kindId,
+          collisionScope: input.entryRef.collisionScope,
+          entryId: input.entryRef.entryId,
+        },
+        ...(input.lastKnownLocator === undefined
+          ? {}
+          : { lastKnownLocator: input.lastKnownLocator }),
+      }, getOptions),
+      deps.getDeadlineMs ?? TRIAGE_REOBSERVE_GET_DEADLINE_MS,
+    );
+  } catch (error) {
+    // A synchronous invocation failure has the same caller-visible path as a
+    // rejected source read.
+    settled = { type: 'rejected', error };
+  } finally {
+    deadline.abort();
+  }
+
+  throwIfAborted(deps.signal);
+  if (settled.type === 'timeout') return { kind: 'unavailable' };
+  if (settled.type === 'rejected') throw settled.error;
+  const observed = settled.value;
   const qualified = qualifySourceObservation({
     source: input.entryRef.source,
     declaredKindIds: contribution.descriptor.kinds.map((kind) => kind.id),

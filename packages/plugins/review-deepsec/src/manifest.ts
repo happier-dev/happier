@@ -62,16 +62,15 @@ export const DEEPSEC_PLUGIN = definePlugin({
           },
           auth: {
             support: 'status_only',
-            probe: {
-              parser: 'unknown',
-              backgroundChecks: 'safe',
-              statusArgs: null,
-              envVars: ['AI_GATEWAY_API_KEY'],
-            },
+            environmentVariables: ['AI_GATEWAY_API_KEY'],
+            missingCredentialState: 'unknown',
             loginLaunches: [],
           },
         },
         primary: 'executionRuns',
+        catalog: {
+          vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
+        },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, { executionRuns: { open: ['create'], checkpoint: false, stop: true } }),
       },
       factory: createDeepSecRuntime,

@@ -274,7 +274,11 @@ export async function confirmGitlabItemMutation<TRow extends GitlabIdentifiedRow
     });
   }
   const decoded = input.subject.decode(read.response.body);
-  return decoded.ok
-    ? Object.freeze({ ok: true as const, row: decoded.row })
-    : Object.freeze({ ok: false as const, failure: UNDECODABLE_ITEM_FAILURE });
+  if (!decoded.ok) {
+    return Object.freeze({ ok: false as const, failure: UNDECODABLE_ITEM_FAILURE });
+  }
+  if (!gitlabMutationRowMatchesRouteV1(decoded.row, input.route)) {
+    return Object.freeze({ ok: false as const, failure: IDENTITY_MISMATCH_FAILURE });
+  }
+  return Object.freeze({ ok: true as const, row: decoded.row });
 }

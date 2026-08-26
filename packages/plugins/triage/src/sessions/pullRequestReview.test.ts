@@ -47,6 +47,7 @@ function preparedWorkspace(
         directory: '/workspaces/acme/web',
         branch: 'pr-42',
         created: true,
+        pullRequest: PULL_REQUEST,
         currentness: { kind: 'currentAtObservedHead' },
         reviewEligibility,
     };
@@ -113,7 +114,7 @@ describe('resolvePullRequestReviewStart', () => {
             { type: 'creationPending', creationKey: 'key-1', outcome: 'accepted', workspace: ELIGIBLE },
             { type: 'creationFailed', creationKey: 'key-1', workspace: ELIGIBLE },
             { type: 'workspacePreparationFailed', reason: 'refused', retryable: false },
-            { type: 'rejected', reason: 'existingSessionNotOfferedForFix' },
+            { type: 'rejected', reason: 'existingSessionRequiresReferenceOnlyMode' },
         ];
 
         for (const result of unsettled) {

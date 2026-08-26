@@ -10,6 +10,7 @@ import {
   classifyGithubResponseFailure,
   classifyGithubTransportFailure,
   isGithubSuccessStatus,
+  isGithubWriteResponseAmbiguous,
 } from '../errors.js';
 import {
   readGithubPullRequest,
@@ -366,7 +367,8 @@ export async function publishGithubPullRequestReview(
     }),
     // A lost transport answer and a server-side failure both sit inside the
     // response-loss window. A definite 4xx is handled below without reconciliation.
-    mayHaveChanged: (result) => !result.ok || result.response.status >= 500,
+    mayHaveChanged: (result) => !result.ok
+      || isGithubWriteResponseAmbiguous(result.response),
     confirm: async () => {
       const confirmedReviews = matchingReviewIds(
         await readGithubPullRequestReviewRecords({
@@ -434,7 +436,7 @@ export async function publishGithubPullRequestReview(
     // The shared ladder classifies 5xx above. This residual arm fails safe if
     // that predicate changes rather than turning possible application into a
     // definite rejection.
-    if (written.response.status >= 500) {
+    if (isGithubWriteResponseAmbiguous(written.response)) {
       return Object.freeze({
         kind: 'uncertain' as const,
         ...(confirmed.ok ? { observation: confirmed.observation } : {}),
@@ -518,9 +520,20 @@ export async function mergeGithubPullRequest(
       ...(input.commitMessage === undefined ? {} : { commit_message: input.commitMessage }),
     },
   });
-  if (!written.ok) return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+  if (!written.ok) {
+    return settle(
+      await confirm(input.localRef, input.route, repositories, dependencies),
+      (facts) => facts.merged,
+    );
+  }
 
   const response = written.response;
+  if (isGithubWriteResponseAmbiguous(response)) {
+    return settle(
+      await confirm(input.localRef, input.route, repositories, dependencies),
+      (facts) => facts.merged,
+    );
+  }
   if (isGithubSuccessStatus(response.status)) {
     return settle(
       await confirm(input.localRef, input.route, repositories, dependencies),
@@ -624,7 +637,15 @@ export async function markGithubPullRequestReady(
     { query: MARK_READY_MUTATION, variables: { pullRequestId: current.facts.nodeId } },
     dependencies,
   );
-  if (!written.ok) return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+  if (!written.ok) {
+    if (!written.mayHaveChanged) {
+      return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+    }
+    return settle(
+      await confirm(input.localRef, input.route, repositories, dependencies),
+      (facts) => !facts.draft,
+    );
+  }
 
   // The GraphQL payload's own `isDraft` is NOT the claim. The confirming read is,
   // for the same reason every other write here rereads: the response describes the
@@ -696,9 +717,11 @@ export async function updateGithubPullRequestBranch(
       method: 'PUT',
       body: { expected_head_sha: input.headRevision },
     }),
-    // A transport failure cannot say whether GitHub accepted the PUT. A response
-    // can, and keeps its status-specific handling below.
-    mayHaveChanged: (result) => !result.ok,
+    // A transport failure or 5xx cannot say whether GitHub accepted the PUT.
+    // A 4xx can, and keeps its status-specific handling below.
+    mayHaveChanged: (result) => result.ok
+      ? isGithubWriteResponseAmbiguous(result.response)
+      : true,
     confirm: async () => {
       const confirmed = await confirm(input.localRef, input.route, repositories, dependencies);
       if (!confirmed.ok) {
@@ -816,9 +839,20 @@ async function transitionGithubPullRequestState(
     method: 'PATCH',
     body: { state: transition.target },
   });
-  if (!written.ok) return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+  if (!written.ok) {
+    return settle(
+      await confirm(input.localRef, input.route, repositories, dependencies),
+      (facts) => facts.state === transition.target,
+    );
+  }
 
   const response = written.response;
+  if (isGithubWriteResponseAmbiguous(response)) {
+    return settle(
+      await confirm(input.localRef, input.route, repositories, dependencies),
+      (facts) => facts.state === transition.target,
+    );
+  }
   if (!isGithubSuccessStatus(response.status)) {
     return Object.freeze({
       kind: 'failed' as const,

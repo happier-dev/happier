@@ -16,6 +16,7 @@ import {
     inspectGitWorkspaceLocation,
     materializeGitWorkspaceSourceCheckout,
     isGitAdministrativeWorkspacePath,
+    prepareGitReviewWorkspaceAtSelectedRoot,
     realizeGitWorkspaceCheckout,
     reconcileGitWorkspacePostMaterialization,
     resolveGitWorkspaceTransferSourceEntries,
@@ -55,6 +56,7 @@ export function createGitBackend(): ScmBackend {
         workspaceIntegration: {
             inspectWorkspaceLocation: inspectGitWorkspaceLocation,
             reconcilePostMaterialization: reconcileGitWorkspacePostMaterialization,
+            prepareReviewWorkspace: prepareGitReviewWorkspaceAtSelectedRoot,
             realizeWorkspaceCheckout: realizeGitWorkspaceCheckout,
             createWorkspaceCheckout: createGitWorkspaceCheckout,
             materializeWorkspaceCheckout: materializeGitWorkspaceSourceCheckout,

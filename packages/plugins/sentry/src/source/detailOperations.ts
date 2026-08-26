@@ -18,10 +18,10 @@
  */
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
 
 import { createSentryApiClient } from '../api/sentryApiClient.js';
 import type { SentryCursorWalkV1 } from '../api/sentryCursorCycle.js';
-import { boundSentryInvocation } from '../api/sentryInvocationDeadline.js';
 import { SENTRY_FAILURE_CODES } from '../sentryContracts.js';
 import {
   SentryIssueEventsInputV1Schema,
@@ -129,34 +129,42 @@ export async function readSentryIssue(
 ): Promise<SentryReadIssueResultV1> {
   const parsed = SentryReadIssueInputV1Schema.parse(input);
 
-  const routed = admitSentryEntryInvocation({
-    localInstanceKey: parsed.instance.localInstanceKey,
-    configurationToken: parsed.instance.configuration.token,
-    localRef: parsed.localRef,
+  const bounded = createBoundedInvocation({
+    callerSignal: context.signal,
+    timeoutMs: SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
   });
-  if (!routed.ok) {
-    return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
-  }
-
-  const client = await createSentryApiClient(context, {
-    account: parsed.instance.binding.account,
-    deployment: routed.deployment,
-    nowMs: () => Date.now(),
-    signal: boundSentryInvocation(context.signal, SENTRY_MOUNTED_DETAIL_DEADLINE_MS),
-  });
-  const read = await readSentryIssueProjection(client, {
-    instance: routed.instance,
-    entryId: parsed.localRef.entryId,
-    projection: parsed.projection,
-    nowMs: Date.now(),
-  });
-  if (!read.ok) {
-    return Object.freeze({
-      kind: 'unavailable' as const,
-      failure: toTriageFailure(read.failure),
+  try {
+    const routed = admitSentryEntryInvocation({
+      localInstanceKey: parsed.instance.localInstanceKey,
+      configurationToken: parsed.instance.configuration.token,
+      localRef: parsed.localRef,
     });
+    if (!routed.ok) {
+      return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
+    }
+
+    const client = await createSentryApiClient(context, {
+      account: parsed.instance.binding.account,
+      deployment: routed.deployment,
+      nowMs: () => Date.now(),
+      signal: bounded.signal,
+    });
+    const read = await readSentryIssueProjection(client, {
+      instance: routed.instance,
+      entryId: parsed.localRef.entryId,
+      projection: parsed.projection,
+      nowMs: Date.now(),
+    });
+    if (!read.ok) {
+      return Object.freeze({
+        kind: 'unavailable' as const,
+        failure: toTriageFailure(read.failure),
+      });
+    }
+    return read.value;
+  } finally {
+    bounded.dispose();
   }
-  return read.value;
 }
 
 /** One bounded page of the retained events for one issue. */
@@ -166,50 +174,58 @@ export async function listSentryIssueEvents(
 ): Promise<SentryIssueEventsResultV1> {
   const parsed = SentryIssueEventsInputV1Schema.parse(input);
 
-  const routed = admitSentryEntryInvocation({
-    localInstanceKey: parsed.instance.localInstanceKey,
-    configurationToken: parsed.instance.configuration.token,
-    localRef: parsed.localRef,
+  const bounded = createBoundedInvocation({
+    callerSignal: context.signal,
+    timeoutMs: SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
   });
-  if (!routed.ok) {
-    return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
-  }
-
-  const walk = resolveWalkPosition(parsed.continuation, parsed.limit);
-  if (!walk.ok) {
-    return Object.freeze({
-      kind: 'unavailable' as const,
-      failure: toTriageFailure(CONTINUATION_UNREADABLE),
+  try {
+    const routed = admitSentryEntryInvocation({
+      localInstanceKey: parsed.instance.localInstanceKey,
+      configurationToken: parsed.instance.configuration.token,
+      localRef: parsed.localRef,
     });
-  }
+    if (!routed.ok) {
+      return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
+    }
 
-  const client = await createSentryApiClient(context, {
-    account: parsed.instance.binding.account,
-    deployment: routed.deployment,
-    nowMs: () => Date.now(),
-    signal: boundSentryInvocation(context.signal, SENTRY_MOUNTED_DETAIL_DEADLINE_MS),
-  });
-  const page = await readSentryIssueEventsPage(client, {
-    instance: routed.instance,
-    entryId: parsed.localRef.entryId,
-    limit: parsed.limit,
-    position: walk.position,
-    nowMs: Date.now(),
-  });
-  if (!page.ok) {
-    return Object.freeze({
-      kind: 'unavailable' as const,
-      failure: toTriageFailure(page.failure),
+    const walk = resolveWalkPosition(parsed.continuation, parsed.limit);
+    if (!walk.ok) {
+      return Object.freeze({
+        kind: 'unavailable' as const,
+        failure: toTriageFailure(CONTINUATION_UNREADABLE),
+      });
+    }
+
+    const client = await createSentryApiClient(context, {
+      account: parsed.instance.binding.account,
+      deployment: routed.deployment,
+      nowMs: () => Date.now(),
+      signal: bounded.signal,
     });
-  }
+    const page = await readSentryIssueEventsPage(client, {
+      instance: routed.instance,
+      entryId: parsed.localRef.entryId,
+      limit: parsed.limit,
+      position: walk.position,
+      nowMs: Date.now(),
+    });
+    if (!page.ok) {
+      return Object.freeze({
+        kind: 'unavailable' as const,
+        failure: toTriageFailure(page.failure),
+      });
+    }
 
-  return Object.freeze({
-    kind: 'events' as const,
-    rows: page.value.rows,
-    omittedRowCount: page.value.omittedRowCount,
-    projectionTruncated: page.value.projectionTruncated,
-    ...projectWalkPosition(page.value.nextPage, parsed.limit),
-  });
+    return Object.freeze({
+      kind: 'events' as const,
+      rows: page.value.rows,
+      omittedRowCount: page.value.omittedRowCount,
+      projectionTruncated: page.value.projectionTruncated,
+      ...projectWalkPosition(page.value.nextPage, parsed.limit),
+    });
+  } finally {
+    bounded.dispose();
+  }
 }
 
 /** One bounded page of the value distribution of a single tag key. */
@@ -219,52 +235,60 @@ export async function listSentryTagValues(
 ): Promise<SentryTagValuesResultV1> {
   const parsed = SentryTagValuesInputV1Schema.parse(input);
 
-  const routed = admitSentryEntryInvocation({
-    localInstanceKey: parsed.instance.localInstanceKey,
-    configurationToken: parsed.instance.configuration.token,
-    localRef: parsed.localRef,
+  const bounded = createBoundedInvocation({
+    callerSignal: context.signal,
+    timeoutMs: SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
   });
-  if (!routed.ok) {
-    return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
-  }
-
-  const walk = resolveWalkPosition(parsed.continuation, parsed.limit);
-  if (!walk.ok) {
-    return Object.freeze({
-      kind: 'unavailable' as const,
-      failure: toTriageFailure(CONTINUATION_UNREADABLE),
+  try {
+    const routed = admitSentryEntryInvocation({
+      localInstanceKey: parsed.instance.localInstanceKey,
+      configurationToken: parsed.instance.configuration.token,
+      localRef: parsed.localRef,
     });
-  }
+    if (!routed.ok) {
+      return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
+    }
 
-  const client = await createSentryApiClient(context, {
-    account: parsed.instance.binding.account,
-    deployment: routed.deployment,
-    nowMs: () => Date.now(),
-    signal: boundSentryInvocation(context.signal, SENTRY_MOUNTED_DETAIL_DEADLINE_MS),
-  });
-  const page = await readSentryTagValuesPage(client, {
-    instance: routed.instance,
-    entryId: parsed.localRef.entryId,
-    tagKey: parsed.tagKey,
-    limit: parsed.limit,
-    position: walk.position,
-    nowMs: Date.now(),
-  });
-  if (!page.ok) {
-    return Object.freeze({
-      kind: 'unavailable' as const,
-      failure: toTriageFailure(page.failure),
+    const walk = resolveWalkPosition(parsed.continuation, parsed.limit);
+    if (!walk.ok) {
+      return Object.freeze({
+        kind: 'unavailable' as const,
+        failure: toTriageFailure(CONTINUATION_UNREADABLE),
+      });
+    }
+
+    const client = await createSentryApiClient(context, {
+      account: parsed.instance.binding.account,
+      deployment: routed.deployment,
+      nowMs: () => Date.now(),
+      signal: bounded.signal,
     });
-  }
+    const page = await readSentryTagValuesPage(client, {
+      instance: routed.instance,
+      entryId: parsed.localRef.entryId,
+      tagKey: parsed.tagKey,
+      limit: parsed.limit,
+      position: walk.position,
+      nowMs: Date.now(),
+    });
+    if (!page.ok) {
+      return Object.freeze({
+        kind: 'unavailable' as const,
+        failure: toTriageFailure(page.failure),
+      });
+    }
 
-  return Object.freeze({
-    kind: 'tagValues' as const,
-    tagKey: parsed.tagKey,
-    rows: page.value.rows,
-    omittedRowCount: page.value.omittedRowCount,
-    projectionTruncated: page.value.projectionTruncated,
-    ...projectWalkPosition(page.value.nextPage, parsed.limit),
-  });
+    return Object.freeze({
+      kind: 'tagValues' as const,
+      tagKey: parsed.tagKey,
+      rows: page.value.rows,
+      omittedRowCount: page.value.omittedRowCount,
+      projectionTruncated: page.value.projectionTruncated,
+      ...projectWalkPosition(page.value.nextPage, parsed.limit),
+    });
+  } finally {
+    bounded.dispose();
+  }
 }
 
 /**
@@ -282,32 +306,40 @@ export async function readSentryEvent(
 ): Promise<SentryReadEventResultV1> {
   const parsed = SentryReadEventInputV1Schema.parse(input);
 
-  const routed = admitSentryEntryInvocation({
-    localInstanceKey: parsed.instance.localInstanceKey,
-    configurationToken: parsed.instance.configuration.token,
-    localRef: parsed.localRef,
+  const bounded = createBoundedInvocation({
+    callerSignal: context.signal,
+    timeoutMs: SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
   });
-  if (!routed.ok) {
-    return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
-  }
-
-  const client = await createSentryApiClient(context, {
-    account: parsed.instance.binding.account,
-    deployment: routed.deployment,
-    nowMs: () => Date.now(),
-    signal: boundSentryInvocation(context.signal, SENTRY_MOUNTED_DETAIL_DEADLINE_MS),
-  });
-  const read = await readSentryEventProjection(client, {
-    instance: routed.instance,
-    entryId: parsed.localRef.entryId,
-    selector: parsed.selector,
-    nowMs: Date.now(),
-  });
-  if (!read.ok) {
-    return Object.freeze({
-      kind: 'unavailable' as const,
-      failure: toTriageFailure(read.failure),
+  try {
+    const routed = admitSentryEntryInvocation({
+      localInstanceKey: parsed.instance.localInstanceKey,
+      configurationToken: parsed.instance.configuration.token,
+      localRef: parsed.localRef,
     });
+    if (!routed.ok) {
+      return Object.freeze({ kind: 'unavailable' as const, failure: routed.failure });
+    }
+
+    const client = await createSentryApiClient(context, {
+      account: parsed.instance.binding.account,
+      deployment: routed.deployment,
+      nowMs: () => Date.now(),
+      signal: bounded.signal,
+    });
+    const read = await readSentryEventProjection(client, {
+      instance: routed.instance,
+      entryId: parsed.localRef.entryId,
+      selector: parsed.selector,
+      nowMs: Date.now(),
+    });
+    if (!read.ok) {
+      return Object.freeze({
+        kind: 'unavailable' as const,
+        failure: toTriageFailure(read.failure),
+      });
+    }
+    return Object.freeze({ kind: 'event' as const, projection: read.value });
+  } finally {
+    bounded.dispose();
   }
-  return Object.freeze({ kind: 'event' as const, projection: read.value });
 }

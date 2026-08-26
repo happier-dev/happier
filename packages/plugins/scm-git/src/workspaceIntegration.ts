@@ -42,6 +42,7 @@ import { inspectGitCheckoutIdentity } from './checkoutIdentity.js';
 import {
     createGitWorkspaceCheckoutAtDefaultPath,
     materializeGitWorkspaceCheckoutAtPath,
+    prepareGitReviewWorkspace,
 } from './operations/materializeGitWorkspaceCheckout.js';
 import { reconcileGitWorkspaceCheckout } from './operations/reconcileWorkspaceCheckout.js';
 import { resolveGitWorkspaceTransferEntries } from './operations/resolveGitWorkspaceTransferEntries.js';
@@ -154,6 +155,35 @@ export async function materializeGitWorkspaceSourceCheckout(
         branchName: materialized.branchName,
         created: !materialized.reused,
     };
+}
+
+export async function prepareGitReviewWorkspaceAtSelectedRoot(input: Readonly<{
+    context: ScmBackendContext;
+    request: Readonly<{
+        sourceTip: Parameters<typeof prepareGitReviewWorkspace>[0]['sourceTip'];
+    }>;
+    signal: AbortSignal;
+}>) {
+    try {
+        const prepared = await prepareGitReviewWorkspace({
+            repoRoot: resolveGitRepoRoot(input.context),
+            sourceTip: input.request.sourceTip,
+            signal: input.signal,
+        });
+        return {
+            success: true as const,
+            targetPath: prepared.targetPath,
+            branchName: prepared.branchName,
+            created: prepared.created,
+            currentness: prepared.currentness,
+        };
+    } catch (error) {
+        return {
+            success: false as const,
+            error: error instanceof Error ? error.message : String(error),
+            errorCode: 'COMMAND_FAILED' as const,
+        };
+    }
 }
 
 export async function realizeGitWorkspaceCheckout(

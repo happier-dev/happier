@@ -105,6 +105,19 @@ describe('GitLab listInstances', () => {
     }
   });
 
+  it('carries every discovered account candidate instead of imposing a local thirty-two-instance ceiling', async () => {
+    const { result } = await list({
+      status: 'complete',
+      accounts: Array.from({ length: 33 }, (_unused, index) => (
+        account(`account-${index + 1}`, ['https://gitlab.com'])
+      )),
+    });
+
+    expect(result.kind).toBe('complete');
+    if (result.kind !== 'complete') throw new Error(`expected complete, got ${result.kind}`);
+    expect(result.candidates).toHaveLength(33);
+  });
+
   it('maps truncation to incomplete and a listing failure to failed, never complete', async () => {
     const truncated = await list({
       status: 'truncated',

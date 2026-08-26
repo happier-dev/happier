@@ -67,6 +67,16 @@ export function createAzureDevOpsApiClient(
         return { ok: false, failure: classifyAzureDevOpsTransportFailure({ error, signal }) };
       }
 
+      // Cancellation can race an already-started transport: some boundaries resolve with bytes
+      // after their signal fired. Those bytes belong to an invocation the caller has discarded,
+      // so classify the abort before response parsing or projection can publish stale state.
+      if (signal.aborted) {
+        return {
+          ok: false,
+          failure: classifyAzureDevOpsTransportFailure({ error: signal.reason, signal }),
+        };
+      }
+
       const failure = classifyAzureDevOpsResponse({
         status: response.status,
         headers: response.headers,

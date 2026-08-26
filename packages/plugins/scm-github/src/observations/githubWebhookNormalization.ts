@@ -1,3 +1,10 @@
+import {
+  normalizeGithubAutomationEvent,
+  type GithubAutomationEventFactsV1,
+  type GithubAutomationEventPayloadV1,
+  type GithubAutomationEventRefV1,
+} from '../githubAutomationEvents.js';
+
 export type GithubActorV1 = Readonly<{
   id: string;
   login: string;
@@ -22,36 +29,12 @@ export type GithubIssueCommentWebhookObservationV1 = Readonly<{
   actor: GithubActorV1;
 }>;
 
-export type GithubAutomationWebhookPayloadV1 =
-  | Readonly<{
-      kind: 'push';
-      eventId: string;
-      occurredAtMs: number;
-      repository: Readonly<{ repositoryId: string; nameWithOwner: string }>;
-      ref: string;
-      before: string;
-      after: string;
-    }>
-  | Readonly<{
-      kind: 'issueOpened';
-      eventId: string;
-      occurredAtMs: number;
-      repository: Readonly<{ repositoryId: string; nameWithOwner: string }>;
-      issue: Readonly<{ id: string; number: number; title: string }>;
-    }>
-  | Readonly<{
-      kind: 'pullRequestMerged';
-      eventId: string;
-      occurredAtMs: number;
-      repository: Readonly<{ repositoryId: string; nameWithOwner: string }>;
-      pullRequest: Readonly<{ id: string; number: number; mergeCommitSha: string }>;
-    }>;
-
 export type GithubAutomationWebhookObservationV1 = Readonly<{
+  eventRef: GithubAutomationEventRefV1;
   sourceInstanceId: string;
   occurrenceId: string;
   occurredAtMs: number;
-  payload: GithubAutomationWebhookPayloadV1;
+  payload: GithubAutomationEventPayloadV1;
 }>;
 
 export type GithubNormalizedWebhookDeliveryV1 = Readonly<{
@@ -181,13 +164,15 @@ function createAutomationWebhookObservation(params: Readonly<{
   repository: Readonly<{ id: string; nameWithOwner: string }>;
   providerDeliveryId: string;
   occurredAtMs: number;
-  payload: GithubAutomationWebhookPayloadV1;
+  facts: GithubAutomationEventFactsV1;
 }>): GithubAutomationWebhookObservationV1 {
+  const normalized = normalizeGithubAutomationEvent(params.facts);
   return Object.freeze({
+    eventRef: normalized.eventRef,
     sourceInstanceId: `github:repository:${params.repository.id}`,
     occurrenceId: `github:repository:${params.repository.id}:delivery:${params.providerDeliveryId}`,
     occurredAtMs: params.occurredAtMs,
-    payload: params.payload,
+    payload: normalized.payload,
   });
 }
 
@@ -202,64 +187,74 @@ function normalizeAutomationEvent(
   if (eventType === 'push') {
     if (!isObject(payload.head_commit)) return null;
     const occurredAtMs = readTimestamp(payload.head_commit, 'timestamp');
-    const eventPayload: GithubAutomationWebhookPayloadV1 = Object.freeze({
+    const facts = Object.freeze({
       kind: 'push',
-      eventId: providerDeliveryId,
-      occurredAtMs,
       repository: repositoryPayload,
       ref: readString(payload, 'ref'),
       before: readString(payload, 'before'),
       after: readString(payload, 'after'),
-    });
+    }) satisfies GithubAutomationEventFactsV1;
     return createAutomationWebhookObservation({
       repository,
       providerDeliveryId,
       occurredAtMs,
-      payload: eventPayload,
+      facts,
     });
   }
   if (eventType === 'issues') {
     if (payload.action !== 'opened') return null;
     const issue = readObject(payload.issue, 'issue');
     const occurredAtMs = readTimestamp(issue, 'created_at');
-    const eventPayload: GithubAutomationWebhookPayloadV1 = Object.freeze({
+    const facts = Object.freeze({
       kind: 'issueOpened',
-      eventId: providerDeliveryId,
-      occurredAtMs,
       repository: repositoryPayload,
       issue: Object.freeze({
         id: String(readPositiveInteger(issue, 'id')),
         number: readPositiveInteger(issue, 'number'),
         title: readString(issue, 'title', true),
       }),
-    });
+    }) satisfies GithubAutomationEventFactsV1;
     return createAutomationWebhookObservation({
       repository,
       providerDeliveryId,
       occurredAtMs,
-      payload: eventPayload,
+      facts,
     });
   }
-  if (payload.action !== 'closed') return null;
+  if (payload.action !== 'opened' && payload.action !== 'closed') return null;
   const pullRequest = readObject(payload.pull_request, 'pull_request');
-  if (pullRequest.merged !== true) return null;
-  const occurredAtMs = readTimestamp(pullRequest, 'merged_at');
-  const eventPayload: GithubAutomationWebhookPayloadV1 = Object.freeze({
-    kind: 'pullRequestMerged',
-    eventId: providerDeliveryId,
-    occurredAtMs,
-    repository: repositoryPayload,
-    pullRequest: Object.freeze({
-      id: String(readPositiveInteger(pullRequest, 'id')),
-      number: readPositiveInteger(pullRequest, 'number'),
-      mergeCommitSha: readString(pullRequest, 'merge_commit_sha'),
-    }),
-  });
+  const occurredAtMs = payload.action === 'opened'
+    ? readTimestamp(pullRequest, 'created_at')
+    : readTimestamp(pullRequest, 'merged_at');
+  const commonPullRequest = {
+    id: String(readPositiveInteger(pullRequest, 'id')),
+    number: readPositiveInteger(pullRequest, 'number'),
+  } as const;
+  const facts: GithubAutomationEventFactsV1 = payload.action === 'opened'
+    ? Object.freeze({
+        kind: 'pullRequestOpened',
+        repository: repositoryPayload,
+        pullRequest: Object.freeze({
+          ...commonPullRequest,
+          title: readString(pullRequest, 'title', true),
+        }),
+      })
+    : pullRequest.merged === true
+      ? Object.freeze({
+          kind: 'pullRequestMerged',
+          repository: repositoryPayload,
+          pullRequest: Object.freeze({
+            ...commonPullRequest,
+            mergeCommitSha: readString(pullRequest, 'merge_commit_sha'),
+          }),
+        })
+      : null;
+  if (facts === null) return null;
   return createAutomationWebhookObservation({
     repository,
     providerDeliveryId,
     occurredAtMs,
-    payload: eventPayload,
+    facts,
   });
 }
 

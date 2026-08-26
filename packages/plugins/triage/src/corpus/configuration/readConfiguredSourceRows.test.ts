@@ -5,8 +5,10 @@ import { TriageConfiguredSourceInstanceV1Schema } from '@happier-dev/triage-prot
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../collections/ids.js';
 import { toCorpusStoredValue } from '../collections/rowCodec.js';
 import { createTestkitCorpusCollections } from '../testkit/corpusCollections.test-support.js';
-import { MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 } from './administerConfiguredSourceInstance.js';
-import { readActiveConfiguredSourceRows } from './readConfiguredSourceRows.js';
+import {
+    readActiveConfiguredSourceRowPage,
+    readActiveConfiguredSourceRows,
+} from './readConfiguredSourceRows.js';
 
 function sourceRow(seed: number) {
     const suffix = String(seed).padStart(12, '0');
@@ -36,19 +38,29 @@ function sourceRow(seed: number) {
 }
 
 describe('the canonical active configured-source read', () => {
-    it('keeps the bounded list projection but returns every overshoot row for administration', async () => {
+    it('pages the Collection cursor while the full reader carries every configured source', async () => {
         const { collections, control } = createTestkitCorpusCollections();
-        const count = MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 + 2;
+        const count = 34;
         for (let seed = 1; seed <= count; seed += 1) {
             control.sourceInstances.seed(toCorpusStoredValue(sourceRow(seed)));
         }
 
+        const first = await readActiveConfiguredSourceRowPage(collections.sourceInstances, { limit: 32 });
+        const second = await readActiveConfiguredSourceRowPage(collections.sourceInstances, {
+            limit: 32,
+            cursor: first.nextCursor,
+        });
         const read = await readActiveConfiguredSourceRows(collections.sourceInstances);
 
-        expect(read.status).toBe('truncated');
-        expect(read.rows).toHaveLength(MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1);
-        expect(read.administrativeRows).toHaveLength(count);
-        expect(read.administrativeRows.at(-1)?.configured.instance.sourceInstanceId)
+        expect(first.rows).toHaveLength(32);
+        expect(first.status).toBe('truncated');
+        expect(first.nextCursor).toBeDefined();
+        expect(second.rows).toHaveLength(2);
+        expect(second.status).toBe('complete');
+        expect(second.nextCursor).toBeUndefined();
+        expect(read.status).toBe('complete');
+        expect(read.rows).toHaveLength(count);
+        expect(read.rows.at(-1)?.configured.instance.sourceInstanceId)
             .toBe(`00000000-0000-4000-8000-${String(count).padStart(12, '0')}`);
     });
 });

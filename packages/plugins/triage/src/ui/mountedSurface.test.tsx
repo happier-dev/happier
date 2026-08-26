@@ -326,9 +326,12 @@ async function mountSurface(
 }
 
 /** Settle the cycle the mount already started; `flush` joins it rather than adding one. */
-async function settleWindow(trigger: 'view' | 'manual'): Promise<void> {
+async function settleWindow(
+    trigger: 'view' | 'manual',
+    fixture: PluginUiTestkit,
+): Promise<void> {
     await act(async () => {
-        await refreshTriageListWindow(trigger);
+        await refreshTriageListWindow(trigger, fixture.context.hostApi);
     });
 }
 
@@ -386,7 +389,7 @@ describe('the mounted PRs & Issues surface', () => {
             locale: 'fr',
             translations: TRIAGE_UI_TRANSLATIONS.fr,
         });
-        await settleWindow('view');
+        await settleWindow('view', shell);
 
         await visibleTexts(shell, [
             TRIAGE_UI_TRANSLATIONS.fr['plugins.triage.surface.upToDate'],
@@ -398,7 +401,7 @@ describe('the mounted PRs & Issues surface', () => {
     it('renders one window assembled from every configured source', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
-        await settleWindow('view');
+        await settleWindow('view', shell);
 
         await visibleTexts(shell, [
             'Replace the duplicated normalizer',
@@ -433,7 +436,7 @@ describe('the mounted PRs & Issues surface', () => {
     it('opens the Composer picker without walking a single source', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
-        await settleWindow('view');
+        await settleWindow('view', shell);
         const scansAfterList = harness.scanCalls.count;
 
         const picker = await mountSurface(renderPickerSurface, harness, 'triage-entry-picker');
@@ -449,7 +452,7 @@ describe('the mounted PRs & Issues surface', () => {
         await visibleTexts(shell, ['Replace the duplicated normalizer']);
 
         // The reader asks, and only then does the picker read.
-        await settleWindow('manual');
+        await settleWindow('manual', picker);
         expect(harness.scanCalls.count).toBeGreaterThan(scansAfterList);
         await visibleTexts(picker, ['Replace the duplicated normalizer', 'Middle change', 'Older change']);
         expect(await picker.getAllByRole('button', { name: 'Attach Middle change' })).toHaveLength(1);
@@ -458,10 +461,10 @@ describe('the mounted PRs & Issues surface', () => {
     it('keeps the last known list on screen when a source fails to refresh', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
-        await settleWindow('view');
+        await settleWindow('view', shell);
 
         harness.state.sourceBFails = true;
-        await settleWindow('manual');
+        await settleWindow('manual', shell);
 
         // The failing connection's entry is still listed: a transient provider
         // error must never be shown as "nothing needs you". The reason is
@@ -489,16 +492,16 @@ describe('the mounted PRs & Issues surface', () => {
     it('keeps serving the picker after the page that opened the window unmounts', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
-        await settleWindow('view');
+        await settleWindow('view', shell);
         const picker = await mountSurface(renderPickerSurface, harness, 'triage-entry-picker');
-        await settleWindow('view');
+        await settleWindow('view', picker);
 
         // The page that happened to create the window goes away while the
         // picker is still open. A window that had captured that mount's Host API
         // would now fail every pass it runs for the surface still on screen.
         await mounted.splice(mounted.indexOf(shell), 1)[0]?.dispose();
         const before = harness.scanCalls.count;
-        await settleWindow('manual');
+        await settleWindow('manual', picker);
 
         expect(harness.scanCalls.count).toBeGreaterThan(before);
         await visibleTexts(picker, ['Replace the duplicated normalizer', 'Middle change']);
@@ -509,7 +512,7 @@ describe('the mounted PRs & Issues surface', () => {
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', {}, {
             subPath: 'q,Middle',
         });
-        await settleWindow('view');
+        await settleWindow('view', shell);
 
         // Without the window binding this is the whole defect: the location
         // parses, the reducer holds the query, and the list shows every row
@@ -522,7 +525,7 @@ describe('the mounted PRs & Issues surface', () => {
     it('narrows the list from the rail and says so instead of claiming nothing needs you', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
-        await settleWindow('view');
+        await settleWindow('view', shell);
         await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
 
         // One press of one facet, through the shared public option control:
@@ -551,7 +554,7 @@ describe('the mounted PRs & Issues surface', () => {
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', {}, {
             subPath: 'q,unmatchable-token',
         });
-        await settleWindow('view');
+        await settleWindow('view', shell);
 
         // Four causes, four sentences (`core/SURFACE.md` §6.2). Nothing is
         // selected in the rail here, so "adjust or clear a filter to widen it"
@@ -565,17 +568,17 @@ describe('the mounted PRs & Issues surface', () => {
     it('reads the provider again only when the reader asks', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
-        await settleWindow('view');
+        await settleWindow('view', shell);
         const afterMount = harness.scanCalls.count;
 
         // View demand inside the one shared minimum interval joins instead of
         // multiplying. Nothing in this surface repeats on its own: there is no
         // timer, interval or poller to wait out.
-        await settleWindow('view');
+        await settleWindow('view', shell);
         expect(harness.scanCalls.count).toBe(afterMount);
 
         await shell.press(await shell.getByRole('button', { name: 'Refresh' }));
-        await settleWindow('manual');
+        await settleWindow('manual', shell);
 
         // Explicit Refresh is the user asking, and the user is never paced.
         expect(harness.scanCalls.count).toBeGreaterThan(afterMount);
@@ -585,7 +588,7 @@ describe('the mounted PRs & Issues surface', () => {
         const harness = createHarness();
         const lifecycle = createRetirableShellSurface();
         const shell = await mountSurface(lifecycle.surface, harness, 'triage-list');
-        await settleWindow('view');
+        await settleWindow('view', shell);
 
         const entryA = {
             source: SOURCE_A,

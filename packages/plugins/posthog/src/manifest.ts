@@ -3,9 +3,11 @@
  *
  * It declares exactly one Triage source contribution, the three read Actions that carry
  * its roles, the two source-native detail reads behind its own body, the Connected
- * Account this source may materialize, and the two host grants those reads need. It declares no Composer attachment, control, chip, picker, or
- * whole-entry reference provider: `happier.triage` owns the one whole-entry attachment,
- * and a second owner here would make the aggregate ambiguous about what a row is.
+ * Account this source may materialize, the one direct-disclosure Tier-B Composer
+ * reference, and the two host grants those reads need. It declares no Composer
+ * attachment, control, chip, picker, region, or whole-entry reference provider:
+ * `happier.triage` owns the one whole-entry attachment, and a second owner here would
+ * make the aggregate ambiguous about what a row is.
  *
  * Every Action's input and result schema is the exact published Triage schema rather
  * than a source-local restatement, so a drift between this manifest and the shared
@@ -13,7 +15,7 @@
  * dialect.
  */
 
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { defineComposerReference, definePlugin } from '@happier-dev/plugin-sdk';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -35,6 +37,7 @@ import {
     POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
     POSTHOG_DETAIL_ARTIFACT_ID,
     POSTHOG_DETAIL_FALLBACK_RENDERER_ID,
+    POSTHOG_EVIDENCE_REFERENCE_ID,
     POSTHOG_SOURCE_DISPLAY_NAME,
     POSTHOG_TRIAGE_SETTINGS_ARTIFACT_ID,
     POSTHOG_TRIAGE_SETTINGS_GROUP_ID,
@@ -66,6 +69,10 @@ import {
     readPosthogSampledEvents,
     scanPosthogSource,
 } from './source/operations.js';
+import {
+    resolvePosthogEvidenceReference,
+    searchPosthogEvidenceReferences,
+} from './composer/reference.js';
 
 export {
     POSTHOG_ACTION_IDS,
@@ -166,6 +173,16 @@ export const POSTHOG_PLUGIN = definePlugin({
     engines: { happier: '^0.0.0' },
     runtime: { apiVersion: 1 },
     entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    composer: {
+        references: {
+            [POSTHOG_EVIDENCE_REFERENCE_ID]: defineComposerReference({
+                title: 'PostHog occurrence',
+                icon: 'error',
+                search: searchPosthogEvidenceReferences,
+                resolve: resolvePosthogEvidenceReference,
+            }),
+        },
+    },
     hostAccess: {
         required: [{
             id: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,

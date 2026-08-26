@@ -162,7 +162,7 @@ async function mountShell(textScale = 1): Promise<PluginUiTestkit> {
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view'); });
+    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
     return fixture;
 }
 

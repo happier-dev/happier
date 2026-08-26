@@ -66,6 +66,7 @@ import {
   usePluginHostApi,
   useSurfaceContext,
   type MetadataEntry,
+  type PluginActionExecution,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
 import {
@@ -74,7 +75,10 @@ import {
   type TriageLinkedSessionProjectionV1,
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
-import { useTriagePostMutationCompletion } from '@happier-dev/triage-sources/ui';
+import {
+  completeTriagePostMutationIfNeeded,
+  useTriagePostMutationCompletion,
+} from '@happier-dev/triage-sources/ui';
 // The presentation rules used below are projections of the Triage contract's own
 // closed fact and failure vocabularies, so they are consumed from the one published
 // owner rather than re-spelled here: six copies is how one declared `compact` number
@@ -163,6 +167,7 @@ import {
   buildGithubPullRequestTargetInputV1,
   buildGithubPullRequestThreadResolutionInputV1,
   buildGithubPullRequestUpdateBranchInputV1,
+  githubMutationMayHaveChangedProviderStateV1,
   githubOfferedMutationsV1,
   projectGithubMutationOutcomeV1,
   readGithubLabelsV1,
@@ -467,11 +472,11 @@ function WriteOutcome({
   );
 }
 
-/**
- * A settled potentially-changing Action signals the Triage-owned completion seam. It carries no
- * provider result: the target performs its own exact get and canonical fold.
- */
-type GithubObservedEntryHandlerV1 = () => void;
+/** A settled Action gives the shared gate the provider outcome; only that gate can signal Triage. */
+type GithubObservedEntryHandlerV1 = (
+  execution: PluginActionExecution<unknown>,
+  outcome: GithubMutationOutcomeV1 | null,
+) => void;
 
 type GithubWriteControllerV1 = Readonly<{
   /** `null` until one dispatch has settled; a press in flight settles nothing. */
@@ -518,8 +523,9 @@ function useGithubWrite(
     void (async () => {
       const settled = await execute(payload);
       const parsed = settled.status === 'success' ? parseResult(settled.result) : null;
-      setOutcome(projectGithubMutationOutcomeV1(settled, parsed));
-      onObserved();
+      const outcome = projectGithubMutationOutcomeV1(settled, parsed);
+      setOutcome(outcome);
+      onObserved(settled, outcome);
     })();
   }, [execute, onObserved, parseResult]);
 
@@ -2575,7 +2581,16 @@ function GithubDetailBody({
   // One render-time read, passed down as data, so no child owns a hidden clock.
   const nowMs = Date.now();
   const completePostMutation = useTriagePostMutationCompletion();
-  const onObserved = React.useCallback(() => { void completePostMutation(); }, [completePostMutation]);
+  const onObserved = React.useCallback((
+    execution: PluginActionExecution<unknown>,
+    outcome: GithubMutationOutcomeV1 | null,
+  ) => {
+    void completeTriagePostMutationIfNeeded(
+      completePostMutation,
+      execution,
+      () => githubMutationMayHaveChangedProviderStateV1(outcome),
+    );
+  }, [completePostMutation]);
   const input = launched;
   const body = React.useMemo(() => projectGithubDetailBody(input), [input]);
 

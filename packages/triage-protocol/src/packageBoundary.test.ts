@@ -139,12 +139,8 @@ describe('Triage protocol public barrel', () => {
         expect(bounds.map(([name]) => name).sort()).toEqual([
             'MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1',
             'MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1',
-            'MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1',
             'MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1',
             'MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1',
-            'MAX_TRIAGE_INSTANCE_DRAFTS_V1',
-            'MAX_TRIAGE_INSTANCE_FAILURES_V1',
-            'MAX_TRIAGE_KINDS_V1',
             'MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1',
             'MAX_TRIAGE_LOCATION_UTF8_BYTES_V1',
             'MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1',

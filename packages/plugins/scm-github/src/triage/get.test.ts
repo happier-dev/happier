@@ -15,7 +15,8 @@ import {
   type RecordedGithubRequest,
   type StubHttpResponse,
 } from './testkit/githubTriage.test-support.js';
-import { runGithubTriageGet } from './get.js';
+import { readGithubPullRequest, runGithubTriageGet } from './get.js';
+import { createGithubRepositoryReader } from './repositories.js';
 import type { GithubTriageEntryLocalRefV1 } from './types.js';
 
 const PULL_REQUEST_REF: GithubTriageEntryLocalRefV1 = Object.freeze({
@@ -88,6 +89,26 @@ describe('GitHub triage get', () => {
     expect(observation.snapshot.rowFacts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
     expect(observation.snapshot.rowFacts.every((fact) => fact.value.kind !== 'detailOnly'))
       .toBe(true);
+  });
+
+  it('retains the validated provider pull-request number for canonical reread consumers', async () => {
+    const transport = createStubGithubTransport({
+      respond: (request) => (request.url.endsWith('/pulls/1284')
+        ? { status: 200, body: GITHUB_PULL_REQUEST_RESPONSE }
+        : undefined),
+    });
+    const client = await createTestGithubApiClient(transport);
+    const reread = await readGithubPullRequest(
+      PULL_REQUEST_REF,
+      { owner: 'octo-org', name: 'example-app' },
+      createGithubRepositoryReader({ client, now: fixedClock(1_000) }),
+      { client, now: fixedClock(1_000), signal: transport.context.signal },
+    );
+
+    expect(reread).toMatchObject({
+      observation: { kind: 'present' },
+      facts: { number: 1284 },
+    });
   });
 
   it('keeps a 200 whose repository scope differs unresolved, never present', async () => {

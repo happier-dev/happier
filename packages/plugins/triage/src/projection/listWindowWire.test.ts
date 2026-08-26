@@ -1,8 +1,10 @@
 import type { TriageSourceViewerFactsV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
-import { MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1 } from '../actions/listEntriesProtocol.js';
-import type { TriageListEntriesResultV1 } from '../actions/listEntriesProtocol.js';
+import {
+    MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
+    type TriageListEntriesResultV1,
+} from '../actions/listEntriesProtocol.js';
 import type { CorpusQualifiedObservationV1 } from '../corpus/fold/qualify.js';
 import { qualifySourceObservation } from '../corpus/fold/qualify.js';
 import {
@@ -27,13 +29,14 @@ import { laneObservationsFromWire, toTriageListWireRows } from './listWindowWire
  * `REQ-03` on a wire that has a hard ceiling.
  *
  * One entry observed through two configured connections is one entry with two
- * observations, and the list has to say so. The compact row carries one full
- * rendered answer and names the other connections without duplicating their
- * complete detail payloads into the list.
+ * observations, and the list has to preserve both complete answers. The
+ * mounted store rehydrates the mixed Action result through the same fold, so a
+ * compact marker for one connection would silently change attention and
+ * selection after the wire boundary.
  *
  * The falsifiers this file exists for are therefore both directions: a wire
- * that quietly drops the second connection, and a wire that quietly carries its
- * content.
+ * that quietly drops the second connection, and a wire that rehydrates only the
+ * rendered connection instead of the whole folded connection set.
  */
 
 const ENTRY_REF = testkitEntryRef();
@@ -165,20 +168,27 @@ describe('the list window on the wire', () => {
         const row = rows[0];
         expect(row?.observedByCount).toBe(2);
         expect(row?.observation.sourceInstanceId).toBe(TESTKIT_SOURCE_INSTANCE_ID);
-        expect(row?.otherObservations).toEqual([
-            { sourceInstanceId: SECOND_INSTANCE_ID, observedAtMs: 1_000, kind: 'present' },
-        ]);
+        expect(row?.otherObservations).toEqual([expect.objectContaining({
+            sourceInstanceId: SECOND_INSTANCE_ID,
+            observedAtMs: 1_000,
+            outcome: expect.objectContaining({
+                kind: 'present',
+                snapshot: expect.objectContaining({ title: 'Replace the duplicated normalizer' }),
+            }),
+        })]);
     });
 
-    it('carries the entry content exactly once, whatever the connection count', () => {
-        const rows = toTriageListWireRows(fold([
+    it('preserves each connection complete answer through rehydration', () => {
+        const window = fold([
             observation({ sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID }),
             observation({ sourceInstanceId: SECOND_INSTANCE_ID, title: 'A second account, same pull request' }),
-        ]));
+        ]);
+        const result = resultFor(window);
 
-        const encoded = JSON.stringify(rows);
-        expect(encoded).toContain('Replace the duplicated normalizer');
-        expect(encoded).not.toContain('A second account, same pull request');
+        expect(laneObservationsFromWire(result, TESTKIT_SOURCE_INSTANCE_ID)[0]?.outcome)
+            .toMatchObject({ kind: 'present', snapshot: { title: 'Replace the duplicated normalizer' } });
+        expect(laneObservationsFromWire(result, SECOND_INSTANCE_ID)[0]?.outcome)
+            .toMatchObject({ kind: 'present', snapshot: { title: 'A second account, same pull request' } });
     });
 
     it('renders the row from the connection the fold selected', () => {
@@ -192,14 +202,9 @@ describe('the list window on the wire', () => {
         expect(row?.observation.sourceInstanceId).toBe(TESTKIT_SOURCE_INSTANCE_ID);
     });
 
-    /**
-     * The bound is a byte-gate decision, so what matters is that exceeding it
-     * is visible. A row that simply listed four of nine connections would be
-     * the same silent truncation the configured-set maximum exists to prevent.
-     */
-    it('reports the true connection count when it carries more than it can list', () => {
-        const connections = MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1 + 4;
-        const rows = toTriageListWireRows(fold(Array.from(
+    it('preserves every configured connection answer instead of truncating the folded set', () => {
+        const connections = MAX_TRIAGE_LIST_SOURCE_BATCH_V1;
+        const window = fold(Array.from(
             { length: connections },
             (_unused, index) => observation({
                 sourceInstanceId: instanceId(index),
@@ -207,18 +212,24 @@ describe('the list window on the wire', () => {
                 // attention names a connection the bound would otherwise drop.
                 involvement: index === connections - 1 ? ['reviewRequested'] : [],
             }),
-        )));
+        ));
+        const rows = toTriageListWireRows(window);
 
         const row = rows[0];
         expect(row?.observedByCount).toBe(connections);
-        expect(row?.otherObservations).toHaveLength(MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1);
-        // The row never names a connection in `attention` that its own list omits.
+        expect(row?.otherObservations).toHaveLength(connections - 1);
         const attentionInstanceId = row?.attention?.fromSourceInstanceId;
         expect(attentionInstanceId).toBe(instanceId(connections - 1));
         expect([
             row?.observation.sourceInstanceId,
             ...(row?.otherObservations ?? []).map((entry) => entry.sourceInstanceId),
         ]).toContain(attentionInstanceId);
+        expect(
+            Array.from({ length: connections }, (_unused, index) => laneObservationsFromWire(
+                resultFor(window),
+                instanceId(index),
+            )).flat(),
+        ).toHaveLength(connections);
     });
 
     it('counts one connection that answered twice as one connection', () => {
@@ -274,7 +285,7 @@ describe('the list window on the wire', () => {
         expect(fold(rehydrated).rows[0]?.attention?.level).toBe('required');
     });
 
-    it('rehydrates the driving connection\'s own answer, ref and all', () => {
+    it('rehydrates one connection\'s answer, ref and all', () => {
         const window = fold([observation({ sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID })]);
 
         expect(laneObservationsFromWire(resultFor(window), TESTKIT_SOURCE_INSTANCE_ID)).toEqual([{

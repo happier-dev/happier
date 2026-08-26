@@ -419,7 +419,7 @@ describe('resolveBuiltInContributions', () => {
 
     const opencodeAgent = contributes.agents.find((agent) => agent.id === 'opencode');
     expect(opencodeAgent?.catalogEntry).not.toHaveProperty('getManagedServerShutdownCleanup');
-    expect(opencodeAgent?.catalogEntry?.resolveHostAgentRuntimeSurfaces).toBeTypeOf('function');
+    expect(opencodeAgent?.catalogEntry?.resolveHostAgentRuntimeSurfaces).toBeUndefined();
     expect(opencodeAgent?.catalogEntry?.resolveSessionRuntimePreferences).toBeTypeOf('function');
     expect(opencodeAgent?.catalogEntry?.getSessionHandoffAgentBundleRecordExtractor).toBeTypeOf('function');
     const opencodeRecordExtractor = await opencodeAgent?.catalogEntry?.getSessionHandoffAgentBundleRecordExtractor?.();
@@ -443,13 +443,17 @@ describe('resolveBuiltInContributions', () => {
     expect(resolveKimiSessionPreferences).toBeTypeOf('function');
     expect(await resolveKimiSessionPreferences?.({
       settings: { kimiAcpPythonSelector: 'poll' },
-      processEnv: {},
-      startedBy: 'terminal',
+      environment: {},
+      startOrigin: 'terminal',
+      isExplicitCliSubcommand: true,
+      parsed: { agentArgs: [] },
     })).toEqual({ environmentVariables: { HAPPIER_KIMI_ACP_SELECTOR: 'poll' } });
     expect(await resolveKimiSessionPreferences?.({
       settings: { kimiAcpPythonSelector: 'poll' },
-      processEnv: { HAPPIER_KIMI_ACP_SELECTOR: 'auto' },
-      startedBy: 'terminal',
+      environment: { HAPPIER_KIMI_ACP_SELECTOR: 'auto' },
+      startOrigin: 'terminal',
+      isExplicitCliSubcommand: true,
+      parsed: { agentArgs: [] },
     })).toEqual({ environmentVariables: { HAPPIER_KIMI_ACP_SELECTOR: 'auto' } });
 
     const activationTargets = contributes.activationTargets;
@@ -527,10 +531,6 @@ describe('resolveBuiltInContributions', () => {
         | ((params: Readonly<{ codexBackendMode?: unknown }>) => boolean)
         | undefined;
     expect(supportsRawCodexVendorResumeInput?.({ codexBackendMode: 'unknown' })).toBe(false);
-    expect(codexAgent?.catalogEntry?.checklists?.['resume.codex']).toEqual([
-        { id: 'cli.codex', params: { includeLoginStatus: true } },
-    ]);
-
     const materializer = await codexAgent?.catalogEntry?.getConnectedServicesMaterializer?.();
             const oauthResult = await materializer?.({
                 materializationKey: 'mat-1',
@@ -968,27 +968,29 @@ describe('resolveBuiltInContributions', () => {
       directoryFlags: ['-C', '--cd'],
       forwardModelFlag: true,
       versionFlags: ['-V', '--version'],
-      resolveExtraOptions: expect.any(Function),
+      isExplicitCliSubcommand: true,
     }));
-    const call = runBackendSessionCliCommandMock.mock.calls.at(-1)?.[0] as {
-      resolveExtraOptions?: (args: string[], parsed: {
-        startingMode?: string;
-        directory?: string;
-        providerArgs: string[];
-      }) => unknown;
-    } | undefined;
-    expect(call?.resolveExtraOptions?.([], {
-      startingMode: 'remote',
-      directory: '/workspace',
-      providerArgs: ['exec', '--model', 'gpt-5.1-codex-max'],
+    const call = runBackendSessionCliCommandMock.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined;
+    expect(call).not.toHaveProperty('resolveExtraOptions');
+    expect(codexAgent?.catalogEntry?.resolveSessionRuntimePreferences?.({
+      isExplicitCliSubcommand: true,
+      parsed: {
+        startingMode: 'remote',
+        directory: '/workspace',
+        agentArgs: ['exec', '--model', 'gpt-5.1-codex-max'],
+      },
+      settings: { codexBackendMode: 'appServer' },
+      environment: {},
+      startOrigin: 'terminal',
     })).toEqual({
       startingMode: 'remote',
       directory: '/workspace',
       codexArgs: ['exec', '--model', 'gpt-5.1-codex-max'],
+      codexBackendMode: 'appServer',
     });
   });
 
-  it('projects Claude CLI session command descriptors from the plugin runtime contribution', async () => {
+  it('projects Claude CLI session command descriptors from the canonical Agent registration', async () => {
     runBackendSessionCliCommandMock.mockClear();
     const contributes = resolveBuiltInContributions();
     const claudeAgent = contributes.agents.find((agent) => agent.id === 'claude');
@@ -1008,27 +1010,42 @@ describe('resolveBuiltInContributions', () => {
       forwardModelFlag: true,
       yoloProviderArgs: ['--dangerously-skip-permissions'],
       versionFlags: ['-v', '--version'],
-      resolveExtraOptions: expect.any(Function),
+      isExplicitCliSubcommand: true,
     }));
-    const call = runBackendSessionCliCommandMock.mock.calls.at(-1)?.[0] as {
-      resolveExtraOptions?: (args: string[], parsed: {
-        startingMode?: string;
-        directory?: string;
-        resume?: string;
-        providerArgs: string[];
-      }) => unknown;
-    } | undefined;
-    expect(call?.resolveExtraOptions?.(['claude', '--js-runtime', 'bun', '--resume', 'vendor-session-1'], {
-      startingMode: 'terminal',
-      directory: '/workspace',
-      resume: 'vendor-session-1',
-      providerArgs: ['--model', 'claude-opus-4-6', '--js-runtime', 'bun'],
+    const call = runBackendSessionCliCommandMock.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined;
+    expect(call).not.toHaveProperty('resolveExtraOptions');
+    expect(claudeAgent?.catalogEntry?.resolveSessionRuntimePreferences?.({
+      isExplicitCliSubcommand: true,
+      parsed: {
+        startingMode: 'terminal',
+        directory: '/workspace',
+        resume: 'vendor-session-1',
+        agentArgs: ['--model', 'claude-opus-4-6', '--js-runtime', 'bun'],
+      },
+      settings: { claudeUnifiedTerminalResumeChoice: 'ask_every_time' },
+      environment: {},
+      startOrigin: 'terminal',
     })).toEqual({
       startingMode: 'terminal',
       directory: '/workspace',
       jsRuntime: 'bun',
       resume: undefined,
       claudeArgs: ['--model', 'claude-opus-4-6', '--resume', 'vendor-session-1'],
+      claudeUnifiedTerminalResumeChoice: 'ask_every_time',
+    });
+
+    expect(claudeAgent?.catalogEntry?.resolveSessionRuntimePreferences?.({
+      isExplicitCliSubcommand: false,
+      parsed: {
+        resume: 'session_happy_123',
+        agentArgs: ['--model', 'claude-opus-4-6'],
+      },
+      settings: {},
+      environment: {},
+      startOrigin: 'terminal',
+    })).toEqual({
+      claudeArgs: ['--model', 'claude-opus-4-6'],
+      claudeUnifiedTerminalResumeChoice: 'ask_every_time',
     });
   });
 
@@ -1173,32 +1190,25 @@ describe('resolveBuiltInContributions', () => {
     }
   });
 
-  it('projects Kilo preflight and Copilot auth hooks from plugin runtime contributions', async () => {
+  it('keeps Kilo preflight behavior out of the cold static catalog while projecting Copilot auth', async () => {
     const contributes = resolveBuiltInContributions();
     const kiloAgent = contributes.agents.find((entry) => entry.id === 'kilo');
     const copilotAgent = contributes.agents.find((entry) => entry.id === 'copilot');
 
-    await expect(kiloAgent?.catalogEntry?.getPreflightSessionControlsProbeAdapter?.()).resolves.toMatchObject({
-      failureCacheStrategy: 'cooldown',
-      cliModelsCommandArgs: ['models'],
-    });
+    expect(kiloAgent?.catalogEntry?.getPreflightSessionControlsProbeAdapter).toBeUndefined();
 
     const copilotAuthSpec = await copilotAgent?.catalogEntry?.getCliAuthSpec?.();
     expect(copilotAuthSpec?.detectAuthStatus).toBeTypeOf('function');
   });
 
-  it('projects selected-account materialized environments only for declaring preflight plugins', async () => {
+  it('leaves selected-account preflight materialization to the activation-time host projection', () => {
     const contributes = resolveBuiltInContributions();
-    const adapters = await Promise.all(['codex', 'opencode', 'pi'].map(async (agentId) => {
+    const preflightGetters = ['codex', 'opencode', 'pi'].map((agentId) => {
       const agent = contributes.agents.find((entry) => entry.id === agentId);
-      return await agent?.catalogEntry?.getPreflightSessionControlsProbeAdapter?.();
-    }));
+      return agent?.catalogEntry?.getPreflightSessionControlsProbeAdapter;
+    });
 
-    expect(adapters).toEqual([
-      expect.objectContaining({ connectedServiceAuth: 'materialized-env' }),
-      expect.objectContaining({ connectedServiceAuth: 'materialized-env' }),
-      expect.objectContaining({ connectedServiceAuth: 'materialized-env' }),
-    ]);
+    expect(preflightGetters).toEqual([undefined, undefined, undefined]);
   });
 
   it('projects Pi through bundled plugin metadata without ACP or MCP ownership', () => {

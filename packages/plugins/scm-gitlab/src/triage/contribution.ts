@@ -73,6 +73,7 @@ export const GITLAB_TRIAGE_ACTION_IDS = Object.freeze({
   listInstances: 'triage/list-gitlab-instances',
   scan: 'triage/scan-gitlab',
   get: 'triage/get-gitlab-entry',
+  prepareReviewWorkspace: 'triage/prepare-gitlab-review-workspace',
 });
 
 /**
@@ -234,7 +235,7 @@ type TriageActionDeclaration = Readonly<{
   scopes: readonly ['settings'] | readonly ['global'];
   surfaces: readonly PluginActionInvocationSurfaceV2[];
   execution: Readonly<{ target: 'daemon' }>;
-  dangerLevel: 'safe';
+  dangerLevel: 'safe' | 'writesLocal';
   inputSchema: PluginJsonSchema;
   resultSchema: PluginJsonSchema;
   hostAccess: readonly string[];
@@ -272,7 +273,7 @@ function declareOperationAction(input: Readonly<{
   title: string;
   description: string;
   scopes: readonly ['settings'] | readonly ['global'];
-  role: 'listInstances' | 'scan' | 'get';
+  role: 'listInstances' | 'scan' | 'get' | 'prepareReviewWorkspace';
   connectedAccountPurposeBindings?: readonly Readonly<{ path: string; purpose: string }>[];
 }>): TriageActionDeclaration {
   const declaration = sourceOperations[input.role].declaration;
@@ -288,7 +289,7 @@ function declareOperationAction(input: Readonly<{
     scopes: input.scopes,
     surfaces: [...declaration.surfaces],
     execution: { target: 'daemon' },
-    dangerLevel: declaration.dangerLevel as 'safe',
+    dangerLevel: declaration.dangerLevel as 'safe' | 'writesLocal',
     inputSchema: declaration.input.schema.jsonSchema,
     resultSchema: declaration.resultSchema.jsonSchema,
     hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
@@ -298,7 +299,7 @@ function declareOperationAction(input: Readonly<{
   };
 }
 
-/** The three Action declarations the contribution's operation roles bind to. */
+/** The four Action declarations the contribution's operation roles bind to. */
 export const GITLAB_TRIAGE_ACTION_DECLARATIONS: readonly TriageActionDeclaration[] = Object.freeze([
   declareOperationAction({
     id: GITLAB_TRIAGE_ACTION_IDS.listInstances,
@@ -321,6 +322,15 @@ export const GITLAB_TRIAGE_ACTION_DECLARATIONS: readonly TriageActionDeclaration
     description: 'Authoritatively reads one GitLab merge request or issue for a configured deployment.',
     scopes: ['global'],
     role: 'get',
+    connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+  }),
+  declareOperationAction({
+    id: GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace,
+    title: 'Prepare a GitLab merge-request review workspace',
+    description: 'Reauthorizes and rereads one GitLab merge request before preparing its selected'
+      + ' local workspace.',
+    scopes: ['global'],
+    role: 'prepareReviewWorkspace',
     connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
   }),
 ]);
@@ -629,9 +639,10 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
   })));
 
 /**
- * The targeted contribution itself. `prepareReviewWorkspace` is deliberately
- * unbound: it is an optional role, and binding it would claim a worktree
- * materialization contract this provider has not implemented.
+ * The targeted contribution binds the optional prepared-workspace role only
+ * because this provider has a live handler that reauthorizes, rereads and
+ * currentness-checks the merge request before it invokes the generic SCM
+ * materializer.
  */
 export const GITLAB_TRIAGE_CONTRIBUTION_DECLARATION = TriageSourcesContributionProtocolV1.contribute({
   descriptor: GITLAB_TRIAGE_SOURCE_DESCRIPTOR_V1,
@@ -639,6 +650,9 @@ export const GITLAB_TRIAGE_CONTRIBUTION_DECLARATION = TriageSourcesContributionP
     listInstances: sourceOperations.listInstances.bind(GITLAB_TRIAGE_ACTION_IDS.listInstances),
     scan: sourceOperations.scan.bind(GITLAB_TRIAGE_ACTION_IDS.scan),
     get: sourceOperations.get.bind(GITLAB_TRIAGE_ACTION_IDS.get),
+    prepareReviewWorkspace: sourceOperations.prepareReviewWorkspace.bind(
+      GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace,
+    ),
   },
   surfaces: {
     detail: { renderer: GITLAB_TRIAGE_DETAIL_RENDERER_ID },

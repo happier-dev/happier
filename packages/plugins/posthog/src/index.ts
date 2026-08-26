@@ -13,7 +13,8 @@
  * artifact is not re-exported here — the host mounts it through the staged UI graph the
  * manifest names, not through this daemon entrypoint.
  *
- * The selected Tier-B Composer evidence reference arrives with its own later unit.
+ * It also owns the selected Tier-B Composer evidence reference, while Triage retains
+ * the whole-entry attachment and every Composer transaction.
  */
 
 export { activate } from './activate.js';
@@ -29,12 +30,21 @@ export {
     POSTHOG_DETAIL_ARTIFACT_ID,
     POSTHOG_DETAIL_FALLBACK_RENDERER_ID,
     POSTHOG_DETAIL_RENDERER_ID,
+    POSTHOG_EVIDENCE_REFERENCE_ID,
     POSTHOG_NETWORK_HOST_ACCESS_ID,
     POSTHOG_PERSONAL_API_KEY_FIELD_ID,
     POSTHOG_PERSONAL_API_KEY_MODE_ID,
     POSTHOG_PLUGIN_ID,
     POSTHOG_SOURCE_CONTRIBUTION_ID,
 } from './posthogContracts.js';
+
+export {
+    POSTHOG_EVIDENCE_REFERENCE,
+    createPosthogEvidenceCandidate,
+    resolvePosthogEvidenceReference,
+    searchPosthogEvidenceReferences,
+} from './composer/reference.js';
+export type { PosthogEvidenceCandidateInput } from './composer/reference.js';
 
 export {
     POSTHOG_ACCOUNT_DIAGNOSTIC_CODES,

@@ -1,5 +1,6 @@
 import {
     defineProtocolLiteral,
+    defineProtocolJsonValue,
     defineProtocolNumber,
     defineProtocolObject,
     defineProtocolUnion,
@@ -11,6 +12,7 @@ import {
     TRIAGE_REVIEW_WORKSPACE_UNAVAILABLE_REASONS_V1,
 } from './bounds.js';
 import {
+    TriageEntryLocatorV1Schema,
     TriageEntryRefV1Schema,
     TriageIdentifierV1ProtocolSchema,
     TriageLocationV1ProtocolSchema,
@@ -34,15 +36,33 @@ export type TriageSelectedWorkspaceScopeV1 = ReturnType<
 >;
 
 /**
+ * The source-owned PR revision facts that one authoritative provider read can
+ * publish. The observation timestamp belongs to the target, so the scan/get
+ * snapshot carries this exact three-field projection and preparation combines
+ * it with the target stamp below.
+ */
+const triagePullRequestReviewRevisionFieldsV1 = {
+    baseSha: TriageIdentifierV1ProtocolSchema,
+    headSha: TriageIdentifierV1ProtocolSchema,
+    nativeRevision: TriageIdentifierV1ProtocolSchema,
+} as const;
+
+export const TriagePullRequestReviewRevisionV1Schema = defineProtocolObject(
+    triagePullRequestReviewRevisionFieldsV1,
+    { policy: 'closed' },
+);
+export type TriagePullRequestReviewRevisionV1 = ReturnType<
+    typeof TriagePullRequestReviewRevisionV1Schema.parse
+>;
+
+/**
  * The target-stamped provider revision this preparation was asked to match.
  * The source authoritatively rereads the pull request and requires base, head,
  * and native revision to still match before any local materialization
  * (`CONTRACT.md` §5.3, §5.4).
  */
 export const TriageReviewWorkspaceObservedRevisionV1Schema = defineProtocolObject({
-    baseSha: TriageIdentifierV1ProtocolSchema,
-    headSha: TriageIdentifierV1ProtocolSchema,
-    nativeRevision: TriageIdentifierV1ProtocolSchema,
+    ...triagePullRequestReviewRevisionFieldsV1,
     observedAtMs: defineProtocolNumber({ integer: true }),
 }, { policy: 'closed' });
 export type TriageReviewWorkspaceObservedRevisionV1 = ReturnType<
@@ -91,6 +111,12 @@ export const TriagePrepareReviewWorkspaceInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     instance: TriageConfiguredSourceInstanceV1Schema,
     entryRef: TriageEntryRefV1Schema,
+    /**
+     * The source's newest opaque route for this exact row. Account-scoped
+     * instances cannot reconstruct a provider repository from public identity,
+     * so this is carried under the same locator-only rule as `get`.
+     */
+    lastKnownLocator: TriageEntryLocatorV1Schema,
     observed: TriageReviewWorkspaceObservedRevisionV1Schema,
     workspace: TriageSelectedWorkspaceScopeV1Schema.nullable(),
 }, { policy: 'closed' });
@@ -113,6 +139,12 @@ export const TriagePrepareReviewWorkspaceResultV1Schema = defineProtocolUnion([
             defineProtocolLiteral(false),
         ]),
         currentness: TriageReviewWorkspaceCurrentnessV1Schema,
+        /**
+         * A bounded opaque transport of the canonical SCM pull-request
+         * reference. Its parser stays at the SCM/Reviews producer: Triage and
+         * sources must not grow a second `ScmPullRequestReference` grammar.
+         */
+        pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('workspaceRequired'),

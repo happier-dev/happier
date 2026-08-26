@@ -9,6 +9,7 @@ import {
   classifyGithubResponseFailure,
   classifyGithubTransportFailure,
   isGithubSuccessStatus,
+  isGithubWriteResponseAmbiguous,
 } from '../errors.js';
 import { readGithubIssue, type GithubIssueFactsV1, type GithubIssueReadV1 } from '../get.js';
 import { buildGithubApiUrl, type GithubRepositoryRouteV1 } from '../locator.js';
@@ -235,7 +236,18 @@ async function transitionGithubIssueState(
       ...(transition.stateReason === undefined ? {} : { state_reason: transition.stateReason }),
     },
   });
-  if (!written.ok) return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+  if (!written.ok) {
+    return settle(
+      await confirm(input.localRef, input.route, repositories, dependencies),
+      (facts) => facts.state === transition.target,
+    );
+  }
+  if (isGithubWriteResponseAmbiguous(written.response)) {
+    return settle(
+      await confirm(input.localRef, input.route, repositories, dependencies),
+      (facts) => facts.state === transition.target,
+    );
+  }
   if (!isGithubSuccessStatus(written.response.status)) {
     return Object.freeze({
       kind: 'failed' as const,
@@ -341,7 +353,18 @@ async function applyGithubIssueMembershipDelta(
   }
 
   const written = await send(dependencies, delta.request(input.localRef, input.route));
-  if (!written.ok) return Object.freeze({ kind: 'failed' as const, failure: written.failure });
+  if (!written.ok) {
+    return settle(
+      await confirm(input.localRef, input.route, repositories, dependencies),
+      (facts) => everyNameIsPresent(delta.observe(facts), input.named, delta.presentAfterwards),
+    );
+  }
+  if (isGithubWriteResponseAmbiguous(written.response)) {
+    return settle(
+      await confirm(input.localRef, input.route, repositories, dependencies),
+      (facts) => everyNameIsPresent(delta.observe(facts), input.named, delta.presentAfterwards),
+    );
+  }
   if (!isGithubSuccessStatus(written.response.status)) {
     return Object.freeze({
       kind: 'failed' as const,

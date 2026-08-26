@@ -1,6 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
-  MAX_TRIAGE_INSTANCE_DRAFTS_V1,
   TriageGetResultV1Schema,
   TriageListInstancesResultV1Schema,
   TriageScanResultV1Schema,
@@ -160,7 +159,7 @@ describe('Sentry Triage source operations', () => {
 
     expect(() => TriageListInstancesResultV1Schema.parse(result)).not.toThrow();
     expect(harness.listAccounts).toHaveBeenCalledWith(
-      { purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE, limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1 },
+      { purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE },
       { signal: harness.context.signal },
     );
     expect(harness.request.mock.calls[0]?.[0]?.url)
@@ -182,6 +181,30 @@ describe('Sentry Triage source operations', () => {
       localInstanceKey: `https://de.sentry.io${SENTRY_SCOPE_SEPARATOR}${ORGANIZATION_ID}`,
       keyStability: 'locatorDerived',
     });
+  });
+
+  it('carries every discovered organization instead of imposing a local thirty-two-instance ceiling', async () => {
+    const recorded = onOrigin(organizationsCloudPage, 'https://de.sentry.io');
+    const organization = (recorded.body as readonly Record<string, unknown>[])[0];
+    if (organization === undefined) throw new Error('expected one recorded organization');
+    const harness = host({
+      origins: ['https://de.sentry.io'],
+      responses: [{
+        ...recorded,
+        body: Array.from({ length: 33 }, (_unused, index) => ({
+          ...organization,
+          id: String(index + 1),
+          slug: `organization-${index + 1}`,
+          name: `Organization ${index + 1}`,
+        })),
+      }],
+    });
+
+    const result = await listSentryInstances({ v: 1 }, harness.context);
+
+    expect(result.kind).toBe('complete');
+    if (result.kind !== 'complete') throw new Error('expected complete discovery');
+    expect(result.candidates).toHaveLength(33);
   });
 
   it('discovers the US Cloud deployment when that is the projected origin', async () => {
@@ -236,10 +259,8 @@ describe('Sentry Triage source operations', () => {
    * Sentry's organization cursor is an OFFSET triple (`value:offset:is_prev`), so a
    * concurrent create, delete or rename shifts the window between two pages and hands
    * back an organization the walk already recorded. Each copy became its own candidate:
-   * the same organization was offered twice in Settings, and — because the walk stops at
-   * `MAX_TRIAGE_INSTANCE_DRAFTS_V1` — each duplicate spent a slot a DISTINCT organization
-   * could have taken, so an account near the ceiling silently lost real organizations to
-   * copies of one it already had.
+   * the same organization was offered twice in Settings, and each duplicate obscured a
+   * DISTINCT organization in the discovery result.
    *
    * A candidate is identified by its match tuple, which the draft already carries: the
    * exact account binding plus `localInstanceKey`. Two rows resolving to that same tuple

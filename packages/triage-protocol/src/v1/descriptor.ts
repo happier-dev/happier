@@ -4,7 +4,6 @@ import {
     defineProtocolObject,
 } from '@happier-dev/plugin-sdk/protocol';
 
-import { MAX_TRIAGE_KINDS_V1 } from './bounds.js';
 import {
     TriageIdentifierV1ProtocolSchema,
     TriageSourceWorkflowSubjectV1Schema,
@@ -39,7 +38,6 @@ export const TriageSourceDescriptorV1Schema = defineProtocolObject({
     displayName: TriageTextV1ProtocolSchema,
     kinds: defineProtocolArray(TriageSourceKindDescriptorV1ProtocolSchema, {
         minItems: 1,
-        maxItems: MAX_TRIAGE_KINDS_V1,
     }),
     /**
      * The local id of the source's OWN `settingsPages[]` entry for putting

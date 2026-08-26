@@ -3,6 +3,7 @@ import * as React from 'react';
 import {
   Item,
   ItemGroup,
+  Button,
   Label,
   Stack,
   Status,
@@ -17,6 +18,8 @@ import { openLinkedSession } from '../../sessions/entrySessionOpen.js';
 export function TriageLinkedSessions(props: Readonly<{
   sessions: readonly TriageLinkedSessionProjectionV1[];
   hasMore: boolean;
+  pageState?: 'idle' | 'loading' | 'failed';
+  onLoadMore?: () => void;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
   const host = usePluginHostApi();
@@ -56,10 +59,22 @@ export function TriageLinkedSessions(props: Readonly<{
         ))}
       </ItemGroup>
       {props.hasMore ? (
+        <Button
+          titleKey={props.pageState === 'failed'
+            ? 'plugins.triage.surface.loadMore.retry'
+            : 'plugins.triage.surface.loadMore'}
+          title={props.pageState === 'failed' ? 'Retry' : 'Load more'}
+          variant="secondary"
+          busy={props.pageState === 'loading'}
+          disabled={props.onLoadMore === undefined}
+          onPress={() => { props.onLoadMore?.(); }}
+        />
+      ) : null}
+      {props.pageState === 'failed' ? (
         <Status
-          tone="muted"
-          labelKey="plugins.triage.surface.detail.sessionsMore"
-          label="More linked Sessions are available."
+          tone="danger"
+          labelKey="plugins.triage.surface.detail.sessionsLoadFailed"
+          label="More linked Sessions could not be loaded."
         />
       ) : null}
       {failedSessionId === null ? null : (

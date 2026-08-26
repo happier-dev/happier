@@ -29,6 +29,7 @@ import {
   buildGitlabIssueReopenInputV1,
   buildGitlabIssueAssignInputV1,
   buildGitlabIssueLabelInputV1,
+  gitlabWriteMayHaveChangedProviderStateV1,
   gitlabOfferedMergeRequestWritesV1,
   projectGitlabWriteOutcomeV1,
 } from './mutations.js';
@@ -358,5 +359,26 @@ describe('projectGitlabWriteOutcomeV1', () => {
       .toEqual({ kind: 'unreadable' });
     expect(projectGitlabWriteOutcomeV1('close', success(null)))
       .toEqual({ kind: 'unreadable' });
+  });
+});
+
+describe('GitLab post-mutation provider semantics', () => {
+  it('retains its documented post-dispatch rejected and unreadable outcomes', () => {
+    expect(gitlabWriteMayHaveChangedProviderStateV1({ kind: 'applied', effect: 'merged' }))
+      .toBe(true);
+    expect(gitlabWriteMayHaveChangedProviderStateV1({ kind: 'unconfirmed' })).toBe(true);
+    expect(gitlabWriteMayHaveChangedProviderStateV1({
+      kind: 'rejected',
+      code: 'provider_transport_failed',
+      message: 'The handler may have dispatched before failing.',
+    })).toBe(true);
+    expect(gitlabWriteMayHaveChangedProviderStateV1({ kind: 'unreadable' })).toBe(true);
+    expect(gitlabWriteMayHaveChangedProviderStateV1({ kind: 'declined' })).toBe(false);
+    expect(gitlabWriteMayHaveChangedProviderStateV1({
+      kind: 'unavailable',
+      failure: { class: 'permission', code: 'gitlab-write-forbidden' },
+    })).toBe(false);
+    expect(gitlabWriteMayHaveChangedProviderStateV1({ kind: 'reconfirmationRequired', observed: STATE_ROW }))
+      .toBe(false);
   });
 });

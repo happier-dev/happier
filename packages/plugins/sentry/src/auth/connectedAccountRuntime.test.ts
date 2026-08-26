@@ -136,6 +136,17 @@ describe('Sentry connected-account confirmation deadline', () => {
     vi.useRealTimers();
   });
 
+  it('disposes the confirmation deadline after a normal success', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({
+      modeId: SENTRY_SELF_HOSTED_MODE_ID,
+      values: { origin: 'https://sentry.example.com' },
+    });
+
+    await expect(completeConnection(harness)).resolves.toMatchObject({ status: 'connected' });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('answers a silent deployment instead of waiting on it forever', async () => {
     vi.useFakeTimers();
     const harness = createSilentHarness({

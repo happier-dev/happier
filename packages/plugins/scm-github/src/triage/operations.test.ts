@@ -1,11 +1,13 @@
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
   TriageGetResultV1Schema,
+  TriagePrepareReviewWorkspaceResultV1Schema,
   TriageScanResultV1Schema,
   type TriageConfiguredSourceInstanceV1,
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -21,7 +23,11 @@ import {
   githubSearchResponse,
 } from './__fixtures__/githubResponses.js';
 import { encodeGithubTriageConfiguration } from './configuration.js';
-import { getGithubTriageEntry, scanGithubTriageSource } from './operations.js';
+import {
+  getGithubTriageEntry,
+  prepareGithubTriageReviewWorkspace,
+  scanGithubTriageSource,
+} from './operations.js';
 import {
   createStubGithubTransport,
   fixedClock,
@@ -37,6 +43,91 @@ const OTHER_ACCOUNT: ConnectedAccountRef = Object.freeze({
   service: Object.freeze({ pluginId: GITHUB_PLUGIN_ID, localId: 'github-account' }),
   accountId: 'other-account',
 });
+
+const GITHUB_FORK_PULL_REQUEST_RESPONSE = Object.freeze({
+  ...GITHUB_PULL_REQUEST_RESPONSE,
+  head: Object.freeze({
+    label: 'fork-user:review-from-fork',
+    ref: 'review-from-fork',
+    sha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+    repo: Object.freeze({
+      id: 8128,
+      owner: Object.freeze({ login: 'fork-user' }),
+      name: 'fork-app',
+      full_name: 'fork-user/fork-app',
+      clone_url: 'https://github.com/fork-user/fork-app.git',
+    }),
+  }),
+  base: Object.freeze({
+    ...(GITHUB_PULL_REQUEST_RESPONSE.base as Readonly<Record<string, unknown>>),
+    repo: Object.freeze({
+      id: Number(GITHUB_FIXTURE_REPOSITORY_ID),
+      owner: Object.freeze({ login: GITHUB_FIXTURE_OWNER }),
+      name: GITHUB_FIXTURE_REPOSITORY,
+      full_name: `${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`,
+      clone_url: `https://github.com/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}.git`,
+    }),
+  }),
+});
+
+function prepareWorkspaceInput(input: Readonly<{
+  scope?: 'repository' | 'account';
+  observed?: Partial<Readonly<{
+    baseSha: string;
+    headSha: string;
+    nativeRevision: string;
+  }>>;
+  workspace?: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
+}>) {
+  return {
+    v: 1 as const,
+    // Account-wide discovery owns no repository configuration. Its newest
+    // source locator is the only route preparation may use for this entry.
+    instance: configuredInstance({ scope: input.scope ?? 'account' }),
+    entryRef: {
+      source: Object.freeze({ pluginId: GITHUB_PLUGIN_ID, localId: 'github-forge' }),
+      kindId: 'pull-request',
+      collisionScope: `github:${GITHUB_FIXTURE_REPOSITORY_ID}`,
+      entryId: '1284',
+    },
+    lastKnownLocator: { v: 1 as const, routingToken: REPOSITORY_KEY },
+    observed: {
+      baseSha: '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e',
+      headSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+      nativeRevision: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+      observedAtMs: 1_700_000_000_000,
+      ...input.observed,
+    },
+    workspace: input.workspace === undefined
+      ? { serverId: 'server-selected', machineId: 'machine-selected', rootPath: '/selected/repository' }
+      : input.workspace,
+  };
+}
+
+function withReviewWorkspaceMaterializer(
+  context: PluginInvocationContext,
+  result: unknown = Object.freeze({
+    success: true as const,
+    targetPath: '/selected/repository/.happier/review/review-from-fork',
+    branchName: 'review-from-fork',
+    created: true,
+    currentness: Object.freeze({ kind: 'currentAtObservedHead' as const }),
+  }),
+): Readonly<{
+  context: PluginInvocationContext;
+  execute: ReturnType<typeof vi.fn>;
+}> {
+  // The generic SCM Action is a process boundary. The GitHub source operation,
+  // its exact-account reauthorization and its provider reread remain real.
+  const execute = vi.fn(async () => result);
+  return Object.freeze({
+    execute,
+    context: {
+      ...context,
+      services: { ...context.services, actions: { execute } },
+    } as unknown as PluginInvocationContext,
+  });
+}
 
 function configuredInstance(input: Readonly<{
   scope: 'repository' | 'account';
@@ -142,6 +233,151 @@ describe('GitHub Triage source operations', () => {
     expect(serialized).not.toContain(OTHER_ACCOUNT.accountId);
   });
 
+  it('reauthorizes a GitHub fork source tip before materializing only at the selected workspace root', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request): StubHttpResponse | undefined => {
+        if (!request.url.endsWith(`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`)) {
+          return undefined;
+        }
+        return {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: GITHUB_FORK_PULL_REQUEST_RESPONSE,
+        };
+      },
+    });
+    const materializer = withReviewWorkspaceMaterializer(stub.context);
+
+    const result = await prepareGithubTriageReviewWorkspace(
+      prepareWorkspaceInput({}),
+      materializer.context,
+      { now: fixedClock(1_700_000_000_000) },
+    );
+
+    expect(() => TriagePrepareReviewWorkspaceResultV1Schema.parse(result)).not.toThrow();
+    expect(result).toEqual({
+      kind: 'prepared',
+      repositoryPath: '/selected/repository/.happier/review/review-from-fork',
+      branch: 'review-from-fork',
+      created: true,
+      currentness: { kind: 'currentAtObservedHead' },
+      // The source transports a bounded reference after the canonical reread;
+      // the generic SCM/Reviews producer remains its only grammar validator.
+      pullRequest: { number: 1284 },
+    });
+    // The source's exact configured account is still the sole credential that
+    // reaches GitHub. The generic materializer receives no account authority.
+    expect(stub.materializations).toEqual([{
+      purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+      account: CONFIGURED_ACCOUNT,
+      materialization: {
+        kind: 'httpHeaders',
+        origin: 'https://api.github.com',
+        headerNames: ['authorization'],
+      },
+    }]);
+    // The source repo is a fork. Base/target facts remain the route/read
+    // authority and must never become the editable checkout target.
+    expect(materializer.execute).toHaveBeenCalledWith(
+      'scm.reviewWorkspace.materializePrepared',
+      {
+        cwd: '/selected/repository',
+        displayName: 'review-from-fork',
+        sourceTip: {
+          repository: {
+            kind: 'github',
+            deployment: 'https://github.com',
+            repository: 'fork-user/fork-app',
+          },
+          cloneUrl: 'https://github.com/fork-user/fork-app.git',
+          branch: 'review-from-fork',
+          sourceHeadSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+          fetchRef: 'refs/heads/review-from-fork',
+        },
+      },
+      { signal: materializer.context.signal },
+    );
+  });
+
+  it('requires an already-selected workspace without reading GitHub or probing local SCM', async () => {
+    const stub = searchTransport();
+    const materializer = withReviewWorkspaceMaterializer(stub.context);
+
+    await expect(prepareGithubTriageReviewWorkspace(
+      prepareWorkspaceInput({ workspace: null }),
+      materializer.context,
+      { now: fixedClock(1_700_000_000_000) },
+    )).resolves.toEqual({ kind: 'workspaceRequired' });
+
+    expect(stub.materializations).toHaveLength(0);
+    expect(stub.requests).toHaveLength(0);
+    expect(materializer.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['baseSha', '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2f'],
+    ['headSha', '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e20'],
+    ['nativeRevision', '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e20'],
+  ] as const)('refuses a reread whose observed %s moved before local materialization', async (field, value) => {
+    const stub = createStubGithubTransport({
+      respond: (request): StubHttpResponse | undefined => {
+        if (!request.url.endsWith(`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`)) {
+          return undefined;
+        }
+        return {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: GITHUB_FORK_PULL_REQUEST_RESPONSE,
+        };
+      },
+    });
+    const materializer = withReviewWorkspaceMaterializer(stub.context);
+
+    const result = await prepareGithubTriageReviewWorkspace(
+      prepareWorkspaceInput({ observed: { [field]: value } }),
+      materializer.context,
+      { now: fixedClock(1_700_000_000_000) },
+    );
+
+    expect(result).toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
+    expect(materializer.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['NOT_REPOSITORY', { kind: 'workspaceMismatch' }],
+    ['INVALID_PATH', { kind: 'workspaceMismatch' }],
+    ['REMOTE_NOT_FOUND', { kind: 'workspaceMismatch' }],
+    ['COMMAND_FAILED', { kind: 'unavailable', reason: 'scmResolver' }],
+  ] as const)('projects generic local materialization %s without granting a fallback path', async (
+    errorCode,
+    expected,
+  ) => {
+    const stub = createStubGithubTransport({
+      respond: (request): StubHttpResponse | undefined => {
+        if (!request.url.endsWith(`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`)) {
+          return undefined;
+        }
+        return {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: GITHUB_FORK_PULL_REQUEST_RESPONSE,
+        };
+      },
+    });
+    const materializer = withReviewWorkspaceMaterializer(stub.context, Object.freeze({
+      success: false as const,
+      error: 'synthetic local materialization failure',
+      errorCode,
+    }));
+
+    await expect(prepareGithubTriageReviewWorkspace(
+      prepareWorkspaceInput({}),
+      materializer.context,
+      { now: fixedClock(1_700_000_000_000) },
+    )).resolves.toEqual(expected);
+    expect(materializer.execute).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses a continuation this process did not mint rather than guessing a frontier', async () => {
     const stub = searchTransport();
 
@@ -239,6 +475,12 @@ describe('GitHub Triage source operations', () => {
     expect(() => TriageGetResultV1Schema.parse(result)).not.toThrow();
     expect(result.kind).toBe('present');
     expect(result.localRef).toEqual(localRef);
+    if (result.kind !== 'present') throw new Error('expected present GitHub pull request');
+    expect(result.snapshot.reviewRevision).toEqual({
+      baseSha: '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e',
+      headSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+      nativeRevision: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+    });
   });
 
   it('answers unresolved without an outbound call when the configured instance carries no route', async () => {

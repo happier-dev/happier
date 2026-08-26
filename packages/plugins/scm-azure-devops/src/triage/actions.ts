@@ -1,22 +1,24 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import {
   TriageGetInputV1Schema,
   TriageListInstancesInputV1Schema,
+  TriagePrepareReviewWorkspaceInputV1Schema,
   TriageScanInputV1Schema,
   type TriageGetResultV1,
   type TriageListInstancesResultV1,
+  type TriagePrepareReviewWorkspaceResultV1,
   type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { createAzureSourceFailure } from './failureProjection.js';
+import { toAzureTransport } from './invocation.js';
 import {
   runAzureTriageGet,
   runAzureTriageListInstances,
+  runAzureTriagePrepareReviewWorkspace,
   runAzureTriageScan,
   type AzureTriageReadServices,
 } from './operations.js';
-import type { AzureDevOpsHttpRequest, AzureDevOpsHttpResponse } from './types.js';
 
 /**
  * The Action ids that carry this source's three required V1 roles.
@@ -29,40 +31,13 @@ export const AZURE_DEVOPS_TRIAGE_ACTION_IDS = Object.freeze({
   listInstances: 'triage-list-instances',
   scan: 'triage-scan',
   get: 'triage-get',
+  prepareReviewWorkspace: 'triage-prepare-review-workspace',
 });
-
-const TEXT_DECODER = new TextDecoder('utf-8', { fatal: false });
-
-/**
- * Adapt the host HTTP service to this source's one transport seam.
- *
- * `redirect: 'error'` is deliberate and is the whole reason this adapter exists rather than a
- * direct call: Azure answers an unusable credential with a redirect to a sign-in host, and a
- * followed redirect would deliver that page's HTML as if it were an API response.
- */
-function toTransport(http: HttpService, signal: AbortSignal) {
-  return async (request: AzureDevOpsHttpRequest): Promise<AzureDevOpsHttpResponse> => {
-    const response = await http.request({
-      url: request.url,
-      method: request.method,
-      headers: request.headers,
-      ...(request.body === undefined
-        ? {}
-        : { body: new TextEncoder().encode(request.body) }),
-      redirect: 'error',
-    }, { signal });
-    return {
-      status: response.status,
-      headers: response.headers,
-      bodyText: TEXT_DECODER.decode(response.body),
-    };
-  };
-}
 
 function toReadServices(context: PluginInvocationContext): AzureTriageReadServices {
   return {
     connectedAccounts: context.services.connectedAccounts,
-    transport: toTransport(context.services.http, context.signal),
+    transport: toAzureTransport(context.services.http, context.signal),
     now: () => Date.now(),
   };
 }
@@ -76,7 +51,7 @@ function invalidInput(detail: string) {
 }
 
 /**
- * The three source role handlers.
+ * The source role handlers.
  *
  * Each parses its input through the published schema before touching a provider. The host already
  * validates against the same declared JSON Schema, so this is not a second admission authority: it
@@ -131,6 +106,30 @@ export async function getAzureDevOpsSourceEntryAction(
   }
   return await runAzureTriageGet({
     services: toReadServices(context),
+    request: parsed.data,
+    signal: context.signal,
+  });
+}
+
+/**
+ * Performs the one provider-authorized review-workspace preparation operation.
+ *
+ * The source parser and the source owner retain provider/account/currentness authority; only
+ * after that vertical calls the generic local SCM Action does any local mutation become possible.
+ */
+export async function prepareAzureDevOpsReviewWorkspaceAction(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<TriagePrepareReviewWorkspaceResultV1> {
+  const parsed = TriagePrepareReviewWorkspaceInputV1Schema.safeParse(input);
+  if (!parsed.success) {
+    throw new TypeError('Azure DevOps review-workspace preparation received an invalid input');
+  }
+  return await runAzureTriagePrepareReviewWorkspace({
+    services: {
+      ...toReadServices(context),
+      actions: context.services.actions,
+    },
     request: parsed.data,
     signal: context.signal,
   });

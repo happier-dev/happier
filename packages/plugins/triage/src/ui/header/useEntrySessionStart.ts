@@ -1,5 +1,10 @@
 import * as React from 'react';
 import { usePluginHostApi } from '@happier-dev/plugin-ui';
+import type {
+    PluginUiActionExecutionOptions,
+    SelectActionInputRequest,
+    SelectActionInputResult,
+} from '@happier-dev/plugin-sdk/ui';
 import type { ComposerAttachmentAuthorPresentationV1 } from '@happier-dev/plugin-sdk/ui';
 import type {
     TriageEntryLocatorV1,
@@ -40,6 +45,7 @@ import {
     triageNewSessionDraftSeedV1,
     triageNewSessionWireMaterializationV1,
     type TriageNewSessionPreferenceV1,
+    type TriageReviewWorkspacePreparationV1,
 } from './newSessionDestination.js';
 import {
     requestTriageNewSessionDraft,
@@ -112,6 +118,15 @@ export type TriageEntrySessionStartRequestV1 = Readonly<{
      * honest answer rather than a guessed directory.
      */
     repository?: TriageForgeIdentityV1;
+    /**
+     * The exact admitted source operation and semantic request for a formal
+     * pull-request review. The mounted host selects its raw input once the
+     * reader has settled the matching project/machine/root workspace.
+     */
+    reviewWorkspace?: Readonly<{
+        operation: Extract<SelectActionInputRequest, Readonly<{ operation: unknown }>>['operation'];
+        preparation: TriageReviewWorkspacePreparationV1;
+    }>;
 }>;
 
 /**
@@ -136,18 +151,6 @@ export type TriageEntrySessionStartUnavailableReasonV1 =
     | 'newSessionUnavailable'
     /** The reachable wire cannot request a prepared review workspace. */
     | 'preparedWorkspaceUnsupported'
-    /**
-     * The action targets `review.start`, and nothing reachable can prepare the
-     * workspace that contract scopes to.
-     *
-     * It is stated as its own reason and refused BEFORE anything is created,
-     * because the alternative — the behaviour this replaces — was to start an
-     * ordinary agent Session and let the reader believe a formal code review
-     * had begun. `review.start` describes exact commits of a pull request in a
-     * worktree a source prepared and reread; a Session with an agent in it is a
-     * different product, however it is labelled.
-     */
-    | 'reviewStartUnsupported'
     /**
      * A reference the action names is not in the catalog that owns it.
      *
@@ -219,10 +222,21 @@ export type TriageEntrySessionStartPhaseV1 =
 
 export type TriageEntrySessionStartControllerV1 = Readonly<{
     phase: TriageEntrySessionStartPhaseV1;
+    /** A linked selected-PR Session awaiting the reader's explicit engine choice. */
+    review: TriagePendingPullRequestReviewV1 | null;
     /** Ignored while a press is in flight; otherwise starts exactly one. */
     start: (request: TriageEntrySessionStartRequestV1) => void;
     /** Returns to `idle` — for dismissing a settled outcome, never for retrying one. */
     reset: () => void;
+}>;
+
+export type TriagePendingPullRequestReviewV1 = Readonly<{
+    sessionId: Extract<TriageStartEntrySessionResultV1, Readonly<{ type: 'linked' }>>['sessionId'];
+    review: NonNullable<Extract<
+        TriageStartEntrySessionResultV1,
+        Readonly<{ type: 'linked' }>
+    >['review']>;
+    instructions: string;
 }>;
 
 const IDLE: TriageEntrySessionStartPhaseV1 = Object.freeze({ kind: 'idle' });
@@ -240,10 +254,8 @@ function unavailable(
 export function triageActionImmediateRefusalV1(
     action: Pick<TriageActionV1, 'target' | 'workspaceMode'>,
 ): TriageEntrySessionStartUnavailableReasonV1 | null {
-    if (action.target.kind === 'reviewStart') return 'reviewStartUnsupported';
-    return triageNewSessionWireMaterializationV1(action.workspaceMode) === null
-        ? 'preparedWorkspaceUnsupported'
-        : null;
+    void action;
+    return null;
 }
 
 /**
@@ -270,7 +282,13 @@ type TriageStartHostV1 = TriageSessionStartHostV1
     & TriageNewSessionSeedHostV1
     & TriageProjectRegistryHostV1
     & TriageAgentInventoryHostV1
-    & TriageActionResolutionHostV1;
+    & TriageActionResolutionHostV1
+    & Readonly<{
+        selectActionInput(
+            request: SelectActionInputRequest,
+            options?: PluginUiActionExecutionOptions,
+        ): Promise<SelectActionInputResult>;
+    }>;
 
 /**
  * The minimal mounted fact a retry needs, and nothing more.
@@ -297,6 +315,8 @@ type TriageEntrySessionStartCustodyV1 = Readonly<{
     input: TriageStartEntrySessionInputV1;
     /** The phase the settled start stopped at, when it stopped at one. */
     pending?: NonNullable<TriageStartEntrySessionInputV1['resume']>;
+    /** Resolved once from the configured review action; link/open retry reuses it. */
+    reviewInstructions?: string;
 }>;
 
 /**
@@ -308,7 +328,9 @@ type TriageEntrySessionStartCustodyV1 = Readonly<{
 function readSendStatus(
     result: TriageStartEntrySessionResultV1,
 ): Extract<TriageEntrySessionDeliveryOutcomeV1, Readonly<{ kind: 'send' }>>['status'] {
-    return result.type === 'opened' || result.type === 'openPending' ? result.delivery : 'none';
+    return result.type === 'opened' || result.type === 'openPending' || result.type === 'linked'
+        ? result.delivery
+        : 'none';
 }
 
 /** Component-wise entry identity, never a joined string. */
@@ -325,6 +347,7 @@ export function useTriageEntrySessionStart(
 ): TriageEntrySessionStartControllerV1 {
     const host = usePluginHostApi() as unknown as TriageStartHostV1;
     const [phase, setPhase] = React.useState<TriageEntrySessionStartPhaseV1>(IDLE);
+    const [review, setReview] = React.useState<TriagePendingPullRequestReviewV1 | null>(null);
     // Read synchronously by `start`, so two presses in one tick cannot both pass
     // the gate the way a state read would.
     const inFlight = React.useRef(false);
@@ -386,6 +409,7 @@ export function useTriageEntrySessionStart(
         request: TriageEntrySessionStartRequestV1,
         input: TriageStartEntrySessionInputV1,
         result: TriageStartEntrySessionResultV1,
+        reviewInstructions?: string,
     ): Promise<void> => {
         // Custody is retained for exactly the arms a retry can resume, and
         // released for every terminal one. A `creationFailed` is terminal by the
@@ -403,6 +427,7 @@ export function useTriageEntrySessionStart(
                         sessionId: result.sessionId,
                         disposition: result.disposition,
                     },
+                    ...(reviewInstructions === undefined ? {} : { reviewInstructions }),
                 }
                 // The Session opened, but delivery did not settle. Reuse the
                 // incumbent open-pending resume arm: it re-delivers under the
@@ -419,10 +444,11 @@ export function useTriageEntrySessionStart(
                             sessionId: result.sessionId,
                             disposition: result.disposition,
                         },
+                        ...(reviewInstructions === undefined ? {} : { reviewInstructions }),
                     }
                 : null;
 
-        const sessionId = result.type === 'opened' || result.type === 'openPending'
+        const sessionId = result.type === 'opened' || result.type === 'openPending' || result.type === 'linked'
             ? result.sessionId
             : null;
         const delivery: TriageEntrySessionDeliveryOutcomeV1 = sessionId === null
@@ -431,6 +457,16 @@ export function useTriageEntrySessionStart(
                 ? { kind: 'send', status: readSendStatus(result) }
                 : { kind: 'none' };
         if (!retired.current) {
+            const pendingReview = result.type === 'linked'
+                && result.review !== undefined
+                && reviewInstructions !== undefined
+                ? {
+                    sessionId: result.sessionId,
+                    review: result.review,
+                    instructions: reviewInstructions,
+                }
+                : null;
+            setReview(pendingReview === null ? null : Object.freeze(pendingReview));
             setPhase(Object.freeze({ kind: 'settled', result, delivery }));
         }
     }, []);
@@ -497,6 +533,17 @@ export function useTriageEntrySessionStart(
                 }
                 const preferences = references.profile?.preferences;
                 const promptText = references.prompt?.text ?? null;
+                if (action.target.kind === 'reviewStart') {
+                    if (action.workspaceMode !== 'pull_request' || request.reviewWorkspace === undefined) {
+                        setPhase(unavailable('preparedWorkspaceUnsupported'));
+                        return;
+                    }
+                    // Formal review has no Triage-authored fallback prose.
+                    if (promptText === null || promptText.trim().length === 0) {
+                        setPhase(unavailable('promptMissing'));
+                        return;
+                    }
+                }
 
                 // 2. Placement, in the one stated precedence.
                 const preference = request.preference ?? {};
@@ -555,6 +602,7 @@ export function useTriageEntrySessionStart(
                             ? { prompt: { text: delivery.text, mode: 'replace' as const } }
                             : {}),
                         ...(action.profileId === null ? {} : { profileId: action.profileId }),
+                        checkoutIntent: checkout,
                         ...(executionPlacement === null ? {} : {
                             placement: {
                                 serverId: executionPlacement.executionTarget.serverId,
@@ -627,17 +675,68 @@ export function useTriageEntrySessionStart(
                     }
                     settlement = draft.settlement;
                 }
+                const placementCandidates = placement === null
+                    ? undefined
+                    : placement.kind === 'launch'
+                        ? [projectTriageSessionPlacementCandidateV1(placement.candidate)]
+                        : placement.kind === 'prefill'
+                            ? placement.candidates.map(projectTriageSessionPlacementCandidateV1)
+                            : undefined;
                 const destination = projectTriageNewSessionDestinationV1({
                     workspaceMode: action.workspaceMode,
                     creationKey: mintCreationKey(),
                     settlement,
                     ...(action.profileId === null ? {} : { profileId: action.profileId }),
+                    ...(action.target.kind === 'reviewStart'
+                        ? { reviewWorkspace: request.reviewWorkspace!.preparation }
+                        : {}),
+                    ...(placementCandidates === undefined ? {} : { placementCandidates }),
                 });
                 if (destination.status === 'refused') {
                     setPhase(unavailable(destination.reason === 'preparedWorkspaceUnsupported'
                         ? 'preparedWorkspaceUnsupported'
                         : 'newSessionUnavailable'));
                     return;
+                }
+                let startOptions: PluginUiActionExecutionOptions | undefined;
+                let reviewInstructions: string | undefined;
+                let prepareReviewWorkspaceSelection:
+                    | TriageStartEntrySessionInputV1['prepareReviewWorkspaceSelection']
+                    | undefined;
+                if (action.target.kind === 'reviewStart') {
+                    if (destination.destination.kind !== 'new'
+                        || destination.destination.materialization.kind !== 'reviewWorkspace') {
+                        setPhase(unavailable('preparedWorkspaceUnsupported'));
+                        return;
+                    }
+                    const selected = await host.selectActionInput({
+                        operation: request.reviewWorkspace!.operation,
+                        draft: destination.destination.materialization.request,
+                    });
+                    if (retired.current) return;
+                    if (selected.kind === 'cancelled') {
+                        setPhase(IDLE);
+                        return;
+                    }
+                    if (selected.kind !== 'submitted' || selected.connectedAccount.kind !== 'selected') {
+                        setPhase(unavailable('preparedWorkspaceUnsupported'));
+                        return;
+                    }
+                    prepareReviewWorkspaceSelection = {
+                        selection: selected.selection,
+                        input: selected.input,
+                        credentialRef: selected.connectedAccount.ref,
+                    };
+                    // The selected source operation is consumed exactly once by
+                    // the outer start Action's canonical materialization owner.
+                    startOptions = {
+                        selectedActionInput: {
+                            operation: request.reviewWorkspace!.operation,
+                            result: selected,
+                        },
+                        consumeSelectedActionInput: true,
+                    } as PluginUiActionExecutionOptions;
+                    reviewInstructions = promptText!;
                 }
                 setPhase(STARTING);
                 // 3. A send travels with the start so it settles between link
@@ -648,6 +747,10 @@ export function useTriageEntrySessionStart(
                     entryRef: request.entryRef,
                     display: request.display,
                     destination: destination.destination,
+                    ...(prepareReviewWorkspaceSelection === undefined
+                        ? {}
+                        : { prepareReviewWorkspaceSelection }),
+                    ...(action.target.kind === 'reviewStart' ? { finalOpen: 'deferred' as const } : {}),
                     ...(action.target.kind === 'agent' && action.target.delivery === 'send'
                         ? {
                             delivery: {
@@ -666,8 +769,8 @@ export function useTriageEntrySessionStart(
                         }
                         : {}),
                 };
-                const result = await submitTriageEntrySessionStart(host, input);
-                await settle(request, input, result);
+                const result = await submitTriageEntrySessionStart(host, input, startOptions);
+                await settle(request, input, result, reviewInstructions);
             } catch {
                 if (!retired.current) setPhase(unavailable('dispatch'));
             } finally {
@@ -676,10 +779,13 @@ export function useTriageEntrySessionStart(
         })();
     }, [host, mintCreationKey, resolvePlacement, settle]);
 
-    const reset = React.useCallback(() => { setPhase(IDLE); }, []);
+    const reset = React.useCallback(() => {
+        setReview(null);
+        setPhase(IDLE);
+    }, []);
 
     return React.useMemo(
-        () => Object.freeze({ phase, start, reset }),
-        [phase, reset, start],
+        () => Object.freeze({ phase, review, start, reset }),
+        [phase, reset, review, start],
     );
 }

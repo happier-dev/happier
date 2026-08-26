@@ -26,6 +26,7 @@ import type {
   GithubTriageEntryLocalRefV1,
   GithubTriageFailureV1,
   GithubTriageObservationV1,
+  GithubTriageReviewRevisionV1,
 } from './types.js';
 
 /**
@@ -68,6 +69,10 @@ function observed(observation: GithubTriageObservationV1): GithubPullRequestRead
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 export type GithubIssueRedirectDestinationV1 = Readonly<{
@@ -189,13 +194,27 @@ export async function runGithubTriageGet(
  * for the reader, and reading `'Merged'` back out of it to decide whether to
  * merge would make a display string a precondition.
  */
+export type GithubPullRequestSourceTipV1 = Readonly<{
+  owner: string;
+  name: string;
+  cloneUrl: string;
+  branch: string;
+  sourceHeadSha: string;
+}>;
+
 export type GithubPullRequestFactsV1 = Readonly<{
+  /** The validated provider pull-request number from this reread. */
+  number: number;
   /** GitHub's own `state`, trimmed: `open` or `closed`. */
   state: string | null;
   merged: boolean;
   draft: boolean;
   /** The head commit this read observed, or `null` when the response carried none. */
   headRevision: string | null;
+  /** The three revisions the public source snapshot can project after this one read. */
+  reviewRevision: GithubTriageReviewRevisionV1 | null;
+  /** The writable fork/branch facts, never reconstructed from the target repository. */
+  sourceTip: GithubPullRequestSourceTipV1 | null;
   /**
    * GitHub's own GraphQL global node id for this pull request, as REST publishes
    * it on `node_id`.
@@ -215,18 +234,63 @@ export type GithubPullRequestReadV1 = Readonly<{
   facts: GithubPullRequestFactsV1 | null;
 }>;
 
+function readGithubPullRequestReviewRevision(
+  raw: Readonly<Record<string, unknown>>,
+  headRevision: string | null,
+): GithubTriageReviewRevisionV1 | null {
+  const base = isRecord(raw.base) ? raw.base : null;
+  const head = isRecord(raw.head) ? raw.head : null;
+  const baseSha = base === null ? null : readNonEmptyString(base.sha);
+  const headSha = head === null ? null : readNonEmptyString(head.sha);
+  if (baseSha === null || headSha === null || headRevision === null || headSha !== headRevision) {
+    return null;
+  }
+  return Object.freeze({ baseSha, headSha, nativeRevision: headRevision });
+}
+
+function readGithubPullRequestSourceTip(
+  raw: Readonly<Record<string, unknown>>,
+  reviewRevision: GithubTriageReviewRevisionV1,
+): GithubPullRequestSourceTipV1 | null {
+  const head = isRecord(raw.head) ? raw.head : null;
+  const repository = head !== null && isRecord(head.repo) ? head.repo : null;
+  const owner = repository !== null && isRecord(repository.owner)
+    ? readNonEmptyString(repository.owner.login)
+    : null;
+  const name = repository === null ? null : readNonEmptyString(repository.name);
+  const cloneUrl = repository === null ? null : readNonEmptyString(repository.clone_url);
+  const branch = head === null ? null : readNonEmptyString(head.ref);
+  const sourceHeadSha = head === null ? null : readNonEmptyString(head.sha);
+  if (
+    owner === null
+    || name === null
+    || cloneUrl === null
+    || branch === null
+    || sourceHeadSha === null
+    || sourceHeadSha !== reviewRevision.headSha
+  ) {
+    return null;
+  }
+  return Object.freeze({ owner, name, cloneUrl, branch, sourceHeadSha });
+}
+
 function readGithubPullRequestFacts(
   raw: Readonly<Record<string, unknown>>,
   headRevision: string | null,
+  number: number,
 ): GithubPullRequestFactsV1 {
   const mergedAt = typeof raw.merged_at === 'string' ? raw.merged_at.trim() : '';
+  const reviewRevision = readGithubPullRequestReviewRevision(raw, headRevision);
   return Object.freeze({
+    number,
     state: typeof raw.state === 'string' && raw.state.trim() ? raw.state.trim() : null,
     // GitHub publishes both; either one alone is enough to prove the merge happened,
     // and requiring both would report an already-merged pull request as unmerged.
     merged: raw.merged === true || mergedAt !== '',
     draft: raw.draft === true,
     headRevision,
+    reviewRevision,
+    sourceTip: reviewRevision === null ? null : readGithubPullRequestSourceTip(raw, reviewRevision),
     nodeId: typeof raw.node_id === 'string' && raw.node_id.trim() ? raw.node_id.trim() : null,
   });
 }
@@ -293,6 +357,10 @@ export async function readGithubPullRequest(
   if (view.number !== localRef.entryId) {
     return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
   }
+  const number = Number(view.number);
+  if (!Number.isSafeInteger(number) || number < 1) {
+    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
+  }
   const resolved = await readRepositoryId(repositories, route, view.repositoryId);
   if (resolved.kind === 'failed') return observed(unresolved(localRef, resolved.failure));
 
@@ -314,15 +382,18 @@ export async function readGithubPullRequest(
     return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
   }
 
+  const facts = readGithubPullRequestFacts(record, view.nativeRevision, number);
   return Object.freeze({
     observation: Object.freeze({
       kind: 'present' as const,
       localRef: projection.localRef,
       locator: projection.locator,
-      snapshot: projection.snapshot,
+      snapshot: facts.reviewRevision === null
+        ? projection.snapshot
+        : Object.freeze({ ...projection.snapshot, reviewRevision: facts.reviewRevision }),
       viewer: Object.freeze({ involvement: Object.freeze([]) }),
     }),
-    facts: readGithubPullRequestFacts(record, view.nativeRevision),
+    facts,
   });
 }
 

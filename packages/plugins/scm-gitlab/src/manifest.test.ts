@@ -101,12 +101,29 @@ describe('GitLab plugin manifest', () => {
       // exact account leaf the host revalidates.
       expect(action?.connectedAccountPurposeBindings).toEqual([INSTANCE_ACCOUNT_BINDING]);
     }
-    // They are NOT source-protocol roles. The contribution binds exactly three
-    // operations, and adding a fourth would publish GitLab vocabulary into a
-    // shared contract that has no such role.
+    // They are NOT source-protocol roles. The fourth bound operation is the
+    // protocol-owned prepared-workspace role; adding another would publish
+    // GitLab vocabulary into a shared contract that has no such role.
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
-      .toEqual(['get', 'listInstances', 'scan']);
+      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan']);
+  });
+
+  it('binds prepared-workspace materialization as the protocol-owned local write', () => {
+    const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+    const action = actions.get(GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace);
+    const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
+
+    // The source can invoke this only as the contribution's optional role; it is
+    // neither a generic UI/agent tool nor a second SCM dispatch surface.
+    expect(contribution?.operations?.prepareReviewWorkspace)
+      .toBe(GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace);
+    expect(action).toMatchObject({
+      dangerLevel: 'writesLocal',
+      surfaces: ['plugin'],
+      hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
+      connectedAccountPurposeBindings: [INSTANCE_ACCOUNT_BINDING],
+    });
   });
 
   it('binds the configured-instance account leaf on every read, including the union-shaped scan', () => {

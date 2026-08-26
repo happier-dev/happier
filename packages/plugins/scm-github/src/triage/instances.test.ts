@@ -1,6 +1,5 @@
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { TriageListInstancesResultV1Schema } from '@happier-dev/triage-protocol/v1';
-import { MAX_TRIAGE_INSTANCE_DRAFTS_V1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
@@ -85,7 +84,7 @@ describe('GitHub Triage discovery', () => {
       .toEqual(['octocat-dev', 'octocat-ops']);
     // The listing is asked for this source's own declared purpose and nothing else.
     expect(stub.listRequests).toEqual([
-      { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1 },
+      { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE },
     ]);
     // Each candidate reauthorized its OWN exact account rather than a bound default.
     expect(stub.materializations.map((entry) => entry.account))

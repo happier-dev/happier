@@ -56,6 +56,22 @@ export function sameTriageSourceIdentity(
 }
 
 /**
+ * Whether two source-published references identify the same Triage entry.
+ * This is intentionally component-wise: callers use it at admission and
+ * dispatch boundaries where reconstructing a joined identity would create a
+ * second parser for the durable entry tuple.
+ */
+export function sameTriageEntryReference(
+    left: TriageEntryRefV1,
+    right: TriageEntryRefV1,
+): boolean {
+    return sameTriageSourceIdentity(left.source, right.source)
+        && left.kindId === right.kindId
+        && left.collisionScope === right.collisionScope
+        && left.entryId === right.entryId;
+}
+
+/**
  * The canonical entry reference, as ordered identity components.
  *
  * It addresses no row of its own: nothing provider-derived is stored. It is the

@@ -43,6 +43,7 @@ import {
   BITBUCKET_TRIAGE_ACTION_IDS,
   getBitbucketSourceEntryAction,
   listBitbucketInstancesAction,
+  prepareBitbucketReviewWorkspaceAction,
   scanBitbucketSourceAction,
 } from './triage/source/actions.js';
 import {
@@ -94,16 +95,17 @@ export {
 const sources = TriageSourcesContributionProtocolV1;
 
 /**
- * Every read Action reaches the provider and the exact account, so both grants are declared on all
- * three.
+ * Every source Action that reaches the provider uses the exact account, so both grants are declared
+ * on all four roles.
  *
- * `scan` and `get` additionally declare the exact account path their configured instance carries, so
- * the host cross-checks at declaration time that the credential each one asks for is the one this
- * purpose was granted. `scan`'s published input is a two-arm union — the deliberate shape that makes
- * a mid-scan limit change unrepresentable — and the canonical Action validator resolves a bound path
- * through every arm, requiring the same exact qualified credential ref in each; a path either arm
- * narrowed differently, or omitted, is refused. `listInstances` carries no account at all, because
- * producing account references is what it does, so it has no path to bind.
+ * `scan`, `get`, and selected-PR preparation additionally declare the exact account path their
+ * configured instance carries, so the host cross-checks at declaration time that the credential
+ * each one asks for is the one this purpose was granted. `scan`'s published input is a two-arm
+ * union — the deliberate shape that makes a mid-scan limit change unrepresentable — and the
+ * canonical Action validator resolves a bound path through every arm, requiring the same exact
+ * qualified credential ref in each; a path either arm narrowed differently, or omitted, is refused.
+ * `listInstances` carries no account at all, because producing account references is what it does,
+ * so it has no path to bind.
  */
 const READ_HOST_ACCESS = [BITBUCKET_NETWORK_HOST_ACCESS_ID, BITBUCKET_CONNECTED_ACCOUNT_PURPOSE];
 const INSTANCE_ACCOUNT_BINDINGS = [{
@@ -239,6 +241,19 @@ export const BITBUCKET_PLUGIN = definePlugin({
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: getBitbucketSourceEntryAction,
+    },
+    [BITBUCKET_TRIAGE_ACTION_IDS.prepareReviewWorkspace]: {
+      title: 'Prepare a Bitbucket Cloud pull-request review workspace',
+      description: 'Reauthorizes and rereads one Bitbucket Cloud pull request before preparing its selected local workspace.',
+      scopes: ['global'],
+      surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
+      execution: { target: 'daemon' },
+      dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      inputSchema: sources.operations.prepareReviewWorkspace.declaration.input.schema.jsonSchema,
+      resultSchema: sources.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: prepareBitbucketReviewWorkspaceAction,
     },
     // The three source-native detail planes. Their published surface is
     // `plugin`, so the only caller that reaches them is this plugin's own
@@ -480,9 +495,9 @@ export const BITBUCKET_PLUGIN = definePlugin({
               .bind(BITBUCKET_TRIAGE_ACTION_IDS.listInstances),
             scan: sources.operations.scan.bind(BITBUCKET_TRIAGE_ACTION_IDS.scan),
             get: sources.operations.get.bind(BITBUCKET_TRIAGE_ACTION_IDS.get),
+            prepareReviewWorkspace: sources.operations.prepareReviewWorkspace
+              .bind(BITBUCKET_TRIAGE_ACTION_IDS.prepareReviewWorkspace),
           },
-          // `prepareReviewWorkspace` is deliberately unbound: it is an optional role, and binding
-          // it would claim a worktree materialization contract this provider has not implemented.
           surfaces: { detail: { renderer: BITBUCKET_TRIAGE_DETAIL_RENDERER_ID } },
         }),
       },

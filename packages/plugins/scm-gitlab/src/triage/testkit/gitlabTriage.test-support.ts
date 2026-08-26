@@ -123,15 +123,15 @@ export function createStubGitlabTransport(input: Readonly<{
         redirect: request.redirect,
       });
       requests.push(recorded);
+      const signal = options?.signal;
+      if (signal?.aborted === true) throw signal.reason;
       const response = input.respond(recorded);
       if (response === undefined) {
         throw new Error(`No stubbed GitLab response for ${recorded.method} ${recorded.url}`);
       }
       if (response === GITLAB_STUB_NEVER_ANSWERS) {
         return new Promise((_resolve, reject) => {
-          const signal = options?.signal;
           if (signal === undefined) return;
-          if (signal.aborted) { reject(signal.reason); return; }
           signal.addEventListener('abort', () => { reject(signal.reason); }, { once: true });
         });
       }

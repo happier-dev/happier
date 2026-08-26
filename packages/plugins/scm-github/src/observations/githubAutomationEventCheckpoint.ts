@@ -4,7 +4,11 @@ import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import {
-  GITHUB_AUTOMATION_REPOSITORY_EVENT_ID,
+  GITHUB_AUTOMATION_EVENT_LOCAL_IDS,
+  isGithubAutomationEventLocalId,
+  type GithubAutomationEventLocalIdV1,
+} from '../githubAutomationEvents.js';
+import {
   GITHUB_PLUGIN_ID,
 } from './githubProviderContracts.js';
 
@@ -117,7 +121,7 @@ export type GithubAutomationEventCheckpointRowV1 = Readonly<{
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.version]: 1;
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId]: string;
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId]: typeof GITHUB_PLUGIN_ID;
-  [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: typeof GITHUB_AUTOMATION_REPOSITORY_EVENT_ID;
+  [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: GithubAutomationEventLocalIdV1;
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId]: string;
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload]: GithubAutomationEventCheckpointPayloadV1;
 }>;
@@ -204,7 +208,8 @@ export function isGithubAutomationEventCheckpointRowV1(value: unknown): value is
     || !isBoundedString(id, 43)
     || !isBoundedString(automationId, MAX_HOST_ID_LENGTH)
     || eventPluginId !== GITHUB_PLUGIN_ID
-    || eventLocalId !== GITHUB_AUTOMATION_REPOSITORY_EVENT_ID
+    || typeof eventLocalId !== 'string'
+    || !isGithubAutomationEventLocalId(eventLocalId)
     || !isBoundedString(sourceSelectorId, MAX_HOST_ID_LENGTH)
     || !isRecord(payload)) return false;
   if (
@@ -233,6 +238,7 @@ export function isGithubAutomationEventCheckpointRowV1(value: unknown): value is
 
 export function createGithubAutomationEventCheckpointRowV1(input: Readonly<{
   automationId: string;
+  eventRef: Readonly<{ pluginId: string; localId: string }>;
   sourceSelectorId: string;
   sourceInstanceId: string;
   sourceContractVersion: number;
@@ -242,16 +248,19 @@ export function createGithubAutomationEventCheckpointRowV1(input: Readonly<{
   lastEvaluatedTemplateVersion: number;
   continuity: JsonValue;
 }>): GithubAutomationEventCheckpointRowV1 {
+  if (input.eventRef.pluginId !== GITHUB_PLUGIN_ID || !isGithubAutomationEventLocalId(input.eventRef.localId)) {
+    throw new RangeError('GitHub Automation Event checkpoint requires a current semantic Event ref');
+  }
   const row: GithubAutomationEventCheckpointRowV1 = Object.freeze({
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.id]: createGithubAutomationEventCheckpointRowId({
       automationId: input.automationId,
-      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_AUTOMATION_REPOSITORY_EVENT_ID },
+      eventRef: input.eventRef,
       sourceSelectorId: input.sourceSelectorId,
     }),
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.version]: 1,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId]: input.automationId,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId]: GITHUB_PLUGIN_ID,
-    [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: GITHUB_AUTOMATION_REPOSITORY_EVENT_ID,
+    [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: input.eventRef.localId,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId]: input.sourceSelectorId,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload]: Object.freeze({
       sourceInstanceId: input.sourceInstanceId,
@@ -287,7 +296,7 @@ export const GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION = defineAccountCollec
       [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId]: { type: 'string', const: GITHUB_PLUGIN_ID },
       [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: {
         type: 'string',
-        const: GITHUB_AUTOMATION_REPOSITORY_EVENT_ID,
+        enum: Object.values(GITHUB_AUTOMATION_EVENT_LOCAL_IDS),
       },
       [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId]: HOST_ID_SCHEMA,
       [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload]: CHECKPOINT_PAYLOAD_SCHEMA,

@@ -14,6 +14,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
+import { TriageCollectionCursorV1Schema } from './collectionCursorProtocol.js';
 
 /**
  * The strict contract of the two user-mark Actions.
@@ -100,12 +101,6 @@ export const TriageSetEntryPinnedResultV1JsonSchema: PluginJsonSchema =
  * imported, since an Action's wire shape is declared through the
  * validator-neutral authoring surface.
  */
-const triagePinCursor = defineProtocolString({
-    minLength: 1,
-    maxLength: 4096,
-    pattern: '^[A-Za-z0-9_-]+$',
-});
-
 export const TriageListPinnedEntriesInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     limit: defineProtocolNumber({
@@ -114,7 +109,7 @@ export const TriageListPinnedEntriesInputV1Schema = defineProtocolObject({
         maximum: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     }),
     /** Absent asks for the newest page; present asks for the one after it. */
-    cursor: triagePinCursor.optional(),
+    cursor: TriageCollectionCursorV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageListPinnedEntriesInputV1 = ReturnType<typeof TriageListPinnedEntriesInputV1Schema.parse>;
 export const TriageListPinnedEntriesInputV1JsonSchema: PluginJsonSchema =
@@ -146,7 +141,7 @@ export const TriageListPinnedEntriesResultV1Schema = defineProtocolObject({
      * "Is there more" is derived from that absence rather than reported beside
      * it, so the page bound and the offer to pass it cannot disagree.
      */
-    nextCursor: triagePinCursor.optional(),
+    nextCursor: TriageCollectionCursorV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageListPinnedEntriesResultV1 = ReturnType<typeof TriageListPinnedEntriesResultV1Schema.parse>;
 export const TriageListPinnedEntriesResultV1JsonSchema: PluginJsonSchema =

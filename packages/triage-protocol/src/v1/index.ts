@@ -161,6 +161,7 @@ export type {
 export {
     TriagePrepareReviewWorkspaceInputV1Schema,
     TriagePrepareReviewWorkspaceResultV1Schema,
+    TriagePullRequestReviewRevisionV1Schema,
     TriageReviewWorkspaceCurrentnessV1Schema,
     TriageReviewWorkspaceObservedRevisionV1Schema,
     TriageSelectedWorkspaceScopeV1Schema,
@@ -168,6 +169,7 @@ export {
 export type {
     TriagePrepareReviewWorkspaceInputV1,
     TriagePrepareReviewWorkspaceResultV1,
+    TriagePullRequestReviewRevisionV1,
     TriageReviewWorkspaceCurrentnessV1,
     TriageReviewWorkspaceObservedRevisionV1,
     TriageSelectedWorkspaceScopeV1,

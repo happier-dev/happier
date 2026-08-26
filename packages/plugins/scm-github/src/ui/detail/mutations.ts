@@ -448,3 +448,20 @@ export function projectGithubMutationOutcomeV1(
   }
   return Object.freeze({ kind: 'failed' as const, failure: parsed.failure });
 }
+
+/** Whether GitHub's own settled write vocabulary leaves provider state uncertain. */
+export function githubMutationMayHaveChangedProviderStateV1(
+  outcome: GithubMutationOutcomeV1 | null,
+): boolean {
+  if (outcome === null) return false;
+  switch (outcome.kind) {
+    case 'applied':
+      return outcome.effect === 'changed';
+    case 'pending':
+    case 'uncertain':
+    case 'unreadable':
+      return true;
+    default:
+      return false;
+  }
+}

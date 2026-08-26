@@ -5,7 +5,6 @@ export const GITHUB_CONNECTED_ACCOUNT_ID = 'github-account';
 /** Declared host-access purpose for materializing the selected GitHub account. */
 export const GITHUB_CONNECTED_ACCOUNT_PURPOSE = 'github-connected-account';
 export const GITHUB_WEBHOOK_CONTRIBUTION_ID = 'github-events';
-export const GITHUB_AUTOMATION_REPOSITORY_EVENT_ID = 'automation/repository-event-v1';
 export const GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID = 'automation/setup-repository-event-v1';
 /** Host target-Action boundary for one checkpointed-pull source attempt. */
 export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID = 'automation/run-repository-event-source-attempt-v1';

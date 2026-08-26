@@ -18,7 +18,6 @@ import type {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import {
-  MAX_TRIAGE_INSTANCE_DRAFTS_V1,
   TriageGetInputV1Schema,
   TriageListInstancesInputV1Schema,
   TriageScanInputV1Schema,
@@ -223,12 +222,10 @@ async function collectAccountCandidates(input: Readonly<{
   client: SentryApiClientV1;
   binding: SentryAccountBindingV1;
   deployment: SentryDeploymentV1;
-  remainingCapacity: number;
   nowMs: number;
 }>): Promise<Readonly<{
   candidates: readonly TriageSourceInstanceDraftV1[];
   failures: readonly SentryInstanceFailureV1[];
-  capReached: boolean;
   skippedSiblingFailure: TriageSourceFailureV1 | null;
 }>> {
   const candidates: TriageSourceInstanceDraftV1[] = [];
@@ -244,10 +241,9 @@ async function collectAccountCandidates(input: Readonly<{
    * and each duplicate spent one of the draft slots a DISTINCT organization needed.
    * A repeat is provider paging, not a contract failure, so it is dropped silently
    * rather than reported.
-   */
+  */
   const recordedInstanceKeys = new Set<string>();
   let cursor: string | undefined;
-  let capReached = false;
   let skippedSiblingFailure: TriageSourceFailureV1 | null = null;
 
   const fail = (failure: TriageSourceFailureV1): void => {
@@ -299,19 +295,12 @@ async function collectAccountCandidates(input: Readonly<{
         fail(failure);
         continue;
       }
-      // Deduped BEFORE the capacity test, because a repeat is not a candidate: charging
-      // it would both spend a slot and, at the ceiling, report a finished walk as
-      // `instanceCapReached` on the strength of a row already recorded.
+      // A repeat is provider paging, not a second configured choice.
       if (recordedInstanceKeys.has(draft.localInstanceKey)) continue;
-      if (candidates.length >= input.remainingCapacity) {
-        capReached = true;
-        break;
-      }
       recordedInstanceKeys.add(draft.localInstanceKey);
       candidates.push(draft);
     }
     if (page.failure !== null) fail(toTriageFailure(page.failure));
-    if (capReached) break;
 
     const link = parseSentryLinkHeader(response.headers);
     if (!link.present) {
@@ -335,7 +324,6 @@ async function collectAccountCandidates(input: Readonly<{
   return Object.freeze({
     candidates: Object.freeze(candidates),
     failures: Object.freeze(failures),
-    capReached,
     skippedSiblingFailure,
   });
 }
@@ -374,7 +362,6 @@ export async function listSentryInstances(
   const outcome = await readTriageSourceAccountListingV1({
     connectedAccounts: context.services.connectedAccounts,
     purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE,
-    limit: MAX_TRIAGE_INSTANCE_DRAFTS_V1,
     signal: context.signal,
   });
   if (outcome.kind === 'failed') throw outcome.error;
@@ -384,14 +371,12 @@ export async function listSentryInstances(
 
   const candidates: TriageSourceInstanceDraftV1[] = [];
   const failures: SentryInstanceFailureV1[] = [];
-  let capReached = false;
   let skippedSiblingFailure: TriageSourceFailureV1 | null = null;
 
   const accounts = [...listed.accounts]
     .sort((left, right) => compareAccounts(left.account, right.account));
 
   for (const entry of accounts) {
-    if (capReached) break;
     const binding: SentryAccountBindingV1 = Object.freeze({
       purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE,
       account: entry.account,
@@ -410,32 +395,21 @@ export async function listSentryInstances(
       client,
       binding,
       deployment: route.deployment,
-      remainingCapacity: MAX_TRIAGE_INSTANCE_DRAFTS_V1 - candidates.length,
       nowMs,
     });
     candidates.push(...walked.candidates);
     failures.push(...walked.failures);
-    capReached = walked.capReached;
     skippedSiblingFailure ??= walked.skippedSiblingFailure;
   }
 
-  const bounded = Object.freeze(failures.slice(0, MAX_TRIAGE_INSTANCE_DRAFTS_V1));
-
-  if (capReached) {
-    return Object.freeze({
-      kind: 'incomplete' as const,
-      candidates: Object.freeze(candidates),
-      failures: bounded,
-      failure: sourceFailure(SENTRY_FAILURE_CODES.instanceCapReached),
-    });
-  }
+  const frozenFailures = Object.freeze([...failures]);
   if (listed.status === 'truncated') {
     // The incumbent listing has no resumable cursor, so an elision can never be
     // reported as complete discovery — and it never retires anything either.
     return Object.freeze({
       kind: 'incomplete' as const,
       candidates: Object.freeze(candidates),
-      failures: bounded,
+      failures: frozenFailures,
       failure: sourceFailure(SENTRY_FAILURE_CODES.accountListTruncated),
     });
   }
@@ -443,14 +417,14 @@ export async function listSentryInstances(
     return Object.freeze({
       kind: 'incomplete' as const,
       candidates: Object.freeze(candidates),
-      failures: bounded,
+      failures: frozenFailures,
       failure: skippedSiblingFailure,
     });
   }
   return Object.freeze({
     kind: 'complete' as const,
     candidates: Object.freeze(candidates),
-    failures: bounded,
+    failures: frozenFailures,
   });
 }
 

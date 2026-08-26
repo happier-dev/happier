@@ -140,6 +140,34 @@ describe('gitlab/merge-request/merge', () => {
     expect(transport.requests.filter((request) => request.method === 'PUT')).toHaveLength(0);
   });
 
+  it('does not claim a merge when the confirming read identifies another project', async () => {
+    const transport = scriptedTransport({
+      [`GET ${ITEM_URL}`]: [
+        { status: 200, body: mergeRequestBody() },
+        {
+          status: 200,
+          body: mergeRequestBody({
+            project_id: 99,
+            state: 'merged',
+            merged_at: '2026-08-12T09:05:00.000Z',
+          }),
+        },
+      ],
+      [`PUT ${MERGE_URL}`]: [{ status: 200, body: mergeRequestBody({ state: 'merged' }) }],
+    });
+
+    const result = await mergeGitlabMergeRequest(mergeInput(), transport.context);
+
+    // The write may have happened, but a confirmation for another project cannot
+    // prove it. Reporting this as merged would let a wrong response reconcile the
+    // action and overwrite the user's currentness evidence.
+    expect(result).toMatchObject({
+      kind: 'unconfirmed',
+      failure: { class: 'unsupportedContract', code: 'identity-mismatch' },
+    });
+    expect(transport.requests.filter((request) => request.method === 'PUT')).toHaveLength(1);
+  });
+
   it('sends the caller-observed head as GitLab’s own sha precondition', async () => {
     const transport = scriptedTransport({
       [`GET ${ITEM_URL}`]: [
@@ -821,11 +849,9 @@ describe('the GitLab mutation deadline', () => {
  * not, and cannot, tell the caller that the provider did nothing. `sources/SCM.md` §4.7.2's rule is
  * that a status code is not evidence of an effect, and its dual is that a MISSING answer is not
  * evidence of no effect — so a deadline abort belongs with the dropped connection, not with the two
- * refusals this client makes before dispatch.
- *
- * Every case below scripts the item as GitLab would report it if the write HAD landed. A result of
- * `unavailable` is therefore the precise failure the arm's own contract names — "nothing was
- * attempted" — asserted about a transition that happened.
+ * refusals this client makes before dispatch. The one absolute deadline also bounds confirmation:
+ * after it expires, even a scripted confirming response is inaccessible through a real already-
+ * aborted transport signal, so the truthful result is `unconfirmed` without a second timer.
  */
 describe('a mutation write whose answer this source’s deadline took', () => {
   afterEach(() => {
@@ -839,7 +865,7 @@ describe('a mutation write whose answer this source’s deadline took', () => {
     return pending;
   }
 
-  it('reports a merge GitLab performed as merged, never as nothing attempted', async () => {
+  it('reports a timed-out merge as unconfirmed when the spent deadline prevents confirmation', async () => {
     const transport = scriptedTransport({
       [`GET ${ITEM_URL}`]: [
         { status: 200, body: mergeRequestBody() },
@@ -852,12 +878,15 @@ describe('a mutation write whose answer this source’s deadline took', () => {
       () => mergeGitlabMergeRequest(mergeInput(), transport.context),
     );
 
-    expect(result).toMatchObject({ kind: 'merged', item: { state: 'merged' } });
-    // One PUT. A lost answer is settled by the confirming read, never by a second write.
+    expect(result).toMatchObject({
+      kind: 'unconfirmed',
+      failure: { class: 'transient', code: 'deadline-exceeded' },
+    });
+    // One PUT. A lost answer is never followed by a second write.
     expect(transport.requests.filter((request) => request.method === 'PUT')).toHaveLength(1);
   });
 
-  it('reports a draft GitLab cleared as ready, never as nothing attempted', async () => {
+  it('reports a timed-out draft change as unconfirmed when the spent deadline prevents confirmation', async () => {
     const transport = scriptedTransport({
       [`GET ${ITEM_URL}`]: [
         { status: 200, body: mergeRequestBody({ draft: true }) },
@@ -870,11 +899,14 @@ describe('a mutation write whose answer this source’s deadline took', () => {
       () => markGitlabMergeRequestReady(mergeInput(), transport.context),
     );
 
-    expect(result).toMatchObject({ kind: 'ready', item: { draft: false } });
+    expect(result).toMatchObject({
+      kind: 'unconfirmed',
+      failure: { class: 'transient', code: 'deadline-exceeded' },
+    });
     expect(transport.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   });
 
-  it('reports a close GitLab performed as closed, never as nothing attempted', async () => {
+  it('reports a timed-out close as unconfirmed when the spent deadline prevents confirmation', async () => {
     const transport = scriptedTransport({
       [`GET ${ITEM_URL}`]: [
         { status: 200, body: mergeRequestBody({ state: 'opened' }) },
@@ -887,10 +919,13 @@ describe('a mutation write whose answer this source’s deadline took', () => {
       () => closeGitlabMergeRequest(closeInput(), transport.context),
     );
 
-    expect(result).toMatchObject({ kind: 'closed', item: { state: 'closed' } });
+    expect(result).toMatchObject({
+      kind: 'unconfirmed',
+      failure: { class: 'transient', code: 'deadline-exceeded' },
+    });
   });
 
-  it('reports a reopen GitLab performed as reopened, never as nothing attempted', async () => {
+  it('reports a timed-out reopen as unconfirmed when the spent deadline prevents confirmation', async () => {
     const transport = scriptedTransport({
       [`GET ${ITEM_URL}`]: [
         { status: 200, body: mergeRequestBody({ state: 'closed' }) },
@@ -903,10 +938,13 @@ describe('a mutation write whose answer this source’s deadline took', () => {
       () => reopenGitlabMergeRequest(closeInput(), transport.context),
     );
 
-    expect(result).toMatchObject({ kind: 'reopened', item: { state: 'opened' } });
+    expect(result).toMatchObject({
+      kind: 'unconfirmed',
+      failure: { class: 'transient', code: 'deadline-exceeded' },
+    });
   });
 
-  it('still reports a write the deadline took and the confirming read cannot settle as unconfirmed', async () => {
+  it('does not expose a scripted confirming row after the shared deadline has expired', async () => {
     // The other arm of the same rule: when the re-observation proves nothing, the honest answer is
     // that the outcome is unknown — which is still not `unavailable`.
     const transport = scriptedTransport({
@@ -921,6 +959,9 @@ describe('a mutation write whose answer this source’s deadline took', () => {
       () => mergeGitlabMergeRequest(mergeInput(), transport.context),
     );
 
-    expect(result).toMatchObject({ kind: 'unconfirmed', observed: { state: 'opened' } });
+    expect(result).toMatchObject({
+      kind: 'unconfirmed',
+      failure: { class: 'transient', code: 'deadline-exceeded' },
+    });
   });
 });

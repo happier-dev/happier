@@ -20,6 +20,7 @@ answer "no" while still passing a schema check.
 | `test/publicSurface.test.mjs` | QB-01 import boundary and packaging, QB-08 canonical-owner census |
 | `test/sourceAbiConformance.test.mjs` | QB-01 through QB-06 and QB-59 as runnable cases |
 | `test/publicContractCensus.test.mjs` | QB-20, QB-22 and QB-59 censuses, each paired with the wrong shape it rejects |
+| `test/installedTarballProof.test.mjs` | QB-01 prepublication proof over packed SDK, protocol, and external-source tarballs installed outside the repository |
 
 There is no HTTP client, so nothing is mocked. Provider reads are deterministic and in-memory, which
 keeps the mapping — the layer the public contract actually constrains — running for real.
@@ -30,9 +31,9 @@ keeps the mapping — the layer the public contract actually constrains — runn
 npm --prefix packages/tests/fixtures/plugin-platform/out-of-tree-triage-source test
 ```
 
-Both suites resolve `@happier-dev/triage-protocol` through the workspace symlink, so they consume the
-package's built `dist`, exactly as an installed consumer would. Rebuild that package first if its
-source has moved.
+The source-level suites consume the workspace packages. The installed-tarball suite separately uses
+the canonical pack sandbox to build the SDK and protocol publication closures, packs this fixture,
+installs all three tarballs outside the repository, and verifies that every import resolves there.
 
 ## What it deliberately does not do
 

@@ -34,11 +34,20 @@ const mounted: PluginUiTestkit[] = [];
 let configuredScanWindow: unknown = { kind: 'relative', durationMs: 2_592_000_000 };
 let configuredDetailWindow: unknown = { kind: 'relative', durationMs: 2_592_000_000 };
 let capabilityResult: () => Promise<JsonValue> = async () => ({ kind: 'available' });
+type ConfigurationRequest = Readonly<{
+  kind?: string;
+  organizationUuid?: string;
+  page?: Readonly<{ kind?: string; next?: string }>;
+}>;
+let configurationResult: ((input: Readonly<{
+  request: ConfigurationRequest;
+  signal: AbortSignal;
+}>) => Promise<JsonValue>) | null = null;
 const ORGANIZATIONS_NEXT = 'https://eu.posthog.com/api/organizations/?limit=754&offset=754';
 const ENVIRONMENTS_NEXT = 'https://eu.posthog.com/api/organizations/00000000-0000-4000-8000-0000000000a1/projects/?limit=754&offset=754';
 
 async function executeAction(
-  { action, input }: Readonly<{ action: unknown; input: unknown }>,
+  { action, input, signal }: Readonly<{ action: unknown; input: unknown; signal: AbortSignal }>,
 ): Promise<JsonValue> {
   recorded.push({ action, input });
   const ref = action as Readonly<{ pluginId?: string; localId?: string }>;
@@ -77,11 +86,8 @@ async function executeAction(
     };
   }
   if (ref.localId === POSTHOG_ACTION_IDS.configuration) {
-    const request = input as Readonly<{
-      kind?: string;
-      organizationUuid?: string;
-      page?: Readonly<{ kind?: string; next?: string }>;
-    }>;
+    const request = input as ConfigurationRequest;
+    if (configurationResult !== null) return await configurationResult({ request, signal });
     if (request.kind === 'environments') {
       return {
         kind: 'environments',
@@ -139,7 +145,7 @@ async function mountSettings(): Promise<PluginUiTestkit> {
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
-        executeAction: async ({ action, input }) => await executeAction({ action, input }),
+        executeAction: async ({ action, input, signal }) => await executeAction({ action, input, signal }),
       },
     });
   });
@@ -152,6 +158,7 @@ afterEach(async () => {
   configuredScanWindow = { kind: 'relative', durationMs: 2_592_000_000 };
   configuredDetailWindow = { kind: 'relative', durationMs: 2_592_000_000 };
   capabilityResult = async () => ({ kind: 'available' });
+  configurationResult = null;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
@@ -303,5 +310,126 @@ describe('the mounted PostHog PRs & Issues settings page', () => {
       kind: 'organizations',
       page: { kind: 'continuation', next: ORGANIZATIONS_NEXT },
     }));
+  });
+
+  it('keeps a new organization current when its predecessor environment page settles late', async () => {
+    const organizationA = '00000000-0000-4000-8000-0000000000a1';
+    const organizationB = '00000000-0000-4000-8000-0000000000a2';
+    let resolveB!: (value: JsonValue) => void;
+    let observeB!: () => void;
+    const startedB = new Promise<void>((resolve) => { observeB = resolve; });
+    let staleSignal!: AbortSignal;
+    configurationResult = async ({ request, signal }) => {
+      if (request.kind === 'organizations') {
+        return {
+          kind: 'organizations',
+          rows: [
+            {
+              organizationUuid: organizationA,
+              displayName: 'Organization A',
+              localInstanceKey: `posthog-org:https://eu.posthog.com:${organizationA}`,
+            },
+            {
+              organizationUuid: organizationB,
+              displayName: 'Organization B',
+              localInstanceKey: `posthog-org:https://eu.posthog.com:${organizationB}`,
+            },
+          ],
+        };
+      }
+      if (request.organizationUuid === organizationB) {
+        staleSignal = signal;
+        observeB();
+        return await new Promise<JsonValue>((resolve) => { resolveB = resolve; });
+      }
+      return {
+        kind: 'environments',
+        organizationUuid: organizationA,
+        rows: [{
+          teamPathId: 4821,
+          teamUuid: '00000000-0000-4000-8000-0000000000d1',
+          parentProjectId: 4820,
+          displayName: 'Environment A',
+        }],
+      };
+    };
+
+    const page = await mountSettings();
+    await act(async () => {
+      await page.press(await page.getByRole('button', {
+        name: 'Add Example organization to PRs & Issues',
+      }));
+    });
+    const organizationBControl = await page.findByRole('radio', { name: 'Organization B' });
+    expect(organizationBControl.state?.disabled).not.toBe(true);
+    await act(async () => { await page.press(organizationBControl); });
+    await startedB;
+
+    await act(async () => {
+      await page.press(await page.getByRole('radio', { name: 'Organization A' }));
+    });
+    expect(staleSignal.aborted).toBe(true);
+
+    await act(async () => {
+      resolveB({
+        kind: 'environments',
+        organizationUuid: organizationB,
+        rows: [{
+          teamPathId: 4822,
+          teamUuid: '00000000-0000-4000-8000-0000000000d2',
+          parentProjectId: 4820,
+          displayName: 'Environment B',
+        }],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await expect(page.queryByRole('checkbox', { name: 'Environment B' })).resolves.toBeUndefined();
+  });
+
+  it('cancels an in-flight environment page when the editor unmounts', async () => {
+    const organizationA = '00000000-0000-4000-8000-0000000000a1';
+    const organizationB = '00000000-0000-4000-8000-0000000000a2';
+    let environmentSignal!: AbortSignal;
+    let observeEnvironment!: () => void;
+    const environmentStarted = new Promise<void>((resolve) => { observeEnvironment = resolve; });
+    configurationResult = async ({ request, signal }) => {
+      if (request.kind === 'organizations') {
+        return {
+          kind: 'organizations',
+          rows: [{
+            organizationUuid: organizationA,
+            displayName: 'Example organization',
+            localInstanceKey: `posthog-org:https://eu.posthog.com:${organizationA}`,
+          }, {
+            organizationUuid: organizationB,
+            displayName: 'Organization B',
+            localInstanceKey: `posthog-org:https://eu.posthog.com:${organizationB}`,
+          }],
+        };
+      }
+      environmentSignal = signal;
+      observeEnvironment();
+      return await new Promise<JsonValue>(() => {
+        // The provider boundary deliberately ignores abort; mounted currentness still
+        // must withdraw the request and make its late settlement inert.
+      });
+    };
+
+    const page = await mountSettings();
+    await act(async () => {
+      await page.press(await page.getByRole('button', {
+        name: 'Add Example organization to PRs & Issues',
+      }));
+    });
+    await act(async () => {
+      await page.press(await page.findByRole('radio', { name: 'Organization B' }));
+    });
+    await environmentStarted;
+
+    await act(async () => {
+      await page.press(await page.getByRole('button', { name: 'Cancel' }));
+    });
+    expect(environmentSignal.aborted).toBe(true);
   });
 });

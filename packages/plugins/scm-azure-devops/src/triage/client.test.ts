@@ -223,6 +223,26 @@ describe('createAzureDevOpsApiClient', () => {
     if (!result.ok) expect(result.failure.class).toBe('cancelled');
   });
 
+  it('does not publish a response that arrived after the caller cancelled the invocation', async () => {
+    const controller = new AbortController();
+    const azure = createAzureDevOpsApiClient({
+      origin: origin(),
+      authorization: { headers: { authorization: 'Basic REDACTED' } },
+      // A transport can race cancellation and still resolve with bytes. The source must not
+      // publish those bytes into a panel whose invocation is no longer current.
+      transport: async () => {
+        controller.abort();
+        return { status: 200, headers: {}, bodyText: JSON.stringify(projectsPage1) };
+      },
+      now: () => NOW_MS,
+    });
+
+    const result = await azure.request({ route: { resource: 'projects' }, signal: controller.signal });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failure.class).toBe('cancelled');
+  });
+
   it('passes the invocation signal through to the transport boundary', async () => {
     const harness = client({ status: 200, headers: {}, bodyText: '{}' });
     const controller = new AbortController();

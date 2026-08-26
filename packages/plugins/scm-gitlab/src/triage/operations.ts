@@ -15,10 +15,13 @@ import {
   TriageGetResultV1Schema,
   TriageListInstancesInputV1Schema,
   TriageListInstancesResultV1Schema,
+  TriagePrepareReviewWorkspaceInputV1Schema,
+  TriagePrepareReviewWorkspaceResultV1Schema,
   TriageScanInputV1Schema,
   TriageScanResultV1Schema,
   type TriageGetResultV1,
   type TriageListInstancesResultV1,
+  type TriagePrepareReviewWorkspaceResultV1,
   type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -26,6 +29,7 @@ import { createGitlabHttpFetcher, readGitlabConnectedAccounts } from './invocati
 import { getGitlabTriageEntry } from './sourceGet.js';
 import { listGitlabTriageInstances } from './sourceInstances.js';
 import { scanGitlabTriageSource } from './sourceScan.js';
+import { prepareGitlabReviewWorkspace } from './reviewWorkspace.js';
 
 /**
  * The host validates operation input against the published schema before
@@ -82,4 +86,16 @@ export async function getGitlabSourceEntryAction(
     nowMs: Date.now(),
   });
   return TriageGetResultV1Schema.parse(result);
+}
+
+export async function prepareGitlabReviewWorkspaceAction(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<TriagePrepareReviewWorkspaceResultV1> {
+  const preparation = requireOperationInput(
+    TriagePrepareReviewWorkspaceInputV1Schema.safeParse(input),
+    'prepareReviewWorkspace',
+  );
+  const result = await prepareGitlabReviewWorkspace(preparation, context);
+  return TriagePrepareReviewWorkspaceResultV1Schema.parse(result);
 }

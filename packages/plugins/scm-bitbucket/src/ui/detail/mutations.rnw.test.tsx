@@ -36,6 +36,7 @@ const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
 
 let nextResult: JsonValue = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
+let nextActionError: unknown | null = null;
 let completedMutations = 0;
 
 /**
@@ -95,6 +96,7 @@ async function mountDetail(
       handlers: {
         executeAction: async ({ action, input }) => {
           recorded.push({ action, input });
+          if (nextActionError !== null) throw nextActionError;
           const localId = (action as Readonly<{ localId?: string }>).localId ?? '';
           return readResults[localId] ?? nextResult;
         },
@@ -108,6 +110,7 @@ async function mountDetail(
 afterEach(async () => {
   recorded.splice(0);
   readResults = {};
+  nextActionError = null;
   completedMutations = 0;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
@@ -128,6 +131,19 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     await detail.press(await detail.getByRole('button', { name: 'Decline' }));
 
     expect(completedMutations).toBe(1);
+  });
+
+  it('hands an unknown dispatch outcome to the target-owned re-observation seam', async () => {
+    const detail = await mountDetail();
+    nextActionError = Object.assign(
+      new Error('The Action timed out after dispatch.'),
+      { code: 'timeout' },
+    );
+
+    await detail.press(await detail.getByRole('button', { name: 'Decline' }));
+
+    expect(completedMutations).toBe(1);
+    expect(recordedWrites()).toHaveLength(1);
   });
 
   it('offers Decline and sends the exact entry it is mounted on', async () => {

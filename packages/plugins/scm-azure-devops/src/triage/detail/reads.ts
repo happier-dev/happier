@@ -275,8 +275,14 @@ export async function readAzurePoliciesSurface(
       },
     );
     if (!evaluations.ok) {
-    // The statuses are real evidence and are kept; only the evaluation half is
-    // reported short. Failing both would hide policy state the reader can see.
+      // A cancellation/deadline invalidates the entire mounted invocation. Retaining the status
+      // section is useful only for an ordinary evaluation failure while the panel remains current;
+      // otherwise it would publish a stale partial result after navigation or timeout.
+      if (dependencies.signal.aborted) {
+        return { ok: false, failure: evaluations.failure };
+      }
+      // The statuses are real evidence and are kept; only the evaluation half is
+      // reported short. Failing both would hide policy state the reader can see.
       return {
         ok: true,
         value: Object.freeze({

@@ -29,7 +29,10 @@ import {
   summarizeGitlabLabels,
 } from './bounded.js';
 import { readGitlabSubscribedFact } from './gitlabInvolvement.js';
-import { readGitlabMergeRequestHeadSha } from './mergeRequestHead.js';
+import {
+  readGitlabMergeRequestHeadSha,
+  readGitlabMergeRequestReviewRevision,
+} from './mergeRequestHead.js';
 
 /** Bounded native label for a state GitLab added after this client shipped. */
 const MAX_NATIVE_LABEL_UTF8_BYTES = 64;
@@ -219,8 +222,11 @@ export function decodeGitlabRow(input: GitlabRowDecodeInput): GitlabRowDecodeRes
   // `sha` precondition. An issue has no head, so it publishes GitLab's
   // `updated_at` byte — unparsed, because the pin is compared for equality and a
   // parsed clock would make two spellings of one instant compare equal.
+  const reviewRevision = isMergeRequest
+    ? readGitlabMergeRequestReviewRevision(row)
+    : null;
   const nativeRevision = isMergeRequest
-    ? readGitlabMergeRequestHeadSha(row)
+    ? reviewRevision?.nativeRevision ?? readGitlabMergeRequestHeadSha(row)
     : readString(row.updated_at);
   const commentCount = typeof row.user_notes_count === 'number' ? row.user_notes_count : null;
 
@@ -278,6 +284,7 @@ export function decodeGitlabRow(input: GitlabRowDecodeInput): GitlabRowDecodeRes
         state,
         sourceUpdatedAtMs,
         nativeRevision,
+        reviewRevision,
         sourceCreatedAtMs: readTimestampMs(row.created_at),
         author,
         assignees: readActors(row.assignees),

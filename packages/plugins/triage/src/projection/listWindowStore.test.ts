@@ -15,7 +15,10 @@ import {
     type TriageAdmittedOperationExecutorV1,
     type TriageAdmittedSourceV1,
 } from '../actions/listEntries.js';
-import type { TriageListEntriesInputV1 } from '../actions/listEntriesProtocol.js';
+import {
+    MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
+    type TriageListEntriesInputV1,
+} from '../actions/listEntriesProtocol.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
@@ -55,13 +58,14 @@ type ScanFn = (input: TriageScanInputV1) => Promise<TriageScanResultV1>;
 function configuredInstance(
     source: Readonly<{ pluginId: string; localId: string }>,
     sourceInstanceId: string,
+    accountId = 'account-1',
 ): TriageConfiguredSourceInstanceV1 {
     return TriageConfiguredSourceInstanceV1Schema.parse({
         v: 1,
         instance: { source, sourceInstanceId },
         binding: {
             purpose: 'triage-source',
-            account: { service: { pluginId: source.pluginId, localId: 'accounts' }, accountId: 'account-1' },
+            account: { service: { pluginId: source.pluginId, localId: 'accounts' }, accountId },
         },
         localInstanceKey: 'example/repository',
         configuration: { v: 1, token: 'routing-token' },
@@ -74,13 +78,14 @@ function instanceRow(
     source: Readonly<{ pluginId: string; localId: string }>,
     sourceInstanceId: string,
     configuredAtMs: number,
+    accountId?: string,
 ): CorpusSourceInstanceRowV1 {
     return {
         instanceTag: `${tagSeed}${'0'.repeat(43 - tagSeed.length)}`,
         sourceQualifiedId: `${source.pluginId}/${source.localId}`,
         lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active,
         configuredAtMs,
-        configured: configuredInstance(source, sourceInstanceId),
+        configured: configuredInstance(source, sourceInstanceId, accountId),
     };
 }
 
@@ -129,14 +134,23 @@ function createHarness(options: Readonly<{
     /** Seeded by default; a single-connection mount is its own configured set. */
     configureSourceA?: boolean;
     configureSourceB?: boolean;
+    /** Two distinct configured accounts of one source can observe one canonical entry. */
+    sameSourceForB?: boolean;
 }> = {}) {
     const admitSourceB = options.admitSourceB ?? true;
+    const sourceForB = options.sameSourceForB ? SOURCE_A : SOURCE_B;
     const { collections, control } = createTestkitCorpusCollections();
     if (options.configureSourceA ?? true) {
         control.sourceInstances.seed(toCorpusStoredValue(instanceRow('a', SOURCE_A, INSTANCE_A, 1)));
     }
     if (options.configureSourceB ?? true) {
-        control.sourceInstances.seed(toCorpusStoredValue(instanceRow('b', SOURCE_B, INSTANCE_B, 2)));
+        control.sourceInstances.seed(toCorpusStoredValue(instanceRow(
+            'b',
+            sourceForB,
+            INSTANCE_B,
+            2,
+            options.sameSourceForB ? 'account-2' : undefined,
+        )));
     }
 
     const scans = new Map<object, ScanFn>();
@@ -218,6 +232,19 @@ function createHarness(options: Readonly<{
 
     const scanA: ScanFn = async (input) => {
         scanCalls.count += 1;
+        if (options.sameSourceForB) {
+            const isSecondAccount = input.instance.instance.sourceInstanceId === INSTANCE_B;
+            return {
+                kind: 'complete',
+                observations: [presentObservation({
+                    entryId: 'shared-entry',
+                    title: isSecondAccount ? 'Second account view' : 'First account view',
+                    sourceUpdatedAtMs: isSecondAccount ? 2_000 : 3_000,
+                    ...(isSecondAccount ? { involvement: ['reviewRequested'] as const } : {}),
+                })],
+                evidence: { kind: 'walkFinished' },
+            };
+        }
         if (state.mixedSourcesNeverFinish) {
             const page = input.page.kind === 'initial' ? 1 : Number(input.page.continuation.token);
             return {
@@ -312,9 +339,11 @@ function createHarness(options: Readonly<{
         };
     };
 
-    const admitted = admitSourceB
-        ? [admittedSource(SOURCE_A, scanA), admittedSource(SOURCE_B, scanB)]
-        : [admittedSource(SOURCE_A, scanA)];
+    const admitted = options.sameSourceForB
+        ? [admittedSource(SOURCE_A, scanA)]
+        : admitSourceB
+            ? [admittedSource(SOURCE_A, scanA), admittedSource(SOURCE_B, scanB)]
+            : [admittedSource(SOURCE_A, scanA)];
     const executeScan: TriageAdmittedOperationExecutorV1 = async (operation, input) => {
         const scan = scans.get(operation as unknown as object);
         if (scan === undefined) throw new Error('No admitted scan handle for this operation.');
@@ -329,8 +358,8 @@ function createHarness(options: Readonly<{
         // that goes away after a first successful pass takes.
         if (
             state.enumerationRejected
-            && input.sources.kind === 'selected'
-            && input.sources.sourceInstanceIds.length === 0
+            && input.sources.kind === 'allConfigured'
+            && input.limit === 0
         ) {
             throw new Error('The plugin action could not be dispatched: no machine is reachable.');
         }
@@ -352,7 +381,7 @@ function createHarness(options: Readonly<{
         nowMs: () => clock.nowMs,
     });
 
-    return { actionInputs, clock, readEntries, scanCalls, state };
+    return { actionInputs, clock, collections, control, readEntries, scanCalls, state };
 }
 
 describe('the mounted PRs & Issues window store', () => {
@@ -392,6 +421,81 @@ describe('the mounted PRs & Issues window store', () => {
             sourceInstanceIds: [INSTANCE_A, INSTANCE_B],
         });
         store.dispose();
+    });
+
+    it('enumerates every configured source cursor page then submits sequential transport batches through the same coordinator', async () => {
+        const harness = createHarness({ configureSourceB: false });
+        for (let index = 0; index < MAX_TRIAGE_LIST_SOURCE_BATCH_V1; index += 1) {
+            const sourceInstanceId = `${String(index + 3).padStart(8, '0')}-1111-4111-8111-111111111111`;
+            harness.control.sourceInstances.seed(toCorpusStoredValue(instanceRow(
+                `c${String(index).padStart(4, '0')}x`,
+                SOURCE_A,
+                sourceInstanceId,
+                index + 3,
+                `account-${String(index + 3)}`,
+            )));
+        }
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+
+        expect(store.getSnapshot().configuredSources).toHaveLength(MAX_TRIAGE_LIST_SOURCE_BATCH_V1 + 1);
+
+        const enumerationPages = harness.actionInputs.filter((input) => (
+            input.sources.kind === 'allConfigured' && input.limit === 0
+        ));
+        expect(enumerationPages).toHaveLength(2);
+        expect(enumerationPages[0]?.sources).toEqual({ kind: 'allConfigured' });
+        expect(enumerationPages[1]?.sources).toMatchObject({
+            kind: 'allConfigured',
+            cursor: expect.any(String),
+        });
+
+        const batches = harness.actionInputs.filter((input) => (
+            input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0
+        ));
+        expect(batches.map((input) => (
+            input.sources.kind === 'selected' ? input.sources.sourceInstanceIds.length : 0
+        ))).toEqual([MAX_TRIAGE_LIST_SOURCE_BATCH_V1, 1]);
+        expect(new Set(batches.flatMap((input) => (
+            input.sources.kind === 'selected' ? input.sources.sourceInstanceIds : []
+        ))).size).toBe(MAX_TRIAGE_LIST_SOURCE_BATCH_V1 + 1);
+        store.dispose();
+    });
+
+    it('retains every account observation when one mixed page folds them into one canonical entry', async () => {
+        // Two accounts of the same source can legitimately see the same entry.
+        // The Action renders the stable content winner (A) in full, while B is
+        // the attention/selection winner. Rehydrating only the rendered answer
+        // makes the mounted read model choose A again, silently changing where
+        // detail and mutations run even though the one mixed Action answered B.
+        const harness = createHarness({ sameSourceForB: true });
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        try {
+            await store.refresh('view');
+
+            const row = store.getSnapshot().window?.rows[0];
+            expect(row?.observations.map((observation) => observation.sourceInstanceId))
+                .toEqual([INSTANCE_A, INSTANCE_B]);
+            expect(row?.attention).toMatchObject({
+                level: 'required',
+                fromSourceInstanceId: INSTANCE_B,
+            });
+            expect(row?.selected).toEqual({
+                kind: 'selected',
+                sourceInstanceId: INSTANCE_B,
+                reason: 'attention',
+            });
+        } finally {
+            store.dispose();
+        }
     });
 
     it('goes stale on its own clock and adopts the next pass on refresh', async () => {
@@ -1258,6 +1362,47 @@ describe('appending another bounded window to one mount', () => {
         ) ?? [];
         expect(secondResumedPages).toHaveLength(2);
         expect(secondResumedPages.every((page, index) => page > (resumedPages[index] ?? 0))).toBe(true);
+
+        store.dispose();
+    });
+
+    it('restarts the mixed paging generation when a configured source appears before Load More', async () => {
+        const harness = createHarness({ configureSourceB: false });
+        harness.state.mixedSourcesNeverFinish = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        harness.control.sourceInstances.seed(toCorpusStoredValue(instanceRow('b', SOURCE_B, INSTANCE_B, 2)));
+
+        await store.loadMore();
+
+        const transportPages = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        );
+        // Source B cannot join A's prior frontier: a configured-set change is
+        // a new mixed acquisition generation, so both start from their first
+        // page under the same Action invocation.
+        expect(transportPages).toHaveLength(2);
+        expect(transportPages[1]?.sources).toEqual({
+            kind: 'selected',
+            sourceInstanceIds: [INSTANCE_A, INSTANCE_B],
+        });
+        expect(transportPages[1]?.resume).toBeUndefined();
+        expect(store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId))
+            .toEqual(expect.arrayContaining(['a-1', 'b-1']));
+
+        await store.loadMore();
+        const resumed = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        ).at(-1);
+        expect(resumed?.resume?.map((entry) => entry.sourceInstanceId))
+            .toEqual([INSTANCE_A, INSTANCE_B]);
+        const resumedPages = resumed?.resume?.map((entry) => Number(entry.continuation.token)) ?? [];
+        expect(resumedPages).toHaveLength(2);
+        expect(resumedPages.every((page) => page > 1)).toBe(true);
 
         store.dispose();
     });

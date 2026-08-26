@@ -13,7 +13,10 @@ import {
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
+import {
+    readActiveConfiguredSourceRowPage,
+    readActiveConfiguredSourceRows,
+} from '../corpus/configuration/readConfiguredSourceRows.js';
 import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
@@ -36,6 +39,7 @@ import {
 } from '../projection/scanPass.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import {
+    MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
     triageListRowBudgetV1,
     type TriageListEntriesInputV1,
     type TriageListEntriesResultV1,
@@ -131,19 +135,6 @@ function selectionAdmits(input: TriageListEntriesInputV1, sourceInstanceId: stri
 }
 
 /**
- * The active configured set, and whether it could be carried whole.
- *
- * The lifecycle writer refuses to create or reactivate past the same maximum,
- * but that check is a read-then-write admission bound rather than a set-level
- * guard: two creates racing at the boundary can each observe room and each
- * commit their own tuple-addressed row. This read therefore does not assume the
- * writer's bound holds. It asks for one row past the maximum, carries exactly
- * the maximum — which is also what this Action's own result array can name —
- * and reports the surplus as `truncated` so the window says it is incomplete
- * instead of silently dropping a configured source no reader could ever ask
- * about.
- */
-/**
  * The lane frontiers this request carries in, keyed the one way a lane is
  * addressed.
  *
@@ -168,13 +159,28 @@ export async function listTriageEntries(
 ): Promise<TriageListEntriesResultV1> {
     const options: PluginCancellationOptions | undefined = deps.signal ? { signal: deps.signal } : undefined;
     const resumeByInstance = resumeByInstanceId(input);
-    const [configured, admitted] = await Promise.all([
-        readActiveConfiguredSourceRows(
-            deps.sourceInstances,
-            deps.signal ? { signal: deps.signal } : undefined,
-        ),
-        deps.readAdmittedSources(options),
-    ]);
+    const admittedPromise = deps.readAdmittedSources(options);
+    const sources = input.sources;
+    let configuredRows: readonly CorpusSourceInstanceRowV1[];
+    let configuredSourcesStatus: 'complete' | 'truncated';
+    let configuredSourcesNextCursor: string | undefined;
+    if (sources.kind === 'allConfigured') {
+        const page = await readActiveConfiguredSourceRowPage(deps.sourceInstances, {
+            limit: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
+            ...(sources.cursor === undefined ? {} : { cursor: sources.cursor }),
+        }, options);
+        configuredRows = page.rows;
+        configuredSourcesStatus = page.status;
+        configuredSourcesNextCursor = page.nextCursor;
+    } else {
+        const configured = await readActiveConfiguredSourceRows(deps.sourceInstances, options);
+        configuredRows = configured.rows.filter((row) => sources.sourceInstanceIds.includes(
+            row.configured.instance.sourceInstanceId,
+        ));
+        configuredSourcesStatus = 'complete';
+        configuredSourcesNextCursor = undefined;
+    }
+    const admitted = await admittedPromise;
 
     const admittedByQualifiedId = indexTriageAdmittedSourcesV1(admitted);
 
@@ -182,7 +188,7 @@ export async function listTriageEntries(
     /** Every instance this request set out to cover, invocable or not. */
     const intended: TriageListIntendedSourceV1[] = [];
     const lanes: TriageScanLaneV1[] = [];
-    for (const row of configured.rows) {
+    for (const row of configuredRows) {
         const contribution = admittedByQualifiedId.get(row.sourceQualifiedId);
         const source = {
             pluginId: row.configured.instance.source.pluginId,
@@ -202,7 +208,7 @@ export async function listTriageEntries(
                 : { displayLabel: row.configured.locator.displayLabel }),
             available,
         });
-        if (!selectionAdmits(input, row.configured.instance.sourceInstanceId)) continue;
+        if (input.limit === 0 || !selectionAdmits(input, row.configured.instance.sourceInstanceId)) continue;
         // Selected, so this window is answering for it either way. A source that
         // cannot be invoked becomes an unfinished lane rather than a silent
         // absence, which is what keeps the coverage claim about what was asked.
@@ -244,7 +250,7 @@ export async function listTriageEntries(
     const window: TriageListWindowV1 = foldTriageListWindow({
         observations: pass.observations,
         lanes: triageListCoverageLanes({ intended, walked: pass.lanes }),
-        configuredSourcesStatus: configured.status,
+        configuredSourcesStatus,
         activeSourceInstanceIds: configuredSources
             .filter((summary) => summary.available)
             .map((summary) => summary.sourceInstanceId),
@@ -262,7 +268,8 @@ export async function listTriageEntries(
     return {
         v: 1,
         configuredSources,
-        configuredSourcesStatus: configured.status,
+        configuredSourcesStatus,
+        ...(configuredSourcesNextCursor === undefined ? {} : { configuredSourcesNextCursor }),
         window: {
             v: 1,
             rows: toTriageListWireRows(window),

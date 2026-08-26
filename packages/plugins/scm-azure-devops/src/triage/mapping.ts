@@ -1,11 +1,9 @@
-import { truncateUtf8 } from './decode.js';
 import { buildAzureCollisionScope, buildAzureEntryId, foldAzureIdentityId } from './identity.js';
 import { buildAzureRepositoryKey } from './origin.js';
 import type {
   AzureDevOpsOrigin,
   AzureInvolvement,
   AzureInvolvementLaneId,
-  AzurePresentationState,
   AzureProjectRow,
   AzurePullRequestEntry,
   AzurePullRequestMergeStatus,
@@ -15,19 +13,6 @@ import type {
   AzureReviewerRow,
   AzureRowFact,
 } from './types.js';
-
-/** Semantic display bound. Oversize text is shortened, never a reason to drop a valid entry. */
-export const MAX_AZURE_TEXT_UTF8_BYTES = 4 * 1024;
-/** Bounded projected fact count. Excess facts set `projectionTruncated`. */
-export const MAX_AZURE_ROW_FACTS = 12;
-
-const STATE_PRESENTATION: Readonly<Record<AzurePullRequestStatus, AzurePresentationState>> = {
-  active: 'active',
-  completed: 'closed',
-  abandoned: 'closed',
-  notSet: 'active',
-  all: 'active',
-};
 
 /**
  * Azure's own word for an abandoned pull request, and the one fact that separates it from a
@@ -103,7 +88,6 @@ export function mapAzurePullRequestEntry(input: Readonly<{
   const entryId = buildAzureEntryId(row.pullRequestId);
   if (collisionScope === null || entryId === null) return null;
 
-  const title = truncateUtf8(row.title, MAX_AZURE_TEXT_UTF8_BYTES);
   const facts = buildRowFacts({ row, viewerId });
 
   return {
@@ -126,9 +110,8 @@ export function mapAzurePullRequestEntry(input: Readonly<{
       repositoryName: repository.name,
       webUrl: repository.webUrl,
     },
-    title: title.value,
+    title: row.title,
     state: row.status,
-    presentation: STATE_PRESENTATION[row.status],
     nativeLabel: STATE_NATIVE_LABEL[row.status],
     isDraft: row.isDraft,
     authorId: row.createdBy?.id ?? null,
@@ -141,15 +124,14 @@ export function mapAzurePullRequestEntry(input: Readonly<{
     baseCommitId: row.lastMergeTargetCommitId,
     mergeStatus: row.mergeStatus,
     involvement: resolveAzureInvolvement({ lane, viewerId, reviewers: row.reviewers }),
-    facts: facts.facts,
-    projectionTruncated: title.truncated || facts.truncated,
+    facts,
   };
 }
 
 function buildRowFacts(input: Readonly<{
   row: AzurePullRequestRow;
   viewerId: string;
-}>): Readonly<{ facts: readonly AzureRowFact[]; truncated: boolean }> {
+}>): readonly AzureRowFact[] {
   const { row, viewerId } = input;
   const candidates: AzureRowFact[] = [];
 
@@ -177,10 +159,7 @@ function buildRowFacts(input: Readonly<{
   }
   for (const label of row.labels) candidates.push({ kind: 'label', value: label });
 
-  if (candidates.length <= MAX_AZURE_ROW_FACTS) {
-    return { facts: candidates, truncated: false };
-  }
-  return { facts: candidates.slice(0, MAX_AZURE_ROW_FACTS), truncated: true };
+  return candidates;
 }
 
 function readViewerReviewer(

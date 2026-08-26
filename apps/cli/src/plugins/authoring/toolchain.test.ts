@@ -91,6 +91,7 @@ describe('assertPluginAuthorPrepublicationRuntimeDeclarations', () => {
         bundledDependencies: [
           '@happier-dev/plugin-sdk',
           '@happier-dev/plugin-ui',
+          '@happier-dev/triage-protocol',
         ],
       }), 'utf8');
 
@@ -634,6 +635,9 @@ describe('runPluginAuthorToolchain', () => {
 
   it('installs and loads the prepublication author closure through the real managed file override', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'happier-author-external-sdk-resolution-'));
+    // Every declared author package must come from the transient file overrides;
+    // an undeclared package must not fall back to a registry request.
+    vi.stubEnv('npm_config_offline', 'true');
     try {
       await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
         name: 'external-happier-plugin',
@@ -642,6 +646,7 @@ describe('runPluginAuthorToolchain', () => {
         dependencies: {
           '@happier-dev/plugin-sdk': '0.0.0',
           '@happier-dev/plugin-ui': '0.0.0',
+          '@happier-dev/triage-protocol': '0.0.0',
         },
       }), 'utf8');
 
@@ -656,10 +661,13 @@ describe('runPluginAuthorToolchain', () => {
 
       const installedSdkRoot = await realpath(join(projectRoot, 'node_modules', '@happier-dev', 'plugin-sdk'));
       const installedUiRoot = join(projectRoot, 'node_modules', '@happier-dev', 'plugin-ui');
+      const installedTriageProtocolRoot = join(projectRoot, 'node_modules', '@happier-dev', 'triage-protocol');
       await expect(readFile(join(installedSdkRoot, 'package.json'), 'utf8'))
         .resolves.toContain('"@happier-dev/plugin-sdk"');
       await expect(readFile(join(installedUiRoot, 'package.json'), 'utf8'))
         .resolves.toContain('"@happier-dev/plugin-ui"');
+      await expect(readFile(join(installedTriageProtocolRoot, 'package.json'), 'utf8'))
+        .resolves.toContain('"@happier-dev/triage-protocol"');
 
       const authorRequire = createRequire(join(projectRoot, 'package.json'));
       const installedSdkRequire = createRequire(join(installedSdkRoot, 'package.json'));
@@ -668,6 +676,26 @@ describe('runPluginAuthorToolchain', () => {
         installedSdkRequire.resolve('@happier-dev/protocol/plugins/ui/client'),
       ).href);
       expect(composer.ComposerContentHandleV1Schema).toBe(protocolUiClient.ComposerContentHandleV1Schema);
+
+      // A third-party Triage source imports the complete published feature
+      // protocol surface through the same managed author dependency path.
+      await writeFile(join(projectRoot, 'triage-source-entrypoints.mjs'), [
+        "import { TriageSourcesContributionPointV1 } from '@happier-dev/triage-protocol';",
+        "import { TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';",
+        "import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';",
+        'export {',
+        '  TriageSourcesContributionPointV1,',
+        '  TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1,',
+        '  createTriageSourceV1Fixture,',
+        '};',
+        '',
+      ].join('\n'), 'utf8');
+      const triageSourceEntrypoints = await import(pathToFileURL(
+        join(projectRoot, 'triage-source-entrypoints.mjs'),
+      ).href);
+      expect(triageSourceEntrypoints.TriageSourcesContributionPointV1).toEqual(expect.any(Object));
+      expect(triageSourceEntrypoints.TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1).toEqual(expect.any(Object));
+      expect(triageSourceEntrypoints.createTriageSourceV1Fixture).toEqual(expect.any(Function));
 
       // The installed manifest must keep `bin`: it is the only declaration that
       // makes `happier-plugin-build-ui` discoverable, so every `--ui` author's
@@ -697,9 +725,10 @@ describe('runPluginAuthorToolchain', () => {
       expect(builderResult.stdout).toContain('happier-plugin-build-ui');
       expect(builderResult.stderr).toBe('');
     } finally {
+      vi.unstubAllEnvs();
       await rm(projectRoot, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 300_000);
 
   it('does not materialize a prepublication SDK after dependency preparation is already cancelled', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'happier-author-external-sdk-pre-cancelled-'));

@@ -1,7 +1,6 @@
 import type { PluginInvocationCaller, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import {
-    MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TriageConfiguredSourceInstanceV1Schema,
@@ -234,9 +233,9 @@ describe('the caller-scoped configured-instance read', () => {
         expect(result).toEqual({ kind: 'currentnessConflict' });
     });
 
-    it('says the page is truncated rather than presenting a short one as the whole set', async () => {
+    it('returns every caller-owned active and retired row instead of truncating at thirty-two', async () => {
         const { collections, control } = createTestkitCorpusCollections();
-        for (let seed = 1; seed <= MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1 + 2; seed += 1) {
+        for (let seed = 1; seed <= 34; seed += 1) {
             control.sourceInstances.seed(toCorpusStoredValue(instanceRow({
                 source: FORGE,
                 seed,
@@ -253,7 +252,7 @@ describe('the caller-scoped configured-instance read', () => {
 
         expect(result.kind).toBe('read');
         if (result.kind !== 'read') return;
-        expect(result.instances).toHaveLength(MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1);
-        expect(result.status).toBe('truncated');
+        expect(result.instances).toHaveLength(34);
+        expect(result.status).toBe('complete');
     });
 });

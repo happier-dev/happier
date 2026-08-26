@@ -18,8 +18,8 @@ import {
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import {
+  completeTriagePostMutationIfNeeded,
   useTriagePostMutationCompletion,
-  type TriagePostMutationCompletionV1,
 } from '@happier-dev/triage-sources/ui';
 
 import { BITBUCKET_PLUGIN_ID } from '../../bitbucketContracts.js';
@@ -155,30 +155,30 @@ function unreadableResult(text: PluginTranslate): SettledMutationV1 {
   };
 }
 
-async function completeAfterEntryWrite(
+/** Whether Bitbucket's pull-request result established that provider state may have changed. */
+export function bitbucketEntryWriteMayHaveChangedProviderStateV1(
   execution: PluginActionExecution<unknown>,
-  complete: TriagePostMutationCompletionV1,
-): Promise<void> {
-  if (execution.status !== 'success') return;
+): boolean {
+  if (execution.status !== 'success') return false;
   const parsed = BitbucketMutationResultV1Schema.safeParse(execution.result);
-  if (parsed.success && (
+  return parsed.success && (
     parsed.data.kind === 'applied'
     || parsed.data.kind === 'pending'
     || parsed.data.kind === 'uncertain'
-  )) await complete();
+  );
 }
 
-async function completeAfterCommentWrite(
+/** Whether Bitbucket's comment result established that provider state may have changed. */
+export function bitbucketCommentWriteMayHaveChangedProviderStateV1(
   execution: PluginActionExecution<unknown>,
-  complete: TriagePostMutationCompletionV1,
-): Promise<void> {
-  if (execution.status !== 'success') return;
+): boolean {
+  if (execution.status !== 'success') return false;
   const parsed = BitbucketCommentResolutionResultV1Schema.safeParse(execution.result);
-  if (parsed.success && (
+  return parsed.success && (
     parsed.data.kind === 'applied'
     || parsed.data.kind === 'rejected'
     || parsed.data.kind === 'uncertain'
-  )) await complete();
+  );
 }
 
 function projectSettledMutation(
@@ -324,7 +324,11 @@ export function BitbucketMutationControls({
       closeSourceBranch,
       mergeStrategy: strategy,
       ...(trimmedMessage === '' ? {} : { message: trimmedMessage }),
-    }).then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+    }).then((execution) => completeTriagePostMutationIfNeeded(
+      completeMutation,
+      execution,
+      bitbucketEntryWriteMayHaveChangedProviderStateV1,
+    ));
   }, [
     closeSourceBranch,
     completeMutation,
@@ -338,7 +342,11 @@ export function BitbucketMutationControls({
 
   const runDecline = React.useCallback(() => {
     void decline.execute({ v: 1, instance: input.instance, localRef })
-      .then(async (execution) => await completeAfterEntryWrite(execution, completeMutation));
+      .then((execution) => completeTriagePostMutationIfNeeded(
+        completeMutation,
+        execution,
+        bitbucketEntryWriteMayHaveChangedProviderStateV1,
+      ));
   }, [completeMutation, decline, input.instance, localRef]);
 
   if (overview.state.presentation !== 'active') return null;
@@ -557,12 +565,20 @@ export function BitbucketCommentResolutionControls({
 
   const runResolve = React.useCallback(() => {
     void resolve.execute({ v: 1, instance: input.instance, localRef, commentId: comment.id })
-      .then(async (execution) => await completeAfterCommentWrite(execution, completeMutation));
+      .then((execution) => completeTriagePostMutationIfNeeded(
+        completeMutation,
+        execution,
+        bitbucketCommentWriteMayHaveChangedProviderStateV1,
+      ));
   }, [comment.id, completeMutation, input.instance, localRef, resolve]);
 
   const runReopen = React.useCallback(() => {
     void reopen.execute({ v: 1, instance: input.instance, localRef, commentId: comment.id })
-      .then(async (execution) => await completeAfterCommentWrite(execution, completeMutation));
+      .then((execution) => completeTriagePostMutationIfNeeded(
+        completeMutation,
+        execution,
+        bitbucketCommentWriteMayHaveChangedProviderStateV1,
+      ));
   }, [comment.id, completeMutation, input.instance, localRef, reopen]);
 
   // A deleted comment has no thread left to resolve, and Bitbucket keeps the row only as a

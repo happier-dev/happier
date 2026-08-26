@@ -60,7 +60,7 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
         { signal },
       );
       if (signal.aborted || generation.current !== current) return false;
-      setSources(Object.freeze(result.administrativeRows.map((row) => Object.freeze({
+      setSources(Object.freeze(result.rows.map((row) => Object.freeze({
         sourceInstanceId: row.configured.instance.sourceInstanceId,
         displayLabel: row.configured.locator?.displayLabel ?? row.configured.localInstanceKey,
         ...(row.configured.locator?.displayPath === undefined

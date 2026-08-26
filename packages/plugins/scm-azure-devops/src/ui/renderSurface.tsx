@@ -527,6 +527,16 @@ function PoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }
   const view = state.value;
   const blocking = view.evaluations.filter((row) => row.isBlocking);
   const builds = view.evaluations.filter((row) => row.isBuildValidation);
+  const policies = view.evaluations.filter((row) => !row.isBuildValidation);
+
+  const renderEvaluation = (row: AzurePoliciesViewV1['evaluations'][number]) => (
+    <Item
+      title={row.displayName ?? row.evaluationId}
+      subtitle={row.isBlocking ? `${row.status} · required` : `${row.status} · optional`}
+      // A missing completion time is unknown, never a zero duration.
+      detail={row.completedAtMs === undefined ? 'Completion time unknown' : undefined}
+    />
+  );
 
   return (
     <ScrollArea>
@@ -551,23 +561,6 @@ function PoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }
               { label: 'Build validations', value: String(builds.length) },
             ]}
         />
-        {view.evaluations.length === 0 ? null : (
-          <List
-            accessibilityLabel="Policy evaluations for this Azure DevOps pull request"
-            accessibilityLabelKey="plugins.azureDevops.ui.policyEvaluationsLabel"
-            items={view.evaluations}
-            keyForItem={(row) => row.evaluationId}
-            renderItem={(row) => (
-              <Item
-                title={row.displayName ?? row.evaluationId}
-                subtitle={row.isBlocking ? `${row.status} · required` : `${row.status} · optional`}
-                // A missing completion time is unknown, never a zero duration.
-                detail={row.completedAtMs === undefined ? 'Completion time unknown' : undefined}
-              />
-            )}
-          />
-        )}
-        <Divider />
         <List
           accessibilityLabel="Statuses reported against this Azure DevOps pull request"
           accessibilityLabelKey="plugins.azureDevops.ui.statusesLabel"
@@ -608,6 +601,32 @@ function PoliciesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }
             />
           )}
         />
+        <Divider />
+        <List
+          accessibilityLabel="Policies for this Azure DevOps pull request"
+          items={policies}
+          keyForItem={(row) => row.evaluationId}
+          empty={(
+            <EmptyState
+              title="No policies"
+              description="Azure DevOps reports no ordinary policy evaluation for this pull request."
+            />
+          )}
+          renderItem={renderEvaluation}
+        />
+        <Divider />
+        <List
+          accessibilityLabel="Build validations for this Azure DevOps pull request"
+          items={builds}
+          keyForItem={(row) => row.evaluationId}
+          empty={(
+            <EmptyState
+              title="No build validations"
+              description="Azure DevOps reports no build-validation policy for this pull request."
+            />
+          )}
+          renderItem={renderEvaluation}
+        />
         <Row gap="small">
           <Action.Refresh
             onRefresh={controller.refresh}
@@ -639,8 +658,11 @@ function threadHeadline(row: AzureProjectedThreadRowV1): string {
  * so expanding it issues no request — and a control that claimed otherwise would be pagination
  * this product invented.
  */
-function threadSubtitle(row: AzureProjectedThreadRowV1): string {
-  const shown = row.comments.slice(-AZURE_THREAD_REPLY_WINDOW_V1);
+export function projectAzureThreadSubtitle(
+  row: AzureProjectedThreadRowV1,
+  replyWindow: number,
+): string {
+  const shown = row.comments.slice(-replyWindow);
   const earlier = row.comments.length - shown.length;
   const bodies = shown.map((comment) => comment.content).filter((body) => body !== '').join(' — ');
   const omitted = row.omittedCommentCount === 0
@@ -649,6 +671,58 @@ function threadSubtitle(row: AzureProjectedThreadRowV1): string {
   return earlier === 0
     ? `${bodies}${omitted}`
     : `${String(earlier)} earlier repl(y/ies) · ${bodies}${omitted}`;
+}
+
+export function advanceAzureThreadReplyWindow(current: number, commentCount: number): number {
+  return Math.min(commentCount, current + AZURE_THREAD_REPLY_WINDOW_V1);
+}
+
+function ThreadItem({
+  onOpenStatus,
+  row,
+}: Readonly<{
+  onOpenStatus: (threadId: string) => void;
+  row: AzureProjectedThreadRowV1;
+}>): React.ReactElement {
+  const text = usePluginTranslation();
+  const [replyWindow, setReplyWindow] = React.useState(AZURE_THREAD_REPLY_WINDOW_V1);
+  const earlier = Math.max(0, row.comments.length - replyWindow);
+  const expansion = Math.min(earlier, AZURE_THREAD_REPLY_WINDOW_V1);
+
+  return (
+    <Item
+      title={threadHeadline(row)}
+      subtitle={projectAzureThreadSubtitle(row, replyWindow)}
+      accessory={(
+        <Row gap="small">
+          {earlier === 0 ? null : (
+            <Button
+              title={text(
+                'plugins.azureDevops.ui.showEarlierReplies',
+                'Show {count} earlier replies',
+                { count: expansion },
+              )}
+              variant="plain"
+              onPress={() => setReplyWindow((current) => (
+                advanceAzureThreadReplyWindow(current, row.comments.length)
+              ))}
+            />
+          )}
+          <Button
+            title={text('plugins.azureDevops.ui.threadStatusRow', 'Status')}
+            titleKey="plugins.azureDevops.ui.threadStatusRow"
+            variant="plain"
+            accessibilityLabel={text(
+              'plugins.azureDevops.ui.setThreadStatus',
+              'Set the status of thread {thread}',
+              { thread: row.id },
+            )}
+            onPress={() => onOpenStatus(row.id)}
+          />
+        </Row>
+      )}
+    />
+  );
 }
 
 function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
@@ -739,28 +813,7 @@ function ThreadsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
           </Row>
         </Stack>
       )}
-      renderItem={(row) => (
-        <Item
-          title={threadHeadline(row)}
-          subtitle={threadSubtitle(row)}
-          // The row itself stays unpressable and the control lives in the accessory, because the
-          // row body sits inside the row's own pressable and an interactive body there would be a
-          // button inside a button.
-          accessory={(
-            <Button
-              title={text('plugins.azureDevops.ui.threadStatusRow', 'Status')}
-              titleKey="plugins.azureDevops.ui.threadStatusRow"
-              variant="plain"
-              accessibilityLabel={text(
-                'plugins.azureDevops.ui.setThreadStatus',
-                'Set the status of thread {thread}',
-                { thread: row.id },
-              )}
-              onPress={() => setOpenThreadId(row.id)}
-            />
-          )}
-        />
-      )}
+      renderItem={(row) => <ThreadItem row={row} onOpenStatus={setOpenThreadId} />}
     />
   );
 }

@@ -42,6 +42,7 @@ import {
 } from '../corpus/testkit/observations.test-support.js';
 import { TRIAGE_ACTIONS_SETTING_ID_V1 } from '../settings/actions.js';
 import { createTestkitAccountSettings } from '../settings/testkit/accountSettings.test-support.js';
+import type { TriageSessionActionInvokerV1 } from '../sessions/entrySessionOpen.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 
@@ -137,6 +138,10 @@ function createHarness(options: Readonly<{
     kindId?: string;
     /** A stored `triage.actions` catalog replacing the shipped seed. */
     actions?: JsonValue;
+    /** Launch Profile rows returned to the action-reference owner. */
+    profiles?: JsonValue;
+    /** Host settlement returned for a New Session seed request. */
+    newSessionSeedResult?: unknown;
 }> = {}) {
     const kindId = options.kindId ?? 'pull-request';
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
@@ -145,7 +150,64 @@ function createHarness(options: Readonly<{
     );
     const referenceReads: string[] = [];
     const newSessionSeeds: unknown[] = [];
+    const lifecycle: string[] = [];
+    const composerTransactions: unknown[] = [];
+    const spawnInputs: unknown[] = [];
+    const sentInputs: unknown[] = [];
+    let nextSessionNumber = 1;
+    let retired = false;
+    let retireMounted: (() => Promise<void>) | null = null;
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
+
+    // The actual Session-link writer runs below. This records its real durable
+    // Collection boundary, including the primary link that travels inside the
+    // start Action rather than through the secondary-link Action.
+    const sessionLinks = {
+        ...collections.sessionLinks,
+        batch: async (...args: Parameters<typeof collections.sessionLinks.batch>) => {
+            lifecycle.push('link');
+            return await collections.sessionLinks.batch(...args);
+        },
+    };
+
+    /**
+     * The three generic Session Actions are the only external boundary the
+     * real start owner crosses. `session.open` retires this exact mounted
+     * fixture before it resolves, modelling the host navigation that made the
+     * old bulk ordering lose the rest of its work.
+     */
+    const executeSessionAction: TriageSessionActionInvokerV1 = async (actionId, input) => {
+        if (actionId === 'session.spawn_new') {
+            lifecycle.push('session.spawn_new');
+            spawnInputs.push(input);
+            const sessionId = `session-${nextSessionNumber}`;
+            nextSessionNumber += 1;
+            return {
+                type: 'success',
+                disposition: 'created',
+                sessionId,
+                executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
+                organizationPlacement: { folderId: null, tagIds: [] },
+                initialInput: { status: 'notRequested' },
+            } as never;
+        }
+        if (actionId === 'session.message.send') {
+            lifecycle.push('session.message.send');
+            sentInputs.push(input);
+            return { status: 'accepted', localId: `input-${sentInputs.length}` } as never;
+        }
+        lifecycle.push('session.open');
+        retired = true;
+        // Retire the host boundary synchronously, then physically retire the
+        // React fixture as soon as this Action dispatch unwinds. Calling the
+        // fixture's unmount reentrantly from the Action it is currently
+        // dispatching makes the fixture wait on its own request; the next
+        // microtask is the earliest real host lifecycle can dispose it.
+        void Promise.resolve()
+            .then(async () => await retireMounted?.())
+            .catch(() => undefined);
+        return null as never;
+    };
 
     const admitted = [{
         contributor: {
@@ -212,27 +274,59 @@ function createHarness(options: Readonly<{
         } satisfies TriageScanResultV1));
 
     async function executeAction(request: Readonly<{ action: unknown; input: unknown }>) {
-        if (String(request.action) === TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1) {
+        const action = String(request.action);
+        if (retired) throw new Error('triage:test:surfaceRetired');
+        if (action === TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1) {
             return await readTriageActionsForSurface(
                 TriageReadActionsInputV1Schema.parse(request.input),
                 { settings: accountSettings.settings },
             );
         }
-        if (String(request.action) === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
+        if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
             return await listTriagePinnedEntries(
                 TriageListPinnedEntriesInputV1Schema.parse(request.input),
                 { collections, nowMs: () => 2_000 },
             );
         }
-        if (String(request.action) === 'projects.list') return { items: [], truncated: false };
-        if (String(request.action) === 'sessions.spawn.profiles.list') {
+        if (action === 'sessions/start-entry-v1') {
+            const [{ startTriageEntrySession }, { TriageStartEntrySessionInputV1Schema }] = await Promise.all([
+                import('../actions/entrySession.js'),
+                import('../actions/entrySessionProtocol.js'),
+            ]);
+            return await startTriageEntrySession(
+                TriageStartEntrySessionInputV1Schema.parse(request.input),
+                {
+                    collections: { sessionLinks },
+                    execute: executeSessionAction,
+                    nowMs: () => 2_000,
+                },
+            );
+        }
+        if (action === 'sessions/link-entry-v1') {
+            const [{ linkTriageEntryToSession }, { TriageLinkEntryToSessionInputV1Schema }] = await Promise.all([
+                import('../actions/sessionLinks.js'),
+                import('../actions/sessionLinksProtocol.js'),
+            ]);
+            return await linkTriageEntryToSession(
+                TriageLinkEntryToSessionInputV1Schema.parse(request.input),
+                { collections: { sessionLinks }, nowMs: () => 2_000 },
+            );
+        }
+        if (action === 'session.spawn_new' || action === 'session.message.send' || action === 'session.open') {
+            return await executeSessionAction(action, request.input as never);
+        }
+        if (action === 'projects.list') return { items: [], truncated: false };
+        if (action === 'sessions.spawn.profiles.list') {
             referenceReads.push('sessions.spawn.profiles.list');
+            return { items: options.profiles ?? [], truncated: false };
+        }
+        if (action === 'prompts.invocations.list') {
+            referenceReads.push(action);
             return { items: [], truncated: false };
         }
-        if (String(request.action) === 'prompts.invocations.list'
-            || String(request.action) === 'prompts.invocation.resolve') {
-            referenceReads.push(String(request.action));
-            return { items: [], truncated: false };
+        if (action === 'prompts.invocation.resolve') {
+            referenceReads.push(action);
+            return { status: 'resolved', text: 'Investigate the selected entries.' };
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
@@ -242,7 +336,23 @@ function createHarness(options: Readonly<{
         });
     }
 
-    return { collections, executeAction, newSessionSeeds, referenceReads };
+    return {
+        collections,
+        executeAction,
+        newSessionSeeds,
+        referenceReads,
+        lifecycle,
+        composerTransactions,
+        spawnInputs,
+        sentInputs,
+        newSessionSeedResult: options.newSessionSeedResult,
+        get wasRetired() {
+            return retired;
+        },
+        setMountRetirement: (retire: () => Promise<void>) => {
+            retireMounted = retire;
+        },
+    };
 }
 
 type Harness = ReturnType<typeof createHarness>;
@@ -277,9 +387,55 @@ async function mountShell(
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
                 selectActionInput: async ({ request }) => {
-                    if (!('seed' in request)) return { kind: 'cancelled' } as never;
-                    harness.newSessionSeeds.push(request.seed);
-                    return { kind: 'newSessionSeeded' } as never;
+                    if ('seed' in request) {
+                        harness.newSessionSeeds.push(request.seed);
+                        return (harness.newSessionSeedResult ?? { kind: 'newSessionSeeded' }) as never;
+                    }
+                    return {
+                        kind: 'serverStartDraft',
+                        draft: {
+                            executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
+                            agentTarget: {
+                                kind: 'agent',
+                                identity: { pluginId: 'happier.test.agent', localId: 'agent' },
+                            },
+                            directory: '/workspaces/example',
+                        },
+                    } as never;
+                },
+                readComposer: async ({ ref }) => {
+                    if (harness.wasRetired) throw new Error('triage:test:surfaceRetired');
+                    harness.lifecycle.push('composer.read');
+                    return {
+                        status: 'ready' as const,
+                        snapshot: {
+                            revision: 1,
+                            ref,
+                            text: '',
+                            references: [],
+                            attachments: [],
+                            layout: 'wrap' as const,
+                            capabilities: {
+                                text: true,
+                                references: true,
+                                attachments: true,
+                                submit: true,
+                            },
+                            state: {
+                                focused: false,
+                                editable: true,
+                                submittable: true,
+                                submitting: false,
+                                running: false,
+                            },
+                        },
+                    };
+                },
+                applyComposer: async ({ ref, transaction }) => {
+                    if (harness.wasRetired) throw new Error('triage:test:surfaceRetired');
+                    harness.lifecycle.push('composer.apply');
+                    harness.composerTransactions.push({ ref, transaction });
+                    return { status: 'applied' as const, revision: 2 };
                 },
                 // The host owns history and settlement; the surface only writes
                 // the lens and consumes what settles.
@@ -291,7 +447,11 @@ async function mountShell(
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view'); });
+    // `session.open` cannot resolve until this shell has actually retired. The
+    // regression cases therefore fail if any bulk continuation is scheduled
+    // after automatic open, just as it does in the live host.
+    harness.setMountRetirement(async () => { await fixture.retire('session_opened'); });
+    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
     return { shell: fixture, locations };
 }
 
@@ -540,6 +700,200 @@ describe('selecting several PRs & Issues rows', () => {
             }],
         });
         expect(locations).toEqual([]);
+    });
+
+    it('carries a Launch Profile worktree answer into the attach-all seed', async () => {
+        const harness = createHarness({
+            actions: {
+                v: 1,
+                actions: [{
+                    actionId: 'attach-worktree',
+                    label: 'Attach in worktree',
+                    enabled: true,
+                    appliesTo: ['pullRequest'],
+                    profileId: 'profile-worktree',
+                    workspaceMode: 'repository',
+                    target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
+                }],
+            },
+            profiles: [{
+                id: 'profile-worktree',
+                name: 'Worktree repair',
+                placement: 'automatic',
+                checkout: 'create_worktree',
+            }],
+        });
+        const { shell } = await mountShell(harness);
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+        await pressRow('Extract the selection reducer', { ctrlKey: true });
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Attach to New Session' }));
+        });
+        await settle();
+
+        expect(harness.newSessionSeeds).toHaveLength(1);
+        expect(harness.newSessionSeeds[0]).toMatchObject({
+            profileId: 'profile-worktree',
+            checkoutIntent: 'createWorktree',
+            attachments: [{
+                value: { value: { entryRef: expect.objectContaining({ entryId: '17' }) } },
+            }, {
+                value: { value: { entryRef: expect.objectContaining({ entryId: '18' }) } },
+            }],
+        });
+    });
+
+    it('leaves every entry unstarted when New Session refuses an unmaterialized prepared review workspace', async () => {
+        const harness = createHarness({
+            actions: {
+                v: 1,
+                actions: [{
+                    actionId: 'attach-prepared-review',
+                    label: 'Attach in prepared review workspace',
+                    enabled: true,
+                    appliesTo: ['pullRequest'],
+                    profileId: null,
+                    workspaceMode: 'pull_request',
+                    target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
+                }],
+            },
+            newSessionSeedResult: {
+                code: 'unavailable',
+                diagnostics: ['prepared_review_workspace_unavailable'],
+            },
+        });
+        const { shell, locations } = await mountShell(harness);
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+        await pressRow('Extract the selection reducer', { ctrlKey: true });
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Attach to New Session' }));
+        });
+        await settle();
+
+        expect(harness.newSessionSeeds).toEqual([
+            expect.objectContaining({ checkoutIntent: 'preparedReviewWorkspace' }),
+        ]);
+        expect(harness.lifecycle).toEqual([]);
+        expect(harness.wasRetired).toBe(false);
+        expect(locations).toEqual([]);
+        expect(document.body.textContent).toContain('0 attached to New Session');
+        expect(document.body.textContent).toContain('2 could not be used');
+    });
+
+    it('completes a one-session compose unit before its one open retires the mount', async () => {
+        // This deliberately retires the mounted shell as soon as the generic
+        // `session.open` resolves. The old sequence opened after linking only
+        // the primary entry, so the secondary link and composer transaction
+        // were never able to run. A merely mocked start result cannot expose
+        // that lifecycle loss; this drives the real mounted start Action.
+        const harness = createHarness({
+            actions: {
+                v: 1,
+                actions: [{
+                    actionId: 'compose-all',
+                    label: 'Compose all',
+                    enabled: true,
+                    appliesTo: ['pullRequest'],
+                    profileId: null,
+                    workspaceMode: 'reference_only',
+                    target: {
+                        kind: 'agent',
+                        promptInvocationId: 'prompt-1',
+                        delivery: 'compose',
+                    },
+                }],
+            },
+        });
+        const { shell } = await mountShell(harness);
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+        await pressRow('Extract the selection reducer', { ctrlKey: true });
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'One session for all' }));
+        });
+        await settle();
+
+        // A single owner-created Session gets both durable links and its whole
+        // compose payload before the only navigation can retire this mount.
+        expect(harness.lifecycle).toEqual([
+            'session.spawn_new',
+            'link',
+            'link',
+            'composer.read',
+            'composer.apply',
+            'session.open',
+        ]);
+        expect(harness.composerTransactions).toHaveLength(1);
+        expect(harness.composerTransactions[0]).toMatchObject({
+            ref: { kind: 'session', sessionId: 'session-1' },
+            transaction: {
+                expectedRevision: 1,
+                operations: [
+                    { kind: 'text.set', text: 'Investigate the selected entries.' },
+                    {
+                        kind: 'attachment.add',
+                        value: { value: { entryRef: expect.objectContaining({ entryId: '17' }) } },
+                    },
+                    {
+                        kind: 'attachment.add',
+                        value: { value: { entryRef: expect.objectContaining({ entryId: '18' }) } },
+                    },
+                ],
+            },
+        });
+        expect(harness.wasRetired).toBe(true);
+    });
+
+    it('keeps the mount alive until every per-entry structured send has settled', async () => {
+        // The per-entry destination has no honest final destination to open:
+        // guessing a first or last Session both retires the batch's owner and
+        // drops the other units. The settled phase is therefore observable
+        // before any navigation, with distinct creation identities and sends.
+        const harness = createHarness({
+            actions: {
+                v: 1,
+                actions: [{
+                    actionId: 'send-each',
+                    label: 'Send each',
+                    enabled: true,
+                    appliesTo: ['pullRequest'],
+                    profileId: null,
+                    workspaceMode: 'reference_only',
+                    target: {
+                        kind: 'agent',
+                        promptInvocationId: 'prompt-1',
+                        delivery: 'send',
+                    },
+                }],
+            },
+        });
+        const { shell } = await mountShell(harness);
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+        await pressRow('Extract the selection reducer', { ctrlKey: true });
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'A session each' }));
+        });
+        await settle();
+
+        expect(harness.lifecycle).toEqual([
+            'session.spawn_new',
+            'link',
+            'session.message.send',
+            'session.spawn_new',
+            'link',
+            'session.message.send',
+        ]);
+        expect(harness.spawnInputs).toHaveLength(2);
+        expect(harness.sentInputs).toHaveLength(2);
+        expect(harness.sentInputs).toMatchObject([
+            { attachments: [{ value: { value: { entryRef: expect.objectContaining({ entryId: '17' }) } } }] },
+            { attachments: [{ value: { value: { entryRef: expect.objectContaining({ entryId: '18' }) } } }] },
+        ]);
+        expect(harness.wasRetired).toBe(false);
+        expect(document.body.textContent).toContain('2 started, 0 unconfirmed, 0 not started, 0 could not be used');
     });
 
     it('still opens a detail on an unmodified press while no set is being built', async () => {

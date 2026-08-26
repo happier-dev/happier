@@ -39,3 +39,33 @@ export function readGitlabMergeRequestHeadSha(row: unknown): string | null {
   if (direct !== null) return direct;
   return readNonEmptyString(readRecord(record.diff_refs)?.head_sha);
 }
+
+/**
+ * The complete provider revision tuple a selected-review workspace must pin.
+ *
+ * GitLab's `sha` remains the native write precondition and `diff_refs.head_sha`
+ * is the source branch tip the local materializer must fetch. They often match,
+ * but are separate provider facts and may not be collapsed by a caller. A fresh
+ * merge request can omit `diff_refs.head_sha`, in which case its direct `sha` is
+ * the only available source-head fact; an omitted base has no safe substitute.
+ */
+export type GitlabMergeRequestReviewRevision = Readonly<{
+  baseSha: string;
+  headSha: string;
+  nativeRevision: string;
+}>;
+
+export function readGitlabMergeRequestReviewRevision(
+  row: unknown,
+): GitlabMergeRequestReviewRevision | null {
+  const record = readRecord(row);
+  if (record === null) return null;
+
+  const nativeRevision = readGitlabMergeRequestHeadSha(record);
+  const diffRefs = readRecord(record.diff_refs);
+  const baseSha = readNonEmptyString(diffRefs?.base_sha);
+  const headSha = readNonEmptyString(diffRefs?.head_sha) ?? nativeRevision;
+  if (baseSha === null || headSha === null || nativeRevision === null) return null;
+
+  return Object.freeze({ baseSha, headSha, nativeRevision });
+}

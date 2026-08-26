@@ -91,17 +91,18 @@ export type TriageReadEntryDetailDepsV1 = Readonly<{
 /**
  * One bounded page of this entry's links, over the declared `by-entry` index.
  *
- * The bound is one generic Collection page. The Collection cursor is projected
- * as `hasMore`, so the detail remains explicit when additional links exist
- * without silently truncating the result.
+ * The bound is one generic Collection page. The Collection cursor crosses only
+ * this plugin-private Action and is returned untouched; the mounted reader may
+ * hand it back, but neither side interprets or persists it.
  */
 async function readLinkedSessions(
     entryRef: TriageEntryRefV1,
     deps: TriageReadEntryDetailDepsV1,
+    cursor?: string,
     options?: PluginCancellationOptions,
 ): Promise<Readonly<{
     sessions: readonly TriageLinkedSessionProjectionV1[];
-    hasMore: boolean;
+    nextCursor?: string;
 }>> {
     const entryTag = await deriveSessionLinkEntryTag(deps.sessionLinks, entryRef, options);
     const page = await deps.sessionLinks.query({
@@ -109,6 +110,7 @@ async function readLinkedSessions(
         prefix: [entryTag],
         order: 'asc',
         limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
+        ...(cursor === undefined ? {} : { cursor }),
     }, options);
 
     const projections: TriageLinkedSessionProjectionV1[] = [];
@@ -130,7 +132,7 @@ async function readLinkedSessions(
     }
     return Object.freeze({
         sessions: Object.freeze(projections),
-        hasMore: page.nextCursor !== undefined,
+        ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
     });
 }
 
@@ -162,7 +164,7 @@ export async function readTriageEntryDetail(
     }
 
     const [linkedSessionPage, admitted] = await Promise.all([
-        readLinkedSessions(input.entryRef, deps, options),
+        readLinkedSessions(input.entryRef, deps, input.linkedSessionsCursor, options),
         deps.readAdmittedSources(options),
     ]);
     // Keyed on the entry's own source, never on the configured row's. The
@@ -176,7 +178,9 @@ export async function readTriageEntryDetail(
         kind: 'read',
         instance: configured,
         linkedSessions: linkedSessionPage.sessions,
-        linkedSessionsHasMore: linkedSessionPage.hasMore,
+        ...(linkedSessionPage.nextCursor === undefined
+            ? {}
+            : { linkedSessionsNextCursor: linkedSessionPage.nextCursor }),
         // A source with no currently admitted contribution loses the two names
         // rather than gaining an invented one.
         ...(contribution?.descriptor === undefined

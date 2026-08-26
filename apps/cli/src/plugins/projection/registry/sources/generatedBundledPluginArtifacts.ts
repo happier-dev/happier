@@ -11,19 +11,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 5482985,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-JG4WNIEE.js"
+          "byteLength": 5493016,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-5EXAZ544.js"
         },
         {
           "byteLength": 221,
           "relativePath": ".happier-plugin/agent/runtime/factory.js"
         },
         {
-          "byteLength": 45999,
+          "byteLength": 46073,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 13202,
+          "byteLength": 13309,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -347,19 +347,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/connectedServices/stateSharing.js.map"
         },
         {
-          "byteLength": 4864,
+          "byteLength": 4686,
           "relativePath": "dist/agent/contributions/catalog.d.ts"
         },
         {
-          "byteLength": 2332,
+          "byteLength": 2167,
           "relativePath": "dist/agent/contributions/catalog.d.ts.map"
         },
         {
-          "byteLength": 1805,
+          "byteLength": 1672,
           "relativePath": "dist/agent/contributions/catalog.js"
         },
         {
-          "byteLength": 2693,
+          "byteLength": 2479,
           "relativePath": "dist/agent/contributions/catalog.js.map"
         },
         {
@@ -379,11 +379,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contributions/runtime.js.map"
         },
         {
-          "byteLength": 8275,
+          "byteLength": 9268,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 6173,
+          "byteLength": 5807,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -391,7 +391,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 7647,
+          "byteLength": 7663,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -463,15 +463,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/lifecycle/spawnHooks.d.ts"
         },
         {
-          "byteLength": 10618,
+          "byteLength": 10609,
           "relativePath": "dist/agent/lifecycle/spawnHooks.d.ts.map"
         },
         {
-          "byteLength": 6216,
+          "byteLength": 6207,
           "relativePath": "dist/agent/lifecycle/spawnHooks.js"
         },
         {
-          "byteLength": 14259,
+          "byteLength": 14250,
           "relativePath": "dist/agent/lifecycle/spawnHooks.js.map"
         },
         {
@@ -731,19 +731,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/runtime/factory.js.map"
         },
         {
-          "byteLength": 1416,
+          "byteLength": 1436,
           "relativePath": "dist/agent/runtime/nativeRuntime.d.ts"
         },
         {
-          "byteLength": 11432,
+          "byteLength": 8504,
           "relativePath": "dist/agent/runtime/nativeRuntime.d.ts.map"
         },
         {
-          "byteLength": 8107,
+          "byteLength": 5450,
           "relativePath": "dist/agent/runtime/nativeRuntime.js"
         },
         {
-          "byteLength": 17800,
+          "byteLength": 11975,
           "relativePath": "dist/agent/runtime/nativeRuntime.js.map"
         },
         {
@@ -795,19 +795,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/systemTool.js.map"
         },
         {
-          "byteLength": 839,
+          "byteLength": 603,
           "relativePath": "dist/agent/terminal/launchArgs.d.ts"
         },
         {
-          "byteLength": 4572,
+          "byteLength": 2413,
           "relativePath": "dist/agent/terminal/launchArgs.d.ts.map"
         },
         {
-          "byteLength": 3001,
+          "byteLength": 1348,
           "relativePath": "dist/agent/terminal/launchArgs.js"
         },
         {
-          "byteLength": 6715,
+          "byteLength": 3181,
           "relativePath": "dist/agent/terminal/launchArgs.js.map"
         },
         {
@@ -895,15 +895,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 7948,
+          "byteLength": 8233,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 9268,
+          "byteLength": 9607,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 12861,
+          "byteLength": 13357,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -927,7 +927,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-1399738f-831f-4d1c-b6cb-7abea897bbd4",
+      "immutableGenerationId": "bundled-23b459cc-5734-4a92-b274-cb9611508e37",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.antigravity",
       "schemaVersion": 1,
@@ -950,11 +950,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": ".happier-plugin/agent/runtime/factory.js"
         },
         {
-          "byteLength": 739084,
+          "byteLength": 737651,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 4131,
+          "byteLength": 4238,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -1058,11 +1058,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contributions/runtime.js.map"
         },
         {
-          "byteLength": 1421,
+          "byteLength": 1426,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 1763,
+          "byteLength": 1782,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -1070,7 +1070,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 2429,
+          "byteLength": 2439,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -1158,15 +1158,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 2869,
+          "byteLength": 2982,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 3141,
+          "byteLength": 3277,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 4758,
+          "byteLength": 4967,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -1222,7 +1222,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-2a7d04aa-2e2e-4b35-a219-ddf3ba206896",
+      "immutableGenerationId": "bundled-9908fbea-64f7-442d-84df-4c464856ccaa",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.auggie",
       "schemaVersion": 1,
@@ -1237,7 +1237,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 2179086,
+          "byteLength": 2179063,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -1589,7 +1589,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-30736fef-5433-45e0-920f-f1689c03012b",
+      "immutableGenerationId": "bundled-8314de6a-ab73-4dd1-b8bc-d2f0b31afaaa",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.channel.discord",
       "schemaVersion": 1,
@@ -1604,7 +1604,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 2090558,
+          "byteLength": 2090535,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -1792,7 +1792,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-c74cfb88-323f-4da3-b348-5a8ae325c8a5",
+      "immutableGenerationId": "bundled-dd82ef47-0842-4914-beba-b31c538a9810",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.channel.telegram",
       "schemaVersion": 1,
@@ -1807,7 +1807,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 5167314,
+          "byteLength": 5169519,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -2055,7 +2055,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/deliveryCustody.js.map"
         },
         {
-          "byteLength": 2711262,
+          "byteLength": 2708715,
           "relativePath": "dist/happier-plugin-ui/react-native-web/channels-app-native/entry.mjs.bundle"
         },
         {
@@ -2083,11 +2083,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5989611,
+          "byteLength": 5973773,
           "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/android/vendors-node_modules_happier-dev_channels-protocol_dist_index_js-node_modules_happier-dev_plu-f876a2.chunk.bundle"
         },
         {
-          "byteLength": 1177445,
+          "byteLength": 1175184,
           "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/android/vendors-node_modules_happier-dev_channels-protocol_dist_index_js-node_modules_happier-dev_plu-f876a2.chunk.bundle.map"
         },
         {
@@ -2115,11 +2115,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5989611,
+          "byteLength": 5973773,
           "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_index_js-node_modules_happier-dev_plu-f876a2.chunk.bundle"
         },
         {
-          "byteLength": 1177445,
+          "byteLength": 1175184,
           "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_index_js-node_modules_happier-dev_plu-f876a2.chunk.bundle.map"
         },
         {
@@ -2595,7 +2595,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-e5a659c8-868e-4872-8f57-8c5dec60b051",
+      "immutableGenerationId": "bundled-65d0a984-7983-43de-86df-15dced2930c7",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.channels",
       "schemaVersion": 1,
@@ -2610,19 +2610,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 6875862,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-GLOBJN6Z.js"
+          "byteLength": 6881862,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-QESVQ64Z.js"
         },
         {
           "byteLength": 603,
           "relativePath": ".happier-plugin/agent/runtime/nativeRuntime.js"
         },
         {
-          "byteLength": 146079,
+          "byteLength": 146069,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 77935,
+          "byteLength": 78011,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -3074,19 +3074,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/auth/services/workspaceTrust.js.map"
         },
         {
-          "byteLength": 1422,
+          "byteLength": 1412,
           "relativePath": "dist/agent/cli/command.d.ts"
         },
         {
-          "byteLength": 6144,
+          "byteLength": 6028,
           "relativePath": "dist/agent/cli/command.d.ts.map"
         },
         {
-          "byteLength": 4049,
+          "byteLength": 3959,
           "relativePath": "dist/agent/cli/command.js"
         },
         {
-          "byteLength": 8828,
+          "byteLength": 8624,
           "relativePath": "dist/agent/cli/command.js.map"
         },
         {
@@ -3122,19 +3122,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contextWindow.js.map"
         },
         {
-          "byteLength": 16625,
+          "byteLength": 15744,
           "relativePath": "dist/agent/contributions/catalog.d.ts"
         },
         {
-          "byteLength": 28503,
+          "byteLength": 27786,
           "relativePath": "dist/agent/contributions/catalog.d.ts.map"
         },
         {
-          "byteLength": 21885,
+          "byteLength": 21632,
           "relativePath": "dist/agent/contributions/catalog.js"
         },
         {
-          "byteLength": 39763,
+          "byteLength": 39126,
           "relativePath": "dist/agent/contributions/catalog.js.map"
         },
         {
@@ -3158,7 +3158,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 4464,
+          "byteLength": 4473,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -3166,7 +3166,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 5251,
+          "byteLength": 5261,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -3734,15 +3734,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/runtime/nativeRuntime.d.ts"
         },
         {
-          "byteLength": 70962,
+          "byteLength": 67012,
           "relativePath": "dist/agent/runtime/nativeRuntime.d.ts.map"
         },
         {
-          "byteLength": 60417,
+          "byteLength": 56677,
           "relativePath": "dist/agent/runtime/nativeRuntime.js"
         },
         {
-          "byteLength": 114664,
+          "byteLength": 106822,
           "relativePath": "dist/agent/runtime/nativeRuntime.js.map"
         },
         {
@@ -4406,15 +4406,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/runtime/terminal/unified/resumeChoice/startup.d.ts"
         },
         {
-          "byteLength": 17245,
+          "byteLength": 17240,
           "relativePath": "dist/agent/runtime/terminal/unified/resumeChoice/startup.d.ts.map"
         },
         {
-          "byteLength": 13840,
+          "byteLength": 13835,
           "relativePath": "dist/agent/runtime/terminal/unified/resumeChoice/startup.js"
         },
         {
-          "byteLength": 25775,
+          "byteLength": 25770,
           "relativePath": "dist/agent/runtime/terminal/unified/resumeChoice/startup.js.map"
         },
         {
@@ -5910,15 +5910,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 20799,
+          "byteLength": 21136,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 24282,
+          "byteLength": 24644,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 34304,
+          "byteLength": 34842,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -5954,19 +5954,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/provider/contribution.js.map"
         },
         {
-          "byteLength": 5681,
+          "byteLength": 6882,
           "relativePath": "dist/ui/descriptor.d.ts"
         },
         {
-          "byteLength": 7965,
+          "byteLength": 11318,
           "relativePath": "dist/ui/descriptor.d.ts.map"
         },
         {
-          "byteLength": 8011,
+          "byteLength": 11896,
           "relativePath": "dist/ui/descriptor.js"
         },
         {
-          "byteLength": 10857,
+          "byteLength": 15300,
           "relativePath": "dist/ui/descriptor.js.map"
         },
         {
@@ -6022,7 +6022,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-a30605a5-19ae-483c-aa93-83c9c59517c9",
+      "immutableGenerationId": "bundled-35faf534-7b64-4cd7-ba19-c6d75f69f3f9",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.claude",
       "schemaVersion": 1,
@@ -6037,7 +6037,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 634740,
+          "byteLength": 633198,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -6129,7 +6129,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-1e98285e-eaba-44fa-9cfa-1a8ad5f5196c",
+      "immutableGenerationId": "bundled-a447dae5-2fc0-4567-9469-da707d5f8ac8",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.provider.cliproxyapi",
       "schemaVersion": 1,
@@ -6144,19 +6144,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 6490300,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-IQ5X4BKS.js"
+          "byteLength": 6495494,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-6S7QVKQN.js"
         },
         {
           "byteLength": 197,
           "relativePath": ".happier-plugin/agent/runtime/engine.js"
         },
         {
-          "byteLength": 164946,
+          "byteLength": 165240,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 27052,
+          "byteLength": 27217,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -6896,19 +6896,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/cli/checklists.js.map"
         },
         {
-          "byteLength": 1177,
+          "byteLength": 1161,
           "relativePath": "dist/agent/cli/command.d.ts"
         },
         {
-          "byteLength": 3032,
+          "byteLength": 3010,
           "relativePath": "dist/agent/cli/command.d.ts.map"
         },
         {
-          "byteLength": 1355,
+          "byteLength": 1336,
           "relativePath": "dist/agent/cli/command.js"
         },
         {
-          "byteLength": 3312,
+          "byteLength": 3290,
           "relativePath": "dist/agent/cli/command.js.map"
         },
         {
@@ -6928,19 +6928,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/cli/detect.js.map"
         },
         {
-          "byteLength": 17225,
+          "byteLength": 15732,
           "relativePath": "dist/agent/contributions/catalog.d.ts"
         },
         {
-          "byteLength": 22276,
+          "byteLength": 21064,
           "relativePath": "dist/agent/contributions/catalog.d.ts.map"
         },
         {
-          "byteLength": 16103,
+          "byteLength": 15335,
           "relativePath": "dist/agent/contributions/catalog.js"
         },
         {
-          "byteLength": 29007,
+          "byteLength": 27686,
           "relativePath": "dist/agent/contributions/catalog.js.map"
         },
         {
@@ -6960,11 +6960,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contributions/runtime.js.map"
         },
         {
-          "byteLength": 18410,
+          "byteLength": 18425,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 12749,
+          "byteLength": 12786,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -6972,7 +6972,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 15318,
+          "byteLength": 15338,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -7040,19 +7040,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/index.js.map"
         },
         {
-          "byteLength": 510,
+          "byteLength": 1024,
           "relativePath": "dist/agent/installables/codexAcp.d.ts"
         },
         {
-          "byteLength": 2068,
+          "byteLength": 2807,
           "relativePath": "dist/agent/installables/codexAcp.d.ts.map"
         },
         {
-          "byteLength": 1468,
+          "byteLength": 1659,
           "relativePath": "dist/agent/installables/codexAcp.js"
         },
         {
-          "byteLength": 2756,
+          "byteLength": 3407,
           "relativePath": "dist/agent/installables/codexAcp.js.map"
         },
         {
@@ -7140,15 +7140,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/lifecycle/spawnHooks.d.ts"
         },
         {
-          "byteLength": 7175,
+          "byteLength": 7172,
           "relativePath": "dist/agent/lifecycle/spawnHooks.d.ts.map"
         },
         {
-          "byteLength": 4330,
+          "byteLength": 4327,
           "relativePath": "dist/agent/lifecycle/spawnHooks.js"
         },
         {
-          "byteLength": 9017,
+          "byteLength": 9001,
           "relativePath": "dist/agent/lifecycle/spawnHooks.js.map"
         },
         {
@@ -7284,15 +7284,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/rollout/discovery/homeEntries.d.ts"
         },
         {
-          "byteLength": 17656,
+          "byteLength": 17777,
           "relativePath": "dist/agent/rollout/discovery/homeEntries.d.ts.map"
         },
         {
-          "byteLength": 16493,
+          "byteLength": 16612,
           "relativePath": "dist/agent/rollout/discovery/homeEntries.js"
         },
         {
-          "byteLength": 28299,
+          "byteLength": 28422,
           "relativePath": "dist/agent/rollout/discovery/homeEntries.js.map"
         },
         {
@@ -8020,15 +8020,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/runtime/engine.d.ts"
         },
         {
-          "byteLength": 15157,
+          "byteLength": 15100,
           "relativePath": "dist/agent/runtime/engine.d.ts.map"
         },
         {
-          "byteLength": 14085,
+          "byteLength": 13995,
           "relativePath": "dist/agent/runtime/engine.js"
         },
         {
-          "byteLength": 27478,
+          "byteLength": 27302,
           "relativePath": "dist/agent/runtime/engine.js.map"
         },
         {
@@ -8356,15 +8356,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/surfaces/sessions/handoff/export.d.ts"
         },
         {
-          "byteLength": 5872,
+          "byteLength": 6815,
           "relativePath": "dist/agent/surfaces/sessions/handoff/export.d.ts.map"
         },
         {
-          "byteLength": 4738,
+          "byteLength": 5775,
           "relativePath": "dist/agent/surfaces/sessions/handoff/export.js"
         },
         {
-          "byteLength": 9042,
+          "byteLength": 10692,
           "relativePath": "dist/agent/surfaces/sessions/handoff/export.js.map"
         },
         {
@@ -8564,15 +8564,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 17455,
+          "byteLength": 17898,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 21088,
+          "byteLength": 21579,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 27931,
+          "byteLength": 28681,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -8660,15 +8660,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/voice/control.d.ts"
         },
         {
-          "byteLength": 12478,
+          "byteLength": 12504,
           "relativePath": "dist/ui/voice/control.d.ts.map"
         },
         {
-          "byteLength": 10286,
+          "byteLength": 10312,
           "relativePath": "dist/ui/voice/control.js"
         },
         {
-          "byteLength": 19644,
+          "byteLength": 19690,
           "relativePath": "dist/ui/voice/control.js.map"
         },
         {
@@ -8740,7 +8740,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-3461fecd-fd96-4d49-a4e1-b43cbf9e258d",
+      "immutableGenerationId": "bundled-35911f2b-8c46-4e49-9fa6-4b6659dfcc08",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.codex",
       "schemaVersion": 1,
@@ -8755,19 +8755,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 877494,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-NZMOQUBH.js"
+          "byteLength": 877512,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-DLUF3WHL.js"
         },
         {
           "byteLength": 127,
           "relativePath": ".happier-plugin/agent/runtime/factory.js"
         },
         {
-          "byteLength": 192586,
+          "byteLength": 191153,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 6252,
+          "byteLength": 6359,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -8903,11 +8903,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/auth/services/index.js.map"
         },
         {
-          "byteLength": 1297,
+          "byteLength": 1302,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 1625,
+          "byteLength": 1644,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -8915,7 +8915,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 2263,
+          "byteLength": 2273,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -9051,15 +9051,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 3427,
+          "byteLength": 3540,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 3797,
+          "byteLength": 3933,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 5585,
+          "byteLength": 5794,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -9115,7 +9115,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-712e6030-e7ab-4b7a-a14f-dd704c976cd4",
+      "immutableGenerationId": "bundled-4e49e7ee-ec1d-4497-ab0b-044ccb3f3494",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.copilot",
       "schemaVersion": 1,
@@ -9130,19 +9130,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 1177443,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-6KDMJYJG.js"
+          "byteLength": 1175934,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-2ALPW2VV.js"
         },
         {
           "byteLength": 125,
           "relativePath": ".happier-plugin/agent/runtime/engine.js"
         },
         {
-          "byteLength": 132669,
+          "byteLength": 132778,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 7313,
+          "byteLength": 7423,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -9562,11 +9562,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/controls/probe.js.map"
         },
         {
-          "byteLength": 1829,
+          "byteLength": 1837,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 2302,
+          "byteLength": 2322,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -9574,7 +9574,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 3259,
+          "byteLength": 3269,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -9630,15 +9630,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/runtime/emptyResponse.d.ts"
         },
         {
-          "byteLength": 2167,
+          "byteLength": 2244,
           "relativePath": "dist/agent/runtime/emptyResponse.d.ts.map"
         },
         {
-          "byteLength": 1947,
+          "byteLength": 2020,
           "relativePath": "dist/agent/runtime/emptyResponse.js"
         },
         {
-          "byteLength": 3614,
+          "byteLength": 3724,
           "relativePath": "dist/agent/runtime/emptyResponse.js.map"
         },
         {
@@ -9694,15 +9694,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 3696,
+          "byteLength": 3809,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 4163,
+          "byteLength": 4299,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 6041,
+          "byteLength": 6250,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -9726,7 +9726,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-e3f6e804-52dc-438b-9285-017480ee6e91",
+      "immutableGenerationId": "bundled-5ffa87ed-25b7-448a-b6cc-01ad5e3f2aff",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.cursor",
       "schemaVersion": 1,
@@ -9741,19 +9741,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 1202778,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-LETM2JXU.js"
+          "byteLength": 1308251,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-R6SIXIFC.js"
         },
         {
           "byteLength": 125,
           "relativePath": ".happier-plugin/agent/runtime/factory.js"
         },
         {
-          "byteLength": 251706,
+          "byteLength": 250386,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 7717,
+          "byteLength": 7824,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -9937,19 +9937,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/connectedServices/runtimeAuthAdapter.js.map"
         },
         {
-          "byteLength": 6723,
+          "byteLength": 6072,
           "relativePath": "dist/agent/contributions/catalog.d.ts"
         },
         {
-          "byteLength": 3157,
+          "byteLength": 2404,
           "relativePath": "dist/agent/contributions/catalog.d.ts.map"
         },
         {
-          "byteLength": 2494,
+          "byteLength": 1819,
           "relativePath": "dist/agent/contributions/catalog.js"
         },
         {
-          "byteLength": 3672,
+          "byteLength": 2722,
           "relativePath": "dist/agent/contributions/catalog.js.map"
         },
         {
@@ -9969,11 +9969,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contributions/runtime.js.map"
         },
         {
-          "byteLength": 3580,
+          "byteLength": 3585,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 4104,
+          "byteLength": 4123,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -9981,7 +9981,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 5426,
+          "byteLength": 5436,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -10085,15 +10085,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/runtime/factory.d.ts"
         },
         {
-          "byteLength": 11567,
+          "byteLength": 8281,
           "relativePath": "dist/agent/runtime/factory.d.ts.map"
         },
         {
-          "byteLength": 10629,
+          "byteLength": 7595,
           "relativePath": "dist/agent/runtime/factory.js"
         },
         {
-          "byteLength": 20565,
+          "byteLength": 14178,
           "relativePath": "dist/agent/runtime/factory.js.map"
         },
         {
@@ -10165,15 +10165,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 5386,
+          "byteLength": 5617,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 6451,
+          "byteLength": 6729,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 8788,
+          "byteLength": 9186,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -10229,7 +10229,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-a38599d9-ed77-43f1-8c39-57fe353fe01e",
+      "immutableGenerationId": "bundled-a1f4e76d-ccd3-47fc-8051-048d2b0ff278",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.gemini",
       "schemaVersion": 1,
@@ -10244,7 +10244,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 1716639,
+          "byteLength": 1715097,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -10384,7 +10384,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-a7c041d1-e13f-464e-860b-b377cf36f1a3",
+      "immutableGenerationId": "bundled-77bc590c-ce56-4b06-9537-c2719935e826",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.voice.google",
       "schemaVersion": 1,
@@ -10399,19 +10399,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 1034853,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-FXEHZNSU.js"
+          "byteLength": 1034871,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-B4ILPFDA.js"
         },
         {
           "byteLength": 121,
           "relativePath": ".happier-plugin/agent/runtime/factory.js"
         },
         {
-          "byteLength": 191426,
+          "byteLength": 189993,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 9445,
+          "byteLength": 9552,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -10607,11 +10607,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contributions/runtime.js.map"
         },
         {
-          "byteLength": 1441,
+          "byteLength": 1446,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 1783,
+          "byteLength": 1802,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -10619,7 +10619,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 2469,
+          "byteLength": 2479,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -10675,15 +10675,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 4075,
+          "byteLength": 4188,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 4866,
+          "byteLength": 5002,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 6655,
+          "byteLength": 6864,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -10723,7 +10723,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-3e7e8432-c74e-4c54-8b31-57c9db70f4fa",
+      "immutableGenerationId": "bundled-fde1c6e3-9427-4ff6-b09f-3842ddfd40ef",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.grok",
       "schemaVersion": 1,
@@ -10738,7 +10738,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 664642,
+          "byteLength": 663100,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -10770,7 +10770,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/activate.js.map"
         },
         {
-          "byteLength": 1099357,
+          "byteLength": 1097112,
           "relativePath": "dist/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs.bundle"
         },
         {
@@ -10790,11 +10790,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 4118345,
+          "byteLength": 4102873,
           "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js.chunk.bundle"
         },
         {
-          "byteLength": 780048,
+          "byteLength": 777837,
           "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js.chunk.bundle.map"
         },
         {
@@ -10814,11 +10814,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 4118345,
+          "byteLength": 4102873,
           "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js.chunk.bundle"
         },
         {
-          "byteLength": 780048,
+          "byteLength": 777837,
           "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js.chunk.bundle.map"
         },
         {
@@ -10894,7 +10894,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-6897bc2d-4064-49c5-a325-d330e35b45ca",
+      "immutableGenerationId": "bundled-f0c4eb3c-28d0-44dc-aba8-95194ddbfb56",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.inspector",
       "schemaVersion": 1,
@@ -10909,19 +10909,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 881391,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-M7P5VZ4B.js"
+          "byteLength": 881409,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-SQTGGMVC.js"
         },
         {
           "byteLength": 121,
           "relativePath": ".happier-plugin/agent/runtime/factory.js"
         },
         {
-          "byteLength": 189794,
+          "byteLength": 188361,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 4195,
+          "byteLength": 4302,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -11057,11 +11057,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contributions/runtime.js.map"
         },
         {
-          "byteLength": 1464,
+          "byteLength": 1469,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 1829,
+          "byteLength": 1848,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -11069,7 +11069,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 2514,
+          "byteLength": 2524,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -11189,15 +11189,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 3011,
+          "byteLength": 3124,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 3310,
+          "byteLength": 3446,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 5007,
+          "byteLength": 5216,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -11237,7 +11237,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-dd9d3ecf-5d92-410e-a627-a3030ccebb61",
+      "immutableGenerationId": "bundled-8b37352a-6234-4b43-80cc-71e5b1ff807c",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.kilo",
       "schemaVersion": 1,
@@ -11252,19 +11252,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 15812,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-SK6RCAIU.js"
+          "byteLength": 15846,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-TNZ42LIX.js"
         },
         {
           "byteLength": 121,
           "relativePath": ".happier-plugin/agent/runtime/factory.js"
         },
         {
-          "byteLength": 742557,
+          "byteLength": 742407,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 8193,
+          "byteLength": 8300,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -11400,11 +11400,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contributions/runtime.js.map"
         },
         {
-          "byteLength": 1450,
+          "byteLength": 1455,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 1794,
+          "byteLength": 1813,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -11412,7 +11412,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 2479,
+          "byteLength": 2489,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -11516,15 +11516,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 4228,
+          "byteLength": 4341,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 4746,
+          "byteLength": 4882,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 6906,
+          "byteLength": 7115,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -11548,7 +11548,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-94b1cab6-9d52-4cb8-bec5-542e9af0a70b",
+      "immutableGenerationId": "bundled-cdd7e932-22c1-48b0-8d29-d3fc631322b7",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.kimi",
       "schemaVersion": 1,
@@ -11563,19 +11563,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 1055,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-VPEJ6FA4.js"
-        },
-        {
           "byteLength": 121,
           "relativePath": ".happier-plugin/agent/runtime/factory.js"
         },
         {
-          "byteLength": 737646,
+          "byteLength": 736698,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 4075,
+          "byteLength": 4872,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -11727,11 +11723,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contributions/runtime.js.map"
         },
         {
-          "byteLength": 1661,
+          "byteLength": 1669,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 1989,
+          "byteLength": 2007,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -11739,7 +11735,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 2730,
+          "byteLength": 2740,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -11757,22 +11753,6 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
         {
           "byteLength": 351,
           "relativePath": "dist/agent/index.js.map"
-        },
-        {
-          "byteLength": 186,
-          "relativePath": "dist/agent/runtime/factory.d.ts"
-        },
-        {
-          "byteLength": 781,
-          "relativePath": "dist/agent/runtime/factory.d.ts.map"
-        },
-        {
-          "byteLength": 548,
-          "relativePath": "dist/agent/runtime/factory.js"
-        },
-        {
-          "byteLength": 1101,
-          "relativePath": "dist/agent/runtime/factory.js.map"
         },
         {
           "byteLength": 552,
@@ -11811,15 +11791,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 2777,
+          "byteLength": 2931,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 3036,
+          "byteLength": 3253,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 4630,
+          "byteLength": 4923,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -11843,7 +11823,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-b180fc12-a170-410f-bd72-59e212dfa83a",
+      "immutableGenerationId": "bundled-47f4acd1-6070-4788-813b-9cd9faf39655",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.kiro",
       "schemaVersion": 1,
@@ -11858,19 +11838,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 5419722,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-M7XQ4KHQ.js"
+          "byteLength": 5426669,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-XQHQGTMJ.js"
         },
         {
           "byteLength": 201,
           "relativePath": ".happier-plugin/agent/runtime/engine.js"
         },
         {
-          "byteLength": 34580,
+          "byteLength": 35284,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 17870,
+          "byteLength": 17977,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -12022,11 +12002,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contributions/runtime.js.map"
         },
         {
-          "byteLength": 2147,
+          "byteLength": 3008,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 2662,
+          "byteLength": 3188,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -12034,7 +12014,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 3768,
+          "byteLength": 3787,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -12282,15 +12262,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 7338,
+          "byteLength": 7451,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 8472,
+          "byteLength": 8608,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 11726,
+          "byteLength": 11935,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -12330,7 +12310,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-a1add238-fdda-4c56-a142-90b9a8cbea32",
+      "immutableGenerationId": "bundled-cb25662c-8dfb-4d0c-8124-a20c337afcaf",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.ohmypi",
       "schemaVersion": 1,
@@ -12345,7 +12325,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 622631,
+          "byteLength": 621089,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -12421,7 +12401,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-cbe03d5a-3495-4093-9057-eee75d6c5f5d",
+      "immutableGenerationId": "bundled-3219a1bb-b96b-44b1-aded-4ca09c96698a",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.provider.ollama",
       "schemaVersion": 1,
@@ -12436,7 +12416,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 1598888,
+          "byteLength": 1597346,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -12720,7 +12700,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-e54dcf3d-27aa-4841-af87-b8cc2e3c9429",
+      "immutableGenerationId": "bundled-a9f15707-1853-4fee-8023-36399b8455b2",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.voice.openai",
       "schemaVersion": 1,
@@ -12735,7 +12715,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 1190270,
+          "byteLength": 1188728,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -12843,7 +12823,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-c0adad3c-6622-4bfb-a0b7-396e3d0cfa56",
+      "immutableGenerationId": "bundled-daaac34d-c96b-47a9-a2ae-758840cf617b",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.voice.openai-compat",
       "schemaVersion": 1,
@@ -12858,19 +12838,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 5675462,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-HCFGQ5VI.js"
+          "byteLength": 5684483,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-7MFA2FQO.js"
         },
         {
           "byteLength": 209,
           "relativePath": ".happier-plugin/agent/runtime/nativeRuntime.js"
         },
         {
-          "byteLength": 67360,
+          "byteLength": 68158,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 16845,
+          "byteLength": 17036,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -13226,19 +13206,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/config/thinking.js.map"
         },
         {
-          "byteLength": 5665,
+          "byteLength": 4964,
           "relativePath": "dist/agent/contributions/catalog.d.ts"
         },
         {
-          "byteLength": 6842,
+          "byteLength": 6029,
           "relativePath": "dist/agent/contributions/catalog.d.ts.map"
         },
         {
-          "byteLength": 5290,
+          "byteLength": 4646,
           "relativePath": "dist/agent/contributions/catalog.js"
         },
         {
-          "byteLength": 8351,
+          "byteLength": 7348,
           "relativePath": "dist/agent/contributions/catalog.js.map"
         },
         {
@@ -13258,11 +13238,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/contributions/runtime.js.map"
         },
         {
-          "byteLength": 10730,
+          "byteLength": 10735,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 7940,
+          "byteLength": 7959,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -13270,7 +13250,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 9984,
+          "byteLength": 9994,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -13310,15 +13290,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/identity/runtimeDescriptor.d.ts"
         },
         {
-          "byteLength": 7093,
+          "byteLength": 7896,
           "relativePath": "dist/agent/identity/runtimeDescriptor.d.ts.map"
         },
         {
-          "byteLength": 4737,
+          "byteLength": 5461,
           "relativePath": "dist/agent/identity/runtimeDescriptor.js"
         },
         {
-          "byteLength": 9591,
+          "byteLength": 10681,
           "relativePath": "dist/agent/identity/runtimeDescriptor.js.map"
         },
         {
@@ -13582,15 +13562,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/runtime/nativeRuntime.d.ts"
         },
         {
-          "byteLength": 8992,
+          "byteLength": 5940,
           "relativePath": "dist/agent/runtime/nativeRuntime.d.ts.map"
         },
         {
-          "byteLength": 8101,
+          "byteLength": 5229,
           "relativePath": "dist/agent/runtime/nativeRuntime.js"
         },
         {
-          "byteLength": 15769,
+          "byteLength": 9729,
           "relativePath": "dist/agent/runtime/nativeRuntime.js.map"
         },
         {
@@ -14062,15 +14042,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/runtime/server/sessionRuntime.d.ts"
         },
         {
-          "byteLength": 23689,
+          "byteLength": 23724,
           "relativePath": "dist/agent/runtime/server/sessionRuntime.d.ts.map"
         },
         {
-          "byteLength": 22250,
+          "byteLength": 22285,
           "relativePath": "dist/agent/runtime/server/sessionRuntime.js"
         },
         {
-          "byteLength": 40276,
+          "byteLength": 40341,
           "relativePath": "dist/agent/runtime/server/sessionRuntime.js.map"
         },
         {
@@ -14330,19 +14310,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/runtime/workState.js.map"
         },
         {
-          "byteLength": 766,
+          "byteLength": 692,
           "relativePath": "dist/agent/surfaces/sessions/attach/descriptor.d.ts"
         },
         {
-          "byteLength": 3122,
+          "byteLength": 2802,
           "relativePath": "dist/agent/surfaces/sessions/attach/descriptor.d.ts.map"
         },
         {
-          "byteLength": 1842,
+          "byteLength": 1888,
           "relativePath": "dist/agent/surfaces/sessions/attach/descriptor.js"
         },
         {
-          "byteLength": 4041,
+          "byteLength": 4011,
           "relativePath": "dist/agent/surfaces/sessions/attach/descriptor.js.map"
         },
         {
@@ -14654,15 +14634,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 11337,
+          "byteLength": 12051,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 13278,
+          "byteLength": 14075,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 18559,
+          "byteLength": 19707,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -14702,7 +14682,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-9aee4aab-4f30-4a9f-bb5f-852affe0ccfa",
+      "immutableGenerationId": "bundled-cd5e9824-b435-4187-94dc-002de7177387",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.opencode",
       "schemaVersion": 1,
@@ -14717,19 +14697,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 5583410,
-          "relativePath": ".happier-plugin/.happier-chunks/chunk-MZAJCX2Z.js"
+          "byteLength": 5592773,
+          "relativePath": ".happier-plugin/.happier-chunks/chunk-DNCX4J4X.js"
         },
         {
           "byteLength": 185,
           "relativePath": ".happier-plugin/agent/runtime/engine.js"
         },
         {
-          "byteLength": 27862,
+          "byteLength": 29586,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 16752,
+          "byteLength": 16937,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -14977,19 +14957,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/connectedServices/stateSharingDescriptor.js.map"
         },
         {
-          "byteLength": 5892,
+          "byteLength": 5644,
           "relativePath": "dist/agent/contributions/catalog.d.ts"
         },
         {
-          "byteLength": 3885,
+          "byteLength": 3630,
           "relativePath": "dist/agent/contributions/catalog.d.ts.map"
         },
         {
-          "byteLength": 2962,
+          "byteLength": 2768,
           "relativePath": "dist/agent/contributions/catalog.js"
         },
         {
-          "byteLength": 4412,
+          "byteLength": 4099,
           "relativePath": "dist/agent/contributions/catalog.js.map"
         },
         {
@@ -15013,7 +14993,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 4666,
+          "byteLength": 4675,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -15021,7 +15001,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 5428,
+          "byteLength": 5438,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -15093,15 +15073,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/externalSessions/takeover.d.ts"
         },
         {
-          "byteLength": 3029,
+          "byteLength": 3124,
           "relativePath": "dist/agent/externalSessions/takeover.d.ts.map"
         },
         {
-          "byteLength": 2130,
+          "byteLength": 2238,
           "relativePath": "dist/agent/externalSessions/takeover.js"
         },
         {
-          "byteLength": 4520,
+          "byteLength": 4636,
           "relativePath": "dist/agent/externalSessions/takeover.js.map"
         },
         {
@@ -15221,15 +15201,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/runtime/engine.d.ts"
         },
         {
-          "byteLength": 9432,
+          "byteLength": 6615,
           "relativePath": "dist/agent/runtime/engine.d.ts.map"
         },
         {
-          "byteLength": 8624,
+          "byteLength": 5823,
           "relativePath": "dist/agent/runtime/engine.js"
         },
         {
-          "byteLength": 17045,
+          "byteLength": 11266,
           "relativePath": "dist/agent/runtime/engine.js.map"
         },
         {
@@ -15557,15 +15537,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 6957,
+          "byteLength": 7233,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 7906,
+          "byteLength": 8238,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 10949,
+          "byteLength": 11436,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -15653,7 +15633,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-1298ceed-37af-48f5-9033-d92cddcba00c",
+      "immutableGenerationId": "bundled-98112966-13c4-459f-825d-c8a08e490430",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.pi",
       "schemaVersion": 1,
@@ -15668,11 +15648,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 2161369,
+          "byteLength": 2215460,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 283470,
+          "byteLength": 290404,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -15692,19 +15672,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/activate.js.map"
         },
         {
-          "byteLength": 4351,
+          "byteLength": 4166,
           "relativePath": "dist/api/client.d.ts"
         },
         {
-          "byteLength": 14268,
+          "byteLength": 13588,
           "relativePath": "dist/api/client.d.ts.map"
         },
         {
-          "byteLength": 7324,
+          "byteLength": 6965,
           "relativePath": "dist/api/client.js"
         },
         {
-          "byteLength": 17863,
+          "byteLength": 16582,
           "relativePath": "dist/api/client.js.map"
         },
         {
@@ -15722,6 +15702,22 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
         {
           "byteLength": 7181,
           "relativePath": "dist/api/errors.js.map"
+        },
+        {
+          "byteLength": 1222,
+          "relativePath": "dist/api/invocationClient.d.ts"
+        },
+        {
+          "byteLength": 4169,
+          "relativePath": "dist/api/invocationClient.d.ts.map"
+        },
+        {
+          "byteLength": 2989,
+          "relativePath": "dist/api/invocationClient.js"
+        },
+        {
+          "byteLength": 5784,
+          "relativePath": "dist/api/invocationClient.js.map"
         },
         {
           "byteLength": 2803,
@@ -15772,19 +15768,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/api/types/directory.js.map"
         },
         {
-          "byteLength": 2027,
+          "byteLength": 2224,
           "relativePath": "dist/api/types/events.d.ts"
         },
         {
-          "byteLength": 4753,
+          "byteLength": 5211,
           "relativePath": "dist/api/types/events.d.ts.map"
         },
         {
-          "byteLength": 3313,
+          "byteLength": 3593,
           "relativePath": "dist/api/types/events.js"
         },
         {
-          "byteLength": 6296,
+          "byteLength": 6866,
           "relativePath": "dist/api/types/events.js.map"
         },
         {
@@ -15818,6 +15814,38 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
         {
           "byteLength": 4365,
           "relativePath": "dist/api/types/primitives.js.map"
+        },
+        {
+          "byteLength": 2439,
+          "relativePath": "dist/composer/candidate.d.ts"
+        },
+        {
+          "byteLength": 11707,
+          "relativePath": "dist/composer/candidate.d.ts.map"
+        },
+        {
+          "byteLength": 8486,
+          "relativePath": "dist/composer/candidate.js"
+        },
+        {
+          "byteLength": 17352,
+          "relativePath": "dist/composer/candidate.js.map"
+        },
+        {
+          "byteLength": 1335,
+          "relativePath": "dist/composer/reference.d.ts"
+        },
+        {
+          "byteLength": 6255,
+          "relativePath": "dist/composer/reference.d.ts.map"
+        },
+        {
+          "byteLength": 4973,
+          "relativePath": "dist/composer/reference.js"
+        },
+        {
+          "byteLength": 9534,
+          "relativePath": "dist/composer/reference.js.map"
         },
         {
           "byteLength": 1835,
@@ -15900,11 +15928,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/connect/origin.js.map"
         },
         {
-          "byteLength": 2137448,
+          "byteLength": 2154728,
           "relativePath": "dist/happier-plugin-ui/react-native-web/posthog-issue-detail-native/entry.mjs.bundle"
         },
         {
-          "byteLength": 2122124,
+          "byteLength": 2127257,
           "relativePath": "dist/happier-plugin-ui/react-native-web/posthog-triage-sources-native/entry.mjs.bundle"
         },
         {
@@ -15916,20 +15944,20 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/android.bundle.map"
         },
         {
-          "byteLength": 117920,
+          "byteLength": 152056,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 50884,
+          "byteLength": 69640,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5828285,
-          "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
+          "byteLength": 5825442,
+          "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-c26200.chunk.bundle"
         },
         {
-          "byteLength": 1156842,
-          "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
+          "byteLength": 1157087,
+          "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-c26200.chunk.bundle.map"
         },
         {
           "byteLength": 34149,
@@ -15940,20 +15968,20 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 117920,
+          "byteLength": 152056,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 50884,
+          "byteLength": 69640,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5828285,
-          "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
+          "byteLength": 5825442,
+          "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-c26200.chunk.bundle"
         },
         {
-          "byteLength": 1156842,
-          "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
+          "byteLength": 1157087,
+          "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-c26200.chunk.bundle.map"
         },
         {
           "byteLength": 34168,
@@ -15964,19 +15992,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/android/android.bundle.map"
         },
         {
-          "byteLength": 42907,
+          "byteLength": 45414,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 20301,
+          "byteLength": 21431,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5914713,
+          "byteLength": 5915994,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
         },
         {
-          "byteLength": 1172054,
+          "byteLength": 1173191,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
         },
         {
@@ -15988,19 +16016,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 42907,
+          "byteLength": 45414,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 20301,
+          "byteLength": 21431,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5914713,
+          "byteLength": 5915994,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
         },
         {
-          "byteLength": 1172054,
+          "byteLength": 1173191,
           "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
         },
         {
@@ -16008,51 +16036,51 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/ui-artifacts.json"
         },
         {
-          "byteLength": 7879,
+          "byteLength": 8221,
           "relativePath": "dist/index.d.ts"
         },
         {
-          "byteLength": 12827,
+          "byteLength": 13344,
           "relativePath": "dist/index.d.ts.map"
         },
         {
-          "byteLength": 4857,
+          "byteLength": 5121,
           "relativePath": "dist/index.js"
         },
         {
-          "byteLength": 11034,
+          "byteLength": 11506,
           "relativePath": "dist/index.js.map"
         },
         {
-          "byteLength": 2267,
+          "byteLength": 2334,
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 22810,
+          "byteLength": 23407,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 22290,
+          "byteLength": 22856,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 32656,
+          "byteLength": 33520,
           "relativePath": "dist/manifest.js.map"
         },
         {
-          "byteLength": 4671,
+          "byteLength": 4829,
           "relativePath": "dist/posthogContracts.d.ts"
         },
         {
-          "byteLength": 5617,
+          "byteLength": 5819,
           "relativePath": "dist/posthogContracts.d.ts.map"
         },
         {
-          "byteLength": 4479,
+          "byteLength": 4629,
           "relativePath": "dist/posthogContracts.js"
         },
         {
-          "byteLength": 5773,
+          "byteLength": 5985,
           "relativePath": "dist/posthogContracts.js.map"
         },
         {
@@ -16104,19 +16132,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/source/detail/issueEvents.js.map"
         },
         {
-          "byteLength": 9571,
+          "byteLength": 11884,
           "relativePath": "dist/source/detail/issueEventsContract.d.ts"
         },
         {
-          "byteLength": 10338,
+          "byteLength": 12989,
           "relativePath": "dist/source/detail/issueEventsContract.d.ts.map"
         },
         {
-          "byteLength": 8284,
+          "byteLength": 10523,
           "relativePath": "dist/source/detail/issueEventsContract.js"
         },
         {
-          "byteLength": 13791,
+          "byteLength": 17381,
           "relativePath": "dist/source/detail/issueEventsContract.js.map"
         },
         {
@@ -16182,6 +16210,38 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
         {
           "byteLength": 16198,
           "relativePath": "dist/source/instance.js.map"
+        },
+        {
+          "byteLength": 625,
+          "relativePath": "dist/source/invocationDeadline.d.ts"
+        },
+        {
+          "byteLength": 1296,
+          "relativePath": "dist/source/invocationDeadline.d.ts.map"
+        },
+        {
+          "byteLength": 771,
+          "relativePath": "dist/source/invocationDeadline.js"
+        },
+        {
+          "byteLength": 1419,
+          "relativePath": "dist/source/invocationDeadline.js.map"
+        },
+        {
+          "byteLength": 1132,
+          "relativePath": "dist/source/invocationScope.d.ts"
+        },
+        {
+          "byteLength": 3013,
+          "relativePath": "dist/source/invocationScope.d.ts.map"
+        },
+        {
+          "byteLength": 1500,
+          "relativePath": "dist/source/invocationScope.js"
+        },
+        {
+          "byteLength": 3461,
+          "relativePath": "dist/source/invocationScope.js.map"
         },
         {
           "byteLength": 2345,
@@ -16280,19 +16340,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/source/map/state.js.map"
         },
         {
-          "byteLength": 9922,
+          "byteLength": 9822,
           "relativePath": "dist/source/operations.d.ts"
         },
         {
-          "byteLength": 66917,
+          "byteLength": 62051,
           "relativePath": "dist/source/operations.d.ts.map"
         },
         {
-          "byteLength": 53874,
+          "byteLength": 50784,
           "relativePath": "dist/source/operations.js"
         },
         {
-          "byteLength": 101060,
+          "byteLength": 94286,
           "relativePath": "dist/source/operations.js.map"
         },
         {
@@ -16392,19 +16452,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/detail/model.js.map"
         },
         {
-          "byteLength": 3692,
+          "byteLength": 4791,
           "relativePath": "dist/ui/detail/occurrenceController.d.ts"
         },
         {
-          "byteLength": 12719,
+          "byteLength": 15853,
           "relativePath": "dist/ui/detail/occurrenceController.d.ts.map"
         },
         {
-          "byteLength": 8028,
+          "byteLength": 9870,
           "relativePath": "dist/ui/detail/occurrenceController.js"
         },
         {
-          "byteLength": 17085,
+          "byteLength": 21159,
           "relativePath": "dist/ui/detail/occurrenceController.js.map"
         },
         {
@@ -16444,15 +16504,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/renderSurface.d.ts"
         },
         {
-          "byteLength": 34657,
+          "byteLength": 36670,
           "relativePath": "dist/ui/renderSurface.d.ts.map"
         },
         {
-          "byteLength": 24193,
+          "byteLength": 25862,
           "relativePath": "dist/ui/renderSurface.js"
         },
         {
-          "byteLength": 52085,
+          "byteLength": 55196,
           "relativePath": "dist/ui/renderSurface.js.map"
         },
         {
@@ -16476,15 +16536,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/settings/renderSettingsSurface.d.ts"
         },
         {
-          "byteLength": 17848,
+          "byteLength": 19476,
           "relativePath": "dist/ui/settings/renderSettingsSurface.d.ts.map"
         },
         {
-          "byteLength": 16707,
+          "byteLength": 18480,
           "relativePath": "dist/ui/settings/renderSettingsSurface.js"
         },
         {
-          "byteLength": 32128,
+          "byteLength": 35037,
           "relativePath": "dist/ui/settings/renderSettingsSurface.js.map"
         },
         {
@@ -16508,7 +16568,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-6df32e7b-faf0-4a4f-9784-ead48a4c080d",
+      "immutableGenerationId": "bundled-a172d8c1-15fc-4f87-a227-1b760f4f070a",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.posthog",
       "schemaVersion": 1,
@@ -16531,11 +16591,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": ".happier-plugin/agent/runtime/factory.js"
         },
         {
-          "byteLength": 735273,
+          "byteLength": 733840,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 3547,
+          "byteLength": 3654,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -16575,11 +16635,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/acp/definition.js.map"
         },
         {
-          "byteLength": 1315,
+          "byteLength": 1320,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 1598,
+          "byteLength": 1617,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -16587,7 +16647,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 2226,
+          "byteLength": 2236,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -16627,15 +16687,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 2536,
+          "byteLength": 2649,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 2852,
+          "byteLength": 2988,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 4286,
+          "byteLength": 4495,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -16643,7 +16703,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-aa12b89a-5827-41c4-bace-fcf26bf751a7",
+      "immutableGenerationId": "bundled-2cdd5e0e-0440-485a-9aa9-238a6144d1d9",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.agent.qwen",
       "schemaVersion": 1,
@@ -16658,11 +16718,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 4667355,
+          "byteLength": 4673852,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 4831,
+          "byteLength": 4940,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -16682,11 +16742,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/activate.js.map"
         },
         {
-          "byteLength": 1239,
+          "byteLength": 1246,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 1521,
+          "byteLength": 1541,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -16694,7 +16754,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 2126,
+          "byteLength": 2136,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -16878,15 +16938,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 3747,
+          "byteLength": 3860,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 4059,
+          "byteLength": 4195,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 6028,
+          "byteLength": 6237,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -16914,7 +16974,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "resources/review-prompt.md"
         }
       ],
-      "immutableGenerationId": "bundled-6baee9ae-c79b-4783-925f-cfcea850c01d",
+      "immutableGenerationId": "bundled-34dcda0a-1af8-43a0-bf06-fc832378b4a2",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.review.coderabbit",
       "schemaVersion": 1,
@@ -16929,11 +16989,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 4666767,
+          "byteLength": 4676199,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 5943,
+          "byteLength": 6052,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -16953,11 +17013,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/activate.js.map"
         },
         {
-          "byteLength": 1236,
+          "byteLength": 1243,
           "relativePath": "dist/agent/definition.d.ts"
         },
         {
-          "byteLength": 1532,
+          "byteLength": 1552,
           "relativePath": "dist/agent/definition.d.ts.map"
         },
         {
@@ -16965,7 +17025,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/definition.js"
         },
         {
-          "byteLength": 2149,
+          "byteLength": 2159,
           "relativePath": "dist/agent/definition.js.map"
         },
         {
@@ -17053,15 +17113,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/agent/reviews/execution.d.ts"
         },
         {
-          "byteLength": 17869,
+          "byteLength": 21692,
           "relativePath": "dist/agent/reviews/execution.d.ts.map"
         },
         {
-          "byteLength": 15946,
+          "byteLength": 19816,
           "relativePath": "dist/agent/reviews/execution.js"
         },
         {
-          "byteLength": 31796,
+          "byteLength": 38588,
           "relativePath": "dist/agent/reviews/execution.js.map"
         },
         {
@@ -17197,15 +17257,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 4182,
+          "byteLength": 4295,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 4521,
+          "byteLength": 4657,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 6816,
+          "byteLength": 7025,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -17237,7 +17297,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "resources/review-prompt.md"
         }
       ],
-      "immutableGenerationId": "bundled-31fc0792-7891-42c8-918f-13f79bf379da",
+      "immutableGenerationId": "bundled-672009bb-2784-48e3-8a63-038bca54520f",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.review.deepsec",
       "schemaVersion": 1,
@@ -17252,11 +17312,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 2357960,
+          "byteLength": 2358586,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 1090459,
+          "byteLength": 1091321,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -17356,11 +17416,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/detection/remoteUrl.js.map"
         },
         {
-          "byteLength": 2175112,
+          "byteLength": 2178279,
           "relativePath": "dist/happier-plugin-ui/react-native-web/azure-devops-detail-native/entry.mjs.bundle"
         },
         {
-          "byteLength": 2101998,
+          "byteLength": 2104139,
           "relativePath": "dist/happier-plugin-ui/react-native-web/azure-devops-triage-sources-native/entry.mjs.bundle"
         },
         {
@@ -17372,19 +17432,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/android/android.bundle.map"
         },
         {
-          "byteLength": 320792,
+          "byteLength": 324112,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 146078,
+          "byteLength": 147310,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5861845,
+          "byteLength": 5852652,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
         },
         {
-          "byteLength": 1168436,
+          "byteLength": 1167102,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
         },
         {
@@ -17396,19 +17456,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 320792,
+          "byteLength": 324112,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 146078,
+          "byteLength": 147310,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5861845,
+          "byteLength": 5852652,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
         },
         {
-          "byteLength": 1168436,
+          "byteLength": 1167102,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
         },
         {
@@ -17420,19 +17480,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/android/android.bundle.map"
         },
         {
-          "byteLength": 126632,
+          "byteLength": 128517,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
         },
         {
-          "byteLength": 59921,
+          "byteLength": 60402,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
         },
         {
-          "byteLength": 5926740,
+          "byteLength": 5925655,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle"
         },
         {
-          "byteLength": 1183822,
+          "byteLength": 1184700,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle.map"
         },
         {
@@ -17444,19 +17504,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 126632,
+          "byteLength": 128517,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
         },
         {
-          "byteLength": 59921,
+          "byteLength": 60402,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
         },
         {
-          "byteLength": 5926740,
+          "byteLength": 5925655,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle"
         },
         {
-          "byteLength": 1183822,
+          "byteLength": 1184700,
           "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle.map"
         },
         {
@@ -17484,15 +17544,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 30439,
+          "byteLength": 31104,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 32214,
+          "byteLength": 32959,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 43732,
+          "byteLength": 44661,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -17564,15 +17624,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/actions.d.ts"
         },
         {
-          "byteLength": 5464,
+          "byteLength": 4348,
           "relativePath": "dist/triage/actions.d.ts.map"
         },
         {
-          "byteLength": 4256,
+          "byteLength": 3319,
           "relativePath": "dist/triage/actions.js"
         },
         {
-          "byteLength": 7482,
+          "byteLength": 5729,
           "relativePath": "dist/triage/actions.js.map"
         },
         {
@@ -17612,15 +17672,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/client.d.ts"
         },
         {
-          "byteLength": 3671,
+          "byteLength": 4144,
           "relativePath": "dist/triage/client.d.ts.map"
         },
         {
-          "byteLength": 3630,
+          "byteLength": 4158,
           "relativePath": "dist/triage/client.js"
         },
         {
-          "byteLength": 5782,
+          "byteLength": 6462,
           "relativePath": "dist/triage/client.js.map"
         },
         {
@@ -17660,31 +17720,31 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/decode.d.ts"
         },
         {
-          "byteLength": 11806,
+          "byteLength": 12812,
           "relativePath": "dist/triage/decode.d.ts.map"
         },
         {
-          "byteLength": 9650,
+          "byteLength": 10614,
           "relativePath": "dist/triage/decode.js"
         },
         {
-          "byteLength": 18800,
+          "byteLength": 20344,
           "relativePath": "dist/triage/decode.js.map"
         },
         {
-          "byteLength": 3520,
+          "byteLength": 3970,
           "relativePath": "dist/triage/descriptor.d.ts"
         },
         {
-          "byteLength": 4526,
+          "byteLength": 5028,
           "relativePath": "dist/triage/descriptor.d.ts.map"
         },
         {
-          "byteLength": 3697,
+          "byteLength": 4139,
           "relativePath": "dist/triage/descriptor.js"
         },
         {
-          "byteLength": 4839,
+          "byteLength": 5351,
           "relativePath": "dist/triage/descriptor.js.map"
         },
         {
@@ -17708,31 +17768,31 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/detail/contracts.d.ts"
         },
         {
-          "byteLength": 15517,
+          "byteLength": 15706,
           "relativePath": "dist/triage/detail/contracts.d.ts.map"
         },
         {
-          "byteLength": 12463,
+          "byteLength": 12654,
           "relativePath": "dist/triage/detail/contracts.js"
         },
         {
-          "byteLength": 20434,
+          "byteLength": 20616,
           "relativePath": "dist/triage/detail/contracts.js.map"
         },
         {
-          "byteLength": 6382,
+          "byteLength": 6281,
           "relativePath": "dist/triage/detail/projection.d.ts"
         },
         {
-          "byteLength": 23323,
+          "byteLength": 23031,
           "relativePath": "dist/triage/detail/projection.d.ts.map"
         },
         {
-          "byteLength": 14355,
+          "byteLength": 14112,
           "relativePath": "dist/triage/detail/projection.js"
         },
         {
-          "byteLength": 34005,
+          "byteLength": 33587,
           "relativePath": "dist/triage/detail/projection.js.map"
         },
         {
@@ -17740,15 +17800,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/detail/reads.d.ts"
         },
         {
-          "byteLength": 16184,
+          "byteLength": 16588,
           "relativePath": "dist/triage/detail/reads.d.ts.map"
         },
         {
-          "byteLength": 9009,
+          "byteLength": 9441,
           "relativePath": "dist/triage/detail/reads.js"
         },
         {
-          "byteLength": 19748,
+          "byteLength": 20319,
           "relativePath": "dist/triage/detail/reads.js.map"
         },
         {
@@ -17848,19 +17908,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/localRef.js.map"
         },
         {
-          "byteLength": 1844,
+          "byteLength": 1567,
           "relativePath": "dist/triage/mapping.d.ts"
         },
         {
-          "byteLength": 7916,
+          "byteLength": 6867,
           "relativePath": "dist/triage/mapping.d.ts.map"
         },
         {
-          "byteLength": 6158,
+          "byteLength": 5329,
           "relativePath": "dist/triage/mapping.js"
         },
         {
-          "byteLength": 11684,
+          "byteLength": 10039,
           "relativePath": "dist/triage/mapping.js.map"
         },
         {
@@ -17916,23 +17976,23 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/observation.d.ts"
         },
         {
-          "byteLength": 10928,
+          "byteLength": 10919,
           "relativePath": "dist/triage/observation.d.ts.map"
         },
         {
-          "byteLength": 9760,
+          "byteLength": 9746,
           "relativePath": "dist/triage/observation.js"
         },
         {
-          "byteLength": 17207,
+          "byteLength": 17205,
           "relativePath": "dist/triage/observation.js.map"
         },
         {
-          "byteLength": 8463,
+          "byteLength": 8768,
           "relativePath": "dist/triage/operations.d.ts"
         },
         {
-          "byteLength": 44274,
+          "byteLength": 45044,
           "relativePath": "dist/triage/operations.d.ts.map"
         },
         {
@@ -17940,7 +18000,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/operations.js"
         },
         {
-          "byteLength": 61763,
+          "byteLength": 62356,
           "relativePath": "dist/triage/operations.js.map"
         },
         {
@@ -18008,11 +18068,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/requestUrls.js.map"
         },
         {
-          "byteLength": 18874,
+          "byteLength": 18894,
           "relativePath": "dist/triage/types.d.ts"
         },
         {
-          "byteLength": 32231,
+          "byteLength": 32179,
           "relativePath": "dist/triage/types.d.ts.map"
         },
         {
@@ -18020,7 +18080,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/types.js"
         },
         {
-          "byteLength": 21572,
+          "byteLength": 21587,
           "relativePath": "dist/triage/types.js.map"
         },
         {
@@ -18040,19 +18100,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/additionalTranslations.js.map"
         },
         {
-          "byteLength": 2292,
+          "byteLength": 2793,
           "relativePath": "dist/ui/detail/mutations.d.ts"
         },
         {
-          "byteLength": 32742,
+          "byteLength": 33464,
           "relativePath": "dist/ui/detail/mutations.d.ts.map"
         },
         {
-          "byteLength": 27379,
+          "byteLength": 27817,
           "relativePath": "dist/ui/detail/mutations.js"
         },
         {
-          "byteLength": 48082,
+          "byteLength": 48593,
           "relativePath": "dist/ui/detail/mutations.js.map"
         },
         {
@@ -18104,19 +18164,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/detail/tabDeclarations.js.map"
         },
         {
-          "byteLength": 2346,
+          "byteLength": 2951,
           "relativePath": "dist/ui/renderSurface.d.ts"
         },
         {
-          "byteLength": 33192,
+          "byteLength": 34997,
           "relativePath": "dist/ui/renderSurface.d.ts.map"
         },
         {
-          "byteLength": 28296,
+          "byteLength": 29540,
           "relativePath": "dist/ui/renderSurface.js"
         },
         {
-          "byteLength": 52735,
+          "byteLength": 55560,
           "relativePath": "dist/ui/renderSurface.js.map"
         },
         {
@@ -18172,7 +18232,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-51292021-78f8-42d9-a575-842f49dfa370",
+      "immutableGenerationId": "bundled-19d32649-6914-489f-b4b8-132ff1d4bd79",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.scm.forge.azure-devops",
       "schemaVersion": 1,
@@ -18187,11 +18247,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 4992224,
+          "byteLength": 5003393,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 734734,
+          "byteLength": 775001,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -18275,6 +18335,22 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/auth/readiness.js.map"
         },
         {
+          "byteLength": 443,
+          "relativePath": "dist/bitbucketCloneUrl.d.ts"
+        },
+        {
+          "byteLength": 1105,
+          "relativePath": "dist/bitbucketCloneUrl.d.ts.map"
+        },
+        {
+          "byteLength": 889,
+          "relativePath": "dist/bitbucketCloneUrl.js"
+        },
+        {
+          "byteLength": 1607,
+          "relativePath": "dist/bitbucketCloneUrl.js.map"
+        },
+        {
           "byteLength": 933,
           "relativePath": "dist/bitbucketContracts.d.ts"
         },
@@ -18307,11 +18383,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/connectedAccounts/builtInLegacyCompatibility.js.map"
         },
         {
-          "byteLength": 2160173,
+          "byteLength": 2162919,
           "relativePath": "dist/happier-plugin-ui/react-native-web/bitbucket-detail-native/entry.mjs.bundle"
         },
         {
-          "byteLength": 2100891,
+          "byteLength": 2104679,
           "relativePath": "dist/happier-plugin-ui/react-native-web/bitbucket-triage-sources-native/entry.mjs.bundle"
         },
         {
@@ -18323,19 +18399,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/android/android.bundle.map"
         },
         {
-          "byteLength": 280283,
+          "byteLength": 284454,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 126519,
+          "byteLength": 128682,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5861833,
+          "byteLength": 5855006,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
         },
         {
-          "byteLength": 1163048,
+          "byteLength": 1162013,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
         },
         {
@@ -18347,19 +18423,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 280283,
+          "byteLength": 284454,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 126519,
+          "byteLength": 128682,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5861833,
+          "byteLength": 5855006,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
         },
         {
-          "byteLength": 1163048,
+          "byteLength": 1162013,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
         },
         {
@@ -18371,19 +18447,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/android/android.bundle.map"
         },
         {
-          "byteLength": 136313,
+          "byteLength": 146652,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
         },
         {
-          "byteLength": 60578,
+          "byteLength": 65830,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
         },
         {
-          "byteLength": 5926728,
+          "byteLength": 5928009,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle"
         },
         {
-          "byteLength": 1178428,
+          "byteLength": 1179581,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle.map"
         },
         {
@@ -18395,19 +18471,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 136313,
+          "byteLength": 146652,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
         },
         {
-          "byteLength": 60578,
+          "byteLength": 65830,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
         },
         {
-          "byteLength": 5926728,
+          "byteLength": 5928009,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle"
         },
         {
-          "byteLength": 1178428,
+          "byteLength": 1179581,
           "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle.map"
         },
         {
@@ -18431,19 +18507,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/index.js.map"
         },
         {
-          "byteLength": 3438,
+          "byteLength": 3597,
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 27716,
+          "byteLength": 28617,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 29409,
+          "byteLength": 30369,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 40018,
+          "byteLength": 41504,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -18515,15 +18591,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/operations/mapping.d.ts"
         },
         {
-          "byteLength": 8475,
+          "byteLength": 8136,
           "relativePath": "dist/operations/mapping.d.ts.map"
         },
         {
-          "byteLength": 6747,
+          "byteLength": 6393,
           "relativePath": "dist/operations/mapping.js"
         },
         {
-          "byteLength": 15005,
+          "byteLength": 14239,
           "relativePath": "dist/operations/mapping.js.map"
         },
         {
@@ -18671,19 +18747,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/detail/routes.js.map"
         },
         {
-          "byteLength": 4824,
+          "byteLength": 5073,
           "relativePath": "dist/triage/entries.d.ts"
         },
         {
-          "byteLength": 15106,
+          "byteLength": 16256,
           "relativePath": "dist/triage/entries.d.ts.map"
         },
         {
-          "byteLength": 8420,
+          "byteLength": 9178,
           "relativePath": "dist/triage/entries.js"
         },
         {
-          "byteLength": 19329,
+          "byteLength": 21179,
           "relativePath": "dist/triage/entries.js.map"
         },
         {
@@ -18787,15 +18863,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/pullRequests.d.ts"
         },
         {
-          "byteLength": 31644,
+          "byteLength": 31779,
           "relativePath": "dist/triage/pullRequests.d.ts.map"
         },
         {
-          "byteLength": 21044,
+          "byteLength": 21196,
           "relativePath": "dist/triage/pullRequests.js"
         },
         {
-          "byteLength": 38993,
+          "byteLength": 39252,
           "relativePath": "dist/triage/pullRequests.js.map"
         },
         {
@@ -18831,19 +18907,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/scanContinuation.js.map"
         },
         {
-          "byteLength": 1499,
+          "byteLength": 1818,
           "relativePath": "dist/triage/source/actions.d.ts"
         },
         {
-          "byteLength": 3832,
+          "byteLength": 4882,
           "relativePath": "dist/triage/source/actions.d.ts.map"
         },
         {
-          "byteLength": 2732,
+          "byteLength": 3533,
           "relativePath": "dist/triage/source/actions.js"
         },
         {
-          "byteLength": 4999,
+          "byteLength": 6440,
           "relativePath": "dist/triage/source/actions.js.map"
         },
         {
@@ -18927,11 +19003,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/source/detailContinuation.js.map"
         },
         {
-          "byteLength": 35744,
+          "byteLength": 36150,
           "relativePath": "dist/triage/source/detailContracts.d.ts"
         },
         {
-          "byteLength": 13707,
+          "byteLength": 13717,
           "relativePath": "dist/triage/source/detailContracts.d.ts.map"
         },
         {
@@ -18975,19 +19051,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/source/get.js.map"
         },
         {
-          "byteLength": 1302,
+          "byteLength": 1489,
           "relativePath": "dist/triage/source/index.d.ts"
         },
         {
-          "byteLength": 2088,
+          "byteLength": 2379,
           "relativePath": "dist/triage/source/index.d.ts.map"
         },
         {
-          "byteLength": 1171,
+          "byteLength": 1320,
           "relativePath": "dist/triage/source/index.js"
         },
         {
-          "byteLength": 2014,
+          "byteLength": 2287,
           "relativePath": "dist/triage/source/index.js.map"
         },
         {
@@ -19011,15 +19087,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/source/listInstances.d.ts"
         },
         {
-          "byteLength": 7212,
+          "byteLength": 6647,
           "relativePath": "dist/triage/source/listInstances.d.ts.map"
         },
         {
-          "byteLength": 6281,
+          "byteLength": 5575,
           "relativePath": "dist/triage/source/listInstances.js"
         },
         {
-          "byteLength": 11305,
+          "byteLength": 10337,
           "relativePath": "dist/triage/source/listInstances.js.map"
         },
         {
@@ -19027,23 +19103,23 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/source/mutationActions.d.ts"
         },
         {
-          "byteLength": 23932,
+          "byteLength": 24728,
           "relativePath": "dist/triage/source/mutationActions.d.ts.map"
         },
         {
-          "byteLength": 22451,
+          "byteLength": 23205,
           "relativePath": "dist/triage/source/mutationActions.js"
         },
         {
-          "byteLength": 36521,
+          "byteLength": 37388,
           "relativePath": "dist/triage/source/mutationActions.js.map"
         },
         {
-          "byteLength": 59511,
+          "byteLength": 61541,
           "relativePath": "dist/triage/source/mutationContracts.d.ts"
         },
         {
-          "byteLength": 13662,
+          "byteLength": 13712,
           "relativePath": "dist/triage/source/mutationContracts.d.ts.map"
         },
         {
@@ -19055,19 +19131,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/source/mutationContracts.js.map"
         },
         {
-          "byteLength": 1462,
+          "byteLength": 1889,
           "relativePath": "dist/triage/source/observations.d.ts"
         },
         {
-          "byteLength": 17788,
+          "byteLength": 19449,
           "relativePath": "dist/triage/source/observations.d.ts.map"
         },
         {
-          "byteLength": 15182,
+          "byteLength": 16539,
           "relativePath": "dist/triage/source/observations.js"
         },
         {
-          "byteLength": 25962,
+          "byteLength": 28314,
           "relativePath": "dist/triage/source/observations.js.map"
         },
         {
@@ -19087,35 +19163,51 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/source/observeEntry.js.map"
         },
         {
+          "byteLength": 1081,
+          "relativePath": "dist/triage/source/prepareReviewWorkspace.d.ts"
+        },
+        {
+          "byteLength": 6588,
+          "relativePath": "dist/triage/source/prepareReviewWorkspace.d.ts.map"
+        },
+        {
+          "byteLength": 5109,
+          "relativePath": "dist/triage/source/prepareReviewWorkspace.js"
+        },
+        {
+          "byteLength": 9852,
+          "relativePath": "dist/triage/source/prepareReviewWorkspace.js.map"
+        },
+        {
           "byteLength": 928,
           "relativePath": "dist/triage/source/scan.d.ts"
         },
         {
-          "byteLength": 11654,
+          "byteLength": 12039,
           "relativePath": "dist/triage/source/scan.d.ts.map"
         },
         {
-          "byteLength": 10543,
+          "byteLength": 10958,
           "relativePath": "dist/triage/source/scan.js"
         },
         {
-          "byteLength": 18174,
+          "byteLength": 18681,
           "relativePath": "dist/triage/source/scan.js.map"
         },
         {
-          "byteLength": 2935,
+          "byteLength": 3041,
           "relativePath": "dist/triage/source/testSupport.d.ts"
         },
         {
-          "byteLength": 8402,
+          "byteLength": 8607,
           "relativePath": "dist/triage/source/testSupport.d.ts.map"
         },
         {
-          "byteLength": 4244,
+          "byteLength": 4322,
           "relativePath": "dist/triage/source/testSupport.js"
         },
         {
-          "byteLength": 10146,
+          "byteLength": 10374,
           "relativePath": "dist/triage/source/testSupport.js.map"
         },
         {
@@ -19167,19 +19259,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/additionalTranslations.js.map"
         },
         {
-          "byteLength": 1784,
+          "byteLength": 2296,
           "relativePath": "dist/ui/detail/mutations.d.ts"
         },
         {
-          "byteLength": 24647,
+          "byteLength": 25329,
           "relativePath": "dist/ui/detail/mutations.d.ts.map"
         },
         {
-          "byteLength": 19994,
+          "byteLength": 20413,
           "relativePath": "dist/ui/detail/mutations.js"
         },
         {
-          "byteLength": 36516,
+          "byteLength": 36983,
           "relativePath": "dist/ui/detail/mutations.js.map"
         },
         {
@@ -19283,7 +19375,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-065e2995-f545-44a8-a08a-1bef9e0fbbc6",
+      "immutableGenerationId": "bundled-d7191af6-ac21-4e1e-867c-01211cd363ba",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.scm.forge.bitbucket",
       "schemaVersion": 1,
@@ -19298,7 +19390,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 1078612,
+          "byteLength": 1089793,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -19326,15 +19418,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/backend.d.ts"
         },
         {
-          "byteLength": 12213,
+          "byteLength": 12337,
           "relativePath": "dist/backend.d.ts.map"
         },
         {
-          "byteLength": 11359,
+          "byteLength": 11477,
           "relativePath": "dist/backend.js"
         },
         {
-          "byteLength": 18835,
+          "byteLength": 18997,
           "relativePath": "dist/backend.js.map"
         },
         {
@@ -19722,19 +19814,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/operations/hostingRepositoryPublishOperations.js.map"
         },
         {
-          "byteLength": 752,
+          "byteLength": 1686,
           "relativePath": "dist/operations/materializeGitWorkspaceCheckout.d.ts"
         },
         {
-          "byteLength": 10950,
+          "byteLength": 23651,
           "relativePath": "dist/operations/materializeGitWorkspaceCheckout.d.ts.map"
         },
         {
-          "byteLength": 8546,
+          "byteLength": 18731,
           "relativePath": "dist/operations/materializeGitWorkspaceCheckout.js"
         },
         {
-          "byteLength": 17029,
+          "byteLength": 37790,
           "relativePath": "dist/operations/materializeGitWorkspaceCheckout.js.map"
         },
         {
@@ -20410,19 +20502,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/workspace/workspaceTransfer.js.map"
         },
         {
-          "byteLength": 2613,
+          "byteLength": 3680,
           "relativePath": "dist/workspaceIntegration.d.ts"
         },
         {
-          "byteLength": 12510,
+          "byteLength": 13827,
           "relativePath": "dist/workspaceIntegration.d.ts.map"
         },
         {
-          "byteLength": 9086,
+          "byteLength": 9841,
           "relativePath": "dist/workspaceIntegration.js"
         },
         {
-          "byteLength": 16390,
+          "byteLength": 18012,
           "relativePath": "dist/workspaceIntegration.js.map"
         },
         {
@@ -20478,7 +20570,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-97f91b16-195b-4c57-ae6e-31db9e9cf4c5",
+      "immutableGenerationId": "bundled-1590c6fb-0703-4f1b-9d42-30f144c4cb3c",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.scm.backend.git",
       "schemaVersion": 1,
@@ -20493,11 +20585,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 5524029,
+          "byteLength": 5539403,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 1829145,
+          "byteLength": 1897114,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -20601,11 +20693,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/githubChannelActions.js.map"
         },
         {
-          "byteLength": 2235615,
+          "byteLength": 2239453,
           "relativePath": "dist/happier-plugin-ui/react-native-web/github-detail-native/entry.mjs.bundle"
         },
         {
-          "byteLength": 2101305,
+          "byteLength": 2105973,
           "relativePath": "dist/happier-plugin-ui/react-native-web/github-triage-sources-native/entry.mjs.bundle"
         },
         {
@@ -20617,19 +20709,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/android/android.bundle.map"
         },
         {
-          "byteLength": 350929,
+          "byteLength": 352683,
           "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 163934,
+          "byteLength": 164666,
           "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5861821,
+          "byteLength": 5856226,
           "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
         },
         {
-          "byteLength": 1157660,
+          "byteLength": 1156790,
           "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
         },
         {
@@ -20641,19 +20733,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 350929,
+          "byteLength": 352683,
           "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 163934,
+          "byteLength": 164666,
           "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5861821,
+          "byteLength": 5856226,
           "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
         },
         {
-          "byteLength": 1157660,
+          "byteLength": 1156790,
           "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
         },
         {
@@ -20665,19 +20757,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/android/android.bundle.map"
         },
         {
-          "byteLength": 14319,
+          "byteLength": 14389,
           "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
         },
         {
-          "byteLength": 6295,
+          "byteLength": 6308,
           "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
         },
         {
-          "byteLength": 5914709,
+          "byteLength": 5917222,
           "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
         },
         {
-          "byteLength": 1170264,
+          "byteLength": 1171558,
           "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
         },
         {
@@ -20689,19 +20781,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 14319,
+          "byteLength": 14389,
           "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
         },
         {
-          "byteLength": 6295,
+          "byteLength": 6308,
           "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
         },
         {
-          "byteLength": 5914709,
+          "byteLength": 5917222,
           "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
         },
         {
-          "byteLength": 1170264,
+          "byteLength": 1171558,
           "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
         },
         {
@@ -20725,19 +20817,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/index.js.map"
         },
         {
-          "byteLength": 6995,
+          "byteLength": 7165,
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 72312,
+          "byteLength": 73140,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 80900,
+          "byteLength": 81827,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 109732,
+          "byteLength": 111141,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -21237,19 +21329,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/configuration.js.map"
         },
         {
-          "byteLength": 6258,
+          "byteLength": 6327,
           "relativePath": "dist/triage/contribution.d.ts"
         },
         {
-          "byteLength": 8572,
+          "byteLength": 8641,
           "relativePath": "dist/triage/contribution.d.ts.map"
         },
         {
-          "byteLength": 7459,
+          "byteLength": 7528,
           "relativePath": "dist/triage/contribution.js"
         },
         {
-          "byteLength": 9900,
+          "byteLength": 9993,
           "relativePath": "dist/triage/contribution.js.map"
         },
         {
@@ -21365,19 +21457,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/detailOperations.js.map"
         },
         {
-          "byteLength": 956,
+          "byteLength": 1279,
           "relativePath": "dist/triage/errors.d.ts"
         },
         {
-          "byteLength": 6205,
+          "byteLength": 6636,
           "relativePath": "dist/triage/errors.d.ts.map"
         },
         {
-          "byteLength": 5487,
+          "byteLength": 5810,
           "relativePath": "dist/triage/errors.js"
         },
         {
-          "byteLength": 8954,
+          "byteLength": 9413,
           "relativePath": "dist/triage/errors.js.map"
         },
         {
@@ -21397,19 +21489,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/feedback.js.map"
         },
         {
-          "byteLength": 6233,
+          "byteLength": 6810,
           "relativePath": "dist/triage/get.d.ts"
         },
         {
-          "byteLength": 25721,
+          "byteLength": 29013,
           "relativePath": "dist/triage/get.d.ts.map"
         },
         {
-          "byteLength": 17336,
+          "byteLength": 19532,
           "relativePath": "dist/triage/get.js"
         },
         {
-          "byteLength": 37615,
+          "byteLength": 43129,
           "relativePath": "dist/triage/get.js.map"
         },
         {
@@ -21433,15 +21525,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/instances.d.ts"
         },
         {
-          "byteLength": 8627,
+          "byteLength": 8550,
           "relativePath": "dist/triage/instances.d.ts.map"
         },
         {
-          "byteLength": 6189,
+          "byteLength": 6061,
           "relativePath": "dist/triage/instances.js"
         },
         {
-          "byteLength": 12842,
+          "byteLength": 12696,
           "relativePath": "dist/triage/instances.js.map"
         },
         {
@@ -21513,15 +21605,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mapping/protocol.d.ts"
         },
         {
-          "byteLength": 11312,
+          "byteLength": 11426,
           "relativePath": "dist/triage/mapping/protocol.d.ts.map"
         },
         {
-          "byteLength": 9188,
+          "byteLength": 9315,
           "relativePath": "dist/triage/mapping/protocol.js"
         },
         {
-          "byteLength": 16742,
+          "byteLength": 16973,
           "relativePath": "dist/triage/mapping/protocol.js.map"
         },
         {
@@ -21557,11 +21649,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mutationOperations.js.map"
         },
         {
-          "byteLength": 218343,
+          "byteLength": 225651,
           "relativePath": "dist/triage/mutations/contracts.d.ts"
         },
         {
-          "byteLength": 37779,
+          "byteLength": 37959,
           "relativePath": "dist/triage/mutations/contracts.d.ts.map"
         },
         {
@@ -21573,19 +21665,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mutations/contracts.js.map"
         },
         {
-          "byteLength": 2204,
+          "byteLength": 2326,
           "relativePath": "dist/triage/mutations/graphql.d.ts"
         },
         {
-          "byteLength": 6513,
+          "byteLength": 7387,
           "relativePath": "dist/triage/mutations/graphql.d.ts.map"
         },
         {
-          "byteLength": 5195,
+          "byteLength": 5983,
           "relativePath": "dist/triage/mutations/graphql.js"
         },
         {
-          "byteLength": 8957,
+          "byteLength": 10044,
           "relativePath": "dist/triage/mutations/graphql.js.map"
         },
         {
@@ -21593,15 +21685,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mutations/issue.d.ts"
         },
         {
-          "byteLength": 18523,
+          "byteLength": 19276,
           "relativePath": "dist/triage/mutations/issue.d.ts.map"
         },
         {
-          "byteLength": 11565,
+          "byteLength": 12247,
           "relativePath": "dist/triage/mutations/issue.js"
         },
         {
-          "byteLength": 24802,
+          "byteLength": 26338,
           "relativePath": "dist/triage/mutations/issue.js.map"
         },
         {
@@ -21609,15 +21701,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mutations/pullRequest.d.ts"
         },
         {
-          "byteLength": 37325,
+          "byteLength": 38241,
           "relativePath": "dist/triage/mutations/pullRequest.d.ts.map"
         },
         {
-          "byteLength": 26519,
+          "byteLength": 27364,
           "relativePath": "dist/triage/mutations/pullRequest.js"
         },
         {
-          "byteLength": 52730,
+          "byteLength": 54548,
           "relativePath": "dist/triage/mutations/pullRequest.js.map"
         },
         {
@@ -21625,15 +21717,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mutations/reviewThread.d.ts"
         },
         {
-          "byteLength": 11153,
+          "byteLength": 11192,
           "relativePath": "dist/triage/mutations/reviewThread.d.ts.map"
         },
         {
-          "byteLength": 6722,
+          "byteLength": 6757,
           "relativePath": "dist/triage/mutations/reviewThread.js"
         },
         {
-          "byteLength": 14471,
+          "byteLength": 14556,
           "relativePath": "dist/triage/mutations/reviewThread.js.map"
         },
         {
@@ -21641,31 +21733,31 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mutations/reviewers.d.ts"
         },
         {
-          "byteLength": 15647,
+          "byteLength": 15949,
           "relativePath": "dist/triage/mutations/reviewers.d.ts.map"
         },
         {
-          "byteLength": 10553,
+          "byteLength": 10865,
           "relativePath": "dist/triage/mutations/reviewers.js"
         },
         {
-          "byteLength": 22562,
+          "byteLength": 23029,
           "relativePath": "dist/triage/mutations/reviewers.js.map"
         },
         {
-          "byteLength": 3037,
+          "byteLength": 3570,
           "relativePath": "dist/triage/operations.d.ts"
         },
         {
-          "byteLength": 12394,
+          "byteLength": 20164,
           "relativePath": "dist/triage/operations.d.ts.map"
         },
         {
-          "byteLength": 8785,
+          "byteLength": 15445,
           "relativePath": "dist/triage/operations.js"
         },
         {
-          "byteLength": 17531,
+          "byteLength": 30512,
           "relativePath": "dist/triage/operations.js.map"
         },
         {
@@ -21797,11 +21889,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/testkit/githubTriage.test-support.js.map"
         },
         {
-          "byteLength": 7616,
+          "byteLength": 7960,
           "relativePath": "dist/triage/types.d.ts"
         },
         {
-          "byteLength": 11941,
+          "byteLength": 12475,
           "relativePath": "dist/triage/types.d.ts.map"
         },
         {
@@ -21809,7 +21901,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/types.js"
         },
         {
-          "byteLength": 8364,
+          "byteLength": 8708,
           "relativePath": "dist/triage/types.js.map"
         },
         {
@@ -21877,19 +21969,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/detail/model.js.map"
         },
         {
-          "byteLength": 11819,
+          "byteLength": 12024,
           "relativePath": "dist/ui/detail/mutations.d.ts"
         },
         {
-          "byteLength": 22746,
+          "byteLength": 23298,
           "relativePath": "dist/ui/detail/mutations.d.ts.map"
         },
         {
-          "byteLength": 13851,
+          "byteLength": 14310,
           "relativePath": "dist/ui/detail/mutations.js"
         },
         {
-          "byteLength": 26897,
+          "byteLength": 27676,
           "relativePath": "dist/ui/detail/mutations.js.map"
         },
         {
@@ -21961,15 +22053,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/renderSurface.d.ts"
         },
         {
-          "byteLength": 96272,
+          "byteLength": 96691,
           "relativePath": "dist/ui/renderSurface.d.ts.map"
         },
         {
-          "byteLength": 81362,
+          "byteLength": 81632,
           "relativePath": "dist/ui/renderSurface.js"
         },
         {
-          "byteLength": 154327,
+          "byteLength": 154917,
           "relativePath": "dist/ui/renderSurface.js.map"
         },
         {
@@ -22025,7 +22117,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-c093bbb7-f91d-4385-ab4e-f54a4fd23626",
+      "immutableGenerationId": "bundled-20d515ab-3461-4eee-b2ae-7b0a09e6f414",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.scm.forge.github",
       "schemaVersion": 1,
@@ -22040,11 +22132,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 2336272,
+          "byteLength": 2346233,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 647976,
+          "byteLength": 672183,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -22096,11 +22188,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/auth/connectedAccountRuntime.js.map"
         },
         {
-          "byteLength": 2205559,
+          "byteLength": 2209727,
           "relativePath": "dist/happier-plugin-ui/react-native-web/gitlab-detail-native/entry.mjs.bundle"
         },
         {
-          "byteLength": 2138801,
+          "byteLength": 2143996,
           "relativePath": "dist/happier-plugin-ui/react-native-web/gitlab-triage-sources-native/entry.mjs.bundle"
         },
         {
@@ -22112,20 +22204,20 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/android.bundle.map"
         },
         {
-          "byteLength": 218624,
+          "byteLength": 220276,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 91908,
+          "byteLength": 92541,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5845908,
-          "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-897adf.chunk.bundle"
+          "byteLength": 5844383,
+          "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-3b4254.chunk.bundle"
         },
         {
-          "byteLength": 1153705,
-          "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-897adf.chunk.bundle.map"
+          "byteLength": 1154086,
+          "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-3b4254.chunk.bundle.map"
         },
         {
           "byteLength": 34101,
@@ -22136,20 +22228,20 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 218624,
+          "byteLength": 220276,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 91908,
+          "byteLength": 92541,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5845908,
-          "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-897adf.chunk.bundle"
+          "byteLength": 5844383,
+          "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-3b4254.chunk.bundle"
         },
         {
-          "byteLength": 1153705,
-          "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-897adf.chunk.bundle.map"
+          "byteLength": 1154086,
+          "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-3b4254.chunk.bundle.map"
         },
         {
           "byteLength": 34184,
@@ -22160,19 +22252,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/android/android.bundle.map"
         },
         {
-          "byteLength": 104361,
+          "byteLength": 105005,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
         },
         {
-          "byteLength": 43560,
+          "byteLength": 43752,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
         },
         {
-          "byteLength": 5914709,
+          "byteLength": 5917308,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
         },
         {
-          "byteLength": 1170264,
+          "byteLength": 1171553,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
         },
         {
@@ -22184,19 +22276,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 104361,
+          "byteLength": 105005,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
         },
         {
-          "byteLength": 43560,
+          "byteLength": 43752,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
         },
         {
-          "byteLength": 5914709,
+          "byteLength": 5917308,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
         },
         {
-          "byteLength": 1170264,
+          "byteLength": 1171553,
           "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
         },
         {
@@ -22220,19 +22312,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/index.js.map"
         },
         {
-          "byteLength": 3099,
+          "byteLength": 3269,
           "relativePath": "dist/manifest.d.ts"
         },
         {
-          "byteLength": 16503,
+          "byteLength": 16748,
           "relativePath": "dist/manifest.d.ts.map"
         },
         {
-          "byteLength": 17674,
+          "byteLength": 17928,
           "relativePath": "dist/manifest.js"
         },
         {
-          "byteLength": 25240,
+          "byteLength": 25609,
           "relativePath": "dist/manifest.js.map"
         },
         {
@@ -22380,19 +22472,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/configuredInstance.js.map"
         },
         {
-          "byteLength": 13169,
+          "byteLength": 13583,
           "relativePath": "dist/triage/contribution.d.ts"
         },
         {
-          "byteLength": 32644,
+          "byteLength": 33364,
           "relativePath": "dist/triage/contribution.d.ts.map"
         },
         {
-          "byteLength": 27365,
+          "byteLength": 28027,
           "relativePath": "dist/triage/contribution.js"
         },
         {
-          "byteLength": 40429,
+          "byteLength": 41441,
           "relativePath": "dist/triage/contribution.js.map"
         },
         {
@@ -22624,15 +22716,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mapping/gitlabEntry.d.ts"
         },
         {
-          "byteLength": 14514,
+          "byteLength": 14722,
           "relativePath": "dist/triage/mapping/gitlabEntry.d.ts.map"
         },
         {
-          "byteLength": 11814,
+          "byteLength": 12029,
           "relativePath": "dist/triage/mapping/gitlabEntry.js"
         },
         {
-          "byteLength": 22163,
+          "byteLength": 22505,
           "relativePath": "dist/triage/mapping/gitlabEntry.js.map"
         },
         {
@@ -22652,19 +22744,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mapping/gitlabInvolvement.js.map"
         },
         {
-          "byteLength": 1357,
+          "byteLength": 2100,
           "relativePath": "dist/triage/mapping/mergeRequestHead.d.ts"
         },
         {
-          "byteLength": 2229,
+          "byteLength": 3679,
           "relativePath": "dist/triage/mapping/mergeRequestHead.d.ts.map"
         },
         {
-          "byteLength": 1894,
+          "byteLength": 2451,
           "relativePath": "dist/triage/mapping/mergeRequestHead.js"
         },
         {
-          "byteLength": 2854,
+          "byteLength": 4616,
           "relativePath": "dist/triage/mapping/mergeRequestHead.js.map"
         },
         {
@@ -22880,15 +22972,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mutations/preflight.d.ts"
         },
         {
-          "byteLength": 14960,
+          "byteLength": 15136,
           "relativePath": "dist/triage/mutations/preflight.d.ts.map"
         },
         {
-          "byteLength": 9210,
+          "byteLength": 9381,
           "relativePath": "dist/triage/mutations/preflight.js"
         },
         {
-          "byteLength": 16337,
+          "byteLength": 16710,
           "relativePath": "dist/triage/mutations/preflight.js.map"
         },
         {
@@ -22924,19 +23016,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/mutations/stateTransition.js.map"
         },
         {
-          "byteLength": 1149,
+          "byteLength": 1349,
           "relativePath": "dist/triage/operations.d.ts"
         },
         {
-          "byteLength": 3877,
+          "byteLength": 4664,
           "relativePath": "dist/triage/operations.d.ts.map"
         },
         {
-          "byteLength": 2838,
+          "byteLength": 3350,
           "relativePath": "dist/triage/operations.js"
         },
         {
-          "byteLength": 5050,
+          "byteLength": 6059,
           "relativePath": "dist/triage/operations.js.map"
         },
         {
@@ -22954,6 +23046,22 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
         {
           "byteLength": 5818,
           "relativePath": "dist/triage/origin.js.map"
+        },
+        {
+          "byteLength": 1030,
+          "relativePath": "dist/triage/reviewWorkspace.d.ts"
+        },
+        {
+          "byteLength": 7844,
+          "relativePath": "dist/triage/reviewWorkspace.d.ts.map"
+        },
+        {
+          "byteLength": 6655,
+          "relativePath": "dist/triage/reviewWorkspace.js"
+        },
+        {
+          "byteLength": 12784,
+          "relativePath": "dist/triage/reviewWorkspace.js.map"
         },
         {
           "byteLength": 2409,
@@ -23024,15 +23132,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/sourceInstances.d.ts"
         },
         {
-          "byteLength": 7194,
+          "byteLength": 6492,
           "relativePath": "dist/triage/sourceInstances.d.ts.map"
         },
         {
-          "byteLength": 6560,
+          "byteLength": 5777,
           "relativePath": "dist/triage/sourceInstances.js"
         },
         {
-          "byteLength": 10518,
+          "byteLength": 9325,
           "relativePath": "dist/triage/sourceInstances.js.map"
         },
         {
@@ -23040,15 +23148,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/sourceObservation.d.ts"
         },
         {
-          "byteLength": 7729,
+          "byteLength": 8759,
           "relativePath": "dist/triage/sourceObservation.d.ts.map"
         },
         {
-          "byteLength": 6862,
+          "byteLength": 7805,
           "relativePath": "dist/triage/sourceObservation.js"
         },
         {
-          "byteLength": 11540,
+          "byteLength": 13203,
           "relativePath": "dist/triage/sourceObservation.js.map"
         },
         {
@@ -23072,23 +23180,23 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/testkit/gitlabTriage.test-support.d.ts"
         },
         {
-          "byteLength": 8570,
+          "byteLength": 8558,
           "relativePath": "dist/triage/testkit/gitlabTriage.test-support.d.ts.map"
         },
         {
-          "byteLength": 5432,
+          "byteLength": 5360,
           "relativePath": "dist/triage/testkit/gitlabTriage.test-support.js"
         },
         {
-          "byteLength": 10731,
+          "byteLength": 10685,
           "relativePath": "dist/triage/testkit/gitlabTriage.test-support.js.map"
         },
         {
-          "byteLength": 6833,
+          "byteLength": 7062,
           "relativePath": "dist/triage/types.d.ts"
         },
         {
-          "byteLength": 10290,
+          "byteLength": 10649,
           "relativePath": "dist/triage/types.d.ts.map"
         },
         {
@@ -23096,7 +23204,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/triage/types.js"
         },
         {
-          "byteLength": 7078,
+          "byteLength": 7295,
           "relativePath": "dist/triage/types.js.map"
         },
         {
@@ -23184,31 +23292,31 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/detail/mutationControls.d.ts"
         },
         {
-          "byteLength": 21557,
+          "byteLength": 22138,
           "relativePath": "dist/ui/detail/mutationControls.d.ts.map"
         },
         {
-          "byteLength": 19087,
+          "byteLength": 19613,
           "relativePath": "dist/ui/detail/mutationControls.js"
         },
         {
-          "byteLength": 32475,
+          "byteLength": 33402,
           "relativePath": "dist/ui/detail/mutationControls.js.map"
         },
         {
-          "byteLength": 19326,
+          "byteLength": 19525,
           "relativePath": "dist/ui/detail/mutations.d.ts"
         },
         {
-          "byteLength": 22412,
+          "byteLength": 22940,
           "relativePath": "dist/ui/detail/mutations.d.ts.map"
         },
         {
-          "byteLength": 15008,
+          "byteLength": 15444,
           "relativePath": "dist/ui/detail/mutations.js"
         },
         {
-          "byteLength": 26111,
+          "byteLength": 26852,
           "relativePath": "dist/ui/detail/mutations.js.map"
         },
         {
@@ -23312,7 +23420,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-74aade52-0f3f-406e-9616-e7778ee555d8",
+      "immutableGenerationId": "bundled-6294450f-3e78-4be2-b414-84994c241e59",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.scm.forge.gitlab",
       "schemaVersion": 1,
@@ -23327,7 +23435,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 713838,
+          "byteLength": 713595,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
@@ -23627,7 +23735,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-4c6a728e-5fc5-4291-8e0c-55f4bd2bef94",
+      "immutableGenerationId": "bundled-e2020b79-f68a-4ed0-b3c5-7cef9ad77ba3",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.scm.backend.sapling",
       "schemaVersion": 1,
@@ -23642,11 +23750,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 2214371,
+          "byteLength": 2216521,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 357726,
+          "byteLength": 361851,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -23670,15 +23778,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/api/sentryApiClient.d.ts"
         },
         {
-          "byteLength": 9896,
+          "byteLength": 9869,
           "relativePath": "dist/api/sentryApiClient.d.ts.map"
         },
         {
-          "byteLength": 7170,
+          "byteLength": 7141,
           "relativePath": "dist/api/sentryApiClient.js"
         },
         {
-          "byteLength": 12612,
+          "byteLength": 12563,
           "relativePath": "dist/api/sentryApiClient.js.map"
         },
         {
@@ -23712,22 +23820,6 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
         {
           "byteLength": 7369,
           "relativePath": "dist/api/sentryFailure.js.map"
-        },
-        {
-          "byteLength": 2034,
-          "relativePath": "dist/api/sentryInvocationDeadline.d.ts"
-        },
-        {
-          "byteLength": 2999,
-          "relativePath": "dist/api/sentryInvocationDeadline.d.ts.map"
-        },
-        {
-          "byteLength": 2499,
-          "relativePath": "dist/api/sentryInvocationDeadline.js"
-        },
-        {
-          "byteLength": 3522,
-          "relativePath": "dist/api/sentryInvocationDeadline.js.map"
         },
         {
           "byteLength": 1165,
@@ -23782,15 +23874,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/auth/connectedAccountRuntime.d.ts"
         },
         {
-          "byteLength": 17345,
+          "byteLength": 17627,
           "relativePath": "dist/auth/connectedAccountRuntime.d.ts.map"
         },
         {
-          "byteLength": 14719,
+          "byteLength": 15108,
           "relativePath": "dist/auth/connectedAccountRuntime.js"
         },
         {
-          "byteLength": 25272,
+          "byteLength": 25695,
           "relativePath": "dist/auth/connectedAccountRuntime.js.map"
         },
         {
@@ -23922,11 +24014,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/entries/sentryIssueTypes.js.map"
         },
         {
-          "byteLength": 2162530,
+          "byteLength": 2164514,
           "relativePath": "dist/happier-plugin-ui/react-native-web/sentry-detail-native/entry.mjs.bundle"
         },
         {
-          "byteLength": 2100327,
+          "byteLength": 2104927,
           "relativePath": "dist/happier-plugin-ui/react-native-web/sentry-triage-sources-native/entry.mjs.bundle"
         },
         {
@@ -23938,19 +24030,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/android/android.bundle.map"
         },
         {
-          "byteLength": 197964,
+          "byteLength": 197751,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 81777,
+          "byteLength": 81691,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5828269,
+          "byteLength": 5821795,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
         },
         {
-          "byteLength": 1149770,
+          "byteLength": 1148760,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
         },
         {
@@ -23962,19 +24054,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 197964,
+          "byteLength": 197751,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 81777,
+          "byteLength": 81691,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5828269,
+          "byteLength": 5821795,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
         },
         {
-          "byteLength": 1149770,
+          "byteLength": 1148760,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
         },
         {
@@ -23986,19 +24078,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/android/android.bundle.map"
         },
         {
-          "byteLength": 11481,
+          "byteLength": 11268,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
         },
         {
-          "byteLength": 3572,
+          "byteLength": 3486,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
         },
         {
-          "byteLength": 5914709,
+          "byteLength": 5917308,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
         },
         {
-          "byteLength": 1170264,
+          "byteLength": 1171553,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
         },
         {
@@ -24010,19 +24102,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 11481,
+          "byteLength": 11268,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
         },
         {
-          "byteLength": 3572,
+          "byteLength": 3486,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
         },
         {
-          "byteLength": 5914709,
+          "byteLength": 5917308,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
         },
         {
-          "byteLength": 1170264,
+          "byteLength": 1171553,
           "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
         },
         {
@@ -24222,19 +24314,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/scan/sentryScanQuery.js.map"
         },
         {
-          "byteLength": 11159,
+          "byteLength": 10554,
           "relativePath": "dist/sentryContracts.d.ts"
         },
         {
-          "byteLength": 14173,
+          "byteLength": 13461,
           "relativePath": "dist/sentryContracts.d.ts.map"
         },
         {
-          "byteLength": 10363,
+          "byteLength": 9717,
           "relativePath": "dist/sentryContracts.js"
         },
         {
-          "byteLength": 14813,
+          "byteLength": 14066,
           "relativePath": "dist/sentryContracts.js.map"
         },
         {
@@ -24242,15 +24334,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/source/detailOperations.d.ts"
         },
         {
-          "byteLength": 12537,
+          "byteLength": 13348,
           "relativePath": "dist/source/detailOperations.d.ts.map"
         },
         {
-          "byteLength": 10896,
+          "byteLength": 12055,
           "relativePath": "dist/source/detailOperations.js"
         },
         {
-          "byteLength": 19132,
+          "byteLength": 20551,
           "relativePath": "dist/source/detailOperations.js.map"
         },
         {
@@ -24274,15 +24366,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/source/operations.d.ts"
         },
         {
-          "byteLength": 23260,
+          "byteLength": 22346,
           "relativePath": "dist/source/operations.d.ts.map"
         },
         {
-          "byteLength": 19874,
+          "byteLength": 18920,
           "relativePath": "dist/source/operations.js"
         },
         {
-          "byteLength": 36194,
+          "byteLength": 34665,
           "relativePath": "dist/source/operations.js.map"
         },
         {
@@ -24434,7 +24526,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-f71a048c-a7d7-45f5-8aa9-90225c592920",
+      "immutableGenerationId": "bundled-8ddb5e3f-af38-438b-bb7b-e7af2d9356f3",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.sentry",
       "schemaVersion": 1,
@@ -24449,11 +24541,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
       "createdAtMs": 0,
       "files": [
         {
-          "byteLength": 2619419,
+          "byteLength": 2621000,
           "relativePath": ".happier-plugin/daemon.js"
         },
         {
-          "byteLength": 918084,
+          "byteLength": 954027,
           "relativePath": ".happier-plugin/plugin.json"
         },
         {
@@ -24521,19 +24613,35 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/actions/callerSource.js.map"
         },
         {
-          "byteLength": 7894,
+          "byteLength": 580,
+          "relativePath": "dist/actions/collectionCursorProtocol.d.ts"
+        },
+        {
+          "byteLength": 830,
+          "relativePath": "dist/actions/collectionCursorProtocol.d.ts.map"
+        },
+        {
+          "byteLength": 658,
+          "relativePath": "dist/actions/collectionCursorProtocol.js"
+        },
+        {
+          "byteLength": 962,
+          "relativePath": "dist/actions/collectionCursorProtocol.js.map"
+        },
+        {
+          "byteLength": 8038,
           "relativePath": "dist/actions/entryDetailProtocol.d.ts"
         },
         {
-          "byteLength": 5957,
+          "byteLength": 6232,
           "relativePath": "dist/actions/entryDetailProtocol.d.ts.map"
         },
         {
-          "byteLength": 4768,
+          "byteLength": 5038,
           "relativePath": "dist/actions/entryDetailProtocol.js"
         },
         {
-          "byteLength": 6576,
+          "byteLength": 6902,
           "relativePath": "dist/actions/entryDetailProtocol.js.map"
         },
         {
@@ -24541,31 +24649,31 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/actions/entrySession.d.ts"
         },
         {
-          "byteLength": 11322,
+          "byteLength": 11709,
           "relativePath": "dist/actions/entrySession.d.ts.map"
         },
         {
-          "byteLength": 7409,
+          "byteLength": 7786,
           "relativePath": "dist/actions/entrySession.js"
         },
         {
-          "byteLength": 15159,
+          "byteLength": 15867,
           "relativePath": "dist/actions/entrySession.js.map"
         },
         {
-          "byteLength": 13909,
+          "byteLength": 14693,
           "relativePath": "dist/actions/entrySessionProtocol.d.ts"
         },
         {
-          "byteLength": 23188,
+          "byteLength": 24179,
           "relativePath": "dist/actions/entrySessionProtocol.d.ts.map"
         },
         {
-          "byteLength": 20578,
+          "byteLength": 21530,
           "relativePath": "dist/actions/entrySessionProtocol.js"
         },
         {
-          "byteLength": 28595,
+          "byteLength": 29967,
           "relativePath": "dist/actions/entrySessionProtocol.js.map"
         },
         {
@@ -24585,19 +24693,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/actions/listEntries.js.map"
         },
         {
-          "byteLength": 33138,
+          "byteLength": 41546,
           "relativePath": "dist/actions/listEntriesProtocol.d.ts"
         },
         {
-          "byteLength": 23729,
+          "byteLength": 22428,
           "relativePath": "dist/actions/listEntriesProtocol.d.ts.map"
         },
         {
-          "byteLength": 21072,
+          "byteLength": 19679,
           "relativePath": "dist/actions/listEntriesProtocol.js"
         },
         {
-          "byteLength": 30267,
+          "byteLength": 28415,
           "relativePath": "dist/actions/listEntriesProtocol.js.map"
         },
         {
@@ -24621,31 +24729,31 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/actions/readEntryDetail.d.ts"
         },
         {
-          "byteLength": 11105,
+          "byteLength": 11360,
           "relativePath": "dist/actions/readEntryDetail.d.ts.map"
         },
         {
-          "byteLength": 6735,
+          "byteLength": 6970,
           "relativePath": "dist/actions/readEntryDetail.js"
         },
         {
-          "byteLength": 14361,
+          "byteLength": 14897,
           "relativePath": "dist/actions/readEntryDetail.js.map"
         },
         {
-          "byteLength": 2294,
+          "byteLength": 2404,
           "relativePath": "dist/actions/reobserveEntry.d.ts"
         },
         {
-          "byteLength": 7709,
+          "byteLength": 9034,
           "relativePath": "dist/actions/reobserveEntry.d.ts.map"
         },
         {
-          "byteLength": 4698,
+          "byteLength": 5778,
           "relativePath": "dist/actions/reobserveEntry.js"
         },
         {
-          "byteLength": 10139,
+          "byteLength": 12320,
           "relativePath": "dist/actions/reobserveEntry.js.map"
         },
         {
@@ -24745,7 +24853,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/actions/userMarks.js.map"
         },
         {
-          "byteLength": 5236,
+          "byteLength": 5867,
           "relativePath": "dist/actions/userMarksProtocol.d.ts"
         },
         {
@@ -24753,11 +24861,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/actions/userMarksProtocol.d.ts.map"
         },
         {
-          "byteLength": 6457,
+          "byteLength": 6444,
           "relativePath": "dist/actions/userMarksProtocol.js"
         },
         {
-          "byteLength": 9716,
+          "byteLength": 9635,
           "relativePath": "dist/actions/userMarksProtocol.js.map"
         },
         {
@@ -24969,19 +25077,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/composer/pickerModel.js.map"
         },
         {
-          "byteLength": 5587,
+          "byteLength": 5697,
           "relativePath": "dist/composer/resolveForDispatch.d.ts"
         },
         {
-          "byteLength": 18570,
+          "byteLength": 20072,
           "relativePath": "dist/composer/resolveForDispatch.d.ts.map"
         },
         {
-          "byteLength": 12024,
+          "byteLength": 13083,
           "relativePath": "dist/composer/resolveForDispatch.js"
         },
         {
-          "byteLength": 22879,
+          "byteLength": 25202,
           "relativePath": "dist/composer/resolveForDispatch.js.map"
         },
         {
@@ -25465,19 +25573,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/displayName.js.map"
         },
         {
-          "byteLength": 1959180,
+          "byteLength": 1959578,
           "relativePath": "dist/happier-plugin-ui/react-native-web/triage-entries-compact-native/entry.mjs.bundle"
         },
         {
-          "byteLength": 2183849,
+          "byteLength": 2184673,
           "relativePath": "dist/happier-plugin-ui/react-native-web/triage-entry-picker-native/entry.mjs.bundle"
         },
         {
-          "byteLength": 2541718,
+          "byteLength": 2550090,
           "relativePath": "dist/happier-plugin-ui/react-native-web/triage-list-page-native/entry.mjs.bundle"
         },
         {
-          "byteLength": 2109292,
+          "byteLength": 2111491,
           "relativePath": "dist/happier-plugin-ui/react-native-web/triage-session-entries-native/entry.mjs.bundle"
         },
         {
@@ -25497,11 +25605,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/android/src_composer_controlCompact_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5828287,
+          "byteLength": 5818129,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
         },
         {
-          "byteLength": 1157726,
+          "byteLength": 1156257,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
         },
         {
@@ -25521,11 +25629,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/ios/src_composer_controlCompact_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5828287,
+          "byteLength": 5818129,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
         },
         {
-          "byteLength": 1157726,
+          "byteLength": 1156257,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
         },
         {
@@ -25537,19 +25645,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/android/android.bundle.map"
         },
         {
-          "byteLength": 229686,
+          "byteLength": 230679,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/android/src_composer_entryPicker_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 96074,
+          "byteLength": 96376,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/android/src_composer_entryPicker_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5834780,
+          "byteLength": 5824622,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle"
         },
         {
-          "byteLength": 1157036,
+          "byteLength": 1155567,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle.map"
         },
         {
@@ -25561,19 +25669,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 229686,
+          "byteLength": 230679,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/ios/src_composer_entryPicker_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 96074,
+          "byteLength": 96376,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/ios/src_composer_entryPicker_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5834780,
+          "byteLength": 5824622,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle"
         },
         {
-          "byteLength": 1157036,
+          "byteLength": 1155567,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle.map"
         },
         {
@@ -25585,19 +25693,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/android/android.bundle.map"
         },
         {
-          "byteLength": 814826,
+          "byteLength": 826849,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/android/src_ui_surface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 339905,
+          "byteLength": 345660,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/android/src_ui_surface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5869813,
+          "byteLength": 5860620,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-a2ae17.chunk.bundle"
         },
         {
-          "byteLength": 1163540,
+          "byteLength": 1162206,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-a2ae17.chunk.bundle.map"
         },
         {
@@ -25609,19 +25717,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 814826,
+          "byteLength": 826849,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/ios/src_ui_surface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 339905,
+          "byteLength": 345660,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/ios/src_ui_surface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5869813,
+          "byteLength": 5860620,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-a2ae17.chunk.bundle"
         },
         {
-          "byteLength": 1163540,
+          "byteLength": 1162206,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-a2ae17.chunk.bundle.map"
         },
         {
@@ -25633,19 +25741,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/android/android.bundle.map"
         },
         {
-          "byteLength": 164639,
+          "byteLength": 168640,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/android/src_sessions_cockpit_sessionLinkedEntriesSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 69656,
+          "byteLength": 71313,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/android/src_sessions_cockpit_sessionLinkedEntriesSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5837422,
+          "byteLength": 5827264,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_collections_index_js-node_modules_happier-de-233e65.chunk.bundle"
         },
         {
-          "byteLength": 1160219,
+          "byteLength": 1158750,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_collections_index_js-node_modules_happier-de-233e65.chunk.bundle.map"
         },
         {
@@ -25657,19 +25765,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/ios/ios.bundle.map"
         },
         {
-          "byteLength": 164639,
+          "byteLength": 168640,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/ios/src_sessions_cockpit_sessionLinkedEntriesSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
         },
         {
-          "byteLength": 69656,
+          "byteLength": 71313,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/ios/src_sessions_cockpit_sessionLinkedEntriesSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
         },
         {
-          "byteLength": 5837422,
+          "byteLength": 5827264,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_collections_index_js-node_modules_happier-de-233e65.chunk.bundle"
         },
         {
-          "byteLength": 1160219,
+          "byteLength": 1158750,
           "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_collections_index_js-node_modules_happier-de-233e65.chunk.bundle.map"
         },
         {
@@ -25777,31 +25885,31 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/projection/listWindowStore.d.ts"
         },
         {
-          "byteLength": 60364,
+          "byteLength": 62390,
           "relativePath": "dist/projection/listWindowStore.d.ts.map"
         },
         {
-          "byteLength": 45366,
+          "byteLength": 47160,
           "relativePath": "dist/projection/listWindowStore.js"
         },
         {
-          "byteLength": 78346,
+          "byteLength": 81371,
           "relativePath": "dist/projection/listWindowStore.js.map"
         },
         {
-          "byteLength": 1731,
+          "byteLength": 1727,
           "relativePath": "dist/projection/listWindowWire.d.ts"
         },
         {
-          "byteLength": 7409,
+          "byteLength": 7132,
           "relativePath": "dist/projection/listWindowWire.d.ts.map"
         },
         {
-          "byteLength": 5298,
+          "byteLength": 5021,
           "relativePath": "dist/projection/listWindowWire.js"
         },
         {
-          "byteLength": 10066,
+          "byteLength": 9607,
           "relativePath": "dist/projection/listWindowWire.js.map"
         },
         {
@@ -25949,35 +26057,35 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/sessions/agentTarget.js.map"
         },
         {
-          "byteLength": 1843,
+          "byteLength": 1765,
           "relativePath": "dist/sessions/cockpit/linkedEntriesQuery.d.ts"
         },
         {
-          "byteLength": 2711,
+          "byteLength": 2629,
           "relativePath": "dist/sessions/cockpit/linkedEntriesQuery.d.ts.map"
         },
         {
-          "byteLength": 2154,
+          "byteLength": 2076,
           "relativePath": "dist/sessions/cockpit/linkedEntriesQuery.js"
         },
         {
-          "byteLength": 2886,
+          "byteLength": 2804,
           "relativePath": "dist/sessions/cockpit/linkedEntriesQuery.js.map"
         },
         {
-          "byteLength": 4821,
+          "byteLength": 4789,
           "relativePath": "dist/sessions/cockpit/linkedEntryRows.d.ts"
         },
         {
-          "byteLength": 11465,
+          "byteLength": 11381,
           "relativePath": "dist/sessions/cockpit/linkedEntryRows.d.ts.map"
         },
         {
-          "byteLength": 4082,
+          "byteLength": 4007,
           "relativePath": "dist/sessions/cockpit/linkedEntryRows.js"
         },
         {
-          "byteLength": 12407,
+          "byteLength": 12171,
           "relativePath": "dist/sessions/cockpit/linkedEntryRows.js.map"
         },
         {
@@ -25985,15 +26093,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/sessions/cockpit/sessionLinkedEntriesSurface.d.ts"
         },
         {
-          "byteLength": 12491,
+          "byteLength": 14651,
           "relativePath": "dist/sessions/cockpit/sessionLinkedEntriesSurface.d.ts.map"
         },
         {
-          "byteLength": 8871,
+          "byteLength": 10531,
           "relativePath": "dist/sessions/cockpit/sessionLinkedEntriesSurface.js"
         },
         {
-          "byteLength": 17814,
+          "byteLength": 21275,
           "relativePath": "dist/sessions/cockpit/sessionLinkedEntriesSurface.js.map"
         },
         {
@@ -26013,19 +26121,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/sessions/cockpit/unlinkLinkedEntry.js.map"
         },
         {
-          "byteLength": 706,
+          "byteLength": 818,
           "relativePath": "dist/sessions/cockpit/useSessionLinkedEntries.d.ts"
         },
         {
-          "byteLength": 8961,
+          "byteLength": 9176,
           "relativePath": "dist/sessions/cockpit/useSessionLinkedEntries.d.ts.map"
         },
         {
-          "byteLength": 7089,
+          "byteLength": 7131,
           "relativePath": "dist/sessions/cockpit/useSessionLinkedEntries.js"
         },
         {
-          "byteLength": 13289,
+          "byteLength": 13495,
           "relativePath": "dist/sessions/cockpit/useSessionLinkedEntries.js.map"
         },
         {
@@ -26077,19 +26185,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/sessions/entrySessionOpen.js.map"
         },
         {
-          "byteLength": 8271,
+          "byteLength": 9262,
           "relativePath": "dist/sessions/entrySessionOrchestrator.d.ts"
         },
         {
-          "byteLength": 23452,
+          "byteLength": 25649,
           "relativePath": "dist/sessions/entrySessionOrchestrator.d.ts.map"
         },
         {
-          "byteLength": 12281,
+          "byteLength": 13050,
           "relativePath": "dist/sessions/entrySessionOrchestrator.js"
         },
         {
-          "byteLength": 26532,
+          "byteLength": 28934,
           "relativePath": "dist/sessions/entrySessionOrchestrator.js.map"
         },
         {
@@ -26413,19 +26521,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/actions/useTriageActions.js.map"
         },
         {
-          "byteLength": 120164,
+          "byteLength": 120345,
           "relativePath": "dist/ui/additionalTranslations.d.ts"
         },
         {
-          "byteLength": 122811,
+          "byteLength": 122992,
           "relativePath": "dist/ui/additionalTranslations.d.ts.map"
         },
         {
-          "byteLength": 120233,
+          "byteLength": 120414,
           "relativePath": "dist/ui/additionalTranslations.js"
         },
         {
-          "byteLength": 151548,
+          "byteLength": 151731,
           "relativePath": "dist/ui/additionalTranslations.js.map"
         },
         {
@@ -26509,19 +26617,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/detail/input.js.map"
         },
         {
-          "byteLength": 423,
+          "byteLength": 499,
           "relativePath": "dist/ui/detail/linkedSessions.d.ts"
         },
         {
-          "byteLength": 3243,
+          "byteLength": 3929,
           "relativePath": "dist/ui/detail/linkedSessions.d.ts.map"
         },
         {
-          "byteLength": 2536,
+          "byteLength": 2992,
           "relativePath": "dist/ui/detail/linkedSessions.js"
         },
         {
-          "byteLength": 5273,
+          "byteLength": 6318,
           "relativePath": "dist/ui/detail/linkedSessions.js.map"
         },
         {
@@ -26557,19 +26665,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/detail/postMutationReobservation.js.map"
         },
         {
-          "byteLength": 5346,
+          "byteLength": 5450,
           "relativePath": "dist/ui/detail/region.d.ts"
         },
         {
-          "byteLength": 22884,
+          "byteLength": 23433,
           "relativePath": "dist/ui/detail/region.d.ts.map"
         },
         {
-          "byteLength": 16016,
+          "byteLength": 16298,
           "relativePath": "dist/ui/detail/region.js"
         },
         {
-          "byteLength": 31993,
+          "byteLength": 32653,
           "relativePath": "dist/ui/detail/region.js.map"
         },
         {
@@ -26589,19 +26697,19 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/detail/sourceSurface.js.map"
         },
         {
-          "byteLength": 3306,
+          "byteLength": 3694,
           "relativePath": "dist/ui/detail/useTriageEntryDetail.d.ts"
         },
         {
-          "byteLength": 8113,
+          "byteLength": 12933,
           "relativePath": "dist/ui/detail/useTriageEntryDetail.d.ts.map"
         },
         {
-          "byteLength": 3662,
+          "byteLength": 8244,
           "relativePath": "dist/ui/detail/useTriageEntryDetail.js"
         },
         {
-          "byteLength": 9843,
+          "byteLength": 18160,
           "relativePath": "dist/ui/detail/useTriageEntryDetail.js.map"
         },
         {
@@ -26701,11 +26809,11 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/header/newSessionDraftCommand.js.map"
         },
         {
-          "byteLength": 2801,
+          "byteLength": 2975,
           "relativePath": "dist/ui/header/newSessionSeedCommand.d.ts"
         },
         {
-          "byteLength": 5164,
+          "byteLength": 5404,
           "relativePath": "dist/ui/header/newSessionSeedCommand.d.ts.map"
         },
         {
@@ -26713,7 +26821,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/header/newSessionSeedCommand.js"
         },
         {
-          "byteLength": 4742,
+          "byteLength": 4923,
           "relativePath": "dist/ui/header/newSessionSeedCommand.js.map"
         },
         {
@@ -26721,15 +26829,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/header/sessionStartOutcome.d.ts"
         },
         {
-          "byteLength": 10828,
+          "byteLength": 11030,
           "relativePath": "dist/ui/header/sessionStartOutcome.d.ts.map"
         },
         {
-          "byteLength": 8012,
+          "byteLength": 8185,
           "relativePath": "dist/ui/header/sessionStartOutcome.js"
         },
         {
-          "byteLength": 13640,
+          "byteLength": 13918,
           "relativePath": "dist/ui/header/sessionStartOutcome.js.map"
         },
         {
@@ -26753,15 +26861,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/header/useEntrySessionStart.d.ts"
         },
         {
-          "byteLength": 37119,
+          "byteLength": 37244,
           "relativePath": "dist/ui/header/useEntrySessionStart.d.ts.map"
         },
         {
-          "byteLength": 22142,
+          "byteLength": 22264,
           "relativePath": "dist/ui/header/useEntrySessionStart.js"
         },
         {
-          "byteLength": 47464,
+          "byteLength": 47673,
           "relativePath": "dist/ui/header/useEntrySessionStart.js.map"
         },
         {
@@ -26779,6 +26887,22 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
         {
           "byteLength": 23012,
           "relativePath": "dist/ui/list/BulkActionBar.js.map"
+        },
+        {
+          "byteLength": 1959,
+          "relativePath": "dist/ui/list/bulkEntrySessionExecution.d.ts"
+        },
+        {
+          "byteLength": 12040,
+          "relativePath": "dist/ui/list/bulkEntrySessionExecution.d.ts.map"
+        },
+        {
+          "byteLength": 8200,
+          "relativePath": "dist/ui/list/bulkEntrySessionExecution.js"
+        },
+        {
+          "byteLength": 17057,
+          "relativePath": "dist/ui/list/bulkEntrySessionExecution.js.map"
         },
         {
           "byteLength": 2422,
@@ -26817,15 +26941,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/list/bulkSessionOutcome.d.ts"
         },
         {
-          "byteLength": 5424,
+          "byteLength": 5503,
           "relativePath": "dist/ui/list/bulkSessionOutcome.d.ts.map"
         },
         {
-          "byteLength": 2828,
+          "byteLength": 2897,
           "relativePath": "dist/ui/list/bulkSessionOutcome.js"
         },
         {
-          "byteLength": 6634,
+          "byteLength": 6804,
           "relativePath": "dist/ui/list/bulkSessionOutcome.js.map"
         },
         {
@@ -26897,15 +27021,15 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/list/useBulkEntrySessions.d.ts"
         },
         {
-          "byteLength": 39345,
+          "byteLength": 30210,
           "relativePath": "dist/ui/list/useBulkEntrySessions.d.ts.map"
         },
         {
-          "byteLength": 25230,
+          "byteLength": 17262,
           "relativePath": "dist/ui/list/useBulkEntrySessions.js"
         },
         {
-          "byteLength": 53924,
+          "byteLength": 40152,
           "relativePath": "dist/ui/list/useBulkEntrySessions.js.map"
         },
         {
@@ -27165,7 +27289,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "dist/ui/surface.js.map"
         },
         {
-          "byteLength": 693962,
+          "byteLength": 694324,
           "relativePath": "dist/ui/translations.d.ts"
         },
         {
@@ -27329,7 +27453,7 @@ export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze(
           "relativePath": "package.json"
         }
       ],
-      "immutableGenerationId": "bundled-ddbb3ef1-1818-4ba7-8723-b6b256e92d72",
+      "immutableGenerationId": "bundled-539e751d-bea8-4c37-b0ce-c3a7201c33e8",
       "manifestRelativePath": ".happier-plugin/plugin.json",
       "pluginId": "happier.triage",
       "schemaVersion": 1,
@@ -27359,23 +27483,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 5482985,
-        "digest": "sha256:553a9344363d3b56ee30161025430f65b19d73732afd54bb29d235e33b724ac2",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-JG4WNIEE.js"
+        "byteLength": 5493016,
+        "digest": "sha256:74948807e44b506221a9302d7eea5e28e8d4b21d462e8f692d80efbcd14ef927",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-5EXAZ544.js"
       },
       {
         "byteLength": 221,
-        "digest": "sha256:4577e1fcf31f40d7fdddc1aaa8aee5fe4f7d9011d4fbed1c732c70629d8d2bf3",
+        "digest": "sha256:d097be021cce39cfbebdf693496608d5702227b5f3b1a7e1def3000f9655b88a",
         "relativePath": ".happier-plugin/agent/runtime/factory.js"
       },
       {
-        "byteLength": 45999,
-        "digest": "sha256:aa3f9a821e166c4d7105b344ba5c79dfdce199efe357b7cf45fcdc436e95a267",
+        "byteLength": 46073,
+        "digest": "sha256:9bf6d96dffde00ce5e9cee085640e367e537dc03ff0adb03c9ab4722163ffb35",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 13202,
-        "digest": "sha256:5f5b4bbd3414d97229d6efd3632ec584b7105a33dae8512344f008d9116494d5",
+        "byteLength": 13309,
+        "digest": "sha256:49f27be6a80c2ce0a6255372c25a1218c6a48b160b46b3fc99e8d276d95b3bdd",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -27779,23 +27903,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/connectedServices/stateSharing.js.map"
       },
       {
-        "byteLength": 4864,
-        "digest": "sha256:13ee0914232c961c64dcc7914e7fac3bb31bb8f527636aaef112fcff4d7bd700",
+        "byteLength": 4686,
+        "digest": "sha256:fd2b43485ef350e91c93117d12d38f6c43881868dc5d0a67cca5b82102857d5a",
         "relativePath": "dist/agent/contributions/catalog.d.ts"
       },
       {
-        "byteLength": 2332,
-        "digest": "sha256:76312e531dfa8efaf21f8527ef106a49882486054da109d5c631936844afb702",
+        "byteLength": 2167,
+        "digest": "sha256:4029c3e5349aca72ec295c56177415ae42f1aace2a03634ff2698ad4143672be",
         "relativePath": "dist/agent/contributions/catalog.d.ts.map"
       },
       {
-        "byteLength": 1805,
-        "digest": "sha256:66a6f5c8b4d896d5a6990d57444a587214e78d9f28cca69dd0160ae121201704",
+        "byteLength": 1672,
+        "digest": "sha256:fc64384e10aba33b318ffa2f3d374085966793f6c5004c1448019396e40dec6f",
         "relativePath": "dist/agent/contributions/catalog.js"
       },
       {
-        "byteLength": 2693,
-        "digest": "sha256:3971a7f94ab80c1bc8786d774c464248fc4605e53bb0525364b6f20eae6973dc",
+        "byteLength": 2479,
+        "digest": "sha256:1d4ac8bfd019f35fd9e7c19f7e2b176314f6d3b14591dc0a98036844faa85b84",
         "relativePath": "dist/agent/contributions/catalog.js.map"
       },
       {
@@ -27819,13 +27943,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contributions/runtime.js.map"
       },
       {
-        "byteLength": 8275,
-        "digest": "sha256:8b87f4e03ba8c1f10dcffceb1051d8757c21a3183067435fd113b38424dfef8f",
+        "byteLength": 9268,
+        "digest": "sha256:1e395c7c9c0f45e32a9bb6a1c09c4bfc7aaa83882e2b3ade7e52ded767745605",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 6173,
-        "digest": "sha256:50a61a35a3e47cbb28edd209979418432cc05c8d34ef726dbcca81bcf9b3079f",
+        "byteLength": 5807,
+        "digest": "sha256:269be76398686789d724e9b43caf966f40525e8e6e27840c73e2aff85a53d250",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -27834,8 +27958,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 7647,
-        "digest": "sha256:36d0d3806c7638517ce6348159cc0be62cf00b3e70c1eff6c6d3e37fef6f62be",
+        "byteLength": 7663,
+        "digest": "sha256:a63d67225e5f028e25d516a839ea0f15bea52b33d69c2a159755f17f9c7126d2",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -27924,18 +28048,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/lifecycle/spawnHooks.d.ts"
       },
       {
-        "byteLength": 10618,
-        "digest": "sha256:4bcbba7de9b89bb30096f70f55ebca10402662d775de0e8785020303b6abdcc0",
+        "byteLength": 10609,
+        "digest": "sha256:5c7227ac7bbfce68be9f28356c759c0911db7809ad6d44aebc0c6152dcc20321",
         "relativePath": "dist/agent/lifecycle/spawnHooks.d.ts.map"
       },
       {
-        "byteLength": 6216,
-        "digest": "sha256:2b7785a0b4376f928f01e11203fab9743e165c4d12b12a1537460e923f3f86ee",
+        "byteLength": 6207,
+        "digest": "sha256:3db72182e4c487baa0973944dc7f8c9e8ae011a640c04bfa9b0e0f91ee147cf2",
         "relativePath": "dist/agent/lifecycle/spawnHooks.js"
       },
       {
-        "byteLength": 14259,
-        "digest": "sha256:c7701e39b1cbb4c7d30b77e962b3a0a274ab61b0bb1c92c0988f4c8ae2977ab5",
+        "byteLength": 14250,
+        "digest": "sha256:fb1ea58a09a43edbe669207cd52a769800d9ffb355922496b34d2fe34df4c65b",
         "relativePath": "dist/agent/lifecycle/spawnHooks.js.map"
       },
       {
@@ -28259,23 +28383,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/runtime/factory.js.map"
       },
       {
-        "byteLength": 1416,
-        "digest": "sha256:84530e4881f55033c09d3e53a08e5e84b0d0d4ae2b8f66a68e249fda7e179bc2",
+        "byteLength": 1436,
+        "digest": "sha256:3513882c5f8f78781eed0211989e0e5dd850ce87420a617ad3d5051d6a9bff78",
         "relativePath": "dist/agent/runtime/nativeRuntime.d.ts"
       },
       {
-        "byteLength": 11432,
-        "digest": "sha256:3dbc04ddbe0005bc013c91901ce99ef1a54435d8b6948ad2963019b1953a4774",
+        "byteLength": 8504,
+        "digest": "sha256:cdd833bc8ff284a0757b46c866d4bc2dd631498c5a587cd57bdfc462786b3bc2",
         "relativePath": "dist/agent/runtime/nativeRuntime.d.ts.map"
       },
       {
-        "byteLength": 8107,
-        "digest": "sha256:a4e5afd24e816ad11c2cf082449727781d278f82c791e82077c0d4b0c3c670ed",
+        "byteLength": 5450,
+        "digest": "sha256:c851303a83b408c42b67d035ac830e42a805c521110dedfa2f39b2f51b72775d",
         "relativePath": "dist/agent/runtime/nativeRuntime.js"
       },
       {
-        "byteLength": 17800,
-        "digest": "sha256:8b5f15bdcedd1548ee7c6db07d399e7d4a0832fb81f74f22e35e346cc3119395",
+        "byteLength": 11975,
+        "digest": "sha256:79395e2f88dc436acd5f695d410563ab9c54eead3b1e8fd50d708b89164375e9",
         "relativePath": "dist/agent/runtime/nativeRuntime.js.map"
       },
       {
@@ -28339,23 +28463,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/systemTool.js.map"
       },
       {
-        "byteLength": 839,
-        "digest": "sha256:5dc67036b88fb7fbe0a55836a097a972f88220da3e365c7f846bc4b88dfbd3fd",
+        "byteLength": 603,
+        "digest": "sha256:5ca004ea0021319ec57e215f2b059fd60ac329efd14ed33d315163cd9566c4f5",
         "relativePath": "dist/agent/terminal/launchArgs.d.ts"
       },
       {
-        "byteLength": 4572,
-        "digest": "sha256:ab1a21e6033c62ed6ae1dd489aac0796cf5ef566b317cf2acd4f113450f4319c",
+        "byteLength": 2413,
+        "digest": "sha256:0e81c9beb0e5a5ef418920cf47dbeb0cae715b1d1fe5acd4547fc3f59409a52f",
         "relativePath": "dist/agent/terminal/launchArgs.d.ts.map"
       },
       {
-        "byteLength": 3001,
-        "digest": "sha256:d3001de914c98cccc83849c125827c2f257a1b96a5591cb53dc66f09b615a03e",
+        "byteLength": 1348,
+        "digest": "sha256:bba6ae480253262048972c7365cbe619e27cec803f67c46ad8d002562d8dd2e1",
         "relativePath": "dist/agent/terminal/launchArgs.js"
       },
       {
-        "byteLength": 6715,
-        "digest": "sha256:e99bd5d345d99d571d54ebda7c8dc1fd35c7bb0eaad5ef02a3d3c2a64d85be44",
+        "byteLength": 3181,
+        "digest": "sha256:81a448211b24a8f4c01beb497a73d1188113413821e63758dd1fda551b9ff921",
         "relativePath": "dist/agent/terminal/launchArgs.js.map"
       },
       {
@@ -28464,18 +28588,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 7948,
-        "digest": "sha256:b9920c7aea5bfed1dc3f29c4a00c7825c96c7c17749ebfa729da605edb05a393",
+        "byteLength": 8233,
+        "digest": "sha256:2cc39563e32b8cce32bf10ed5576b61a6339ab2ab4009f679cafa643aba8cd8a",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 9268,
-        "digest": "sha256:67181337b06fabe8d11d39d71933a9ba3c19f40b15b214849d4c26f3892e2c57",
+        "byteLength": 9607,
+        "digest": "sha256:ffe43895eb8fa16d34a526609abb5417b68fdc7aa24236e6903e34120b330dcc",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 12861,
-        "digest": "sha256:468e96b485c12bf4c00693ec8792b095ab36db2b8dc18a2ece1f1ef2a61c5696",
+        "byteLength": 13357,
+        "digest": "sha256:982b8c69302224528ffb7fbeedd2e2f0515db2133336a4ed4adb01403d2a6c48",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -28519,13 +28643,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": ".happier-plugin/agent/runtime/factory.js"
       },
       {
-        "byteLength": 739084,
-        "digest": "sha256:416fb0f372b0ac940b4e2890443a5ae30161b47a03daa6835be5ced5bd3b36ee",
+        "byteLength": 737651,
+        "digest": "sha256:1d29ee7c796f95784979df8ffbc5ed85659f665e22601ff041cd9271a3737767",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 4131,
-        "digest": "sha256:deeba0beaca4e4dca6e5b3b9e5e218ef755efbadb04c31a6c4753f74f14b0844",
+        "byteLength": 4238,
+        "digest": "sha256:1b6f2b67f33f3a7179f90e70a77b7edeb2cb663cb7cd8aba59c5408876044f53",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -28654,13 +28778,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contributions/runtime.js.map"
       },
       {
-        "byteLength": 1421,
-        "digest": "sha256:c665332170b07365010ea8d2eb7772353f2488f56a983f6f1bf2619883ce147b",
+        "byteLength": 1426,
+        "digest": "sha256:57355678bff24bf6db4f455f36602bf6034dc8c28395fc7a549b1617faed839c",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 1763,
-        "digest": "sha256:8ff29bfa110c30f028babdfcce4fb69509eaffb932368d78e0d8aff0e441a523",
+        "byteLength": 1782,
+        "digest": "sha256:2a1c8521e769445da5500c047d78fde90cd4a8c792e9713160646ae35df49d52",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -28669,8 +28793,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 2429,
-        "digest": "sha256:67799cb03e09c77383329bce16fded1658d6856be2cac58ef750b483a1284df8",
+        "byteLength": 2439,
+        "digest": "sha256:4ba9dd1fc93ee7d07b4eca4003df3d788e56bde4ba0d44c980099f9cac21a343",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -28779,18 +28903,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 2869,
-        "digest": "sha256:34267126499e7b813a76bb391d18424337d31e7e80665534a2010c7007e04559",
+        "byteLength": 2982,
+        "digest": "sha256:9e925324cfed69c8b62ab469466a23b7e097ed922f3c7a364c34958a116bfdc8",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 3141,
-        "digest": "sha256:01ab5ed5ac447ffdf29395b09ea621d5748c226a0ddcc0e15134ada184ac95c4",
+        "byteLength": 3277,
+        "digest": "sha256:5c7eff234735a764aeed13cd99abeb60424304923883c6830e0adc5f1d860128",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 4758,
-        "digest": "sha256:98b09aa0edaf09db84ee45e7e2c461baba43f0a5c6b8eb0ccc869f7e461e4612",
+        "byteLength": 4967,
+        "digest": "sha256:610cbae82d0001ee49960ea72c49ed1f893118a3b0fb110bd85d9d592c4e63b4",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -28864,8 +28988,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 2179086,
-        "digest": "sha256:9d2af09b921bdfc910a312f2c22e2fc7384d665d91447b79c54a0c75c303d860",
+        "byteLength": 2179063,
+        "digest": "sha256:ae4e364be961f862ad78aba711899ff71c5be558d8f5d5dacb2dd8d38f3ccb35",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -29309,8 +29433,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 2090558,
-        "digest": "sha256:cdc7d16cfaef0fbbf0ba3e814d45bbe81ac06c5b839122f6bc1f9d5bd2f8d16f",
+        "byteLength": 2090535,
+        "digest": "sha256:cd2821bc30e1e094d3e5e6c201994c3d1518a35db4b2606d7c17fa14704750bf",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -29549,8 +29673,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 5167314,
-        "digest": "sha256:9af881b4036243bb204725f2458458917b23f513b60ceee5fdaa0fbe158de342",
+        "byteLength": 5169519,
+        "digest": "sha256:7f13a420e0771bc0d5a7a1b1607681974f0bf7a22de67af89a2f09c67c5fef37",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -29859,8 +29983,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/deliveryCustody.js.map"
       },
       {
-        "byteLength": 2711262,
-        "digest": "sha256:f118ed0e72f953ddf7c0f591cd54871b39c48f1895fac7fd2b6446c5ed6ab0ea",
+        "byteLength": 2708715,
+        "digest": "sha256:06341b845302d7d0b2bb03b98b5c870fadee926297e04459b85662bdb6ca55cd",
         "relativePath": "dist/happier-plugin-ui/react-native-web/channels-app-native/entry.mjs.bundle"
       },
       {
@@ -29894,13 +30018,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5989611,
-        "digest": "sha256:cec7c3f396520da33f41b9ba1106bacb34c1bf2e724a6aa52cbd09aff0cb8632",
+        "byteLength": 5973773,
+        "digest": "sha256:a5f8bb2c00ef3e7804bab7e594c14b1da101356c2e63680d333af37c88ca6707",
         "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/android/vendors-node_modules_happier-dev_channels-protocol_dist_index_js-node_modules_happier-dev_plu-f876a2.chunk.bundle"
       },
       {
-        "byteLength": 1177445,
-        "digest": "sha256:71e6f2e1ad09406f5c3cc8c64b893dc3c35705b485f68201330e3e4d64f85ac2",
+        "byteLength": 1175184,
+        "digest": "sha256:036d6f41e765ea09926eb2b96e1819edf1215d48def9ce4c25f25ede753fcbdf",
         "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/android/vendors-node_modules_happier-dev_channels-protocol_dist_index_js-node_modules_happier-dev_plu-f876a2.chunk.bundle.map"
       },
       {
@@ -29934,18 +30058,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5989611,
-        "digest": "sha256:cec7c3f396520da33f41b9ba1106bacb34c1bf2e724a6aa52cbd09aff0cb8632",
+        "byteLength": 5973773,
+        "digest": "sha256:a5f8bb2c00ef3e7804bab7e594c14b1da101356c2e63680d333af37c88ca6707",
         "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_index_js-node_modules_happier-dev_plu-f876a2.chunk.bundle"
       },
       {
-        "byteLength": 1177445,
-        "digest": "sha256:71e6f2e1ad09406f5c3cc8c64b893dc3c35705b485f68201330e3e4d64f85ac2",
+        "byteLength": 1175184,
+        "digest": "sha256:036d6f41e765ea09926eb2b96e1819edf1215d48def9ce4c25f25ede753fcbdf",
         "relativePath": "dist/happier-plugin-ui/react-native/channels-app-native/ios/vendors-node_modules_happier-dev_channels-protocol_dist_index_js-node_modules_happier-dev_plu-f876a2.chunk.bundle.map"
       },
       {
         "byteLength": 6527,
-        "digest": "sha256:c77d3ea31f240170444ead1f27f66c4207c85f2923a260daabd8f5dfcc1de24a",
+        "digest": "sha256:76e3bfb879c270166b6c93a32ba25478912f0d0fc219c69d99d4832241559639",
         "relativePath": "dist/happier-plugin-ui/ui-artifacts.json"
       },
       {
@@ -30539,23 +30663,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 6875862,
-        "digest": "sha256:8feda5f66e22c504773ecccd6e4f42cc8bf386d36c3162d1f054c31d051de4f1",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-GLOBJN6Z.js"
+        "byteLength": 6881862,
+        "digest": "sha256:88b54411a9a4776086df7d5f04aefaa11fa84a37608fc1076f227cad84e37ce3",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-QESVQ64Z.js"
       },
       {
         "byteLength": 603,
-        "digest": "sha256:841e77e24d32a7f8245d43df0accee1591df8f5db92fa964eb04a61cf3d2e12c",
+        "digest": "sha256:348581c573f971296c468c1a6625cc9ec36678cdf2e1a9dd46fbca23f2133ca5",
         "relativePath": ".happier-plugin/agent/runtime/nativeRuntime.js"
       },
       {
-        "byteLength": 146079,
-        "digest": "sha256:c5a987367a4a46b3f8af4be62482107272573d3c6ac34926515d128c6a17beb7",
+        "byteLength": 146069,
+        "digest": "sha256:553f0657caef2cec7e9ac8e9373cf2235d5690c396c472f098865a761268f091",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 77935,
-        "digest": "sha256:af4c8e675789925ff0048a7aa70c7771afdad2ab06aa65a6e178fae4f11aa6ac",
+        "byteLength": 78011,
+        "digest": "sha256:c5e3162410f8ca087fe7a229f5e91e4793088308b85c0fc43f898b15955fb2e6",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -31119,23 +31243,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/auth/services/workspaceTrust.js.map"
       },
       {
-        "byteLength": 1422,
-        "digest": "sha256:d2bfd98e9f04c6463d75938bf1300f108bc2f43cd6ec0fac193adf3d39d3bd10",
+        "byteLength": 1412,
+        "digest": "sha256:7e76320c3bb70fb1e69f7a205adbfbc184628fa88daf0089b0b8623fece69984",
         "relativePath": "dist/agent/cli/command.d.ts"
       },
       {
-        "byteLength": 6144,
-        "digest": "sha256:61c8b9ee9eccc3b21ba1c73044cd247f52b3aec6dac861fc167f515566c26eaf",
+        "byteLength": 6028,
+        "digest": "sha256:50e0db4dd25a1858c146ac5a397ecb8dc625ba497a9706c3fa163b8701981859",
         "relativePath": "dist/agent/cli/command.d.ts.map"
       },
       {
-        "byteLength": 4049,
-        "digest": "sha256:6a58920e5e39b2afd23e39437bf56933d857c4710c74ab5f4e59d55950b98333",
+        "byteLength": 3959,
+        "digest": "sha256:5de1882cf16be5631d743dc5db77a427a8a67af9ae41689683b393cea634417f",
         "relativePath": "dist/agent/cli/command.js"
       },
       {
-        "byteLength": 8828,
-        "digest": "sha256:6dfc79c0ce0af27c1c5be79fc481d29c6db71b8b051303c701c7450a437d84d7",
+        "byteLength": 8624,
+        "digest": "sha256:38aa0e29b30aa87994ea5c095165f8a45388a2e1634ce26501819b86d90ff5ea",
         "relativePath": "dist/agent/cli/command.js.map"
       },
       {
@@ -31179,23 +31303,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contextWindow.js.map"
       },
       {
-        "byteLength": 16625,
-        "digest": "sha256:53922b6c3e0420a421633a383463a70f17f7e2c1a12fcafb6c0143fbf8b21b6d",
+        "byteLength": 15744,
+        "digest": "sha256:ca12489b15bf484534387d307c1a16acb3835796b389289ad874b82cfdfa12b6",
         "relativePath": "dist/agent/contributions/catalog.d.ts"
       },
       {
-        "byteLength": 28503,
-        "digest": "sha256:0bbea2b103745f581924a3a747a82473259ebd12bfc89848d44ed61b8f09eced",
+        "byteLength": 27786,
+        "digest": "sha256:84cc7aa8d5fbb19d6a00ff771c98a926b88abc5fcb6bb7eee44ce96620e5ff8f",
         "relativePath": "dist/agent/contributions/catalog.d.ts.map"
       },
       {
-        "byteLength": 21885,
-        "digest": "sha256:90acc285046c469f4d4579e8a2acddfc777c4bfacf151ab12007063b9658599e",
+        "byteLength": 21632,
+        "digest": "sha256:b7778a40c0726db8e00779f04512fd55f2ee80143e31f6358f6d97c2c4885458",
         "relativePath": "dist/agent/contributions/catalog.js"
       },
       {
-        "byteLength": 39763,
-        "digest": "sha256:106f475c386d6f4d75a63c8c08050ddd2fd5f455239c18a9e74454820edd3ae6",
+        "byteLength": 39126,
+        "digest": "sha256:d73a82357c7c08702b61f9f7853e23b038905e7bc4caad729bc325a3f556affb",
         "relativePath": "dist/agent/contributions/catalog.js.map"
       },
       {
@@ -31224,8 +31348,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 4464,
-        "digest": "sha256:edae7cbf5dc1c7b5ba405dbf3856f749a52d63c63b3099e8226d8d3135267be1",
+        "byteLength": 4473,
+        "digest": "sha256:6016a5f4cff305b3bd8268a11407d4ffbc309fe9d067e70e4ee2314b8304483c",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -31234,8 +31358,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 5251,
-        "digest": "sha256:5bca12a595d06241b249660d58c4386dc6bccd03f7a5011d6afbce520b56d386",
+        "byteLength": 5261,
+        "digest": "sha256:56cc9c96cea7de4725330debfa06ad7e050d684b02c038d8546a6a04a0de646e",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -31944,18 +32068,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/runtime/nativeRuntime.d.ts"
       },
       {
-        "byteLength": 70962,
-        "digest": "sha256:ff5aa2e2d522af89e63da30d86523dc9c955ef23a459eb710916c128917e971f",
+        "byteLength": 67012,
+        "digest": "sha256:53addcee683d32d453484075c031657fa8a7a8b0f9efa4a7f9110779e59c5a53",
         "relativePath": "dist/agent/runtime/nativeRuntime.d.ts.map"
       },
       {
-        "byteLength": 60417,
-        "digest": "sha256:62f9606ebb708a5e8e3fe567d61d06dbcbbdc06bf7611244925f8da09e095b8e",
+        "byteLength": 56677,
+        "digest": "sha256:a3cbe40653e8e0807a7aeddb6d76b41ede731b45c6b3f83b21432f15697bb314",
         "relativePath": "dist/agent/runtime/nativeRuntime.js"
       },
       {
-        "byteLength": 114664,
-        "digest": "sha256:8d384785f54239bd00fd688e9ebc0c095ff8175965997544b5bb06914be23bd6",
+        "byteLength": 106822,
+        "digest": "sha256:8f2041436692015a32a40f261ed5fec85f3a09b9bf874515f5bb185426a91923",
         "relativePath": "dist/agent/runtime/nativeRuntime.js.map"
       },
       {
@@ -32784,18 +32908,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/runtime/terminal/unified/resumeChoice/startup.d.ts"
       },
       {
-        "byteLength": 17245,
-        "digest": "sha256:b81f5d2c3c40f95ac17c0d5b458f2abaeb6eb8b5e5fdf3a12eff6c29ed63278f",
+        "byteLength": 17240,
+        "digest": "sha256:56823c769fbf25c7e0456a487ceb29172861a83733c19632774caaf1be7fd154",
         "relativePath": "dist/agent/runtime/terminal/unified/resumeChoice/startup.d.ts.map"
       },
       {
-        "byteLength": 13840,
-        "digest": "sha256:60ad757e1075484348bcb4f489c60a0af113ede70f5ce09037cdfd6b8d4ac1e8",
+        "byteLength": 13835,
+        "digest": "sha256:ea2db243a9741b1e4b9ac0f828be88eb43a6dcc4f26ed5646029f850743d01e6",
         "relativePath": "dist/agent/runtime/terminal/unified/resumeChoice/startup.js"
       },
       {
-        "byteLength": 25775,
-        "digest": "sha256:d738c8960797658da7aa98084dc31ff39d938be45441aa9c6c493d3e87852c42",
+        "byteLength": 25770,
+        "digest": "sha256:a4ae95234b0dde93f35c4a0dda869ac9653bbdeb114874a3177efc44fa099177",
         "relativePath": "dist/agent/runtime/terminal/unified/resumeChoice/startup.js.map"
       },
       {
@@ -34664,18 +34788,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 20799,
-        "digest": "sha256:550f1c3c089711e974a300bb7a2eb38b7467b2b12c0c05372b72dcd925af239a",
+        "byteLength": 21136,
+        "digest": "sha256:a3a7d7a0b25a56acf15eac7072accbbbfa275bca2db63572ca91345933c0cf4f",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 24282,
-        "digest": "sha256:b9eccca146e2fd7f23948e842d14511780b7dd7adc0387bad039245adb0b6166",
+        "byteLength": 24644,
+        "digest": "sha256:b6faf52b1b72505a0205af3a581da1451030829bbc9b88090db7355f05fb11ad",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 34304,
-        "digest": "sha256:eab9490c8231b49f9b3004bc89d63988cab8ca04c87dbd134018dc205e68044a",
+        "byteLength": 34842,
+        "digest": "sha256:864e186453f2697de2eb3f3a6a111d66bc1137a1b4b7e62d72d342d9d624fe87",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -34719,23 +34843,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/provider/contribution.js.map"
       },
       {
-        "byteLength": 5681,
-        "digest": "sha256:480b358f50de837dd9f2f8a7acef9de24f89ed50933b2af8f01e039dd81f63c1",
+        "byteLength": 6882,
+        "digest": "sha256:d8458cad4186a0e0e3ac841ed5da1fa2ccf69ab06f2665cefece2baed7a9d469",
         "relativePath": "dist/ui/descriptor.d.ts"
       },
       {
-        "byteLength": 7965,
-        "digest": "sha256:8af2b059893e7383b08e56b3530dd099427d7bb682c012e2fd7b5b660a544d4f",
+        "byteLength": 11318,
+        "digest": "sha256:ec00e1a04bad8ea6228ef3a3228e873a9aad74542e8d9c536e26001ca7b598c3",
         "relativePath": "dist/ui/descriptor.d.ts.map"
       },
       {
-        "byteLength": 8011,
-        "digest": "sha256:55e84db386b24f4952fb65b375597bb4ddec9b533efa7a425c6ad4d2b423eb52",
+        "byteLength": 11896,
+        "digest": "sha256:9511d6c6405519e0f4eb715837c22306d9f15f7392a844b2829ee59884c42973",
         "relativePath": "dist/ui/descriptor.js"
       },
       {
-        "byteLength": 10857,
-        "digest": "sha256:e92496cce4c4b61f0d4a70674a7769b867494303236aef8370335cd39f0a92de",
+        "byteLength": 15300,
+        "digest": "sha256:5c8541ed13487321f0c9c70eea2fb093e20e2cd1c6a9cd1e937239971f829329",
         "relativePath": "dist/ui/descriptor.js.map"
       },
       {
@@ -34809,8 +34933,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 634740,
-        "digest": "sha256:777297852043aba698d236dd0165df907e9942215aee6307879cbedf089b3433",
+        "byteLength": 633198,
+        "digest": "sha256:7d121f1cf04b479fcb2d52320655598b523222aa85387ac26e6565324cac9bbd",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -34929,23 +35053,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 6490300,
-        "digest": "sha256:35ba9fcc297ec019b6ad44a0feff5adc8732456c419ba13d2e856bbb020e2e10",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-IQ5X4BKS.js"
+        "byteLength": 6495494,
+        "digest": "sha256:9083cffde22aa6ab31ddb31bf6059a3d8420bec90d9ca0658bcc6a73180ffe8b",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-6S7QVKQN.js"
       },
       {
         "byteLength": 197,
-        "digest": "sha256:4e7c7e5e9b12f11f599f5284763f80de39bf9e0d472b0b0a26c7550fd1296bc4",
+        "digest": "sha256:478cae605e55a64c2f6e7eb12ed31a1a6d8c3757d156a61fff552bde390f5057",
         "relativePath": ".happier-plugin/agent/runtime/engine.js"
       },
       {
-        "byteLength": 164946,
-        "digest": "sha256:9f92565c1999ed4601d2da3272b76b5ad0731497990bcec70844c48241c3ef8b",
+        "byteLength": 165240,
+        "digest": "sha256:59f4d70fd3c127ad62c42690253c1774e5a9ea28b074a92e54aebecea8c34785",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 27052,
-        "digest": "sha256:fbb84b1fed4cdc4370445fa3b0247453367f5ca731b0bbd35e53427cdde74573",
+        "byteLength": 27217,
+        "digest": "sha256:c8d092785cd126f9724841512d52c902b0e8817f699f2bd97a923db80904608a",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -35869,23 +35993,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/cli/checklists.js.map"
       },
       {
-        "byteLength": 1177,
-        "digest": "sha256:25fa19625b6f04b18b96485e429a40e4fd9047f7254185d620c10e4331402d1e",
+        "byteLength": 1161,
+        "digest": "sha256:7718aeefad71b5a05e3bbb6092f372cb58a3ad8b1d39c264f0124870dca15899",
         "relativePath": "dist/agent/cli/command.d.ts"
       },
       {
-        "byteLength": 3032,
-        "digest": "sha256:5ffe838bb47dd583ca6e18f16df482874c166c7a273f1c817cd1a4995f4c66b7",
+        "byteLength": 3010,
+        "digest": "sha256:398fea7620cadcf527be7511c06b95ad7e14242a6657199a234841b6e8843a94",
         "relativePath": "dist/agent/cli/command.d.ts.map"
       },
       {
-        "byteLength": 1355,
-        "digest": "sha256:e9b42a49fde148fed66c31126c79e11f4397e06573135dc857b37fb771ebe33e",
+        "byteLength": 1336,
+        "digest": "sha256:8606f0f4ca239a2d4b0fc085df4643b0c84878bc2d082a6e19a6bed13a0f7602",
         "relativePath": "dist/agent/cli/command.js"
       },
       {
-        "byteLength": 3312,
-        "digest": "sha256:8a0fd0ad4c87c848a6ba32383dd819c3a13fedc67f82b06046ac5fc4393fc1fa",
+        "byteLength": 3290,
+        "digest": "sha256:ec37554679625880e53a4f2c32de452574a8ec976ef90844f007b3edde136b2d",
         "relativePath": "dist/agent/cli/command.js.map"
       },
       {
@@ -35909,23 +36033,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/cli/detect.js.map"
       },
       {
-        "byteLength": 17225,
-        "digest": "sha256:167697e2d456c28f08aac5d15f9936b89c05b42759f4d7db7d6f21431aa41acf",
+        "byteLength": 15732,
+        "digest": "sha256:8e8b4a74b2bd4e796d59f7c4d7d30f77a8378f6e8525a84c969730be2c29f69d",
         "relativePath": "dist/agent/contributions/catalog.d.ts"
       },
       {
-        "byteLength": 22276,
-        "digest": "sha256:13c85c9f7cb078ab352be0cde089c42a5af1575b23258dbfadb310f6db1b6e69",
+        "byteLength": 21064,
+        "digest": "sha256:60c5237b72eabb44747c3d554711df142b70d14e92b619db29f69db8cb545681",
         "relativePath": "dist/agent/contributions/catalog.d.ts.map"
       },
       {
-        "byteLength": 16103,
-        "digest": "sha256:26ad2a3afefd70771271efe6afcc751b97d679c3dadfb672024aa5d4f64aa767",
+        "byteLength": 15335,
+        "digest": "sha256:a093ca6d63fb27d63229dd3c1bf2f44c6ea980cbcf1b8d513dc0f39eff43940b",
         "relativePath": "dist/agent/contributions/catalog.js"
       },
       {
-        "byteLength": 29007,
-        "digest": "sha256:2d925b6fa9f4c79091049f4438df03a31b244116045a142c61083f6c8ebde42b",
+        "byteLength": 27686,
+        "digest": "sha256:88f9bfe761d4918cb3ca37c8975383c34242d824ce83cdc22b6c380b2d7edef5",
         "relativePath": "dist/agent/contributions/catalog.js.map"
       },
       {
@@ -35949,13 +36073,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contributions/runtime.js.map"
       },
       {
-        "byteLength": 18410,
-        "digest": "sha256:cdceb61d29ea1685d1a5072597174ae3fe4f5f08fc7a5772df58c05a04df3714",
+        "byteLength": 18425,
+        "digest": "sha256:e9c6054df4cff19fd836f0a572a5e2b82d79989ab282e315af631f2906988ddd",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 12749,
-        "digest": "sha256:d58299c951c4e5a9edf398e3eb48f9b796679eae8c8140cdcca180a0d5cf08ac",
+        "byteLength": 12786,
+        "digest": "sha256:5ac91517ef3253b962f0ad2fddf5668caf5b61521a97549d373a211da540c139",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -35964,8 +36088,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 15318,
-        "digest": "sha256:05f854f8bd9dedfd3f2ecddf9c67cc7aef456d26cedf1616440ae788eca3c079",
+        "byteLength": 15338,
+        "digest": "sha256:fdfa1dfa49e962412c50289a6bd1ec15162db4169e53c8a184eb92826ebd5364",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -36049,23 +36173,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/index.js.map"
       },
       {
-        "byteLength": 510,
-        "digest": "sha256:68305e4e5fc6d303342c16c5d6c6037207093e061627f6f03b2a77e1e8e6a417",
+        "byteLength": 1024,
+        "digest": "sha256:5cc1e550ce14890f4d32611311c6e8e340a0929584e5f5db0aba268016590963",
         "relativePath": "dist/agent/installables/codexAcp.d.ts"
       },
       {
-        "byteLength": 2068,
-        "digest": "sha256:c68198eb721399037c70719036ff6b836b7ca3d390b78b0a99322b0a3c06af4a",
+        "byteLength": 2807,
+        "digest": "sha256:ed24f8129a1c79147a3e2589487ac11df3dda428b140fa96ab1ae25231f3da2f",
         "relativePath": "dist/agent/installables/codexAcp.d.ts.map"
       },
       {
-        "byteLength": 1468,
-        "digest": "sha256:e4830ff427308aeb5fcdd85b5c3bc33c52e96b8fabdf5a2add88fbcb86f9b4c4",
+        "byteLength": 1659,
+        "digest": "sha256:8228f34b148c342a5118a2afcb9b6e1933280fbaf0df9272ef4a340936bc2d85",
         "relativePath": "dist/agent/installables/codexAcp.js"
       },
       {
-        "byteLength": 2756,
-        "digest": "sha256:f1eee95e0bf07cbc23f9f01d8d7c00f0c3a97feb675fd41b609a0cf285bd2760",
+        "byteLength": 3407,
+        "digest": "sha256:c90e583674a8077a6238ba4b1eb6e0bc65856071f97411d99cb10189e96ed670",
         "relativePath": "dist/agent/installables/codexAcp.js.map"
       },
       {
@@ -36174,18 +36298,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/lifecycle/spawnHooks.d.ts"
       },
       {
-        "byteLength": 7175,
-        "digest": "sha256:27ae5b7205c5aa8a68e1b326f1d57851bcec9b1c8f8bbebcdc6f7af6c4cc96ae",
+        "byteLength": 7172,
+        "digest": "sha256:2e1ed728d20f51292ddc71dc064ef6021f7c081ce16a6d9a2da832734e8f1338",
         "relativePath": "dist/agent/lifecycle/spawnHooks.d.ts.map"
       },
       {
-        "byteLength": 4330,
-        "digest": "sha256:43b7c5ecacfa78f5136ba8ce904aac61e4409fd3c2964f3f5d86b0b3adf869fc",
+        "byteLength": 4327,
+        "digest": "sha256:18c3ab23ba34891dd4bcde562f9c5c5541582ab1993ab9a042112fac16446ee5",
         "relativePath": "dist/agent/lifecycle/spawnHooks.js"
       },
       {
-        "byteLength": 9017,
-        "digest": "sha256:627df7c901155561a57e1a681952e40df14320e68629d57967bc80ae9fc1b1be",
+        "byteLength": 9001,
+        "digest": "sha256:56e3f7b47ac7e1368b8f65122db412ff6c534d810101f9d491deb51a405e2811",
         "relativePath": "dist/agent/lifecycle/spawnHooks.js.map"
       },
       {
@@ -36354,18 +36478,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/rollout/discovery/homeEntries.d.ts"
       },
       {
-        "byteLength": 17656,
-        "digest": "sha256:a28a98de10cff38ad36d2ab7b8c0942ab789d15d49fbb51c531fe8dab4f96085",
+        "byteLength": 17777,
+        "digest": "sha256:e0fee33c3799440bb1cd4959aed6db729ad5e7c8d432d30aeb915d5d5534df9c",
         "relativePath": "dist/agent/rollout/discovery/homeEntries.d.ts.map"
       },
       {
-        "byteLength": 16493,
-        "digest": "sha256:f978928035e90b336a4496cbe6651cec640f601fc6bf93e2ea402f90e527022d",
+        "byteLength": 16612,
+        "digest": "sha256:f1c614987df2177d2d401ef88cd398292a182c696d2085e460312cf4c9d959c5",
         "relativePath": "dist/agent/rollout/discovery/homeEntries.js"
       },
       {
-        "byteLength": 28299,
-        "digest": "sha256:d0d52c3c3fc1c4fbbc0384277ca375ef6bbd91a3a19f22fd31512653c38246d7",
+        "byteLength": 28422,
+        "digest": "sha256:05b8fe80ec6f506ae2ad9f19a90a3a35b3ad82f83b4c6ed870cee439be1fb68d",
         "relativePath": "dist/agent/rollout/discovery/homeEntries.js.map"
       },
       {
@@ -37274,18 +37398,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/runtime/engine.d.ts"
       },
       {
-        "byteLength": 15157,
-        "digest": "sha256:fd07f84ee2acf30bee008a35ed22b019f6e92cf1e45399839ea9f0a32860ee2c",
+        "byteLength": 15100,
+        "digest": "sha256:04a221f534d53643505a790de4cd36c07169d78adc8d64b270c08c811720a7a3",
         "relativePath": "dist/agent/runtime/engine.d.ts.map"
       },
       {
-        "byteLength": 14085,
-        "digest": "sha256:d73a4dd19507f4fb902a9d488697c240ed544ad74fb3b4d53925efadd98dd417",
+        "byteLength": 13995,
+        "digest": "sha256:3b19bd719ef508637f64450a380cbb93e054716489c558a1042239958989ee9b",
         "relativePath": "dist/agent/runtime/engine.js"
       },
       {
-        "byteLength": 27478,
-        "digest": "sha256:07cea9292e1f70bdeddfbf07c65c76e1e67be3d7ff470f66b4f14cb4b40743f9",
+        "byteLength": 27302,
+        "digest": "sha256:0c24d0b64c9747bba34c82dd96ec4470b54ee1d27f694d6bf0b61fcffa8f8e4d",
         "relativePath": "dist/agent/runtime/engine.js.map"
       },
       {
@@ -37694,18 +37818,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/surfaces/sessions/handoff/export.d.ts"
       },
       {
-        "byteLength": 5872,
-        "digest": "sha256:728ea3cc764a88082551bdbdd1a4214669ce53fdc07b284773bf9843ca2f2588",
+        "byteLength": 6815,
+        "digest": "sha256:5bac74292922e426e2e4e72c82dd8f5038fc8a5e7bbdb34e7d79cdd9d9128a5f",
         "relativePath": "dist/agent/surfaces/sessions/handoff/export.d.ts.map"
       },
       {
-        "byteLength": 4738,
-        "digest": "sha256:81de6f2aa9654200410c1c91b759f06b07681bada941862e28ce02b8baf5719b",
+        "byteLength": 5775,
+        "digest": "sha256:0b2fb7d29387da3a84a0895103ba6f41e11a444c8dd4daab3024fb6db7a979c2",
         "relativePath": "dist/agent/surfaces/sessions/handoff/export.js"
       },
       {
-        "byteLength": 9042,
-        "digest": "sha256:b0b52f9d29c37ea0fc29467c9b2aa07eceba7d73c4932fd3f86ddaff61b94509",
+        "byteLength": 10692,
+        "digest": "sha256:ef270c1500a80a216bb9d0696b3062ba4ba7192f9ce5b1bcae7370bae63cf847",
         "relativePath": "dist/agent/surfaces/sessions/handoff/export.js.map"
       },
       {
@@ -37954,18 +38078,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 17455,
-        "digest": "sha256:fee5a5a5428658ed007473fecea2c08d33cfa2e8af574ae2058047ab4b357f24",
+        "byteLength": 17898,
+        "digest": "sha256:455d792e75f01bbd0acd5220840f6c0ded3223792187785f48d78a087d03ad07",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 21088,
-        "digest": "sha256:a8e699bc8008050b187c9412f3b14caf5d8881055e7f9d29fc44871551784b69",
+        "byteLength": 21579,
+        "digest": "sha256:0a0b9d01761db921809ba49497e61218d008bb15b59ca082a9c56b7f84ac2c99",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 27931,
-        "digest": "sha256:a5d3bc9eb65b81133fc3a08a25f72c47a1811658656c4eed86f70d4d40e9cfba",
+        "byteLength": 28681,
+        "digest": "sha256:f2387dc7cb137eb912fd24b91cada41a8335628a02622335f1c9425b2dcc4a77",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -38074,18 +38198,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/voice/control.d.ts"
       },
       {
-        "byteLength": 12478,
-        "digest": "sha256:e45324a73e7f3a6df0c1254d743447b55053fe8f3652516b3fc19b6d3b4acda1",
+        "byteLength": 12504,
+        "digest": "sha256:9fa7d309d7f652c1461a2814fbce366e1561301772884e91703624e014f605de",
         "relativePath": "dist/ui/voice/control.d.ts.map"
       },
       {
-        "byteLength": 10286,
-        "digest": "sha256:51d0689cce4170c5071a708bd332a769b1bbf09921a775924f15aabb531aacea",
+        "byteLength": 10312,
+        "digest": "sha256:92ba340729d3ce71501461fddb668e39367a1c15afa3ef6dda79284b0f7c4f1c",
         "relativePath": "dist/ui/voice/control.js"
       },
       {
-        "byteLength": 19644,
-        "digest": "sha256:f0ab02ffc72ef505c885b7b46997932af5c7f043dcff9a885930849ce6aa32d7",
+        "byteLength": 19690,
+        "digest": "sha256:a18f2977e14479a760b4e69d918d47e1d78e0828b0b46b40de0828d3c96fd07c",
         "relativePath": "dist/ui/voice/control.js.map"
       },
       {
@@ -38179,23 +38303,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 877494,
-        "digest": "sha256:238dcb67e061b89a0e349216a05c3f3b365857186c8c203054f6d5c114cd607c",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-NZMOQUBH.js"
+        "byteLength": 877512,
+        "digest": "sha256:ddcf1fa8a5bc0942e668148c6f0e80924debd202c6e0de50bea8c12aef08d3e5",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-DLUF3WHL.js"
       },
       {
         "byteLength": 127,
-        "digest": "sha256:5810def191c2653847ed1ec163b8edc931ad88bb4abde6f62c77e6e130d2216a",
+        "digest": "sha256:1c4ac9cb29f370c46798c49d42965bbec53f91ea94cbd1c7aa7edfa8c1350658",
         "relativePath": ".happier-plugin/agent/runtime/factory.js"
       },
       {
-        "byteLength": 192586,
-        "digest": "sha256:df0ca6d8926ef23be600d9ffee35fda7d0eb6e1b031a140982c6642cf7c8bd04",
+        "byteLength": 191153,
+        "digest": "sha256:1225c5641bf7579cf594b09b0c88209b6ab94dc7e052ec8a33dba73869f63362",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 6252,
-        "digest": "sha256:46a656e5d13e62829b76bbc590fd3fa4ba54e4b30eb2e4b97f942ad5ac6f1eab",
+        "byteLength": 6359,
+        "digest": "sha256:da0c6586657914d3fa93fa80333f78de8e7daea901b4c0c35923c4ab83c44e9c",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -38364,13 +38488,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/auth/services/index.js.map"
       },
       {
-        "byteLength": 1297,
-        "digest": "sha256:54939d4fa191569ab10f4b7937b7eab144f3cd6e5414900d86e336e5bbe149f3",
+        "byteLength": 1302,
+        "digest": "sha256:c0a1a97748263cdc9100fbd698025d27500f96bb976e780596d7e06095816ece",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 1625,
-        "digest": "sha256:d5b4fb91af31f3c1e8e8a7aa73300309b9c2bc3735a97432ec5a6e63120dc5f8",
+        "byteLength": 1644,
+        "digest": "sha256:395ff5646cc538663fa21565b180b42c2b9cdbec93f29f139a9fa5ebd5da2522",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -38379,8 +38503,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 2263,
-        "digest": "sha256:f730f82c930f92f4d91fda487dddace3dd65b90f8b4e28a51c1c5fcd4200e061",
+        "byteLength": 2273,
+        "digest": "sha256:3e6de067865cff6b20d942e46548e4bfaf8a598c5028eb7c336ba7062f2abe34",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -38549,18 +38673,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 3427,
-        "digest": "sha256:dd3d2e96b8b69afc73c6a14ab0da34181d517476645237b40376e98b38b9c047",
+        "byteLength": 3540,
+        "digest": "sha256:9bd4628b09577ab49c0379fcfb087dbd215cee77410d7a08beb79aeed4a88bc0",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 3797,
-        "digest": "sha256:4aec82144139ead85be93651c218a451e1de924aa4bfa05a20e73bbe502f256a",
+        "byteLength": 3933,
+        "digest": "sha256:cdeb2d1aef2f5d50724bdc8ca28cae27a78ef3de66360b682c8b6ec9a4241780",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 5585,
-        "digest": "sha256:c786a5ebae2a1f6026ea81e52d79027a1576931a5544919bd969207256a69233",
+        "byteLength": 5794,
+        "digest": "sha256:1ef7391b663401cc0588d434543c899cc78307eab7fb074873d55bb67b9b98d4",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -38634,23 +38758,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 1177443,
-        "digest": "sha256:ebd1186131d646010dc603483c7bf4d67382a664a72e83a82351481559709555",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-6KDMJYJG.js"
+        "byteLength": 1175934,
+        "digest": "sha256:4994563891d9f1fafa0ce2e93275b787a753fdea2faea8dccb4e1bca93e7d5fa",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-2ALPW2VV.js"
       },
       {
         "byteLength": 125,
-        "digest": "sha256:24528e43f2900352dd69970626fc20af99a50893a0d1e14ac612c1c42525c62b",
+        "digest": "sha256:88ce1637c4c624305450b52d7a2843f02fb8b08c1bbedb47a3a4d04cae94bf4c",
         "relativePath": ".happier-plugin/agent/runtime/engine.js"
       },
       {
-        "byteLength": 132669,
-        "digest": "sha256:0e66fd1221cdd7eeb535ca335ef13d67f8db18c162ac701651ba40ee92a5176a",
+        "byteLength": 132778,
+        "digest": "sha256:0793d4ee7d3acab9ad6185b1d30839d7e87157e41809341252dc2c08cac40ccb",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 7313,
-        "digest": "sha256:005d1cfde6b8ac711cc2d6c580de0d89ddfeb7e8c03a1ee18cc2d5cf9331dc8e",
+        "byteLength": 7423,
+        "digest": "sha256:92c2422e1deed7a0f6264fa2fa3b76f3b31abe7201590cc7a6b4574e9477fd4f",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -39174,13 +39298,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/controls/probe.js.map"
       },
       {
-        "byteLength": 1829,
-        "digest": "sha256:b9d15cc8cdf035960b0a0849f74919707fb2597d111d36c1f046dc94a108ddc6",
+        "byteLength": 1837,
+        "digest": "sha256:460006452a19952ce2a53c4d7a28a33966f5defff4dc2d9d3630ce6fbd040c1d",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 2302,
-        "digest": "sha256:b0c0eca525d0a6158503c4e7c628a0561ddb1acf3b52b6786ebb57e5abb70c93",
+        "byteLength": 2322,
+        "digest": "sha256:0c5bd16224432ac90d3812eb94a4100dac6cd766fdf64d5a2b590724573f6ad5",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -39189,8 +39313,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 3259,
-        "digest": "sha256:69c74f081ee46c88a00705051d2dc1a238fc6226cf05bc20e1fa22d40a992b76",
+        "byteLength": 3269,
+        "digest": "sha256:74aa71739adbb084734bb433cebd72e12634bcc63430ad55e2a50e30a34245e5",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -39259,18 +39383,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/runtime/emptyResponse.d.ts"
       },
       {
-        "byteLength": 2167,
-        "digest": "sha256:3e427cb032441b6c30c9f88e79b9c3164bb27a7bce416c29be7119fe6039f7c6",
+        "byteLength": 2244,
+        "digest": "sha256:6040efde3bb2b775f6c4f8b186a9ed86a11090ac239a3ed78116b2c030038a7a",
         "relativePath": "dist/agent/runtime/emptyResponse.d.ts.map"
       },
       {
-        "byteLength": 1947,
-        "digest": "sha256:cbc5e05880298d4b40dab738b52cd6de1f626a60c64fe3452aa8b40d53c59fcd",
+        "byteLength": 2020,
+        "digest": "sha256:b489826b44b6996dc197a834de2103940ba91e1f633c3d77ec1d6fa21becfec3",
         "relativePath": "dist/agent/runtime/emptyResponse.js"
       },
       {
-        "byteLength": 3614,
-        "digest": "sha256:c201bbb52560258ef19b1242d9a833d6b0fc44ef83342d3cb712fd4bb99762bc",
+        "byteLength": 3724,
+        "digest": "sha256:b48294f7bd3a05a592b79841ba5e1ebf6ee2645c69229eb5364d0272c343e437",
         "relativePath": "dist/agent/runtime/emptyResponse.js.map"
       },
       {
@@ -39339,18 +39463,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 3696,
-        "digest": "sha256:af46c36a9c18b8c3deddd08b4167f054ebcac35f2726b959fc7505ded6bd7ba8",
+        "byteLength": 3809,
+        "digest": "sha256:ad0804835f38029a38295f4cbb31aa00dcd1cd4cf81dd3a0af513d4e2a24951e",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 4163,
-        "digest": "sha256:396fdf0de99b0e87025de26ca0a64b2dcfd3baea0a852a5b46d63a4297d94e8f",
+        "byteLength": 4299,
+        "digest": "sha256:e8576ec81ff7bb85b6bb9a32d7409d9edf84b73c3a4f4b9183b6258fe4cb73e8",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 6041,
-        "digest": "sha256:815022089540de520f90ec92d0026cea58f511af40f3f5f5534c8c04115e7f9a",
+        "byteLength": 6250,
+        "digest": "sha256:c3e96a4b412d7527923a0d9fc1ff4c2e83646f4325386c217004ac658ae642b9",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -39729,18 +39853,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/voice/runtime/protocol.d.ts"
       },
       {
-        "byteLength": 7693,
-        "digest": "sha256:36c16111ccbd5286e4ed448d1cdc2e2bbbeb71ce52ee735135016540523936b1",
+        "byteLength": 7945,
+        "digest": "sha256:b9507063a643bf49197d332f72121fad3d32208e363c35cc2ad28e69afeadd18",
         "relativePath": "dist/ui/voice/runtime/protocol.d.ts.map"
       },
       {
-        "byteLength": 6068,
-        "digest": "sha256:89923aafd635a2d4972e0e9bfb1c2a9a31d3fd80d2ab3ec4ff3c5176a1e98e95",
+        "byteLength": 6361,
+        "digest": "sha256:781232b75a3306f3c96ae91b2a0fd61da298277aaecd8b6acb44e27fe8cd7f2d",
         "relativePath": "dist/ui/voice/runtime/protocol.js"
       },
       {
-        "byteLength": 11679,
-        "digest": "sha256:77e897bd5cb8c368902fe3193844930e08bfd297c4622c8cf27a96dbe71ecba2",
+        "byteLength": 12185,
+        "digest": "sha256:d1cdcb577f1de0b2958ec2c59762813bc1171e8421aeb10a89bb12bd18eedb91",
         "relativePath": "dist/ui/voice/runtime/protocol.js.map"
       },
       {
@@ -39874,23 +39998,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 1202778,
-        "digest": "sha256:096e4e91b02285ddc094e7b62e5467ebb5c2d309f9e1340ad6e0f7b6ba6316db",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-LETM2JXU.js"
+        "byteLength": 1308251,
+        "digest": "sha256:30b49e0248721a8c1f9af134216587ee3e3218b64d8cad1ba2c7d2a133849906",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-R6SIXIFC.js"
       },
       {
         "byteLength": 125,
-        "digest": "sha256:cf1e2e09d5c876eefe3a9f8e8599a35e6a16b39e7b12e08c98c1138a39c576c6",
+        "digest": "sha256:14256925ef2983edb155dbebd1f54646481805712f7c981390f12c0a8fe4a4b4",
         "relativePath": ".happier-plugin/agent/runtime/factory.js"
       },
       {
-        "byteLength": 251706,
-        "digest": "sha256:652094edd62972e5769da961dae357263e02d36ab035913743f6a7b76e727cfb",
+        "byteLength": 250386,
+        "digest": "sha256:0048a8fa395339b6c4fe2aa084c5c7787bdc44574bde02a8689430ee459ff4c9",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 7717,
-        "digest": "sha256:21965bfa9694775795c6c5b88cafb2f416d314c53e48e689a485d58c5a142f90",
+        "byteLength": 7824,
+        "digest": "sha256:b89f3471f56eb2e0db4e6e23c30fc683fe638048a7260dc6e425c2e6bc3f8bc7",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -40119,23 +40243,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/connectedServices/runtimeAuthAdapter.js.map"
       },
       {
-        "byteLength": 6723,
-        "digest": "sha256:a7a0a82cecc0324a82e0b466cb0efa036cc0968b0ffee30b9a901aa6a8c2f1da",
+        "byteLength": 6072,
+        "digest": "sha256:0241963cc5033c2dd3bde44407c20d416080938bae87c585f5f8a75f69166902",
         "relativePath": "dist/agent/contributions/catalog.d.ts"
       },
       {
-        "byteLength": 3157,
-        "digest": "sha256:ea8489aee5fc7dce62411b62fb3a3272b48e52b323ce9e06798e5540883e4edb",
+        "byteLength": 2404,
+        "digest": "sha256:75233b3e3fa2f8d8c11ce41e8d28743202f0dd8bf477be3b79eced1ae9ebb0ea",
         "relativePath": "dist/agent/contributions/catalog.d.ts.map"
       },
       {
-        "byteLength": 2494,
-        "digest": "sha256:6df525f9fdc74c3cd5d656dd9b29509f229302ee1cec8c8fc018478af1525d88",
+        "byteLength": 1819,
+        "digest": "sha256:ae3f9986f1f444aaa4078e70b471e5469a2c6a4a2b2beed7d00fb470d2faad9b",
         "relativePath": "dist/agent/contributions/catalog.js"
       },
       {
-        "byteLength": 3672,
-        "digest": "sha256:2c0380abcb3bc0a77bfe741706dd14eb4913fca515aabb2b98a7bca547e7e5cc",
+        "byteLength": 2722,
+        "digest": "sha256:183e3f63f5aaf4ff2362d2aa1cf6d49f7f11d84b9c46fa78aec2d8d289ce5cd8",
         "relativePath": "dist/agent/contributions/catalog.js.map"
       },
       {
@@ -40159,13 +40283,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contributions/runtime.js.map"
       },
       {
-        "byteLength": 3580,
-        "digest": "sha256:ef7cc3d358b0118af0022784ffbff4ac53f2563a7d8557f01eee984df2f6136d",
+        "byteLength": 3585,
+        "digest": "sha256:aefe613a46bd108e631e8eb6d83489fb0fbf79c7a1b530bdc5c340769aaf2170",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 4104,
-        "digest": "sha256:27abb87c5c186f76d476415ea04d9f4e808d629fb06cfb7da68cf423fa150a45",
+        "byteLength": 4123,
+        "digest": "sha256:5164a3712ba2345f46490a968f52cab18848a0c748f384daa5ffa6b9a3f260b8",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -40174,8 +40298,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 5426,
-        "digest": "sha256:b2f285f76a5aeda817d86d55a6a31017a689bd493242bcb1a532a8a2a4556479",
+        "byteLength": 5436,
+        "digest": "sha256:310869c5de073f1ab5764af91eb401eb8610e36dd00e4749a454f7db56a026a1",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -40300,22 +40424,22 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
       },
       {
         "byteLength": 188,
-        "digest": "sha256:460233f9a30a55f82e5418cf8eb43db4405e3f1cea13d2d48470af2dbcff9a16",
+        "digest": "sha256:dda0010db00e9e01f9fb0c6bb85678a057d5481bc7e61b01ecbeb67dc6656703",
         "relativePath": "dist/agent/runtime/factory.d.ts"
       },
       {
-        "byteLength": 11567,
-        "digest": "sha256:45367947e1952c8e38f30bfd817851927683ea9e52a192bb0580bd14deb26305",
+        "byteLength": 8281,
+        "digest": "sha256:eea02452d12533d9cd5693225b72efc5f8534edb37f5b3f9c70abd7d094be19b",
         "relativePath": "dist/agent/runtime/factory.d.ts.map"
       },
       {
-        "byteLength": 10629,
-        "digest": "sha256:b6e229a1db0c12f0c9fa8a92aae97f4d63028169250773ad6f4f6d2e94946989",
+        "byteLength": 7595,
+        "digest": "sha256:a2cfc79b806e085fa31ef66a09c9d5a9e2710102c661faba448aca3ebaba5f82",
         "relativePath": "dist/agent/runtime/factory.js"
       },
       {
-        "byteLength": 20565,
-        "digest": "sha256:21f65369668bedceebdf0404462dad502682ba578998330ab29092fa6003d1e4",
+        "byteLength": 14178,
+        "digest": "sha256:9694a5913ec890f51877f5a025cb75aaa77d739064339c20eacdcd4bd602a3cf",
         "relativePath": "dist/agent/runtime/factory.js.map"
       },
       {
@@ -40404,18 +40528,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 5386,
-        "digest": "sha256:0ac6d95e79515782b6687f592b23525ad412400b253ee10efa5983598af1770c",
+        "byteLength": 5617,
+        "digest": "sha256:9733e3cb50d47e6a9a6ec41d94c32db7cf8bacd50ca8f2b1c4329d378d045114",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 6451,
-        "digest": "sha256:379b920f9a27d86bdfe830f6e5746fcbb8dc37343182ea659f474008fe809bc9",
+        "byteLength": 6729,
+        "digest": "sha256:1163fdad33f8cb6d44c3fb5965914668b8d25bf8609a35484c14a003660e51e7",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 8788,
-        "digest": "sha256:f447f416b00effde6c384f5bf4bd735d3cb7021ee3b7d397258f18148d24c205",
+        "byteLength": 9186,
+        "digest": "sha256:0ad887e4dcdcb6de719a6fb24c3348808b3e24d672a4885f9b85e5246589bf2c",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -40489,8 +40613,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 1716639,
-        "digest": "sha256:ba69dfa3b0ac4e8bdd97106dccf9a5d6889f87d92d38c202c3e46b5683a7c288",
+        "byteLength": 1715097,
+        "digest": "sha256:d7e497e0db15d871231039146d06e4b1b38d7e0f41aeae99bc60bc092be4f20c",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -40669,23 +40793,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 1034853,
-        "digest": "sha256:49ffa21a1f21fed1a43313a7f57578e43da0c775ecd2682c9862cfb450ce9168",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-FXEHZNSU.js"
+        "byteLength": 1034871,
+        "digest": "sha256:a939c49b6ba7813c17fdd7f3094cb52849279a4d48842788f4efba0ed434aa6b",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-B4ILPFDA.js"
       },
       {
         "byteLength": 121,
-        "digest": "sha256:540e71d7fd70c8a744501b0da4483693b147155837e25a5352a6d5ee50b15282",
+        "digest": "sha256:89075cafaf0de8d9a73d23c8759cc661b1ab626e350d96024a35ae8ac1fed49c",
         "relativePath": ".happier-plugin/agent/runtime/factory.js"
       },
       {
-        "byteLength": 191426,
-        "digest": "sha256:7a29b402230c7246d5cf59debb5489fc6a8b769c5a1e4af222cc7aff6e6d04cb",
+        "byteLength": 189993,
+        "digest": "sha256:936460f28f9281d4a1aae471b4d8c0a4bcecb7192f2f75031a752e1fca4574f6",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 9445,
-        "digest": "sha256:30c6d151df1ef71c7726cb85189d252c222320a9d3ba44d226dd6c6fe0ca534a",
+        "byteLength": 9552,
+        "digest": "sha256:5fc580c2636b7633ad7578e0b27ce8ba050162bb13a3db5201c1e44659c123d8",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -40929,13 +41053,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contributions/runtime.js.map"
       },
       {
-        "byteLength": 1441,
-        "digest": "sha256:cbf9d70d16e52eef5ec2730b105342ebf20711bfd8c8a86d5be396b4a26aa96d",
+        "byteLength": 1446,
+        "digest": "sha256:a182540d913ab23e6b9f63b3ffbe1630620571f5c533934b43d378c54c7e0c1d",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 1783,
-        "digest": "sha256:c4060b2b2706dc2973da20baf000ace60f285410ff1ed360c016edb8c2442932",
+        "byteLength": 1802,
+        "digest": "sha256:a2a773498e7fede1af1f3ae6abbe0c0a8f8ce5cd2bc13bf868767d574a44b10d",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -40944,8 +41068,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 2469,
-        "digest": "sha256:215e6105cb46f9d5322c48a7cb2a5490e3066b4e909241f359b217d475b3649e",
+        "byteLength": 2479,
+        "digest": "sha256:a45e9d2779bace9b18b6ff7d9d19b18ed66b97f42b05e81b5cdb43c6be65035d",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -41014,18 +41138,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 4075,
-        "digest": "sha256:72f439627d743f90b8c942d5a4d9af4e8ef5a15206feaa534056bc9f6c6791a2",
+        "byteLength": 4188,
+        "digest": "sha256:9a05e6cd983f8a1d1d433250a6369ca1060f230bf04ab76341933337aa608647",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 4866,
-        "digest": "sha256:9e9f4c55df1fd8179e177d1ba32953c91fc42ba7926b14319826dc5c215e71ef",
+        "byteLength": 5002,
+        "digest": "sha256:5f0618e68c39e97900f73b99b4c4917d161cea72e5da7642a3e4d9cdf4c7d7bf",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 6655,
-        "digest": "sha256:67f5d78cae496a38036e26c3a1be049c998dfac1fa189ef332e64798ca851856",
+        "byteLength": 6864,
+        "digest": "sha256:90627ddeff16e513287c952bc6211260d9255c9bffcf34a33c80a568822bb85a",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -41079,8 +41203,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 664642,
-        "digest": "sha256:33053a54f912b707ebe0ea0f9f06dd8ed6ab86b1e4d2659405d5b67889525945",
+        "byteLength": 663100,
+        "digest": "sha256:b83ab209adb4a3055007cc08b7d1ed15c854ae9501c42a5ca666e368a5967542",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -41119,8 +41243,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/activate.js.map"
       },
       {
-        "byteLength": 1099357,
-        "digest": "sha256:2cac22b0a142340465d1478b1e144b678df9130a1da64fd142f113c7f5bc1110",
+        "byteLength": 1097112,
+        "digest": "sha256:26796bf228540bffb5900fbeb9cc2f015783e56db8a764493175ec577d47da94",
         "relativePath": "dist/happier-plugin-ui/react-native-web/inspector-app-native/entry.mjs.bundle"
       },
       {
@@ -41144,13 +41268,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 4118345,
-        "digest": "sha256:025354d2213974a0a469ed83553d096c835a5481b850ad077888ae5ddc1aef10",
+        "byteLength": 4102873,
+        "digest": "sha256:693888e3ba73b8db11b9654dc4073f3fd6ef1440030d7e3ff69544addef6489d",
         "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js.chunk.bundle"
       },
       {
-        "byteLength": 780048,
-        "digest": "sha256:754c5d656b889a1bc828464cf96bef5dc36a39ce01f8f4f11d78862ec51dae90",
+        "byteLength": 777837,
+        "digest": "sha256:7e0bd0d884f6c19875c35c42a146a3a77500fffb013350d177fadefc9d8edad9",
         "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js.chunk.bundle.map"
       },
       {
@@ -41174,18 +41298,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 4118345,
-        "digest": "sha256:025354d2213974a0a469ed83553d096c835a5481b850ad077888ae5ddc1aef10",
+        "byteLength": 4102873,
+        "digest": "sha256:693888e3ba73b8db11b9654dc4073f3fd6ef1440030d7e3ff69544addef6489d",
         "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js.chunk.bundle"
       },
       {
-        "byteLength": 780048,
-        "digest": "sha256:754c5d656b889a1bc828464cf96bef5dc36a39ce01f8f4f11d78862ec51dae90",
+        "byteLength": 777837,
+        "digest": "sha256:7e0bd0d884f6c19875c35c42a146a3a77500fffb013350d177fadefc9d8edad9",
         "relativePath": "dist/happier-plugin-ui/react-native/inspector-app-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js.chunk.bundle.map"
       },
       {
         "byteLength": 5390,
-        "digest": "sha256:f6dd90550ab5f9caed903875ffd0c09a4cd66d72fb44159722a47fd0a962f0dc",
+        "digest": "sha256:238570f5210fe971ab6ca20485081bccf548b1945f0509f8111d40dd568fba58",
         "relativePath": "dist/happier-plugin-ui/ui-artifacts.json"
       },
       {
@@ -41279,23 +41403,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 881391,
-        "digest": "sha256:a9fdd51cab9f378005a06c1d36342d5eff97da1e8db855db8ed7dbb70e63fc52",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-M7P5VZ4B.js"
+        "byteLength": 881409,
+        "digest": "sha256:28c96b4bf0a19591ca09ce9cc13b78c1b873a925e2764d974dedf849633d6b63",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-SQTGGMVC.js"
       },
       {
         "byteLength": 121,
-        "digest": "sha256:0ed34bed40eacb3a2e4300d45ea26e85e040b175eaff6a978de556b9eb89a74f",
+        "digest": "sha256:dccb3941fe2b0183fb7c4f884c54d140458aeb121300eb166c66e3a4ad273655",
         "relativePath": ".happier-plugin/agent/runtime/factory.js"
       },
       {
-        "byteLength": 189794,
-        "digest": "sha256:4fa137ca41b311203c362cc721f69703cd3a8910fcf7f0c42e9bbebc0e4f6b9a",
+        "byteLength": 188361,
+        "digest": "sha256:c3aa53d33258fb035f43fa9e86754d2a3173c6c82e1584aa102e910368383c34",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 4195,
-        "digest": "sha256:7c13fede111e154fb680d40a5eb3a0d512df9646db33fc1c30944dd05621fb99",
+        "byteLength": 4302,
+        "digest": "sha256:07af49b648bcbc81019559f6ba38e3e7126b22ee25bc0eb987aa13464148a2db",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -41464,13 +41588,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contributions/runtime.js.map"
       },
       {
-        "byteLength": 1464,
-        "digest": "sha256:0ba169440c4aca5507f4d036a01cf76375ce9e7e8a269aad3a64680f5f17e3ff",
+        "byteLength": 1469,
+        "digest": "sha256:c97dcb2dfdb0528a7546adcf46bb37c0fbdbdf81d79ef451c4a4c1511d601bba",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 1829,
-        "digest": "sha256:32d1817d2c9607239bb169f558ab68ed5a316171e386952b260de81bcb1d2074",
+        "byteLength": 1848,
+        "digest": "sha256:7ac04d10527e3c3a49bf3e76b971abe68ade9aaa52140c8455e20794cb97e152",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -41479,8 +41603,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 2514,
-        "digest": "sha256:b8b97616a72f536914767764ee84e5acb3cecef0f10ba8f99b34bfa9a4cf71c0",
+        "byteLength": 2524,
+        "digest": "sha256:ed20972eda21698e62cabd5a09da77df5d12cfc32d0485b61777658e4ce0afda",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -41629,18 +41753,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 3011,
-        "digest": "sha256:428fea1d3e88ae12458658257abfc85b63254149a959d499f76ae5ef1ef0e359",
+        "byteLength": 3124,
+        "digest": "sha256:3b6b9ea0b84313fc8cd5c86180b7db3a7c95fa6465ef5947269f4b83220da151",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 3310,
-        "digest": "sha256:fcc31bfd651170d64befe9fef7acadd64d425df70a0b1dfa7139ab4c02bcf6e2",
+        "byteLength": 3446,
+        "digest": "sha256:e4ed2305ad91399ee89cb5146e5033764da9b4030010b0f054cf7587ee6c7f64",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 5007,
-        "digest": "sha256:488e67933b5c233065fde793984d0e6af8c45eb7ac57b57aba3cbf871f2366c0",
+        "byteLength": 5216,
+        "digest": "sha256:88cbb0b9de781408cb3888ac668943eb3127c814c28792801dbe5e90d1ec7224",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -41694,23 +41818,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 15812,
-        "digest": "sha256:fd7276fac0d9192a69823c1ec23d532abd246158c8cdac7eaf5c5e410782784e",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-SK6RCAIU.js"
+        "byteLength": 15846,
+        "digest": "sha256:e713aa6678178864f7d4ec0590afaed4696b40d8ba301fbd5462881916979ae9",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-TNZ42LIX.js"
       },
       {
         "byteLength": 121,
-        "digest": "sha256:2b7f90df5620ae9c90df606e1c45062cf672318902cc6d540f6ebc26dc2748ef",
+        "digest": "sha256:89d54a3a4bda092f7d5262f0db3affeaab97a4b833e0b0d2504b99502c5969ae",
         "relativePath": ".happier-plugin/agent/runtime/factory.js"
       },
       {
-        "byteLength": 742557,
-        "digest": "sha256:5ffa79c9649e8ccc9c1c94726fdbc49f54e1ee3376c51348fb419c99fd0c6cac",
+        "byteLength": 742407,
+        "digest": "sha256:84ddc80d397189a05cc4caa9a6caffe1f9a08af24eaabf54f2161e2ba6d1f54f",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 8193,
-        "digest": "sha256:b1042402318e75e749cac125d35158ff0ae3b590f9dbc2d763ea6e93f1e27c98",
+        "byteLength": 8300,
+        "digest": "sha256:c440f84c469ae2fa48691fdf366f9c654dbd236bc76d71deeca638eea8049f3c",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -41879,13 +42003,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contributions/runtime.js.map"
       },
       {
-        "byteLength": 1450,
-        "digest": "sha256:e8ac0c5fb26ed11d9b1075f6d784949a82f2faae88a0a4af5da4730f31d20357",
+        "byteLength": 1455,
+        "digest": "sha256:3aa1d5aa051d128c679726bcebad6b0f853e75009e8a1d86acdb0bffe554649d",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 1794,
-        "digest": "sha256:ad54e2839ec580e34f1046ba5cd260d67be74c8c9f52a9b7a6e9a2bdfb80bd4e",
+        "byteLength": 1813,
+        "digest": "sha256:76ef48988bf6f3fa081f9349da8ba5891520312b708a03faa5b13c6018418d3a",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -41894,8 +42018,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 2479,
-        "digest": "sha256:4e120d8da671de2978ac2e7a743b7cba23b83a1a8698de24a907a1e903789285",
+        "byteLength": 2489,
+        "digest": "sha256:12ffcc17bea8155aa5906e3c01da10a81e005247b6916d285b97fbd40c9459ab",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -42024,18 +42148,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 4228,
-        "digest": "sha256:157bf0a5bf1c9938858a2c69700422566d0ff8635e775ffdfce1d751194e808b",
+        "byteLength": 4341,
+        "digest": "sha256:7d2add1f81e0d6e8d0dce625d99068bb23ac9bb7cc9e2d87a96f855fd4bd3541",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 4746,
-        "digest": "sha256:836d65b5716d489c18dfc976e6fae911c501a36005240e8658802e9f891735aa",
+        "byteLength": 4882,
+        "digest": "sha256:0e1a71c3d8dad0154821c78b22310005a823edf787881f563f9e8bc4c7e9f86e",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 6906,
-        "digest": "sha256:bf75b430a86703bdb13bcaa9ba057afc14df5ee9e23110ecaa0c1ca50e342586",
+        "byteLength": 7115,
+        "digest": "sha256:9a7d4a8643217cb53d804b409dccfb21ec6550e9f8d11c6595ee13d2ce02c162",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -42069,23 +42193,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 1055,
-        "digest": "sha256:866921224a87f1232d5e526838eb2433fed074ec60f08d1d87e2698104e0c45d",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-VPEJ6FA4.js"
-      },
-      {
         "byteLength": 121,
         "digest": "sha256:32b095197bbdeb02d2005d8465e07ee196e1805d4860f64a50f2d41224c3d1dc",
         "relativePath": ".happier-plugin/agent/runtime/factory.js"
       },
       {
-        "byteLength": 737646,
-        "digest": "sha256:4bf0118bbbdd8a1076af746ea9faf4d9efc3fed713c84961344032bbb1afb531",
+        "byteLength": 736698,
+        "digest": "sha256:ec953befebce57fd91a92ee13a06a6b0be2e7248d52f36a8524c37321e43a89a",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 4075,
-        "digest": "sha256:c1261b356ac1b44ebefc8f25b1cb7b86cee5cdd082a38dd78d1e4243a2556ec1",
+        "byteLength": 4872,
+        "digest": "sha256:a4619cbb0745a344cfcebcc39d9f7aa789a76486ad98f6659d4845567a68e3aa",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -42274,13 +42393,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contributions/runtime.js.map"
       },
       {
-        "byteLength": 1661,
-        "digest": "sha256:3079f9713de406b826fdbc39b3b37221f592e655b7e60cb06ccd2c986fe09689",
+        "byteLength": 1669,
+        "digest": "sha256:b1f3d22956999774c3bdb922a3eb5a86d4b783179682d9e1305c26ed51a5de50",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 1989,
-        "digest": "sha256:8373611a8cfe1926aec7be2c668948b10c78ff21a5062cff753b1be75176cee7",
+        "byteLength": 2007,
+        "digest": "sha256:6a6056ff87ed85261baf85cdf221ca6a89ec0e6aa534a6ff6a87a7cabee7f652",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -42289,8 +42408,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 2730,
-        "digest": "sha256:a59ed30816bb430a14e7fb6ad98f4c19a5a20c4f4b56114287896e47bc24d8ea",
+        "byteLength": 2740,
+        "digest": "sha256:2966dcf858bdd6aa1e50ec521253ab7c39877a196fdda973d61b20788b77b609",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -42312,26 +42431,6 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "byteLength": 351,
         "digest": "sha256:99b30b917819a8ae0428e20c601f0cef8684ac2c07837aa29d02d84b447d3fdf",
         "relativePath": "dist/agent/index.js.map"
-      },
-      {
-        "byteLength": 186,
-        "digest": "sha256:5a1866de1810ebafcc2e98bf9aeb3ed8c1f248f077778914b06d2a956fd94ead",
-        "relativePath": "dist/agent/runtime/factory.d.ts"
-      },
-      {
-        "byteLength": 781,
-        "digest": "sha256:3d5fb73edb844692bc3b50c4926103de338677f43fa6e57d5136d0b0ca3dca73",
-        "relativePath": "dist/agent/runtime/factory.d.ts.map"
-      },
-      {
-        "byteLength": 548,
-        "digest": "sha256:33e3a2295ebe0d9d530ab868e740d092525fbc7c975c308312cc987a4a5e393f",
-        "relativePath": "dist/agent/runtime/factory.js"
-      },
-      {
-        "byteLength": 1101,
-        "digest": "sha256:203e722bcc6f8667fb2861cd01ce1a981b3d17f1270d628acb9ccbc814ee9141",
-        "relativePath": "dist/agent/runtime/factory.js.map"
       },
       {
         "byteLength": 552,
@@ -42379,18 +42478,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 2777,
-        "digest": "sha256:b7876759ba50fb635c12ec6f9c5a28784f2443bd924fa456c1557c5a062c37e3",
+        "byteLength": 2931,
+        "digest": "sha256:a883d4f7af3210c2580635f0c8a046b9725d29e641c70fa1e261b45736b172c5",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 3036,
-        "digest": "sha256:37b22dc980560e62449736de731e9804583ff5940c9ce2d084a3b009669375f1",
+        "byteLength": 3253,
+        "digest": "sha256:37f91e46ecef092f16260ee7e06cbe70a0d9b7b49b5dc1162a6ee28efcaaa6ce",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 4630,
-        "digest": "sha256:be4da488cb0324cb10f27f5bdb672f278a7d0e80e08cd83e29c33ad7cfed670a",
+        "byteLength": 4923,
+        "digest": "sha256:01c9224263beec70a810e9100274ad0c6409c1a395eb01e619164f2cf1db1c17",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -42574,23 +42673,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 5419722,
-        "digest": "sha256:f83accb68d96d64a54207f150ec9e85e749314e096d25dd575fa1edda3fea13b",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-M7XQ4KHQ.js"
+        "byteLength": 5426669,
+        "digest": "sha256:27aedf89411ee6bd0eda7b8a5041e8bbb3199234f6b3c9ba2dda6e01af056757",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-XQHQGTMJ.js"
       },
       {
         "byteLength": 201,
-        "digest": "sha256:adb07926dfce473a94ef4d66b0c0392a7572111cd90fcdc0aab66b947f3d8cf1",
+        "digest": "sha256:2fee04f5fd55a4beb379d072acdcb3e3f2756346135078b51a06dec3c8b1f51a",
         "relativePath": ".happier-plugin/agent/runtime/engine.js"
       },
       {
-        "byteLength": 34580,
-        "digest": "sha256:1adf336f252a8546174209d4967e5298d80972089076170f3f0b212f2214a07b",
+        "byteLength": 35284,
+        "digest": "sha256:d8fb21835c815d86e360f83ba622f36c37252f7d3fb32a9a1803c3e102d5aaf7",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 17870,
-        "digest": "sha256:8e9ac5394464a2d5df5f72ec4805f1d44800d974989752d4acf16e41bc3ef1d1",
+        "byteLength": 17977,
+        "digest": "sha256:dc83d4544ed8e462d433ca0c5293a258c82894624b163ff9c1e891469fdd055f",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -42779,13 +42878,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contributions/runtime.js.map"
       },
       {
-        "byteLength": 2147,
-        "digest": "sha256:8606b2ee988494a7c189e78f85b4983fa8a860252c8510f1ae16c20ac4754700",
+        "byteLength": 3008,
+        "digest": "sha256:8b8685c7d1c0069df007a2678dc93a786fa2cdfae76db9b22f1ad718a02518d6",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 2662,
-        "digest": "sha256:4021bfbf3ae48ceb1e9ca24098e2fde34885aeab80baeb1a4bcd496c436639e9",
+        "byteLength": 3188,
+        "digest": "sha256:19ff17d072557327a32a77aa45a34dd0c6e46cdad151991123275b7f5e972e55",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -42794,8 +42893,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 3768,
-        "digest": "sha256:081556de17705e76db90e9299fcb622c7b605ad9366661f2f825df68d6f85482",
+        "byteLength": 3787,
+        "digest": "sha256:d0484019689b9d1dfab19822bcd6569ebd4ebf6ec6aefcf30f51554021ce90f5",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -43104,18 +43203,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 7338,
-        "digest": "sha256:566c6ef059441c0f18943eb138b211cfc184bc5d59807bda77437cf9879c34f8",
+        "byteLength": 7451,
+        "digest": "sha256:026082c3c290d1f38ead245cb4befabd56b1a0fb49243014cb0bc4455c37ad33",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 8472,
-        "digest": "sha256:6cc2ad1af5a398444279f48402eb84a859af7fe955d5f2cc7d7b735dd47098fa",
+        "byteLength": 8608,
+        "digest": "sha256:6411eaeba7e2544ffee240353284047c854a8027922d3552e8fc387963370f8b",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 11726,
-        "digest": "sha256:399073ae06315cde3ec18c02d541eca75ba8fa49cace9e70f76def499f0691eb",
+        "byteLength": 11935,
+        "digest": "sha256:d47ea0b34de4a34b0be2cffc606c32bfe2343fb10f96c79830edb720e35adbb3",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -43169,8 +43268,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 622631,
-        "digest": "sha256:f815a4786ff34e161407350e39e7df8fedc5b1a1cbe3594c6dd21ad42737722b",
+        "byteLength": 621089,
+        "digest": "sha256:4fa89e04922698706830717c68a286ce334b64f1723cf43b1fd2539c38bc8f6a",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -43269,8 +43368,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 1598888,
-        "digest": "sha256:b8f353d72d2987c855e92dc237077caf9212caeee0bf4ad06989f6790f8dab61",
+        "byteLength": 1597346,
+        "digest": "sha256:c56e5c1a623eea2bd167f88278b0e49f94f3b69ef0883391b0226628451e896b",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -43629,8 +43728,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 1190270,
-        "digest": "sha256:db53e65b07256c4aa7c73db50871643baf1440329b543424b2431687f97880cc",
+        "byteLength": 1188728,
+        "digest": "sha256:1d28baa927b048d431436c4e9dbf0e132d11948b42fa007e2c6b27caaaba5aee",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -43844,23 +43943,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 5675462,
-        "digest": "sha256:3c892757c06b5bb7647ff26de642c324db3b64f868f59ebbafa3ac2928e72d55",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-HCFGQ5VI.js"
+        "byteLength": 5684483,
+        "digest": "sha256:7579a5d0a7e7eef53768094404a459871043642b351af8fe861e42b3339c3d05",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-7MFA2FQO.js"
       },
       {
         "byteLength": 209,
-        "digest": "sha256:c5cca89a069417dfae6bf0c587e8323fe32dce6fe471068c2e1897e3f9667619",
+        "digest": "sha256:62f1c1ef2ea183aebd1d88a011f0db46f024d3e3b0eb7cb30c86b4aeb899e2f3",
         "relativePath": ".happier-plugin/agent/runtime/nativeRuntime.js"
       },
       {
-        "byteLength": 67360,
-        "digest": "sha256:f472496d824ca180ad77ce696144cfda87db26f16c189b255f9c23ae538d7c1b",
+        "byteLength": 68158,
+        "digest": "sha256:a508b4d285f1c149b2ade89ec0f64944c6f20a58cf9d4e388e39b9b3b6caafdb",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 16845,
-        "digest": "sha256:6c1cee03b463500c20fe71e7c819886299e33ee097fff3c4cf51195f698230d1",
+        "byteLength": 17036,
+        "digest": "sha256:c05338cf7e9fa4344238ce231a352f000afb4b863ebb8b87d21b315f230fa803",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -44304,23 +44403,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/config/thinking.js.map"
       },
       {
-        "byteLength": 5665,
-        "digest": "sha256:a93dfb4a28efc2cd8163adc7a8c64242b7ba97e21c5091fbd1a024065980c134",
+        "byteLength": 4964,
+        "digest": "sha256:631ff70d0236bfcb4c954032e8b3d67da6834662e24831276047db8af4b537a2",
         "relativePath": "dist/agent/contributions/catalog.d.ts"
       },
       {
-        "byteLength": 6842,
-        "digest": "sha256:875677c6d7a72abf1afa9e05d547602bfdb09781c8856c00426cecad959c7409",
+        "byteLength": 6029,
+        "digest": "sha256:eaf0eeb8db52a014bdb6ef5a2420326655154d675b5a987c2adf97827e8e3271",
         "relativePath": "dist/agent/contributions/catalog.d.ts.map"
       },
       {
-        "byteLength": 5290,
-        "digest": "sha256:cc5b2ff63ec09250e2c8412d3343de96992b5e0f92d165369f880a3bfe8e690f",
+        "byteLength": 4646,
+        "digest": "sha256:34be906c2a4050afe13d7c342a41c84e4683b50d5b822d2c8ae4b804ff1130ef",
         "relativePath": "dist/agent/contributions/catalog.js"
       },
       {
-        "byteLength": 8351,
-        "digest": "sha256:d3811a7afc1857e184ad76b30dc18d709bfb2526b40168a4646fb54a88b24ebf",
+        "byteLength": 7348,
+        "digest": "sha256:ac446b38b43b1841d7d58db96b92bbec33c1a1e25da435f94f01ffbe98220c09",
         "relativePath": "dist/agent/contributions/catalog.js.map"
       },
       {
@@ -44344,13 +44443,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/contributions/runtime.js.map"
       },
       {
-        "byteLength": 10730,
-        "digest": "sha256:a31cf7a0f93a183963c26bb14f272e075e8fefbb8d8555cfccc84ddd13c68496",
+        "byteLength": 10735,
+        "digest": "sha256:7883b70704ed230e8144ef3d070600a74951b870d20a248aa6e7bcec4346fc67",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 7940,
-        "digest": "sha256:aea901e133aa9dde04e2fe12eb5e1f4d01d9fcfe71c4190a86b1a7a69f89b272",
+        "byteLength": 7959,
+        "digest": "sha256:0a3008c43a3ba7c6ade9b7d84b045a3fe2c1d763c6ab94d027dbedc5f268e6ef",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -44359,8 +44458,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 9984,
-        "digest": "sha256:c2b945cf8085d0adec28165fecb083b473bf3ae2cc5589f2e1a3b2e1a163c102",
+        "byteLength": 9994,
+        "digest": "sha256:29185adeee63ed8170be415d6c7bd7ed8c3e8d11aa386dd0a515b3def50793f0",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -44409,18 +44508,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/identity/runtimeDescriptor.d.ts"
       },
       {
-        "byteLength": 7093,
-        "digest": "sha256:d16c9d5e6276fdb774a6047edf0edd131994379b0f7f10400623f45eb4377a26",
+        "byteLength": 7896,
+        "digest": "sha256:bfea137573bdf5decf2f92b98356375eff92794af5b167bfab5a8f0066db8f97",
         "relativePath": "dist/agent/identity/runtimeDescriptor.d.ts.map"
       },
       {
-        "byteLength": 4737,
-        "digest": "sha256:7d61acfab93c2f50c1a6a26fa78937d9cc689e1de9414b9dab91bcca719f4abe",
+        "byteLength": 5461,
+        "digest": "sha256:08f8a701852a15ef3f79f879b699cfee420b28ae9932622ac6a0827d7474267c",
         "relativePath": "dist/agent/identity/runtimeDescriptor.js"
       },
       {
-        "byteLength": 9591,
-        "digest": "sha256:594bd4d207d4f9cc7d6f01262b01b88b1dfadbefdcd58ff836b593f1fe1178a6",
+        "byteLength": 10681,
+        "digest": "sha256:2d33cac0bafde25b4d85d0bec6812571e3ecff67075d6db9e66f7c24d3d995c8",
         "relativePath": "dist/agent/identity/runtimeDescriptor.js.map"
       },
       {
@@ -44745,22 +44844,22 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
       },
       {
         "byteLength": 299,
-        "digest": "sha256:17866ce35f066b73670e3968c05b06c6e2af0099e335c9402630fd78e2268724",
+        "digest": "sha256:d0befb0375119c871b7f058103f9f0b21b55bc10cfd2652366b2f543fc5abb9f",
         "relativePath": "dist/agent/runtime/nativeRuntime.d.ts"
       },
       {
-        "byteLength": 8992,
-        "digest": "sha256:8b65420cf81613ece8efae620e122e1d90773e5aaa8f5344d322c22ed03011be",
+        "byteLength": 5940,
+        "digest": "sha256:a99e750f5cb975af607c573340492ba6d90da83aac164d76b671876c477623d4",
         "relativePath": "dist/agent/runtime/nativeRuntime.d.ts.map"
       },
       {
-        "byteLength": 8101,
-        "digest": "sha256:c0f52764358e85bc78d85bbe49cdcd0f2a293a529603279b17cd0f33b3dd193f",
+        "byteLength": 5229,
+        "digest": "sha256:5ae59897cee4bb8f62c705a603ac8d4a10a646686425c1adc124b879af072a86",
         "relativePath": "dist/agent/runtime/nativeRuntime.js"
       },
       {
-        "byteLength": 15769,
-        "digest": "sha256:209a0869458d783f6789aaaa70b58c36dffbec0907f1709a0f8fb6d709d99d4a",
+        "byteLength": 9729,
+        "digest": "sha256:8f3aa3efb4c0c01a420e5abf77f2da047ffa869c92f47f60418c9d608cc98642",
         "relativePath": "dist/agent/runtime/nativeRuntime.js.map"
       },
       {
@@ -45349,18 +45448,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/runtime/server/sessionRuntime.d.ts"
       },
       {
-        "byteLength": 23689,
-        "digest": "sha256:dc3dd9d74e0d493da8c3979f93d193728e1c0bb67fc95a13a0cf17ff3c639981",
+        "byteLength": 23724,
+        "digest": "sha256:fa93e14feca7ef3610d3edac68e859717b329f9d608800b82c9e7ee9a1e572be",
         "relativePath": "dist/agent/runtime/server/sessionRuntime.d.ts.map"
       },
       {
-        "byteLength": 22250,
-        "digest": "sha256:2d3dc70abdfa5a77c8770381ff57a6c26110e08114cc260044e06e6c52225f61",
+        "byteLength": 22285,
+        "digest": "sha256:1201a73e4825d1b914ddd792576e1de27ab81bf911ec892e12ce14fff86dea60",
         "relativePath": "dist/agent/runtime/server/sessionRuntime.js"
       },
       {
-        "byteLength": 40276,
-        "digest": "sha256:0e895799cbbbc082a253b40bf7dd19eb70892e6981fd345384218d9c1a597041",
+        "byteLength": 40341,
+        "digest": "sha256:00835f115cef3c8ce440eaf6f2d277919036798c401857e978e75ed48611f67c",
         "relativePath": "dist/agent/runtime/server/sessionRuntime.js.map"
       },
       {
@@ -45684,23 +45783,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/runtime/workState.js.map"
       },
       {
-        "byteLength": 766,
-        "digest": "sha256:d3430354910e5f32ebd4a8122d169f1064cb05cbca4efa0a1dcc64eeacf80811",
+        "byteLength": 692,
+        "digest": "sha256:5ccdf116d368602b65c83e5c640bde784d7ccb7270a6d887934dfd367304d2c5",
         "relativePath": "dist/agent/surfaces/sessions/attach/descriptor.d.ts"
       },
       {
-        "byteLength": 3122,
-        "digest": "sha256:e465bcc02fb734beaef659c5feef9898a0dd9100220778266d7c04e2916fbdc3",
+        "byteLength": 2802,
+        "digest": "sha256:f3d351c43dfb711ad3f3c266be76a822e5fcca78febb4456499f1cdf95060419",
         "relativePath": "dist/agent/surfaces/sessions/attach/descriptor.d.ts.map"
       },
       {
-        "byteLength": 1842,
-        "digest": "sha256:c407dfbd12b7d4fff5ccb0651677476d5eb65606f3d8e609e348928e41884f9c",
+        "byteLength": 1888,
+        "digest": "sha256:b3df429e0f98a19effdb73138f2a93145aab9028a40ba036b77d0114294b7c26",
         "relativePath": "dist/agent/surfaces/sessions/attach/descriptor.js"
       },
       {
-        "byteLength": 4041,
-        "digest": "sha256:9180dc110f23c2ec234055ccaf23a161a9de6527ba741a08a46360d9a47ece1e",
+        "byteLength": 4011,
+        "digest": "sha256:c4c47f646828404088131222956092641b9c67c3fdbaa8947851cd6de72299b7",
         "relativePath": "dist/agent/surfaces/sessions/attach/descriptor.js.map"
       },
       {
@@ -46089,18 +46188,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 11337,
-        "digest": "sha256:f6d39372d17ff2e90e7de53f7ece665166590ee4ade4aebf43dbd9bac57aae09",
+        "byteLength": 12051,
+        "digest": "sha256:0fc7e9adf3c091dc04052e01957e0bacd39edf395c2d6a91b9d9f4a9894220aa",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 13278,
-        "digest": "sha256:d0870295c81f9e42e3a86897dd122a19cd44aa32987e3580b5d5b1bf5501f646",
+        "byteLength": 14075,
+        "digest": "sha256:73b6579e65e92a9c898b65b52a26051975085c15b404654497ab2c8dafb8578f",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 18559,
-        "digest": "sha256:ae153a846e8ff28eca1335211af2ed98a7407321a1c83754609849885376fdbb",
+        "byteLength": 19707,
+        "digest": "sha256:c3f295596910a687884f638d9e1c0d8931b4e403a64fc75066c944fef2f8632c",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -46229,23 +46328,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 5583410,
-        "digest": "sha256:25e8776fe444768a7525ec0c321ae2e8298241c5df0b3d2119c0cfe16697a564",
-        "relativePath": ".happier-plugin/.happier-chunks/chunk-MZAJCX2Z.js"
+        "byteLength": 5592773,
+        "digest": "sha256:e2e9901883e88114a0eb5bfcebcfeb935f7d5d4d46b496f28f64b49afd07aff9",
+        "relativePath": ".happier-plugin/.happier-chunks/chunk-DNCX4J4X.js"
       },
       {
         "byteLength": 185,
-        "digest": "sha256:5c49731b0de53737c48d562830439409d15dbd46ce0022c024603e911525b7a7",
+        "digest": "sha256:1e0037c11c41bc984589f3f3e2a229655ab612af99de729c63a2646a20a436d7",
         "relativePath": ".happier-plugin/agent/runtime/engine.js"
       },
       {
-        "byteLength": 27862,
-        "digest": "sha256:88d6caa1702381c4c99fe0ada5263df858be442ba79dfb8aff512269a1a1d85f",
+        "byteLength": 29586,
+        "digest": "sha256:4d310a447eaca774b63f1f7cccda3023dde7e47dcba0069a455cc92cdb45ba2a",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 16752,
-        "digest": "sha256:0c1c5e408a288970f981c8761e6ab0c90b706d137a9232f7fede0f5834ae2829",
+        "byteLength": 16937,
+        "digest": "sha256:e816727ab40697548b2d6f1ff2a16812b0915fe49b7b5d2c6d5d6c089657cf01",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -46554,23 +46653,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/connectedServices/stateSharingDescriptor.js.map"
       },
       {
-        "byteLength": 5892,
-        "digest": "sha256:c48d4fc053de1daf96135a5da8bca11f0494674598b897c8fa7a498aa1d576c2",
+        "byteLength": 5644,
+        "digest": "sha256:a637070f9313f9a6c0bfdbca5126d18c1085731fa16f19af29ddc53755123082",
         "relativePath": "dist/agent/contributions/catalog.d.ts"
       },
       {
-        "byteLength": 3885,
-        "digest": "sha256:70c50101864b92f3b40cfa2317be587fb00e6cd950c981686e5766f956d739a5",
+        "byteLength": 3630,
+        "digest": "sha256:a7f937851be7e368b738af3f6b561785b119f8d00441ba8958e5e98cf2d16e74",
         "relativePath": "dist/agent/contributions/catalog.d.ts.map"
       },
       {
-        "byteLength": 2962,
-        "digest": "sha256:51a014df619118b2dfbd27a75159831e91405ea9e2069a53d6b37f86ed8cbba6",
+        "byteLength": 2768,
+        "digest": "sha256:531644afc191bbc6a4a2cf1cf327b371791c94f44bef8f01a247fbb1fa02193c",
         "relativePath": "dist/agent/contributions/catalog.js"
       },
       {
-        "byteLength": 4412,
-        "digest": "sha256:e56841317cd5dd97518624985d57be3721f2b990afeba562e01c23d4f7bec1c7",
+        "byteLength": 4099,
+        "digest": "sha256:312d3a96bf690e016659776e8a89ed69cccc799094f4b62dc8b70883ea2226ba",
         "relativePath": "dist/agent/contributions/catalog.js.map"
       },
       {
@@ -46599,8 +46698,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 4666,
-        "digest": "sha256:364f499503e1be255ebf57a6704e2994fbcca51a657cb058df1a62a01bb5e3ff",
+        "byteLength": 4675,
+        "digest": "sha256:051b8d9f866f3e7ad7f0e077c0950442daf87b40febb5b4625822a288166e12f",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -46609,8 +46708,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 5428,
-        "digest": "sha256:bde21a0301570131aeff4f8835906d6306c60b5a13fdb4a1268d45cffaba3209",
+        "byteLength": 5438,
+        "digest": "sha256:beac9311f2733ba15434715801017445cf8b6fa831980cebab1b24c03fe19c54",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -46699,18 +46798,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/externalSessions/takeover.d.ts"
       },
       {
-        "byteLength": 3029,
-        "digest": "sha256:a2594a7908aeee75649917430b06b7599756a155397e85ef4e41175fe84d1efe",
+        "byteLength": 3124,
+        "digest": "sha256:ce58f28cd6914a48be42a476becbf46acdec4d9ab360f2071cabc4fe4b857e11",
         "relativePath": "dist/agent/externalSessions/takeover.d.ts.map"
       },
       {
-        "byteLength": 2130,
-        "digest": "sha256:10b5c4e837c95f95b6f1f232640eb45d3bb8bce9efb28d1da7fcf39f3a04d994",
+        "byteLength": 2238,
+        "digest": "sha256:1b93cdbcea92975a21a58e1fcfeacc33f9e5e8001ff168a70e808a1014b858ed",
         "relativePath": "dist/agent/externalSessions/takeover.js"
       },
       {
-        "byteLength": 4520,
-        "digest": "sha256:97267fe4886051dd0ef57c27cd2491a4f9a8601dc9cf854acd02fb2a02be942e",
+        "byteLength": 4636,
+        "digest": "sha256:5430a1b41aa8abca9423f58bb31441ca19db182dabd08eaec9d81308eaf5e0bc",
         "relativePath": "dist/agent/externalSessions/takeover.js.map"
       },
       {
@@ -46855,22 +46954,22 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
       },
       {
         "byteLength": 270,
-        "digest": "sha256:c5c904453b68868fac89c2605eb0a0710ea604b1889eccd0667b90b4a9508ec5",
+        "digest": "sha256:22d4fca327de267a1baf6d6e8aacd9fdebd6070405cf2cd5d75d7f8e5c4462ce",
         "relativePath": "dist/agent/runtime/engine.d.ts"
       },
       {
-        "byteLength": 9432,
-        "digest": "sha256:36a31fae09b445a756b1cf5589892ba73e2ec4a8943a95e7d3d5293d86c8733b",
+        "byteLength": 6615,
+        "digest": "sha256:3c4c19fd8fdd072e5882b0fc3f4eb8c00ae9b88414dfd4c4cc3fe92c5ccb6f10",
         "relativePath": "dist/agent/runtime/engine.d.ts.map"
       },
       {
-        "byteLength": 8624,
-        "digest": "sha256:efb559a05be43ff87ba765b11b63331eb1b6dbd1857c87ef9d020564b74c4f16",
+        "byteLength": 5823,
+        "digest": "sha256:7755e0f594bbf347347586777e00a3a18feda0c85bf15c5d900c871069441c87",
         "relativePath": "dist/agent/runtime/engine.js"
       },
       {
-        "byteLength": 17045,
-        "digest": "sha256:77f76c3b5a858c9543e593b3ef80fb5b3f12641b2e742d85c52c1723f0b673f1",
+        "byteLength": 11266,
+        "digest": "sha256:3e611d36f6d2d903ba6b1fefe680dcc049976dae5c3b5fa8a3f243ccd163e048",
         "relativePath": "dist/agent/runtime/engine.js.map"
       },
       {
@@ -47279,18 +47378,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 6957,
-        "digest": "sha256:081140a2795f3ac87f25a822db67b1f432900c7676f4c7b04a40309104ea6d07",
+        "byteLength": 7233,
+        "digest": "sha256:d5b42157007ddc893506f1973285d19de58362f859790e7afb00bec482037882",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 7906,
-        "digest": "sha256:e0d33e3e71bb83be9a8b6af0fec2bf05fe09949f4960c5faea78d6b7b3ea9f44",
+        "byteLength": 8238,
+        "digest": "sha256:c20534154559f84b7969e4f7015c80237391bd33d5ce3626fb4767fc76661d19",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 10949,
-        "digest": "sha256:90db8cdc79b1e5816dda77832494bead942a26f7f9bf3f51e0d5f09bae1beeec",
+        "byteLength": 11436,
+        "digest": "sha256:f8277f8d3ce1979b6cbe384a01281e9e39a5ee790bfd007e2f7d280e83a54b9c",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -47404,13 +47503,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 2161369,
-        "digest": "sha256:03243708412c083cd70e60beebe931a97a5d6aa7c49c180307e39166f1e6b57b",
+        "byteLength": 2215460,
+        "digest": "sha256:3c683fd4e906abf46ca302f2c091a7c1f942ed61c42b8cb6722b26d996fa4821",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 283470,
-        "digest": "sha256:7be28ecaf93a2f820c7ea65b1906a375a3175064f50425b02e1f232cf1dd6e1c",
+        "byteLength": 290404,
+        "digest": "sha256:4c803fa38ab10a5089ad723c8f739e37f3d7c257f361d77f57013ca75f827e6e",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -47434,23 +47533,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/activate.js.map"
       },
       {
-        "byteLength": 4351,
-        "digest": "sha256:0c0bed27ea62145a0c653e2e56d1340eafd272d08e0cecb829091a33ef40d373",
+        "byteLength": 4166,
+        "digest": "sha256:1e49494954f775c5a41df6f684baa7fc05324c7f086948ab8f33acc20b8a7004",
         "relativePath": "dist/api/client.d.ts"
       },
       {
-        "byteLength": 14268,
-        "digest": "sha256:35e9a35d50804d885999b4712f35f2a86cf953ea995a6336c3d4dfcb590c55d8",
+        "byteLength": 13588,
+        "digest": "sha256:caee79772c7eae93296b4e961ec1e2c5dc4c467c5da8e0d865859f3918840490",
         "relativePath": "dist/api/client.d.ts.map"
       },
       {
-        "byteLength": 7324,
-        "digest": "sha256:9377a3ea96296ea9bea0f78bc71438a1f70ed2c5bed1f22e180ea702f6da24e6",
+        "byteLength": 6965,
+        "digest": "sha256:8d6e50e051e1ae20a9f3e6302e36ee4149cf20b0b99f00b797f05860c406aa29",
         "relativePath": "dist/api/client.js"
       },
       {
-        "byteLength": 17863,
-        "digest": "sha256:e9f56ab6d73a09451328ae96eecf5d5d7956809a72335b408424f7b7ace06781",
+        "byteLength": 16582,
+        "digest": "sha256:39b373a95537f4b1a347845ccaeddaa8043527143e8342f4fc7d1efcc34e8459",
         "relativePath": "dist/api/client.js.map"
       },
       {
@@ -47472,6 +47571,26 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "byteLength": 7181,
         "digest": "sha256:5a9ff57e932af07e0f43c5aafa92d225af6071d570b9dfb11245c61833211a26",
         "relativePath": "dist/api/errors.js.map"
+      },
+      {
+        "byteLength": 1222,
+        "digest": "sha256:0eab65f760f594471aaf66be04ccb7610078ab5d1093925ddbf7644867dbf868",
+        "relativePath": "dist/api/invocationClient.d.ts"
+      },
+      {
+        "byteLength": 4169,
+        "digest": "sha256:2a4449ca50643189c3f7599e693487d961d4e4592edd5024c2f34fced1018fb0",
+        "relativePath": "dist/api/invocationClient.d.ts.map"
+      },
+      {
+        "byteLength": 2989,
+        "digest": "sha256:3590e0c449442eb6c1f12400e8c2dfadfba9cb0a308d2d0e29bb3420b7901025",
+        "relativePath": "dist/api/invocationClient.js"
+      },
+      {
+        "byteLength": 5784,
+        "digest": "sha256:d331490a10cf393fc17dc244d9730abafe3132481d69b0400a5270ddceec4ea4",
+        "relativePath": "dist/api/invocationClient.js.map"
       },
       {
         "byteLength": 2803,
@@ -47534,23 +47653,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/api/types/directory.js.map"
       },
       {
-        "byteLength": 2027,
-        "digest": "sha256:3318e9715a5af25a65707a4fa5e909ef1d864a1395456d18812c2d4a4a8b7c72",
+        "byteLength": 2224,
+        "digest": "sha256:7ecf666be7b248c8200985f7a8628bd448bd4e21bee979e169461d2188ca21b1",
         "relativePath": "dist/api/types/events.d.ts"
       },
       {
-        "byteLength": 4753,
-        "digest": "sha256:9aa5fa49dcfbe12f9eda06e512b7921ee3ca1e5d8349d52481617fade1c7dce5",
+        "byteLength": 5211,
+        "digest": "sha256:01548fe27e22cf119448831d3a36aa53a48d6fec8981d4339ef05c39f622f15a",
         "relativePath": "dist/api/types/events.d.ts.map"
       },
       {
-        "byteLength": 3313,
-        "digest": "sha256:cee925a21b98f7d1f5763e62af0be845660b582327a1552db5e7b1192dc96efc",
+        "byteLength": 3593,
+        "digest": "sha256:1a78acc37274662751c333def0cb2e1a87d63b6d56715f3ada9af3e4e628a0e5",
         "relativePath": "dist/api/types/events.js"
       },
       {
-        "byteLength": 6296,
-        "digest": "sha256:aa8d7542ef906e5c4bcc16373195ec71fbba5ce335ee862817e6d1ac729cbcfc",
+        "byteLength": 6866,
+        "digest": "sha256:e9bb64aa0bc9063fdd297a540072d2ed3cd6f4677e30d33f803415c03340429f",
         "relativePath": "dist/api/types/events.js.map"
       },
       {
@@ -47592,6 +47711,46 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "byteLength": 4365,
         "digest": "sha256:da267c75844a92c31a2e7e35a16914094e894b27684d059fdb4e96caab6a1564",
         "relativePath": "dist/api/types/primitives.js.map"
+      },
+      {
+        "byteLength": 2439,
+        "digest": "sha256:5b3b8cf1c6a1c8a427180a7330923f59658b27bc2fcecd112c0b06ab73a073e6",
+        "relativePath": "dist/composer/candidate.d.ts"
+      },
+      {
+        "byteLength": 11707,
+        "digest": "sha256:144627e993d8f88659297b00db3705033235db19a03ef2b4b766451accd544c3",
+        "relativePath": "dist/composer/candidate.d.ts.map"
+      },
+      {
+        "byteLength": 8486,
+        "digest": "sha256:cba6b2d387b1a5bb6f731c5a88fe3c4eb81342fe67baada67e6f1e84402e627b",
+        "relativePath": "dist/composer/candidate.js"
+      },
+      {
+        "byteLength": 17352,
+        "digest": "sha256:4ba989bcfe981143a092adaf5b59112651a26a5905f21462e7610b4c7fe6b938",
+        "relativePath": "dist/composer/candidate.js.map"
+      },
+      {
+        "byteLength": 1335,
+        "digest": "sha256:eb1b95f06b81ef26e4579c6d7922b048051c757904f61ebe20e3fa56c20a00c0",
+        "relativePath": "dist/composer/reference.d.ts"
+      },
+      {
+        "byteLength": 6255,
+        "digest": "sha256:15b1e9528b20597ea9d6e7366953ceca2362f57b26c0a99bd06741831b08ccdd",
+        "relativePath": "dist/composer/reference.d.ts.map"
+      },
+      {
+        "byteLength": 4973,
+        "digest": "sha256:83379cd0956b708ec4d9fb9ec27aa1df9fc852a968821789bae4c117b6be9ae0",
+        "relativePath": "dist/composer/reference.js"
+      },
+      {
+        "byteLength": 9534,
+        "digest": "sha256:080f7c5b930f84a21cd80a5500ed2dd9513881ae1f1b6b42c04642a0fca846b8",
+        "relativePath": "dist/composer/reference.js.map"
       },
       {
         "byteLength": 1835,
@@ -47694,18 +47853,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/connect/origin.js.map"
       },
       {
-        "byteLength": 2137448,
-        "digest": "sha256:2b5bfacb9dc7e38beb3b6cc490cd7bb3c8c7b16808d0e529d37d6ecd9ca8766a",
+        "byteLength": 2154728,
+        "digest": "sha256:6db88f4773247ef905bef5c8dfdca6c84035e5ca1151d9ea31618e7e8bcebd23",
         "relativePath": "dist/happier-plugin-ui/react-native-web/posthog-issue-detail-native/entry.mjs.bundle"
       },
       {
-        "byteLength": 2122124,
-        "digest": "sha256:366371e0696854603b9a8e857fb152885007e20c5a33a23e883cdc8f3eebea9a",
+        "byteLength": 2127257,
+        "digest": "sha256:85826f53a876bd0ae5aabdcbdcac50037c05c621da36810d43120fc3bb714311",
         "relativePath": "dist/happier-plugin-ui/react-native-web/posthog-triage-sources-native/entry.mjs.bundle"
       },
       {
         "byteLength": 34153,
-        "digest": "sha256:67cd41f15a1f84055c44a3c8f13c65680d3004893543a61fe9281b8615b64396",
+        "digest": "sha256:bbf92d1e885537d6d81248ff9f15e8f89ef9591101cbfea76be0f56da6f61fd3",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/android.bundle"
       },
       {
@@ -47714,28 +47873,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/android.bundle.map"
       },
       {
-        "byteLength": 117920,
-        "digest": "sha256:5ed0d2b9480fd49b785a0804f9d410d10495080dfb7b5a22696c03fd48ecab1b",
+        "byteLength": 152056,
+        "digest": "sha256:59c59f38bdde216679399ec2318efa59615b2a439ce2607507fb16f462ffb5af",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 50884,
-        "digest": "sha256:3703fcf1f39b368266ca38ef05550bee16f4859e81e27d744fdcb35fb4245e19",
+        "byteLength": 69640,
+        "digest": "sha256:8476c70eed8bc636e63f4138645e09783a35564be836ecaf27f44febabae53a2",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5828285,
-        "digest": "sha256:6c995bf1843497f1477a5517fc48ac665d5cc489a9ae857bc7e494e7c40dca59",
-        "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
+        "byteLength": 5825442,
+        "digest": "sha256:245b55866104263ba9709d1ac1ad3d2b46714941e222a5eb6c004087c1820fbe",
+        "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-c26200.chunk.bundle"
       },
       {
-        "byteLength": 1156842,
-        "digest": "sha256:4def76b7fcb86431d11ef50ff9c53651b58890cdcc22a0025b109d277846b7f9",
-        "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
+        "byteLength": 1157087,
+        "digest": "sha256:6a1c9611c04b649aaaadef91263c9bbb510a9c6071e0fbf9d76d9bb72260caaf",
+        "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-c26200.chunk.bundle.map"
       },
       {
         "byteLength": 34149,
-        "digest": "sha256:68bc4d32a0377a20f6f2f68e0886bb3f7a0a0a05b5da30139882eae8bf733397",
+        "digest": "sha256:de90f681db9202a8582244e6ef9d3e91db46e0eee3129b8815763fd58c6ab496",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/ios.bundle"
       },
       {
@@ -47744,24 +47903,24 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 117920,
-        "digest": "sha256:5ed0d2b9480fd49b785a0804f9d410d10495080dfb7b5a22696c03fd48ecab1b",
+        "byteLength": 152056,
+        "digest": "sha256:59c59f38bdde216679399ec2318efa59615b2a439ce2607507fb16f462ffb5af",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 50884,
-        "digest": "sha256:3703fcf1f39b368266ca38ef05550bee16f4859e81e27d744fdcb35fb4245e19",
+        "byteLength": 69640,
+        "digest": "sha256:8476c70eed8bc636e63f4138645e09783a35564be836ecaf27f44febabae53a2",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5828285,
-        "digest": "sha256:6c995bf1843497f1477a5517fc48ac665d5cc489a9ae857bc7e494e7c40dca59",
-        "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
+        "byteLength": 5825442,
+        "digest": "sha256:245b55866104263ba9709d1ac1ad3d2b46714941e222a5eb6c004087c1820fbe",
+        "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-c26200.chunk.bundle"
       },
       {
-        "byteLength": 1156842,
-        "digest": "sha256:4def76b7fcb86431d11ef50ff9c53651b58890cdcc22a0025b109d277846b7f9",
-        "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
+        "byteLength": 1157087,
+        "digest": "sha256:6a1c9611c04b649aaaadef91263c9bbb510a9c6071e0fbf9d76d9bb72260caaf",
+        "relativePath": "dist/happier-plugin-ui/react-native/posthog-issue-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-c26200.chunk.bundle.map"
       },
       {
         "byteLength": 34168,
@@ -47774,23 +47933,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/android/android.bundle.map"
       },
       {
-        "byteLength": 42907,
-        "digest": "sha256:44752985d1bdc6c93eb53004a07288a8eee7746f6f2c1ac4a28400cd01ab5578",
+        "byteLength": 45414,
+        "digest": "sha256:192423bb39aa209898caa46e4be65dd33d32b457510b43c83eb61843434ee50d",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 20301,
-        "digest": "sha256:37bbafd6ecc9ff961603d8492c83763c19e6c4aabe48b30ef0d3ff3d6a62f4cb",
+        "byteLength": 21431,
+        "digest": "sha256:d83772a5c34a2d08a8936c5b77c37e7128f78c07b1cb2d00dbb758c829eba735",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5914713,
-        "digest": "sha256:e5c250292ea79e5c9ccbbd4f123dbbd89a36fb4a3c6b5aec368ab166f9d6e71b",
+        "byteLength": 5915994,
+        "digest": "sha256:fa058874aa2be0e187fff49003f43309800ce0e8ef5b0eea16440d1645dea3b7",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
       },
       {
-        "byteLength": 1172054,
-        "digest": "sha256:b4aecaad0d76b9c2457ba22bc001f88eb92406ec51e1e954dce653dcbaf8ccc0",
+        "byteLength": 1173191,
+        "digest": "sha256:192193ba74d76e089a9156f31d035ee241935fc3936dd5d00287861b920d8333",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
       },
       {
@@ -47804,88 +47963,88 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 42907,
-        "digest": "sha256:44752985d1bdc6c93eb53004a07288a8eee7746f6f2c1ac4a28400cd01ab5578",
+        "byteLength": 45414,
+        "digest": "sha256:192423bb39aa209898caa46e4be65dd33d32b457510b43c83eb61843434ee50d",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 20301,
-        "digest": "sha256:37bbafd6ecc9ff961603d8492c83763c19e6c4aabe48b30ef0d3ff3d6a62f4cb",
+        "byteLength": 21431,
+        "digest": "sha256:d83772a5c34a2d08a8936c5b77c37e7128f78c07b1cb2d00dbb758c829eba735",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5914713,
-        "digest": "sha256:e5c250292ea79e5c9ccbbd4f123dbbd89a36fb4a3c6b5aec368ab166f9d6e71b",
+        "byteLength": 5915994,
+        "digest": "sha256:fa058874aa2be0e187fff49003f43309800ce0e8ef5b0eea16440d1645dea3b7",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
       },
       {
-        "byteLength": 1172054,
-        "digest": "sha256:b4aecaad0d76b9c2457ba22bc001f88eb92406ec51e1e954dce653dcbaf8ccc0",
+        "byteLength": 1173191,
+        "digest": "sha256:192193ba74d76e089a9156f31d035ee241935fc3936dd5d00287861b920d8333",
         "relativePath": "dist/happier-plugin-ui/react-native/posthog-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
       },
       {
         "byteLength": 11356,
-        "digest": "sha256:c7ee7e72adcd5836aaf981eac0b575582d46464b9e4ecbf9969eebbd9ccec863",
+        "digest": "sha256:a1d8491aa006faf1a3a0d03912b1eb1d6d2a1ccd5be6bb7f9070611bcb4a1bc2",
         "relativePath": "dist/happier-plugin-ui/ui-artifacts.json"
       },
       {
-        "byteLength": 7879,
-        "digest": "sha256:be38fcaf3edeea250334c24072e9e9728ced09fad7d77b0fad50e54b7a1af795",
+        "byteLength": 8221,
+        "digest": "sha256:bdb79db25c3b3d9d88c7a48cd8b5923ecdf7d66f3f8912f351ba959559ce0ee9",
         "relativePath": "dist/index.d.ts"
       },
       {
-        "byteLength": 12827,
-        "digest": "sha256:029ffe73b0fb04244b6cd3adcd399fcafd7708294a47a6eafffc7c9e39e1a30b",
+        "byteLength": 13344,
+        "digest": "sha256:814d7ed930f08898f92a9ae4ccef111435715bf21369deb5d38846d2076276e0",
         "relativePath": "dist/index.d.ts.map"
       },
       {
-        "byteLength": 4857,
-        "digest": "sha256:e77b81a0eab2f0eac2550de7aa2332cace47e5d58cda85f4a95250452efa8668",
+        "byteLength": 5121,
+        "digest": "sha256:41df68796f3a36eca693357fcbfd8fad068142495744c59012e000f104da4f1a",
         "relativePath": "dist/index.js"
       },
       {
-        "byteLength": 11034,
-        "digest": "sha256:d37a08ed77a22d016d61f1f97b10541bc8478452e486706a82937e2b89d66408",
+        "byteLength": 11506,
+        "digest": "sha256:d715f60be7cf9ca330116afc559d4ed6f21a2f87517300a1b359172065b552e5",
         "relativePath": "dist/index.js.map"
       },
       {
-        "byteLength": 2267,
-        "digest": "sha256:e5aee1831c36bc5e5191250e44593c1a29bd0f6c0417478ec08fa1f503230193",
+        "byteLength": 2334,
+        "digest": "sha256:565a6b98f9fd8e6fc66e68f31749af9fcde46cc19c9e3061bab697a82b8b1ca9",
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 22810,
-        "digest": "sha256:e112d6a0f6348d33b13ecc87324ddb9c06bed893b3d7c836dfaa11ac0769c8bc",
+        "byteLength": 23407,
+        "digest": "sha256:c0313368951eae628746e2e6668f0e9ae6227e64a98c9168de6ff554d50a64dd",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 22290,
-        "digest": "sha256:785430f103e5a49c6cc80321958b90a214b29100184eca55900f7c9f675183a8",
+        "byteLength": 22856,
+        "digest": "sha256:2a1de51541af4a70bd4d5411ca638fbfaef39151bbb21ebc7b036a13392ff839",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 32656,
-        "digest": "sha256:f666bcae789f46c5c107013b009b1c4c6637ab3b5fe67f08638f6beacca5b4fb",
+        "byteLength": 33520,
+        "digest": "sha256:a0f375a774cb99fa23d8e018aaee3233e8cb4af714ab90ee5462aae587e706a8",
         "relativePath": "dist/manifest.js.map"
       },
       {
-        "byteLength": 4671,
-        "digest": "sha256:6c78df8e02796c9ba7d75bb538f26b99078c31b556098bdef33baf9a25aab2a3",
+        "byteLength": 4829,
+        "digest": "sha256:cdd2bac04fbb5fd4fde006cb8388f92bc53eb5c6a3fd6d3c456e5c875c1b1e8b",
         "relativePath": "dist/posthogContracts.d.ts"
       },
       {
-        "byteLength": 5617,
-        "digest": "sha256:af4af57ddef80d642962100373b373f63523b86a8571ccc546def09bf5320582",
+        "byteLength": 5819,
+        "digest": "sha256:4c55fbb65ba003c84813f0739473a8af989bd35baa6eeded426e0b5eba7b28de",
         "relativePath": "dist/posthogContracts.d.ts.map"
       },
       {
-        "byteLength": 4479,
-        "digest": "sha256:86cc98aa04c0d1ebb1abcbf558308d0bda89fe04ddf795f3fb1dba9511f573f5",
+        "byteLength": 4629,
+        "digest": "sha256:6c77bb4477697035abe3562c6549433c7e9ddd6f0346e89e52ce549d77c2dce2",
         "relativePath": "dist/posthogContracts.js"
       },
       {
-        "byteLength": 5773,
-        "digest": "sha256:f45966c2a319f2d48e7935aa82a05a9bad62ba4910cae5d0e0b2d4a7508dfe6c",
+        "byteLength": 5985,
+        "digest": "sha256:fdca9f2172e145f031e79d6580a9ceb72148e5b13cc48765bda06725f2913671",
         "relativePath": "dist/posthogContracts.js.map"
       },
       {
@@ -47949,23 +48108,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/source/detail/issueEvents.js.map"
       },
       {
-        "byteLength": 9571,
-        "digest": "sha256:e8c6f01620c36e31577984e799fd1b9a636cbf4b2a46c86d8beb6c06fa3185d4",
+        "byteLength": 11884,
+        "digest": "sha256:06464df1fdf89752714b7d04aec28cbbbd812cba6447ddfad18f818f20f0ee00",
         "relativePath": "dist/source/detail/issueEventsContract.d.ts"
       },
       {
-        "byteLength": 10338,
-        "digest": "sha256:3c2c4831cea8132d0422e7e4e35c54b234bd6451bdc7d10c8ff80fd429f689af",
+        "byteLength": 12989,
+        "digest": "sha256:26e730c01dc71fcdbb6b366fca41f56ae12319a6fc0d7d5bd07f2d3cba2b9814",
         "relativePath": "dist/source/detail/issueEventsContract.d.ts.map"
       },
       {
-        "byteLength": 8284,
-        "digest": "sha256:3f44cbdc1fb0a62f637955c48847afc67bf171dd7705652776da3e9afd109a13",
+        "byteLength": 10523,
+        "digest": "sha256:bde8df26e93c69b5bbce70db0eeaa284c887f13c9e413baad000ab51ed46900a",
         "relativePath": "dist/source/detail/issueEventsContract.js"
       },
       {
-        "byteLength": 13791,
-        "digest": "sha256:908faf818664b0723522799997de256a7451d710784076fd3182835df5a0b2c9",
+        "byteLength": 17381,
+        "digest": "sha256:c36ea4fc40184d2b0997f0df9d019c5ff66bed54aea10449523884a4d65c2718",
         "relativePath": "dist/source/detail/issueEventsContract.js.map"
       },
       {
@@ -48047,6 +48206,46 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "byteLength": 16198,
         "digest": "sha256:a0d3a357b5aeb4013f948f832798d896f47d0af6835141c1e61443495d4d69bd",
         "relativePath": "dist/source/instance.js.map"
+      },
+      {
+        "byteLength": 625,
+        "digest": "sha256:cd1791f4c5769be180b97475ab8fdb36878e8026dbab320b3836a6c70f67169c",
+        "relativePath": "dist/source/invocationDeadline.d.ts"
+      },
+      {
+        "byteLength": 1296,
+        "digest": "sha256:388420e3b1e4b7ac6731f20f03ef6fd4159c347a3ef6f0956c810d15523ffe8b",
+        "relativePath": "dist/source/invocationDeadline.d.ts.map"
+      },
+      {
+        "byteLength": 771,
+        "digest": "sha256:b9ac7567315a21e2f1dae6c67713151dc294816b7ee8161432832a09c04170fd",
+        "relativePath": "dist/source/invocationDeadline.js"
+      },
+      {
+        "byteLength": 1419,
+        "digest": "sha256:b9228bdab2e130b98756fa029fc1904819ee287422baf749261234f34fad515c",
+        "relativePath": "dist/source/invocationDeadline.js.map"
+      },
+      {
+        "byteLength": 1132,
+        "digest": "sha256:b9271ce5d8206dc760809fdd57fb98eb97ebe966149545fa5d1a6c9f856c1354",
+        "relativePath": "dist/source/invocationScope.d.ts"
+      },
+      {
+        "byteLength": 3013,
+        "digest": "sha256:e0871c5823554bb6ecffc0de151b7fbf470f8ed60bd02e6b5929c4f15412200e",
+        "relativePath": "dist/source/invocationScope.d.ts.map"
+      },
+      {
+        "byteLength": 1500,
+        "digest": "sha256:d7608b5acc68d7e48626d3089f7d247f2c3ae4a0561ef012583c0432849f91ab",
+        "relativePath": "dist/source/invocationScope.js"
+      },
+      {
+        "byteLength": 3461,
+        "digest": "sha256:73c91122d9e30b511f1682c637550094274a9874f3622a118aee905f91e0080e",
+        "relativePath": "dist/source/invocationScope.js.map"
       },
       {
         "byteLength": 2345,
@@ -48169,23 +48368,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/source/map/state.js.map"
       },
       {
-        "byteLength": 9922,
-        "digest": "sha256:1bc8f0d6af59bcbb6fc88beb16d4ac7be69a9d093b8b3476424bb289f0c9aeba",
+        "byteLength": 9822,
+        "digest": "sha256:dae713489f2a9ae106d7e895e781e077750a7cec6ec6eb377d6b4143a3eca8ad",
         "relativePath": "dist/source/operations.d.ts"
       },
       {
-        "byteLength": 66917,
-        "digest": "sha256:a36bc36d8b2455ac5dc5a5aa5c258379fe8ab64f745fefeda7578a3e4e372e5a",
+        "byteLength": 62051,
+        "digest": "sha256:c50091cfc6327ade951cdfecd02a01aa24c4a9f33b5d7c5cd9cabf82bdc78682",
         "relativePath": "dist/source/operations.d.ts.map"
       },
       {
-        "byteLength": 53874,
-        "digest": "sha256:19777ba35b98125874841d48abe40665de601386be7f79ebec2869edec57bcfb",
+        "byteLength": 50784,
+        "digest": "sha256:924bbb69a30c1ab8faded6f79403b999263ee8806089c932494eabe6e5cd5208",
         "relativePath": "dist/source/operations.js"
       },
       {
-        "byteLength": 101060,
-        "digest": "sha256:ca6f9bcafeeb1bfdab297ca060446a924d0eb95fcd2b912d98bc0c8db4692b17",
+        "byteLength": 94286,
+        "digest": "sha256:9cc3ca9a77a5adfbab6c806aba7d8159c8dc814f2198a10385ab6efc3841f4e0",
         "relativePath": "dist/source/operations.js.map"
       },
       {
@@ -48309,23 +48508,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/detail/model.js.map"
       },
       {
-        "byteLength": 3692,
-        "digest": "sha256:dac9ac1cee90d117110d2f58524e2547c8c89b1cd89c0eee0a62140d3d23947c",
+        "byteLength": 4791,
+        "digest": "sha256:f76f8cd42be7f148708ff79f29dfc602466d123c3a3f689d6c6eb6d4ca624f70",
         "relativePath": "dist/ui/detail/occurrenceController.d.ts"
       },
       {
-        "byteLength": 12719,
-        "digest": "sha256:76282cfd199775d11dd2e29d435e1cee4ad3a415713650ff5ded75f8b5c04765",
+        "byteLength": 15853,
+        "digest": "sha256:66f126e28fa95308d1bdbfb068eb9855adf866b563a275f18d933d2691ec2d19",
         "relativePath": "dist/ui/detail/occurrenceController.d.ts.map"
       },
       {
-        "byteLength": 8028,
-        "digest": "sha256:983b92543238b3c1ea6f5eeb04155042f27b274834ba69f8a7c1bbb756b47e0e",
+        "byteLength": 9870,
+        "digest": "sha256:c3dab9c748665afb4a3b3b447ffe1a6dc9aaff9a8ec78e4dd07890daf97bfa68",
         "relativePath": "dist/ui/detail/occurrenceController.js"
       },
       {
-        "byteLength": 17085,
-        "digest": "sha256:feb4dd668791e76ab950e8d83af36083704d19ce51443a9e5969be4b4de46986",
+        "byteLength": 21159,
+        "digest": "sha256:6ed6aa83d85c515b96ed4d879ea51c57a7017fc3e727ddb7e0d177cfd6e2dc6b",
         "relativePath": "dist/ui/detail/occurrenceController.js.map"
       },
       {
@@ -48374,18 +48573,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/renderSurface.d.ts"
       },
       {
-        "byteLength": 34657,
-        "digest": "sha256:7a8b8aef6a7d61113b5a67d5f6e23963a2375c4cd5816f789eba7ba827407a57",
+        "byteLength": 36670,
+        "digest": "sha256:3e654114746418abedc69e9164cdd025cfd2b3383dd375888b7a295d7491f710",
         "relativePath": "dist/ui/renderSurface.d.ts.map"
       },
       {
-        "byteLength": 24193,
-        "digest": "sha256:3cbc61ed88b1dd1669b6582e42c68728ee69f87a86f364118fc2550d1f4c10e9",
+        "byteLength": 25862,
+        "digest": "sha256:622515f481dcf1f98838bbbd50fd462ae5ca207579cc8d5f95b3c2facc780eb4",
         "relativePath": "dist/ui/renderSurface.js"
       },
       {
-        "byteLength": 52085,
-        "digest": "sha256:ad4ac7a50046ecd6a5b1898b1befd7dfb769abf7aeb73b263042dd8885bdc604",
+        "byteLength": 55196,
+        "digest": "sha256:23be672ab50cc290cd948cd821d979efd45f12fb3238e493e5d040cc6a5a04ef",
         "relativePath": "dist/ui/renderSurface.js.map"
       },
       {
@@ -48414,18 +48613,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/settings/renderSettingsSurface.d.ts"
       },
       {
-        "byteLength": 17848,
-        "digest": "sha256:d5217343b4b6d53a6ce378ddb2e280bd8e53fc5dda342d6f82c37aeb1fa81f56",
+        "byteLength": 19476,
+        "digest": "sha256:4258767c334c3af9c16fae8a277af9428a5626d25b583dd6483b84b0d760be76",
         "relativePath": "dist/ui/settings/renderSettingsSurface.d.ts.map"
       },
       {
-        "byteLength": 16707,
-        "digest": "sha256:867f53954a0e79d6ddf0e7714800c66bd093be7a4f8053dd4331d4288b5bc451",
+        "byteLength": 18480,
+        "digest": "sha256:a5c540640f1d2b37f42cbbd95bdb18560d749eb1a3c60500ae2b8c177f8f3091",
         "relativePath": "dist/ui/settings/renderSettingsSurface.js"
       },
       {
-        "byteLength": 32128,
-        "digest": "sha256:e94804bed16ed34bf0db78c0f76720af60b931bcf6f47c074f252cf9fcce8759",
+        "byteLength": 35037,
+        "digest": "sha256:ef86a344b330ee4f48046390ee31f395870051ca60d8925aae5f3a35f5d10826",
         "relativePath": "dist/ui/settings/renderSettingsSurface.js.map"
       },
       {
@@ -48469,13 +48668,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": ".happier-plugin/agent/runtime/factory.js"
       },
       {
-        "byteLength": 735273,
-        "digest": "sha256:29e8304f9930766d3c0bf8c4e1ab06fbd488871bc15ae6c37ec836afd24cf6fe",
+        "byteLength": 733840,
+        "digest": "sha256:56de765bc1c6927524c3fe180d2962bcf9c3d262ded96d30b0150042016f95b2",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 3547,
-        "digest": "sha256:4f97b9c72f9aedd4eefafec481df39136e825360f3294c4edf09e2a95ca12cdd",
+        "byteLength": 3654,
+        "digest": "sha256:dbd40ec37c4087fe657f39eae2bafd9ec68a7bd3a5ecfd731d3c06630747a9fe",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -48524,13 +48723,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/acp/definition.js.map"
       },
       {
-        "byteLength": 1315,
-        "digest": "sha256:5edee2554b7a6662ef4c2b2d515b37dd5bf9a61f7aa33a7c1a29fbb8e3cd90fa",
+        "byteLength": 1320,
+        "digest": "sha256:e806fee32e8ea957dec7950754a3295cc3e4d94fdee88e461ae641f03a85a05c",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 1598,
-        "digest": "sha256:b88d10e23efdec305ec5becac2d8eb01b842e4977886c77c5a93b6116f9142f8",
+        "byteLength": 1617,
+        "digest": "sha256:5cabda9e65eb440197c006020ffaa723e830fde0360ed450532f03ee68c2943b",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -48539,8 +48738,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 2226,
-        "digest": "sha256:76a39738ce3da98dc02bea8e3cb53446874c57c9d3487475a57c1d889d2ee716",
+        "byteLength": 2236,
+        "digest": "sha256:c3e7b1d5d194308c5eb3688c4ce3d53a17458914dd9ba58e60ad3a13616bf073",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -48589,18 +48788,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 2536,
-        "digest": "sha256:56a71d950d270a401fd102985c56ee68044b338c6ffa62c02d6519d070f1a7b5",
+        "byteLength": 2649,
+        "digest": "sha256:a4ece8c1c404429973d1feb41e10d5460e60127113b977d441018404e04a2b09",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 2852,
-        "digest": "sha256:bf8bd7ece37b7ae34bcdca2da7632d315228948095d0b354d2fd0d336bc08c03",
+        "byteLength": 2988,
+        "digest": "sha256:59e729d35ebe87ece934bc294c4bd86447c38667ee764383a9c5a30fbe8a8107",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 4286,
-        "digest": "sha256:85c58a95ddf60c6edf42bfe53a8a266f4456fdb0b6f9fe2e4243d9bcee94f986",
+        "byteLength": 4495,
+        "digest": "sha256:3f4213cbeb18daf0f15911dabf0008ba4b98383b09beefd0625b2c6a3037bff2",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -48614,13 +48813,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 4667355,
-        "digest": "sha256:04d8b44590da81cbfb0b05c2f30e1e2b1343571fe4b03fea6fd129cc853b9da8",
+        "byteLength": 4673852,
+        "digest": "sha256:7a355da0defc5319d448c8dbd257830ee9b228ff51e4245dad9b69d52273af31",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 4831,
-        "digest": "sha256:015f3f2385adfd37ee6f757e3fb105b4024f976d48db9fa19e74fea5f5645a06",
+        "byteLength": 4940,
+        "digest": "sha256:9a52561867aa40f45a89f39b20104e223cfece1c94340ebcd812d9a06d92d677",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -48644,13 +48843,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/activate.js.map"
       },
       {
-        "byteLength": 1239,
-        "digest": "sha256:9dc1be052836ca4e95e7097232f3077f2c2a355d8555a19e0ccd9731ff904f53",
+        "byteLength": 1246,
+        "digest": "sha256:dc2c766aadca686f5538223716ed49c46f20d21e888c432c822a96d8697ac8ef",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 1521,
-        "digest": "sha256:f6d9ff3529ed7995da6dedf78206be97c2594a358139a2c2c82e950ff77333c2",
+        "byteLength": 1541,
+        "digest": "sha256:baafe09e1005f292ff412b837556477d4538d90e58742b27020b1e89a46249ab",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -48659,8 +48858,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 2126,
-        "digest": "sha256:74de42ca8964dadea3c26f204adbd0dd9be672619594c10f74e85ff425dcbc90",
+        "byteLength": 2136,
+        "digest": "sha256:593fdfacd40b76dded7bf10b57df3c6090b6995094038c099d5268799d8aed24",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -48889,18 +49088,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 3747,
-        "digest": "sha256:4aea0fef95a3cc1048f21b177b6e3d3f49b839a0b01903c716c227bb557af6a9",
+        "byteLength": 3860,
+        "digest": "sha256:708d4cb05d8c1321675f59525e2253b91407f4e8aeba4d77d1ad4c37ff57b634",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 4059,
-        "digest": "sha256:59ba12b788d9837b66a8a28e42762572b581b1735724b6ae8379f1105de6b07a",
+        "byteLength": 4195,
+        "digest": "sha256:b3f7c4d4718f53e4ba0934618c159a30c013fa4300cf0351f5f7589a5046e4bc",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 6028,
-        "digest": "sha256:1ca08008f31246caa8cdfb3b5a8693c31601c7332090598bd1f8d1876d33e167",
+        "byteLength": 6237,
+        "digest": "sha256:b6ee60f0b944f25729cbce97080580958dd09a9782adfa4eacb306c93e47f04d",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -48939,13 +49138,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 4666767,
-        "digest": "sha256:fcc37909fe9d569faf2e99678a4e48058820e7091f0b705764abaa39ee40a5bf",
+        "byteLength": 4676199,
+        "digest": "sha256:8b5a3e5af6977bd4aab5062f3b5449a4e4bfdcd224f08128803de21ca6dca018",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 5943,
-        "digest": "sha256:56038fc0d29bab16b274bbb502dc20ab243798bc94fdccb3fabfeee66315459b",
+        "byteLength": 6052,
+        "digest": "sha256:b23901ca84c8310ab568be8b5993e7c67bf6e9a92385abf1bc71d02e00cbd4df",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -48969,13 +49168,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/activate.js.map"
       },
       {
-        "byteLength": 1236,
-        "digest": "sha256:78bb9363d8196d1df90063694aced68755654126ce354d65cc54a9f774f257c5",
+        "byteLength": 1243,
+        "digest": "sha256:3f52b81d8e939cb2ef8deabe5778494797c9a3c3ec6d85e77eb5c0a7e6a8b93d",
         "relativePath": "dist/agent/definition.d.ts"
       },
       {
-        "byteLength": 1532,
-        "digest": "sha256:9f97a28ed75b81fd8122e696482058e21cd0e41b3b0b22b3fac2f4c2b7ac176a",
+        "byteLength": 1552,
+        "digest": "sha256:fe9af98c3ec856ef625c15da804fc74bb8fc779ba392fcab7d876450fc47fedf",
         "relativePath": "dist/agent/definition.d.ts.map"
       },
       {
@@ -48984,8 +49183,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/definition.js"
       },
       {
-        "byteLength": 2149,
-        "digest": "sha256:3b8e4c0d1860f0e200863f80fecba2a2f0458d63fd992241288d325797291fcc",
+        "byteLength": 2159,
+        "digest": "sha256:9bd60ccc64bfca37d8f4e6c271dc56bb2e7f589b6fff93520fa001ec7f83daf2",
         "relativePath": "dist/agent/definition.js.map"
       },
       {
@@ -49094,18 +49293,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/agent/reviews/execution.d.ts"
       },
       {
-        "byteLength": 17869,
-        "digest": "sha256:ac90613e4665765e1efb92dbaff4777a2a360a59481c651abece7c1e94aa2c9e",
+        "byteLength": 21692,
+        "digest": "sha256:81c5012ac8429c59a1a9ebe8895e77e2a0fc497c379db3b422784809d60e3cd2",
         "relativePath": "dist/agent/reviews/execution.d.ts.map"
       },
       {
-        "byteLength": 15946,
-        "digest": "sha256:7e0f0e66d72b5c58da7dab6a4478fbd31e5403034685556fe5c39cf38a9252d8",
+        "byteLength": 19816,
+        "digest": "sha256:cae35da056ad5f33edac2962fc152c6f9d448c141ad84df80121b43c987e2519",
         "relativePath": "dist/agent/reviews/execution.js"
       },
       {
-        "byteLength": 31796,
-        "digest": "sha256:c32b8f3c8703a8469e571795a0e4fb2eb9e06148e1554c1300bffa337c59538b",
+        "byteLength": 38588,
+        "digest": "sha256:ebaaf13494c94fb1f3519fdff38851e1522ab9195ccb26f03e77dc70d4d3ea20",
         "relativePath": "dist/agent/reviews/execution.js.map"
       },
       {
@@ -49274,18 +49473,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 4182,
-        "digest": "sha256:9762c145459c706eece5e4408b3ae2ceb25c0dad745d0b88e307fcc23c32f548",
+        "byteLength": 4295,
+        "digest": "sha256:70ea14fc2b2f78f8e5cd0afbb4bb6a9986bb137c11622e42865c706125561d2b",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 4521,
-        "digest": "sha256:56a1b07e001b7b7c74044a15ca9eb80f6ef3f1f6bcd133e15b2f7212258504d5",
+        "byteLength": 4657,
+        "digest": "sha256:c59250fd4c24463f25fcfb83a6bb7d0fdd742901bc0b199d1b5cfb6d4f14a5e1",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 6816,
-        "digest": "sha256:bc629986c3d9f162328d6f86a597f93411f0c735f5e3cd82c46e40261cccaea3",
+        "byteLength": 7025,
+        "digest": "sha256:42a575f06f9f04da661874079806861697f14ae911a45a48d9091aca82c23522",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -49329,13 +49528,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 2357960,
-        "digest": "sha256:04221afddca4ec24d8d2aa2561a4bdea59e40a7f6f205da466b9ad8168c62c98",
+        "byteLength": 2358586,
+        "digest": "sha256:df04b610b5490df6474b181687e4d92147e2b79ba65409a3dd269c547f187ef5",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 1090459,
-        "digest": "sha256:661a19078f1e9ae50dad5a3f911ab177b73b059644980b9ef0191557636d6eef",
+        "byteLength": 1091321,
+        "digest": "sha256:81f848eb19771db285c99cf9a5f020fa37ae90c9b6e87262c0239d84943da7f0",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -49459,13 +49658,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/detection/remoteUrl.js.map"
       },
       {
-        "byteLength": 2175112,
-        "digest": "sha256:60d94f24233cda01e9659fc24d626c47eedf5ae5b226996824356f6d920a7081",
+        "byteLength": 2178279,
+        "digest": "sha256:3353e897363a4c9cc667f2790d47f3da18e40c165bf184a77f5f289a2c754ff1",
         "relativePath": "dist/happier-plugin-ui/react-native-web/azure-devops-detail-native/entry.mjs.bundle"
       },
       {
-        "byteLength": 2101998,
-        "digest": "sha256:5e77ae1c6f3bab4365c8cdd09a1e0b9818a345407c6e530c6508939871586ea6",
+        "byteLength": 2104139,
+        "digest": "sha256:27f7e31071c263b59af907dc61365ad9445b63b125fb1eab636499f8692fbeba",
         "relativePath": "dist/happier-plugin-ui/react-native-web/azure-devops-triage-sources-native/entry.mjs.bundle"
       },
       {
@@ -49479,23 +49678,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/android/android.bundle.map"
       },
       {
-        "byteLength": 320792,
-        "digest": "sha256:c805418ee3bb6ed02a08650c9ce37daf58505c7c5772a4222518fa7e3c432f59",
+        "byteLength": 324112,
+        "digest": "sha256:8b6d7af5e11c7def7d159245bfc43a0d19bf4e5ca2846952b8c0a8f1a2e9e859",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 146078,
-        "digest": "sha256:26cba119cec297e63cc3a0fdba6de29ad7771d0bcaa9ccb945975dcc41fc95d7",
+        "byteLength": 147310,
+        "digest": "sha256:2c8b808deeabb929e817516f47e521c5fa93b2cd3811f5b471c550ad6b81cb55",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5861845,
-        "digest": "sha256:7a479e1ab147b6eb3f3a4e9395f23c02736f7fd62beee4840bb86abbca27b625",
+        "byteLength": 5852652,
+        "digest": "sha256:01d1cc27a4557d51063080c8f0c4dca44d21322d1c8e44d89828eaac42c1ba31",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
       },
       {
-        "byteLength": 1168436,
-        "digest": "sha256:a4149fff45db1585e9e7c330cee62761919d42f3d530124120669c719a0692e3",
+        "byteLength": 1167102,
+        "digest": "sha256:f382b71a84c651e7f97039f80b5c3aeed846ab68c347e5480ae0a415473faa8c",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
       },
       {
@@ -49509,23 +49708,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 320792,
-        "digest": "sha256:c805418ee3bb6ed02a08650c9ce37daf58505c7c5772a4222518fa7e3c432f59",
+        "byteLength": 324112,
+        "digest": "sha256:8b6d7af5e11c7def7d159245bfc43a0d19bf4e5ca2846952b8c0a8f1a2e9e859",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 146078,
-        "digest": "sha256:26cba119cec297e63cc3a0fdba6de29ad7771d0bcaa9ccb945975dcc41fc95d7",
+        "byteLength": 147310,
+        "digest": "sha256:2c8b808deeabb929e817516f47e521c5fa93b2cd3811f5b471c550ad6b81cb55",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5861845,
-        "digest": "sha256:7a479e1ab147b6eb3f3a4e9395f23c02736f7fd62beee4840bb86abbca27b625",
+        "byteLength": 5852652,
+        "digest": "sha256:01d1cc27a4557d51063080c8f0c4dca44d21322d1c8e44d89828eaac42c1ba31",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
       },
       {
-        "byteLength": 1168436,
-        "digest": "sha256:a4149fff45db1585e9e7c330cee62761919d42f3d530124120669c719a0692e3",
+        "byteLength": 1167102,
+        "digest": "sha256:f382b71a84c651e7f97039f80b5c3aeed846ab68c347e5480ae0a415473faa8c",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
       },
       {
@@ -49539,23 +49738,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/android/android.bundle.map"
       },
       {
-        "byteLength": 126632,
-        "digest": "sha256:7286c4821503df8094b3e5528ce487480817a148a29d091dced6eb27e7b7f25f",
+        "byteLength": 128517,
+        "digest": "sha256:bd4ae20513508e7b5c3687afd52f29dbe393a5d302a59c4adf5a94bb9064313a",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
       },
       {
-        "byteLength": 59921,
-        "digest": "sha256:b98179b6de8656721bf713021d2322d8631bb5077280a03edaf0b9c1440fdb58",
+        "byteLength": 60402,
+        "digest": "sha256:6f0cfd4146f5e635b675a83d4c5e3faf4fc7d89f300bf27aa8a0c652fd77e70c",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
       },
       {
-        "byteLength": 5926740,
-        "digest": "sha256:acfd6b650932b5c8467ee89b4ea9d4e35766eb24e4d1651aac72b4fd9df0ba71",
+        "byteLength": 5925655,
+        "digest": "sha256:805c54984fecae44549e205e0cd0a836cde92b88aec60fd03bcf41bf9892502c",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle"
       },
       {
-        "byteLength": 1183822,
-        "digest": "sha256:92d5037c5de6085d73311a1e851b7421b0ceddb7bdbc637d397d55a8fd3aca15",
+        "byteLength": 1184700,
+        "digest": "sha256:e40713e7858a9352a2fd135083c01520ff51f2335ba1412e674a4fc7edf534d1",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle.map"
       },
       {
@@ -49569,28 +49768,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 126632,
-        "digest": "sha256:7286c4821503df8094b3e5528ce487480817a148a29d091dced6eb27e7b7f25f",
+        "byteLength": 128517,
+        "digest": "sha256:bd4ae20513508e7b5c3687afd52f29dbe393a5d302a59c4adf5a94bb9064313a",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
       },
       {
-        "byteLength": 59921,
-        "digest": "sha256:b98179b6de8656721bf713021d2322d8631bb5077280a03edaf0b9c1440fdb58",
+        "byteLength": 60402,
+        "digest": "sha256:6f0cfd4146f5e635b675a83d4c5e3faf4fc7d89f300bf27aa8a0c652fd77e70c",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
       },
       {
-        "byteLength": 5926740,
-        "digest": "sha256:acfd6b650932b5c8467ee89b4ea9d4e35766eb24e4d1651aac72b4fd9df0ba71",
+        "byteLength": 5925655,
+        "digest": "sha256:805c54984fecae44549e205e0cd0a836cde92b88aec60fd03bcf41bf9892502c",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle"
       },
       {
-        "byteLength": 1183822,
-        "digest": "sha256:92d5037c5de6085d73311a1e851b7421b0ceddb7bdbc637d397d55a8fd3aca15",
+        "byteLength": 1184700,
+        "digest": "sha256:e40713e7858a9352a2fd135083c01520ff51f2335ba1412e674a4fc7edf534d1",
         "relativePath": "dist/happier-plugin-ui/react-native/azure-devops-triage-sources-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle.map"
       },
       {
         "byteLength": 11676,
-        "digest": "sha256:4553df008cf3109d133a12c1d9081a277e6c5bb1aa9f68c2594729cb007ac222",
+        "digest": "sha256:7a85d783ed63dcd8c14ff6cecadad49a95cf8f84ccad824648e631dc95908699",
         "relativePath": "dist/happier-plugin-ui/ui-artifacts.json"
       },
       {
@@ -49619,18 +49818,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 30439,
-        "digest": "sha256:d89a19078688bdf99edb5bbdc70e0a3307f3380ce428aa024c1eea69280e9cae",
+        "byteLength": 31104,
+        "digest": "sha256:47670fc876e8beb327d0709b6653fa9e4b6df650ef6c18f8908c4a687cd549d4",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 32214,
-        "digest": "sha256:1d2ff1fe338e0fc2be51a04cddc5e95de18370931f583719752027c9addcb346",
+        "byteLength": 32959,
+        "digest": "sha256:178cff209a559961e875467dfed3c38a190600d9bad4e7297c44d70822916a6b",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 43732,
-        "digest": "sha256:4ee25e0df15a5ae34b16786446db077bce8bd7ee107937f022e8646dbce58611",
+        "byteLength": 44661,
+        "digest": "sha256:e533f13a3091e3b31c72cc13a0f49509ed3101f8f82e632959d35386db7361fa",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -49719,18 +49918,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/actions.d.ts"
       },
       {
-        "byteLength": 5464,
-        "digest": "sha256:418e105573151cf2e0c02c4cecaf92c46bd0ea538f9f16b2e814daf8269df16d",
+        "byteLength": 4348,
+        "digest": "sha256:dec3ed698e5e95d03bd320c91afb06f004aad6aeecc75274f85ebe4e2e91cdb6",
         "relativePath": "dist/triage/actions.d.ts.map"
       },
       {
-        "byteLength": 4256,
-        "digest": "sha256:2e6d55009e8186681580570b275fa4e95754aa1cca7e0d359c49d5acf234d739",
+        "byteLength": 3319,
+        "digest": "sha256:4ac9b5e7f83c5af2e577495cd947d4750af17d35d20eeee30017e332224221c2",
         "relativePath": "dist/triage/actions.js"
       },
       {
-        "byteLength": 7482,
-        "digest": "sha256:1d2564c991a1922f39febcf22a0bba66450d8cfc82cdb9d2cd26a4b890a5f8e3",
+        "byteLength": 5729,
+        "digest": "sha256:3ecafadc56a270cdace9b4d8675a4d5e37423d1a08900bd5c2c6f035e2230f16",
         "relativePath": "dist/triage/actions.js.map"
       },
       {
@@ -49779,18 +49978,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/client.d.ts"
       },
       {
-        "byteLength": 3671,
-        "digest": "sha256:4cd8ec82363327d42cf93699a982bc7adf30971ca97b69338100b97c428a68ff",
+        "byteLength": 4144,
+        "digest": "sha256:b03deb302fafdd5d0db23e5c96d75fdeaea846c095441e179ebe96d920bb0170",
         "relativePath": "dist/triage/client.d.ts.map"
       },
       {
-        "byteLength": 3630,
-        "digest": "sha256:7cc3822fe383d75a00a1d1b9f4cb1a92c9c40e32f9e27030d02ba9efa5baa0d0",
+        "byteLength": 4158,
+        "digest": "sha256:e2c856d4a3ae812b981b874d75239471196974954f96936cef23ac96c138e8ab",
         "relativePath": "dist/triage/client.js"
       },
       {
-        "byteLength": 5782,
-        "digest": "sha256:339d7dcec1c65a92dd6e3138b67e597cfa5d6b7b464ae065a8e903c2fb69eac0",
+        "byteLength": 6462,
+        "digest": "sha256:6696dc57438a509c45dd9221bb0ada99e8a0971665ee1680d1c6e3a9ab869b86",
         "relativePath": "dist/triage/client.js.map"
       },
       {
@@ -49839,38 +50038,38 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/decode.d.ts"
       },
       {
-        "byteLength": 11806,
-        "digest": "sha256:85b99e72fe8711d1c1a4ec6141c2f0e9628f592821725d37d62bde8a2372f551",
+        "byteLength": 12812,
+        "digest": "sha256:81519c88069b336675959f298af3d22a9dda9a11fd280f2af03d7d605d7ef365",
         "relativePath": "dist/triage/decode.d.ts.map"
       },
       {
-        "byteLength": 9650,
-        "digest": "sha256:d5d817110a2ea5f425d132bcb8e049331b320432ba26bc83b50a15397c25c438",
+        "byteLength": 10614,
+        "digest": "sha256:4f49df1256bd9977f9ecf93471fa727c6893bbc3345b06fdabea9bd11ddec8de",
         "relativePath": "dist/triage/decode.js"
       },
       {
-        "byteLength": 18800,
-        "digest": "sha256:26483afed7fde60f5e34898b65a633974ed5ae501130630d6183e16025fd1041",
+        "byteLength": 20344,
+        "digest": "sha256:8180355ca9cd517f12d92a6c946e6f8c1cd9cec8dde320adb5a53d85c4a372c3",
         "relativePath": "dist/triage/decode.js.map"
       },
       {
-        "byteLength": 3520,
-        "digest": "sha256:755cdceb42c4445ba869c034223d95a81acb02b4e66bfdb164d21eb7306f9e74",
+        "byteLength": 3970,
+        "digest": "sha256:f148ea322e5c0ccbf40190cc7579ed446d517480a308d248675ea000bbd941c3",
         "relativePath": "dist/triage/descriptor.d.ts"
       },
       {
-        "byteLength": 4526,
-        "digest": "sha256:8365c3090aa6ce8aaff5631ffaeb0da9a1085aac6f63a66e64a6fd4934671d91",
+        "byteLength": 5028,
+        "digest": "sha256:d08fd992e3ca96f1fc0a1f133e4ca5ce35043283381a6f4640c11dbad47c48e7",
         "relativePath": "dist/triage/descriptor.d.ts.map"
       },
       {
-        "byteLength": 3697,
-        "digest": "sha256:402934a3f0b92a9f94f77ca78bcb8326badbb38c90f0fa4f9f422df5160cc7ae",
+        "byteLength": 4139,
+        "digest": "sha256:370fe67814f69070e8de9ec80c11c73d46021a04b0924257d901af994418cbbe",
         "relativePath": "dist/triage/descriptor.js"
       },
       {
-        "byteLength": 4839,
-        "digest": "sha256:d63c90070ea2cad80a3a8d803ff5bb60058f7d1d72087f63b71b5355c28ee8d7",
+        "byteLength": 5351,
+        "digest": "sha256:53accaeab57898871e6e1208aeb19a5c555d808717607171e642bed9f75289fe",
         "relativePath": "dist/triage/descriptor.js.map"
       },
       {
@@ -49899,38 +50098,38 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/detail/contracts.d.ts"
       },
       {
-        "byteLength": 15517,
-        "digest": "sha256:5a7ef4edd147a2179ffb9365871563167aa10cd70b330e43770f09b34c7f80b6",
+        "byteLength": 15706,
+        "digest": "sha256:459060af3cb089d96821f1406e6c156c72502b00dcb3bb6658b1f16ee8eef19b",
         "relativePath": "dist/triage/detail/contracts.d.ts.map"
       },
       {
-        "byteLength": 12463,
-        "digest": "sha256:99e6b9c50b4b5e52da10a3a73ae0dfed99ec5d61fdcc1886d58d0e1db8b30ffd",
+        "byteLength": 12654,
+        "digest": "sha256:fba980b4be1f8dfb4b8030029166d336dd6e70a4d97bdd54ea0e595d0a543c4a",
         "relativePath": "dist/triage/detail/contracts.js"
       },
       {
-        "byteLength": 20434,
-        "digest": "sha256:66f18aac2151c2c11f1d6d6ba95dbda8dcbcd5dd2973e3ecd279752ce68a5ec8",
+        "byteLength": 20616,
+        "digest": "sha256:8173b6a853ebf2ae0ed8cfe235447a63da2b2014b4c65bc1677b0096262f30ec",
         "relativePath": "dist/triage/detail/contracts.js.map"
       },
       {
-        "byteLength": 6382,
-        "digest": "sha256:9058ea4a067b636238e86c8a8d8d7325082eada56f64286098ed3c591c1cf815",
+        "byteLength": 6281,
+        "digest": "sha256:62ba16d655c619f6c5190a435e0bff8a2fbee3422ce99b0bfa2d27f47dd8320e",
         "relativePath": "dist/triage/detail/projection.d.ts"
       },
       {
-        "byteLength": 23323,
-        "digest": "sha256:1f0d9bd2343784ab619870a7aa19adc732596a8f0027fc77dbf9bab907e94624",
+        "byteLength": 23031,
+        "digest": "sha256:65f8d64e1cf7e3df2957d599c7d8347664579f6d82f68f36d667f587889fb9a2",
         "relativePath": "dist/triage/detail/projection.d.ts.map"
       },
       {
-        "byteLength": 14355,
-        "digest": "sha256:8381880819f98da491505f15ad00b2e98dbbae665f7ed7920797078b6162ab71",
+        "byteLength": 14112,
+        "digest": "sha256:3ca2d7a69ff47d4d970cad86274f9ec9974ec71f7e09316f4e85943c5f954ddb",
         "relativePath": "dist/triage/detail/projection.js"
       },
       {
-        "byteLength": 34005,
-        "digest": "sha256:f2c12a2d90497620dae7a6e6dd04e38d8abac4ed4ca38938caeefef7ee785668",
+        "byteLength": 33587,
+        "digest": "sha256:e34698c19d887cf011207170ee82ff83fdaa45b8ec3566acb3a5fdbfdd40b8e2",
         "relativePath": "dist/triage/detail/projection.js.map"
       },
       {
@@ -49939,18 +50138,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/detail/reads.d.ts"
       },
       {
-        "byteLength": 16184,
-        "digest": "sha256:a075cfb60819447842ea636e2e3a6e828295a3694330f261e2dc217e1c4fba97",
+        "byteLength": 16588,
+        "digest": "sha256:81863c47722f66fce91cc0157e262ebd478957670ee8909b89475e91b97dd5f9",
         "relativePath": "dist/triage/detail/reads.d.ts.map"
       },
       {
-        "byteLength": 9009,
-        "digest": "sha256:2ed2ba93211e035a4d617b617aa0cd2f2d993001bd026a2176aceb8ec547dd62",
+        "byteLength": 9441,
+        "digest": "sha256:ca08e052e24c3c94efa1f6ad8f5ea89f5e18b18fb35ca007dcc2188aa79ece70",
         "relativePath": "dist/triage/detail/reads.js"
       },
       {
-        "byteLength": 19748,
-        "digest": "sha256:ecdd803fd1de9d2b073dcefaeb93833fbcd3df37a167f4c53e7f179132ee27be",
+        "byteLength": 20319,
+        "digest": "sha256:33337ecb9cf6096a0a7da20f55412e2bd7572dfb7b60fa6f058e1bb1caf54e4b",
         "relativePath": "dist/triage/detail/reads.js.map"
       },
       {
@@ -50074,23 +50273,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/localRef.js.map"
       },
       {
-        "byteLength": 1844,
-        "digest": "sha256:af4a1b5e63c132249a9a435311bc6870a70b370ac2afbd35bb0f1d819f2774a2",
+        "byteLength": 1567,
+        "digest": "sha256:5a9dbb8452685ce8b74338362b216020561501a621ac0e23739f41376c5665e7",
         "relativePath": "dist/triage/mapping.d.ts"
       },
       {
-        "byteLength": 7916,
-        "digest": "sha256:b7fbba71fd66b55796e5eb1f55d2692bcaa53580425618f8fb246dc1e3a50959",
+        "byteLength": 6867,
+        "digest": "sha256:ce3d61c5586ee5c170feb173a145ac1fddd849337492c195036374de1acce64b",
         "relativePath": "dist/triage/mapping.d.ts.map"
       },
       {
-        "byteLength": 6158,
-        "digest": "sha256:19f0488d47cc571918f080a41f98d634b4def64f0eea8ebd4f076da57d4ede87",
+        "byteLength": 5329,
+        "digest": "sha256:07322edc2dcb28836293e3cd4a36b4e1066444f8774c64ec367185134e846871",
         "relativePath": "dist/triage/mapping.js"
       },
       {
-        "byteLength": 11684,
-        "digest": "sha256:34548b2496ff18bf599d93801e534f08f3267dc1c4d3cd104ce9fdf7ade51dca",
+        "byteLength": 10039,
+        "digest": "sha256:5254a006ef7c0b209cd61de4e8064d6ac95b0c2e1b4ef4e49c8d1ccca6be1ecc",
         "relativePath": "dist/triage/mapping.js.map"
       },
       {
@@ -50159,28 +50358,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/observation.d.ts"
       },
       {
-        "byteLength": 10928,
-        "digest": "sha256:5e5df7b0e58e11637681d1fcc9511649adc6c7423c46343dd28651cf1d9ce9c7",
+        "byteLength": 10919,
+        "digest": "sha256:f69c0d48f9e3618c7ffaae8eb30a1c5dbbadfe8e8b4821ef08a90f32c49fdcef",
         "relativePath": "dist/triage/observation.d.ts.map"
       },
       {
-        "byteLength": 9760,
-        "digest": "sha256:aad509701de335646036df48af188a45606052ccce86f953dd0b1c92e013d619",
+        "byteLength": 9746,
+        "digest": "sha256:9914f3c462bb13c6160898d019ea71862a8c05b31d6455bce6f723fea28ee879",
         "relativePath": "dist/triage/observation.js"
       },
       {
-        "byteLength": 17207,
-        "digest": "sha256:1f94ca16f99dc3001e59778c08f7292d46319b9cadfe397fb743d21789dcde4d",
+        "byteLength": 17205,
+        "digest": "sha256:bb06656538cc23b8e19ffb953b324d453de3300393d89cd9b2a0da97d64c773a",
         "relativePath": "dist/triage/observation.js.map"
       },
       {
-        "byteLength": 8463,
-        "digest": "sha256:d0eff7a1455f6a27d90077a1aa5a3e6b64039165c3f7e0b135f465127da8579c",
+        "byteLength": 8768,
+        "digest": "sha256:a2be17e429aa9229b56e7e3589f22817f8b043b870d8a00989d4c0c5f5b56262",
         "relativePath": "dist/triage/operations.d.ts"
       },
       {
-        "byteLength": 44274,
-        "digest": "sha256:729d6fb56ad475dcd17c85539d9706791cfe50977f0ca08b076743c1dbae3d7e",
+        "byteLength": 45044,
+        "digest": "sha256:a96ded86fbfa34ca580d1a162a16552936b76a8686d3117a52e7891d3c7dbc2c",
         "relativePath": "dist/triage/operations.d.ts.map"
       },
       {
@@ -50189,8 +50388,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/operations.js"
       },
       {
-        "byteLength": 61763,
-        "digest": "sha256:345b5e7a36b37f54887a6b3e6cec1be3651d116e1da79dec6bce85236328f7ff",
+        "byteLength": 62356,
+        "digest": "sha256:dfba5102901f7dfbd57c7e29ef1096e670cbc1eadca09b829ea4b9e964eba34f",
         "relativePath": "dist/triage/operations.js.map"
       },
       {
@@ -50274,13 +50473,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/requestUrls.js.map"
       },
       {
-        "byteLength": 18874,
-        "digest": "sha256:90bdc16e21048dde7c0807a22d2a0c45d4a92012b09446dbfce7dd27977fa309",
+        "byteLength": 18894,
+        "digest": "sha256:fcd1ae57bd0cd3d9fecaa9614d590c4c32c3cdab46610a0f380a200ff328e67c",
         "relativePath": "dist/triage/types.d.ts"
       },
       {
-        "byteLength": 32231,
-        "digest": "sha256:884e7ebcf7f979fa91bea7df2af1bbd59035be42d4bd1fa3cc4f258f5c8ab338",
+        "byteLength": 32179,
+        "digest": "sha256:297557cd797d26cf4dc77447177293015d867b1cf4b2177b769278661f57447e",
         "relativePath": "dist/triage/types.d.ts.map"
       },
       {
@@ -50289,8 +50488,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/types.js"
       },
       {
-        "byteLength": 21572,
-        "digest": "sha256:cd978b3c29cd3703f714405df3ea189d4df0a5cb8ae0f20590dc3bb7b7f20da1",
+        "byteLength": 21587,
+        "digest": "sha256:ada3ce5d936624b25ffcb9910e94eb5ab715704ddd6caed8a88375cc30901cb9",
         "relativePath": "dist/triage/types.js.map"
       },
       {
@@ -50314,23 +50513,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/additionalTranslations.js.map"
       },
       {
-        "byteLength": 2292,
-        "digest": "sha256:3f20f57a220736bc6e823ea7e64dd0b7a1ddb1c60c49c8ebcd21edc65a70a9ed",
+        "byteLength": 2793,
+        "digest": "sha256:d922542400b1ccbfee6837e5fb2ec3c6b740f65690086bcb1b9b96c7739f8947",
         "relativePath": "dist/ui/detail/mutations.d.ts"
       },
       {
-        "byteLength": 32742,
-        "digest": "sha256:18dae96557d3ecfc5b5758f698592dd1a32d6618dc4c27a8b0a205d1814f70f8",
+        "byteLength": 33464,
+        "digest": "sha256:08edfec9eef177fc02e80ad74189f16f89e1989ce342dc29dc11267e201939f4",
         "relativePath": "dist/ui/detail/mutations.d.ts.map"
       },
       {
-        "byteLength": 27379,
-        "digest": "sha256:3d965b1be85d6e91c3d85df92ed76cbcd03cc43dd3538878a299566e21247394",
+        "byteLength": 27817,
+        "digest": "sha256:2cb01f8efc89a0498b888d5909d69ea84d6d905779677916ac3277313de47e0a",
         "relativePath": "dist/ui/detail/mutations.js"
       },
       {
-        "byteLength": 48082,
-        "digest": "sha256:19edbc4eacd30fa394043024e0f6365800698315b8165427b52d6e10d5f06380",
+        "byteLength": 48593,
+        "digest": "sha256:4dda14825908ecd1e767196fde1fc9da11ff4203bbf168e13fb536e154eac2f5",
         "relativePath": "dist/ui/detail/mutations.js.map"
       },
       {
@@ -50394,23 +50593,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/detail/tabDeclarations.js.map"
       },
       {
-        "byteLength": 2346,
-        "digest": "sha256:334c2a93a9e72e87db46e8fa5dc3c6940bdbf7f651f736e2ca7fdffabec7c8a0",
+        "byteLength": 2951,
+        "digest": "sha256:9007a19a08e1d24774b9126293da0fcabf6cbc595447191ac9adc1c2f76af5e3",
         "relativePath": "dist/ui/renderSurface.d.ts"
       },
       {
-        "byteLength": 33192,
-        "digest": "sha256:1f3b9abf458127061cc815e11d4ca39289838cc62fb5425104ec7a27ae671870",
+        "byteLength": 34997,
+        "digest": "sha256:e1c0a165bb96aecb3c466fe8280f6b5360447efaa709f42b6a544da529c96fd4",
         "relativePath": "dist/ui/renderSurface.d.ts.map"
       },
       {
-        "byteLength": 28296,
-        "digest": "sha256:7e058556603456a524e399f5faafe2d6493dea68875398fa499adbe1dfd344ed",
+        "byteLength": 29540,
+        "digest": "sha256:301696a00295c6f08d5dbddcd75aa8ec6d62784558f828361e1b9c54a221bbb6",
         "relativePath": "dist/ui/renderSurface.js"
       },
       {
-        "byteLength": 52735,
-        "digest": "sha256:b46d0d070bc793b8b4593ab0644cae352982450166c5d68d1656463a5e8e72e6",
+        "byteLength": 55560,
+        "digest": "sha256:262546f3fcfe0ac5063834d35debaee7c6a8cc309275bfb771eab3eb32c4f05b",
         "relativePath": "dist/ui/renderSurface.js.map"
       },
       {
@@ -50484,13 +50683,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 4992224,
-        "digest": "sha256:9c0b2830fa499de9687fe03fb1df6076c38fe1d0f633e3a786358b56f73176d8",
+        "byteLength": 5003393,
+        "digest": "sha256:95cebf2cf98bf847e80fb57f9a5d55ab11ecb9638b4105a7b0ab667aed531c3c",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 734734,
-        "digest": "sha256:073741176f3e00d7bd83fa5b52c0b6162f6d15e6ed9750524aaf24a4ce674e66",
+        "byteLength": 775001,
+        "digest": "sha256:c030b4346567d2fdd9a74099249bb9df5038aac2c4e1d6b2fa8441c0c6892826",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -50594,6 +50793,26 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/auth/readiness.js.map"
       },
       {
+        "byteLength": 443,
+        "digest": "sha256:a555d010f61116232bf320a5bab7e7025cd4f823494baa796b4647340b8e58b1",
+        "relativePath": "dist/bitbucketCloneUrl.d.ts"
+      },
+      {
+        "byteLength": 1105,
+        "digest": "sha256:70bf8e8bc1b15d83deec59c22e71119b0de592d1991af2421aecde845177bf1b",
+        "relativePath": "dist/bitbucketCloneUrl.d.ts.map"
+      },
+      {
+        "byteLength": 889,
+        "digest": "sha256:312cc813473d109585cd93061303d9193a3fcc83cffd7ee5a23af10da5d05967",
+        "relativePath": "dist/bitbucketCloneUrl.js"
+      },
+      {
+        "byteLength": 1607,
+        "digest": "sha256:78374bca723953b835bab99f4669545b5fe486b87397976544e0be45beaeaa79",
+        "relativePath": "dist/bitbucketCloneUrl.js.map"
+      },
+      {
         "byteLength": 933,
         "digest": "sha256:e4d0a2b690d236b3bc1b1bb525138e4f9b80792e4a229b7620de7eafbe42e4a1",
         "relativePath": "dist/bitbucketContracts.d.ts"
@@ -50634,13 +50853,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/connectedAccounts/builtInLegacyCompatibility.js.map"
       },
       {
-        "byteLength": 2160173,
-        "digest": "sha256:9ca8b81fcd2ce7b8c0892316bed9d701101b64eeb28cda5c6679d2f38d4ed448",
+        "byteLength": 2162919,
+        "digest": "sha256:9b19394c6729ad4bf8862c9bab4b8e4f0eb76ac54d733b972d0650caad2d9d86",
         "relativePath": "dist/happier-plugin-ui/react-native-web/bitbucket-detail-native/entry.mjs.bundle"
       },
       {
-        "byteLength": 2100891,
-        "digest": "sha256:73e58f08dfce4e3f83ed2f4358dabdbc540964bbb3031563e281509383d09616",
+        "byteLength": 2104679,
+        "digest": "sha256:63a814ee8bf749b7e71e809d87eb79f1676480b7f02f4317eaad129ab212b394",
         "relativePath": "dist/happier-plugin-ui/react-native-web/bitbucket-triage-sources-native/entry.mjs.bundle"
       },
       {
@@ -50654,23 +50873,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/android/android.bundle.map"
       },
       {
-        "byteLength": 280283,
-        "digest": "sha256:76fcce30e274719e1845f73bad0b84ba37f8fa91c65cd454ef28e4142eeb6057",
+        "byteLength": 284454,
+        "digest": "sha256:bfdb9284f860690491ee76970d253af31b378263fab2ed7d34731030974052b6",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 126519,
-        "digest": "sha256:0ea034271c0aa0aae4fd62fdedebcbbc85571ff965d4336e41f1c66571952364",
+        "byteLength": 128682,
+        "digest": "sha256:0fbce0914f57268ae68aa1abc5b3787ec3dbc24f6c1e3711f4e01cddc204adba",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5861833,
-        "digest": "sha256:4c974714a344a48a901b5ba717afc54080a0e79de60f6042432b340351a3eca9",
+        "byteLength": 5855006,
+        "digest": "sha256:1602ab8193113f2b30cfdddc3d91839f5805c72c5647c5d87978d2e9ced8d33f",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
       },
       {
-        "byteLength": 1163048,
-        "digest": "sha256:3290de8b72894dbf775511da6d1b79070b7627bd2a7a98e37eef86cec855450b",
+        "byteLength": 1162013,
+        "digest": "sha256:d614a572fc7a526a38950778292c96ae2805f682591d3ccd0461fa2379025035",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
       },
       {
@@ -50684,23 +50903,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 280283,
-        "digest": "sha256:76fcce30e274719e1845f73bad0b84ba37f8fa91c65cd454ef28e4142eeb6057",
+        "byteLength": 284454,
+        "digest": "sha256:bfdb9284f860690491ee76970d253af31b378263fab2ed7d34731030974052b6",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 126519,
-        "digest": "sha256:0ea034271c0aa0aae4fd62fdedebcbbc85571ff965d4336e41f1c66571952364",
+        "byteLength": 128682,
+        "digest": "sha256:0fbce0914f57268ae68aa1abc5b3787ec3dbc24f6c1e3711f4e01cddc204adba",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5861833,
-        "digest": "sha256:4c974714a344a48a901b5ba717afc54080a0e79de60f6042432b340351a3eca9",
+        "byteLength": 5855006,
+        "digest": "sha256:1602ab8193113f2b30cfdddc3d91839f5805c72c5647c5d87978d2e9ced8d33f",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
       },
       {
-        "byteLength": 1163048,
-        "digest": "sha256:3290de8b72894dbf775511da6d1b79070b7627bd2a7a98e37eef86cec855450b",
+        "byteLength": 1162013,
+        "digest": "sha256:d614a572fc7a526a38950778292c96ae2805f682591d3ccd0461fa2379025035",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
       },
       {
@@ -50714,23 +50933,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/android/android.bundle.map"
       },
       {
-        "byteLength": 136313,
-        "digest": "sha256:4204d4a61e7c90078702ffd81d910b77d98f58001a6467ad50b7bc6537facaaa",
+        "byteLength": 146652,
+        "digest": "sha256:962dcf9352396799ce8a37ae5042de4c993cae2e4a4f77396d0baf8d43165629",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
       },
       {
-        "byteLength": 60578,
-        "digest": "sha256:307b6ea37cf0c225d690b90b4225e4b2375489237af8475c95090f8534f38a03",
+        "byteLength": 65830,
+        "digest": "sha256:1d99ac51e6768ae456dc2c23f4d96fc3034287a6815fcb29f4d754592d772438",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
       },
       {
-        "byteLength": 5926728,
-        "digest": "sha256:3b34aa8c6f831211f717c995390cbf4e51fb8b23b88873573864638f43162125",
+        "byteLength": 5928009,
+        "digest": "sha256:d35ecab4d3e1f59752bd132ece3ecedf8e142436ca5210976fcc0e0da16b4288",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle"
       },
       {
-        "byteLength": 1178428,
-        "digest": "sha256:78797e6bd34f199758466ba5173e0ddb1bb65ba9a43eeb3557ab08e40b35da22",
+        "byteLength": 1179581,
+        "digest": "sha256:885ec4fdee6610ac4122b4c5c3629384f2743b7e387ea4064bad4448ca8582ee",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle.map"
       },
       {
@@ -50744,28 +50963,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 136313,
-        "digest": "sha256:4204d4a61e7c90078702ffd81d910b77d98f58001a6467ad50b7bc6537facaaa",
+        "byteLength": 146652,
+        "digest": "sha256:962dcf9352396799ce8a37ae5042de4c993cae2e4a4f77396d0baf8d43165629",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
       },
       {
-        "byteLength": 60578,
-        "digest": "sha256:307b6ea37cf0c225d690b90b4225e4b2375489237af8475c95090f8534f38a03",
+        "byteLength": 65830,
+        "digest": "sha256:1d99ac51e6768ae456dc2c23f4d96fc3034287a6815fcb29f4d754592d772438",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
       },
       {
-        "byteLength": 5926728,
-        "digest": "sha256:3b34aa8c6f831211f717c995390cbf4e51fb8b23b88873573864638f43162125",
+        "byteLength": 5928009,
+        "digest": "sha256:d35ecab4d3e1f59752bd132ece3ecedf8e142436ca5210976fcc0e0da16b4288",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle"
       },
       {
-        "byteLength": 1178428,
-        "digest": "sha256:78797e6bd34f199758466ba5173e0ddb1bb65ba9a43eeb3557ab08e40b35da22",
+        "byteLength": 1179581,
+        "digest": "sha256:885ec4fdee6610ac4122b4c5c3629384f2743b7e387ea4064bad4448ca8582ee",
         "relativePath": "dist/happier-plugin-ui/react-native/bitbucket-triage-sources-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_triage-67e361.chunk.bundle.map"
       },
       {
         "byteLength": 11538,
-        "digest": "sha256:b5d85318a88df72b85fd9488ffb756488903e92c9d392d11e288dfbd3ecaedb7",
+        "digest": "sha256:c1ecc12eb34cda07aa694d1f6d2945a92f0b2fa4229e590d6b7a21af10d23b41",
         "relativePath": "dist/happier-plugin-ui/ui-artifacts.json"
       },
       {
@@ -50789,23 +51008,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/index.js.map"
       },
       {
-        "byteLength": 3438,
-        "digest": "sha256:c8bea13c7abf19043af89e17f523e1d23da26eab8b71f607f142d12d1f80db4b",
+        "byteLength": 3597,
+        "digest": "sha256:6470c7251a4fd30323e4f19dbbbb4969f87c5c816c3df1878a258458c8524633",
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 27716,
-        "digest": "sha256:e8c464afe0d252ffc7b52f90e1556ede610ce2727182ee70aad8bdf91112a84a",
+        "byteLength": 28617,
+        "digest": "sha256:c5dc555ad0017e0c40783d79390e79bde278681d5987ec2df01bfc4af344e706",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 29409,
-        "digest": "sha256:b8fea8539eb19d52b12e373364bc63fd8df1ee1ff29f1806ee207e9a73e7c1f7",
+        "byteLength": 30369,
+        "digest": "sha256:5eb1c520255216843c2d74e36abfe07978e80e945e19cdb8bbc02a251426031d",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 40018,
-        "digest": "sha256:72135e370cddd2c774a952600e07f697961dbe96ea0df0030cab8e1afb967b85",
+        "byteLength": 41504,
+        "digest": "sha256:f949542e15b5c2951517e999d096b6548ee189e0c0a11b3cb9f6349d0c31bd2f",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -50894,18 +51113,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/operations/mapping.d.ts"
       },
       {
-        "byteLength": 8475,
-        "digest": "sha256:c4a489362139d73c8d64bc62ceaed84bbd0aeb79916b659b38495de0e38d4fb2",
+        "byteLength": 8136,
+        "digest": "sha256:136803a838f69cadc2fcd3a3fd7b2dc46708b7055d1dcefed1f72135b01d22e2",
         "relativePath": "dist/operations/mapping.d.ts.map"
       },
       {
-        "byteLength": 6747,
-        "digest": "sha256:d3e64003ffa12aaffc03303a77a0319e6a5b82771984c0b7584ab1dc5fb5f902",
+        "byteLength": 6393,
+        "digest": "sha256:7955ddc9a3b76f810a9cfdd8954afbd0b24632ba32e4107d6cce3c098e485d9b",
         "relativePath": "dist/operations/mapping.js"
       },
       {
-        "byteLength": 15005,
-        "digest": "sha256:0e2bb3076c19e93980dba4e78895f1729a1ca18d1ba180f921c4e9360ba2d03a",
+        "byteLength": 14239,
+        "digest": "sha256:e0c9a1ac595231c26f1dc95a90dc7ced1751270c43d67b8654ff8329cb51fcf1",
         "relativePath": "dist/operations/mapping.js.map"
       },
       {
@@ -51089,23 +51308,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/detail/routes.js.map"
       },
       {
-        "byteLength": 4824,
-        "digest": "sha256:117ab1aee910ee7f457de24d0ae6a513d1ecbb05f30d103b9532bc1122a87bb9",
+        "byteLength": 5073,
+        "digest": "sha256:66645eeb3e1dd1a35597f3ace384b5e5e1b0dd9e117505847cce6ede4de1407b",
         "relativePath": "dist/triage/entries.d.ts"
       },
       {
-        "byteLength": 15106,
-        "digest": "sha256:44ca205c7f55620c613abe7af82d7b7d9738bad12ab36c41d598c27edc3b98a1",
+        "byteLength": 16256,
+        "digest": "sha256:ddcb9547208eaf4171b06e1c58667e5a159f4abac80be5c18ba2f1773d18238b",
         "relativePath": "dist/triage/entries.d.ts.map"
       },
       {
-        "byteLength": 8420,
-        "digest": "sha256:d7d4329b914da1acae79665c9a6326206299630f4e406df3440f44a9886347df",
+        "byteLength": 9178,
+        "digest": "sha256:dc8847d194bd0c80fb42e1bfc1628dadd66e4aba2a74db46a7c81b631808644e",
         "relativePath": "dist/triage/entries.js"
       },
       {
-        "byteLength": 19329,
-        "digest": "sha256:dd3116c3282554400da788788d48c3adcd7783118dce27a7099ad2533e9f1213",
+        "byteLength": 21179,
+        "digest": "sha256:cac3edb1bd2216877a7d343ec0716e23329262f04e0ba9fea04aced6a35941a6",
         "relativePath": "dist/triage/entries.js.map"
       },
       {
@@ -51234,18 +51453,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/pullRequests.d.ts"
       },
       {
-        "byteLength": 31644,
-        "digest": "sha256:4a09b7ab699840204bf080fbba4654617cad536aab4827ce91f5ebe2eea512c0",
+        "byteLength": 31779,
+        "digest": "sha256:c05781e868adbd3f8ae44e6b1dec6570aa6e62b27f05645eb8260b94f53304d5",
         "relativePath": "dist/triage/pullRequests.d.ts.map"
       },
       {
-        "byteLength": 21044,
-        "digest": "sha256:5c5118074569a3dc2a4105992df2466a8b40630b41ed0500396f246b441e15f5",
+        "byteLength": 21196,
+        "digest": "sha256:9f7f99b5715ff780d67716443172d02333803a7cfd4370465725ec6ef7412a7f",
         "relativePath": "dist/triage/pullRequests.js"
       },
       {
-        "byteLength": 38993,
-        "digest": "sha256:95811e817b2237b4a85ad555672f23e7a1938378fc6dcd93d6f453c3ef2ffe72",
+        "byteLength": 39252,
+        "digest": "sha256:e3ee8e2a1d32bbfc2c129dd3cbb6e17f15250b95febe14e17cf6edabda3c9eea",
         "relativePath": "dist/triage/pullRequests.js.map"
       },
       {
@@ -51289,23 +51508,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/scanContinuation.js.map"
       },
       {
-        "byteLength": 1499,
-        "digest": "sha256:c395984d4021f5047fbd6fa040131cc259a5a4c7e8ee52c098ce131bac06b86c",
+        "byteLength": 1818,
+        "digest": "sha256:0fe0026a36c0268dc7cc8dd7b6a4562ff95a8c5c76a84552632e9b485e88a81e",
         "relativePath": "dist/triage/source/actions.d.ts"
       },
       {
-        "byteLength": 3832,
-        "digest": "sha256:3218351fe86e11b5b937ed092c0c23a35e531d2a2d6365d7f06ac5c40d6684f5",
+        "byteLength": 4882,
+        "digest": "sha256:c601ae834d25d9e398046268ec16d6df8e647a25f61555af50bdabc01147f1c4",
         "relativePath": "dist/triage/source/actions.d.ts.map"
       },
       {
-        "byteLength": 2732,
-        "digest": "sha256:db80f33f7dd259c4adaed8ffcdb5141dc847edb986cfe8ee3780b945e6fbb162",
+        "byteLength": 3533,
+        "digest": "sha256:42dad30047c1e62dd9c916e771eede785e18302c1d31333b847702dc026dac18",
         "relativePath": "dist/triage/source/actions.js"
       },
       {
-        "byteLength": 4999,
-        "digest": "sha256:afe524d3b8933bf82c6aa25c7f50bd3753610e8c64e10e2512a06ba98d02f09e",
+        "byteLength": 6440,
+        "digest": "sha256:5e1516c3a8eb368ff43fd8b7c038554644eb94923dd230899737197a2184a900",
         "relativePath": "dist/triage/source/actions.js.map"
       },
       {
@@ -51409,13 +51628,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/source/detailContinuation.js.map"
       },
       {
-        "byteLength": 35744,
-        "digest": "sha256:30ba6ec883e10d5408b82a674c5ab395cf291df4c2fdb092a35f851e1127f1bd",
+        "byteLength": 36150,
+        "digest": "sha256:a2e6b1ca8200ad2e8704c42e3633a7cdafac28acaf4a84df8fc18690a162ad6c",
         "relativePath": "dist/triage/source/detailContracts.d.ts"
       },
       {
-        "byteLength": 13707,
-        "digest": "sha256:42b74b4a384e5624edc56ec8b0c5a83beac83145b1fea909a2fd1e9d77df9263",
+        "byteLength": 13717,
+        "digest": "sha256:c73c98e6c63af11aa39fbb7dcd0d3ddf2051986e9fabfa22a82f50e701cb374f",
         "relativePath": "dist/triage/source/detailContracts.d.ts.map"
       },
       {
@@ -51469,23 +51688,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/source/get.js.map"
       },
       {
-        "byteLength": 1302,
-        "digest": "sha256:0a4760df9b3b5bdf70be9044fe01f1d7c486c4c8a8c8c2fa7bbdd0f6ddca46fa",
+        "byteLength": 1489,
+        "digest": "sha256:a2a0cabc51b216da9aa1e8e5cc56ab2458f253f99013a93c74ba4a9a26615819",
         "relativePath": "dist/triage/source/index.d.ts"
       },
       {
-        "byteLength": 2088,
-        "digest": "sha256:1e2beacb049fac738fdd82fd52429b192f9e646502c32e423500f6b94b0ec695",
+        "byteLength": 2379,
+        "digest": "sha256:c48a23c136178bb9ce0f9f21daeb2e3b6d75953242fc4e4a9fd7ef2498d661e8",
         "relativePath": "dist/triage/source/index.d.ts.map"
       },
       {
-        "byteLength": 1171,
-        "digest": "sha256:68aaad4ef903c444874db46b5274a690004234f9f92eadb9d61a2bac3f27b861",
+        "byteLength": 1320,
+        "digest": "sha256:5de22555866f07aaee9fdea307820c1a55e09b7d5ef78e6b1b62932722a7c8f3",
         "relativePath": "dist/triage/source/index.js"
       },
       {
-        "byteLength": 2014,
-        "digest": "sha256:ea9fc9ef011a3f894176ce61e7bef4e20c152af22044882cb17b2114ef66ebb0",
+        "byteLength": 2287,
+        "digest": "sha256:38ad7adb5217f8eeeccdee9e675a91707fdbb650b060136cc86fa0a7a4fca127",
         "relativePath": "dist/triage/source/index.js.map"
       },
       {
@@ -51514,18 +51733,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/source/listInstances.d.ts"
       },
       {
-        "byteLength": 7212,
-        "digest": "sha256:0cceef3a3654e49ec14debb2994fb082caae5a82cde17b0e4b3bf43483ddc696",
+        "byteLength": 6647,
+        "digest": "sha256:9ef96d33ffaf85f8adeaa6ee6e7af4f23af74a460db85c776d7152c6dac51795",
         "relativePath": "dist/triage/source/listInstances.d.ts.map"
       },
       {
-        "byteLength": 6281,
-        "digest": "sha256:a5ca949d7c07908dd8b44928d536444a97a5f31a96c50b0a3c103f0728438cd7",
+        "byteLength": 5575,
+        "digest": "sha256:28b668229312a3923093d48e6d9618201e519396ebb7c4ef6953e4b6ce1f8f16",
         "relativePath": "dist/triage/source/listInstances.js"
       },
       {
-        "byteLength": 11305,
-        "digest": "sha256:8828437b266fd54194559b3358507293a0d0851af375501c7d8768fe5814ded4",
+        "byteLength": 10337,
+        "digest": "sha256:cb2f26f981fcc8fb7aa395b6a710ed1dd098495b2d444a5e96ed68fdf141054c",
         "relativePath": "dist/triage/source/listInstances.js.map"
       },
       {
@@ -51534,28 +51753,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/source/mutationActions.d.ts"
       },
       {
-        "byteLength": 23932,
-        "digest": "sha256:54161ed7f67c1fa52ccefd364732e4362c348c1b23e31dc28c767a1017c09601",
+        "byteLength": 24728,
+        "digest": "sha256:80f09079da44638fba33c929c31561333e97675a8baa80957293857e5dee90e2",
         "relativePath": "dist/triage/source/mutationActions.d.ts.map"
       },
       {
-        "byteLength": 22451,
-        "digest": "sha256:a9ab296d5a40278f59eeaa16c57bff9806c084955ebe1230844361f4f2a87f3d",
+        "byteLength": 23205,
+        "digest": "sha256:66be86bf2f94bafc6e5cdd3b2d598fd4ed62cfba676e382fd96a87aea0da73da",
         "relativePath": "dist/triage/source/mutationActions.js"
       },
       {
-        "byteLength": 36521,
-        "digest": "sha256:376beefb3acd89258c38d5f23999a2b35d5aa4e550067d7c3ba0fcd72af500bf",
+        "byteLength": 37388,
+        "digest": "sha256:c7a244e4509f9a546922ac009433357f7124a9bbc783f94e97e00915e459f87b",
         "relativePath": "dist/triage/source/mutationActions.js.map"
       },
       {
-        "byteLength": 59511,
-        "digest": "sha256:971ee6625252b6bc500d3039658f30c9172dc6cde07858211f0112976e48123e",
+        "byteLength": 61541,
+        "digest": "sha256:847e98b943915c4d05593e6c26fe7adf373f6a54204857836a5bee60a1ccb857",
         "relativePath": "dist/triage/source/mutationContracts.d.ts"
       },
       {
-        "byteLength": 13662,
-        "digest": "sha256:cc3918393580b3c0df24b3c6fcf8c725d5ea94072e821ae7cc3affee549e2c7d",
+        "byteLength": 13712,
+        "digest": "sha256:da37fe82461fd85db4eb23c6e9299a3240a70a4d8d4172b7be5c9df09fb9aa3d",
         "relativePath": "dist/triage/source/mutationContracts.d.ts.map"
       },
       {
@@ -51569,23 +51788,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/source/mutationContracts.js.map"
       },
       {
-        "byteLength": 1462,
-        "digest": "sha256:2c6192131895d2ae4992d78ec48c8eb9e294ad1a07d0917b39f7975ae2af070e",
+        "byteLength": 1889,
+        "digest": "sha256:a025d8e24a0f98e324b5d1afff86156dcd7f53ca7515c9aaeeefea09fbc35cd1",
         "relativePath": "dist/triage/source/observations.d.ts"
       },
       {
-        "byteLength": 17788,
-        "digest": "sha256:f11a69e9bc136f41853f1b60dfc76eac8caa2cd3222be1c10f0613dd28de7a0c",
+        "byteLength": 19449,
+        "digest": "sha256:b0f2a945cbe4d4e08f1df1edc4238ab84cd462f5b9fc1342a668b6b054218b8e",
         "relativePath": "dist/triage/source/observations.d.ts.map"
       },
       {
-        "byteLength": 15182,
-        "digest": "sha256:f927c2dec77c409af8401cdacacbe632436e6a7a28f5edc15989510f158ff84f",
+        "byteLength": 16539,
+        "digest": "sha256:2c32a0c3d1c71cedcebf0b6708c47c5319bb319ae42f428364f845f22dda728c",
         "relativePath": "dist/triage/source/observations.js"
       },
       {
-        "byteLength": 25962,
-        "digest": "sha256:9dc5453b1c7212a6af28a4be5f8b173ae53fac1abb1686df51bb8a43f24b8a3d",
+        "byteLength": 28314,
+        "digest": "sha256:d448c4a1e4de08c3f2361a777f3b62ef45272385bed513628a7e603955474ebd",
         "relativePath": "dist/triage/source/observations.js.map"
       },
       {
@@ -51609,43 +51828,63 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/source/observeEntry.js.map"
       },
       {
+        "byteLength": 1081,
+        "digest": "sha256:9ec201485b7eef524725de42cc4ce0e60f0d16c2362bb80c09c8411f1d6f3a01",
+        "relativePath": "dist/triage/source/prepareReviewWorkspace.d.ts"
+      },
+      {
+        "byteLength": 6588,
+        "digest": "sha256:154444fdf62db0dc5cefd5eab6978ec1b47f81ad3d514653ee42e0aac4436eb7",
+        "relativePath": "dist/triage/source/prepareReviewWorkspace.d.ts.map"
+      },
+      {
+        "byteLength": 5109,
+        "digest": "sha256:3aa745b89caf6b038e76b51920372963cb2b0a6e26a572eb018bf710ef0bc70e",
+        "relativePath": "dist/triage/source/prepareReviewWorkspace.js"
+      },
+      {
+        "byteLength": 9852,
+        "digest": "sha256:ec072154ef6bc1f3a443dd1a4e68ed5b917e6cc76a3d95c036406d7f9066d71b",
+        "relativePath": "dist/triage/source/prepareReviewWorkspace.js.map"
+      },
+      {
         "byteLength": 928,
         "digest": "sha256:6ab21411b44cce5bf2f13beb57932e84fe7e4acbf67501d42156300553d688ad",
         "relativePath": "dist/triage/source/scan.d.ts"
       },
       {
-        "byteLength": 11654,
-        "digest": "sha256:ef1f052e0b4b1f76721a358b4d51aa101349b2d648824a44adc2d3651fa25d08",
+        "byteLength": 12039,
+        "digest": "sha256:b83174bdcaa9bf528107e3487e7e012c2410e2d1627c1fb255c4cd48da978246",
         "relativePath": "dist/triage/source/scan.d.ts.map"
       },
       {
-        "byteLength": 10543,
-        "digest": "sha256:6bd3f7b527fd9602f80d0ee3b4f4a9287752a3bdc5b3590d1e9a4f537de58a5c",
+        "byteLength": 10958,
+        "digest": "sha256:25c45fa8ac9cfb1b6753626df2756b94e8f98bef134b49e6712d0d5c878fa0d9",
         "relativePath": "dist/triage/source/scan.js"
       },
       {
-        "byteLength": 18174,
-        "digest": "sha256:45d295a843e9583f145ec68abb8b791caf77ea0f4af9bcc1233a43cebe853c33",
+        "byteLength": 18681,
+        "digest": "sha256:4a21bcebb7c3023534519943908ac5b56a0cd84d4907b502bddb4cb9ae1498b1",
         "relativePath": "dist/triage/source/scan.js.map"
       },
       {
-        "byteLength": 2935,
-        "digest": "sha256:041ba217df64cb8df9c201abbcd56aeae18f7f55ac0141926ca4a034c25f8353",
+        "byteLength": 3041,
+        "digest": "sha256:baa72b235d2e8d5f0b258de2424cb30bbad4cdb01647ffabedb9ae643c11bb8b",
         "relativePath": "dist/triage/source/testSupport.d.ts"
       },
       {
-        "byteLength": 8402,
-        "digest": "sha256:a00d0f33c792a616cf3cdbe8acb9238c303f3e5790f6baaf30d55a81538e4253",
+        "byteLength": 8607,
+        "digest": "sha256:62e7140acd99378a4457bc7cb6e36d79dc2159f01f3156081c843358b450a630",
         "relativePath": "dist/triage/source/testSupport.d.ts.map"
       },
       {
-        "byteLength": 4244,
-        "digest": "sha256:1c4971a72d25f0522d26fd563c7375ff13ed01fd481ba9186e8d47aa61802a62",
+        "byteLength": 4322,
+        "digest": "sha256:bf607b3ab854935ee28510383307538c232305fedfa6aaa980dad23a0cf680f7",
         "relativePath": "dist/triage/source/testSupport.js"
       },
       {
-        "byteLength": 10146,
-        "digest": "sha256:e3a4cfcaaaf82eec36352e925b7803b0145fa4a9f400a905f4ad58236acb8c49",
+        "byteLength": 10374,
+        "digest": "sha256:511a78fd8267319bc141b74ec1549e51c4961eb196f0e990f7242479d9219b31",
         "relativePath": "dist/triage/source/testSupport.js.map"
       },
       {
@@ -51709,23 +51948,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/additionalTranslations.js.map"
       },
       {
-        "byteLength": 1784,
-        "digest": "sha256:82e67c77d85fd2faa8a46ce99d522d3b6e45f426c14c94698f9d3768a17d0e98",
+        "byteLength": 2296,
+        "digest": "sha256:78caccc7615aa7a3c4ca68f1dcfa6fd0b944d3938d29c7464f8b4d6505ca667a",
         "relativePath": "dist/ui/detail/mutations.d.ts"
       },
       {
-        "byteLength": 24647,
-        "digest": "sha256:dc2bb071d2d7875329cbb613464565838762ade30a580db8aae9aad4d88d131e",
+        "byteLength": 25329,
+        "digest": "sha256:e1ef6d9cebe6d06676b196344f27e223cbd083ed1f0aafa540f59f6a30702fb9",
         "relativePath": "dist/ui/detail/mutations.d.ts.map"
       },
       {
-        "byteLength": 19994,
-        "digest": "sha256:11697b42f7eb72bba1a391564963e86abe6c94aea7c4e6c921fe5c9fb7f58eb7",
+        "byteLength": 20413,
+        "digest": "sha256:88abaddd44d76eb5c83d1d71121f190716fecae3a7371ff15dfac3fde73d5a25",
         "relativePath": "dist/ui/detail/mutations.js"
       },
       {
-        "byteLength": 36516,
-        "digest": "sha256:fd5e8afa28418e2af74357fe3dacd5793218131e25bdbb55aa8ec48b71699701",
+        "byteLength": 36983,
+        "digest": "sha256:bd05fe2705ffa84def70b1d91d231fa03b5ba3acd14e38f9d8837145073fa24f",
         "relativePath": "dist/ui/detail/mutations.js.map"
       },
       {
@@ -51859,8 +52098,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 1078612,
-        "digest": "sha256:54af72c37bee7baef5c1185a73b9a12f86f010cd2d538d3903a9f67e22e66c71",
+        "byteLength": 1089793,
+        "digest": "sha256:a554b77361aa42f165d1b05621eefe3a68e918d3e15a8eaa6fd14eb85ee88372",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -51894,18 +52133,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/backend.d.ts"
       },
       {
-        "byteLength": 12213,
-        "digest": "sha256:fa53dadd85a9797f85783c6a2e92065d1186b3fe036fbef31a855948bde88341",
+        "byteLength": 12337,
+        "digest": "sha256:f24bf18cb456573af998053aa496adea41f25fb8e0c66472200cb5c6a944860e",
         "relativePath": "dist/backend.d.ts.map"
       },
       {
-        "byteLength": 11359,
-        "digest": "sha256:26f5bd2df7a261e8c7cc4ec6bfcf99443832a5b010a1a9dadf9963825990ad6d",
+        "byteLength": 11477,
+        "digest": "sha256:2c7afd70e04751272cbdbd4dea13d211a76682440efb3f9176cc55c7a60fdf60",
         "relativePath": "dist/backend.js"
       },
       {
-        "byteLength": 18835,
-        "digest": "sha256:590c2743a79988bd21910bb2cd129e4cfbe47ca30fcfc40cf51eeb550fe96894",
+        "byteLength": 18997,
+        "digest": "sha256:b7743f3bf961de8c06656b4562b10b496c6c1d8f598e0078e42f0e18803bc2ef",
         "relativePath": "dist/backend.js.map"
       },
       {
@@ -52389,23 +52628,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/operations/hostingRepositoryPublishOperations.js.map"
       },
       {
-        "byteLength": 752,
-        "digest": "sha256:f9bbc3c29afee98424be071a3b1106bd80d282b975d45e92ec1b9df9b124ef76",
+        "byteLength": 1686,
+        "digest": "sha256:fda345c6dd7093b278f6817cbafa8041b591ba831cb32d49e996f19ac30168af",
         "relativePath": "dist/operations/materializeGitWorkspaceCheckout.d.ts"
       },
       {
-        "byteLength": 10950,
-        "digest": "sha256:eb08d24cd60be3a49171ae6e0d25bb01b07d7918720fe99e9d46d95d20b1883d",
+        "byteLength": 23651,
+        "digest": "sha256:4ae42a9d20b6fc3352b946cd8d2928644ddc3caddf90d3cb999efc355e6fd7f3",
         "relativePath": "dist/operations/materializeGitWorkspaceCheckout.d.ts.map"
       },
       {
-        "byteLength": 8546,
-        "digest": "sha256:08dc43de79d2552468939381c6862be6649ca9208dc3b681c64043b087b3bd89",
+        "byteLength": 18731,
+        "digest": "sha256:97de69d4c387a461cd56998cae9d2f97d491cb0728e5ed9ba087c7ad814c390e",
         "relativePath": "dist/operations/materializeGitWorkspaceCheckout.js"
       },
       {
-        "byteLength": 17029,
-        "digest": "sha256:3fba6d8b512b55bbb759b77bd0c06fc7fb69659ac4f3c8ccd5f47295a53272fa",
+        "byteLength": 37790,
+        "digest": "sha256:d974ffae8214f1eb754988a011b1c309cced547c62c2c564a4f2902cfdc09b26",
         "relativePath": "dist/operations/materializeGitWorkspaceCheckout.js.map"
       },
       {
@@ -53249,23 +53488,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/workspace/workspaceTransfer.js.map"
       },
       {
-        "byteLength": 2613,
-        "digest": "sha256:2a6f840b9687c67651fbe788b36a31bcc371249a562c7b8944783bca315465bb",
+        "byteLength": 3680,
+        "digest": "sha256:c9d7f2801514d45b4acfb011e52b0feee0bd94e095b1f80e37fcacd98bd2945c",
         "relativePath": "dist/workspaceIntegration.d.ts"
       },
       {
-        "byteLength": 12510,
-        "digest": "sha256:31d72ff4c020234c708db1881800a187e66de1b11bf001d6582fb428995ed65a",
+        "byteLength": 13827,
+        "digest": "sha256:8fd0b34b6cde52f988ebed0ac87039641a2be979ebc07b84f06343cf5c48e366",
         "relativePath": "dist/workspaceIntegration.d.ts.map"
       },
       {
-        "byteLength": 9086,
-        "digest": "sha256:380864c5229dacd34fc5746ca1e2ec66902654ec65d304ec0dcc4f792129ffe1",
+        "byteLength": 9841,
+        "digest": "sha256:2e0bea986a8d42d1b503575bfccd5122b672558f911120e8eb3502873b6e2883",
         "relativePath": "dist/workspaceIntegration.js"
       },
       {
-        "byteLength": 16390,
-        "digest": "sha256:5e64d94304b38cefba3f1bc267f94a2b7c0fd68255d73864465c5a79eba96a7a",
+        "byteLength": 18012,
+        "digest": "sha256:6c3113e7c50456907f60a8baf16b09951ce03b360caba99eb1fc3f7440853a9e",
         "relativePath": "dist/workspaceIntegration.js.map"
       },
       {
@@ -53339,13 +53578,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 5524029,
-        "digest": "sha256:419cd5d6d98e3fdb79177f728f90a7f3108dad4cf56b35997c4487299112835e",
+        "byteLength": 5539403,
+        "digest": "sha256:bc391527c3979a3fa5e7c68160db494517bdfd8b2ac3667b18fa8ce2ef18b886",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 1829145,
-        "digest": "sha256:b00eef37bdb61f21dcc573465bee85e9e776cb342a0bcd29cde8645b2dba1fef",
+        "byteLength": 1897114,
+        "digest": "sha256:686fbf8ab525c757cbb0f053898e3d79550b44c4d803aa44ad6e939076377d86",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -53474,13 +53713,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/githubChannelActions.js.map"
       },
       {
-        "byteLength": 2235615,
-        "digest": "sha256:38c31059b30c6ded29d85c0cebb522da8014025efdad6108f03968fd20c8726e",
+        "byteLength": 2239453,
+        "digest": "sha256:3479f81014ed27ef90a6f22f3d7d1942e33e2101a25d5bad5f2129fe724b823a",
         "relativePath": "dist/happier-plugin-ui/react-native-web/github-detail-native/entry.mjs.bundle"
       },
       {
-        "byteLength": 2101305,
-        "digest": "sha256:6e8859c95cd60160f94e39a4fc82ac2d4a51bc74c47fb1febe84127ea8543ccb",
+        "byteLength": 2105973,
+        "digest": "sha256:fdde344f2de6d84cafa76b6bbc842c0844c57e0eef33a8cb70d333a8f9d6eb07",
         "relativePath": "dist/happier-plugin-ui/react-native-web/github-triage-sources-native/entry.mjs.bundle"
       },
       {
@@ -53494,23 +53733,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/android/android.bundle.map"
       },
       {
-        "byteLength": 350929,
-        "digest": "sha256:1f1b41f9c5a3ccf1ee86a0ba7eaa14a06329972ec8d4d3ff7605b940182ccc11",
+        "byteLength": 352683,
+        "digest": "sha256:97edc3645733d0a0f6bf2e74c4f4ae89e9cadd79903306e90bced75619be8904",
         "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 163934,
-        "digest": "sha256:024e0fbec8b04073a9a10051caa083f3d1547ac21bea4cc74870708dac66639c",
+        "byteLength": 164666,
+        "digest": "sha256:62c68feff50355e8b946340c7402935030079dc4ec0f0fbf3b95c70826b26385",
         "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5861821,
-        "digest": "sha256:2da5924a144b60d7106322e695948f5ac1ce0eacd20f2f12fcb8436b2477f927",
+        "byteLength": 5856226,
+        "digest": "sha256:fc632b11b2d29eaf34b714605b708267cfab0589147a57507a9f4b49ed09cf0a",
         "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
       },
       {
-        "byteLength": 1157660,
-        "digest": "sha256:4c74b04dc6c0dd742e126c34e59d529a017f759c5f22dc54d1f4d00ab93ffab5",
+        "byteLength": 1156790,
+        "digest": "sha256:6ce9b1ccbeead772a71eed600a60697bfdc0104f248b707d688f1f25b471871b",
         "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
       },
       {
@@ -53524,23 +53763,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 350929,
-        "digest": "sha256:1f1b41f9c5a3ccf1ee86a0ba7eaa14a06329972ec8d4d3ff7605b940182ccc11",
+        "byteLength": 352683,
+        "digest": "sha256:97edc3645733d0a0f6bf2e74c4f4ae89e9cadd79903306e90bced75619be8904",
         "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 163934,
-        "digest": "sha256:024e0fbec8b04073a9a10051caa083f3d1547ac21bea4cc74870708dac66639c",
+        "byteLength": 164666,
+        "digest": "sha256:62c68feff50355e8b946340c7402935030079dc4ec0f0fbf3b95c70826b26385",
         "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5861821,
-        "digest": "sha256:2da5924a144b60d7106322e695948f5ac1ce0eacd20f2f12fcb8436b2477f927",
+        "byteLength": 5856226,
+        "digest": "sha256:fc632b11b2d29eaf34b714605b708267cfab0589147a57507a9f4b49ed09cf0a",
         "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle"
       },
       {
-        "byteLength": 1157660,
-        "digest": "sha256:4c74b04dc6c0dd742e126c34e59d529a017f759c5f22dc54d1f4d00ab93ffab5",
+        "byteLength": 1156790,
+        "digest": "sha256:6ce9b1ccbeead772a71eed600a60697bfdc0104f248b707d688f1f25b471871b",
         "relativePath": "dist/happier-plugin-ui/react-native/github-detail-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_scm_index_js-node_modules_happier-dev_plugin-3325a9.chunk.bundle.map"
       },
       {
@@ -53554,23 +53793,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/android/android.bundle.map"
       },
       {
-        "byteLength": 14319,
-        "digest": "sha256:64abf78b3c0e66b6ac88ce4a437acd062088b6643ff2678eec5574b04055a4c5",
+        "byteLength": 14389,
+        "digest": "sha256:47ae400a0a06af80b141f493ec8efcd358bdc05b844200e62b9f151b7e9e071b",
         "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
       },
       {
-        "byteLength": 6295,
-        "digest": "sha256:8ef6cb087d016b6a847ad0bff2b73c21af4bce1ff7741dc31f810ddfa8780fab",
+        "byteLength": 6308,
+        "digest": "sha256:564817b4e55101cb2de4e2a8d66c697d88ea847b40ab3087c9da267574cea15b",
         "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
       },
       {
-        "byteLength": 5914709,
-        "digest": "sha256:87ca695e493e5ff4c643e8f056d3c60bc062983c23586c88cfa5c2986590099d",
+        "byteLength": 5917222,
+        "digest": "sha256:78f043e761f319f66b8e81dfd9bc205fc62a2b7dec344a4e5450f12d5eb0140c",
         "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
       },
       {
-        "byteLength": 1170264,
-        "digest": "sha256:2acbc4e00c65878366f717d7f463879eeb89a2ce857e929c70053667718922d7",
+        "byteLength": 1171558,
+        "digest": "sha256:1666e94335da3ffa443b5d5ed82c2f1db541b725265b024460e8f6e033eecd09",
         "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
       },
       {
@@ -53584,28 +53823,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 14319,
-        "digest": "sha256:64abf78b3c0e66b6ac88ce4a437acd062088b6643ff2678eec5574b04055a4c5",
+        "byteLength": 14389,
+        "digest": "sha256:47ae400a0a06af80b141f493ec8efcd358bdc05b844200e62b9f151b7e9e071b",
         "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
       },
       {
-        "byteLength": 6295,
-        "digest": "sha256:8ef6cb087d016b6a847ad0bff2b73c21af4bce1ff7741dc31f810ddfa8780fab",
+        "byteLength": 6308,
+        "digest": "sha256:564817b4e55101cb2de4e2a8d66c697d88ea847b40ab3087c9da267574cea15b",
         "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
       },
       {
-        "byteLength": 5914709,
-        "digest": "sha256:87ca695e493e5ff4c643e8f056d3c60bc062983c23586c88cfa5c2986590099d",
+        "byteLength": 5917222,
+        "digest": "sha256:78f043e761f319f66b8e81dfd9bc205fc62a2b7dec344a4e5450f12d5eb0140c",
         "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
       },
       {
-        "byteLength": 1170264,
-        "digest": "sha256:2acbc4e00c65878366f717d7f463879eeb89a2ce857e929c70053667718922d7",
+        "byteLength": 1171558,
+        "digest": "sha256:1666e94335da3ffa443b5d5ed82c2f1db541b725265b024460e8f6e033eecd09",
         "relativePath": "dist/happier-plugin-ui/react-native/github-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
       },
       {
         "byteLength": 11240,
-        "digest": "sha256:fec8e4e1c3acfff7d829356cf2236463eee95e44576eb10d6b144659d6b11fb8",
+        "digest": "sha256:74acad3a48a52f3985bcffbb43ce0bd2f40995d85f344c0b9ffa30b074631984",
         "relativePath": "dist/happier-plugin-ui/ui-artifacts.json"
       },
       {
@@ -53629,23 +53868,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/index.js.map"
       },
       {
-        "byteLength": 6995,
-        "digest": "sha256:1f88d4eca69763d0461be14dcd457effb08304e5b0ddb3f532f9912500ca24c7",
+        "byteLength": 7165,
+        "digest": "sha256:ab2b3e673417d589f6f4debb5118be4ac0d962336e754f1d8c04097777ce8fdd",
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 72312,
-        "digest": "sha256:46cfbb4c3f1ab14342a22f10c087e1e54439ab9cfb7a11f42913bf9a232bac82",
+        "byteLength": 73140,
+        "digest": "sha256:81eddf5f1f1446ac9e081f022c17b1f216a60707f7b7203838668ea0c0347b59",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 80900,
-        "digest": "sha256:6f5e022d47494405e41205da0d0d4cecf39d04cb371f1f1fcbcd313b774bfff0",
+        "byteLength": 81827,
+        "digest": "sha256:baf1703e0fcc0803739f46e9e284c50c81ec3779ce01bca0289d79d7cfaed8f9",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 109732,
-        "digest": "sha256:26908f83abb2b9f545beddc267b2f6fa7ea2790e5922f68f49ec63a58ae0a42a",
+        "byteLength": 111141,
+        "digest": "sha256:32aa982939144e8bfe94c57e99df79efa2173e58c5a1d507dbb3f384b784dc25",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -54269,23 +54508,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/configuration.js.map"
       },
       {
-        "byteLength": 6258,
-        "digest": "sha256:077f5661a79244f94a45c7cebe432f41476eab47ca39dfb10a0874464b1e22a7",
+        "byteLength": 6327,
+        "digest": "sha256:61961710fd90cee23bc28ef2ae3162a8ab1a46587b30afa998be86d10640ca17",
         "relativePath": "dist/triage/contribution.d.ts"
       },
       {
-        "byteLength": 8572,
-        "digest": "sha256:15e0738a1d19cae6d25eedb1fe75bb7d16b436e17a47e6475b22e4307d58c708",
+        "byteLength": 8641,
+        "digest": "sha256:f625c6c2a65f4d77ff2abc3322c9a21449a572ce36cc9a10848b1ee5a334f007",
         "relativePath": "dist/triage/contribution.d.ts.map"
       },
       {
-        "byteLength": 7459,
-        "digest": "sha256:5a3b84d299d5c7086024c50d8a93d279058e2a5cc6ae59de9afe932d6238a701",
+        "byteLength": 7528,
+        "digest": "sha256:aa95b1c350bbd121d5732c2a620147fff4e6148b10fc555f7113f60817c7236c",
         "relativePath": "dist/triage/contribution.js"
       },
       {
-        "byteLength": 9900,
-        "digest": "sha256:df046c60161f5fb5462855aa558b098546a7f310e35457958620931fa32fe07a",
+        "byteLength": 9993,
+        "digest": "sha256:6d50e54b07d7a7f22c12d7e0742199b006c2c14c550cd27cb40976101445b807",
         "relativePath": "dist/triage/contribution.js.map"
       },
       {
@@ -54429,23 +54668,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/detailOperations.js.map"
       },
       {
-        "byteLength": 956,
-        "digest": "sha256:10d73f8d816bc19954f3884143ad156156b97cd4aee8d63d58bc0552fb53399c",
+        "byteLength": 1279,
+        "digest": "sha256:d9338bc18302d01847010a79ed7520a223e0cbcce82fe9b9e8c74fe1a4723868",
         "relativePath": "dist/triage/errors.d.ts"
       },
       {
-        "byteLength": 6205,
-        "digest": "sha256:84d7a10ca29742ef0f759289632e2e8350cc1518dfbdaacc1878ad6d9b1233b8",
+        "byteLength": 6636,
+        "digest": "sha256:a8ebf048806d966749fabe2deb482babd1f9e7cfea0533855e2471e3824e958c",
         "relativePath": "dist/triage/errors.d.ts.map"
       },
       {
-        "byteLength": 5487,
-        "digest": "sha256:3fc50805e070532473c7c19952f76379cacab8fcb6b8ce63f63018b459379ec3",
+        "byteLength": 5810,
+        "digest": "sha256:812172ed4411ef0cc20f5ec106641a32ea4ad9964eee0cf3f181f3e4714d5586",
         "relativePath": "dist/triage/errors.js"
       },
       {
-        "byteLength": 8954,
-        "digest": "sha256:47cea62bbfbe65ad87e6bbe3176375fde5fa212b359e5dc829ee80775cd07f5d",
+        "byteLength": 9413,
+        "digest": "sha256:ef30c9979d35805ad34bb2c80260b2e2d55b1695e6bebe72be6114fafda6c72b",
         "relativePath": "dist/triage/errors.js.map"
       },
       {
@@ -54469,23 +54708,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/feedback.js.map"
       },
       {
-        "byteLength": 6233,
-        "digest": "sha256:7415439d7fa9e382d25a33b480cca9ceb5dc282f2d3fbf1284b334b3d83830b3",
+        "byteLength": 6810,
+        "digest": "sha256:a289476945761e4a868d256f33f69d3c2756d8fffe195c52325fac874b650b92",
         "relativePath": "dist/triage/get.d.ts"
       },
       {
-        "byteLength": 25721,
-        "digest": "sha256:f5c139d3dc612f039a909276e3498d443243aa934f2bcad73f607f005b7f050a",
+        "byteLength": 29013,
+        "digest": "sha256:6ca426e0a40567bb12298aac3cc277e594d0488b33695ad2df41b85c5eba204c",
         "relativePath": "dist/triage/get.d.ts.map"
       },
       {
-        "byteLength": 17336,
-        "digest": "sha256:5a7f7a3fbfdb3907b6a7012b572423a9275d84fab18bc7fa3c42d78b9b659331",
+        "byteLength": 19532,
+        "digest": "sha256:2bd554ee538e2a708ecc69a9197754ebad0435435bd3fed1ef9a994ba4df1d29",
         "relativePath": "dist/triage/get.js"
       },
       {
-        "byteLength": 37615,
-        "digest": "sha256:eb97f50cf78511579bb7e85fad3d4c994e7805935d7b5e77c06dcdad934683c1",
+        "byteLength": 43129,
+        "digest": "sha256:7fe8da1376425e394243554ecd4cfccb4b3cf5c862cb87331b6509f68476e373",
         "relativePath": "dist/triage/get.js.map"
       },
       {
@@ -54514,18 +54753,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/instances.d.ts"
       },
       {
-        "byteLength": 8627,
-        "digest": "sha256:8295093cd115005a0e94a0101ff17333bdc0654633186b76b448716b6a99e862",
+        "byteLength": 8550,
+        "digest": "sha256:9a30219f988770d770751262199df9fe813a28d059a1fc29e840bc1357a41592",
         "relativePath": "dist/triage/instances.d.ts.map"
       },
       {
-        "byteLength": 6189,
-        "digest": "sha256:838af40beee674bd49ee9781b9aca3b00014012150c53e4530fc584a34ba327e",
+        "byteLength": 6061,
+        "digest": "sha256:3d5fdd363a0fa13d293b913bc4979186372c1f7518373d7f42377b4aa8e9d501",
         "relativePath": "dist/triage/instances.js"
       },
       {
-        "byteLength": 12842,
-        "digest": "sha256:d41975f454d3b28b2b8e2ae2a436b1519cfff13e60b171bf72ec994c13e4d09d",
+        "byteLength": 12696,
+        "digest": "sha256:3e4aaeb34b8ae9f4df025d8a927fd5c3434ebddaa141844b30b0e55b0a2a0ae3",
         "relativePath": "dist/triage/instances.js.map"
       },
       {
@@ -54614,18 +54853,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mapping/protocol.d.ts"
       },
       {
-        "byteLength": 11312,
-        "digest": "sha256:7d0f6f26974fb46fb4fbbe36e93e06f56a0a16727789f5c2aea9847d0c4e99af",
+        "byteLength": 11426,
+        "digest": "sha256:46798ea47d371e0d85353a6bf7de8c22032ab089a4602de2120cabc303cc3097",
         "relativePath": "dist/triage/mapping/protocol.d.ts.map"
       },
       {
-        "byteLength": 9188,
-        "digest": "sha256:918db3f25e1a035d228df0c01585614286a6700ac3ce369c42623ee32f155bc5",
+        "byteLength": 9315,
+        "digest": "sha256:889987beadb54f250283b79edfe2e7e00931fe5185aa8d610c111b848721ce4b",
         "relativePath": "dist/triage/mapping/protocol.js"
       },
       {
-        "byteLength": 16742,
-        "digest": "sha256:7a0d34f1f6b5a7c1f5e746567800857b19dc926148611fc4db080c02aa6433c2",
+        "byteLength": 16973,
+        "digest": "sha256:e2a6b4457ada928d436eb55e51455543c78c43c8c171aeb7d8a7fedbc4de415d",
         "relativePath": "dist/triage/mapping/protocol.js.map"
       },
       {
@@ -54669,13 +54908,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mutationOperations.js.map"
       },
       {
-        "byteLength": 218343,
-        "digest": "sha256:c1a5adc5ce818fcd0376623e7e81b6e0d7d5f3b76a4cd30ac8ba9a3cbb735b00",
+        "byteLength": 225651,
+        "digest": "sha256:ac37148d6c7c87837185a548cfe203618a720784e6311543a8058a5e5662b05c",
         "relativePath": "dist/triage/mutations/contracts.d.ts"
       },
       {
-        "byteLength": 37779,
-        "digest": "sha256:6531493f649b08ffd94b446709c7367b845fe62aa19807251e0984e90e44cbb2",
+        "byteLength": 37959,
+        "digest": "sha256:752c26d47ccf4777bfee3b485f1f9d88ad0b8c7b99c5ef853babd39d1571c273",
         "relativePath": "dist/triage/mutations/contracts.d.ts.map"
       },
       {
@@ -54689,23 +54928,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mutations/contracts.js.map"
       },
       {
-        "byteLength": 2204,
-        "digest": "sha256:cbc64c80feb69e38a08bfe79ac8a8884166932c7d84e7710049f693d1d81432f",
+        "byteLength": 2326,
+        "digest": "sha256:28113203317010069924a6a8e3a7187174c528c80d5bf1aabdda8ff29e600fc5",
         "relativePath": "dist/triage/mutations/graphql.d.ts"
       },
       {
-        "byteLength": 6513,
-        "digest": "sha256:71af4aa61d977dfda2f89646584f293b5e4ca4a2414667bd42ac8dcb032f3d46",
+        "byteLength": 7387,
+        "digest": "sha256:d879f3feaca31e13a9e45d7b268586a9f046391cd2a11789e465f03c80071612",
         "relativePath": "dist/triage/mutations/graphql.d.ts.map"
       },
       {
-        "byteLength": 5195,
-        "digest": "sha256:d314ebbce00959833ab33a154470db518ec5586055cc38cd6b74fa8e59c25942",
+        "byteLength": 5983,
+        "digest": "sha256:8c69a240ee756cbd617aa745cf23868b21dbb2d326769a1296d232708dcbc3e2",
         "relativePath": "dist/triage/mutations/graphql.js"
       },
       {
-        "byteLength": 8957,
-        "digest": "sha256:13aca46a7aef5def3011dd36934715e115b430f199e9a89ed7a6314db76c1ea9",
+        "byteLength": 10044,
+        "digest": "sha256:2563445bcf3a8fe5e14856411c6e70b6ba5009990e7760cb12328d58f265d621",
         "relativePath": "dist/triage/mutations/graphql.js.map"
       },
       {
@@ -54714,18 +54953,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mutations/issue.d.ts"
       },
       {
-        "byteLength": 18523,
-        "digest": "sha256:b76c888310af39bf23ada410cb2529c9c076df72f6cfc1498ed82e1c966385e9",
+        "byteLength": 19276,
+        "digest": "sha256:4fd3ebae27ec58af3bdbba8576acd47cc3c2510fdc39d00a0a62e28eb2e28b52",
         "relativePath": "dist/triage/mutations/issue.d.ts.map"
       },
       {
-        "byteLength": 11565,
-        "digest": "sha256:dcb07b25d6a3de77cb9106a7f876de1af3c1df93578f060c6f47e4bc154ec07e",
+        "byteLength": 12247,
+        "digest": "sha256:fd0ea0fd80632f0e930f87ccf771d6413c6854adbda45fe31c8619b9cfb0fba8",
         "relativePath": "dist/triage/mutations/issue.js"
       },
       {
-        "byteLength": 24802,
-        "digest": "sha256:105b8c1dbe2365d4df394f16b7119151f01339738594fc28c6bb0c0acc1d6deb",
+        "byteLength": 26338,
+        "digest": "sha256:a7d07e1b9eca84b00ac244c0ad35ebd5acc5d07b9de9dd4adbae1a6aa5db87cf",
         "relativePath": "dist/triage/mutations/issue.js.map"
       },
       {
@@ -54734,18 +54973,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mutations/pullRequest.d.ts"
       },
       {
-        "byteLength": 37325,
-        "digest": "sha256:3d0aff768617851b3ae20f225a782f4229a87cacc35cf083e48c1b61b7c78810",
+        "byteLength": 38241,
+        "digest": "sha256:99706e18d29dcbd1bceed936a5fdb6a5212a97ef78b54025e470f78f84a7954f",
         "relativePath": "dist/triage/mutations/pullRequest.d.ts.map"
       },
       {
-        "byteLength": 26519,
-        "digest": "sha256:8fc7065b851abcec10037f52647d72662efd7bb79024354b64d832295f81f333",
+        "byteLength": 27364,
+        "digest": "sha256:ba04f9f0c45c4fad578a18e8214a5f8edfad9bbb060e4b13cc72a0fae04f7a33",
         "relativePath": "dist/triage/mutations/pullRequest.js"
       },
       {
-        "byteLength": 52730,
-        "digest": "sha256:c77eea93cec0aeeb268c76647691d7dd2f5a4991e2bcf7bdf12dfea3e75547c3",
+        "byteLength": 54548,
+        "digest": "sha256:75354c514fd31112596452d81efa0165bc30171bda1bc52ea04f05c36d2a6390",
         "relativePath": "dist/triage/mutations/pullRequest.js.map"
       },
       {
@@ -54754,18 +54993,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mutations/reviewThread.d.ts"
       },
       {
-        "byteLength": 11153,
-        "digest": "sha256:94179cf6ef641d127422e3bbde96790018631e5211e322d6f6d124f7ca7687df",
+        "byteLength": 11192,
+        "digest": "sha256:4bd62d5fb459c9fe0b313a6c40daea1b0b2e34e65fc2303eb982d649ba162be6",
         "relativePath": "dist/triage/mutations/reviewThread.d.ts.map"
       },
       {
-        "byteLength": 6722,
-        "digest": "sha256:3f1d2c280f77229051866ed5b17259884f09d893d1f54fda9fcaf5615a434f81",
+        "byteLength": 6757,
+        "digest": "sha256:d86f1c5e95350782680c884166a3acb472966dbe681deb68e256473baed67a63",
         "relativePath": "dist/triage/mutations/reviewThread.js"
       },
       {
-        "byteLength": 14471,
-        "digest": "sha256:c6ce7abdb017ee77a0ff61a5c398c44fa708591eec8ab01c344a5fcffe197f15",
+        "byteLength": 14556,
+        "digest": "sha256:6a2ea60d7771510a6b2f319b3193ac3d743d63989bb2151a66d5bbf8af525cb7",
         "relativePath": "dist/triage/mutations/reviewThread.js.map"
       },
       {
@@ -54774,38 +55013,38 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mutations/reviewers.d.ts"
       },
       {
-        "byteLength": 15647,
-        "digest": "sha256:581a69162c72922837fd8017add4d9d14f7bf47d32d3192599c7fc9209184b80",
+        "byteLength": 15949,
+        "digest": "sha256:83ab499a38df103ccc6a22ddb8eb39656be3af000288c1cdcb33deffb9ebf8c0",
         "relativePath": "dist/triage/mutations/reviewers.d.ts.map"
       },
       {
-        "byteLength": 10553,
-        "digest": "sha256:1850e5a5bef07530f1b219e2ecdfc3453fd913e29060d98dd6ae932a1c3f8b42",
+        "byteLength": 10865,
+        "digest": "sha256:a6a2745ffc1c6a82d9a4b546672e28063d5a68972a550b309dcedf1307767ced",
         "relativePath": "dist/triage/mutations/reviewers.js"
       },
       {
-        "byteLength": 22562,
-        "digest": "sha256:866ce75b18fe0e8dfac936dd84dcb76e4641204d827a8828572a134252d61105",
+        "byteLength": 23029,
+        "digest": "sha256:5910cb071891b1223b85626c3fd094a280a834251f7faac7986a52def6e4591c",
         "relativePath": "dist/triage/mutations/reviewers.js.map"
       },
       {
-        "byteLength": 3037,
-        "digest": "sha256:04008644867e7316e8a2c5379efac3732ffc242079018a993a4776100e060fa0",
+        "byteLength": 3570,
+        "digest": "sha256:f2eb6d24ff866b7b6d30eb9c1835cc635604c21400138d87efda9547518ce39c",
         "relativePath": "dist/triage/operations.d.ts"
       },
       {
-        "byteLength": 12394,
-        "digest": "sha256:ce00b0c75d9deaa8d0f8c55c9a7d2a24b6caf9303dcc1a7db4691953e91d951a",
+        "byteLength": 20164,
+        "digest": "sha256:239f6bf3978bcd1ba2983efe361979adc50056fb051e4edb89d28318f40d02ef",
         "relativePath": "dist/triage/operations.d.ts.map"
       },
       {
-        "byteLength": 8785,
-        "digest": "sha256:1e996179456b675e880200baa51d0848986bf53bac8b188ce69a4894fcdd5c89",
+        "byteLength": 15445,
+        "digest": "sha256:77a856b00eb73d24b99b8ff6e25061c949c50bf25681c48e929b66e71d35eb02",
         "relativePath": "dist/triage/operations.js"
       },
       {
-        "byteLength": 17531,
-        "digest": "sha256:c0dcd15d350b8019d473ef16ae982aa1b6c7849c21058f37c6dc493289e8cdde",
+        "byteLength": 30512,
+        "digest": "sha256:e714dc66bc8708849e9232dd70bf6a5b75c34620c9d475620a17924538950a51",
         "relativePath": "dist/triage/operations.js.map"
       },
       {
@@ -54969,13 +55208,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/testkit/githubTriage.test-support.js.map"
       },
       {
-        "byteLength": 7616,
-        "digest": "sha256:a23162802e41fe5e8bc7918380c7b6d764b412c256df8d6579c5272219c66edf",
+        "byteLength": 7960,
+        "digest": "sha256:6e2025190b3b1e3e30ae9632ac4169bd5f201965240abe414cc537d3e5db6277",
         "relativePath": "dist/triage/types.d.ts"
       },
       {
-        "byteLength": 11941,
-        "digest": "sha256:3f69a00fc1f52b424b7bc92a1a759790f737e34e0a29bcad6549568a9924a9eb",
+        "byteLength": 12475,
+        "digest": "sha256:77797c7894a034187ac4fa6af4a8b67366523d1de7eebde057a8b9004b22eb77",
         "relativePath": "dist/triage/types.d.ts.map"
       },
       {
@@ -54984,8 +55223,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/types.js"
       },
       {
-        "byteLength": 8364,
-        "digest": "sha256:61e755ced48bb7ca62e9a04593e4b41eda16c1e76a13efa4238d306226956f5b",
+        "byteLength": 8708,
+        "digest": "sha256:e47e51f18813bc78b538f3f7fa44a615d0b92c1114b0bb9b65de704a79c55133",
         "relativePath": "dist/triage/types.js.map"
       },
       {
@@ -55069,23 +55308,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/detail/model.js.map"
       },
       {
-        "byteLength": 11819,
-        "digest": "sha256:8553df83404441d61db87f839da1b35cc0b98a9b24ceb5fca05ef7dcf9c224d5",
+        "byteLength": 12024,
+        "digest": "sha256:37765941f5a2a549b3c7ec2c350f2591d5ac6c78582f203538a611a21c966295",
         "relativePath": "dist/ui/detail/mutations.d.ts"
       },
       {
-        "byteLength": 22746,
-        "digest": "sha256:2dc1b3ca882541b67c8c3e81fdf316bc8736abbc95ad600f89bbf17920adcad3",
+        "byteLength": 23298,
+        "digest": "sha256:1c05c321df9c154901370267d24be923c9ffe6cc0091cd92fd32306248663aad",
         "relativePath": "dist/ui/detail/mutations.d.ts.map"
       },
       {
-        "byteLength": 13851,
-        "digest": "sha256:c0fb50f43158952cde18b6f06ad992061eba10df4cdee5b71db4a0728888ca01",
+        "byteLength": 14310,
+        "digest": "sha256:e05f3c79bbcf195595e1dfb0441c8cf43d1bc9a9176747281005a86b59b7e575",
         "relativePath": "dist/ui/detail/mutations.js"
       },
       {
-        "byteLength": 26897,
-        "digest": "sha256:83fc9b534c73c280382958ccc7416641810f9e65627d09c97d766be3374cb5fa",
+        "byteLength": 27676,
+        "digest": "sha256:ee70176d164910789fe59e14748a42d802b687f18c7c47f741bd410f94c017de",
         "relativePath": "dist/ui/detail/mutations.js.map"
       },
       {
@@ -55174,18 +55413,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/renderSurface.d.ts"
       },
       {
-        "byteLength": 96272,
-        "digest": "sha256:63cf888e3ea4ef9528d868a17bb1c7c493d8a28b2118abf7f1975b174d9afa93",
+        "byteLength": 96691,
+        "digest": "sha256:6a41915b2622f5e0bf307eaffa20ce8b6b12aea565363da5bb407c3b65ea2009",
         "relativePath": "dist/ui/renderSurface.d.ts.map"
       },
       {
-        "byteLength": 81362,
-        "digest": "sha256:44d28f5ed2792baad2f4a06720c6f7897a9293cdf1301143ca98578b89058cff",
+        "byteLength": 81632,
+        "digest": "sha256:f1c02a60334a697db62af1e68e53518c23720ae9cdaf7c9cb7f402e6c8416c63",
         "relativePath": "dist/ui/renderSurface.js"
       },
       {
-        "byteLength": 154327,
-        "digest": "sha256:7932647f60ee66954d3e572df6cec414261faf69f0739cd0e089789979da5a90",
+        "byteLength": 154917,
+        "digest": "sha256:b4590fdba32c9b056396d0cd1058b84e73c0f502cf2efd4a1bc7db21d5ddb49e",
         "relativePath": "dist/ui/renderSurface.js.map"
       },
       {
@@ -55259,13 +55498,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 2336272,
-        "digest": "sha256:8bd76a66679c2cc1329ea5e60518e8d9cc5421ed2047bac520f89d70c9b349d2",
+        "byteLength": 2346233,
+        "digest": "sha256:0014bd65c4532d36f5afdc08e8e13b70b219ee6753655f9e1b4cb834597727df",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 647976,
-        "digest": "sha256:f07abcf4f39821b829f16fb8b992723af6ce706e4579a29252c6cc9a33112db7",
+        "byteLength": 672183,
+        "digest": "sha256:1b81e2cf33ce4e6f63a489e990557f9a044f4b42ca1c33d9c7ca3b39498daf32",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -55329,18 +55568,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/auth/connectedAccountRuntime.js.map"
       },
       {
-        "byteLength": 2205559,
-        "digest": "sha256:c5d13716621b4c6981baa05eb12356d808318e17c7c10d5427f6717275a645dd",
+        "byteLength": 2209727,
+        "digest": "sha256:d60894bb580c7c2519dd345405069a82fa8fe54157ba891d643b031f49fcd049",
         "relativePath": "dist/happier-plugin-ui/react-native-web/gitlab-detail-native/entry.mjs.bundle"
       },
       {
-        "byteLength": 2138801,
-        "digest": "sha256:2c0eabf284e7d49c733deb3b932089f8f84fffcc4f31065c076fe3cfc3190ac0",
+        "byteLength": 2143996,
+        "digest": "sha256:0bd86c7bc9dc065304c4fa62601ca6f1c2228eceb0ce3833b64dcae8a529e6d5",
         "relativePath": "dist/happier-plugin-ui/react-native-web/gitlab-triage-sources-native/entry.mjs.bundle"
       },
       {
         "byteLength": 34105,
-        "digest": "sha256:57320d9ece93fc1a4efa386e28999130b3eb7aa2d8c429ba0facfabe692c2779",
+        "digest": "sha256:d8ae5c83c860f4d32e3cef079d22b0d56a718507f5b782c76a946bee68119ee4",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/android.bundle"
       },
       {
@@ -55349,28 +55588,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/android.bundle.map"
       },
       {
-        "byteLength": 218624,
-        "digest": "sha256:98f13263915a0fe0fe9c045953f380d5b48abd8f6766a2c3df8585cc1100524c",
+        "byteLength": 220276,
+        "digest": "sha256:46588f2e657c5d56af0e80ab2426c53ccfb63487da584f588211d8e38d8c9d9e",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 91908,
-        "digest": "sha256:46a055a444d17a745e3f01734f7e38e747786ad310b7506735d09ab2cc5b935e",
+        "byteLength": 92541,
+        "digest": "sha256:4dd9fc49d7df86fb9b8996a7555f16e1e00ff2504ca360dbe01a46e2ef837305",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5845908,
-        "digest": "sha256:ada87791159630f8b26ccb74661b362b85320abeabe6f7f9f038789a6f6f4e94",
-        "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-897adf.chunk.bundle"
+        "byteLength": 5844383,
+        "digest": "sha256:d03f71c0f71d4c2b0e200418537c65fe1491da8db1f15049c2afd9831b5f82d7",
+        "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-3b4254.chunk.bundle"
       },
       {
-        "byteLength": 1153705,
-        "digest": "sha256:d24436e35c1c5fedc485dd58c718d3d2f51011be8082f704a3249053f295c1ce",
-        "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-897adf.chunk.bundle.map"
+        "byteLength": 1154086,
+        "digest": "sha256:458e21132ecaebd84cc10d6c15e724d53645f5aadded6a905a11efe2f0053efa",
+        "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-3b4254.chunk.bundle.map"
       },
       {
         "byteLength": 34101,
-        "digest": "sha256:cf98e60bea67f78efaf663f6bfecb571e5750b7eee1b2365865abb5a2680504f",
+        "digest": "sha256:d0fc55041128a13e930c84466b502ad84fa97e9329c70a44cbc3d87f7842b55d",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/ios.bundle"
       },
       {
@@ -55379,24 +55618,24 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 218624,
-        "digest": "sha256:98f13263915a0fe0fe9c045953f380d5b48abd8f6766a2c3df8585cc1100524c",
+        "byteLength": 220276,
+        "digest": "sha256:46588f2e657c5d56af0e80ab2426c53ccfb63487da584f588211d8e38d8c9d9e",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 91908,
-        "digest": "sha256:46a055a444d17a745e3f01734f7e38e747786ad310b7506735d09ab2cc5b935e",
+        "byteLength": 92541,
+        "digest": "sha256:4dd9fc49d7df86fb9b8996a7555f16e1e00ff2504ca360dbe01a46e2ef837305",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5845908,
-        "digest": "sha256:ada87791159630f8b26ccb74661b362b85320abeabe6f7f9f038789a6f6f4e94",
-        "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-897adf.chunk.bundle"
+        "byteLength": 5844383,
+        "digest": "sha256:d03f71c0f71d4c2b0e200418537c65fe1491da8db1f15049c2afd9831b5f82d7",
+        "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-3b4254.chunk.bundle"
       },
       {
-        "byteLength": 1153705,
-        "digest": "sha256:d24436e35c1c5fedc485dd58c718d3d2f51011be8082f704a3249053f295c1ce",
-        "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-897adf.chunk.bundle.map"
+        "byteLength": 1154086,
+        "digest": "sha256:458e21132ecaebd84cc10d6c15e724d53645f5aadded6a905a11efe2f0053efa",
+        "relativePath": "dist/happier-plugin-ui/react-native/gitlab-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-3b4254.chunk.bundle.map"
       },
       {
         "byteLength": 34184,
@@ -55409,23 +55648,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/android/android.bundle.map"
       },
       {
-        "byteLength": 104361,
-        "digest": "sha256:0fc46fbeb1479931fa15031e12b0957c2daaf9812ec5d8614b68e9da432772eb",
+        "byteLength": 105005,
+        "digest": "sha256:5a016038a06ada65bea7f8882d9a00d3035959e199d9bfb46246bf3dd0a90fac",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
       },
       {
-        "byteLength": 43560,
-        "digest": "sha256:d2b1705aaec91c453b081b111cc27f2f093119b0e4257e3b0856031ca99118e8",
+        "byteLength": 43752,
+        "digest": "sha256:b97eb1ea79a1c481e8dd557a817677f95f6a2e4d24838cfab69670e68b3cda14",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
       },
       {
-        "byteLength": 5914709,
-        "digest": "sha256:d30559eaa6f5490d636868c5072ab9fd677672fbc918207c34148aae43ef72a5",
+        "byteLength": 5917308,
+        "digest": "sha256:dc43998a221cb4091ab0ae919a800f7ca7db2f62541e4aad4bcdf228ee47b8e9",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
       },
       {
-        "byteLength": 1170264,
-        "digest": "sha256:f89ad296bc9ba1fcc8e8bcfaf7e34fdcb061d66bac5bdef730395fad8ff027b7",
+        "byteLength": 1171553,
+        "digest": "sha256:84fa8c76599c627f271919a6f9ca3e684d59241e91a96a0597ed8c832f6517e7",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
       },
       {
@@ -55439,28 +55678,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 104361,
-        "digest": "sha256:0fc46fbeb1479931fa15031e12b0957c2daaf9812ec5d8614b68e9da432772eb",
+        "byteLength": 105005,
+        "digest": "sha256:5a016038a06ada65bea7f8882d9a00d3035959e199d9bfb46246bf3dd0a90fac",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
       },
       {
-        "byteLength": 43560,
-        "digest": "sha256:d2b1705aaec91c453b081b111cc27f2f093119b0e4257e3b0856031ca99118e8",
+        "byteLength": 43752,
+        "digest": "sha256:b97eb1ea79a1c481e8dd557a817677f95f6a2e4d24838cfab69670e68b3cda14",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
       },
       {
-        "byteLength": 5914709,
-        "digest": "sha256:d30559eaa6f5490d636868c5072ab9fd677672fbc918207c34148aae43ef72a5",
+        "byteLength": 5917308,
+        "digest": "sha256:dc43998a221cb4091ab0ae919a800f7ca7db2f62541e4aad4bcdf228ee47b8e9",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
       },
       {
-        "byteLength": 1170264,
-        "digest": "sha256:f89ad296bc9ba1fcc8e8bcfaf7e34fdcb061d66bac5bdef730395fad8ff027b7",
+        "byteLength": 1171553,
+        "digest": "sha256:84fa8c76599c627f271919a6f9ca3e684d59241e91a96a0597ed8c832f6517e7",
         "relativePath": "dist/happier-plugin-ui/react-native/gitlab-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
       },
       {
         "byteLength": 11242,
-        "digest": "sha256:c01c4201bccbe4f7824b6ba343325ed43eb865ab697b529a661ee8d39a2af8d2",
+        "digest": "sha256:3cbbf2876dd93a8fb3ca2898fcd29d43eafe81f38e9f2cceb9ace07987e60200",
         "relativePath": "dist/happier-plugin-ui/ui-artifacts.json"
       },
       {
@@ -55484,23 +55723,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/index.js.map"
       },
       {
-        "byteLength": 3099,
-        "digest": "sha256:1e6a7b58d2b7a7c48fc07c7253c162bbcb2f2294ff8d46d56d7f82a761badd92",
+        "byteLength": 3269,
+        "digest": "sha256:a3f48edf18253c94e77c661365a0b4e9481f0a69247a17f849097869b5b09be3",
         "relativePath": "dist/manifest.d.ts"
       },
       {
-        "byteLength": 16503,
-        "digest": "sha256:b1191e7e7da1f4b188770f7656bd30c8de184781cf20bf8283eb1f4c9a06b3fb",
+        "byteLength": 16748,
+        "digest": "sha256:548f2939f6d2f37db93c94882893abee098b90cd262d00cb1617cad1401ec216",
         "relativePath": "dist/manifest.d.ts.map"
       },
       {
-        "byteLength": 17674,
-        "digest": "sha256:c710d1d841ec4ca015e2f387c389b26f6322b15c0637a155d42212a7c9f3b2c2",
+        "byteLength": 17928,
+        "digest": "sha256:b55f44d0da9626f14f21c97f58d79249d0ba3293a22e9b3e87dc7640d986e9b2",
         "relativePath": "dist/manifest.js"
       },
       {
-        "byteLength": 25240,
-        "digest": "sha256:4a7d4b16587f490fb0983418d84f2d38056b4ab3ce2ea1b698518b7a55092cd9",
+        "byteLength": 25609,
+        "digest": "sha256:5da37cfd20e54b95993ab10b800cee4636ae09033ca1c51925cbf043d57ff222",
         "relativePath": "dist/manifest.js.map"
       },
       {
@@ -55684,23 +55923,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/configuredInstance.js.map"
       },
       {
-        "byteLength": 13169,
-        "digest": "sha256:eb7de9123f86ebf0fa1cb8b2f4375c2e7fad07417cbf29c303aafdf9431ee79f",
+        "byteLength": 13583,
+        "digest": "sha256:81db995c5ddea146b7b6e8504891555a77de0cc7fbe23ef984b21f3ade497cbd",
         "relativePath": "dist/triage/contribution.d.ts"
       },
       {
-        "byteLength": 32644,
-        "digest": "sha256:5c9ea25c6afc9cd094b2fce225c9707a632171c134d80f3415ad8e2bf10d7f1c",
+        "byteLength": 33364,
+        "digest": "sha256:599305837d1177bf66054f7774854bff4fae1cd48c48f39bef4452a1c843df47",
         "relativePath": "dist/triage/contribution.d.ts.map"
       },
       {
-        "byteLength": 27365,
-        "digest": "sha256:12da3c510b7e035038fe16b49bfb1d611a357a7595c55cee18dc22916d4568dc",
+        "byteLength": 28027,
+        "digest": "sha256:bb000652de2887266c57af9bd56223b6af9d2eab4bf5a96fbe20b6f71ac1ad27",
         "relativePath": "dist/triage/contribution.js"
       },
       {
-        "byteLength": 40429,
-        "digest": "sha256:c5938a80270385e30b033fea578155ef01132a2e537024bbd00926443899b7b3",
+        "byteLength": 41441,
+        "digest": "sha256:3c016214a0ec3f449e6a929be0ecc0798407464a274d842a673b46f1766b935d",
         "relativePath": "dist/triage/contribution.js.map"
       },
       {
@@ -55989,18 +56228,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mapping/gitlabEntry.d.ts"
       },
       {
-        "byteLength": 14514,
-        "digest": "sha256:54635eff13b3a618b351a537bde0c8fdb2590b4a587626d7e6e4860d07008448",
+        "byteLength": 14722,
+        "digest": "sha256:7b8b458e10bda7d4e9347ba149e3e809c08cca64ba8e5569eae445f54060daf3",
         "relativePath": "dist/triage/mapping/gitlabEntry.d.ts.map"
       },
       {
-        "byteLength": 11814,
-        "digest": "sha256:e4514f200ed9bb9447297391c5666438a0ea5475b5f4f903d90fc4bdd242badb",
+        "byteLength": 12029,
+        "digest": "sha256:2d02ec6b5b6cc12b5e89a789653e6facb0754123c7ef09b45db74eebabc48281",
         "relativePath": "dist/triage/mapping/gitlabEntry.js"
       },
       {
-        "byteLength": 22163,
-        "digest": "sha256:82a689e5f1e2e45ae2cfe834ea206eff99ede5e30cf97b7669205abc9e1031e5",
+        "byteLength": 22505,
+        "digest": "sha256:011ddcec517e0468494917fecef20e98b369f1b123a146e31175634bcff2e27f",
         "relativePath": "dist/triage/mapping/gitlabEntry.js.map"
       },
       {
@@ -56024,23 +56263,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mapping/gitlabInvolvement.js.map"
       },
       {
-        "byteLength": 1357,
-        "digest": "sha256:a76678b78f5cf223c2d1637f5be48e3133e44a8aedca96738c9a17046cb2816a",
+        "byteLength": 2100,
+        "digest": "sha256:2a04d9645406a2512a706b0c6369c407601da3c1a8f1cd29501523bdc3ccf564",
         "relativePath": "dist/triage/mapping/mergeRequestHead.d.ts"
       },
       {
-        "byteLength": 2229,
-        "digest": "sha256:3bc0900c37f1366e8b663745e9c0ff38e99fb08b73dc34d51e00fdab912c0275",
+        "byteLength": 3679,
+        "digest": "sha256:564986dd309570901d189b792238a5ac7ccf5a71e877056903038c9f939ab1c9",
         "relativePath": "dist/triage/mapping/mergeRequestHead.d.ts.map"
       },
       {
-        "byteLength": 1894,
-        "digest": "sha256:5586a3ef0a6bff5864c0fb69b34f29a70f4f96403c656ef0bd316c90e0847b57",
+        "byteLength": 2451,
+        "digest": "sha256:9012f5d6a93cc131fa449929028ca4172e8419f67061b205a97c100e7ccd40fb",
         "relativePath": "dist/triage/mapping/mergeRequestHead.js"
       },
       {
-        "byteLength": 2854,
-        "digest": "sha256:7b76d5887b41a93169a3071a66077e1488985860f23c11942cb44ec83b6051a1",
+        "byteLength": 4616,
+        "digest": "sha256:39e53552f80dbdba05cb79c45402f5436974cc498ac69f1517129e81aab606f4",
         "relativePath": "dist/triage/mapping/mergeRequestHead.js.map"
       },
       {
@@ -56285,7 +56524,7 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
       },
       {
         "byteLength": 33619,
-        "digest": "sha256:a4ab4fc2c1597bffa24af19e107282fffbffd2fbc9fcbd48ebfa0e3964ac67bd",
+        "digest": "sha256:687597f8a2ff781fb3dddb4290d03560cac193271aa3a0a7968ec54d2cda6c3c",
         "relativePath": "dist/triage/mutations/operations.d.ts"
       },
       {
@@ -56309,18 +56548,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mutations/preflight.d.ts"
       },
       {
-        "byteLength": 14960,
-        "digest": "sha256:1a7558ef71f0a2d169f1350eec3d2c61af9f9b0f76e86e23d649698f9f658996",
+        "byteLength": 15136,
+        "digest": "sha256:7bdcf2cda9c6d526708e6b89725167869508efa35a50297a75d424ef9ebeb264",
         "relativePath": "dist/triage/mutations/preflight.d.ts.map"
       },
       {
-        "byteLength": 9210,
-        "digest": "sha256:0248b891dbe829b53b58303d3485c075fd07e75e35fb3f3d9dc2ce819f0e7acd",
+        "byteLength": 9381,
+        "digest": "sha256:8a00149b85614cfe99a2d3c687d1bb66b49d0b2b8be3295172b8c7d9b25435fd",
         "relativePath": "dist/triage/mutations/preflight.js"
       },
       {
-        "byteLength": 16337,
-        "digest": "sha256:ce7078a469d347ab8f5a0018dbc1dd22bd7580b7ff5fb717ff236b1199e3677f",
+        "byteLength": 16710,
+        "digest": "sha256:78469752fbea70031e90f529d79249a906add4d851c9607a300c96f248523622",
         "relativePath": "dist/triage/mutations/preflight.js.map"
       },
       {
@@ -56364,23 +56603,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/mutations/stateTransition.js.map"
       },
       {
-        "byteLength": 1149,
-        "digest": "sha256:e5a07466004d4d7bb7e6482b874a3e5a8ad49874a75bc730761b9f49b6f17449",
+        "byteLength": 1349,
+        "digest": "sha256:02206113ba80bb40b85528404886756f3ed545993ec2c6f98d899bc368c4bb7b",
         "relativePath": "dist/triage/operations.d.ts"
       },
       {
-        "byteLength": 3877,
-        "digest": "sha256:a93d49cc54be23e3a202a7915ff631af7b6fa001b2294b926ef7d60220793401",
+        "byteLength": 4664,
+        "digest": "sha256:b50b400ff320265ecd9b92c71fd7c2a17ce399f02e364a08a43910d76ae56001",
         "relativePath": "dist/triage/operations.d.ts.map"
       },
       {
-        "byteLength": 2838,
-        "digest": "sha256:afc15aca17d766f385a4539684a342b09cbfb38e46a34b7692c307d9503661ee",
+        "byteLength": 3350,
+        "digest": "sha256:40d36b9528f9571d6c48ccf3fd543d9aaeffb21e2bcdb9414293820baedc63be",
         "relativePath": "dist/triage/operations.js"
       },
       {
-        "byteLength": 5050,
-        "digest": "sha256:966b80c8de39cd7d5774f915cbe42f2df7719848096bdfbc2105f3fcde3305d0",
+        "byteLength": 6059,
+        "digest": "sha256:0307c0d746cb6b50aa5802078c3eab5222918b2e16268212400a8363c2d3a06e",
         "relativePath": "dist/triage/operations.js.map"
       },
       {
@@ -56402,6 +56641,26 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "byteLength": 5818,
         "digest": "sha256:d73ebb8b8a7fd4e82cf98cab6bf966170b8494854e5946a1ccf131c4a86fe025",
         "relativePath": "dist/triage/origin.js.map"
+      },
+      {
+        "byteLength": 1030,
+        "digest": "sha256:370678ceda1810284067b6da299e67a87de1acd54ad6bcb50c4625ab99ab0340",
+        "relativePath": "dist/triage/reviewWorkspace.d.ts"
+      },
+      {
+        "byteLength": 7844,
+        "digest": "sha256:f3083b77d707bea4172201bc9b13cb5a7448ea4a65a95273107244faef928486",
+        "relativePath": "dist/triage/reviewWorkspace.d.ts.map"
+      },
+      {
+        "byteLength": 6655,
+        "digest": "sha256:343310c257b6c707361fa9067144875bec6aba2ae989bb8547341d5b8e958a0c",
+        "relativePath": "dist/triage/reviewWorkspace.js"
+      },
+      {
+        "byteLength": 12784,
+        "digest": "sha256:a9fae7295d231412101d17ff0666e75d5cfc107c06b8b1add6f1d4a60b796b8a",
+        "relativePath": "dist/triage/reviewWorkspace.js.map"
       },
       {
         "byteLength": 2409,
@@ -56489,18 +56748,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/sourceInstances.d.ts"
       },
       {
-        "byteLength": 7194,
-        "digest": "sha256:275fdce6c8c3a39c2c43917f702e6c055c298c66aa62d08ac9b8edf7e90cdd41",
+        "byteLength": 6492,
+        "digest": "sha256:b147c2c3602dcded4caf4a4dedfa802590775c1e47ad28228988808cfb59ef9b",
         "relativePath": "dist/triage/sourceInstances.d.ts.map"
       },
       {
-        "byteLength": 6560,
-        "digest": "sha256:f96c702e54a5b15677da9d51da2f03b2af4dcd9ef6b33114a08765ec2e9820c5",
+        "byteLength": 5777,
+        "digest": "sha256:fcbc4660bd4a2123aefa52723609a52c441dceef6e54339bb5fe8e8287f7c3d0",
         "relativePath": "dist/triage/sourceInstances.js"
       },
       {
-        "byteLength": 10518,
-        "digest": "sha256:99d9ead960dcac3fbf282e561a091a3b0ad635448fd8ffc9ec8d3c5ce97395c2",
+        "byteLength": 9325,
+        "digest": "sha256:ce29f9641baa80a6c5bcaa47d73de3d0c843e1b1f91cc73799324fd204633061",
         "relativePath": "dist/triage/sourceInstances.js.map"
       },
       {
@@ -56509,18 +56768,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/sourceObservation.d.ts"
       },
       {
-        "byteLength": 7729,
-        "digest": "sha256:24ac9cc761e3026eb766b8ba1b3438c39c042af1d449dc6f7f94adde9cf2f59c",
+        "byteLength": 8759,
+        "digest": "sha256:62ffaa8cc6954345c813e5620dadb862968b91666e4ad702ec8047580e0e2a33",
         "relativePath": "dist/triage/sourceObservation.d.ts.map"
       },
       {
-        "byteLength": 6862,
-        "digest": "sha256:f15decdd242d645167c2774d190a845de970340b97bbf342492ac5ecd69311e9",
+        "byteLength": 7805,
+        "digest": "sha256:5516118e1a99df0a617c09d44361b3b71dda94ae1179ee23accd96399c656bcd",
         "relativePath": "dist/triage/sourceObservation.js"
       },
       {
-        "byteLength": 11540,
-        "digest": "sha256:16ab003a017bedf9ddefb401e81ddbf8b96117ea8586e5471a89a5282068f9d6",
+        "byteLength": 13203,
+        "digest": "sha256:09f425a888ee91b39fc4ed6b6330a3865167d79e12feca00ff7c716b319e158c",
         "relativePath": "dist/triage/sourceObservation.js.map"
       },
       {
@@ -56549,28 +56808,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/testkit/gitlabTriage.test-support.d.ts"
       },
       {
-        "byteLength": 8570,
-        "digest": "sha256:0d525c86f4c882e740a1a7375038c2fef22b4781adfc8de8eac5799b80994fdb",
+        "byteLength": 8558,
+        "digest": "sha256:5a2e3c91349dec0f20e4fa7a7fe6cae292b1e9b0c4bff20e101e2f9a3c5f8afc",
         "relativePath": "dist/triage/testkit/gitlabTriage.test-support.d.ts.map"
       },
       {
-        "byteLength": 5432,
-        "digest": "sha256:b7931b765619e461999948a7bfceb7413b6dbe44969a81374d0780e9c52685af",
+        "byteLength": 5360,
+        "digest": "sha256:290d475bb62c62c13f4c2d5b5add1881f07f2b4b94a4a4854075149a39cf7ca6",
         "relativePath": "dist/triage/testkit/gitlabTriage.test-support.js"
       },
       {
-        "byteLength": 10731,
-        "digest": "sha256:03a11dd5bd003e66488f99372f13162f3f52c72b6c16567fe1f7284a32ede3de",
+        "byteLength": 10685,
+        "digest": "sha256:a8624635d96e2a128b8eb16a00610bd47f501a485897b089b41805b44c4d7a5d",
         "relativePath": "dist/triage/testkit/gitlabTriage.test-support.js.map"
       },
       {
-        "byteLength": 6833,
-        "digest": "sha256:3be07f40a64df6a5a8541f641c46b89999a9dd3b95ed5c00bab1ea9092ded047",
+        "byteLength": 7062,
+        "digest": "sha256:a0df331fd5ce14d1783c26b27a970a32b861b7e8fe3221b367dd8a663d68517a",
         "relativePath": "dist/triage/types.d.ts"
       },
       {
-        "byteLength": 10290,
-        "digest": "sha256:800e2603907ac0082ccfba778c1142331b13f98098d09a74edf8c08d6bc554a7",
+        "byteLength": 10649,
+        "digest": "sha256:7df7d4c12cc6c593edb51f2a69f34e56f6396bf60606509677d27237ac145eed",
         "relativePath": "dist/triage/types.d.ts.map"
       },
       {
@@ -56579,8 +56838,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/triage/types.js"
       },
       {
-        "byteLength": 7078,
-        "digest": "sha256:1c45d65d753f021736026965fd89489bfe5c657141eb8c288490b2d8eb3f9701",
+        "byteLength": 7295,
+        "digest": "sha256:ea4e87024bd0305c700e45489b6ceca818c7c0f55d566d7f974c96166d5bf0a4",
         "relativePath": "dist/triage/types.js.map"
       },
       {
@@ -56689,38 +56948,38 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/detail/mutationControls.d.ts"
       },
       {
-        "byteLength": 21557,
-        "digest": "sha256:1156fd51411734563b26c768f8d5d7d8d6c37a9c69323232154d6dd15e851131",
+        "byteLength": 22138,
+        "digest": "sha256:20cf6374fa50a9977133cede06ed90aa34e9df67550009397b450ec529c5c631",
         "relativePath": "dist/ui/detail/mutationControls.d.ts.map"
       },
       {
-        "byteLength": 19087,
-        "digest": "sha256:2c3f0e399c9efcfdb5b57b28a25e1ded2dbbd9611dc78ef111ff82038588dfcc",
+        "byteLength": 19613,
+        "digest": "sha256:d690770e167f2e9b27f92f811f2bebe42c8771b261d7f53e0cb4fdc3a30f82cd",
         "relativePath": "dist/ui/detail/mutationControls.js"
       },
       {
-        "byteLength": 32475,
-        "digest": "sha256:7b0e3af9633f1f2c07f6eeac9eb61941ad6a981813b1647808f5e6c676ff0113",
+        "byteLength": 33402,
+        "digest": "sha256:33b6dada8a08694c2f756a12b25afa3d4088c90af1544b667bc69c2382285759",
         "relativePath": "dist/ui/detail/mutationControls.js.map"
       },
       {
-        "byteLength": 19326,
-        "digest": "sha256:25167d15ad0f046f3f54ce4e3aac37cbaf0dc9f934237cfbeaeeaf2c3ea5ce71",
+        "byteLength": 19525,
+        "digest": "sha256:123473e6d17a9c0e04cf0e0237cf7857eb675d68a5c18bcc4a11d29ba7b05518",
         "relativePath": "dist/ui/detail/mutations.d.ts"
       },
       {
-        "byteLength": 22412,
-        "digest": "sha256:743e64a118ed72fc03a4e8361af034b66b9bd1557fca99ac49f43c15c585813b",
+        "byteLength": 22940,
+        "digest": "sha256:ba4be0bc59f140e48f7bfab8a7f047a1caa0d5821a4aae410d69c27e06a00e2f",
         "relativePath": "dist/ui/detail/mutations.d.ts.map"
       },
       {
-        "byteLength": 15008,
-        "digest": "sha256:b79a6fe5d47a6ae279c96f3ebbe2838c9ee9f0611ecae9b4d41aedd7d80ad4dc",
+        "byteLength": 15444,
+        "digest": "sha256:94273b966b23117d5e2bb59144856dee2ec90da6d43064f3de2d21a8c198c80f",
         "relativePath": "dist/ui/detail/mutations.js"
       },
       {
-        "byteLength": 26111,
-        "digest": "sha256:836aafa64d8788039ee24ea683b1ed16be28db709dc0d689c9a10dbe2e75b969",
+        "byteLength": 26852,
+        "digest": "sha256:7b6a5651e356e2ee260944e3cb3bd05076d704f5cbb45a6e994847da0a444442",
         "relativePath": "dist/ui/detail/mutations.js.map"
       },
       {
@@ -56854,8 +57113,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 713838,
-        "digest": "sha256:bbadc580dd04f5702d471c35dbeec37690194ca8c1c7cae77740de719de89ea4",
+        "byteLength": 713595,
+        "digest": "sha256:2ac64dffc4bca66f1205e0986c99139b29156b04f1ac580149cbc6731b887f5b",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
@@ -57234,13 +57493,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 2214371,
-        "digest": "sha256:25239bac8ed4cb3a7eb5080528103b635f7e2c8c55fab7c4c1e31b96bcec1fcb",
+        "byteLength": 2216521,
+        "digest": "sha256:9dfc26290c1a7220941fb2df28f97c0178b53cfc90a025f2e1c79d50cf323d42",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 357726,
-        "digest": "sha256:6d6901d981a92872c1157c998a90c5d8e993db6c86fbb9c78e80bca3ba031b0c",
+        "byteLength": 361851,
+        "digest": "sha256:84778bf57abc266e72d5a785152f38bcad78aae7c3f3fdf0223fe76cc29d4920",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -57269,18 +57528,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/api/sentryApiClient.d.ts"
       },
       {
-        "byteLength": 9896,
-        "digest": "sha256:701883936321083911d5b8d1aff121d6d1e92d8d3cc7302018b5c059acf79253",
+        "byteLength": 9869,
+        "digest": "sha256:82b749bd486920f92ee493ecb0eba4876b79fdf974b63c293fbbf9683a32a433",
         "relativePath": "dist/api/sentryApiClient.d.ts.map"
       },
       {
-        "byteLength": 7170,
-        "digest": "sha256:96fe6e6645032ce6af5315f945eb7444899df6681e605971bb2466c15f6a125a",
+        "byteLength": 7141,
+        "digest": "sha256:3d475ad8471773fe0d304e06420d88985a5455b6cf8daf03d342977a78b9e721",
         "relativePath": "dist/api/sentryApiClient.js"
       },
       {
-        "byteLength": 12612,
-        "digest": "sha256:01db1d5544197e5e9976939aca0020899e663c67af151bd1f6c02b260dec8c0d",
+        "byteLength": 12563,
+        "digest": "sha256:25b905fd2f85dd045f13898499963c46e8845b52b3d17808334bb8c145804c92",
         "relativePath": "dist/api/sentryApiClient.js.map"
       },
       {
@@ -57322,26 +57581,6 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "byteLength": 7369,
         "digest": "sha256:0928fd6a0f4f7e246bff3fc874594a5c205afa38cc4fbd846a8e1d8d9d7b3b7e",
         "relativePath": "dist/api/sentryFailure.js.map"
-      },
-      {
-        "byteLength": 2034,
-        "digest": "sha256:9267cdb731b957e57da62d28536af4019fd4fd86d54fa26e6ef968ec9b2c9e64",
-        "relativePath": "dist/api/sentryInvocationDeadline.d.ts"
-      },
-      {
-        "byteLength": 2999,
-        "digest": "sha256:665e35122bb074a68a3a61f3ad4a3b15b8826c1a84a5879f146b9d861963893f",
-        "relativePath": "dist/api/sentryInvocationDeadline.d.ts.map"
-      },
-      {
-        "byteLength": 2499,
-        "digest": "sha256:5502895c4edd8ae1a63b9a5e201eac9206e7fbf9404132acbe2dcadee0b1d934",
-        "relativePath": "dist/api/sentryInvocationDeadline.js"
-      },
-      {
-        "byteLength": 3522,
-        "digest": "sha256:e1dfe0f7ba4d8216bfe20a77f35da1a1ce711558711a89b3b285bb20c0cca4ca",
-        "relativePath": "dist/api/sentryInvocationDeadline.js.map"
       },
       {
         "byteLength": 1165,
@@ -57409,18 +57648,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/auth/connectedAccountRuntime.d.ts"
       },
       {
-        "byteLength": 17345,
-        "digest": "sha256:5a4f0cf44d9fe9c8d007f805d234ef1acba96f1ef90893447f611b3c46c82dcf",
+        "byteLength": 17627,
+        "digest": "sha256:67f5dde296a1ff9414b0ada863e235bdc8989ddd9ddd107393573444c5aaa973",
         "relativePath": "dist/auth/connectedAccountRuntime.d.ts.map"
       },
       {
-        "byteLength": 14719,
-        "digest": "sha256:acc99c224c3daba651a7bb9dba150050765e3449cc846dd5e214b50432f63b44",
+        "byteLength": 15108,
+        "digest": "sha256:ccdb8bf197af02df3a40611d3c205f1587e6e25435c80f210cdfb97108fdf0bc",
         "relativePath": "dist/auth/connectedAccountRuntime.js"
       },
       {
-        "byteLength": 25272,
-        "digest": "sha256:a05a8e90093864979a18d4dc2285a14e88b1a41a5ec13344f32f9002f2a43d73",
+        "byteLength": 25695,
+        "digest": "sha256:935a93ea20cb0836fda5abed2f75d3acfdce6876a3ebb438d91f6c4430448e82",
         "relativePath": "dist/auth/connectedAccountRuntime.js.map"
       },
       {
@@ -57584,13 +57823,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/entries/sentryIssueTypes.js.map"
       },
       {
-        "byteLength": 2162530,
-        "digest": "sha256:19bd5c4d1fc637d7f1546ef394f63061b900131156cb479c759e10d23d12c2ab",
+        "byteLength": 2164514,
+        "digest": "sha256:53f7c314ca67b9dd6b5a48ff331e342977adf47a8a398d65aaa6e148f99c2434",
         "relativePath": "dist/happier-plugin-ui/react-native-web/sentry-detail-native/entry.mjs.bundle"
       },
       {
-        "byteLength": 2100327,
-        "digest": "sha256:d63290d988f0a7695eed753b60af029eae04d73aa8d32e6eca1011e1f232fb2d",
+        "byteLength": 2104927,
+        "digest": "sha256:62477d9c72afbbe39146cacc589d947f67226e0f04788627711782808a612a5f",
         "relativePath": "dist/happier-plugin-ui/react-native-web/sentry-triage-sources-native/entry.mjs.bundle"
       },
       {
@@ -57604,23 +57843,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/android/android.bundle.map"
       },
       {
-        "byteLength": 197964,
-        "digest": "sha256:b2305d59a328baa93d23528d44e767ccf1631573b863f9efb2ad44180276c359",
+        "byteLength": 197751,
+        "digest": "sha256:6f64effdff061034e86a60c5a15b94243b77bb3d5187cf3e68bd49ade7293358",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 81777,
-        "digest": "sha256:1ef54de719e67045f35e99d45d21451aa0ea03600348738f63eba7698e16175a",
+        "byteLength": 81691,
+        "digest": "sha256:84bb0c096d090deccde16a61cbd70d6c16a12631266b574d64d860f377bc02fc",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/android/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5828269,
-        "digest": "sha256:9d4b9f3771cdb1a11040d7f2052d96dd911333e125ef74f39cf80ebd3dcee555",
+        "byteLength": 5821795,
+        "digest": "sha256:46d5519f3270cef8887145c6ba698768e6930e5c46e863470103ab742d076ff4",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
       },
       {
-        "byteLength": 1149770,
-        "digest": "sha256:5a80b2dd194b53ffe08d8a8b3673e5cf0048ab42682a3638de5f55071711c2c0",
+        "byteLength": 1148760,
+        "digest": "sha256:6f9edb640a20a34c41d00f0812534cae2e954ae384ecbc0c286388d28c2737d6",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
       },
       {
@@ -57634,23 +57873,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 197964,
-        "digest": "sha256:b2305d59a328baa93d23528d44e767ccf1631573b863f9efb2ad44180276c359",
+        "byteLength": 197751,
+        "digest": "sha256:6f64effdff061034e86a60c5a15b94243b77bb3d5187cf3e68bd49ade7293358",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 81777,
-        "digest": "sha256:1ef54de719e67045f35e99d45d21451aa0ea03600348738f63eba7698e16175a",
+        "byteLength": 81691,
+        "digest": "sha256:84bb0c096d090deccde16a61cbd70d6c16a12631266b574d64d860f377bc02fc",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/ios/src_ui_renderSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5828269,
-        "digest": "sha256:9d4b9f3771cdb1a11040d7f2052d96dd911333e125ef74f39cf80ebd3dcee555",
+        "byteLength": 5821795,
+        "digest": "sha256:46d5519f3270cef8887145c6ba698768e6930e5c46e863470103ab742d076ff4",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
       },
       {
-        "byteLength": 1149770,
-        "digest": "sha256:5a80b2dd194b53ffe08d8a8b3673e5cf0048ab42682a3638de5f55071711c2c0",
+        "byteLength": 1148760,
+        "digest": "sha256:6f9edb640a20a34c41d00f0812534cae2e954ae384ecbc0c286388d28c2737d6",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-detail-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
       },
       {
@@ -57664,23 +57903,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/android/android.bundle.map"
       },
       {
-        "byteLength": 11481,
-        "digest": "sha256:db4a1428b94bf9c7f03f2fee0b8238a06f4d666bde80e9d7c7511991cf210c67",
+        "byteLength": 11268,
+        "digest": "sha256:678b5fb4a5be67d7b5985ef011324a27109ff5c0e471156c6d51a245596dfb8c",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
       },
       {
-        "byteLength": 3572,
-        "digest": "sha256:a78698295f2059185aafcf3ba96480ed9e098aeee4fb82f97dc8f4f55eccbb7b",
+        "byteLength": 3486,
+        "digest": "sha256:0014ae1235ba215a7c6934821745375cefb500ec100f658e316e266bea92dd65",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/android/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
       },
       {
-        "byteLength": 5914709,
-        "digest": "sha256:64e3c6c95988e0456dd961caef165bb205736ad8e5844320c824a00f4441a785",
+        "byteLength": 5917308,
+        "digest": "sha256:e682ae85120d7c9c3c1b01bfbd102ff6aecb0e4732b692d4545f2dca42acb892",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
       },
       {
-        "byteLength": 1170264,
-        "digest": "sha256:5af270b1726886f1401aef708d625008a4d785101520c951d7929394e4224574",
+        "byteLength": 1171553,
+        "digest": "sha256:808b026ae95735ab2bef522a111a1c6f66ced0fe46b7802b3c97ecf956be3073",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/android/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
       },
       {
@@ -57694,28 +57933,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 11481,
-        "digest": "sha256:db4a1428b94bf9c7f03f2fee0b8238a06f4d666bde80e9d7c7511991cf210c67",
+        "byteLength": 11268,
+        "digest": "sha256:678b5fb4a5be67d7b5985ef011324a27109ff5c0e471156c6d51a245596dfb8c",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle"
       },
       {
-        "byteLength": 3572,
-        "digest": "sha256:a78698295f2059185aafcf3ba96480ed9e098aeee4fb82f97dc8f4f55eccbb7b",
+        "byteLength": 3486,
+        "digest": "sha256:0014ae1235ba215a7c6934821745375cefb500ec100f658e316e266bea92dd65",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/ios/src_ui_settings_renderSettingsSurface_tsx-webpack_sharing_consume_default_react-native-webpac-17da18.chunk.bundle.map"
       },
       {
-        "byteLength": 5914709,
-        "digest": "sha256:64e3c6c95988e0456dd961caef165bb205736ad8e5844320c824a00f4441a785",
+        "byteLength": 5917308,
+        "digest": "sha256:e682ae85120d7c9c3c1b01bfbd102ff6aecb0e4732b692d4545f2dca42acb892",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle"
       },
       {
-        "byteLength": 1170264,
-        "digest": "sha256:5af270b1726886f1401aef708d625008a4d785101520c951d7929394e4224574",
+        "byteLength": 1171553,
+        "digest": "sha256:808b026ae95735ab2bef522a111a1c6f66ced0fe46b7802b3c97ecf956be3073",
         "relativePath": "dist/happier-plugin-ui/react-native/sentry-triage-sources-native/ios/vendors-node_modules_happier-dev_triage-sources_dist_index_js.chunk.bundle.map"
       },
       {
         "byteLength": 11238,
-        "digest": "sha256:a2c8d0d507e01da30d2bec803e2cc58ba7ec4e7398bab78af727c2ba85349e8d",
+        "digest": "sha256:8b02460783b6556f84172335e2d2995f9e9f2a37d3438c72075d77ac1f2c21cb",
         "relativePath": "dist/happier-plugin-ui/ui-artifacts.json"
       },
       {
@@ -57959,23 +58198,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/scan/sentryScanQuery.js.map"
       },
       {
-        "byteLength": 11159,
-        "digest": "sha256:153132cb69abbd998710767381733824b2374d96cf2749531edf3e635dfe0455",
+        "byteLength": 10554,
+        "digest": "sha256:a52a6564440cc8188e252e74b016e102eb01ee544f49fc005e30e181cf632d0c",
         "relativePath": "dist/sentryContracts.d.ts"
       },
       {
-        "byteLength": 14173,
-        "digest": "sha256:6b97a2ab09af3a2cb6d09da52a39edb25ce368bee2790b842d148e383ef240f9",
+        "byteLength": 13461,
+        "digest": "sha256:2b12bcf5514ac99dce0c0345210a677d35ecd491346143784986403057e22996",
         "relativePath": "dist/sentryContracts.d.ts.map"
       },
       {
-        "byteLength": 10363,
-        "digest": "sha256:6a0a5dffede938d77364e8adc51de0241390f28a6fbf64afe1b582a0a3138f1b",
+        "byteLength": 9717,
+        "digest": "sha256:368c79201802225dfe143e339ba23eb972849a9940b94d032359833a7110aa3a",
         "relativePath": "dist/sentryContracts.js"
       },
       {
-        "byteLength": 14813,
-        "digest": "sha256:76071bab0ef7720f5e201c518042c4549d19b97b4e8e72862bdc51d239cbb136",
+        "byteLength": 14066,
+        "digest": "sha256:dd1925d60a27748b37fc8f35f8e7809672a8fb76698f469a2421bf3ecdddfca3",
         "relativePath": "dist/sentryContracts.js.map"
       },
       {
@@ -57984,18 +58223,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/source/detailOperations.d.ts"
       },
       {
-        "byteLength": 12537,
-        "digest": "sha256:35757cbf5e79080cfb9bea4585dac5c620746323c54b4511e47843049a998e7a",
+        "byteLength": 13348,
+        "digest": "sha256:02b8c089270a0c5c2fa1ad910040592c1495dca0f488c6149fa6a6e8d26a6ab4",
         "relativePath": "dist/source/detailOperations.d.ts.map"
       },
       {
-        "byteLength": 10896,
-        "digest": "sha256:c540c686c6a62839a97efb9db701ba18ee75ce559e6e14e0a56737be95fc356f",
+        "byteLength": 12055,
+        "digest": "sha256:99b4ec6b03b7ecf0543ed854a7c8a7d515cd45825de1acfdc5a639fb52e9a790",
         "relativePath": "dist/source/detailOperations.js"
       },
       {
-        "byteLength": 19132,
-        "digest": "sha256:d299e7b8b6d662387367227a25019d721d78739b8eadbfe332aee75b8b04b032",
+        "byteLength": 20551,
+        "digest": "sha256:a357180eb96f2f71580ce1456c75f0774c88ec460ba912adb29e5a12f0a0af88",
         "relativePath": "dist/source/detailOperations.js.map"
       },
       {
@@ -58024,18 +58263,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/source/operations.d.ts"
       },
       {
-        "byteLength": 23260,
-        "digest": "sha256:411bfa94ce76de0782615db2278ae8d57c7361d99c9289ece05e56ea497001a1",
+        "byteLength": 22346,
+        "digest": "sha256:56784f794e507dde692f03c96c0bac49e60a8f97b78080f8f5038d7d3d41258d",
         "relativePath": "dist/source/operations.d.ts.map"
       },
       {
-        "byteLength": 19874,
-        "digest": "sha256:b707cfb46cb6ce186290ecd321a1bd16ecba37620ca6268cfcc00e55cc173d95",
+        "byteLength": 18920,
+        "digest": "sha256:eaef73eccd15dcb209090aed2d616ac41c7e324053a6758860fd52785bcb26f4",
         "relativePath": "dist/source/operations.js"
       },
       {
-        "byteLength": 36194,
-        "digest": "sha256:1b34fe7af0e97db30271a4872b5a1ee12bd1595eeba22db1817b7385c5025f85",
+        "byteLength": 34665,
+        "digest": "sha256:92b5d6d3c8ab844574a460b270f869b6ce3f20943d550af6c1878b908d26f39e",
         "relativePath": "dist/source/operations.js.map"
       },
       {
@@ -58229,13 +58468,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
   {
     "files": [
       {
-        "byteLength": 2619419,
-        "digest": "sha256:eefdf5d8c4f57dffbc741a5af8c2aba779849f9c2a2a013c64ec938d9599d3fc",
+        "byteLength": 2621000,
+        "digest": "sha256:1073f28bc7a6eee305fb1d61ddd3a1e4acd136cfa796cca93440602d211a25a6",
         "relativePath": ".happier-plugin/daemon.js"
       },
       {
-        "byteLength": 918084,
-        "digest": "sha256:65730f5e3b22741b719ff1b7fa1a25e8b7af2c1bca19e052ccd8686c066456ca",
+        "byteLength": 954027,
+        "digest": "sha256:30bf7e82aadf407beb902696efd8b568bf0f4c4a3dbac941e4936a28cbdcd630",
         "relativePath": ".happier-plugin/plugin.json"
       },
       {
@@ -58319,23 +58558,43 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/actions/callerSource.js.map"
       },
       {
-        "byteLength": 7894,
-        "digest": "sha256:182b59378171e613e465c437d1f5a508c090c3c66ba16b67cd73125eefa88f5f",
+        "byteLength": 580,
+        "digest": "sha256:f8e8ae0adfa947b7a01550118a0f12152157af600109e0d6f762f62a794091a3",
+        "relativePath": "dist/actions/collectionCursorProtocol.d.ts"
+      },
+      {
+        "byteLength": 830,
+        "digest": "sha256:bc454fb61a8bd19ff29ce77e47680cfe4c62cf2de70b8f465c991e7af0015999",
+        "relativePath": "dist/actions/collectionCursorProtocol.d.ts.map"
+      },
+      {
+        "byteLength": 658,
+        "digest": "sha256:04f8733e6b82151b878bec0a70e4e0283398be373001dbb90bbd9bd30bb12667",
+        "relativePath": "dist/actions/collectionCursorProtocol.js"
+      },
+      {
+        "byteLength": 962,
+        "digest": "sha256:52a5387cc7460f014bcf5484e544bcd013c11b7a3e093f5dd644e6d8a6c6d73d",
+        "relativePath": "dist/actions/collectionCursorProtocol.js.map"
+      },
+      {
+        "byteLength": 8038,
+        "digest": "sha256:2c99e8714565242bfe7670c35d16a650dab6457325d1274af20f043d2c725226",
         "relativePath": "dist/actions/entryDetailProtocol.d.ts"
       },
       {
-        "byteLength": 5957,
-        "digest": "sha256:a62eaeaa51b907e66ea22731284e7dc2c091056e8a1e2da6ac841d33609ad88b",
+        "byteLength": 6232,
+        "digest": "sha256:debaa960abb8c3b115bc70efc2d2f619701c5b9ad00e47a4ac67e26d2f20599a",
         "relativePath": "dist/actions/entryDetailProtocol.d.ts.map"
       },
       {
-        "byteLength": 4768,
-        "digest": "sha256:74705db6e54f4e607afc278943ecb8f9cb758c6bb31322a314f81c2bdaa38dc0",
+        "byteLength": 5038,
+        "digest": "sha256:4f723a6173c9698bd51c8d752b437fdf332894a3315d5836bfde2d2ff4b5ddd2",
         "relativePath": "dist/actions/entryDetailProtocol.js"
       },
       {
-        "byteLength": 6576,
-        "digest": "sha256:b248765faadfa2e63c206d4bd7f580ad32184c9c04ceeb99a96d25dadfd3b843",
+        "byteLength": 6902,
+        "digest": "sha256:74bb116b2f07fedff7ad258da6e152b29e84d361339a720a2ef31919f9ed77e4",
         "relativePath": "dist/actions/entryDetailProtocol.js.map"
       },
       {
@@ -58344,38 +58603,38 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/actions/entrySession.d.ts"
       },
       {
-        "byteLength": 11322,
-        "digest": "sha256:ced44a9e98d539ab8e21e7d0a6974bb0d0780450e916960470b3ddb2265024c9",
+        "byteLength": 11709,
+        "digest": "sha256:b9be9aee8857848ae1e3f1221d7d37c93872ed1fc7263b8aa00359de5564b9cb",
         "relativePath": "dist/actions/entrySession.d.ts.map"
       },
       {
-        "byteLength": 7409,
-        "digest": "sha256:c7840c657db22330919328f6bf4be3e512ea5e8535227a7604ab6e10920ee55f",
+        "byteLength": 7786,
+        "digest": "sha256:f0b2d54f4b0c730b5acf6c62c2ad976be1c97367b2be1e444e6a5bfe75a0ec25",
         "relativePath": "dist/actions/entrySession.js"
       },
       {
-        "byteLength": 15159,
-        "digest": "sha256:9d86a9e2033b59096b425a047546a80ea35c5994e36f85d24b5a67f10c15f7fd",
+        "byteLength": 15867,
+        "digest": "sha256:3efb93caba7dc55e62a20caee757c0c2f13875bd224208fd589ee511cf9ba737",
         "relativePath": "dist/actions/entrySession.js.map"
       },
       {
-        "byteLength": 13909,
-        "digest": "sha256:1ab020adfc36391dd65ed3393249d6d159bb0847452eaa209dc5ca57b671762f",
+        "byteLength": 14693,
+        "digest": "sha256:3e1f069f28e497861aad9f40005ce13c16b5e239255a5f278811625d7e243394",
         "relativePath": "dist/actions/entrySessionProtocol.d.ts"
       },
       {
-        "byteLength": 23188,
-        "digest": "sha256:e7492944b49563a2f3cb015dd46e6f1c5838a0c3ed3417a7dedbd59342b4751d",
+        "byteLength": 24179,
+        "digest": "sha256:4aec30e09dc738f6862c9e7edcf5f92f80ba962f520fdbb0daff7b6a9a2bbf9e",
         "relativePath": "dist/actions/entrySessionProtocol.d.ts.map"
       },
       {
-        "byteLength": 20578,
-        "digest": "sha256:2daca96a332dae4a9abca16164d0dd77f046f90afaaf7bbd06a9e0d58738f2d5",
+        "byteLength": 21530,
+        "digest": "sha256:bb3bf78b4fb8f1797985c5fcb4b971b92a3c66bb494299df0442eda95ea79f08",
         "relativePath": "dist/actions/entrySessionProtocol.js"
       },
       {
-        "byteLength": 28595,
-        "digest": "sha256:64c849697745ccb8c5ebcef57a3defafc4e796f564aeafc3c04a148a15d1bc24",
+        "byteLength": 29967,
+        "digest": "sha256:9189dcee3a3307212abe95e869ec71544f42586fa58b96b2562ecd129ed4bce4",
         "relativePath": "dist/actions/entrySessionProtocol.js.map"
       },
       {
@@ -58399,23 +58658,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/actions/listEntries.js.map"
       },
       {
-        "byteLength": 33138,
-        "digest": "sha256:c03fee21593140d441131851a92d1e19a08e71952fe73ef0bf4cd250dcc53d54",
+        "byteLength": 41546,
+        "digest": "sha256:06676a11074ac47515d42a2769780c5c52b9d47abe75a15cc337d75a06725e58",
         "relativePath": "dist/actions/listEntriesProtocol.d.ts"
       },
       {
-        "byteLength": 23729,
-        "digest": "sha256:ae2b79b3869afc87ba13b625919acdc7c1793b5e00f9714660c690de267da347",
+        "byteLength": 22428,
+        "digest": "sha256:8d0aabada6ade958affa504b352f9676d6aa947c304382e2efd923ef895dbe44",
         "relativePath": "dist/actions/listEntriesProtocol.d.ts.map"
       },
       {
-        "byteLength": 21072,
-        "digest": "sha256:3b63965d6c5873d7c708acf29b6208c71ef0e56a1280c4d3298d1bd9431c2760",
+        "byteLength": 19679,
+        "digest": "sha256:cdf9b0533e01f07dcb06e866fcc24655382de8a451fbcce8ec9f4466288dcf95",
         "relativePath": "dist/actions/listEntriesProtocol.js"
       },
       {
-        "byteLength": 30267,
-        "digest": "sha256:f4ae3c770726e29d91b43436f205e5a45772b9950a1c20383e7ada095d8fc8f2",
+        "byteLength": 28415,
+        "digest": "sha256:0c5f6f8876bbf54ea20226d3f84b36649da289b666f231adb677fb5f738235a2",
         "relativePath": "dist/actions/listEntriesProtocol.js.map"
       },
       {
@@ -58444,38 +58703,38 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/actions/readEntryDetail.d.ts"
       },
       {
-        "byteLength": 11105,
-        "digest": "sha256:b3c009ed9f4d7594f61c073cd71677816db91665d32598e2e9ff514041f6421d",
+        "byteLength": 11360,
+        "digest": "sha256:1d2b96b09aa143d2706271618aaf2d7ffec4a5af2f8169ad9e5f9058378ef506",
         "relativePath": "dist/actions/readEntryDetail.d.ts.map"
       },
       {
-        "byteLength": 6735,
-        "digest": "sha256:7f9061e5235b3cde6fb1b674b3030df84334daea8528a63ae153509bcecb11b6",
+        "byteLength": 6970,
+        "digest": "sha256:4da210a2d4e8b6de839d4aa01c03140f625fc4f9e7df18dc3fdacbcb8870a38f",
         "relativePath": "dist/actions/readEntryDetail.js"
       },
       {
-        "byteLength": 14361,
-        "digest": "sha256:b4169ccdf4c6bacb63ec63139bee2f8fd47c2c4fc8a8bd228ce16b6328686c48",
+        "byteLength": 14897,
+        "digest": "sha256:ff130a35c7961dfadbd2185f6831cc1d6ed372ba672c98efce646a7bf848f6c5",
         "relativePath": "dist/actions/readEntryDetail.js.map"
       },
       {
-        "byteLength": 2294,
-        "digest": "sha256:cb97963875c9601cbec57ca26bad9291fed39d5dce71e331acb5ffea71e2d7a6",
+        "byteLength": 2404,
+        "digest": "sha256:83f42a751f4c8d28a2d35ceeac5c96644d0e659351566127ceb30bc611fc4d66",
         "relativePath": "dist/actions/reobserveEntry.d.ts"
       },
       {
-        "byteLength": 7709,
-        "digest": "sha256:763d8b14b88725dce1d31ae5d6e47147357d3dc2eb57c86cc06b6dc4cdf9c0be",
+        "byteLength": 9034,
+        "digest": "sha256:7283241800935e7bf3875a9545074face386b7fa1e06f0949353196ac9d8560b",
         "relativePath": "dist/actions/reobserveEntry.d.ts.map"
       },
       {
-        "byteLength": 4698,
-        "digest": "sha256:d3cca9ed969b4848adbe0ae9fb4599084a48965a6cd3ec6d4d908d2490038e62",
+        "byteLength": 5778,
+        "digest": "sha256:cc61385a9a03a38d0899193b664e98e18a3dfd75f53dbcc0453ab0eaa530f349",
         "relativePath": "dist/actions/reobserveEntry.js"
       },
       {
-        "byteLength": 10139,
-        "digest": "sha256:581e05d14e40bcf4ce9c28368fe710f67de6a295e698a367bb5a95ced45a9b7b",
+        "byteLength": 12320,
+        "digest": "sha256:8430bd56a9215086e4cb914ff9e0f1f6201ee1dceff25a347d4c102c35db68e3",
         "relativePath": "dist/actions/reobserveEntry.js.map"
       },
       {
@@ -58599,23 +58858,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/actions/userMarks.js.map"
       },
       {
-        "byteLength": 5236,
-        "digest": "sha256:33a0bbe83966bdeaaed25a50b8984bb3bb13f569e7d98491dc8a2f194e131a51",
+        "byteLength": 5867,
+        "digest": "sha256:8303b019460530f97f0a8e6816107f4240c990a4f06bdc9a6ad24683e8784d45",
         "relativePath": "dist/actions/userMarksProtocol.d.ts"
       },
       {
         "byteLength": 8191,
-        "digest": "sha256:89ceaab0b4db1bdb5f06f292b234480c070c123bc4de4110627d5d29ea1d9c6b",
+        "digest": "sha256:77e449c718f40bf615fe38fd399ad8f0e7a1626446f32efb7d43a9b4b866b355",
         "relativePath": "dist/actions/userMarksProtocol.d.ts.map"
       },
       {
-        "byteLength": 6457,
-        "digest": "sha256:76b0e6ae764a33ee38227c1578b31f6b2d215a443e0a4ec4c8bd98d5b33d98b1",
+        "byteLength": 6444,
+        "digest": "sha256:7bc4af115b47ce900e51d937aedf06dc022b121bd546678d74d00ba1a21e33b6",
         "relativePath": "dist/actions/userMarksProtocol.js"
       },
       {
-        "byteLength": 9716,
-        "digest": "sha256:ff1b2c42361cda687ba0a081230f5e90ae46f80b12b0d3b07a2a4313cc9fab51",
+        "byteLength": 9635,
+        "digest": "sha256:e4f2d50e0e7936c921e44359d6ee886d58b871cf744efa0e1102f2fe969b0c2a",
         "relativePath": "dist/actions/userMarksProtocol.js.map"
       },
       {
@@ -58879,23 +59138,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/composer/pickerModel.js.map"
       },
       {
-        "byteLength": 5587,
-        "digest": "sha256:a3709624e8d8177d2a1f2c41fb37fb1aa020dbbf4b4cc9fa35d77d52fe45a347",
+        "byteLength": 5697,
+        "digest": "sha256:8d22b76969d1c39dd1c96185ae4858567e0916ef2eb7c48d4d17c41093606b50",
         "relativePath": "dist/composer/resolveForDispatch.d.ts"
       },
       {
-        "byteLength": 18570,
-        "digest": "sha256:14d352c80432c4126928bee3644a8169c9b4aa4dd88c916c889903c8e49f7998",
+        "byteLength": 20072,
+        "digest": "sha256:8ee6c393bd9e8effd0261d563782dd02873fe87f26e542276a61606e17109604",
         "relativePath": "dist/composer/resolveForDispatch.d.ts.map"
       },
       {
-        "byteLength": 12024,
-        "digest": "sha256:c5164f61841c3f746d05876a66ed4a01fb86dfe7b6a37ae15edd5641eeed8cef",
+        "byteLength": 13083,
+        "digest": "sha256:c43eabfd1394a3421ff7fd95c12cf12fbe8df63c49e80a0f0266e6655b05bd6b",
         "relativePath": "dist/composer/resolveForDispatch.js"
       },
       {
-        "byteLength": 22879,
-        "digest": "sha256:da5e3235feae980395953b021c8f8c662486b951dfbb095e18678c898b73b2f5",
+        "byteLength": 25202,
+        "digest": "sha256:3be4bb7217f1d189c119cfb7341271643de5fac00196a8f4f8a752c531779a88",
         "relativePath": "dist/composer/resolveForDispatch.js.map"
       },
       {
@@ -59499,23 +59758,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/displayName.js.map"
       },
       {
-        "byteLength": 1959180,
-        "digest": "sha256:64d2045b070a6c4a44ccdba5e0e102e949ae645442fece8dc5c4554d1302fcc3",
+        "byteLength": 1959578,
+        "digest": "sha256:6fe9859a4ca80f5181b452d544277d006e5fdced959a4456b7050e2c213cc587",
         "relativePath": "dist/happier-plugin-ui/react-native-web/triage-entries-compact-native/entry.mjs.bundle"
       },
       {
-        "byteLength": 2183849,
-        "digest": "sha256:38a50372ca93930e80592350fef08d72f7086c62f6330903e985962e4baec70f",
+        "byteLength": 2184673,
+        "digest": "sha256:ddc18402f1df334003a26c167bc9abbf42e26a8e8225326c54a160d368fb8f78",
         "relativePath": "dist/happier-plugin-ui/react-native-web/triage-entry-picker-native/entry.mjs.bundle"
       },
       {
-        "byteLength": 2541718,
-        "digest": "sha256:19feac29063ab63a1090fe1c620ade3aea0ac3c7821806feb38ccd793ad7bb5b",
+        "byteLength": 2550090,
+        "digest": "sha256:57ea5b9eb106096e51ed0a10e662757ca2964258dcbbaf7b931dd5b03a5b08e4",
         "relativePath": "dist/happier-plugin-ui/react-native-web/triage-list-page-native/entry.mjs.bundle"
       },
       {
-        "byteLength": 2109292,
-        "digest": "sha256:76a0e08266fb6bc464c18ad7644c5c76997f3eec67a741a4fea62a4ec2191a01",
+        "byteLength": 2111491,
+        "digest": "sha256:4ef2131e624a06e0c6fac8dfbc726d60deb57d33cbec3974d1257a260c9829bd",
         "relativePath": "dist/happier-plugin-ui/react-native-web/triage-session-entries-native/entry.mjs.bundle"
       },
       {
@@ -59539,13 +59798,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/android/src_composer_controlCompact_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5828287,
-        "digest": "sha256:f1e852bb42f542dfb608cf22252dfcbe0c59be23747046fb2f0bfd7f28215065",
+        "byteLength": 5818129,
+        "digest": "sha256:96434a54a46b124408eadc9e0b937ce9fa92694a8b37f4238d95075b9c8fdb44",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
       },
       {
-        "byteLength": 1157726,
-        "digest": "sha256:ed8131ec5ca278c92b6e061dd1e0c89d370e3f511f4f16108e9cfdb9129a2730",
+        "byteLength": 1156257,
+        "digest": "sha256:b041d7fa227e919db704a8b08063ab8578364c731636cd8eb7f7b4a555515bc2",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/android/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
       },
       {
@@ -59569,13 +59828,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/ios/src_composer_controlCompact_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5828287,
-        "digest": "sha256:f1e852bb42f542dfb608cf22252dfcbe0c59be23747046fb2f0bfd7f28215065",
+        "byteLength": 5818129,
+        "digest": "sha256:96434a54a46b124408eadc9e0b937ce9fa92694a8b37f4238d95075b9c8fdb44",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle"
       },
       {
-        "byteLength": 1157726,
-        "digest": "sha256:ed8131ec5ca278c92b6e061dd1e0c89d370e3f511f4f16108e9cfdb9129a2730",
+        "byteLength": 1156257,
+        "digest": "sha256:b041d7fa227e919db704a8b08063ab8578364c731636cd8eb7f7b4a555515bc2",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entries-compact-native/ios/vendors-node_modules_happier-dev_plugin-ui_dist_index_js-node_modules_happier-dev_triage-prot-1b396a.chunk.bundle.map"
       },
       {
@@ -59589,23 +59848,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/android/android.bundle.map"
       },
       {
-        "byteLength": 229686,
-        "digest": "sha256:3528f6b25c813ec91ae62a980e9497963ad7f4710939ba8569fb4c9b8a69bb47",
+        "byteLength": 230679,
+        "digest": "sha256:704b3c133e6b4f18d2cd5912103427744a358cd7a950089e5ea2cdc964a0e9aa",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/android/src_composer_entryPicker_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 96074,
-        "digest": "sha256:f113d1c648cc7d0b646ddd7be8781f3fef28a471d958db1f59c4debc436fd16a",
+        "byteLength": 96376,
+        "digest": "sha256:ca0a28d6d5a674686f9994536e9fd8eccf2567932002bbc8490806e66b3d47f9",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/android/src_composer_entryPicker_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5834780,
-        "digest": "sha256:4c18429686b90a69185acaf65dbeaea43d74840bd11081a745458a93b5df5911",
+        "byteLength": 5824622,
+        "digest": "sha256:7c7293e7543e9f638b5dcd2731819479aba11bc664446a4f0ddfe576dbf797a2",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle"
       },
       {
-        "byteLength": 1157036,
-        "digest": "sha256:9182dd1b7934aa9bd6b09f5a465c48eda41d7c4efffcb91184db71336847834f",
+        "byteLength": 1155567,
+        "digest": "sha256:f81dd4187cdd72ff8e5487a4d7d1f917632477fd48532a8f563c194effa4cf91",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle.map"
       },
       {
@@ -59619,23 +59878,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 229686,
-        "digest": "sha256:3528f6b25c813ec91ae62a980e9497963ad7f4710939ba8569fb4c9b8a69bb47",
+        "byteLength": 230679,
+        "digest": "sha256:704b3c133e6b4f18d2cd5912103427744a358cd7a950089e5ea2cdc964a0e9aa",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/ios/src_composer_entryPicker_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 96074,
-        "digest": "sha256:f113d1c648cc7d0b646ddd7be8781f3fef28a471d958db1f59c4debc436fd16a",
+        "byteLength": 96376,
+        "digest": "sha256:ca0a28d6d5a674686f9994536e9fd8eccf2567932002bbc8490806e66b3d47f9",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/ios/src_composer_entryPicker_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5834780,
-        "digest": "sha256:4c18429686b90a69185acaf65dbeaea43d74840bd11081a745458a93b5df5911",
+        "byteLength": 5824622,
+        "digest": "sha256:7c7293e7543e9f638b5dcd2731819479aba11bc664446a4f0ddfe576dbf797a2",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle"
       },
       {
-        "byteLength": 1157036,
-        "digest": "sha256:9182dd1b7934aa9bd6b09f5a465c48eda41d7c4efffcb91184db71336847834f",
+        "byteLength": 1155567,
+        "digest": "sha256:f81dd4187cdd72ff8e5487a4d7d1f917632477fd48532a8f563c194effa4cf91",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-entry-picker-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-f58295.chunk.bundle.map"
       },
       {
@@ -59649,23 +59908,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/android/android.bundle.map"
       },
       {
-        "byteLength": 814826,
-        "digest": "sha256:b11394770d8d59d7d16320b970f692b2f2265e6aa94bd088574097d7e9e32fb7",
+        "byteLength": 826849,
+        "digest": "sha256:e69d11389398ea0b439116fd6b410cc672c442cda7b328ff6488a90e41040918",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/android/src_ui_surface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 339905,
-        "digest": "sha256:0caa6da1a6fca64490011f230525928824d2ba7efee45dc0a9bf19d00701ec51",
+        "byteLength": 345660,
+        "digest": "sha256:d07a931aba53fce795af2910d7b258794a2cb2aed3d4d4e40622c9d6dc411958",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/android/src_ui_surface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5869813,
-        "digest": "sha256:53a133b98b67321a658bbe5e2dc5e1ba47a028c59b6de6fc1dde2d3552d7ad18",
+        "byteLength": 5860620,
+        "digest": "sha256:a8d47615bdb2c0e1c9afe044ce9f89b60ed817dd1178af82b1c3d5be0a92b4fe",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-a2ae17.chunk.bundle"
       },
       {
-        "byteLength": 1163540,
-        "digest": "sha256:4a012c277950369de12b3dfeb51166b4905f42e05f28e87f064b40050a5d8d05",
+        "byteLength": 1162206,
+        "digest": "sha256:07678eb0a26ec668fdf13ff3730f448d41b3ba2736a166b1a4521dd7dd07021a",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-a2ae17.chunk.bundle.map"
       },
       {
@@ -59679,23 +59938,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 814826,
-        "digest": "sha256:b11394770d8d59d7d16320b970f692b2f2265e6aa94bd088574097d7e9e32fb7",
+        "byteLength": 826849,
+        "digest": "sha256:e69d11389398ea0b439116fd6b410cc672c442cda7b328ff6488a90e41040918",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/ios/src_ui_surface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 339905,
-        "digest": "sha256:0caa6da1a6fca64490011f230525928824d2ba7efee45dc0a9bf19d00701ec51",
+        "byteLength": 345660,
+        "digest": "sha256:d07a931aba53fce795af2910d7b258794a2cb2aed3d4d4e40622c9d6dc411958",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/ios/src_ui_surface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5869813,
-        "digest": "sha256:53a133b98b67321a658bbe5e2dc5e1ba47a028c59b6de6fc1dde2d3552d7ad18",
+        "byteLength": 5860620,
+        "digest": "sha256:a8d47615bdb2c0e1c9afe044ce9f89b60ed817dd1178af82b1c3d5be0a92b4fe",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-a2ae17.chunk.bundle"
       },
       {
-        "byteLength": 1163540,
-        "digest": "sha256:4a012c277950369de12b3dfeb51166b4905f42e05f28e87f064b40050a5d8d05",
+        "byteLength": 1162206,
+        "digest": "sha256:07678eb0a26ec668fdf13ff3730f448d41b3ba2736a166b1a4521dd7dd07021a",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-list-page-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_async_index_js-node_modules_happier-dev_plug-a2ae17.chunk.bundle.map"
       },
       {
@@ -59709,23 +59968,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/android/android.bundle.map"
       },
       {
-        "byteLength": 164639,
-        "digest": "sha256:f1632fd731d5a590937d0c3b05f2d21ebf7b15422bd77b8e1425f919d2f1ebbc",
+        "byteLength": 168640,
+        "digest": "sha256:6a247ae74a635ba84948f421940d65b177db3256842ca484fc994417daea66b9",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/android/src_sessions_cockpit_sessionLinkedEntriesSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 69656,
-        "digest": "sha256:3eababac4a8ac84ca5f1e7d249fd27805c520bffa1c412e5013b2550aac819aa",
+        "byteLength": 71313,
+        "digest": "sha256:96c24b43b6c48f51ae916fd7014a873a58b21482f60fc1be7721e641859dd2ee",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/android/src_sessions_cockpit_sessionLinkedEntriesSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5837422,
-        "digest": "sha256:86f4eb0c4aace033b618899442eae0ea33ff1fc1005079c37677081fca750c33",
+        "byteLength": 5827264,
+        "digest": "sha256:053c7f9a13236074306b1d7e9e8d3e707d7aacadaa7356307110cf729a9705dc",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_collections_index_js-node_modules_happier-de-233e65.chunk.bundle"
       },
       {
-        "byteLength": 1160219,
-        "digest": "sha256:2012337446935f8ec12480353c0a86abaab578f9739428a7d3a7f5f61ab7882d",
+        "byteLength": 1158750,
+        "digest": "sha256:9044c0f3a23662526a4c9aef5cc1c1dbfacd418184c2e0dd40854ab1bdc2d375",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/android/vendors-node_modules_happier-dev_plugin-sdk_dist_collections_index_js-node_modules_happier-de-233e65.chunk.bundle.map"
       },
       {
@@ -59739,28 +59998,28 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/ios/ios.bundle.map"
       },
       {
-        "byteLength": 164639,
-        "digest": "sha256:f1632fd731d5a590937d0c3b05f2d21ebf7b15422bd77b8e1425f919d2f1ebbc",
+        "byteLength": 168640,
+        "digest": "sha256:6a247ae74a635ba84948f421940d65b177db3256842ca484fc994417daea66b9",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/ios/src_sessions_cockpit_sessionLinkedEntriesSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle"
       },
       {
-        "byteLength": 69656,
-        "digest": "sha256:3eababac4a8ac84ca5f1e7d249fd27805c520bffa1c412e5013b2550aac819aa",
+        "byteLength": 71313,
+        "digest": "sha256:96c24b43b6c48f51ae916fd7014a873a58b21482f60fc1be7721e641859dd2ee",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/ios/src_sessions_cockpit_sessionLinkedEntriesSurface_tsx-webpack_sharing_consume_default_react-native.chunk.bundle.map"
       },
       {
-        "byteLength": 5837422,
-        "digest": "sha256:86f4eb0c4aace033b618899442eae0ea33ff1fc1005079c37677081fca750c33",
+        "byteLength": 5827264,
+        "digest": "sha256:053c7f9a13236074306b1d7e9e8d3e707d7aacadaa7356307110cf729a9705dc",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_collections_index_js-node_modules_happier-de-233e65.chunk.bundle"
       },
       {
-        "byteLength": 1160219,
-        "digest": "sha256:2012337446935f8ec12480353c0a86abaab578f9739428a7d3a7f5f61ab7882d",
+        "byteLength": 1158750,
+        "digest": "sha256:9044c0f3a23662526a4c9aef5cc1c1dbfacd418184c2e0dd40854ab1bdc2d375",
         "relativePath": "dist/happier-plugin-ui/react-native/triage-session-entries-native/ios/vendors-node_modules_happier-dev_plugin-sdk_dist_collections_index_js-node_modules_happier-de-233e65.chunk.bundle.map"
       },
       {
         "byteLength": 22853,
-        "digest": "sha256:52e2037390a7804a4fece98dcd29d1cdd6b025b1b4e1c8f76a4c9eec9535adcf",
+        "digest": "sha256:fedc029f7610e8e2d94fed919be4d1bc461f5b448625813a690695fbdb9f7f81",
         "relativePath": "dist/happier-plugin-ui/ui-artifacts.json"
       },
       {
@@ -59889,38 +60148,38 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/projection/listWindowStore.d.ts"
       },
       {
-        "byteLength": 60364,
-        "digest": "sha256:5178c70b7a831ff88974db39bcd3f80683fcfb0619f2b79bad9d85d315a95ae6",
+        "byteLength": 62390,
+        "digest": "sha256:ad9dd9224b272fb963bdb3f9040651cd49d3decba20a2eafbbf85d0270cf803d",
         "relativePath": "dist/projection/listWindowStore.d.ts.map"
       },
       {
-        "byteLength": 45366,
-        "digest": "sha256:f1a2aa97b9f804c1867c0c637f27fb8a437e5b280836fde3eda448b5a15fdafe",
+        "byteLength": 47160,
+        "digest": "sha256:c1ba81b72cb5af0c88a287bbd40eaac1ee32cb212c2be6d7ac05d4101e1aff7a",
         "relativePath": "dist/projection/listWindowStore.js"
       },
       {
-        "byteLength": 78346,
-        "digest": "sha256:4e90affbdb4b292438b512f0ea4f804e708a4975c85d49b32423fec9e2ebc9b7",
+        "byteLength": 81371,
+        "digest": "sha256:d1d9dcb0e884d269f068daca5f572547d5d2516feebfb2d570ba850ba55c1b19",
         "relativePath": "dist/projection/listWindowStore.js.map"
       },
       {
-        "byteLength": 1731,
-        "digest": "sha256:878e376eed3a5b6f9d23a74220b7d7a7600456ff537e4a519d161512c416993c",
+        "byteLength": 1727,
+        "digest": "sha256:cd42ef17ed8b3b69bbab19f8d729baef75182b5023cbf884e57492879accc834",
         "relativePath": "dist/projection/listWindowWire.d.ts"
       },
       {
-        "byteLength": 7409,
-        "digest": "sha256:be089ed4c5d59e7a9ea5e218685ee16791b6639684ac05f5bacee1c4ea339050",
+        "byteLength": 7132,
+        "digest": "sha256:ad3e01c1af7beb8babc5e43bc46b08bde9d0aebae4b786b4c8f2131ca86d16fe",
         "relativePath": "dist/projection/listWindowWire.d.ts.map"
       },
       {
-        "byteLength": 5298,
-        "digest": "sha256:1df1873bb97461bbd66fdc1741d5ba5afc12ce86d81c4433490ae082e38bd0ea",
+        "byteLength": 5021,
+        "digest": "sha256:0edda31445449ae572a5f8a9ac093bdabfb8075b2f83753fcac2211ddbb2c8a5",
         "relativePath": "dist/projection/listWindowWire.js"
       },
       {
-        "byteLength": 10066,
-        "digest": "sha256:5d775994127957670b6d487f7b6b581853a00f25c29e04e31e3fd396130af025",
+        "byteLength": 9607,
+        "digest": "sha256:b97990d81cf7f3dccebf31ed23f77e3a81ef454db9ac252ccf00eee79dabc074",
         "relativePath": "dist/projection/listWindowWire.js.map"
       },
       {
@@ -60104,43 +60363,43 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/sessions/agentTarget.js.map"
       },
       {
-        "byteLength": 1843,
-        "digest": "sha256:036f36652994e182d8c2bdcf2d5184dac38e980807aed9d724dc5f71c68dbf6c",
+        "byteLength": 1765,
+        "digest": "sha256:7e0d04245b36155ca1988fa2dc99c9299e5344372f3793c4faebc41b8759a441",
         "relativePath": "dist/sessions/cockpit/linkedEntriesQuery.d.ts"
       },
       {
-        "byteLength": 2711,
-        "digest": "sha256:03c6cee74558283a201b3282fefc0680ed1f6653a8e352804feed9cb73eb66bb",
+        "byteLength": 2629,
+        "digest": "sha256:d42085b35d0f8eeec345559e25d46c232fa43ebd22c191a8d523e3a89cc48250",
         "relativePath": "dist/sessions/cockpit/linkedEntriesQuery.d.ts.map"
       },
       {
-        "byteLength": 2154,
-        "digest": "sha256:3243f5fd6fad5cbcde6dd528b043a073bc600b363517b532c5e65695a44d0d34",
+        "byteLength": 2076,
+        "digest": "sha256:4534126230897b52df60caeebbb0fbd59772802c7870614fc44ed23597633732",
         "relativePath": "dist/sessions/cockpit/linkedEntriesQuery.js"
       },
       {
-        "byteLength": 2886,
-        "digest": "sha256:e40fe2f05e9c8afe8b663f0e41cf5f0a47aea6a42daf2d9cf67d2876e7ac6520",
+        "byteLength": 2804,
+        "digest": "sha256:1be29bb2f5b5b4c84c354336dce3337435f44c548db31e491a6cb49b3062d7d1",
         "relativePath": "dist/sessions/cockpit/linkedEntriesQuery.js.map"
       },
       {
-        "byteLength": 4821,
-        "digest": "sha256:ef99c0eccea944762c073ff0c6c46ab259aeb8a15688d8fbdd28af47f6b82c85",
+        "byteLength": 4789,
+        "digest": "sha256:59b5aabf1579e099cee8c8604650ba8e814e698199dc3b94dbea7857726beb7d",
         "relativePath": "dist/sessions/cockpit/linkedEntryRows.d.ts"
       },
       {
-        "byteLength": 11465,
-        "digest": "sha256:899210fbb69d5e18d78e83deecafc8db407a4f47f5e04b13b4b9c2671b8f92e1",
+        "byteLength": 11381,
+        "digest": "sha256:3a5bc76240ed21a8c205e77865aa251693a6f60b7fd7981f8701fcba43b478b4",
         "relativePath": "dist/sessions/cockpit/linkedEntryRows.d.ts.map"
       },
       {
-        "byteLength": 4082,
-        "digest": "sha256:8abd3840a8f65cb8c09ba6ae577650a097a3ecbd78781125b4d2cbba5b6f2b2c",
+        "byteLength": 4007,
+        "digest": "sha256:5cbbe04dc55909f31d0c1b19e9bb97657da4b46acdf7bebf5451f54073b7978c",
         "relativePath": "dist/sessions/cockpit/linkedEntryRows.js"
       },
       {
-        "byteLength": 12407,
-        "digest": "sha256:24f205a05674dcf76aa16468b45921c7fc47f2df9e12bbabd27c7cd786f88c9f",
+        "byteLength": 12171,
+        "digest": "sha256:a9de194c6213ebf2229374ed30e67e1c5e95cb31aef66aa1815f5fe74ba8f1ed",
         "relativePath": "dist/sessions/cockpit/linkedEntryRows.js.map"
       },
       {
@@ -60149,18 +60408,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/sessions/cockpit/sessionLinkedEntriesSurface.d.ts"
       },
       {
-        "byteLength": 12491,
-        "digest": "sha256:41a6d0566d9d7e4308259ca503f40b46a413286dca3bbd15bc3459eb3a4d9680",
+        "byteLength": 14651,
+        "digest": "sha256:813a7fdff7cad51700e3d55549864e9b52c32491e40a5d348a97262cccc13b39",
         "relativePath": "dist/sessions/cockpit/sessionLinkedEntriesSurface.d.ts.map"
       },
       {
-        "byteLength": 8871,
-        "digest": "sha256:17cd5f31ebd9066945a3a18373877ec4749eadb1d8b56c13cf82f96ab00d3c86",
+        "byteLength": 10531,
+        "digest": "sha256:3abf9b76aed56b67bd4681343e3e5132776e29f9888cda0295e02813cc1fb25d",
         "relativePath": "dist/sessions/cockpit/sessionLinkedEntriesSurface.js"
       },
       {
-        "byteLength": 17814,
-        "digest": "sha256:ede0ecc92bb6d12b116bd6ba53c589b420b414a5b58bae9c4473194aee690978",
+        "byteLength": 21275,
+        "digest": "sha256:7db5db635c1e65d2f42085017d21e23e1ce66f7f6452cc3e91b46f022afbac5d",
         "relativePath": "dist/sessions/cockpit/sessionLinkedEntriesSurface.js.map"
       },
       {
@@ -60184,23 +60443,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/sessions/cockpit/unlinkLinkedEntry.js.map"
       },
       {
-        "byteLength": 706,
-        "digest": "sha256:1226c66ef2174532bbc43c2ebb35805d697123ee61245f5b65532268bcb9dfb5",
+        "byteLength": 818,
+        "digest": "sha256:ba8f1037810d5130bfcc3c9ce6d5ae66bfb0da7207948f692036e0e854fdc4f7",
         "relativePath": "dist/sessions/cockpit/useSessionLinkedEntries.d.ts"
       },
       {
-        "byteLength": 8961,
-        "digest": "sha256:c3e3f277731bcb2186d121a77354f10feb8beb41765f9ffb6cd1ece1eaf5a84d",
+        "byteLength": 9176,
+        "digest": "sha256:9eff43fc16c6dd978c2d044506e51ec02b3d476f7ffbf5adff6545fc6436ff39",
         "relativePath": "dist/sessions/cockpit/useSessionLinkedEntries.d.ts.map"
       },
       {
-        "byteLength": 7089,
-        "digest": "sha256:82512ec00ba588c746faa801c4695483854bff2f0e2054db1c92640acaa30992",
+        "byteLength": 7131,
+        "digest": "sha256:142de189cb5d1694fe51b614e798dffbfce1a2b08c8b89d511926fb895b531da",
         "relativePath": "dist/sessions/cockpit/useSessionLinkedEntries.js"
       },
       {
-        "byteLength": 13289,
-        "digest": "sha256:c120f83dc62dcdb36ef89a96ebb672870169dba2ec8b689a7d4b74c7a9946d77",
+        "byteLength": 13495,
+        "digest": "sha256:16b60aef36cc6adaffb7216702ecf5f8b24386dd2247345cd7d57d536d6c6a8e",
         "relativePath": "dist/sessions/cockpit/useSessionLinkedEntries.js.map"
       },
       {
@@ -60264,23 +60523,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/sessions/entrySessionOpen.js.map"
       },
       {
-        "byteLength": 8271,
-        "digest": "sha256:a118a5abee91baefe605009d52e276aa12c8c3a09c175fde9412e0e3a1beddc1",
+        "byteLength": 9262,
+        "digest": "sha256:dc8a943b917a937a1a7df23c54a0cffce677f5f23764db54cc6e781466efe979",
         "relativePath": "dist/sessions/entrySessionOrchestrator.d.ts"
       },
       {
-        "byteLength": 23452,
-        "digest": "sha256:75b536272e963ba0615c9fe36d0c500a8102477452a28c5a16decd3c04b7c16c",
+        "byteLength": 25649,
+        "digest": "sha256:af1c70e2d44e68c42de6c860c98ac95e2776394659370f856c549412a7c81004",
         "relativePath": "dist/sessions/entrySessionOrchestrator.d.ts.map"
       },
       {
-        "byteLength": 12281,
-        "digest": "sha256:48be412d3d76be8851410358007c13f54ca7e388615a667dd8d077c7dd553b71",
+        "byteLength": 13050,
+        "digest": "sha256:76c96997e41d9131de5c39972f6f549f199355e31d1245b88a4bfe596a0cd06c",
         "relativePath": "dist/sessions/entrySessionOrchestrator.js"
       },
       {
-        "byteLength": 26532,
-        "digest": "sha256:6dea1cb0a95dfe715ef5fedf87ea543f7230a8e3c772c330362aa8bc8baa2e84",
+        "byteLength": 28934,
+        "digest": "sha256:c6e7b8308e0077a75746905163ea831a9fd9e2e80c47282639b28d283636f967",
         "relativePath": "dist/sessions/entrySessionOrchestrator.js.map"
       },
       {
@@ -60684,23 +60943,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/actions/useTriageActions.js.map"
       },
       {
-        "byteLength": 120164,
-        "digest": "sha256:f7f0b1bd0df865e2cf10df013082cd47b81bdf9c53ee6b9029f6646c42077013",
+        "byteLength": 120345,
+        "digest": "sha256:8eb65dc2b93d9b12bf9a75feb2678dc6e8162090e145097d0edb5178c3f88bc5",
         "relativePath": "dist/ui/additionalTranslations.d.ts"
       },
       {
-        "byteLength": 122811,
-        "digest": "sha256:432ce2c278bc83b0120eb3be42cbbb5e3e018b5d47bb996d54960a0749b2e2a6",
+        "byteLength": 122992,
+        "digest": "sha256:48af591e26d4614df299a3ea696b54395e66032e65b067c2def881ce764fa740",
         "relativePath": "dist/ui/additionalTranslations.d.ts.map"
       },
       {
-        "byteLength": 120233,
-        "digest": "sha256:7a323ff5ad1e5768abe76a5ff4524707d256a5dba28d8c11c40f56cba96458de",
+        "byteLength": 120414,
+        "digest": "sha256:e329aa631f03870e19ab6105150e1ff65a194889fe00e68dcf4f0b0883e39c0b",
         "relativePath": "dist/ui/additionalTranslations.js"
       },
       {
-        "byteLength": 151548,
-        "digest": "sha256:a0e8d61c5e1aa6e052e48236a52758488117cb1dc5ca651800302f4f118ec2fe",
+        "byteLength": 151731,
+        "digest": "sha256:faea5582feb500ff320331da60feae0e0e946e936cab1dc8b014717cc3162a10",
         "relativePath": "dist/ui/additionalTranslations.js.map"
       },
       {
@@ -60804,23 +61063,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/detail/input.js.map"
       },
       {
-        "byteLength": 423,
-        "digest": "sha256:7f39efb05d63481a45a9703d91529d52875f3b00a902c6b59850ce0ae901865d",
+        "byteLength": 499,
+        "digest": "sha256:587e51b7b6a8c7d90a54805f9b0e2faaa9339eb0065c9f8004725d17d4e87bc1",
         "relativePath": "dist/ui/detail/linkedSessions.d.ts"
       },
       {
-        "byteLength": 3243,
-        "digest": "sha256:c828e1f990b1eaf921daf761300afd64c6719219fb4eb675badc6247fd0d6704",
+        "byteLength": 3929,
+        "digest": "sha256:ca589e4e2c5c8d930bd0bdb1e68a9660373b7275a25e207367fec5891a6401af",
         "relativePath": "dist/ui/detail/linkedSessions.d.ts.map"
       },
       {
-        "byteLength": 2536,
-        "digest": "sha256:7edce3ee3e980fba9225b5fcfb9a31416856acb8d91f824205a227d7c2c38830",
+        "byteLength": 2992,
+        "digest": "sha256:d0d3567093eff5f3558cc400ee385f04740fc2a3f4d8cccf5001b17eecb67ee8",
         "relativePath": "dist/ui/detail/linkedSessions.js"
       },
       {
-        "byteLength": 5273,
-        "digest": "sha256:990f9657b214352a661620e80148f498d4caddbca1980f156af1651f95d86c3e",
+        "byteLength": 6318,
+        "digest": "sha256:686eef501b12ca559e8898205567f40b43809f9cdb29415e417b37e7bafc9311",
         "relativePath": "dist/ui/detail/linkedSessions.js.map"
       },
       {
@@ -60864,23 +61123,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/detail/postMutationReobservation.js.map"
       },
       {
-        "byteLength": 5346,
-        "digest": "sha256:c31c11362de4d99f911b29b6b5bf3c2e0261d1607191e7982f4f091d06219b3a",
+        "byteLength": 5450,
+        "digest": "sha256:fdc0c2076c90565a25af345ba1a7946d2198dd12863600e6c0d5ce03b54f5997",
         "relativePath": "dist/ui/detail/region.d.ts"
       },
       {
-        "byteLength": 22884,
-        "digest": "sha256:2b0f1f8a905586ee3d07e691a3168a9707b5fc0c1effbb310504795ae02d39f4",
+        "byteLength": 23433,
+        "digest": "sha256:63636dbd01d74fc27a1028d55a06b1b25c4c6871ecb5e2a3d873b8cf397a4517",
         "relativePath": "dist/ui/detail/region.d.ts.map"
       },
       {
-        "byteLength": 16016,
-        "digest": "sha256:ab6a00c44198d49672b17310e8ae142e6eaa479dc7b8fe5bee1ecc1ca65e5a78",
+        "byteLength": 16298,
+        "digest": "sha256:919dce478d0ee634c24a06ea2f7e9aebf8a843fd7830587757509c0ff74123fc",
         "relativePath": "dist/ui/detail/region.js"
       },
       {
-        "byteLength": 31993,
-        "digest": "sha256:a4e9fb648494bd5f3a1b311e64ba9be43ef08e5d9d6633f20306c9b76ebe2afd",
+        "byteLength": 32653,
+        "digest": "sha256:58474740cc558231fdaaf39554760b01d39c2512cc5584f57f0196b4b64ca377",
         "relativePath": "dist/ui/detail/region.js.map"
       },
       {
@@ -60904,23 +61163,23 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/detail/sourceSurface.js.map"
       },
       {
-        "byteLength": 3306,
-        "digest": "sha256:01eaec9c9007d8a1733f62c8025c9dbfa18ec1b9d581dfc42672c350b483ed06",
+        "byteLength": 3694,
+        "digest": "sha256:7e840ca2cfffdf1794878d95b874048b5ba67616ab01514f3a2e5be668e34f8e",
         "relativePath": "dist/ui/detail/useTriageEntryDetail.d.ts"
       },
       {
-        "byteLength": 8113,
-        "digest": "sha256:76bd2cd35b91c9858ac65bcb7c5cdb93128ec62abb3305b2596c5130fcf4c4f3",
+        "byteLength": 12933,
+        "digest": "sha256:c90b9e1d3feb05d768b826cacb292adde36c7b824df7e4b2f4c2de1c06287d74",
         "relativePath": "dist/ui/detail/useTriageEntryDetail.d.ts.map"
       },
       {
-        "byteLength": 3662,
-        "digest": "sha256:77c77e0b226e82e262c839afaee6701a4c908dd8f129518cc496d6b0a09683a0",
+        "byteLength": 8244,
+        "digest": "sha256:0ad4d268fabd32d732ee63c162e75431e76cd06cd37102058462c0bfb79b695b",
         "relativePath": "dist/ui/detail/useTriageEntryDetail.js"
       },
       {
-        "byteLength": 9843,
-        "digest": "sha256:bc2d90e6a7a96c6cda63811337dd0de5db6ad4c5b5064357cb729cc52ac52bcb",
+        "byteLength": 18160,
+        "digest": "sha256:a0b1ca98ced9fa9a7b4f90a48eae9fed7c54fd4cb410e0b25f5e50da8e7715a2",
         "relativePath": "dist/ui/detail/useTriageEntryDetail.js.map"
       },
       {
@@ -61044,13 +61303,13 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/header/newSessionDraftCommand.js.map"
       },
       {
-        "byteLength": 2801,
-        "digest": "sha256:da824e4c721395fe2ffc578547b9bdb7604d22b2986810594e1aa1c986de23e1",
+        "byteLength": 2975,
+        "digest": "sha256:1a4079cf653d3d2151de8367e0135ebed16377ab4ca0e2b6b34ad98af3676737",
         "relativePath": "dist/ui/header/newSessionSeedCommand.d.ts"
       },
       {
-        "byteLength": 5164,
-        "digest": "sha256:25c619161f1d349eead73bf897cd8864940ab1108ff79711762c74e7f0484a25",
+        "byteLength": 5404,
+        "digest": "sha256:97bd81558c34b3fd521043de5ee26ee4e02fefb248d25bf4d8f4323d41a176f7",
         "relativePath": "dist/ui/header/newSessionSeedCommand.d.ts.map"
       },
       {
@@ -61059,8 +61318,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/header/newSessionSeedCommand.js"
       },
       {
-        "byteLength": 4742,
-        "digest": "sha256:45d878a22dbbf5da1d583dcebbdc32f76431c888040cada8f8e84e66f45aa0f9",
+        "byteLength": 4923,
+        "digest": "sha256:a382693a324224f68d90dce1e9fb4dc0f9d4ef1d81cee8271b3a3ae9d6ebd87f",
         "relativePath": "dist/ui/header/newSessionSeedCommand.js.map"
       },
       {
@@ -61069,18 +61328,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/header/sessionStartOutcome.d.ts"
       },
       {
-        "byteLength": 10828,
-        "digest": "sha256:d88aac631d9fcc54385f85b8ad38c84664a5c6e8d3c6468dc2c1f90c1ed5efdc",
+        "byteLength": 11030,
+        "digest": "sha256:b087adf5f94b0af059fe1f72bfb7d7783ba6446a93cb58a841ebb156402feb2d",
         "relativePath": "dist/ui/header/sessionStartOutcome.d.ts.map"
       },
       {
-        "byteLength": 8012,
-        "digest": "sha256:1db89ee98f40f9e54466541db1eb7ff493763ad3b2899deb8ab3a96a58beb8b7",
+        "byteLength": 8185,
+        "digest": "sha256:df0e46cdef4444f08769f844ee33e4c81160cf632dd311e5252378913e4fb3d7",
         "relativePath": "dist/ui/header/sessionStartOutcome.js"
       },
       {
-        "byteLength": 13640,
-        "digest": "sha256:9596041dbe8d687514f9afba24bcbf517077b2d66fbd6e2a1c820bae4024a9c4",
+        "byteLength": 13918,
+        "digest": "sha256:30090623403453d152df7151ecae71a701840bbba699bc552293d1e544e29116",
         "relativePath": "dist/ui/header/sessionStartOutcome.js.map"
       },
       {
@@ -61109,18 +61368,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/header/useEntrySessionStart.d.ts"
       },
       {
-        "byteLength": 37119,
-        "digest": "sha256:8b6cc59f4414e545d2c324ed731c73fcbccfb4ebe9269f55da68b3b0ca86541f",
+        "byteLength": 37244,
+        "digest": "sha256:3f4dc07305db73a4d8757fa2a58334c44c674631a8c0e36eb7b6181c32a28085",
         "relativePath": "dist/ui/header/useEntrySessionStart.d.ts.map"
       },
       {
-        "byteLength": 22142,
-        "digest": "sha256:b68036d7a8e4cbd8ef7ad0e8fcc672e7b1a50be8ad1342b5eae8629c45d0a548",
+        "byteLength": 22264,
+        "digest": "sha256:648d114c5316597c5ff33c85adf791e69c205c81411bc7f454e3ff1a0578f536",
         "relativePath": "dist/ui/header/useEntrySessionStart.js"
       },
       {
-        "byteLength": 47464,
-        "digest": "sha256:f524293b9ba2aea621f8f4e08ab5f8e04375537249673fdfd5c5979b1c77c640",
+        "byteLength": 47673,
+        "digest": "sha256:30dbba105c354bac434bd431a1dce2de9117555ed9bc9f41510d4bfdf56238c1",
         "relativePath": "dist/ui/header/useEntrySessionStart.js.map"
       },
       {
@@ -61142,6 +61401,26 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "byteLength": 23012,
         "digest": "sha256:2c87233d644700fedeec3d43d1df41f1d1c430bae8b3e1c7a54806b15bbeb72d",
         "relativePath": "dist/ui/list/BulkActionBar.js.map"
+      },
+      {
+        "byteLength": 1959,
+        "digest": "sha256:982c1d4bf9d038898938d8f8e5dda99f7c55cf4c654b327168e10441ea99b75f",
+        "relativePath": "dist/ui/list/bulkEntrySessionExecution.d.ts"
+      },
+      {
+        "byteLength": 12040,
+        "digest": "sha256:911e54ea1726833fa7a9a6795692738bba0fb30b434ddf66256ea22bbde6c108",
+        "relativePath": "dist/ui/list/bulkEntrySessionExecution.d.ts.map"
+      },
+      {
+        "byteLength": 8200,
+        "digest": "sha256:505434fe1e683e962d8e41bb925f40e66ad161dcc191d49ebc6fb026422b63ad",
+        "relativePath": "dist/ui/list/bulkEntrySessionExecution.js"
+      },
+      {
+        "byteLength": 17057,
+        "digest": "sha256:ec835b044246fd72a712979aa5bca940674d154c7b38bb9dddbcfa4cbe31c468",
+        "relativePath": "dist/ui/list/bulkEntrySessionExecution.js.map"
       },
       {
         "byteLength": 2422,
@@ -61189,18 +61468,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/list/bulkSessionOutcome.d.ts"
       },
       {
-        "byteLength": 5424,
-        "digest": "sha256:37b88139a1da42231e866c7cc07e56e5a17636ed7935160fa3294a0830470b0b",
+        "byteLength": 5503,
+        "digest": "sha256:f0197dfc5b1a096cb0f7dfb76beecaabad06cd6cabf7e8481dbe654190cae2a1",
         "relativePath": "dist/ui/list/bulkSessionOutcome.d.ts.map"
       },
       {
-        "byteLength": 2828,
-        "digest": "sha256:6e42fcaf2f84ff4ddbe4acc55d4ae86c1760f89353c620546faed9c1b22cc8f0",
+        "byteLength": 2897,
+        "digest": "sha256:41b35508e162c2f1cc9bd6d07040e30037921f9320b60835a3e5a6258ba68084",
         "relativePath": "dist/ui/list/bulkSessionOutcome.js"
       },
       {
-        "byteLength": 6634,
-        "digest": "sha256:4087fcace14300afa23c32c7e8290106b631cfad1f3a510ccb4b0012aabd61c4",
+        "byteLength": 6804,
+        "digest": "sha256:b5be111c66be3ec769274a6dab67fc51c9120a7e50fbadcdfa937fc0a30b8077",
         "relativePath": "dist/ui/list/bulkSessionOutcome.js.map"
       },
       {
@@ -61289,18 +61568,18 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/list/useBulkEntrySessions.d.ts"
       },
       {
-        "byteLength": 39345,
-        "digest": "sha256:a4af3d154304b600f0c026ddaaa8d066a064ca53b04eb500293e2fa410bb6368",
+        "byteLength": 30210,
+        "digest": "sha256:ec94c296302f600f2084ab7a1763c53f6638e63be3f2fb19f0148106ef648c1c",
         "relativePath": "dist/ui/list/useBulkEntrySessions.d.ts.map"
       },
       {
-        "byteLength": 25230,
-        "digest": "sha256:7cfefe9fa640d7949cd1830aee32daaf9fb00c6e8a37a2d4f18050ee364ba8d5",
+        "byteLength": 17262,
+        "digest": "sha256:a7774581864cb2b9e7c1a263f2ae8e40e70bd34fdc6c6667a173b98135f238f7",
         "relativePath": "dist/ui/list/useBulkEntrySessions.js"
       },
       {
-        "byteLength": 53924,
-        "digest": "sha256:fb47ebf7b7995d55caa9df84c8689d02214845c5ef09cef78914f9afe3f2fdaf",
+        "byteLength": 40152,
+        "digest": "sha256:d7f81e30dbd31f7273a5956f97ebc2cc57f21410627536e7922fb2c66e7991e2",
         "relativePath": "dist/ui/list/useBulkEntrySessions.js.map"
       },
       {
@@ -61624,8 +61903,8 @@ export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze(
         "relativePath": "dist/ui/surface.js.map"
       },
       {
-        "byteLength": 693962,
-        "digest": "sha256:03bfaf03aa88c354c188237ebf1172f6aed7847bb19e87e97ebd908b4239a160",
+        "byteLength": 694324,
+        "digest": "sha256:295cd8cfba3c1f74810c35b92c4f412b201cfeb4d1ef3eeb867c5e1c83652f08",
         "relativePath": "dist/ui/translations.d.ts"
       },
       {

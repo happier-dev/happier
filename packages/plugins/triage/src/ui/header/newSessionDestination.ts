@@ -4,6 +4,7 @@ import {
 } from '../../actions/entrySessionProtocol.js';
 import {
     TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1,
+    type TriageWorkspaceMaterializationV1,
     type TriageWorkspaceModeV1,
 } from '../../sessions/entrySessionWorkspace.js';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -173,6 +174,17 @@ export type TriageNewSessionDestinationV1 =
     }>
     | Readonly<{ status: 'refused'; reason: TriageNewSessionDestinationRefusalV1 }>;
 
+type TriageReviewWorkspaceRequestV1 = Extract<
+    Extract<TriageStartEntrySessionInputV1['destination'], Readonly<{ kind: 'new' }>>['materialization'],
+    Readonly<{ kind: 'reviewWorkspace' }>
+>['request'];
+
+/** Facts the mounted detail already holds before the host settles an Agent/directory. */
+export type TriageReviewWorkspacePreparationV1 = Omit<
+    TriageReviewWorkspaceRequestV1,
+    'workflowSubject' | 'workspace'
+>;
+
 /**
  * The materialization this wire will carry for a mode, or `null` when it cannot
  * carry one at all.
@@ -193,9 +205,8 @@ export type TriageNewSessionDestinationV1 =
  */
 export function triageNewSessionWireMaterializationV1(
     workspaceMode: TriageWorkspaceModeV1,
-): 'referenceOnly' | 'selectedProject' | null {
-    const kind = TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1[workspaceMode];
-    return kind === 'reviewWorkspace' ? null : kind;
+): TriageWorkspaceMaterializationV1['kind'] {
+    return TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1[workspaceMode];
 }
 
 export function projectTriageNewSessionDestinationV1(input: Readonly<{
@@ -213,12 +224,30 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
      * prompt — is resolved there, never here.
      */
     profileId?: string;
+    /** Exact selected-PR facts, supplied only for the pull-request mode. */
+    reviewWorkspace?: TriageReviewWorkspacePreparationV1;
+    /** Saved project identities already admitted by the canonical placement owner. */
+    placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
 }>): TriageNewSessionDestinationV1 {
     const kind = triageNewSessionWireMaterializationV1(input.workspaceMode);
-    if (kind === null) return { status: 'refused', reason: 'preparedWorkspaceUnsupported' };
 
     const draft = TriageStartEntrySessionSettledDraftV1Schema.safeParse(input.settlement);
     if (!draft.success) return { status: 'refused', reason: 'draftUnusable' };
+
+    if (kind === 'reviewWorkspace' && input.reviewWorkspace === undefined) {
+        return { status: 'refused', reason: 'preparedWorkspaceUnsupported' };
+    }
+
+    const materialization = kind === 'reviewWorkspace'
+        ? {
+            kind,
+            request: {
+                ...input.reviewWorkspace!,
+                workflowSubject: 'pullRequest' as const,
+                workspace: selectedWorkspaceScope(draft.data, input.placementCandidates ?? []),
+            },
+        }
+        : { kind, directory: draft.data.directory };
 
     return {
         status: 'settled',
@@ -233,7 +262,29 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
             // The action's declared mode IS the materialization request, read
             // from the one table the gate validates it against. A second copy
             // of the pairings here is the unbound duplicate F1 named.
-            materialization: { kind, directory: draft.data.directory },
+            materialization,
         },
+    };
+}
+
+/**
+ * A prepared PR workspace may use only the saved project identity the placement
+ * owner already surfaced. A settled directory that matches no candidate (or
+ * more than one) is deliberately `null`: no URL, recents index, or string path
+ * fallback is allowed to invent a project/machine/root selection.
+ */
+function selectedWorkspaceScope(
+    draft: ReturnType<typeof TriageStartEntrySessionSettledDraftV1Schema.parse>,
+    candidates: readonly PluginUiSessionPlacementCandidateV1[],
+): TriageReviewWorkspaceRequestV1['workspace'] {
+    const matches = candidates.filter((candidate) => candidate.serverId === draft.executionTarget.serverId
+        && candidate.machineId === draft.executionTarget.machineId
+        && candidate.rootPath === draft.directory);
+    if (matches.length !== 1) return null;
+    const candidate = matches[0]!;
+    return {
+        serverId: candidate.serverId,
+        machineId: candidate.machineId,
+        rootPath: candidate.rootPath,
     };
 }

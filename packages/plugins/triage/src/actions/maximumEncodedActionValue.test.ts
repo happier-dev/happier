@@ -26,7 +26,6 @@ import {
 import { MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1 } from '../settings/actions.js';
 import { MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1 } from '../settings/savedViews.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
-import { MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import {
     TriageReadEntryDetailInputV1Schema,
     TriageReadEntryDetailResultV1Schema,
@@ -42,6 +41,7 @@ import {
     TriageUnlinkEntryFromSessionActionResultV1Schema,
 } from './entrySessionProtocol.js';
 import {
+    MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
     triageListRowBudgetV1,
     TriageListEntriesInputV1Schema,
     TriageListEntriesResultV1Schema,
@@ -207,8 +207,8 @@ const MEASURED_LANE_COUNTS: readonly number[] = Object.freeze([
     1,
     9,
     10,
-    MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1 - 1,
-    MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1,
+    MAX_TRIAGE_LIST_SOURCE_BATCH_V1 - 1,
+    MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
 ]);
 
 const measuredSchemas = {
@@ -248,9 +248,9 @@ describe('aggregate Action value shapes', () => {
         // union arm reruns the derivation instead of silently consuming the
         // remaining headroom.
         expect(derivedMaxima).toEqual({
-            readEntryDetailInput: 1_573,
-            readEntryDetailResult: 533_720,
-            listEntriesResult: 1_183_816,
+            readEntryDetailInput: 5_695,
+            readEntryDetailResult: 537_816,
+            listEntriesResult: 20_121_056,
             reobserveEntryInput: 3_823,
             reobserveEntryResult: 12_464,
             setEntryPinnedInput: 5_670,
@@ -259,7 +259,7 @@ describe('aggregate Action value shapes', () => {
             listPinnedEntriesResult: 322_264,
             linkEntryToSessionInput: 6_359,
             linkEntryToSessionResult: 25,
-            startEntrySessionResult: 609,
+            startEntrySessionResult: 629,
             unlinkEntryFromSessionInput: 2_042,
             unlinkEntryFromSessionResult: 27,
             readActionsInput: 7,
@@ -314,7 +314,7 @@ describe('aggregate Action value shapes', () => {
     it('keeps the explicit row cap independent of lane count', () => {
         expect(triageListRowBudgetV1(0)).toBe(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
         expect(triageListRowBudgetV1(1)).toBe(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
-        expect(triageListRowBudgetV1(MAX_TRIAGE_CONFIGURED_SOURCE_INSTANCES_V1))
+        expect(triageListRowBudgetV1(MAX_TRIAGE_LIST_SOURCE_BATCH_V1))
             .toBe(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
     });
 

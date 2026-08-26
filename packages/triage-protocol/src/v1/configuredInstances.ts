@@ -5,10 +5,7 @@ import {
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 
-import {
-    MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1,
-    TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-} from './bounds.js';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
 import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
 
 /** The Action's target-local id. */
@@ -103,9 +100,7 @@ export type TriageConfiguredSourceInstanceRecordV1 = ReturnType<
 export const TriageReadConfiguredSourceInstancesResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('read'),
-        instances: defineProtocolArray(TriageConfiguredSourceInstanceRecordV1Schema, {
-            maxItems: MAX_TRIAGE_CONFIGURED_INSTANCE_RECORDS_V1,
-        }),
+        instances: defineProtocolArray(TriageConfiguredSourceInstanceRecordV1Schema),
         status: defineProtocolUnion([
             defineProtocolLiteral('complete'),
             defineProtocolLiteral('truncated'),

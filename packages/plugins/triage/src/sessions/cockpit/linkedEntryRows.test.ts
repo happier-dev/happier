@@ -182,7 +182,7 @@ describe('the Session cockpit linked-entry projection', () => {
         expect(view.notice).toBe('Linked PRs and issues are unavailable for this account right now.');
     });
 
-    it('bounds the rendered page and says more links exist', () => {
+    it('keeps every row the canonical pager has accumulated across pages', () => {
         const rows = Array.from(
             { length: MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 + 5 },
             (_unused, index) => queryRow(`link-${String(index).padStart(3, '0')}`, index),
@@ -194,10 +194,10 @@ describe('the Session cockpit linked-entry projection', () => {
         });
 
         if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(view.rows).toHaveLength(MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1);
-        expect(view.more).toBe(true);
-        // Newest first: the oldest five are the ones the bound drops.
+        expect(view.rows).toHaveLength(MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 + 5);
+        expect(view.more).toBe(false);
         expect(view.rows[0]?.key).toBe('link-054');
+        expect(view.rows.at(-1)?.key).toBe('link-000');
     });
 
     it('reports more links when the pager still has a page, even inside the bound', () => {
@@ -242,7 +242,7 @@ describe('the Session cockpit linked-entry projection', () => {
 });
 
 describe('the hydration target set', () => {
-    it('is exactly the bounded page the projection renders', () => {
+    it('is exactly every accumulated row the projection renders', () => {
         const rows = Array.from(
             { length: MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 + 5 },
             (_unused, index) => queryRow(`link-${String(index).padStart(3, '0')}`, index),
@@ -255,7 +255,7 @@ describe('the hydration target set', () => {
         });
 
         if (view.kind !== 'linked') throw new Error(`Expected linked rows, saw ${view.kind}.`);
-        expect(targets).toHaveLength(MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1);
+        expect(targets).toHaveLength(MAX_TRIAGE_SESSION_LINKED_ENTRY_ROWS_V1 + 5);
         expect(targets.map((row) => row.rowId)).toEqual(view.rows.map((row) => row.key));
     });
 });

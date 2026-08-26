@@ -158,8 +158,26 @@ function TriageSessionLinkedEntriesPanel(
     props: Readonly<{ sessionId: string }>,
 ): React.ReactElement {
     const text = usePluginTranslation();
-    const { view, refresh } = useTriageSessionLinkedEntries(props.sessionId);
+    const { view, refresh, loadMore } = useTriageSessionLinkedEntries(props.sessionId);
+    const mounted = React.useRef(true);
+    const [loadingMore, setLoadingMore] = React.useState(false);
+    React.useEffect(() => {
+        mounted.current = true;
+        return () => { mounted.current = false; };
+    }, []);
     const onRefresh = React.useCallback(() => { void refresh(); }, [refresh]);
+    const onLoadMore = React.useCallback(() => {
+        if (loadingMore) return;
+        setLoadingMore(true);
+        void loadMore()
+            // The Data pager publishes its typed retained-row error snapshot.
+            // A transport implementation that also rejects must not become an
+            // unhandled UI promise; the same visible retry remains available.
+            .catch(() => undefined)
+            .finally(() => {
+                if (mounted.current) setLoadingMore(false);
+            });
+    }, [loadMore, loadingMore]);
     const renderRow = React.useCallback(
         (row: TriageSessionLinkedEntryRowV1): React.ReactElement => (
             <LinkedEntryRow row={row} sessionId={props.sessionId} onUnlinked={onRefresh} />
@@ -244,14 +262,36 @@ function TriageSessionLinkedEntriesPanel(
 
                 {view.more ? (
                     <Banner
-                        tone="info"
+                        tone={view.notice === null ? 'info' : 'warning'}
                         title={text(
-                            'plugins.triage.sessionLinks.more.title',
-                            'More entries are linked',
+                            view.notice === null
+                                ? 'plugins.triage.sessionLinks.more.title'
+                                : 'plugins.triage.surface.moreEntries.failed.title',
+                            view.notice === null
+                                ? 'More entries are linked'
+                                : 'More entries could not be loaded',
                         )}
                         description={text(
-                            'plugins.triage.sessionLinks.more.description',
-                            'Recent links from this page are shown; the rest are still linked.',
+                            view.notice === null
+                                ? 'plugins.triage.sessionLinks.more.description'
+                                : 'plugins.triage.surface.moreEntries.failed.description',
+                            view.notice === null
+                                ? 'Recent links from this page are shown; the rest are still linked.'
+                                : 'The entries already in this list are still here. Try again to reach the rest.',
+                        )}
+                        action={(
+                            <Button
+                                title={text(
+                                    view.notice === null
+                                        ? 'plugins.triage.surface.loadMore'
+                                        : 'plugins.triage.surface.loadMore.retry',
+                                    view.notice === null ? 'Load more' : 'Try again',
+                                )}
+                                variant="secondary"
+                                busy={loadingMore}
+                                disabled={loadingMore}
+                                onPress={onLoadMore}
+                            />
                         )}
                     />
                 ) : null}

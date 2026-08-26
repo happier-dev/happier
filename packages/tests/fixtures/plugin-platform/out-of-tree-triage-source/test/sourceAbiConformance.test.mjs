@@ -50,7 +50,7 @@ const fixtureRoot = dirname(dirname(fileURLToPath(import.meta.url)));
  * This suite is the evidence that an outside author can ship a working Triage
  * source, so the thing under test has to be the bytes that author publishes.
  * Driving it from the live export instead let the committed artifact declare an
- * unsupported protocol version while all 21 cases stayed green.
+ * unsupported protocol version while every runtime case stayed green.
  * `publicSurface.test.mjs` separately asserts that this artifact still equals
  * the module's projection, so the two directions cannot drift apart silently.
  */
@@ -132,6 +132,7 @@ function createHarnessTarget(slots) {
         actions: {
             [HARNESS_ACTION_IDS.listInstances]: {
                 title: 'Execute admitted listInstances',
+                execution: { target: 'daemon' },
                 scopes: ['global'],
                 surfaces: ['plugin'],
                 dangerLevel: 'safe',
@@ -139,6 +140,7 @@ function createHarnessTarget(slots) {
             },
             [HARNESS_ACTION_IDS.scan]: {
                 title: 'Execute admitted scan',
+                execution: { target: 'daemon' },
                 scopes: ['global'],
                 surfaces: ['plugin'],
                 dangerLevel: 'safe',
@@ -146,6 +148,7 @@ function createHarnessTarget(slots) {
             },
             [HARNESS_ACTION_IDS.get]: {
                 title: 'Execute admitted get',
+                execution: { target: 'daemon' },
                 scopes: ['global'],
                 surfaces: ['plugin'],
                 dangerLevel: 'safe',
@@ -175,13 +178,18 @@ async function install({ accountListingStatus, shipped = manifest } = {}) {
 
     const conformance = checkTriageSourceContributionV1(shipped);
     assert.equal(conformance.ok, true);
+    const [contribution] = conformance.manifest.contributes.targetedPluginContributions.filter(
+        (candidate) => candidate.target.pluginId === TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1
+            && candidate.target.pointId === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+    );
+    assert.ok(contribution);
 
     for (const role of ['listInstances', 'scan', 'get']) {
         slots[role] = target.issueAdmittedTargetedOperation({
             point: harness.contributionPoints[TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1],
             contributor: { testkit: source, contributionId: LEDGER_CONTRIBUTION_LOCAL_ID },
             role,
-            action: { pluginId: shipped.id, localId: conformance.contribution.operations[role] },
+            action: { pluginId: shipped.id, localId: contribution.operations[role] },
         });
     }
 
