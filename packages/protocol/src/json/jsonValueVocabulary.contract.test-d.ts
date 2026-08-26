@@ -9,7 +9,15 @@
  * unnoticed.
  */
 import type { ProtocolJsonValue } from '../plugins/actions/protocolComposableSchema.js';
+import type {
+  PluginActionInvocationHandlerInput,
+  PluginActionInvocationResult,
+} from '../plugins/actions/invocation.js';
 import type { PluginJsonValueV2 } from '../plugins/contributions/jsonSchema.js';
+import type {
+  StrictJsonObject as SessionDraftStrictJsonObject,
+  StrictJsonValue as SessionDraftStrictJsonValue,
+} from '../drafts/sessionDrafts.js';
 import type { JsonValue, normalizeStrictJsonValue } from './strictJsonValue.js';
 
 type Assert<Condition extends true> = Condition;
@@ -28,6 +36,27 @@ type _ProtocolJsonValueIsTheStrictRuntimeValue = Assert<
 // The strict normalizer is the runtime authority for that contract.
 type _StrictNormalizerProducesTheStrictRuntimeValue = Assert<
   AreMutuallyAssignable<ReturnType<typeof normalizeStrictJsonValue>, JsonValue>
+>;
+
+// Drafts and Action invocation consume aliases/projections of the strict owner;
+// neither boundary gets to grow another recursive JSON vocabulary.
+type _SessionDraftJsonIsTheStrictRuntimeValue = Assert<
+  AreMutuallyAssignable<SessionDraftStrictJsonValue, JsonValue>
+>;
+type _SessionDraftObjectIsTheStrictRuntimeObject = Assert<
+  AreMutuallyAssignable<
+    SessionDraftStrictJsonObject,
+    Extract<JsonValue, Readonly<Record<string, JsonValue>>>
+  >
+>;
+type _PluginActionInputIsTheStrictRuntimeValue = Assert<
+  AreMutuallyAssignable<PluginActionInvocationHandlerInput['input'], JsonValue>
+>;
+type _PluginActionExecutedValueIsTheStrictRuntimeValue = Assert<
+  AreMutuallyAssignable<
+    Extract<PluginActionInvocationResult, { status: 'executed' }>['value'],
+    JsonValue
+  >
 >;
 
 // An author may hand mutable declaration/payload JSON to a strict runtime
