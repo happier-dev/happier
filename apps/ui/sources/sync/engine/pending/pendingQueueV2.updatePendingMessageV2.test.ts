@@ -1369,7 +1369,7 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             presentation: { label: 'Issue #42', typeLabel: 'Issue' },
         } as const;
         const stagedMediaHandle = {
-            v: 1,
+            v: 1 as const,
             id: 'stage-42',
             executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
             owner: attachment.attachment,

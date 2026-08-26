@@ -198,7 +198,6 @@ vi.mock('@/sync/api/account/apiTokens', () => ({
 
 vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
     BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Object.freeze({}),
-    BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: Object.freeze({}),
 }));
 
 async function getSessionRpcWithServerScopeMock() {

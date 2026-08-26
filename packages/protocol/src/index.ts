@@ -80,6 +80,11 @@ export {
   readPluginActionFailureAuthorPayload,
 } from './plugins/actions/invocation.js';
 export {
+  PLUGIN_FAILURE_TEXT_MAX_UTF8_BYTES,
+  projectPluginFailureMessage,
+  projectPluginFailureText,
+} from './plugins/failureProjection.js';
+export {
   compilePluginJsonSchema,
   createPluginJsonSchemaZodObjectAdapter,
   isValidPluginJsonSchemaValue,
@@ -712,6 +717,7 @@ export {
   PluginAgentToolsCapabilityV2Schema,
   PluginAgentSessionCapabilitiesV2Schema,
   PluginAgentExecutionRunCapabilitiesV2Schema,
+  PluginAgentAcpDefinitionV2Schema,
   PluginAgentRuntimeAcpV2Schema,
   PluginAgentRuntimeCustomV2Schema,
   PluginAgentRuntimeV2Schema,
@@ -767,6 +773,7 @@ export {
   type PluginAgentToolsCapabilityV2,
   type PluginAgentSessionCapabilitiesV2,
   type PluginAgentExecutionRunCapabilitiesV2,
+  type PluginAgentAcpDefinitionV2,
   type ParsedPluginAgentContributionV2,
   type PluginAgentRuntimeAcpV2,
   type PluginAgentRuntimeCustomV2,
@@ -958,7 +965,7 @@ export {
 } from './plugins/contributions/agentAcpTransport.js';
 export {
   PluginAgentCliAuthMetadataSchema,
-  PluginAgentCliAuthProbeMetadataSchema,
+  isPluginAgentCliAuthBackgroundCheckSafe,
   PluginAgentCliExecutableMetadataSchema,
   PluginAgentCliInstallCommandSchema,
   PluginAgentCliInstallMetadataSchema,
@@ -968,7 +975,6 @@ export {
   PluginAgentCliMetadataSchema,
   PluginAgentCliSourcePreferenceSchema,
   type PluginAgentCliAuthMetadata,
-  type PluginAgentCliAuthProbeMetadata,
   type PluginAgentCliExecutableMetadata,
   type PluginAgentCliInstallCommand,
   type PluginAgentCliInstallMetadata,

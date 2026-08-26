@@ -325,18 +325,25 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
                 },
             },
         };
-        sessionRpcWithServerScopeMock.mockRejectedValueOnce(
-            new Error('session host transport unavailable'),
-        );
+        const rawTokenSentinel = 'raw-model-transition-token-sentinel';
+        const rawUrlSentinel = 'raw-model-transition-url-sentinel';
+        const rawPathSentinel = 'raw-model-transition-path-sentinel';
+        sessionRpcWithServerScopeMock.mockRejectedValueOnce(new Error([
+            'session host transport unavailable',
+            `client_secret=${rawTokenSentinel}`,
+            `https://alice:${rawUrlSentinel}@example.test/model?access_token=${rawTokenSentinel}`,
+            `/Users/alice/${rawPathSentinel}/settings.json`,
+        ].join(' ')));
 
         createDefaultActionExecutor();
 
-        await expect(capturedDeps.current.sessionModelSet({
+        const result = await capturedDeps.current.sessionModelSet({
             sessionId: 'session_1',
             modelId: 'provider-model',
             providerConnectionId: 'pc_work',
             serverId: 'server_1',
-        })).resolves.toEqual({
+        });
+        expect(result).toMatchObject({
             ok: false,
             errorCode: 'owner_unavailable',
             error: 'owner_unavailable',
@@ -348,9 +355,13 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
                     providerConnectionId: 'pc_work',
                     modelId: 'provider-model',
                 },
-                reason: 'session host transport unavailable',
+                reason: expect.any(String),
             },
         });
+        const reason = result.details?.reason ?? '';
+        expect(reason).not.toContain(rawTokenSentinel);
+        expect(reason).not.toContain(rawUrlSentinel);
+        expect(reason).not.toContain(rawPathSentinel);
         expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
     });
 

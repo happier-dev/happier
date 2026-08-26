@@ -38,6 +38,8 @@ describe('buildSendMessageMeta', () => {
             claudeLocalPermissionBridgeEnabled: true,
             claudeLocalPermissionBridgeWaitIndefinitely: false,
             claudeLocalPermissionBridgeTimeoutSeconds: 123,
+            claudeCodeExperimentalAgentTeamsEnabled: true,
+            claudeRemoteAdvancedOptionsJson: '{"settingSources":["project"]}',
         });
         const meta = buildSendMessageMeta(buildArgs({ settings, displayText: 'hello', agentId: 'claude' }));
         const extras = meta as Record<string, unknown>;
@@ -48,6 +50,10 @@ describe('buildSendMessageMeta', () => {
         expect(extras.claudeLocalPermissionBridgeEnabled).toBe(true);
         expect(extras.claudeLocalPermissionBridgeWaitIndefinitely).toBe(false);
         expect(extras.claudeLocalPermissionBridgeTimeoutSeconds).toBe(123);
+        // `remote-dev` 9b097966a35e643b51e84af987a1f30869696416 reads
+        // these legacy metadata fields to reconstruct Claude runtime options.
+        expect(extras.claudeCodeExperimentalAgentTeamsEnabled).toBe(true);
+        expect(extras.claudeRemoteAdvancedOptionsJson).toBe('{"settingSources":["project"]}');
         expect(meta.sentFrom).toBe('e2e');
         expect(meta.source).toBe('ui');
     });
@@ -144,5 +150,15 @@ describe('buildSendMessageMeta', () => {
         }));
 
         expect((meta as any).reasoningEffort).toBe('medium');
+    });
+
+    it('does not overwrite an explicit Claude predecessor metadata override', () => {
+        const meta = buildSendMessageMeta(buildArgs({
+            agentId: 'claude',
+            settings: settingsParse({ claudeCodeExperimentalAgentTeamsEnabled: true }),
+            metaOverrides: { claudeCodeExperimentalAgentTeamsEnabled: false },
+        }));
+
+        expect((meta as Record<string, unknown>).claudeCodeExperimentalAgentTeamsEnabled).toBe(false);
     });
 });

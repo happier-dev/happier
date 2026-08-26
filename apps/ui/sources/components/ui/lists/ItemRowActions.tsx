@@ -24,6 +24,7 @@ export interface ItemRowActionsProps {
      */
     layoutWidthPx?: number | null;
     overflowTriggerTestID?: string;
+    overflowTriggerAccessibilityLabel?: string;
     renderOverflowTrigger?: (props: Readonly<{
         open: boolean;
         toggle: () => void;
@@ -254,7 +255,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     }, [actionControlFrame, iconSize, props, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const renderOverflow = React.useCallback(() => {
-        const accessibilityLabel = t('common.moreActions');
+        const accessibilityLabel = props.overflowTriggerAccessibilityLabel ?? t('common.moreActions');
         const accessibilityHint = t('common.moreActionsHint');
         const toggleOverflow = () => setShowOverflow((v) => !v);
 

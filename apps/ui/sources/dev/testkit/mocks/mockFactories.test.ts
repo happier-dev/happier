@@ -42,7 +42,8 @@ describe('UI testkit mock factories', () => {
                 React.createElement(moduleMock.ToolSectionView, { title: 'Input', fullWidth: true, children: 'Body' }),
             );
         });
-        const section = screen.root.findByType('ToolSectionView');
+        const toolSectionHostType: string = 'ToolSectionView';
+        const section = screen.root.find((node) => node.type === toolSectionHostType);
 
         expect(section.props.title).toBe('Input');
         expect(section.props.fullWidth).toBe(true);
@@ -92,7 +93,10 @@ describe('UI testkit mock factories', () => {
         let screen!: ReturnType<typeof renderer.create>;
         await act(async () => {
             screen = renderer.create(
-                React.createElement(moduleMock.Pressable, { testID: 'pressable' }, renderChild),
+                React.createElement(moduleMock.Pressable, {
+                    testID: 'pressable',
+                    children: renderChild,
+                }),
             );
         });
 

@@ -11,6 +11,10 @@ import {
     renderScreen,
 } from '@/dev/testkit';
 import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
+import {
+    clearProjectedAgentUiBehaviorDescriptors,
+    publishProjectedAgentUiBehaviorDescriptors,
+} from '@/agents/registry/agentUiBehaviorProjection';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -22,6 +26,7 @@ const modalAlert = vi.fn();
 const openAttachedSessionTerminal = vi.fn();
 const useSettingMutable = vi.fn(() => [null, vi.fn()]);
 const machinePluginSettingsSet = vi.fn();
+const machineProjectionRevision = vi.hoisted(() => ({ current: 0 }));
 const resolvePreferredServerIdForSessionId = vi.fn(() => 'server-a');
 const getServerProfileById = vi.fn((_serverId: string) => ({ serverIdentityId: 'srv_server_a' }));
 const scopedPluginSettingsRead = vi.fn();
@@ -39,6 +44,102 @@ let activeAskUserQuestionRequest: { tool: string; kind?: 'user_action'; source?:
 let activeAskUserQuestionRequestId = 'toolu_1';
 const askUserQuestionSessionState = vi.hoisted(() => ({
     current: null as Record<string, unknown> | null,
+}));
+const daemonMergedProjectionState = vi.hoisted(() => ({
+    current: {
+        phase: 'ready' as const,
+        inputs: {
+            pluginProjectionV2: {
+                v: 2,
+                generation: 1,
+                agentsById: {
+                    claude: {
+                        id: 'claude',
+                        identity: {
+                            pluginId: 'happier.agent.claude',
+                            localId: 'claude',
+                        },
+                    },
+                    'acme.review': {
+                        id: 'acme.review',
+                        identity: {
+                            pluginId: 'acme.review',
+                            localId: 'review',
+                        },
+                    },
+                },
+            },
+            pluginProjectionById: {
+                'happier.agent.claude': {
+                    pluginId: 'happier.agent.claude',
+                    editableSettingsGroups: [{
+                        pluginId: 'happier.agent.claude',
+                        scope: { kind: 'account' },
+                        target: {
+                            kind: 'agent',
+                            agent: {
+                                pluginId: 'happier.agent.claude',
+                                localId: 'claude',
+                            },
+                        },
+                        fields: [
+                            {
+                                key: 'claudeUnifiedTerminalWorkspaceTrust',
+                                valueType: 'string',
+                                valueSchema: {
+                                    type: 'string',
+                                    enum: [
+                                        'ask_every_time',
+                                        'always_trust_happier_workspaces',
+                                        'always_reject_happier_workspaces',
+                                    ],
+                                },
+                                control: 'select',
+                                secretCustody: null,
+                                redaction: 'none',
+                            },
+                            {
+                                key: 'claudeUnifiedTerminalResumeChoice',
+                                valueType: 'string',
+                                valueSchema: {
+                                    type: 'string',
+                                    enum: ['ask_every_time', 'resume_from_summary', 'resume_full_session'],
+                                },
+                                control: 'select',
+                                secretCustody: null,
+                                redaction: 'none',
+                            },
+                        ],
+                    }],
+                },
+                'acme.review': {
+                    pluginId: 'acme.review',
+                    editableSettingsGroups: [{
+                        pluginId: 'acme.review',
+                        scope: { kind: 'account' },
+                        target: {
+                            kind: 'agent',
+                            agent: {
+                                pluginId: 'acme.review',
+                                localId: 'review',
+                            },
+                        },
+                        fields: [{
+                            key: 'reviewScopePreference',
+                            valueType: 'string',
+                            valueSchema: {
+                                type: 'string',
+                                enum: ['ask_every_time', 'always_include'],
+                            },
+                            control: 'select',
+                            secretCustody: null,
+                            redaction: 'none',
+                        }],
+                    }],
+                },
+            },
+        },
+    },
 }));
 
 installWorkflowRendererCommonModuleMocks({
@@ -58,7 +159,10 @@ installWorkflowRendererCommonModuleMocks({
                 getState: () => ({
                     sessions: {
                         s1: askUserQuestionSessionState.current ?? {
-                            metadata: { machineId: 'machine-1' },
+                            metadata: {
+                                machineId: 'machine-1',
+                                runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+                            },
                             agentState: {
                                 capabilities: { askUserQuestionAnswersInPermission: supportsAnswersInPermission },
                                 requests: activeAskUserQuestionRequest
@@ -86,8 +190,12 @@ vi.mock('@/sync/ops', () => ({
     sessionAllowWithAnswers: (...args: any[]) => sessionAllowWithAnswers(...args),
 }));
 
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: () => daemonMergedProjectionState.current,
+}));
+
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
-    getMachineContributionRegistryProjectionRevision: () => 0,
+    getMachineContributionRegistryProjectionRevision: () => machineProjectionRevision.current,
     subscribeMachineContributionRegistryProjectionInvalidation: () => () => {},
     machinePluginSettingsSet: (...args: unknown[]) => machinePluginSettingsSet(...args),
     machinePluginSecretStatus: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
@@ -105,6 +213,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
     captureActiveServerAccountScopeLifetime: () => activeAccountLifetime,
+    getActiveServerAccountScope: () => null,
 }));
 
 vi.mock('@/sync/domains/plugins/settings/scopedPluginSettingsRuntime', () => ({
@@ -174,6 +283,35 @@ describe('AskUserQuestionView', () => {
         });
     }
 
+    function publishReviewAskUserQuestionDescriptor(allowedValues: readonly string[]) {
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-1',
+            descriptorsByAgentId: {
+                'acme.review': {
+                    kind: 'plugin.ui.v1',
+                    pluginId: 'acme.review',
+                    agentId: 'acme.review',
+                    version: 1,
+                    display: {},
+                    behavior: {
+                        askUserQuestion: {
+                            dialogs: [{
+                                dialogId: 'review_scope',
+                                settingMutation: {
+                                    settingId: 'reviewScopePreference',
+                                    allowedValues: [...allowedValues],
+                                },
+                            }],
+                        },
+                    },
+                    session: {},
+                    message: {},
+                    components: { slots: [] },
+                },
+            },
+        });
+    }
+
     function makeSuggestionsWithFreeformTool(overrides: Partial<ToolCall> = {}): ToolCall {
         return makeToolCall({
             name: 'AskUserQuestion',
@@ -232,6 +370,8 @@ describe('AskUserQuestionView', () => {
     }
 
     beforeEach(() => {
+        clearProjectedAgentUiBehaviorDescriptors();
+        machineProjectionRevision.current = 0;
         sessionDeny.mockReset();
         sendMessage.mockReset();
         sessionAllowWithAnswers.mockReset();
@@ -243,7 +383,7 @@ describe('AskUserQuestionView', () => {
             supported: true,
             snapshot: {
                 protocolVersion: 1,
-                pluginId: 'claude',
+                pluginId: 'happier.agent.claude',
                 scope: { kind: 'daemon' },
                 revision: '1',
                 values: {
@@ -525,7 +665,7 @@ describe('AskUserQuestionView', () => {
             },
         }));
 
-        const action = screen.findByProps({ testID: 'ask-user-question.open-claude-terminal' });
+        const action = screen.findByProps({ testID: 'ask-user-question.open-attached-terminal' });
         await pressTestInstanceAsync(action, 'Open Claude terminal');
 
         expect(openAttachedSessionTerminal).toHaveBeenCalledTimes(1);
@@ -601,7 +741,7 @@ describe('AskUserQuestionView', () => {
             },
         }));
 
-        expect(screen.findAllByProps({ testID: 'ask-user-question.open-claude-terminal' })).toHaveLength(0);
+        expect(screen.findAllByProps({ testID: 'ask-user-question.open-attached-terminal' })).toHaveLength(0);
         expect(screen.findByProps({ testID: 'ask-user-question.attached-terminal-unavailable' })).toBeTruthy();
         expect(findTestInstanceByTypeContainingText(screen, 'Text', 'deps.ui.notAvailableUpdateCli')).toBeTruthy();
         expect(screen.findAllByProps({ testID: 'ask-user-question.submit' })).toHaveLength(0);
@@ -622,12 +762,12 @@ describe('AskUserQuestionView', () => {
             },
         }));
 
-        expect(screen.findAllByProps({ testID: 'ask-user-question.open-claude-terminal' })).toHaveLength(0);
+        expect(screen.findAllByProps({ testID: 'ask-user-question.open-attached-terminal' })).toHaveLength(0);
         expect(screen.findByProps({ testID: 'ask-user-question.attached-terminal-unavailable' })).toBeTruthy();
         expect(screen.findByProps({ testID: 'ask-user-question.submit' })).toBeTruthy();
     });
 
-    it('fails closed on workspace-trust persistence without canonical request-source proof', async () => {
+    it('fails closed when an option mutation is outside the current dialog allowlist', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
         const screen = await renderView(makeTool({
             input: {
@@ -642,41 +782,43 @@ describe('AskUserQuestionView', () => {
                         description: '',
                         settingMutation: {
                             settingId: 'claudeUnifiedTerminalWorkspaceTrust',
-                            value: 'always_trust_happier_workspaces',
+                            value: 'always_trust_everything',
                         },
                     }],
                 }],
             },
         }));
 
-        expect(screen.findByProps({ testID: 'ask-user-question.open-claude-terminal' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'ask-user-question.open-attached-terminal' })).toBeTruthy();
         await chooseOptionAndSubmit(screen, 'Trust and remember');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
             'How should Claude continue?': ['trust_always'],
         });
+        expect(scopedPluginSettingsWrite).not.toHaveBeenCalled();
         expect(machinePluginSettingsSet).not.toHaveBeenCalled();
         expect(useSettingMutable).not.toHaveBeenCalledWith('claudeUnifiedTerminalWorkspaceTrust');
     });
 
-    it('persists recognized workspace trust when the live request has canonical source proof', async () => {
+    it('persists recognized workspace trust through its current qualified declaration', async () => {
         activeAskUserQuestionRequest = {
             tool: 'AskUserQuestion',
             kind: 'user_action',
-            source: 'claude_unified_terminal_dialog_choice',
         };
         askUserQuestionSessionState.current = {
             serverId: 'server-a',
             metadataLayoutVersion: 1,
             metadata: { machineId: 'shared-decoy-machine' },
-            ownerMetadataView: { machineId: 'machine-1' },
+            ownerMetadataView: {
+                machineId: 'machine-1',
+                runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+            },
             agentState: {
                 capabilities: { askUserQuestionAnswersInPermission: true },
                 requests: {
                     toolu_1: {
                         tool: 'AskUserQuestion',
                         kind: 'user_action',
-                        source: 'claude_unified_terminal_dialog_choice',
                         arguments: {},
                         createdAt: 1,
                     },
@@ -715,7 +857,7 @@ describe('AskUserQuestionView', () => {
         // operation is refused by the daemon's exact-declaration filter, so the
         // user's answer would settle while the preference silently disappeared.
         expect(scopedPluginSettingsRead).toHaveBeenCalledWith({
-            pluginId: 'claude',
+            pluginId: 'happier.agent.claude',
             scope: { kind: 'account' },
             target: {
                 kind: 'account',
@@ -724,7 +866,7 @@ describe('AskUserQuestionView', () => {
             fields: [{ key: 'claudeUnifiedTerminalWorkspaceTrust', redacted: false }],
         });
         expect(scopedPluginSettingsWrite).toHaveBeenCalledWith({
-            pluginId: 'claude',
+            pluginId: 'happier.agent.claude',
             fieldId: 'claudeUnifiedTerminalWorkspaceTrust',
             mutation: { kind: 'set', value: 'always_trust_happier_workspaces' },
             expectedRevision: { kind: 'account', value: 1 },
@@ -740,6 +882,78 @@ describe('AskUserQuestionView', () => {
         expect(useSettingMutable).not.toHaveBeenCalledWith('claudeUnifiedTerminalWorkspaceTrust');
     });
 
+    it('refuses a remembered choice when the owning Agent projection changes while approval is in flight', async () => {
+        publishReviewAskUserQuestionDescriptor(['always_include']);
+        askUserQuestionSessionState.current = {
+            serverId: 'server-a',
+            metadataLayoutVersion: 1,
+            ownerMetadataView: {
+                machineId: 'machine-1',
+                runtimeDescriptorV1: { v: 1, agentId: 'acme.review', agent: {} },
+            },
+            agentState: {
+                capabilities: { askUserQuestionAnswersInPermission: true },
+                requests: {
+                    toolu_1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: {},
+                        createdAt: 1,
+                    },
+                },
+            },
+        };
+        const approval = createDeferred<void>();
+        sessionAllowWithAnswers.mockImplementationOnce(() => approval.promise);
+        const tool = makeTool({
+            input: {
+                happierDialog: { kind: 'recognized', dialogId: 'review_scope' },
+                questions: [{
+                    header: 'Review scope',
+                    question: 'Remember this scope?',
+                    multiSelect: false,
+                    options: [{
+                        choice: 'always_include',
+                        label: 'Always include selected files',
+                        description: '',
+                        settingMutation: {
+                            settingId: 'reviewScopePreference',
+                            value: 'always_include',
+                        },
+                    }],
+                }],
+            },
+        });
+        const screen = await renderView(tool);
+
+        await pressPressableByLabel(screen, 'Always include selected files');
+        const submit = findPressableByLabel(screen, 'tools.askUserQuestion.submit');
+        expect(submit).toBeTruthy();
+        await act(async () => {
+            submit!.props.onPress();
+        });
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            'Remember this scope?': ['always_include'],
+        });
+
+        // The owning Agent replaces only this dialog's allowlist while the
+        // approval is in flight. The field remains current and writable, so
+        // an old render closure would wrongly persist its now-disallowed
+        // choice. No rerender occurs before settlement: currentness must be
+        // established from the canonical machine projection/descriptor owner.
+        machineProjectionRevision.current += 1;
+        daemonMergedProjectionState.current.inputs.pluginProjectionV2.generation += 1;
+        publishReviewAskUserQuestionDescriptor([]);
+
+        approval.resolve();
+        await act(async () => {
+            await approval.promise;
+        });
+
+        expect(scopedPluginSettingsWrite).not.toHaveBeenCalled();
+        expect(machinePluginSettingsSet).not.toHaveBeenCalled();
+    });
+
     it('persists a remembered resume policy through the same scoped plugin settings owner', async () => {
         activeAskUserQuestionRequest = {
             tool: 'AskUserQuestion',
@@ -749,7 +963,10 @@ describe('AskUserQuestionView', () => {
         askUserQuestionSessionState.current = {
             serverId: 'server-a',
             metadataLayoutVersion: 1,
-            ownerMetadataView: { machineId: 'machine-1' },
+            ownerMetadataView: {
+                machineId: 'machine-1',
+                runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+            },
             agentState: {
                 capabilities: { askUserQuestionAnswersInPermission: true },
                 requests: {
@@ -790,7 +1007,7 @@ describe('AskUserQuestionView', () => {
             'How should Claude resume this session?': ['always_resume_from_summary'],
         });
         expect(scopedPluginSettingsRead).toHaveBeenCalledWith({
-            pluginId: 'claude',
+            pluginId: 'happier.agent.claude',
             scope: { kind: 'account' },
             target: {
                 kind: 'account',
@@ -799,7 +1016,7 @@ describe('AskUserQuestionView', () => {
             fields: [{ key: 'claudeUnifiedTerminalResumeChoice', redacted: false }],
         });
         expect(scopedPluginSettingsWrite).toHaveBeenCalledWith({
-            pluginId: 'claude',
+            pluginId: 'happier.agent.claude',
             fieldId: 'claudeUnifiedTerminalResumeChoice',
             mutation: { kind: 'set', value: 'resume_from_summary' },
             expectedRevision: { kind: 'account', value: 1 },
@@ -821,7 +1038,10 @@ describe('AskUserQuestionView', () => {
         askUserQuestionSessionState.current = {
             serverId: 'server-a',
             metadataLayoutVersion: 1,
-            ownerMetadataView: { machineId: 'machine-1' },
+            ownerMetadataView: {
+                machineId: 'machine-1',
+                runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+            },
             agentState: {
                 capabilities: { askUserQuestionAnswersInPermission: true },
                 requests: {
@@ -862,19 +1082,20 @@ describe('AskUserQuestionView', () => {
         expect(scopedPluginSettingsWrite).not.toHaveBeenCalled();
         expect(modalAlert).toHaveBeenCalledWith(
             'common.error',
-            'Unable to persist Claude workspace trust without an exact Account target.',
+            'Unable to persist the selected setting without an exact Account target.',
         );
     });
 
-    it('persists the remembered Account preference without consulting any machine identity', async () => {
+    it('does not persist a remembered choice without the session machine and Agent identity', async () => {
         activeAskUserQuestionRequest = {
             tool: 'AskUserQuestion',
             kind: 'user_action',
             source: 'claude_unified_terminal_dialog_choice',
         };
         // Layout1 `metadata.machineId` is a shared decoy and there is no owner
-        // view at all. An Account preference is not addressed by machine, so
-        // neither fact may participate in — or block — this write.
+        // view. The Account record is not machine-addressed, but the host must
+        // still resolve the exact session Agent descriptor before accepting a
+        // candidate mutation from a tool payload.
         askUserQuestionSessionState.current = {
             serverId: 'server-a',
             metadataLayoutVersion: 1,
@@ -918,11 +1139,7 @@ describe('AskUserQuestionView', () => {
 
         expect(machinePluginSettingsSet).not.toHaveBeenCalled();
         expect(modalAlert).not.toHaveBeenCalled();
-        const writeCall = scopedPluginSettingsWrite.mock.calls[0]?.[0] as
-            | { target?: Record<string, unknown> }
-            | undefined;
-        expect(writeCall?.target).toEqual({ kind: 'account', serverIdentityId: 'srv_server_a' });
-        expect(JSON.stringify(writeCall ?? {})).not.toContain('shared-decoy-machine');
+        expect(scopedPluginSettingsWrite).not.toHaveBeenCalled();
     });
 
     it('keeps an accepted answer settled when only the remembered preference fails to persist', async () => {
@@ -934,7 +1151,10 @@ describe('AskUserQuestionView', () => {
         askUserQuestionSessionState.current = {
             serverId: 'server-a',
             metadataLayoutVersion: 1,
-            ownerMetadataView: { machineId: 'machine-1' },
+            ownerMetadataView: {
+                machineId: 'machine-1',
+                runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
+            },
             agentState: {
                 capabilities: { askUserQuestionAnswersInPermission: true },
                 requests: {
@@ -979,7 +1199,7 @@ describe('AskUserQuestionView', () => {
         expect(findPressableByLabel(screen, 'tools.askUserQuestion.submit')).toBeFalsy();
         expect(modalAlert).toHaveBeenCalledWith(
             'common.error',
-            'Unable to persist Claude workspace trust.',
+            'Unable to persist the selected setting.',
         );
     });
 

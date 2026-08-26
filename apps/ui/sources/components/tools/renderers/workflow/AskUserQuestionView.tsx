@@ -16,17 +16,29 @@ import {
     useOpenAttachedSessionTerminal,
     type AttachedSessionTerminalUnavailableReason,
 } from '@/components/sessions/terminal/openAttachedSessionTerminal';
-import { isClaudeUnifiedTerminalDialogChoiceAgentStateRequest } from '@happier-dev/protocol';
+import {
+    compilePluginJsonSchema,
+    isValidPluginJsonSchemaValue,
+} from '@happier-dev/protocol';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { Icon } from '@/components/ui/icons/Icon';
+import { getAgentBehavior } from '@/agents/catalog/catalog';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import type { PluginProjectionEditableSettingField } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { getMachineContributionRegistryProjectionRevision } from '@/sync/ops/machineContributionRegistryProjection';
 import {
     resolveScopedPluginSettingsTarget,
-    type ScopedPluginSettingsField,
 } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
 import {
     resolveScopedPluginSettingsServerIdentity,
     scopedPluginSettingsAdapter,
 } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
-import { commitScopedPluginSettingsField } from '@/sync/domains/plugins/settings/scopedPluginSettingsProjection';
+import {
+    commitScopedPluginSettingsField,
+    projectScopedPluginSettingsField,
+} from '@/sync/domains/plugins/settings/scopedPluginSettingsProjection';
 
 
 interface QuestionOption {
@@ -62,71 +74,119 @@ interface AskUserQuestionInput {
     happierDialog?: unknown;
 }
 
-type ClaudeDialogSettingMutation =
-    | Readonly<{
-        settingId: 'claudeUnifiedTerminalWorkspaceTrust';
-        value: 'always_trust_happier_workspaces' | 'always_reject_happier_workspaces';
-    }>
-    | Readonly<{
-        settingId: 'claudeUnifiedTerminalResumeChoice';
-        value: 'resume_from_summary' | 'resume_full_session';
-    }>;
-
 const ACCOUNT_PLUGIN_SETTINGS_SCOPE = Object.freeze({ kind: 'account' as const });
 
 /**
- * A recognized terminal dialog may ask to remember a declared Claude setting,
- * but it has no independent Settings transport. Both remembered choices live in
- * Claude's single `scope: 'account'` Agent Settings contribution and are read
- * back by its runtime through `forScope({ kind: 'account' })`, so this reuses
- * the scoped adapter at that exact scope: read/CAS/write, currentness and
- * unavailable semantics stay one canonical path, and the declaration keeps one
- * owner. Addressing a machine here produced an operation the daemon's
- * exact-declaration filter must refuse.
+ * A dialog option can carry an Agent-owned candidate setting mutation, but the
+ * host accepts it only after the current qualified Agent descriptor allowlists
+ * that exact dialog, setting, and value. The declared Account Settings catalog
+ * remains the sole persistence authority below this bridge.
  */
-async function persistClaudeDialogSetting(input: Readonly<{
+type DeclaredAskUserQuestionSettingMutation = Readonly<{
     sessionId: string;
-    session: Readonly<{ serverId?: unknown }>;
-    mutation: ClaudeDialogSettingMutation;
-}>): Promise<void> {
-    const preferenceName = input.mutation.settingId === 'claudeUnifiedTerminalWorkspaceTrust'
-        ? 'workspace trust'
-        : 'resume choice';
-    const serverId = typeof input.session.serverId === 'string' ? input.session.serverId.trim() : '';
+    serverId: string;
+    agentId: string;
+    machineId: string;
+    pluginId: string;
+    agentLocalId: string;
+    dialogId: string;
+    settingId: string;
+    fieldId: string;
+    projectionGeneration: number;
+    projectionRevision: number;
+    field: PluginProjectionEditableSettingField;
+    value: string;
+}>;
+
+type AskUserQuestionDeclarationAuthority = Readonly<{
+    serverId: string;
+    agentId: string | null;
+    machineId: string | null;
+    daemonProjection: ReturnType<typeof useDaemonMergedProjectionInputs>['inputs'];
+    projectionRevision: number | null;
+}>;
+
+function resolveDeclaredAskUserQuestionSettingFieldId(
+    field: PluginProjectionEditableSettingField,
+): string | null {
+    const projectedField = projectScopedPluginSettingsField(field);
+    if (projectedField.binding?.kind === 'perActiveServer') return null;
+    const fieldId = projectedField.binding?.kind === 'direct'
+        ? projectedField.binding.settingId
+        : projectedField.key;
+    return fieldId.trim().length > 0 ? fieldId : null;
+}
+
+async function persistDeclaredAskUserQuestionSetting(
+    input: DeclaredAskUserQuestionSettingMutation & Readonly<{
+        resolveCurrentDeclaration: () => DeclaredAskUserQuestionSettingMutation | null;
+    }>,
+): Promise<void> {
+    const serverId = input.serverId;
     const target = resolveScopedPluginSettingsTarget({
         scope: ACCOUNT_PLUGIN_SETTINGS_SCOPE,
         serverIdentityId: resolveScopedPluginSettingsServerIdentity(serverId),
     });
     if (!target || target.kind !== 'account') {
-        throw new Error(`Unable to persist Claude ${preferenceName} without an exact Account target.`);
+        throw new Error('Unable to persist the selected setting without an exact Account target.');
     }
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     if (!accountLifetime) {
-        throw new Error(`Unable to persist Claude ${preferenceName} outside the active Account lifetime.`);
+        throw new Error('Unable to persist the selected setting outside the active Account lifetime.');
     }
-    // An Account record is addressed by the session's server identity alone.
-    // The machine that happens to run the session is not part of that target,
-    // so it is not part of this write's currentness either.
+    const projectedField = projectScopedPluginSettingsField(input.field);
+    if (projectedField.binding?.kind === 'perActiveServer') {
+        throw new Error('Unable to persist a selected setting with a server-dependent binding.');
+    }
     const isTargetCurrent = (): boolean => {
         const currentSession = storage.getState().sessions[input.sessionId];
         const currentServerId = typeof currentSession?.serverId === 'string'
             ? currentSession.serverId.trim()
             : '';
-        return currentServerId === serverId;
+        if (currentServerId !== serverId) return false;
+        const metadata = currentSession ? readSessionOwnerMetadataView(currentSession) : null;
+        if (
+            resolveAgentIdFromSessionMetadata(metadata) !== input.agentId
+            || resolveSessionMachineId(metadata) !== input.machineId
+        ) {
+            return false;
+        }
+        const currentDeclaration = input.resolveCurrentDeclaration();
+        if (
+            !currentDeclaration
+            || getMachineContributionRegistryProjectionRevision({
+                machineId: input.machineId,
+                serverId,
+            }) !== input.projectionRevision
+        ) {
+            return false;
+        }
+        return currentDeclaration.sessionId === input.sessionId
+            && currentDeclaration.serverId === input.serverId
+            && currentDeclaration.agentId === input.agentId
+            && currentDeclaration.machineId === input.machineId
+            && currentDeclaration.pluginId === input.pluginId
+            && currentDeclaration.agentLocalId === input.agentLocalId
+            && currentDeclaration.dialogId === input.dialogId
+            && currentDeclaration.settingId === input.settingId
+            && currentDeclaration.fieldId === input.fieldId
+            && currentDeclaration.value === input.value
+            && currentDeclaration.projectionGeneration === input.projectionGeneration
+            && currentDeclaration.projectionRevision === input.projectionRevision;
     };
     const result = await commitScopedPluginSettingsField({
-        pluginId: 'claude',
+        pluginId: input.pluginId,
         scope: ACCOUNT_PLUGIN_SETTINGS_SCOPE,
         target,
         accountLifetime,
-        fields: [{ key: input.mutation.settingId, redacted: false } satisfies ScopedPluginSettingsField],
+        fields: [projectedField],
         adapter: scopedPluginSettingsAdapter,
-        fieldId: input.mutation.settingId,
-        mutation: { kind: 'set', value: input.mutation.value },
+        fieldId: input.fieldId,
+        mutation: { kind: 'set', value: input.value },
         isCurrent: isTargetCurrent,
     });
     if (result?.status !== 'ready') {
-        throw new Error(`Unable to persist Claude ${preferenceName}.`);
+        throw new Error('Unable to persist the selected setting.');
     }
 }
 
@@ -136,6 +196,138 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readOptionalString(value: unknown): string | undefined {
     return typeof value === 'string' ? value : undefined;
+}
+
+function readDialogId(value: unknown): string | null {
+    if (!isRecord(value) || typeof value.dialogId !== 'string') return null;
+    const dialogId = value.dialogId.trim();
+    return dialogId.length > 0 ? dialogId : null;
+}
+
+type DeclaredAskUserQuestionDialog = NonNullable<
+    ReturnType<typeof getAgentBehavior>['askUserQuestion']
+>['dialogs'][number];
+
+function resolveDeclaredAskUserQuestionDialog(
+    behavior: ReturnType<typeof getAgentBehavior> | null,
+    dialog: unknown,
+): DeclaredAskUserQuestionDialog | null {
+    const dialogId = readDialogId(dialog);
+    if (!dialogId) return null;
+    return behavior?.askUserQuestion?.dialogs.find((entry) => entry.dialogId === dialogId) ?? null;
+}
+
+function applyDeclaredTerminalNoticePresentation(
+    input: AskUserQuestionInput | null,
+    dialog: unknown,
+    declaration: DeclaredAskUserQuestionDialog | null,
+): AskUserQuestionInput | null {
+    if (!input || !declaration?.terminalNotice || !isRecord(dialog) || dialog.mode !== 'notice') return input;
+    const firstQuestion = input.questions[0];
+    if (!firstQuestion || firstQuestion.options.length !== 0) return input;
+    return {
+        ...input,
+        questions: [{
+            ...firstQuestion,
+            header: t(declaration.terminalNotice.headerKey),
+            question: t(declaration.terminalNotice.questionKey),
+            options: [],
+        }],
+    };
+}
+
+function resolveOptionSettingMutation(value: unknown): Readonly<{
+    settingId: string;
+    value: string;
+}> | null {
+    if (!isRecord(value) || typeof value.settingId !== 'string' || typeof value.value !== 'string') return null;
+    const settingId = value.settingId.trim();
+    return settingId ? { settingId, value: value.value } : null;
+}
+
+function resolveDeclaredAskUserQuestionSettingMutation(input: Readonly<{
+    sessionId: string;
+    serverId: string;
+    agentId: string | null;
+    machineId: string | null;
+    behavior: ReturnType<typeof getAgentBehavior> | null;
+    daemonProjection: ReturnType<typeof useDaemonMergedProjectionInputs>['inputs'];
+    projectionRevision: number | null;
+    dialog: unknown;
+    candidate: unknown;
+}>): DeclaredAskUserQuestionSettingMutation | null {
+    if (
+        !input.serverId
+        || !input.agentId
+        || !input.machineId
+        || !input.daemonProjection?.pluginProjectionV2
+        || input.projectionRevision === null
+        || !Number.isSafeInteger(input.projectionRevision)
+        || input.projectionRevision < 0
+    ) {
+        return null;
+    }
+    const projectionGeneration = input.daemonProjection.pluginProjectionV2.generation;
+    if (!Number.isSafeInteger(projectionGeneration) || projectionGeneration < 0) return null;
+    const declaration = resolveDeclaredAskUserQuestionDialog(input.behavior, input.dialog);
+    const declaredMutation = declaration?.settingMutation;
+    const candidate = resolveOptionSettingMutation(input.candidate);
+    if (
+        !declaredMutation
+        || !candidate
+        || candidate.settingId !== declaredMutation.settingId
+        || !declaredMutation.allowedValues.includes(candidate.value)
+    ) {
+        return null;
+    }
+
+    const projectedAgent = input.daemonProjection.pluginProjectionV2.agentsById[input.agentId];
+    if (!projectedAgent || projectedAgent.id !== input.agentId || !projectedAgent.identity) return null;
+    const identity = projectedAgent.identity;
+    const projectionEntry = input.daemonProjection.pluginProjectionById[identity.pluginId];
+    if (!projectionEntry) return null;
+    const matchingFields = projectionEntry.editableSettingsGroups
+        .filter((group) => (
+            group.pluginId === identity.pluginId
+            && group.scope.kind === 'account'
+            && group.target.kind === 'agent'
+            && group.target.agent.pluginId === identity.pluginId
+            && group.target.agent.localId === identity.localId
+        ))
+        .flatMap((group) => group.fields.filter((field) => field.key === candidate.settingId));
+    if (matchingFields.length !== 1) return null;
+    const field = matchingFields[0]!;
+    if (
+        field.valueType !== 'string'
+        || field.secretCustody !== null
+        || field.redaction !== 'none'
+        || field.control === 'password'
+    ) {
+        return null;
+    }
+    const fieldId = resolveDeclaredAskUserQuestionSettingFieldId(field);
+    if (!fieldId) return null;
+    try {
+        const validator = compilePluginJsonSchema(field.valueSchema);
+        if (!isValidPluginJsonSchemaValue(validator, candidate.value)) return null;
+    } catch {
+        return null;
+    }
+    return {
+        sessionId: input.sessionId,
+        serverId: input.serverId,
+        agentId: input.agentId,
+        machineId: input.machineId,
+        pluginId: identity.pluginId,
+        agentLocalId: identity.localId,
+        dialogId: declaration.dialogId,
+        settingId: candidate.settingId,
+        fieldId,
+        projectionGeneration,
+        projectionRevision: input.projectionRevision,
+        field,
+        value: candidate.value,
+    };
 }
 
 function normalizeQuestionOption(value: unknown, canonical: boolean): QuestionOption | null {
@@ -236,11 +428,6 @@ function normalizeLegacyQuestion(value: Record<string, unknown>): Question | nul
     };
 }
 
-function isLegacyAskUserQuestionInput(value: unknown): boolean {
-    if (!isRecord(value) || !Array.isArray(value.questions)) return false;
-    return value.questions.some((question) => isRecord(question) && !('selection' in question));
-}
-
 function normalizeAskUserQuestionInput(value: unknown): AskUserQuestionInput | null {
     if (!isRecord(value) || !Array.isArray(value.questions) || value.questions.length === 0) return null;
     const questions = value.questions.map((question) => {
@@ -285,49 +472,6 @@ function resolveAttachedTerminalUnavailableMessage(
         default:
             return null;
     }
-}
-
-function isOpenTerminalNotice(value: unknown): boolean {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const dialog = value as Record<string, unknown>;
-    return dialog.kind === 'unrecognized'
-        && dialog.mode === 'notice'
-        && dialog.dialogId === 'unrecognized_confirmation'
-        && dialog.action === 'open_terminal';
-}
-
-/**
- * The open-terminal notice's copy.
- *
- * The `happierDialog` envelope — not the Agent that produced it — is what makes
- * this row a notice: the host already reads it to decide the notice layout and
- * the open-terminal action, and it owns the copy. An optionless notice question
- * carries the Agent's raw TUI prompt text, which is not presentable, so the host
- * substitutes its own header and question. Anything else is left untouched.
- */
-function applyOpenTerminalNoticePresentation(value: unknown): unknown {
-    if (!isRecord(value) || !Array.isArray(value.questions)) return value;
-    if (!isOpenTerminalNotice(value.happierDialog)) return value;
-    const firstQuestion = value.questions[0];
-    if (!isRecord(firstQuestion) || !Array.isArray(firstQuestion.options) || firstQuestion.options.length !== 0) {
-        return value;
-    }
-    return {
-        ...value,
-        questions: [{
-            ...firstQuestion,
-            header: t('tools.askUserQuestion.claudeDialogNotice.header'),
-            question: t('tools.askUserQuestion.claudeDialogNotice.question'),
-            options: [],
-        }],
-    };
-}
-
-function hasOpenTerminalSecondaryAction(value: unknown): boolean {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const dialog = value as Record<string, unknown>;
-    return (dialog.kind === 'recognized' || dialog.kind === 'unrecognized')
-        && dialog.secondaryAction === 'open_terminal';
 }
 
 function parseAskUserQuestionAnswersFromToolResult(result: unknown): Record<string, string> | null {
@@ -515,10 +659,44 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
     // Parse input
     const rawInput = tool.input;
     const session = sessionId ? storage.getState().sessions[sessionId] : undefined;
-    const presentedInput = isLegacyAskUserQuestionInput(rawInput)
-        ? applyOpenTerminalNoticePresentation(rawInput)
-        : rawInput;
-    const input = normalizeAskUserQuestionInput(presentedInput);
+    const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
+    const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
+    const machineId = resolveSessionMachineId(ownerMetadata);
+    const serverId = typeof session?.serverId === 'string' ? session.serverId.trim() : '';
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId,
+        serverId: serverId || null,
+        enabled: Boolean(sessionId && machineId),
+    });
+    const daemonProjection = daemonMergedProjection.phase === 'ready'
+        ? daemonMergedProjection.inputs
+        : null;
+    const projectionRevision = machineId && serverId
+        ? getMachineContributionRegistryProjectionRevision({ machineId, serverId })
+        : null;
+    // This ref owns no projection or descriptor state. It lets the post-answer
+    // write predicate re-resolve its declaration from the current render while
+    // the canonical machine revision fences an invalidation before React can
+    // render its successor projection.
+    const declarationAuthorityRef = React.useRef<AskUserQuestionDeclarationAuthority | null>(null);
+    declarationAuthorityRef.current = {
+        serverId,
+        agentId,
+        machineId,
+        daemonProjection,
+        projectionRevision,
+    };
+    const agentBehavior = agentId ? getAgentBehavior(agentId, machineId) : null;
+    const normalizedInput = normalizeAskUserQuestionInput(rawInput);
+    const declaredDialog = resolveDeclaredAskUserQuestionDialog(
+        agentBehavior,
+        normalizedInput?.happierDialog,
+    );
+    const input = applyDeclaredTerminalNoticePresentation(
+        normalizedInput,
+        normalizedInput?.happierDialog,
+        declaredDialog,
+    );
     const questions = input?.questions;
 
     if (!input || !questions || !Array.isArray(questions) || questions.length === 0) {
@@ -544,8 +722,13 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             : interaction?.permissionDisabledReason === 'readOnly'
                 ? t('session.sharing.permissionApprovalsDisabledReadOnly')
                 : t('session.sharing.permissionApprovalsDisabledNotGranted');
-    const attachedTerminalNotice = isOpenTerminalNotice(input.happierDialog);
-    const attachedTerminalSecondaryAction = hasOpenTerminalSecondaryAction(input.happierDialog);
+    const attachedTerminalNotice = Boolean(
+        declaredDialog?.terminalNotice
+        && isRecord(normalizedInput?.happierDialog)
+        && normalizedInput.happierDialog.mode === 'notice'
+        && questions[0]?.options.length === 0,
+    );
+    const attachedTerminalSecondaryAction = declaredDialog?.terminalSecondaryAction;
     const canOpenAttachedTerminal = Boolean(
         sessionId && isRunning && canApprovePermissions && attachedSessionTerminal.available,
     );
@@ -563,24 +746,24 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                             <Text style={styles.headerText}>{question?.header}</Text>
                         </View>
                         <Text style={styles.questionText}>{question?.question}</Text>
-                        {canOpenAttachedTerminal ? (
+                        {canOpenAttachedTerminal && attachedTerminalSecondaryAction ? (
                             <TouchableOpacity
-                                testID="ask-user-question.open-claude-terminal"
+                                testID="ask-user-question.open-attached-terminal"
                                 accessibilityRole="button"
-                                accessibilityLabel={t('tools.askUserQuestion.claudeDialogNotice.openTerminal')}
+                                accessibilityLabel={t(attachedTerminalSecondaryAction!.labelKey)}
                                 style={styles.optionButton}
                                 onPress={attachedSessionTerminal.open}
                                 activeOpacity={0.7}
                             >
                                 <Icon name="terminal" size={20} color={theme.colors.text.secondary} />
                                 <View style={styles.optionContent}>
-                                    <Text style={styles.optionLabel}>{t('tools.askUserQuestion.claudeDialogNotice.openTerminal')}</Text>
-                                    <Text style={styles.optionDescription}>{t('tools.askUserQuestion.claudeDialogNotice.description')}</Text>
+                                    <Text style={styles.optionLabel}>{t(attachedTerminalSecondaryAction!.labelKey)}</Text>
+                                    <Text style={styles.optionDescription}>{t(attachedTerminalSecondaryAction!.descriptionKey)}</Text>
                                 </View>
                             </TouchableOpacity>
                         ) : !canApprovePermissions ? (
                             <Text style={styles.optionDescription}>{disabledMessage}</Text>
-                        ) : isRunning && attachedTerminalUnavailableMessage ? (
+                        ) : attachedTerminalSecondaryAction && isRunning && attachedTerminalUnavailableMessage ? (
                             <Text
                                 testID="ask-user-question.attached-terminal-unavailable"
                                 style={styles.optionDescription}
@@ -691,6 +874,30 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                 return;
             }
 
+            const selectedSettingMutationCandidates = [...selections].flatMap(([questionIndex, selectedIndexes]) => (
+                [...selectedIndexes]
+                    .map((optionIndex) => questions[questionIndex]?.options?.[optionIndex]?.settingMutation)
+                    .filter((candidate): candidate is unknown => candidate !== undefined)
+            ));
+            const submittingDeclarationAuthority = declarationAuthorityRef.current;
+            const declaredMutation = selectedSettingMutationCandidates.length === 1 && submittingDeclarationAuthority
+                ? resolveDeclaredAskUserQuestionSettingMutation({
+                    sessionId,
+                    serverId: submittingDeclarationAuthority.serverId,
+                    agentId: submittingDeclarationAuthority.agentId,
+                    machineId: submittingDeclarationAuthority.machineId,
+                    behavior: submittingDeclarationAuthority.agentId
+                        ? getAgentBehavior(
+                            submittingDeclarationAuthority.agentId,
+                            submittingDeclarationAuthority.machineId,
+                        )
+                        : null,
+                    daemonProjection: submittingDeclarationAuthority.daemonProjection,
+                    projectionRevision: submittingDeclarationAuthority.projectionRevision,
+                    dialog: input.happierDialog,
+                    candidate: selectedSettingMutationCandidates[0],
+                })
+                : null;
             setIsSubmitting(true);
 
             await sessionAllowWithAnswers(sessionId, toolCallId, answers);
@@ -699,59 +906,45 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
             // failed preference write must be reported as such and must never
             // re-offer submit for a request that has already been answered.
             setIsSubmitted(true);
-            const dialog = input.happierDialog;
-            if (dialog && typeof dialog === 'object' && !Array.isArray(dialog)) {
-                const metadata = dialog as Record<string, unknown>;
-                if (isClaudeUnifiedTerminalDialogChoiceAgentStateRequest(latestRequest) && metadata.kind === 'recognized') {
-                    try {
-                        for (const [questionIndex, selectedIndexes] of selections) {
-                            for (const optionIndex of selectedIndexes) {
-                                const mutation = questions[questionIndex]?.options?.[optionIndex]?.settingMutation;
-                                if (!mutation || typeof mutation !== 'object' || Array.isArray(mutation)) continue;
-                                const candidate = mutation as Record<string, unknown>;
-                                if (
-                                    metadata.dialogId === 'trust_folder'
-                                    && candidate.settingId === 'claudeUnifiedTerminalWorkspaceTrust'
-                                    && (
-                                        candidate.value === 'always_trust_happier_workspaces'
-                                        || candidate.value === 'always_reject_happier_workspaces'
-                                    )
-                                ) {
-                                    await persistClaudeDialogSetting({
-                                        sessionId,
-                                        session: latestSession,
-                                        mutation: {
-                                            settingId: candidate.settingId,
-                                            value: candidate.value,
-                                        },
-                                    });
-                                } else if (
-                                    metadata.dialogId === 'resume_choice'
-                                    && candidate.settingId === 'claudeUnifiedTerminalResumeChoice'
-                                    && (
-                                        candidate.value === 'resume_from_summary'
-                                        || candidate.value === 'resume_full_session'
-                                    )
-                                ) {
-                                    await persistClaudeDialogSetting({
-                                        sessionId,
-                                        session: latestSession,
-                                        mutation: {
-                                            settingId: candidate.settingId,
-                                            value: candidate.value,
-                                        },
-                                    });
-                                }
-                            }
-                        }
-                    } catch (preferenceError) {
-                        Modal.alert(
-                            t('common.error'),
-                            preferenceError instanceof Error
-                                ? preferenceError.message
-                                : t('errors.failedToSendMessage'),
-                        );
-                    }
+            const currentSession = storage.getState().sessions[sessionId];
+            const currentOwnerMetadata = currentSession ? readSessionOwnerMetadataView(currentSession) : null;
+            const currentServerId = typeof currentSession?.serverId === 'string' ? currentSession.serverId.trim() : '';
+            const currentAgentId = resolveAgentIdFromSessionMetadata(currentOwnerMetadata);
+            const currentMachineId = resolveSessionMachineId(currentOwnerMetadata);
+            if (
+                declaredMutation
+                && currentServerId === declaredMutation.serverId
+                && currentAgentId === declaredMutation.agentId
+                && currentMachineId === declaredMutation.machineId
+            ) {
+                try {
+                    await persistDeclaredAskUserQuestionSetting({
+                        ...declaredMutation,
+                        resolveCurrentDeclaration: () => {
+                            const currentAuthority = declarationAuthorityRef.current;
+                            if (!currentAuthority) return null;
+                            return resolveDeclaredAskUserQuestionSettingMutation({
+                                sessionId,
+                                serverId: currentAuthority.serverId,
+                                agentId: currentAuthority.agentId,
+                                machineId: currentAuthority.machineId,
+                                behavior: currentAuthority.agentId
+                                    ? getAgentBehavior(currentAuthority.agentId, currentAuthority.machineId)
+                                    : null,
+                                daemonProjection: currentAuthority.daemonProjection,
+                                projectionRevision: currentAuthority.projectionRevision,
+                                dialog: input.happierDialog,
+                                candidate: selectedSettingMutationCandidates[0],
+                            });
+                        },
+                    });
+                } catch (preferenceError) {
+                    Modal.alert(
+                        t('common.error'),
+                        preferenceError instanceof Error
+                            ? preferenceError.message
+                            : t('errors.failedToSendMessage'),
+                    );
                 }
             }
         } catch (error) {
@@ -760,7 +953,16 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         } finally {
             setIsSubmitting(false);
         }
-    }, [sessionId, questions, selections, freeformAnswers, allQuestionsAnswered, input.happierDialog, isSubmitting, toolCallId]);
+    }, [
+        sessionId,
+        questions,
+        selections,
+        freeformAnswers,
+        allQuestionsAnswered,
+        input.happierDialog,
+        isSubmitting,
+        toolCallId,
+    ]);
 
     // Show submitted state
     if (isSubmitted || tool.state === 'completed') {
@@ -822,17 +1024,17 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                 ) : null}
                 {attachedTerminalSecondaryAction && canOpenAttachedTerminal ? (
                     <TouchableOpacity
-                        testID="ask-user-question.open-claude-terminal"
+                        testID="ask-user-question.open-attached-terminal"
                         accessibilityRole="button"
-                        accessibilityLabel={t('tools.askUserQuestion.claudeDialogNotice.openTerminal')}
+                        accessibilityLabel={t(attachedTerminalSecondaryAction.labelKey)}
                         style={styles.optionButton}
                         onPress={attachedSessionTerminal.open}
                         activeOpacity={0.7}
                     >
                         <Icon name="terminal" size={20} color={theme.colors.text.secondary} />
                         <View style={styles.optionContent}>
-                            <Text style={styles.optionLabel}>{t('tools.askUserQuestion.claudeDialogNotice.openTerminal')}</Text>
-                            <Text style={styles.optionDescription}>{t('tools.askUserQuestion.claudeDialogNotice.description')}</Text>
+                            <Text style={styles.optionLabel}>{t(attachedTerminalSecondaryAction.labelKey)}</Text>
+                            <Text style={styles.optionDescription}>{t(attachedTerminalSecondaryAction.descriptionKey)}</Text>
                         </View>
                     </TouchableOpacity>
                 ) : attachedTerminalSecondaryAction && isRunning && canApprovePermissions && attachedTerminalUnavailableMessage ? (

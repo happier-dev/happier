@@ -709,6 +709,60 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         </View>
     ) : null;
 
+    // Do not borrow a bundled Agent's approval semantics when the current
+    // Agent did not publish a recognized prompt protocol. A single explicit
+    // denial keeps the request answerable without granting any authority.
+    if (copy.protocol === 'unavailable') {
+        const actionsDisabled = !isPending || loadingButton !== null;
+        return (
+            <View style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
+                <View style={styles.buttonContainer}>
+                    <TouchableOpacity
+                        testID="permission-footer.deny"
+                        accessibilityRole="button"
+                        accessibilityState={{
+                            disabled: actionsDisabled,
+                            selected: isDeniedViaNo,
+                            busy: loadingButton === 'deny',
+                        }}
+                        style={[
+                            styles.button,
+                            minimumInteractiveTargetStyle,
+                            alignedButtonStyle,
+                            isPending && styles.buttonDeny,
+                            isDeniedViaNo && styles.buttonSelected,
+                            isApproved && styles.buttonInactive,
+                        ]}
+                        onPress={handleDeny}
+                        disabled={actionsDisabled}
+                        activeOpacity={isPending ? 0.7 : 1}
+                    >
+                        {loadingButton === 'deny' && isPending ? (
+                            <View style={[styles.buttonContent, { width: 40, height: 20, justifyContent: 'center' }]}>
+                                <ActivitySpinner size={Platform.OS === 'ios' ? 'small' : 14} color={styles.loadingIndicatorDeny.color} />
+                            </View>
+                        ) : (
+                            <View style={styles.buttonContent}>
+                                <Text
+                                    style={[
+                                        styles.buttonText,
+                                        isPending && styles.buttonTextDeny,
+                                        isDeniedViaNo && styles.buttonTextSelected,
+                                    ]}
+                                    numberOfLines={1}
+                                    ellipsizeMode="tail"
+                                >
+                                    {t(copy.denyKey)}
+                                </Text>
+                            </View>
+                        )}
+                    </TouchableOpacity>
+                </View>
+                {actionFailureNode}
+            </View>
+        );
+    }
+
     // Render Codex-style decision buttons if the agent uses the Codex decision protocol.
     if (copy.protocol === 'codexDecision') {
         const actionsDisabled = !isPending || loadingButton !== null || loadingForSession || loadingExecPolicy;

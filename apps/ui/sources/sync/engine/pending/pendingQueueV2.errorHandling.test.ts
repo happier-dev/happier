@@ -359,7 +359,7 @@ describe('pendingQueueV2 error handling', () => {
         insertEditablePendingMessage(sessionId);
         const request = async () => new Response(null, { status });
 
-        const mutations: Array<() => Promise<void>> = [
+        const mutations = [
             () => updatePendingMessageV2({ sessionId, pendingId: 'p1', text: 'new text', encryption, request }),
             () => deletePendingMessageV2({ sessionId, pendingId: 'p1', request }),
             () => discardPendingMessageV2({ sessionId, pendingId: 'p1', encryption, request }),

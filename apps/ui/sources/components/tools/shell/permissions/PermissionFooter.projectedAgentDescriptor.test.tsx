@@ -31,9 +31,9 @@ vi.mock('@/agents/catalog/resolve', () => ({
     resolveAgentIdForPermissionUi: () => EXTERNAL_AGENT_ID,
 }));
 
-// The footer copy owner is deliberately NOT stubbed here: an external Agent must
-// reach the same neutral copy a bundled Agent gets, and stubbing it would hide a
-// footer that never renders.
+// The footer copy owner is deliberately NOT stubbed here: an external Agent
+// must exercise the production fail-closed path, and stubbing it would hide a
+// footer that incorrectly offers approval semantics.
 async function renderPendingPermissionFooter(
     options: Readonly<{ machineId?: string; toolInput?: Record<string, unknown> }> = {},
 ) {
@@ -71,12 +71,16 @@ describe('PermissionFooter for an external Agent', () => {
         ops.sessionAbort.mockClear();
     });
 
-    it('renders the approve, deny and stop actions for a pending request', async () => {
+    it('renders only denial for an external Agent that ships no descriptor', async () => {
         const screen = await renderPendingPermissionFooter();
 
-        for (const testID of ['permission-footer.allow', 'permission-footer.deny', 'permission-footer.stop']) {
-            expect(screen.findAllByTestId(testID).length).toBeGreaterThan(0);
-        }
+        expect(screen.findAllByTestId('permission-footer.deny').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('permission-footer.allow')).toHaveLength(0);
+        expect(screen.findAllByTestId('permission-footer.stop')).toHaveLength(0);
+
+        await screen.pressByTestIdAsync('permission-footer.deny');
+        expect(ops.sessionDeny).toHaveBeenCalledWith('s1', 'p1', undefined, undefined, 'denied');
+        expect(ops.sessionAbort).not.toHaveBeenCalled();
     });
 
     it('honors the projected descriptor stop handling instead of aborting the run', async () => {
@@ -86,7 +90,12 @@ describe('PermissionFooter for an external Agent', () => {
         publishProjectedAgentUiBehaviorDescriptors({
             machineId: 'm1',
             descriptorsByAgentId: {
-                [EXTERNAL_AGENT_ID]: { permissions: { footer: { stopHandling: 'denyOnly' } } },
+                [EXTERNAL_AGENT_ID]: {
+                    permissions: {
+                        promptProtocol: 'claude',
+                        footer: { stopHandling: 'denyOnly' },
+                    },
+                },
             },
         });
 
@@ -97,13 +106,6 @@ describe('PermissionFooter for an external Agent', () => {
         expect(ops.sessionAbort).not.toHaveBeenCalled();
     });
 
-    it('still aborts the run for an external Agent that ships no descriptor', async () => {
-        const screen = await renderPendingPermissionFooter();
-        await screen.pressByTestIdAsync('permission-footer.stop');
-
-        expect(ops.sessionDeny).toHaveBeenCalledTimes(1);
-        expect(ops.sessionAbort).toHaveBeenCalledTimes(1);
-    });
 });
 
 /**
@@ -127,10 +129,16 @@ describe('PermissionFooter across two machines holding different descriptors', (
         // `machine-a` sorts first, so it is exactly what a machine-blind read
         // returns for a Session that actually runs on `machine-b`.
         await publishForMachine('machine-a', {
-            permissions: { footer: { stopHandling: 'denyOnly' } },
+            permissions: {
+                promptProtocol: 'claude',
+                footer: { stopHandling: 'denyOnly' },
+            },
         });
         await publishForMachine('machine-b', {
-            permissions: { footer: { stopHandling: 'denyAndAbortRun' } },
+            permissions: {
+                promptProtocol: 'claude',
+                footer: { stopHandling: 'denyAndAbortRun' },
+            },
         });
     }
 
@@ -192,7 +200,7 @@ describe('PermissionFooter for an external Agent that declares the decision prot
         expect(ops.sessionAllow).toHaveBeenCalledWith('s1', 'p1', undefined, undefined, 'approved');
     });
 
-    it('keeps the neutral Claude action model for an Agent that declares no protocol', async () => {
+    it('fails closed when an external Agent declares no protocol', async () => {
         await publishForMachine('machine-a', {
             permissions: { footer: { supportsExecPolicyAmendment: true } },
         });
@@ -204,9 +212,12 @@ describe('PermissionFooter for an external Agent that declares the decision prot
 
         expect(screen.findAllHostsByTestId('permission-footer.allow-for-session')).toHaveLength(0);
         expect(screen.findAllHostsByTestId('permission-footer.allow-execpolicy')).toHaveLength(0);
+        expect(screen.findAllByTestId('permission-footer.allow')).toHaveLength(0);
+        expect(screen.findAllByTestId('permission-footer.stop')).toHaveLength(0);
 
-        await screen.pressByTestIdAsync('permission-footer.allow');
-        expect(ops.sessionAllow).toHaveBeenCalledWith('s1', 'p1');
+        await screen.pressByTestIdAsync('permission-footer.deny');
+        expect(ops.sessionDeny).toHaveBeenCalledWith('s1', 'p1', undefined, undefined, 'denied');
+        expect(ops.sessionAbort).not.toHaveBeenCalled();
     });
 
     it('refuses an unreadable protocol instead of impersonating another Agent family', async () => {
@@ -220,6 +231,9 @@ describe('PermissionFooter for an external Agent that declares the decision prot
         });
 
         expect(screen.findAllHostsByTestId('permission-footer.allow-execpolicy')).toHaveLength(0);
+        expect(screen.findAllByTestId('permission-footer.allow')).toHaveLength(0);
+        expect(screen.findAllByTestId('permission-footer.stop')).toHaveLength(0);
+        expect(screen.findAllByTestId('permission-footer.deny').length).toBeGreaterThan(0);
 
         const { readProjectedAgentUiBehaviorDiagnostics } = await import(
             '@/agents/registry/agentUiBehaviorProjection'

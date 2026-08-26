@@ -5,6 +5,7 @@ import {
   createActionExecutor,
   isActionEnabledByActionsSettings,
   isApprovalRequiredByActionsSettings,
+  projectPluginFailureText,
   SessionModelTransitionRequestV1Schema,
   SessionModelTransitionResultV1Schema,
   type ActionExecutorContext,
@@ -662,10 +663,7 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
             status: 'owner_unavailable',
             activeSelection: null,
             requestedSelection: request.selection,
-            reason: error instanceof Error
-              ? error.message.slice(0, 512)
-                || 'session_model_transition_owner_unavailable'
-              : 'session_model_transition_owner_unavailable',
+            reason: projectPluginFailureText(error),
           });
         }
         if (!transition.ok) {
