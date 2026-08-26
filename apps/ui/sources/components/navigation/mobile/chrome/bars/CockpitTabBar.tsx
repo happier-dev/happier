@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -22,7 +22,6 @@ const styles = StyleSheet.create((theme) => ({
     tab: {
         alignItems: 'center',
         justifyContent: 'center',
-        minWidth: 50,
         flexShrink: 1,
         zIndex: 1,
     },
@@ -110,7 +109,7 @@ type CockpitTabBarProps<TSurface extends string> = Readonly<{
 export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps<TSurface>) {
     const { theme } = useUnistyles();
     const insets = useChromeSafeAreaInsets();
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
     // Idle stand-in so the row's animated style is unconditional: a bar that swapped
     // between `View` and `Animated.View` would remount its tabs.
     const idleProgress = useSharedValue(0);
@@ -134,7 +133,12 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
                             testID={`${props.tabTestIdPrefix}${tab.id}`}
                             onPress={() => props.onSurfacePress(tab.id)}
                             hitSlop={8}
-                            style={[styles.tab, { paddingVertical: metrics.tabPaddingVertical, paddingHorizontal: metrics.tabPaddingHorizontal }]}
+                            style={[styles.tab, {
+                                minWidth: metrics.tabMinWidth,
+                                minHeight: metrics.tabMinHeight,
+                                paddingVertical: metrics.tabPaddingVertical,
+                                paddingHorizontal: metrics.tabPaddingHorizontal,
+                            }]}
                             accessibilityRole="tab"
                             accessibilityLabel={tab.label}
                             accessibilityState={{ selected: active }}
@@ -175,14 +179,19 @@ export const CockpitTabBarAction = React.forwardRef<View, Readonly<{
     onPress: () => void;
 }>>((props, ref) => {
     const { theme } = useUnistyles();
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
     return (
         <Pressable
             ref={ref as React.Ref<never>}
             testID={props.testID}
             onPress={props.onPress}
             hitSlop={8}
-            style={[styles.tab, { paddingVertical: metrics.tabPaddingVertical, paddingHorizontal: metrics.tabPaddingHorizontal }]}
+            style={[styles.tab, {
+                minWidth: metrics.tabMinWidth,
+                minHeight: metrics.tabMinHeight,
+                paddingVertical: metrics.tabPaddingVertical,
+                paddingHorizontal: metrics.tabPaddingHorizontal,
+            }]}
             accessibilityRole="button"
             accessibilityLabel={props.label}
             accessibilityState={{ expanded: props.expanded }}

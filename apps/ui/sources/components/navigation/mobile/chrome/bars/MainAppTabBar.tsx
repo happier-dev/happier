@@ -49,7 +49,6 @@ const styles = StyleSheet.create((theme) => ({
     tab: {
         alignItems: 'center',
         justifyContent: 'center',
-        minWidth: 50,
         flexShrink: 1,
     },
     tabContent: {
@@ -94,7 +93,7 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     const friendsBadgeEnabled = useSetting('tabBarFriendsBadgeEnabled');
     const inboxBadgeEnabled = useSetting('tabBarInboxBadgeEnabled');
     const sessionsBadgeEnabled = useSetting('tabBarSessionsBadgeEnabled');
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
 
     const tabs: { key: TabType; label: string }[] = React.useMemo(() => {
         const tabKeys = resolveTabBarTabs({ inboxEnabled, friendsEnabled });
@@ -140,7 +139,12 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
                         <Pressable
                             key={tab.key}
                             testID={`tabbar-tab-${tab.key}`}
-                            style={[styles.tab, { paddingVertical: metrics.tabPaddingVertical, paddingHorizontal: metrics.tabPaddingHorizontal }]}
+                            style={[styles.tab, {
+                                minWidth: metrics.tabMinWidth,
+                                minHeight: metrics.tabMinHeight,
+                                paddingVertical: metrics.tabPaddingVertical,
+                                paddingHorizontal: metrics.tabPaddingHorizontal,
+                            }]}
                             onPress={() => props.onTabPress(tab.key)}
                             hitSlop={8}
                             accessibilityRole="tab"

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
+import { Platform, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -51,7 +51,7 @@ export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton
     const router = useRouter();
     const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const { theme } = useUnistyles();
-    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'), Platform.OS);
 
     const handlePress = React.useCallback((event?: unknown) => {
         const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
@@ -68,7 +68,7 @@ export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton
                 accessibilityLabel={t('newSession.title')}
                 onPress={handlePress}
                 // No `hitSlop`: the capsule is the full bar height, so even the smallest tab-bar
-                // size paints a target above the platform minimum, and slop here would overlap the
+                // size paints a target at the platform minimum, and slop here would overlap the
                 // neighbouring tab's own slop across the 8pt gap.
                 style={({ pressed }) => [styles.press, pressed ? styles.pressed : null]}
             >
