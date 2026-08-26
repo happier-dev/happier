@@ -923,6 +923,17 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
 }));
 
 describe('ChangedFilesReview', () => {
+    it('prefers a freshly resolved web scroll root over a retained root', async () => {
+        const { resolveChangedFilesReviewCurrentWebScrollRoot } = await import('./ChangedFilesReview');
+        const retainedRoot = { id: 'retained' } as unknown as HTMLElement;
+        const currentRoot = { id: 'current' } as unknown as HTMLElement;
+
+        expect(resolveChangedFilesReviewCurrentWebScrollRoot({
+            resolveCurrent: () => currentRoot,
+            retained: retainedRoot,
+        })).toBe(currentRoot);
+    });
+
     beforeEach(() => {
         sessionScmDiffFileSpy.mockReset();
         sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, _req: any) => ({ success: true, diff: 'diff', error: null }));

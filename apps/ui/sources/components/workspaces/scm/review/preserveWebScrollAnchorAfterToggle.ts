@@ -15,14 +15,20 @@ export function preserveWebScrollAnchorAfterToggle(params: Readonly<{
     requestFrame: RequestFrame;
     onRestored?: (scrollTop: number) => void;
 }>): void {
-    params.requestFrame(() => {
-        params.requestFrame(() => {
-            const current = params.readCurrentAnchor();
-            if (!current) return;
+    let remainingFrames = 12;
+    const restoreAnchor = () => {
+        const current = params.readCurrentAnchor();
+        if (current) {
             const delta = current.anchorY - params.anchorY;
-            if (Math.abs(delta) <= 1) return;
-            current.scrollRoot.scrollTop = Math.max(0, current.scrollRoot.scrollTop + delta);
-            params.onRestored?.(current.scrollRoot.scrollTop);
-        });
-    });
+            if (Math.abs(delta) > 1) {
+                current.scrollRoot.scrollTop = Math.max(0, current.scrollRoot.scrollTop + delta);
+                params.onRestored?.(current.scrollRoot.scrollTop);
+            }
+        }
+        remainingFrames -= 1;
+        if (remainingFrames > 0) {
+            params.requestFrame(restoreAnchor);
+        }
+    };
+    params.requestFrame(restoreAnchor);
 }

@@ -43,6 +43,13 @@ const ViewWithClick = View as unknown as React.ComponentType<
 
 const REVIEW_DIFF_LIST_DRAW_DISTANCE_MULTIPLIER = 0.75;
 
+export function resolveChangedFilesReviewCurrentWebScrollRoot<T>(params: Readonly<{
+    resolveCurrent: () => T | null;
+    retained: T | null;
+}>): T | null {
+    return params.resolveCurrent() ?? params.retained;
+}
+
 type ChangedFilesReviewTheme = Theme;
 
 function resolveCheckpointAttributionCopy(metadata: RepositoryCheckpointTurnMetadata | null | undefined): string | null {
@@ -593,7 +600,10 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             return;
         }
 
-        const scrollRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
+        const scrollRoot = resolveChangedFilesReviewCurrentWebScrollRoot({
+            resolveCurrent: resolveWebScrollRoot,
+            retained: webScrollRootRef.current,
+        });
         const beforeTop =
             scrollRoot && typeof (scrollRoot as any).scrollTop === 'number'
                 ? Number((scrollRoot as any).scrollTop)
@@ -610,7 +620,10 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             anchorY,
             requestFrame: scheduleWebFrame,
             readCurrentAnchor: () => {
-                const currentRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
+                const currentRoot = resolveChangedFilesReviewCurrentWebScrollRoot({
+                    resolveCurrent: resolveWebScrollRoot,
+                    retained: webScrollRootRef.current,
+                });
                 if (!currentRoot || typeof (currentRoot as any).scrollTop !== 'number') return null;
                 const currentAnchorTop = beforeAnchorTop === null ? null : readWebAnchorTop(path);
                 const currentY = currentAnchorTop ?? Number((currentRoot as any).scrollTop);
@@ -657,7 +670,10 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
 
         if (Platform.OS === 'web') {
             // Prefer DOM scrollTop over RN-web's sometimes-unreliable `contentOffset.y`.
-            const scrollRoot = webScrollRootRef.current ?? resolveWebScrollRoot();
+            const scrollRoot = resolveChangedFilesReviewCurrentWebScrollRoot({
+                resolveCurrent: resolveWebScrollRoot,
+                retained: webScrollRootRef.current,
+            });
             const current = scrollRoot && typeof (scrollRoot as any).scrollTop === 'number' ? (scrollRoot as any).scrollTop : null;
             if (typeof current === 'number') {
                 reportScrollTop(current);
