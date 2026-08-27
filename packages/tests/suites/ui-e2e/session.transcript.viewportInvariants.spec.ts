@@ -153,14 +153,11 @@ const MANUAL_SCROLL_PREFETCH_THRESHOLD_PX = 64;
 // Browser layout values can differ by one physical pixel after fractional CSS-pixel rounding.
 // Anchor preservation is otherwise exact: proximity thresholds must never certify this contract.
 const VIEWPORT_MEASUREMENT_ROUNDING_PX = 1;
-// The cold-open initial /messages fetch sends NO limit, so the server returns its default cap
-// (150, `registerSessionMessageRoutes.ts`) with an explicit `hasMore`. A session at or under the
-// cap materializes ENTIRELY on open (hasMore=false) and `loadOlder` is deterministically no_more —
-// no user-triggered older-page request can ever fire. Each seeded turn persists ~5 messages
-// (user + agent events + assistant), so 35 turns + the initial turn ≈ 180 messages > 150, which
-// guarantees real older pages remain after any cold open (observed live 2026-06-11: a 90-message
-// seed made the prepend scenario impossible).
-const SEED_TURN_COUNT = 35;
+// The test-only UI tuning below requests 12 messages on initial open and six per older page. Each
+// seeded turn persists ~5 messages (user + agent events + assistant), so the initial turn plus
+// eight additional turns produces ~45 messages. Even if the bounded entry-fill phase consumes
+// two older pages, at least three real pages remain for the user-triggered prepend scenario.
+const SEED_TURN_COUNT = 8;
 
 function describeViewportEvent(event: ViewportTelemetryEvent): string {
   const parts = [`t=${event.timestampMs}`, event.type];
@@ -593,9 +590,8 @@ test.describe('ui e2e: transcript viewport invariants', () => {
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 180_000 });
 
-    // Each turn persists ~5 messages: 1 + SEED_TURN_COUNT turns => ~180 messages total, exceeding
-    // the server's 150-message no-limit initial-fetch cap so older-page prepends stay reachable
-    // (see the SEED_TURN_COUNT comment).
+    // Each turn persists ~5 messages. With the test-only 12-message initial request and six-message
+    // older pages, this leaves multiple real older pages after the bounded entry-fill phase.
     for (let i = 1; i <= SEED_TURN_COUNT; i += 1) {
       await sendSeedPromptAndWaitForOk(page, seedMessageText(i, run.runId), i + 1);
     }

@@ -135,6 +135,15 @@ describe('buildSessionViewShellSessionSignature', () => {
         );
     });
 
+    it('changes when the latest turn advances ahead of detailed rollback hydration', () => {
+        const stale = createSession({ latestTurnId: 'turn-1' });
+        const advanced = createSession({ latestTurnId: 'turn-2' });
+
+        expect(buildSessionViewShellSessionSignature(advanced)).not.toBe(
+            buildSessionViewShellSessionSignature(stale),
+        );
+    });
+
     it('changes when detailed rollback turns hydrate after the flattened starts are already current', () => {
         const firstTurn = {
             turnId: 'turn-1',
