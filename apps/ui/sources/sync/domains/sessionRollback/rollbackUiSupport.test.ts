@@ -11,6 +11,7 @@ function createActiveSession(params: Readonly<{
     sessionTurns?: SessionTurnsProjectionV1 | null;
     rollbackEligibleTurnStarts?: readonly number[] | null;
     active?: boolean;
+    latestTurnId?: string | null;
 }>): Session & { sessionTurns?: SessionTurnsProjectionV1 | null } {
     return {
         id: 'session-1',
@@ -26,6 +27,7 @@ function createActiveSession(params: Readonly<{
         thinking: false,
         thinkingAt: 0,
         presence: 'online',
+        ...(params.latestTurnId !== undefined ? { latestTurnId: params.latestTurnId } : {}),
         ...(params.sessionTurns !== undefined ? { sessionTurns: params.sessionTurns } : {}),
         ...(params.rollbackEligibleTurnStarts !== undefined ? { rollbackEligibleTurnStarts: params.rollbackEligibleTurnStarts } : {}),
     };
@@ -376,6 +378,98 @@ describe('resolveTranscriptRollbackActions', () => {
         const messagesById: Record<string, Message> = {
             u1: userTextMessage('u1', 1, 'initial prompt'),
             u2: userTextMessage('u2', 3, 'steer prompt'),
+        };
+
+        expect(resolveTranscriptRollbackActions({
+            session,
+            messageIdsOldestFirst: ['u1', 'u2'],
+            messagesById,
+            rollbackRanges: [],
+        })).toEqual({
+            u1: {
+                target: { type: 'before_user_message', userMessageSeq: 1 },
+                restoredDraftText: 'initial prompt',
+            },
+        });
+    });
+
+    it('uses current flattened eligibility while detailed turns still describe an older latest turn', () => {
+        const session = createActiveSession({
+            metadata: {
+                path: '/workspace',
+                host: 'localhost',
+                flavor: 'codex',
+                codexBackendMode: 'appServer',
+            },
+            latestTurnId: 'turn-2',
+            rollbackEligibleTurnStarts: [1, 3],
+            sessionTurns: {
+                v: 1,
+                sessionId: 's1',
+                latestTurnId: 'turn-1',
+                updatedAt: 10,
+                turns: [{
+                    turnId: 'turn-1',
+                    status: 'completed',
+                    startedAt: 1,
+                    updatedAt: 10,
+                    terminalAt: 10,
+                    transcriptAnchors: { startUserMessageSeq: 1, userMessageSeqs: [1], startSeqInclusive: 1, endSeqInclusive: 2 },
+                    rollback: { state: 'eligible', updatedAt: 10 },
+                }],
+            },
+        });
+        const messagesById: Record<string, Message> = {
+            u1: userTextMessage('u1', 1, 'initial prompt'),
+            u2: userTextMessage('u2', 3, 'second prompt'),
+        };
+
+        expect(resolveTranscriptRollbackActions({
+            session,
+            messageIdsOldestFirst: ['u1', 'u2'],
+            messagesById,
+            rollbackRanges: [],
+        })).toEqual({
+            u1: {
+                target: { type: 'before_user_message', userMessageSeq: 1 },
+                restoredDraftText: 'initial prompt',
+            },
+            u2: {
+                target: { type: 'before_user_message', userMessageSeq: 3 },
+                restoredDraftText: 'second prompt',
+            },
+        });
+    });
+
+    it('does not add flattened eligibility when the detailed turn projection is current', () => {
+        const session = createActiveSession({
+            metadata: {
+                path: '/workspace',
+                host: 'localhost',
+                flavor: 'codex',
+                codexBackendMode: 'appServer',
+            },
+            latestTurnId: 'turn-1',
+            rollbackEligibleTurnStarts: [1, 3],
+            sessionTurns: {
+                v: 1,
+                sessionId: 's1',
+                latestTurnId: 'turn-1',
+                updatedAt: 10,
+                turns: [{
+                    turnId: 'turn-1',
+                    status: 'completed',
+                    startedAt: 1,
+                    updatedAt: 10,
+                    terminalAt: 10,
+                    transcriptAnchors: { startUserMessageSeq: 1, userMessageSeqs: [1], startSeqInclusive: 1, endSeqInclusive: 2 },
+                    rollback: { state: 'eligible', updatedAt: 10 },
+                }],
+            },
+        });
+        const messagesById: Record<string, Message> = {
+            u1: userTextMessage('u1', 1, 'initial prompt'),
+            u2: userTextMessage('u2', 3, 'second prompt'),
         };
 
         expect(resolveTranscriptRollbackActions({

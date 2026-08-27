@@ -154,7 +154,12 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
     const support = resolveConversationRollbackSupport({ session: params.session });
     if (support.supportsRollbackToPoint || hasConversationRollbackCapability(params.session)) {
         const sessionTurnsProjection = readSessionTurnsProjection(params.session?.sessionTurns);
-        const trustedStartSeqs = sessionTurnsProjection
+        const sessionLatestTurnId = typeof params.session?.latestTurnId === 'string'
+            ? params.session.latestTurnId
+            : null;
+        const detailedProjectionIsCurrent = sessionTurnsProjection != null
+            && (sessionLatestTurnId == null || sessionTurnsProjection.latestTurnId === sessionLatestTurnId);
+        const trustedStartSeqs = detailedProjectionIsCurrent
             ? listTrustedRuntimeTurnStartSeqs(sessionTurnsProjection)
             : listFlattenedRollbackEligibleTurnStartSeqs(
                 (params.session as { rollbackEligibleTurnStarts?: unknown } | null | undefined)?.rollbackEligibleTurnStarts,
