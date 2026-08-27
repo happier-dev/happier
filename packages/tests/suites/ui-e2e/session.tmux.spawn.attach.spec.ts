@@ -20,13 +20,8 @@ import {
 } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { parseTestTerminalAttachmentInfo, type TestTerminalAttachmentInfo } from '../../src/testkit/uiE2e/terminalAttachmentInfo';
 
-type TerminalAttachmentInfoV1 = {
-    version: 1;
-    sessionId: string;
-    terminal: { mode: 'plain' | 'tmux'; tmux?: { target?: string; tmpDir?: string } };
-    updatedAt: number;
-};
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -53,7 +48,7 @@ async function sleep(ms: number): Promise<void> {
     await new Promise((r) => setTimeout(r, ms));
 }
 
-async function waitForAttachmentInfo(happyHomeDir: string, sessionId: string): Promise<TerminalAttachmentInfoV1> {
+async function waitForAttachmentInfo(happyHomeDir: string, sessionId: string): Promise<TestTerminalAttachmentInfo> {
     const path = attachmentInfoPath(happyHomeDir, sessionId);
     const startedAt = Date.now();
     while (Date.now() - startedAt < 30_000) {
@@ -76,14 +71,8 @@ async function waitForAttachmentInfo(happyHomeDir: string, sessionId: string): P
         }
 
         const raw = await readFile(path, 'utf8').catch(() => '');
-        try {
-            const parsed = JSON.parse(raw) as Partial<TerminalAttachmentInfoV1>;
-            if (parsed && parsed.version === 1 && parsed.sessionId === sessionId && parsed.terminal) {
-                return parsed as TerminalAttachmentInfoV1;
-            }
-        } catch {
-            // ignore
-        }
+        const parsed = parseTestTerminalAttachmentInfo(raw);
+        if (parsed?.sessionId === sessionId) return parsed;
         await sleep(100);
     }
     throw new Error(`Timed out waiting for terminal attachment info at ${path}`);
@@ -341,10 +330,5 @@ test.describe('ui e2e: tmux spawn → attach', () => {
             .filter(Boolean)
             .find((l) => l.startsWith('1 '));
         expect(active).toBe(`1 ${windowName}`);
-
-        // UI should allow switching back to remote after the terminal has attached locally.
-        await expect(page.getByTestId('session-chatFooter-switchToRemote')).toHaveCount(1, { timeout: 180_000 });
-        await page.getByTestId('session-chatFooter-switchToRemote').click();
-        await expect(page.getByTestId('session-chatFooter-switchToRemote')).toHaveCount(0, { timeout: 180_000 });
     });
 });

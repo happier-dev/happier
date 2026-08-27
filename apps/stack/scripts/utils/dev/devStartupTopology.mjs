@@ -108,3 +108,24 @@ export function decideDevStartupTopology({
     adoptedServer: Boolean(serverRequested && serverAlreadyOwned && !restart),
   });
 }
+
+export function shouldExitAdoptedDevRuntime({
+  devTargetCount = 0,
+  restart = false,
+  watchEnabled = false,
+  serverRequested = false,
+  adoptedServer = false,
+  daemonRequested = false,
+  daemonRunning = false,
+  expoRequested = false,
+  expoRunning = false,
+} = {}) {
+  return (
+    devTargetCount === 0
+    && !restart
+    && !watchEnabled
+    && (!serverRequested || adoptedServer)
+    && (!daemonRequested || daemonRunning)
+    && (!expoRequested || expoRunning)
+  );
+}

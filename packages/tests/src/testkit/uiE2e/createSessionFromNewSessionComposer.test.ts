@@ -25,6 +25,7 @@ type CountableLocator = Readonly<{
 }>;
 
 const MACHINE_OPTION_SELECTOR = '[data-testid^="new-session-machine:"]:visible, [data-testid^="new-session-machine-option:"]:visible';
+const VISIBLE_NEW_SESSION_COMPOSER_SELECTOR = 'textarea[data-testid="new-session-composer-input"]:visible';
 function exactMachineSelector(machineId: string): string {
   return `[data-testid="new-session-machine:${machineId}"]:visible, [data-testid="new-session-machine-option:${machineId}"]:visible`;
 }
@@ -359,6 +360,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-1')) {
           return {
             count: async (): Promise<number> => 1,
@@ -486,6 +492,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-1')) {
           return {
             count: async (): Promise<number> => 0,
@@ -593,6 +604,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-1')) {
           return {
             count: async (): Promise<number> => 0,
@@ -704,6 +720,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-dup')) {
           return exactMachineLocator;
         }
@@ -805,6 +826,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-delayed-enabled')) {
           return {
             count: async (): Promise<number> => 1,
@@ -908,6 +934,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-session-input-only')) {
           return {
             count: async (): Promise<number> => 1,
@@ -1000,6 +1031,11 @@ describe('createSessionFromNewSessionComposer', () => {
         throw new Error(`unexpected test id: ${testId}`);
       }),
       locator: vi.fn((selector: string) => {
+        if (selector === VISIBLE_NEW_SESSION_COMPOSER_SELECTOR) {
+          return {
+            first: () => page.getByTestId('new-session-composer-input'),
+          };
+        }
         if (selector === exactMachineSelector('machine-error')) {
           return {
             count: async (): Promise<number> => 1,

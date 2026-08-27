@@ -80,6 +80,7 @@ export function useSessionFileEditorState(input: Readonly<{
     const [fileChangedExternally, setFileChangedExternally] = React.useState(false);
     const [editorByteSize, setEditorByteSize] = React.useState(0);
     const hydratedFromPersistedRef = React.useRef(false);
+    const restoredEditingDraftRef = React.useRef(false);
     const draftKey = React.useMemo(() => `${input.sessionId}:${input.filePath}`, [input.filePath, input.sessionId]);
 
     const editorHandleRef = React.useRef<CodeEditorHandle | null>(null);
@@ -94,6 +95,7 @@ export function useSessionFileEditorState(input: Readonly<{
 
     React.useEffect(() => {
         hydratedFromPersistedRef.current = false;
+        restoredEditingDraftRef.current = false;
     }, [draftKey]);
 
     React.useEffect(() => {
@@ -151,6 +153,7 @@ export function useSessionFileEditorState(input: Readonly<{
         if (typeof draft.editorText !== 'string' || typeof draft.editorOriginalText !== 'string') return;
         const draftOriginalHash = typeof draft.editorOriginalHash === 'string' ? draft.editorOriginalHash : null;
         const isEditingDraft = Boolean(draft.isEditingFile);
+        restoredEditingDraftRef.current = isEditingDraft;
         const externallyChanged = isEditingDraft
             && typeof input.fileText === 'string'
             && (
@@ -189,6 +192,10 @@ export function useSessionFileEditorState(input: Readonly<{
 
     React.useEffect(() => {
         if (input.displayMode !== 'file') {
+            if (restoredEditingDraftRef.current) {
+                restoredEditingDraftRef.current = false;
+                return;
+            }
             setIsEditingFile(false);
             setEditorDirty(false);
             setFileChangedExternally(false);

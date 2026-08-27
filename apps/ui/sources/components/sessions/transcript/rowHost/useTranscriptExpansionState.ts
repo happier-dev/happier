@@ -93,6 +93,7 @@ export function useTranscriptExpansionState(params: Readonly<{
     return {
         applyToolCallsGroupExpanded,
         expandedToolCallsAnchorMessageIds,
+        thinkingExpandedByMessageId,
         resolveThinkingExpanded,
         setExpandedToolCallsAnchorMessageIds,
         setThinkingExpanded,

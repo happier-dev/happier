@@ -841,6 +841,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     const {
         applyToolCallsGroupExpanded,
         expandedToolCallsAnchorMessageIds,
+        thinkingExpandedByMessageId,
         resolveThinkingExpanded,
         setExpandedToolCallsAnchorMessageIds,
         setThinkingExpanded,
@@ -1154,7 +1155,8 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     const transcriptListExtraData = React.useMemo(() => ({
         messagePins: props.messagePins,
         selectionVersion: transcriptMessageSelection.selectionVersion,
-    }), [props.messagePins, transcriptMessageSelection.selectionVersion]);
+        thinkingExpandedByMessageId,
+    }), [props.messagePins, thinkingExpandedByMessageId, transcriptMessageSelection.selectionVersion]);
     const listOrientation: TranscriptListOrientation = resolveTranscriptListPresentation({
         platformIsWeb: Platform.OS === 'web',
     }).orientation;

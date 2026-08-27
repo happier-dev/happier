@@ -29,7 +29,6 @@ import { sync } from '@/sync/sync';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
-import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 
 import type { SessionHandoffPickerResult } from './openSessionHandoffPicker';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -305,6 +304,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             onPress={async () => {
                                 const machineId = normalizeId(selectedMachineId);
                                 if (!machineId) return;
+                                const { openMachinePathBrowserModal } = await import('@/components/ui/pathBrowser/openMachinePathBrowserModal');
                                 const selectedPath = await openMachinePathBrowserModal({
                                     machineId,
                                     serverId: normalizeId(serverId) || null,

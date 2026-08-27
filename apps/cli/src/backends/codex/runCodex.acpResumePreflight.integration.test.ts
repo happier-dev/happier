@@ -12,6 +12,7 @@ import {
   serializeDaemonInitialGoalForEnv,
 } from '@/agent/runtime/sessionInitialGoal';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import { CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { createCodexPermissionHandler } from './utils/createCodexPermissionHandler';
 import { applyPermissionModeToCodexPermissionHandler } from './utils/applyPermissionModeToHandler';
 
@@ -1590,7 +1591,7 @@ describe('runCodex CodexACP resume behavior', () => {
           groupId: 'main',
         }),
       }),
-      expect.objectContaining({ timeoutMs: 120_000 }),
+      expect.objectContaining({ timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS }),
     );
     const emittedMessages = (lastSessionClient?.sendSessionEvent as ReturnType<typeof vi.fn> | undefined)?.mock.calls
       .map((call) => call[0]?.message)
@@ -1638,7 +1639,7 @@ describe('runCodex CodexACP resume behavior', () => {
         sessionId: 'sess_1',
         classification: expect.objectContaining({ kind: 'usage_limit', groupId: 'main' }),
       }),
-      expect.objectContaining({ timeoutMs: 120_000 }),
+      expect.objectContaining({ timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS }),
     );
   });
 
@@ -1713,7 +1714,7 @@ describe('runCodex CodexACP resume behavior', () => {
           groupId: 'main',
         }),
       }),
-      expect.objectContaining({ timeoutMs: 120_000 }),
+      expect.objectContaining({ timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS }),
     );
   });
 
@@ -4242,7 +4243,7 @@ describe('runCodex CodexACP resume behavior', () => {
         switchesThisTurn: 0,
         classification: runtimeAuthClassification,
       }),
-      expect.objectContaining({ timeoutMs: 120_000 }),
+      expect.objectContaining({ timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS }),
     );
     const emittedMessages = (lastSessionClient?.sendSessionEvent as ReturnType<typeof vi.fn> | undefined)?.mock.calls
       .map((call) => call[0]?.message)

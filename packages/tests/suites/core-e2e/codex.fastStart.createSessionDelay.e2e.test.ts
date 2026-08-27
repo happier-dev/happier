@@ -48,7 +48,12 @@ describe('core e2e: Codex fast-start', () => {
     await mkdir(codexSessionsDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    const { serverId } = await seedCliAuthForServer({
+      cliHome,
+      serverUrl: server.baseUrl,
+      token: auth.token,
+      secret,
+    });
 
     const fakeBinDir = resolve(join(testDir, 'fake-bin'));
     await mkdir(fakeBinDir, { recursive: true });
@@ -102,6 +107,7 @@ setInterval(() => {}, 1000);
       CI: '1',
       HAPPIER_VARIANT: 'dev',
       HAPPIER_HOME_DIR: cliHome,
+      HAPPIER_ACTIVE_SERVER_ID: serverId,
       HAPPIER_SERVER_URL: server.baseUrl,
       HAPPIER_WEBAPP_URL: server.baseUrl,
       HAPPIER_CODEX_TUI_BIN: fakeCodexPath,

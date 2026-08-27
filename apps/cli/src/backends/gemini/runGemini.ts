@@ -255,6 +255,7 @@ export async function runGemini(opts: {
     startupMetadataOverrides: createStartupMetadataOverrides(opts),
     startupSideEffectsOrder: 'persist-first',
     allowOfflineStub: true,
+    deferPendingFirstInputCommitUntilRuntimeReady: true,
     onSessionSwap: (newSession) => {
       // If we're processing a message, queue the swap for later
       // This prevents race conditions where session changes mid-processing
@@ -807,6 +808,7 @@ export async function runGemini(opts: {
       if (providerInputAdmissionClosed) {
         providerInputDispatchDrain = inputConsumer.closeProviderInputAdmissionAndWaitForDispatches();
       }
+      await initializedSession.commitPendingFirstInputAfterRuntimeReady?.();
 
     while (!shouldExit) {
       let message: MessageBatch<GeminiMode, string> | null = pending;

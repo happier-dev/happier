@@ -230,24 +230,24 @@ test.describe('ui e2e: session subroutes', () => {
     await expect(page.getByText('FAKE_CLAUDE_OK_1')).toHaveCount(1, { timeout: 180_000 });
 
     // In-app navigation should resolve session subroutes.
-    await expect(page.getByTestId('session-header-avatar')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('session-header-avatar').click();
-    await expect(page).toHaveURL(sessionRouteUrlPattern({ sessionId, suffix: '/info' }));
+    await expect(page.getByTestId('session-header-info-button')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('session-header-info-button').click();
+    await expect(page).toHaveURL(sessionRouteUrlPattern({ sessionId, suffix: '/info' }), { timeout: 60_000 });
     await expect(page.getByTestId('session-info-screen')).toHaveCount(1, { timeout: 60_000 });
 
     await reloadCreatedSessionFromNewSessionComposer({ page, session });
 
     await page.goto(sessionRouteHref({ sessionHref: session.sessionHref, suffix: '/info' }), { waitUntil: 'domcontentloaded' });
-    await expect(page).toHaveURL(sessionRouteUrlPattern({ sessionId, suffix: '/info' }));
+    await expect(page).toHaveURL(sessionRouteUrlPattern({ sessionId, suffix: '/info' }), { timeout: 60_000 });
     await expect(page.getByTestId('debug-router-pathname')).toHaveText(`/session/${sessionId}/info`, { timeout: 60_000 });
     await expect(page.getByTestId('session-info-screen')).toHaveCount(1, { timeout: 60_000 });
 
     await page.goto(sessionRouteHref({ sessionHref: session.sessionHref, suffix: '/runs' }), { waitUntil: 'domcontentloaded' });
-    await expect(page).toHaveURL(sessionRouteUrlPattern({ sessionId, suffix: '/runs' }));
+    await expect(page).toHaveURL(sessionRouteUrlPattern({ sessionId, suffix: '/runs' }), { timeout: 60_000 });
     await expect(page.getByTestId('session-runs-screen')).toHaveCount(1, { timeout: 60_000 });
 
     await page.goto(sessionRouteHref({ sessionHref: session.sessionHref, suffix: '/files' }), { waitUntil: 'domcontentloaded' });
-    await expect(page).toHaveURL(sessionRouteUrlPattern({ sessionId, suffix: '/files' }));
+    await expect(page).toHaveURL(sessionRouteUrlPattern({ sessionId, suffix: '/files' }), { timeout: 60_000 });
     await expect(page.getByTestId('session-files-screen')).toHaveCount(1, { timeout: 60_000 });
   });
 

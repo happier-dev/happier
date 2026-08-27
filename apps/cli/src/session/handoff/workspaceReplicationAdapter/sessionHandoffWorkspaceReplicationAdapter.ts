@@ -136,7 +136,7 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
 }>> {
   const referencedMediaPaths = [
     ...collectSessionMediaHandoffPaths(input.sessionTranscriptRecords ?? []),
-    ...collectSessionMediaHandoffPathsFromProviderBundle(input.providerBundle),
+    ...await collectSessionMediaHandoffPathsFromProviderBundle(input.providerBundle),
   ];
   const workspaceTransfer = mergeSessionMediaIgnoredIncludeGlobs({
     workspaceTransfer: input.workspaceTransfer,

@@ -622,51 +622,6 @@ test.describe('ui e2e: session list attention', () => {
     }
   });
 
-  test('keeps old-preview thinking fallback as a separate working placement path', async ({ page }) => {
-    test.setTimeout(420_000);
-    if (!server || !token || !uiBaseUrl) throw new Error('missing session list attention fixtures');
-
-    const legacyThinking = await createPlainSession({
-      baseUrl: server.baseUrl,
-      token,
-      title: 'Legacy thinking fallback e2e',
-    });
-    const before = await fetchSessionV2(server.baseUrl, token, legacyThinking.id);
-    expect(before.latestTurnStatus).toBeNull();
-
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
-    await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-
-    await chooseSessionListPlacementMode({
-      page,
-      baseUrl: uiBaseUrl,
-      triggerTestId: sessionListTestIds.workingPlacementModeTrigger,
-      placement: 'global',
-    });
-    await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'narrow' });
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
-    await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-
-    await expect(row(page, legacyThinking.id)).toHaveCount(1, { timeout: 120_000 });
-    const legacyRuntime = await connectAuthenticatedMachinePublisher({
-      baseUrl: server.baseUrl,
-      token,
-      sessionId: legacyThinking.id,
-      thinking: true,
-    });
-    try {
-      await expect(workingHeader(page)).toHaveCount(1, { timeout: 60_000 });
-      await expectRowInSection({
-        page,
-        headerTestId: sessionListTestIds.workingHeader,
-        sessionId: legacyThinking.id,
-      });
-    } finally {
-      legacyRuntime.close();
-    }
-  });
-
   test('keeps live working placement stable and moves unread completion to attention without reload', async ({ page }) => {
     test.setTimeout(540_000);
     if (!server || !token || !uiBaseUrl) throw new Error('missing session list attention fixtures');

@@ -14,6 +14,25 @@ function requireNonEmptyString(value, label) {
   return normalized;
 }
 
+function normalizeRemotePath(raw, platform, name) {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) {
+    throw new Error(`[dev-targets] target ${name}: remotePath must be an array`);
+  }
+  const normalized = [];
+  for (const entry of raw) {
+    const path = requireNonEmptyString(entry, `target ${name} remotePath entry`);
+    const valid = platform === 'windows'
+      ? (/^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\')) && !path.includes(';')
+      : path.startsWith('/') && !path.includes(':');
+    if (!valid) {
+      throw new Error(`[dev-targets] target ${name}: invalid remotePath entry: ${JSON.stringify(path)}`);
+    }
+    if (!normalized.includes(path)) normalized.push(path);
+  }
+  return normalized;
+}
+
 function normalizeTarget(raw, index) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`[dev-targets] target ${index + 1} must be an object`);
@@ -66,6 +85,7 @@ function normalizeTarget(raw, index) {
     throw new Error(`[dev-targets] target ${name}: unsafe repoDir`);
   }
   const cliHomeDir = requireNonEmptyString(raw.cliHomeDir, `target ${name} cliHomeDir`);
+  const remotePath = normalizeRemotePath(raw.remotePath, platform, name);
   const remoteServerPortRaw = raw.remoteServerPort;
   const remoteServerPort =
     remoteServerPortRaw == null || String(remoteServerPortRaw).trim() === ''
@@ -85,6 +105,7 @@ function normalizeTarget(raw, index) {
     ...(limaInstance ? { limaInstance, limaHome } : {}),
     repoDir,
     cliHomeDir,
+    ...(remotePath.length ? { remotePath } : {}),
     remoteServerPort,
   };
 }

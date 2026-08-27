@@ -1099,6 +1099,11 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         transcriptSessionCommon.toolRoute,
     ]);
 
+    const transcriptListExtraData = React.useMemo(() => ({
+        selectionVersion: transcriptMessageSelection.selectionVersion,
+        thinkingExpandedByMessageId,
+    }), [thinkingExpandedByMessageId, transcriptMessageSelection.selectionVersion]);
+
     return (
         <TranscriptMotionProvider sessionKey={datasetKey} config={motionConfig}>
             <TranscriptRowLayoutMutationProvider value={prepareRowLayoutMutation}>
@@ -1109,7 +1114,7 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
                     }}
                     data={renderedItems}
                     dataKey={datasetKey}
-                    extraData={transcriptMessageSelection.selectionVersion}
+                    extraData={transcriptListExtraData}
                     keyExtractor={keyExtractor}
                     renderItem={renderItem}
                     rendererBinding={sidechainRendererBinding}

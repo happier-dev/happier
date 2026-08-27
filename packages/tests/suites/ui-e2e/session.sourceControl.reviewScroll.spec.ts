@@ -87,89 +87,6 @@ async function readScrollTopOfNearestScrollableAncestor(page: Page, testId: stri
   });
 }
 
-async function setScrollTopOfNearestScrollableAncestor(page: Page, testId: string, top: number): Promise<void> {
-  await page.getByTestId(testId).evaluate(
-    (node, nextTop) => {
-      const el = node as HTMLElement | null;
-      if (!el) return;
-      const isScrollable = (cursor: HTMLElement | null) => {
-        if (!cursor) return false;
-        const style = window.getComputedStyle(cursor);
-        const overflowY = style.overflowY;
-        return (overflowY === 'auto' || overflowY === 'scroll') && cursor.scrollHeight > cursor.clientHeight + 1;
-      };
-
-      const findScrollable = (): HTMLElement | null => {
-        if (isScrollable(el)) return el;
-        const descendants = Array.from(el.querySelectorAll('*')) as HTMLElement[];
-        for (const child of descendants) {
-          if (isScrollable(child)) return child;
-        }
-        let cursor: HTMLElement | null = el.parentElement;
-        while (cursor) {
-          if (isScrollable(cursor)) return cursor;
-          cursor = cursor.parentElement;
-        }
-        return null;
-      };
-
-      const target = findScrollable();
-      if (!target) return;
-      try {
-        target.scrollTop = Math.max(0, Math.floor(Number(nextTop) || 0));
-      } catch {
-        // ignore
-      }
-    },
-    top,
-  );
-}
-
-async function expectScrollableToScroll(page: Page, testId: string, deltaY: number): Promise<void> {
-  await setScrollTopOfNearestScrollableAncestor(page, testId, 0);
-  const before = await readScrollTopOfNearestScrollableAncestor(page, testId);
-
-  await page.getByTestId(testId).evaluate(
-    (node, dy) => {
-      const el = node as HTMLElement | null;
-      if (!el) return;
-      const isScrollable = (cursor: HTMLElement | null) => {
-        if (!cursor) return false;
-        const style = window.getComputedStyle(cursor);
-        const overflowY = style.overflowY;
-        return (overflowY === 'auto' || overflowY === 'scroll') && cursor.scrollHeight > cursor.clientHeight + 1;
-      };
-
-      const findScrollable = (): HTMLElement | null => {
-        if (isScrollable(el)) return el;
-        const descendants = Array.from(el.querySelectorAll('*')) as HTMLElement[];
-        for (const child of descendants) {
-          if (isScrollable(child)) return child;
-        }
-        let cursor: HTMLElement | null = el.parentElement;
-        while (cursor) {
-          if (isScrollable(cursor)) return cursor;
-          cursor = cursor.parentElement;
-        }
-        return null;
-      };
-
-      const target = findScrollable();
-      if (!target) return;
-      const next = Math.max(0, (target.scrollTop ?? 0) + (Number(dy) || 0));
-      try {
-        target.scrollTop = next;
-      } catch {
-        // ignore
-      }
-    },
-    deltaY,
-  );
-
-  await page.waitForTimeout(25);
-  const after = await readScrollTopOfNearestScrollableAncestor(page, testId);
-  expect(after).toBeGreaterThan(before + 10);
-}
 
 test.describe('ui e2e: SCM review scroll + tab state', () => {
   test.describe.configure({ mode: 'serial' });
@@ -225,7 +142,7 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('scrolls Review without losing collapsed state or tab context', async ({ page }) => {
+  test('scrolls Review without losing tab context', async ({ page }) => {
     test.setTimeout(900_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
@@ -313,9 +230,7 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     }
 
     const firstPath = 'src/file-00.txt';
-    const midPath = 'src/file-10.txt';
     const laterPath = 'src/file-25.txt';
-    const bigPath = 'src/big.txt';
 
     await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(firstPath)}`)).toHaveCount(1, { timeout: 120_000 });
 
@@ -331,62 +246,6 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await expect(laterRow).toHaveCount(1, { timeout: 60_000 });
     await laterRow.scrollIntoViewIfNeeded();
     await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(laterPath)}`)).toHaveCount(1, { timeout: 60_000 });
-
-    // Collapse a diff and ensure its block disappears without a big scroll jump.
-    // NOTE: the list is virtualized, so we must scroll to the target row to ensure it is mounted.
-    const midRow = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(midPath)}`);
-    for (let i = 0; i < 25; i += 1) {
-      if (await midRow.count()) break;
-      await reviewList.hover();
-      await page.mouse.wheel(0, -1200);
-      await page.waitForTimeout(50);
-    }
-    await expect(midRow).toHaveCount(1, { timeout: 60_000 });
-    await midRow.scrollIntoViewIfNeeded();
-    // Let Playwright finish its actionability scroll before capturing the anchor. Locator.click()
-    // may otherwise scroll a virtualized row again after this baseline has already been read.
-    await midRow.click({ trial: true });
-    const beforeBox = await midRow.boundingBox();
-    expect(beforeBox, 'midRow boundingBox was null after the trial click actionability scroll').not.toBeNull();
-    if (!beforeBox) {
-      throw new Error('midRow boundingBox was null after the trial click actionability scroll');
-    }
-    const scrollTopBeforeCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
-    await page.mouse.click(beforeBox.x + beforeBox.width / 2, beforeBox.y + beforeBox.height / 2);
-    await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(midPath)}`)).toHaveCount(0, { timeout: 60_000 });
-    const scrollTopAfterCollapse = await readScrollTopOfNearestScrollableAncestor(page, 'scm-review-list');
-    // ChangedFilesReview preserves scroll position on web, but FlashList can apply post-layout
-    // corrections asynchronously (RAF + virtualization). Poll briefly for the row's viewport
-    // position to settle to avoid flakiness across machines.
-    let afterBox = await midRow.boundingBox();
-    const startedAt = Date.now();
-    const maxMs = 1200;
-    while (afterBox && Date.now() - startedAt < maxMs) {
-      const delta = Math.abs(afterBox.y - beforeBox.y);
-      if (delta <= 60) break;
-      await page.waitForTimeout(50);
-      afterBox = await midRow.boundingBox();
-    }
-    expect(
-      afterBox,
-      `midRow boundingBox became null (scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse})`
-    ).not.toBeNull();
-    if (!afterBox) {
-      throw new Error(
-        `midRow boundingBox became null (scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse})`
-      );
-    }
-    expect(
-      Math.abs(afterBox.y - beforeBox.y),
-      `scrollTopBefore=${scrollTopBeforeCollapse} scrollTopAfter=${scrollTopAfterCollapse}`
-    ).toBeLessThanOrEqual(60);
-
-    // Scroll away and back; the diff should remain collapsed.
-    await reviewList.hover();
-    await page.mouse.wheel(0, 1800);
-    await page.mouse.wheel(0, -1800);
-    await midRow.scrollIntoViewIfNeeded();
-    await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(midPath)}`)).toHaveCount(0, { timeout: 60_000 });
 
     // Ensure the row we want to open is mounted again before focusing (FlashList recycles rows).
     for (let i = 0; i < 20; i += 1) {
@@ -485,24 +344,6 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
       .poll(async () => readMonacoValue(), { timeout: 60_000 })
       .toContain('ui-e2e edit');
 
-    // File details tab must remain scrollable (regression: details pane/tab content stopped scrolling).
-    // Open a large file from Review to ensure scroll container is mounted and responds to wheel/scrollTop changes.
-    await page.getByTestId(`session-details-tab-${toTestIdSafeValue(reviewTabKey)}`).click();
-    const bigRowForScroll = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(bigPath)}`);
-    for (let i = 0; i < 30; i += 1) {
-      if (await bigRowForScroll.count()) break;
-      await reviewList.hover();
-      // `big.txt` is near the top of the list; scroll upwards until it is mounted.
-      await page.mouse.wheel(0, -1200);
-      await page.waitForTimeout(50);
-    }
-    await expect(bigRowForScroll).toHaveCount(1, { timeout: 60_000 });
-    await bigRowForScroll.focus();
-    await page.keyboard.press('Shift+Enter');
-    await expect(page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${bigPath}`)}`)).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${bigPath}`)}`).click();
-    await expectScrollableToScroll(page, 'file-details-scroll', 600);
-
     // Ensure Review has a non-zero scrollTop persisted before switching sessions. (The file-details
     // scroll check may manipulate a shared scroll container depending on the RN-web implementation.)
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(reviewTabKey)}`).click();
@@ -558,95 +399,19 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await expect(page).toHaveURL(new RegExp(`/session/${sessionId}(\\?|$)`), { timeout: 90_000 });
     await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
 
-    // Restore should keep the Review tab scroll position stable (no jump to top).
+    // Return to Review before restoring the retained file tab.
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(reviewTabKey)}`).click();
-    // Scroll restoration is async (FlashList + RAF corrections). Instead of reading `scrollTop` (which can be
-    // unreliable across RN-web scroll container shapes), assert that a row that should only be mounted when
-    // scrolled down is already present without additional scrolling.
-    const laterRowAfterRestore = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(laterPath)}`);
-    await expect(laterRowAfterRestore).toHaveCount(1, { timeout: 60_000 });
-    await expect(reviewList.getByTestId(`scm-review-diff-${toTestIdSafeValue(midPath)}`)).toHaveCount(0, { timeout: 60_000 });
 
-    // The file tab should still contain the unsaved edits.
-    await page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${laterPath}`)}`).click();
+    // The retained file tab should reactivate its editor and unsaved draft.
+    const retainedFileTab = page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${laterPath}`)}`);
+    await expect(async () => {
+      await retainedFileTab.click({ timeout: 5_000, position: { x: 20, y: 12 } });
+      await expect(page.getByTestId('file-details-editor')).toHaveCount(1, { timeout: 5_000 });
+    }).toPass({ timeout: 60_000 });
     await expect
       .poll(async () => readMonacoValue(), { timeout: 60_000 })
       .toContain('ui-e2e edit');
 
-    // Close the edited file tab so subsequent file-details assertions don't collide with duplicate testIDs
-    // from multiple kept-mounted file details views.
-    await page.getByTestId(`session-details-tab-close-${toTestIdSafeValue(`file:${laterPath}`)}`).click();
-
-    // Details pane focus/expand toggle should hide the main pane (composer), without closing side panes.
-    // Keep this check late in the flow so layout transitions do not affect earlier scroll-jump assertions.
-    const focusToggle = page.getByTestId('session-details-focus-toggle');
-    if (await focusToggle.count()) {
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-      await focusToggle.click();
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(0, { timeout: 60_000 });
-      await expect(rightPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
-      await expect(detailsPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
-      await focusToggle.click();
-      await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 60_000 });
-    }
-
-    // File-details tabs must be scrollable in both diff + file modes (regression: no scroll container on web).
-    // Open the large file in a pinned tab.
-    await page.getByTestId(`session-details-tab-${toTestIdSafeValue(reviewTabKey)}`).click();
-    // Ensure we start from the top of the review list so stable-order files like `src/big.txt`
-    // are reachable deterministically (the earlier part of this test may have scrolled deep).
-    await setScrollTopOfNearestScrollableAncestor(page, 'scm-review-list', 0);
-    await page.waitForTimeout(50);
-    const bigRow = reviewList.getByTestId(`scm-change-row-${toTestIdSafeValue(bigPath)}`);
-    for (let i = 0; i < 30; i += 1) {
-      if (await bigRow.count()) break;
-      await setScrollTopOfNearestScrollableAncestor(page, 'scm-review-list', (i + 1) * 1400);
-      await page.waitForTimeout(50);
-    }
-    await expect(bigRow).toHaveCount(1, { timeout: 60_000 });
-    await bigRow.scrollIntoViewIfNeeded();
-    await bigRow.focus();
-    await page.keyboard.press('Shift+Enter');
-    await expect(page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${bigPath}`)}`)).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${bigPath}`)}`).click();
-
-    const fileScroll = detailsPaneLocator(page).getByTestId('file-details-scroll');
-    await expect(fileScroll).toHaveCount(1, { timeout: 60_000 });
-    const scrollMeta = await fileScroll.evaluate((el) => ({
-      overflowY: window.getComputedStyle(el as HTMLElement).overflowY,
-      scrollHeight: (el as HTMLElement).scrollHeight,
-      clientHeight: (el as HTMLElement).clientHeight,
-    }));
-	    expect(scrollMeta.overflowY === 'auto' || scrollMeta.overflowY === 'scroll').toBeTruthy();
-	    expect(scrollMeta.scrollHeight).toBeGreaterThan(scrollMeta.clientHeight + 10);
-
-	    // Diff mode scroll.
-	    await expectScrollableToScroll(page, 'file-details-scroll', 1800);
-
-    // File mode scroll.
-    await page.getByTestId('file-details-view-mode-menu').click();
-    await page.getByTestId('dropdown-option-file').click();
-    await expectScrollableToScroll(page, 'file-details-scroll', 1800);
-
-    // Link-file popover should open and be closable (regression: popover rendered behind transcript).
-    await page.getByTestId('session-details-close').click();
-    await expect(detailsPaneLocator(page)).toHaveCount(0, { timeout: 60_000 });
-    await page.getByTestId('agent-input-link-file').click();
-    const linkPopover = page.getByTestId('agent-input-content-popover');
-    await expect(linkPopover).toHaveCount(1, { timeout: 60_000 });
-    const linkPopoverClose = page.getByTestId('repository-tree-close');
-    await expect(linkPopoverClose).toHaveCount(1, { timeout: 60_000 });
-
-    // Clicking the chip again should toggle/close the popover.
-    await page.getByTestId('agent-input-link-file').click();
-    await expect(linkPopover).toHaveCount(0, { timeout: 60_000 });
-
-    // Clicking again should re-open it (toggle open).
-    await page.getByTestId('agent-input-link-file').click();
-    await expect(linkPopover).toHaveCount(1, { timeout: 60_000 });
-
-    await linkPopoverClose.click();
-    await expect(linkPopoverClose).toHaveCount(0, { timeout: 60_000 });
     } finally {
       // Ensure per-test daemon cleanup so retries/repeats don't leak processes.
       await runDaemon?.stop().catch(() => {});

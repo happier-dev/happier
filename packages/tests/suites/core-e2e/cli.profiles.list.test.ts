@@ -74,7 +74,12 @@ describe('core e2e: cli profiles list', () => {
     const cliHome = resolve(join(testDir, 'cli-home'));
     await mkdir(cliHome, { recursive: true });
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    const { serverId } = await seedCliAuthForServer({
+      cliHome,
+      serverUrl: server.baseUrl,
+      token: auth.token,
+      secret,
+    });
 
     const cliEnvelope = await runCliJson({
       testDir,
@@ -85,6 +90,7 @@ describe('core e2e: cli profiles list', () => {
         ...process.env,
         CI: '1',
         HAPPIER_VARIANT: 'dev',
+        HAPPIER_ACTIVE_SERVER_ID: serverId,
         HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink',
       },
       label: 'profiles.list',

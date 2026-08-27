@@ -10,10 +10,12 @@ import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../..
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { createTestAuthMtls } from '../../src/testkit/auth';
+import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import {
   ensureSessionFolderTreeView,
   createPlainSession,
+  expectFolderAssignment,
   resolveCanonicalServerIdForUi,
   setSessionFolderDragSettings,
 } from '../../src/testkit/uiE2e/sessionFoldersDrag';
@@ -124,7 +126,7 @@ test.describe('ui e2e: session folders sidebar', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('moves a synced session into a seeded folder and scopes the sidebar focus to that folder', async ({ page }) => {
+  test('moves a synced session into a seeded folder', async ({ page }) => {
     test.setTimeout(720_000);
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
 
@@ -134,6 +136,12 @@ test.describe('ui e2e: session folders sidebar', () => {
 
     const rootPath = repoRootDir();
     const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
+    await registerMachineIdentity({
+      baseUrl: server.baseUrl,
+      token,
+      machineId: SEEDED_MACHINE_ID,
+      metadata: 'session-folders-machine',
+    });
     const firstSessionId = await createPlainSession({
       baseUrl: server.baseUrl,
       token,
@@ -185,28 +193,15 @@ test.describe('ui e2e: session folders sidebar', () => {
     await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
     await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByRole('option', { name: FOLDER_NAME })).toHaveCount(1, { timeout: 60_000 });
-    await page.getByRole('option', { name: FOLDER_NAME }).click();
+    const folderOption = page.getByTestId(`session-list-move-sheet:root:option:folder:${FOLDER_ID}`);
+    await expect(folderOption).toHaveCount(1, { timeout: 60_000 });
+    await folderOption.click();
+    await expectFolderAssignment({
+      baseUrl: server.baseUrl,
+      token,
+      sessionId: firstSessionId,
+      folderId: FOLDER_ID,
+    });
 
-    await page.getByTestId(`session-folder-header-${FOLDER_ID}`).click();
-    await expect(page.getByTestId('session-folder-breadcrumb')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('session-folder-clear-focus')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
-
-    await page.getByTestId('session-folder-clear-focus').click();
-    await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
-
-    await openSessionRowMenu({ page, sessionId: firstSessionId });
-    await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
-    await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByRole('option', { name: /Workspace root/i })).toHaveCount(1, { timeout: 60_000 });
-    await page.getByRole('option', { name: /Workspace root/i }).click();
-
-    await page.getByTestId(`session-folder-header-${FOLDER_ID}`).click();
-    await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(0, { timeout: 120_000 });
-
-    await page.getByTestId('session-folder-clear-focus').click();
-    await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
   });
 });

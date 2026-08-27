@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 
 import { z } from 'zod';
@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { TransferEndpointCandidateSchema } from '@happier-dev/protocol';
 
 import type { SessionHandoffProviderBundle } from '../types';
-import { SessionHandoffProviderBundleSchema } from '../sessionHandoffProviderBundleSchema';
+import { writeSessionHandoffProviderBundleArtifact } from '../sessionHandoffProviderBundleFile';
 import { buildSessionHandoffProviderBundleTransferId } from '../sessionHandoffProviderBundleTransferPublication';
 import {
   buildSessionHandoffWorkspaceManifestTransferId,
@@ -87,7 +87,11 @@ function resolveRecordPath(activeServerDir: string, handoffId: string): string {
 }
 
 function resolveProviderBundleFilePath(activeServerDir: string, handoffId: string): string {
-  return join(resolveHandoffDirectory(activeServerDir, handoffId), 'provider-bundle.json');
+  return join(resolveHandoffDirectory(activeServerDir, handoffId), 'provider-bundle.bin');
+}
+
+function resolveReceivedProviderBundleFilePath(activeServerDir: string, handoffId: string): string {
+  return join(resolveHandoffDirectory(activeServerDir, handoffId), 'received-provider-bundle.bin');
 }
 
 function resolveWorkspaceManifestFilePath(activeServerDir: string, handoffId: string): string {
@@ -123,6 +127,12 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
   const activeServerDir = input.activeServerDir;
 
   return {
+    async prepareReceivedProviderBundleFilePath(handoffIdRaw: string): Promise<string> {
+      const handoffId = assertSafeHandoffId(handoffIdRaw);
+      await mkdir(resolveHandoffDirectory(activeServerDir, handoffId), { recursive: true });
+      return resolveReceivedProviderBundleFilePath(activeServerDir, handoffId);
+    },
+
     async load(handoffIdRaw: string): Promise<SessionHandoffSourceExportRecord | null> {
       const handoffId = assertSafeHandoffId(handoffIdRaw);
       const recordPath = resolveRecordPath(activeServerDir, handoffId);
@@ -220,19 +230,14 @@ export function createSessionHandoffSourceExportStore(input: Readonly<{ activeSe
       const directory = resolveHandoffDirectory(activeServerDir, handoffId);
       await mkdir(directory, { recursive: true });
       const filePath = resolveProviderBundleFilePath(activeServerDir, handoffId);
-      const normalized = SessionHandoffProviderBundleSchema.parse(params.providerBundle);
-      await atomicWriteJson(filePath, normalized);
-      const stats = await stat(filePath);
-      const manifestHash = await resolveTransferPayloadManifestHash({
-        kind: 'file',
+      const artifact = await writeSessionHandoffProviderBundleArtifact({
+        providerBundle: params.providerBundle,
         filePath,
-        sizeBytes: stats.size,
       });
       return {
         transferId: buildSessionHandoffProviderBundleTransferId(handoffId),
         filePath,
-        sizeBytes: stats.size,
-        manifestHash,
+        ...artifact,
       };
     },
 

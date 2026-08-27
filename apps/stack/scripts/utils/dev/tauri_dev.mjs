@@ -334,12 +334,13 @@ export function buildStackTauriDevProcessInvocation({
   configPath = 'tauri.publicdev.conf.json',
   configOverride,
   resolveUserHomeDir,
+  assertCargoAvailableForTauriImpl = assertCargoAvailableForTauri,
 } = {}) {
   const runtimeEnv = buildTauriRuntimeEnv({
     env,
     resolveUserHomeDir,
   });
-  const cargoBinDir = assertCargoAvailableForTauri({ env: runtimeEnv, resolveUserHomeDir });
+  const cargoBinDir = assertCargoAvailableForTauriImpl({ env: runtimeEnv, resolveUserHomeDir });
   const cargoBinaryName = process.platform === 'win32' ? 'cargo.exe' : 'cargo';
   const cargoBinaryPath = join(cargoBinDir, cargoBinaryName);
   const repoRoot = String(repoRootDir ?? '').trim() || getRepoDir(rootDir, env);

@@ -509,7 +509,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     logger.infoFile('[CLAUDE_STARTUP] stage=session_transport_attach_started');
     await runtimeActivity.lifecycle.attachSession(session);
     logger.infoFile('[CLAUDE_STARTUP] stage=session_transport_attach_completed');
-    await pendingFirstInputCommitter.commit(session);
     logger.infoFile('[CLAUDE_STARTUP] stage=effective_prompt_started');
     const defaultSystemPromptText = await resolveEffectiveCodingPromptText({
         credentials,
@@ -1116,6 +1115,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         '[claude]',
         'user_message_handler_ready',
     );
+    await pendingFirstInputCommitter.commit(session);
 
     let activeLoopAbortController: AbortController | null = null;
     let activeLoopPromise: Promise<number> | null = null;
@@ -2027,6 +2027,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     allowOfflineStub: true,
                     startupSideEffectsOrder: 'persist-first',
                     runtimeActivityLifecycle: runtimeActivity.lifecycle,
+                    deferPendingFirstInputCommitUntilRuntimeReady: true,
                     onSessionSwap: (newSession) => {
                         void wireServerSession(newSession);
                     },
@@ -2051,6 +2052,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                 }
 
                 await wireServerSession(initialized.session);
+                await initialized.commitPendingFirstInputAfterRuntimeReady?.();
             },
             spawnLoop: async ({ artifacts, signal }) => {
                 if (signal.aborted) return 0;

@@ -828,6 +828,7 @@ export async function runCodex(opts: {
             ],
         startupSideEffectsOrder: 'persist-first',
         allowOfflineStub: true,
+        deferPendingFirstInputCommitUntilRuntimeReady: true,
         onSessionSwap: (newSession) => {
             session = newSession;
             if (useCodexAppServer) {
@@ -1972,6 +1973,8 @@ export async function runCodex(opts: {
             logger.debug('[codex] Failed to publish in-flight steer capability (non-fatal)', e);
         }
     }
+
+    await initializedSession.commitPendingFirstInputAfterRuntimeReady?.();
 
     const callbackMetadata = session.getMetadataSnapshot?.();
     if ((!useCodexAppServer || startedInLocalMode) && callbackMetadata && session.sessionId?.trim()) {

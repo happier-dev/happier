@@ -499,7 +499,7 @@ async function expectRealSwitchAttemptSessionEventRecorded(params: Readonly<{
                 && data?.type === 'connected-service-account-switch-attempt'
                 && data.ok === false
                 && data.action === 'hot_applied'
-                && data.reason === 'manual'
+                && data.reason === 'usage_limit'
                 && data.attemptedContinuityMode === 'hot_apply'
                 && data.outcome === 'failed'
                 && data.outcomeAction === 'none'
@@ -507,7 +507,7 @@ async function expectRealSwitchAttemptSessionEventRecorded(params: Readonly<{
         });
     }, {
         timeoutMs: 30_000,
-        context: 'auth-group switch with restart-required runtime records an attempt event',
+        context: 'usage-limit auth-group switch with restart-required runtime records an attempt event',
     });
 }
 

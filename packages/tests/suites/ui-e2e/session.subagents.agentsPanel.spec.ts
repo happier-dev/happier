@@ -7,7 +7,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
-import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
+import { fakeClaudeFixturePath, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
@@ -165,9 +165,9 @@ test.describe('ui e2e: session subagents agents panel', () => {
     const executionRunInstructions = `Generate a concise execution-run plan for the smoke test ${run.runId}.`;
     await page.getByTestId('execution-run-new-instructions-input').fill(executionRunInstructions);
     await page.getByTestId('execution-run-new-start-button').click();
-    await waitForFakeClaudeInvocation(
+    await waitForFakeClaudeUserText(
       fakeClaudeLog,
-      (invocation) => invocation.argv.some((arg) => arg.includes(executionRunInstructions)),
+      (text) => text.includes(executionRunInstructions),
       { timeoutMs: 180_000, pollMs: 100 },
     );
     await expect(page.getByTestId('execution-run-new-instructions-input')).toHaveCount(0, { timeout: 120_000 });

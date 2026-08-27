@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { importCodexSessionBundle } from '../../../backends/codex/handoff/importCodexSessionBundle';
+import { readSessionHandoffProviderBundleFile } from '../sessionHandoffProviderBundleFile';
 import { readWorkspaceReplicationManifestFromFile } from '../workspaceReplicationAdapter/workspaceReplicationManifestFile';
 import { createSessionHandoffSourceExportStore } from './sessionHandoffSourceExportStore';
 
@@ -67,7 +69,7 @@ describe('sessionHandoffSourceExportStore', () => {
       expect(providerStats.isFile()).toBe(true);
       expect(provider.sizeBytes).toBe(providerStats.size);
       expect(provider.manifestHash.startsWith('sha256:')).toBe(true);
-      const parsedProvider = JSON.parse(await readFile(provider.filePath, 'utf8'));
+      const parsedProvider = await readSessionHandoffProviderBundleFile(provider.filePath);
       expect(parsedProvider).toMatchObject({ providerId: 'codex' });
 
       const manifest = await store.writeWorkspaceReplicationManifestFile({
@@ -93,6 +95,62 @@ describe('sessionHandoffSourceExportStore', () => {
       expect(parsed.entries).toHaveLength(1);
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes provider file contents as a binary streamed artifact instead of base64 JSON', async () => {
+    const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-store-binary-'));
+    const sourceCodexHome = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-source-codex-'));
+    const targetCodexHome = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-target-codex-'));
+    try {
+      const relativePath = 'sessions/2026/03/08/rollout-thread-large.jsonl';
+      const sourcePath = join(sourceCodexHome, relativePath);
+      await mkdir(join(sourceCodexHome, 'sessions/2026/03/08'), { recursive: true });
+      const content = Buffer.alloc(5 * 1024 * 1024, 'handoff-binary-safe\n');
+      await writeFile(sourcePath, content);
+
+      const store = createSessionHandoffSourceExportStore({ activeServerDir });
+      const persisted = await store.writeProviderBundleFile({
+        handoffId: 'handoff-binary-1',
+        providerBundle: {
+          providerId: 'codex',
+          remoteSessionId: 'thread-large',
+          files: [{
+            relativePath,
+            contentFile: {
+              t: 'happier.handoff.file.v1',
+              filePath: sourcePath,
+              offsetBytes: 0,
+              sizeBytes: content.length,
+            },
+          }],
+        },
+      });
+
+      expect(persisted.sizeBytes).toBeGreaterThan(content.length);
+      expect(persisted.sizeBytes).toBeLessThan(content.length + 64 * 1024);
+      const prefix = (await readFile(persisted.filePath)).subarray(0, 48).toString('utf8');
+      expect(prefix).toMatch(/^HAPPIER_SESSION_HANDOFF_BUNDLE_V2\n/u);
+      const artifact = await readFile(persisted.filePath);
+      const magicBytes = Buffer.byteLength('HAPPIER_SESSION_HANDOFF_BUNDLE_V2\n', 'utf8');
+      const manifestBytes = Number(artifact.readBigUInt64BE(magicBytes));
+      const manifest = JSON.parse(
+        artifact.subarray(magicBytes + 8, magicBytes + 8 + manifestBytes).toString('utf8'),
+      ) as { t?: unknown; bundle?: unknown };
+      expect(manifest.t).toBe('session_handoff_bundle_artifact_v1');
+      expect(manifest.bundle).toMatchObject({ providerId: 'codex' });
+
+      const importedBundle = await readSessionHandoffProviderBundleFile(persisted.filePath);
+      await importCodexSessionBundle({
+        bundle: importedBundle.providerId === 'codex' ? importedBundle : (() => { throw new Error('expected codex'); })(),
+        targetPath: '/repo',
+        env: { CODEX_HOME: targetCodexHome },
+      });
+      await expect(readFile(join(targetCodexHome, relativePath))).resolves.toEqual(content);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+      await rm(sourceCodexHome, { recursive: true, force: true });
+      await rm(targetCodexHome, { recursive: true, force: true });
     }
   });
 

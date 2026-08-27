@@ -93,6 +93,9 @@ export async function runHeartbeatWrappedCommand(params) {
 
   const exitCode = params.resolveExitCode(result);
   // eslint-disable-next-line no-console
-  console.log(`[tests] completed in ${elapsedSeconds(startedAt)}s with code ${exitCode}`);
+  console.log(
+    `[tests] completed in ${elapsedSeconds(startedAt)}s with code ${exitCode}`
+      + (result.signal ? ` (signal ${result.signal})` : ''),
+  );
   process.exit(exitCode);
 }

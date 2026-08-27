@@ -27,7 +27,7 @@ describe('claude session handoff bundle', () => {
     expect(result).toEqual({
       providerId: 'claude',
       remoteSessionId: 'claude_session_1',
-      transcriptBase64: Buffer.from('{"type":"user"}\n', 'utf8').toString('base64'),
+      transcriptFile: { t: 'happier.handoff.file.v1', filePath: transcriptPath, offsetBytes: 0, sizeBytes: 16 },
     });
   });
 
@@ -50,7 +50,7 @@ describe('claude session handoff bundle', () => {
     expect(result).toEqual({
       providerId: 'claude',
       remoteSessionId: 'claude_session_fake',
-      transcriptBase64: Buffer.from('{"type":"assistant"}\n', 'utf8').toString('base64'),
+      transcriptFile: { t: 'happier.handoff.file.v1', filePath: transcriptPath, offsetBytes: 0, sizeBytes: 21 },
     });
   });
 
@@ -77,7 +77,7 @@ describe('claude session handoff bundle', () => {
     expect(result).toEqual({
       providerId: 'claude',
       remoteSessionId: 'claude_session_env',
-      transcriptBase64: Buffer.from('{"type":"assistant","text":"from-happier-config"}\n', 'utf8').toString('base64'),
+      transcriptFile: { t: 'happier.handoff.file.v1', filePath: transcriptPath, offsetBytes: 0, sizeBytes: 50 },
     });
   });
 
@@ -108,7 +108,7 @@ describe('claude session handoff bundle', () => {
     expect(result).toEqual({
       providerId: 'claude',
       remoteSessionId: 'claude_session_direct',
-      transcriptBase64: Buffer.from('{"type":"assistant","text":"from-direct-source"}\n', 'utf8').toString('base64'),
+      transcriptFile: { t: 'happier.handoff.file.v1', filePath: transcriptPath, offsetBytes: 0, sizeBytes: 49 },
     });
   });
 
@@ -142,7 +142,7 @@ describe('claude session handoff bundle', () => {
     expect(result).toEqual({
       providerId: 'claude',
       remoteSessionId: 'claude_session_direct',
-      transcriptBase64: Buffer.from('{"type":"assistant","text":"live-direct"}\n', 'utf8').toString('base64'),
+      transcriptFile: { t: 'happier.handoff.file.v1', filePath: liveTranscriptPath, offsetBytes: 0, sizeBytes: 42 },
     });
   });
 

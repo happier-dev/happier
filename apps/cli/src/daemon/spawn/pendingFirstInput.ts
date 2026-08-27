@@ -57,6 +57,7 @@ export function clearPendingFirstInputFromEnv(env: NodeJS.ProcessEnv = process.e
 }
 
 export type PendingFirstInputCommitter = Readonly<{
+  hasPendingInput: boolean;
   commit(session: Pick<ApiSessionClient, 'enqueueSessionUserMessage'>): Promise<void>;
 }>;
 
@@ -65,20 +66,33 @@ export function createPendingFirstInputCommitter(
 ): PendingFirstInputCommitter {
   const pendingFirstInput = readPendingFirstInputFromEnv(env);
   let committed = pendingFirstInput === null;
+  let inFlight: Promise<void> | null = null;
 
   return Object.freeze({
-    commit: async (session) => {
-      if (committed || pendingFirstInput === null) return;
-      const result = await session.enqueueSessionUserMessage({
-        text: pendingFirstInput.text,
-        localId: pendingFirstInput.localId,
-        meta: { ...pendingFirstInput.meta, source: 'ui', sentFrom: 'cli' },
+    get hasPendingInput() {
+      return !committed;
+    },
+    commit: (session) => {
+      if (committed || pendingFirstInput === null) return Promise.resolve();
+      if (inFlight) return inFlight;
+
+      const attempt = (async () => {
+        const result = await session.enqueueSessionUserMessage({
+          text: pendingFirstInput.text,
+          localId: pendingFirstInput.localId,
+          meta: { ...pendingFirstInput.meta, source: 'ui', sentFrom: 'cli' },
+        });
+        if (result?.recoveryBlocked) {
+          throw new Error(`Pending first input was blocked: ${result.recoveryBlocked.status}`);
+        }
+        committed = true;
+        clearPendingFirstInputFromEnv(env);
+      })();
+      const tracked = attempt.finally(() => {
+        if (inFlight === tracked) inFlight = null;
       });
-      if (result?.recoveryBlocked) {
-        throw new Error(`Pending first input was blocked: ${result.recoveryBlocked.status}`);
-      }
-      committed = true;
-      clearPendingFirstInputFromEnv(env);
+      inFlight = tracked;
+      return tracked;
     },
   });
 }

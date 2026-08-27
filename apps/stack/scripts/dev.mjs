@@ -34,7 +34,11 @@ import {
   resolveStackOwnedServerRuntimePid,
   startDevServer,
 } from './utils/dev/server.mjs';
-import { decideDevStartupTopology, observeDevServerStartupTopology } from './utils/dev/devStartupTopology.mjs';
+import {
+  decideDevStartupTopology,
+  observeDevServerStartupTopology,
+  shouldExitAdoptedDevRuntime,
+} from './utils/dev/devStartupTopology.mjs';
 import { resolveDevReloadPollIntervalMs } from './utils/dev/devReloadCoordinator.mjs';
 import { startDevReloadComposition } from './utils/dev/devReloadComposition.mjs';
 import { prepareDevProxyStartup, resolveDevProxyStableHost, shouldEnableStackDevProxy } from './utils/dev/devProxy.mjs';
@@ -373,13 +377,17 @@ async function main() {
     restart,
   });
 
-  if (
-    devTargets.length === 0 &&
-    !restart &&
-    (!startServer || startupDecision.adoptedServer) &&
-    (!startDaemon || daemonAlreadyRunning) &&
-    (!startExpo || expoAlreadyRunning)
-  ) {
+  if (shouldExitAdoptedDevRuntime({
+    devTargetCount: devTargets.length,
+    restart,
+    watchEnabled,
+    serverRequested: startServer,
+    adoptedServer: startupDecision.adoptedServer,
+    daemonRequested: startDaemon,
+    daemonRunning: daemonAlreadyRunning,
+    expoRequested: startExpo,
+    expoRunning: expoAlreadyRunning,
+  })) {
     console.log(
       `${green('✓')} dev: already running ${dim('(')}` +
         `${dim('server=')}${cyan(internalServerUrl)}${startServer ? '' : dim(' (external)')}` +

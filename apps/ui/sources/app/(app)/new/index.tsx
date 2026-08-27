@@ -142,7 +142,7 @@ function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
     )), [actionOperations, draftScope, draftSnapshot]);
     const startAnother = React.useCallback(() => {
         const next = resolveOrdinaryEntryRoute({ forceFresh: true });
-        router.push({
+        router.replace({
             pathname: '/new',
             params: { draftId: next.draftId, draftOrigin: next.draftOrigin },
         });

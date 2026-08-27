@@ -21,6 +21,10 @@ type MachineSelectionOpenResult = 'picker_open' | 'returned_to_new';
 
 const COMMITTED_TRANSCRIPT_MESSAGE_SELECTOR = '[data-testid^="transcript-message-"]:not([data-testid*=":"])';
 
+export function visibleNewSessionComposer(page: Page) {
+  return page.locator('textarea[data-testid="new-session-composer-input"]:visible').first();
+}
+
 function normalizePathname(input: string): string {
   try {
     const pathname = new URL(input).pathname.replace(/\/+$/, '');
@@ -232,10 +236,11 @@ export async function createSessionFromNewSessionComposer(
   }
 
   await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
-  await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
+  const newSessionComposer = visibleNewSessionComposer(page);
+  await expect(newSessionComposer).toHaveCount(1, { timeout: 60_000 });
   await selectCurrentPathCheckoutIfPresent(page);
 
-  await page.getByTestId('new-session-composer-input').fill(prompt);
+  await newSessionComposer.fill(prompt);
   await expect(page.getByTestId('new-session-composer-send')).toHaveCount(1, { timeout: 60_000 });
   await page.getByTestId('new-session-composer-send').click();
 

@@ -61,6 +61,7 @@ vi.mock('../waitForRegexInFile', () => ({
 
 import {
     resolveCliTerminalConnectOwnershipLeasesDir,
+    sanitizeCliTerminalConnectEnv,
     startCliAuthLoginForTerminalConnect,
 } from './cliTerminalConnect';
 import { spawnDetachedTestProcess } from '../process/testSpawn';
@@ -96,6 +97,19 @@ function deriveServerIdFromUrl(url: string): string {
     }
     return `env_${(h >>> 0).toString(16)}`;
 }
+
+describe('sanitizeCliTerminalConnectEnv', () => {
+    it('strips ambient server-selection overrides while preserving unrelated harness env', () => {
+        const sanitized = sanitizeCliTerminalConnectEnv({
+            PATH: '/usr/bin',
+            HAPPIER_ACTIVE_SERVER_ID: 'ambient-server',
+            HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'ambient-instance',
+            HAPPIER_DAEMON_SERVICE_SERVER_URL: 'https://ambient.invalid',
+        });
+
+        expect(sanitized).toEqual({ PATH: '/usr/bin' });
+    });
+});
 
 describe('startCliAuthLoginForTerminalConnect', () => {
     it('reclaims stale terminal-connect auth helpers from dead owners before starting a new one', async () => {

@@ -32,7 +32,7 @@ export function appendWatchSignatureEntries(path, entries, { ignorePath = null }
   }
 
   if (stats.isFile() || stats.isSymbolicLink()) {
-    entries.push(`${path}\0file\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}`);
+    entries.push(`${path}\0file\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}\0${stats.ino}`);
     return true;
   }
 
@@ -77,7 +77,7 @@ export async function appendWatchSignatureEntriesAsync(path, entries, { ignorePa
   }
 
   if (stats.isFile() || stats.isSymbolicLink()) {
-    entries.push(`${path}\0file\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}`);
+    entries.push(`${path}\0file\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}\0${stats.ino}`);
     return true;
   }
 

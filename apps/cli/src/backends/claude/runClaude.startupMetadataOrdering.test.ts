@@ -559,7 +559,7 @@ describe('runClaude startup metadata ordering', () => {
         expect(runtimeActivityPublisherCloseMock).toHaveBeenCalledTimes(1);
     });
 
-    it('commits daemon-carried first input before launching the direct provider path', async () => {
+    it('commits daemon-carried first input after binding the consumer and before launching the direct provider path', async () => {
         vi.stubEnv('HAPPIER_DAEMON_PENDING_FIRST_INPUT', JSON.stringify({
             text: 'Commit this first turn before launch.',
             localId: 'spawn-first:claude-direct',
@@ -593,6 +593,9 @@ describe('runClaude startup metadata ordering', () => {
                 localId: 'spawn-first:claude-direct',
                 meta: { model: 'opus', source: 'ui', sentFrom: 'cli' },
             });
+            expect(lastSessionClient!.onUserMessage.mock.invocationCallOrder[0]!).toBeLessThan(
+                enqueueSessionUserMessageMock.mock.invocationCallOrder[0]!,
+            );
             expect(enqueueSessionUserMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
                 vi.mocked(loop).mock.invocationCallOrder[0]!,
             );

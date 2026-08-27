@@ -21,13 +21,8 @@ import { enqueueEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { parseTestTerminalAttachmentInfo, type TestTerminalAttachmentInfo } from '../../src/testkit/uiE2e/terminalAttachmentInfo';
 
-type TerminalAttachmentInfoV1 = {
-  version: 1;
-  sessionId: string;
-  terminal: { mode: 'plain' | 'tmux'; tmux?: { target?: string; tmpDir?: string } };
-  updatedAt: number;
-};
 
 function tmuxAvailable(): boolean {
   if (process.platform === 'win32') return false;
@@ -39,7 +34,7 @@ function attachmentInfoPath(happyHomeDir: string, sessionId: string): string {
   return join(happyHomeDir, 'terminal', 'sessions', `${encodeURIComponent(sessionId)}.json`);
 }
 
-async function waitForAttachmentInfo(happyHomeDir: string, sessionId: string): Promise<TerminalAttachmentInfoV1> {
+async function waitForAttachmentInfo(happyHomeDir: string, sessionId: string): Promise<TestTerminalAttachmentInfo> {
   const path = attachmentInfoPath(happyHomeDir, sessionId);
   const startedAt = Date.now();
   while (Date.now() - startedAt < 30_000) {
@@ -60,14 +55,8 @@ async function waitForAttachmentInfo(happyHomeDir: string, sessionId: string): P
       continue;
     }
     const raw = await readFile(path, 'utf8').catch(() => '');
-    try {
-      const parsed = JSON.parse(raw) as Partial<TerminalAttachmentInfoV1>;
-      if (parsed && parsed.version === 1 && parsed.sessionId === sessionId && parsed.terminal) {
-        return parsed as TerminalAttachmentInfoV1;
-      }
-    } catch {
-      // ignore
-    }
+    const parsed = parseTestTerminalAttachmentInfo(raw);
+    if (parsed?.sessionId === sessionId) return parsed;
     await sleep(100);
   }
   throw new Error(`Timed out waiting for terminal attachment info at ${path}`);

@@ -98,7 +98,7 @@ describe('collectSessionMediaHandoffPaths', () => {
     ])).toEqual([]);
   });
 
-  it('collects paths from provider transcript bundles without failing on malformed rows', () => {
+  it('collects paths from provider transcript bundles without failing on malformed rows', async () => {
     const transcript = [
       'not json',
       JSON.stringify({
@@ -108,10 +108,10 @@ describe('collectSessionMediaHandoffPaths', () => {
       }),
     ].join('\n');
 
-    expect(collectSessionMediaHandoffPathsFromProviderBundle({
+    await expect(collectSessionMediaHandoffPathsFromProviderBundle({
       providerId: 'claude',
       remoteSessionId: 'claude_session_1',
       transcriptBase64: Buffer.from(transcript, 'utf8').toString('base64'),
-    })).toEqual(['.happier/uploads/generated/message-1/from-provider.png']);
+    })).resolves.toEqual(['.happier/uploads/generated/message-1/from-provider.png']);
   });
 });

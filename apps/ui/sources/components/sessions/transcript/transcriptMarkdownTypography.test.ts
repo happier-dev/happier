@@ -81,6 +81,7 @@ describe('transcriptMarkdownTypography', () => {
         const h2 = requireMarkdownStyle(markdownStyle.h2, 'h2');
         const h3 = requireMarkdownStyle(markdownStyle.h3, 'h3');
         const h4 = requireMarkdownStyle(markdownStyle.h4, 'h4');
+        const code = requireMarkdownStyle(markdownStyle.code, 'code');
 
         expect(paragraph).toMatchObject({ fontSize: 14, lineHeight: 20, marginTop: 0, marginBottom: 8 });
         expect(h1.marginTop).toBeGreaterThan(0);
@@ -91,6 +92,7 @@ describe('transcriptMarkdownTypography', () => {
         expect(h2).toMatchObject({ marginTop: 16, marginBottom: 8 });
         expect(h3.marginBottom).toBeGreaterThan(0);
         expect(h4.marginBottom).toBeGreaterThan(0);
+        expect(code).toMatchObject({ fontSize: 14, color: '#555555', backgroundColor: 'transparent' });
         expect(markdownStyle.math).toMatchObject({ marginTop: 8, marginBottom: 8 });
         expect(markdownStyle.thematicBreak).toMatchObject({ marginTop: 8, marginBottom: 8 });
     });

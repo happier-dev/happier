@@ -163,13 +163,6 @@ vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
     useSessionFileUploadAvailability: () => true,
 }));
 
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string, scope?: unknown) => {
-        useFeatureEnabledSpy(featureId, scope);
-        return featureId === 'attachments.uploads'
-            || (featureId === 'files.reviewComments' && featureEnabledState.reviewComments);
-    },
-}));
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: (featureId: string, scope?: unknown) => {
         useFeatureDecisionSpy(featureId, scope);
@@ -386,6 +379,13 @@ vi.mock('@/components/sessions/agentInput', () => ({
 const modalAlertSpy = vi.fn();
 
 installSessionShellCommonModuleMocks({
+    featureEnabled: () => ({
+        useFeatureEnabled: (featureId: string, scope?: unknown) => {
+            useFeatureEnabledSpy(featureId, scope);
+            return featureId === 'attachments.uploads'
+                || (featureId === 'files.reviewComments' && featureEnabledState.reviewComments);
+        },
+    }),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({

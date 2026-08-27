@@ -623,6 +623,7 @@ test('non-main stack rejects runtime dev proxy maintenance port when proxy pid i
       runtimeStatePath,
       defaultPort: 3005,
       listenerObservationScope,
+      waitForTcpPortFreeImpl: async () => ({ status: 'occupied' }),
     });
 
     assert.notEqual(out, port);

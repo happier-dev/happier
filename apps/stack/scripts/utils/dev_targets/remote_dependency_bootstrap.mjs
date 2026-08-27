@@ -3,7 +3,6 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { execYarn } from '../../../../../scripts/workspaces/execYarnCommand.mjs';
 import { withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 
 export const REMOTE_INITIAL_DEPENDENCY_INSTALL_ARGS = [
@@ -34,6 +33,12 @@ function resolveInitialInstallEnv(env) {
 }
 
 async function installInitialDependencies({ repoDir, env }) {
+  const { execYarn } = await import(pathToFileURL(join(
+    repoDir,
+    'scripts',
+    'workspaces',
+    'execYarnCommand.mjs',
+  )).href);
   const installEnv = resolveInitialInstallEnv(env);
   for (const path of [
     installEnv.XDG_CACHE_HOME,
@@ -57,7 +62,12 @@ export async function bootstrapRemoteDependencies({
   packageExists = existsSync,
   installInitialDependencies: installInitialDependenciesImpl = installInitialDependencies,
   withDependencyRefresh: withDependencyRefreshImpl = withDependencyRefresh,
-  loadWorkspaceBuildOwner = async () => await import('../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs'),
+  loadWorkspaceBuildOwner = async (targetRepoDir) => await import(pathToFileURL(join(
+    targetRepoDir,
+    'scripts',
+    'workspaces',
+    'ensureWorkspacePackagesBuilt.mjs',
+  )).href),
   loadDependencyOwner = async () => await import('../proc/pm.mjs'),
 } = {}) {
   const componentDir = join(repoDir, 'apps', 'stack');
@@ -75,7 +85,7 @@ export async function bootstrapRemoteDependencies({
       { installDir: repoDir, componentDir, env },
       async () => await installInitialDependenciesImpl({ repoDir, env }),
     );
-    const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner();
+    const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner(repoDir);
     await ensureWorkspacePackagesBuiltByName(
       repoDir,
       ['@happier-dev/cli-common'],

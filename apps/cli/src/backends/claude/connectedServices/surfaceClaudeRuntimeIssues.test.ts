@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
-import { resetConnectedServiceRuntimeAuthFailureReportDedupeForTests } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
+import {
+  CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
+  resetConnectedServiceRuntimeAuthFailureReportDedupeForTests,
+} from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation } from '@/daemon/connectedServices/accountUsage/fromConnectedServiceQuotaObservation';
 import { canRecordProviderAccountUsageSourceLinks } from '@/daemon/connectedServices/accountUsage/record';
 
@@ -398,7 +401,7 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
           groupGeneration: 4,
           credentialRevision: 'csr_7123456789ABCDEFGHJKMNPQRS',
         }),
-      }), expect.objectContaining({ timeoutMs: 120_000 }));
+      }), expect.objectContaining({ timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS }));
     } finally {
       restoreClaudeSelectionEnv(previousSelectionEnv);
     }

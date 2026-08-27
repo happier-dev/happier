@@ -179,6 +179,8 @@ export async function resolve(specifier, context, defaultResolve) {
     HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
     HAPPIER_DB_PROVIDER: 'mysql',
     DATABASE_URL: 'mysql://operator:secret@db.example.test:3306/happier',
+    HAPPIER_STACK_ENV_FILE: '',
+    HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
     HAPPIER_STACK_TEST_TTY: '1',
     HAPPIER_STACK_HOME_DIR: join(tmp, 'home'),
     HAPPIER_STACK_STORAGE_DIR: join(tmp, 'storage'),
@@ -253,10 +255,10 @@ export async function resolve(specifier, context, defaultResolve) {
       ),
       [
         { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: 'happier-server-light' },
-        { key: 'HAPPIER_DB_PROVIDER', value: 'sqlite' },
+        { key: 'HAPPIER_DB_PROVIDER', value: 'mysql' },
       ],
     );
-    assert.deepEqual(setupConfigWrite.removeKeys, ['DATABASE_URL']);
+    assert.deepEqual(setupConfigWrite.removeKeys, []);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

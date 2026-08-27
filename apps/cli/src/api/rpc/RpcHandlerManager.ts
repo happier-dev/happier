@@ -288,6 +288,32 @@ export class RpcHandlerManager {
     }
 
     /**
+     * Replay only registrations that the active server socket has not acknowledged.
+     *
+     * A daemon can connect while the server is still completing socket admission.
+     * The machine lifecycle owns the bounded retry; this manager preserves the
+     * active-socket receipt boundary and never replays acknowledged handlers.
+     */
+    replayUnacknowledgedHandlerRegistrations(methods: readonly string[]): readonly string[] {
+        const socket = this.socket;
+        if (!socket) return [];
+
+        const replayedMethods: string[] = [];
+        for (const method of new Set(methods.map((candidate) => candidate.trim()).filter(Boolean))) {
+            const prefixedMethod = this.getPrefixedMethod(method);
+            if (
+                !this.handlers.has(prefixedMethod)
+                || this.acknowledgedRegistrationMethods.has(prefixedMethod)
+            ) {
+                continue;
+            }
+            socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: prefixedMethod });
+            replayedMethods.push(method);
+        }
+        return replayedMethods;
+    }
+
+    /**
      * Get the number of registered handlers
      */
     getHandlerCount(): number {

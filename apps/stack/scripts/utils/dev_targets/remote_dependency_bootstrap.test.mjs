@@ -17,13 +17,22 @@ test('0.2 remote bootstrap installs without lifecycle scripts before loading the
     packageExists: () => false,
     withDependencyRefresh: async (_options, refresh) => await refresh(),
     installInitialDependencies: async () => calls.push('install'),
-    loadWorkspaceBuildOwner: async () => ({
-      ensureWorkspacePackagesBuiltByName: async () => calls.push('build-owner'),
-    }),
+    loadWorkspaceBuildOwner: async (targetRepoDir) => {
+      calls.push(['load-build-owner', targetRepoDir]);
+      return {
+        ensureWorkspacePackagesBuiltByName: async () => calls.push('build-owner'),
+      };
+    },
     loadDependencyOwner: async () => {
       calls.push('load-owner');
       return { ensureDepsInstalled: async () => calls.push('ensure') };
     },
   });
-  assert.deepEqual(calls, ['install', 'build-owner', 'load-owner', 'ensure']);
+  assert.deepEqual(calls, [
+    'install',
+    ['load-build-owner', '/remote/0.2'],
+    'build-owner',
+    'load-owner',
+    'ensure',
+  ]);
 });

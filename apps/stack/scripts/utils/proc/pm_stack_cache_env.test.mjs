@@ -148,7 +148,7 @@ async function writeNpmArgDumpStub({ binDir, outputPath }) {
   await writeFile(
     npmPath,
     [
-      '#!/usr/bin/env bash',
+      '#!/bin/bash',
       'set -euo pipefail',
       'echo "$*" >> "${OUTPUT_PATH:?}"',
     ].join('\n') + '\n',
@@ -164,7 +164,7 @@ async function writeCorepackYarnArgDumpStub({ binDir, outputPath }) {
   await writeFile(
     corepackPath,
     [
-      '#!/usr/bin/env bash',
+      '#!/bin/bash',
       'set -euo pipefail',
       'echo "$*" >> "${OUTPUT_PATH:?}"',
       'if [[ "${1:-}" == "yarn" && "${2:-}" == "--version" ]]; then',
@@ -1376,7 +1376,7 @@ test('ensureDepsInstalled falls back to npm in binary mode when yarn is unavaila
   await writeNpmArgDumpStub({ binDir, outputPath });
 
   applyEnvOverrides(t, {
-    PATH: `${binDir}:/usr/bin:/bin`,
+    PATH: binDir,
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_BINARY_MODE: '1',
     HAPPIER_STACK_ENV_FILE: null,
@@ -1405,7 +1405,7 @@ test('ensureDepsInstalled uses Corepack Yarn when a global Yarn shim is unavaila
     quiet: true,
     env: {
       ...process.env,
-      PATH: `${binDir}:/usr/bin:/bin`,
+      PATH: binDir,
       OUTPUT_PATH: outputPath,
       HAPPIER_STACK_BINARY_MODE: '0',
       HAPPIER_STACK_ENV_FILE: '',
@@ -1432,7 +1432,7 @@ test('ensureDepsInstalled preserves a Windows-style Path key while preparing Cor
 
   const env = {
     ...process.env,
-    Path: `${binDir}:/usr/bin:/bin`,
+    Path: binDir,
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_BINARY_MODE: '0',
     HAPPIER_STACK_ENV_FILE: '',

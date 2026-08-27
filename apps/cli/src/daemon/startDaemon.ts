@@ -422,14 +422,10 @@ import { parseBooleanEnv, resolveConnectedServicesProviderStateSharingPolicyV1, 
 import type { CatalogAgentId, ConnectedServiceSwitchEffectiveBinding } from '@/backends/types';
 import { readTerminalAttachmentInfo, writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { bindSpawnedTmuxTerminalAttachment } from './sessions/bindSpawnedTmuxTerminalAttachment';
-import {
-  isAccountSettingsVersionAtLeast,
-  normalizeAccountSettingsVersionHint,
-} from '@/settings/accountSettings/accountSettingsVersion';
+import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/accountSettingsVersion';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { fetchSessionByIdCompat, fetchSessionsPage, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { persistExplicitSessionStopUsageLimitRecoveryCancellation } from '@/session/usageLimitRecoveryControls/persistUsageLimitRecoveryFieldDurably';
@@ -1523,24 +1519,12 @@ function readAccountSettingsChangedHintVersion(update: unknown): number | null {
 async function refreshDaemonAccountSettingsForHint(params: Readonly<{
   credentials: Credentials;
   settingsVersion: number | null;
-  forceRefresh?: boolean;
 }>): Promise<boolean> {
-  const requiresConservativeRefresh = params.settingsVersion === null;
-  if (!requiresConservativeRefresh && params.forceRefresh !== true) {
-    const active = getActiveAccountSettingsSnapshot();
-    if (
-      active
-      && active.scopeKey === resolveAccountSettingsScopeKey(params.credentials)
-      && isAccountSettingsVersionAtLeast(active.settingsVersion, params.settingsVersion)
-    ) {
-      return true;
-    }
-  }
   await refreshAccountSettingsForMinimumVersion({
     credentials: params.credentials,
     minSettingsVersion: params.settingsVersion,
     mode: 'blocking',
-    ...(requiresConservativeRefresh || params.forceRefresh === true ? { forceRefresh: true } : {}),
+    forceRefresh: true,
   });
   return true;
 }
@@ -2953,7 +2937,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 await refreshDaemonAccountSettingsForHint({
                   credentials,
                   settingsVersion: normalizedOptions.accountSettingsVersionHint,
-                  forceRefresh: true,
                 });
               } catch (error) {
                 logger.warn('[DAEMON RUN] Account settings freshness refresh failed before spawn; continuing with last available settings', serializeAxiosErrorForLog(error));

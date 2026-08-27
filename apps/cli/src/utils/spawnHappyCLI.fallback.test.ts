@@ -169,6 +169,10 @@ describe('spawnHappyCLI fallback invocation', () => {
       HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: undefined,
       HAPPIER_STACK_STACK: 'qa-agent-1',
       HAPPIER_CLI_SUBPROCESS_PREFER_TSX: undefined,
+      HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: undefined,
+      HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: undefined,
+      HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: undefined,
+      HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: undefined,
       TSX_TSCONFIG_PATH: undefined,
     });
 

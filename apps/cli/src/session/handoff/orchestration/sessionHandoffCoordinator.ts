@@ -291,10 +291,20 @@ export function createSessionHandoffCoordinator(port: SessionHandoffCoordinatorP
           });
           const cancelledAfterResume = await acknowledgeCancellation();
           if (cancelledAfterResume) return cancelledAfterResume;
-          if (!SessionHandoffTargetResumeResponseV2Schema.safeParse(resumedRaw).success) {
+          const resumedParsed = SessionHandoffTargetResumeResponseV2Schema.safeParse(resumedRaw);
+          if (!resumedParsed.success) {
             const resumedFailure = failure(resumedRaw, 'target_resume_failed', 'Failed to resume handoff target');
             await abortBeforeCommit(resumedFailure.errorCode);
             return resumedFailure;
+          }
+          if (resumedParsed.data.disposition === 'preexisting_or_adopted') {
+            const alreadyRunningFailure = {
+              ok: false,
+              errorCode: 'target_session_already_running',
+              error: 'This session is already running on the selected target',
+            } as const;
+            await abortBeforeCommit(alreadyRunningFailure.errorCode);
+            return alreadyRunningFailure;
           }
 
           phase(update, 'confirming_target', 'Confirming target session');

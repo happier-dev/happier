@@ -667,7 +667,7 @@ exit 1
         HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_SERVER_COMPONENT: 'happier-server',
         HAPPIER_STACK_MANAGED_INFRA: '0',
-        HAPPIER_DB_PROVIDER: 'postgres',
+        HAPPIER_DB_PROVIDER: 'sqlite',
         HAPPIER_STACK_RUNTIME_DIR: join(tempRoot, 'runtime'),
         HAPPIER_STACK_LOG_TEE_DIR: join(tempRoot, 'logs'),
         HAPPIER_STACK_SERVER_PORT: String(port),

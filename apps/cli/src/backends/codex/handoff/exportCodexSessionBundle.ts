@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { buildCodexAgentRuntimeDescriptor, resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
@@ -111,12 +111,15 @@ export async function exportCodexSessionBundle(params: Readonly<{
     throw new Error(`No Codex rollout files found for ${params.remoteSessionId}`);
   }
 
-  const files = await Promise.all(
-    rollouts.map(async (rollout) => ({
-      relativePath: rollout.fileRelPath,
-      contentBase64: (await readFile(rollout.filePath)).toString('base64'),
-    })),
-  );
+  const files = await Promise.all(rollouts.map(async (rollout) => ({
+    relativePath: rollout.fileRelPath,
+    contentFile: {
+      t: 'happier.handoff.file.v1' as const,
+      filePath: rollout.filePath,
+      offsetBytes: 0,
+      sizeBytes: (await stat(rollout.filePath)).size,
+    },
+  })));
 
   return {
     providerId: 'codex',

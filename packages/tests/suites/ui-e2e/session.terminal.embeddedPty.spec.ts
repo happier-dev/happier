@@ -198,7 +198,7 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
             await expect(secondSessionItem).toHaveCount(1, { timeout: 120_000 });
             await secondSessionItem.click();
 
-            await expect(page).toHaveURL(`${uiBaseUrl}/session/${secondSessionId}`, { timeout: 60_000 });
+            await expect(page).toHaveURL(new RegExp(`/session/${secondSessionId}(?:\\?.*)?$`), { timeout: 60_000 });
             await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
             await expect(page.getByTestId('session-bottompanel-surface-terminal')).toHaveCount(0, { timeout: 60_000 });
 

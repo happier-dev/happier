@@ -13,7 +13,7 @@ test('assertCliPrereqs({yarn:true}) accepts yarn', async () => {
     const yarnBin = join(root, 'yarn');
     await writeFile(yarnBin, '#!/bin/sh\nexit 0\n', 'utf-8');
     await chmod(yarnBin, 0o755);
-    process.env.PATH = `/bin:${root}`;
+    process.env.PATH = root;
 
     await assertCliPrereqs({ yarn: true });
   } finally {
@@ -25,7 +25,7 @@ test('assertCliPrereqs({yarn:true}) accepts yarn', async () => {
 test('assertCliPrereqs({yarn:true}) throws when yarn is unavailable', async () => {
   const oldPath = process.env.PATH;
   try {
-    process.env.PATH = '/bin';
+    process.env.PATH = '';
     await assert.rejects(() => assertCliPrereqs({ yarn: true }), /yarn/i);
   } finally {
     process.env.PATH = oldPath;

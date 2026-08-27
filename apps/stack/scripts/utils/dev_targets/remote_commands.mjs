@@ -10,11 +10,21 @@ function encodePowerShell(script) {
   return Buffer.from(String(script), 'utf16le').toString('base64');
 }
 
-function wrapRemoteScript(target, script) {
+function prependRemotePath(target, script) {
+  const entries = Array.isArray(target.remotePath) ? target.remotePath.map(String) : [];
+  if (entries.length === 0) return script;
   if (target.platform === 'windows') {
-    return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodePowerShell(script)}`;
+    return `$env:PATH = ${powershellQuote(entries.join(';'))} + [IO.Path]::PathSeparator + $env:PATH; ${script}`;
   }
-  return `bash -lc ${posixQuote(script)}`;
+  return `export PATH=${posixQuote(entries.join(':'))}:"$PATH"; ${script}`;
+}
+
+function wrapRemoteScript(target, script) {
+  const preparedScript = prependRemotePath(target, script);
+  if (target.platform === 'windows') {
+    return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodePowerShell(preparedScript)}`;
+  }
+  return `bash -lc ${posixQuote(preparedScript)}`;
 }
 
 function buildWindowsOrphanedMutagenCleanupScript() {

@@ -115,6 +115,7 @@ test('production reload composition keeps app and Prisma reloads exclusive while
     serverProxyRuntime: { mode: 'proxy', proxyPid: proxyController.pid },
   }, {
     ensureDepsInstalledImpl: async () => {},
+    applyServerMigrationsImpl: async () => {},
     pmSpawnScriptImpl: spawnServer,
     waitForServerReadyImpl: async () => {},
     listListenPidsImpl: async (port) => {

@@ -3796,7 +3796,7 @@ describe('startDaemon automation wiring (integration)', () => {
           credentials: automationCredentials,
           minSettingsVersion: 3,
           mode: 'blocking',
-          refresh: 'auto',
+          refresh: 'force',
         }),
       );
 
@@ -3807,7 +3807,7 @@ describe('startDaemon automation wiring (integration)', () => {
     }
   });
 
-  it('ignores stale or equal daemon account settings live hints', async () => {
+  it('forces an authoritative refresh for equal daemon account settings live hints', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     harness.setAutoShutdownAfterAutomationStart(false);
     harness.setActiveAccountSettingsSnapshot({ settingsVersion: 3 });
@@ -3831,8 +3831,15 @@ describe('startDaemon automation wiring (integration)', () => {
         });
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(harness.bootstrapAccountSettingsContext).not.toHaveBeenCalled();
+      await waitForCondition(
+        () => harness.bootstrapAccountSettingsContext.mock.calls.length >= 1,
+        'Expected equal-version live hint to force an authoritative account settings refresh',
+      );
+      expect(harness.bootstrapAccountSettingsContext).toHaveBeenCalledWith(expect.objectContaining({
+        minSettingsVersion: 3,
+        mode: 'blocking',
+        refresh: 'force',
+      }));
 
       harness.requestShutdown('happier-cli');
       await run;

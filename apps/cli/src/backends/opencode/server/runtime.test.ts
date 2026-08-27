@@ -12,7 +12,10 @@ import {
 import { buildChangeTitleInstruction } from '@/agent/runtime/changeTitleInstruction';
 import { logger } from '@/ui/logger';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
-import { resetConnectedServiceRuntimeAuthFailureReportDedupeForTests } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
+import {
+  CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
+  resetConnectedServiceRuntimeAuthFailureReportDedupeForTests,
+} from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { configuration, reloadConfiguration } from '@/configuration';
 
 import {
@@ -8229,7 +8232,7 @@ describe('createOpenCodeServerRuntime', () => {
         }),
       }),
     }, {
-      timeoutMs: 120_000,
+      timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
     });
   });
 
@@ -8328,7 +8331,7 @@ describe('createOpenCodeServerRuntime', () => {
           providerLimitId: 'free_tier_limit',
         }),
       }, {
-        timeoutMs: 120_000,
+        timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
       });
       expect(client.sessionAbort).toHaveBeenCalledWith({ sessionId: 'ses_1' });
     } finally {

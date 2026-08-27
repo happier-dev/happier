@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import type { ImportedSessionHandoffBundle } from '../../../session/handoff/types';
 import type { ClaudeSessionBundle } from '../../../session/handoff/types';
+import { copySessionHandoffFileSlice } from '../../../session/handoff/sessionHandoffProviderBundleFile';
 import { getProjectPath, resolveClaudeProjectId } from '../utils/path';
 import { resolveConfiguredClaudeConfigDir } from '../utils/resolveConfiguredClaudeConfigDir';
 
@@ -25,8 +26,12 @@ export async function importClaudeSessionBundle(params: Readonly<{
   const transcriptPath = resolveClaudeTranscriptPath(projectDir, params.bundle.remoteSessionId);
   await mkdir(projectDir, { recursive: true });
 
-  const transcript = Buffer.from(params.bundle.transcriptBase64, 'base64').toString('utf8');
-  await writeFile(transcriptPath, transcript, 'utf8');
+  if (params.bundle.transcriptFile) {
+    await copySessionHandoffFileSlice({ source: params.bundle.transcriptFile, targetFilePath: transcriptPath });
+  } else {
+    const transcript = Buffer.from(params.bundle.transcriptBase64, 'base64').toString('utf8');
+    await writeFile(transcriptPath, transcript, 'utf8');
+  }
 
   return {
     remoteSessionId: params.bundle.remoteSessionId,

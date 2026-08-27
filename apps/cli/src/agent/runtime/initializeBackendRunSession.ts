@@ -77,6 +77,8 @@ export interface InitializeBackendRunSessionOptions {
    * the disposal callback returned to the caller.
    */
   runtimeActivityLifecycle?: BackendRunRuntimeActivityLifecycle
+  /** Keep daemon-carried first input durable until the provider installs its input consumer. */
+  deferPendingFirstInputCommitUntilRuntimeReady?: boolean
 }
 
 export interface InitializeBackendRunSessionResult {
@@ -85,6 +87,7 @@ export interface InitializeBackendRunSessionResult {
   reportedSessionId: string | null
   attachedToExistingSession: boolean
   disposeRuntimeActivity?: () => Promise<void>
+  commitPendingFirstInputAfterRuntimeReady?: (() => Promise<void>) | null
 }
 
 type DaemonReportMode = 'await' | 'background'
@@ -219,6 +222,22 @@ export async function initializeBackendRunSession(
     )
   const startupSideEffectsOrder = opts.startupSideEffectsOrder ?? 'report-first'
   const pendingFirstInputCommitter = createPendingFirstInputCommitter()
+  let commitPendingFirstInputAfterRuntimeReady: (() => Promise<void>) | null = null
+  const deferOrCommitPendingFirstInput = async (session: ApiSessionClient): Promise<void> => {
+    if (
+      !opts.deferPendingFirstInputCommitUntilRuntimeReady
+      || !pendingFirstInputCommitter.hasPendingInput
+    ) {
+      await pendingFirstInputCommitter.commit(session)
+      return
+    }
+
+    let commitPromise: Promise<void> | null = null
+    commitPendingFirstInputAfterRuntimeReady = () => {
+      commitPromise ??= pendingFirstInputCommitter.commit(session)
+      return commitPromise
+    }
+  }
 
   try {
 
@@ -319,7 +338,7 @@ export async function initializeBackendRunSession(
     }
 
     primeAgentStateForUiFn(session, opts.uiLogPrefix)
-    await pendingFirstInputCommitter.commit(session)
+    await deferOrCommitPendingFirstInput(session)
     await runStartupSideEffects(session, existingSessionId, daemonReportMetadata, 'background')
 
     return {
@@ -328,6 +347,7 @@ export async function initializeBackendRunSession(
       reportedSessionId: existingSessionId,
       attachedToExistingSession: true,
       disposeRuntimeActivity: preparedRuntimeActivity?.dispose,
+      commitPendingFirstInputAfterRuntimeReady,
     }
   }
 
@@ -391,7 +411,7 @@ export async function initializeBackendRunSession(
 
   primeAgentStateForUiFn(session, opts.uiLogPrefix)
   if (reportedSessionId) {
-    await pendingFirstInputCommitter.commit(session)
+    await deferOrCommitPendingFirstInput(session)
     await runStartupSideEffectsOnce(session, reportedSessionId)
   }
 
@@ -401,6 +421,7 @@ export async function initializeBackendRunSession(
     reportedSessionId,
     attachedToExistingSession: false,
     disposeRuntimeActivity: preparedRuntimeActivity?.dispose,
+    commitPendingFirstInputAfterRuntimeReady,
   }
   } catch (error) {
     await preparedRuntimeActivity?.dispose().catch(() => {})

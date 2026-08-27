@@ -131,6 +131,7 @@ describe('opencode session handoff bundle', () => {
 
     expect(result.providerId).toBe('opencode');
     expect(result.remoteSessionId).toBe(remoteSessionId);
+    if (!result.exportJsonBase64) throw new Error('Expected the bounded OpenCode export payload');
     const decoded = Buffer.from(result.exportJsonBase64, 'base64').toString('utf8');
     const parsed = JSON.parse(decoded) as { id?: unknown; payload?: unknown };
     expect(parsed.id).toBe(remoteSessionId);

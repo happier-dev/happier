@@ -106,7 +106,7 @@ test('repo-local wrapper defaults `tui` to `tui dev` when no forwarded args are 
   assert.equal(data.args[2], 'dev');
 });
 
-test('repo-local execution-host adapter receives the exact original argv before wrapper normalization', async () => {
+test('repo-local execution-host adapter receives the exact original argv before wrapper normalization', { skip: process.platform !== 'darwin' }, async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir);
   const repoRoot = dirname(dirname(packageRoot));

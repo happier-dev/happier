@@ -5,6 +5,7 @@ import { standardCleanup } from '@/dev/testkit';
 import {
   flashListChatListHarnessState,
   renderFlashListChatListSession,
+  requireCapturedFlashListProps,
   resetFlashListChatListHarness,
 } from '@/dev/testkit/harness/chatListHarness';
 import { installFlashListChatListCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
@@ -118,6 +119,7 @@ describe('ChatList (thinking expansion controlled)', () => {
     const screen = await renderFlashListChatListSession();
 
     const firstThinkingProps = renderedMessageViewProps.find((p) => p?.message?.id === 't1');
+    const extraDataBeforeExpansion = requireCapturedFlashListProps().extraData;
     const firstNormalProps = renderedMessageViewProps.find((p) => p?.message?.id === 'a1');
 
     expect(firstThinkingProps?.thinkingExpanded).toBe(false);
@@ -131,6 +133,7 @@ describe('ChatList (thinking expansion controlled)', () => {
 
     const lastThinkingProps = [...renderedMessageViewProps].reverse().find((p) => p?.message?.id === 't1');
     expect(lastThinkingProps?.thinkingExpanded).toBe(true);
+    expect(requireCapturedFlashListProps().extraData).not.toBe(extraDataBeforeExpansion);
 
     await screen.unmount();
   });
