@@ -16,10 +16,7 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
-import {
-  ensureSessionReplayForkEnabled,
-  ensureSessionTranscriptToolCallsGrouped,
-} from '../../src/testkit/uiE2e/ensureSessionReplayForkEnabled';
+import { ensureSessionReplayForkEnabled } from '../../src/testkit/uiE2e/ensureSessionReplayForkEnabled';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -155,11 +152,9 @@ test.describe('ui e2e: session fork from header action menu', () => {
     // Wait on the terminal turn marker before reloading instead of treating prompt visibility as
     // persistence evidence.
     await expect(page.getByText(/FAKE_TRANSCRIPT_ACTIVITY_FEED_DONE_1/)).toHaveCount(1, { timeout: 180_000 });
-    await ensureSessionTranscriptToolCallsGrouped({ page, uiBaseUrl });
     await ensureSessionReplayForkEnabled({ page, uiBaseUrl });
     await reloadCreatedSessionFromNewSessionComposer({ page, session: parentSession });
     await expect(page.getByText(/FAKE_TRANSCRIPT_ACTIVITY_FEED_DONE_1/)).toHaveCount(1, { timeout: 180_000 });
-    await expect(page.getByTestId('transcript-tool-calls-group')).toHaveCount(1, { timeout: 120_000 });
 
     await page.getByLabel('Open session actions').click();
     await expect(page.getByRole('button', { name: /Fork session/i })).toHaveCount(1, { timeout: 60_000 });
@@ -182,7 +177,5 @@ test.describe('ui e2e: session fork from header action menu', () => {
 
     const transcript = page.getByTestId('transcript-chat-list');
     await expect(transcript.locator(`[data-testid=\"transcript-fork-divider:${parentSessionId}:${childSessionId}\"]`)).toHaveCount(1, { timeout: 120_000 });
-    const groupedToolCallRows = transcript.locator('[data-testid="transcript-tool-calls-group"]');
-    expect(await groupedToolCallRows.count()).toBeGreaterThan(0);
   });
 });

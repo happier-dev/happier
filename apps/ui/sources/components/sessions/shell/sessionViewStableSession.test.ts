@@ -135,6 +135,43 @@ describe('buildSessionViewShellSessionSignature', () => {
         );
     });
 
+    it('changes when detailed rollback turns hydrate after the flattened starts are already current', () => {
+        const firstTurn = {
+            turnId: 'turn-1',
+            status: 'completed' as const,
+            startedAt: 1,
+            updatedAt: 2,
+            terminalAt: 2,
+            transcriptAnchors: { startUserMessageSeq: 1, userMessageSeqs: [1], startSeqInclusive: 1, endSeqInclusive: 2 },
+            rollback: { state: 'eligible' as const, updatedAt: 2 },
+        };
+        const projected = createSession({
+            rollbackEligibleTurnStarts: [1, 4],
+            sessionTurns: { v: 1, sessionId: 's1', latestTurnId: 'turn-1', updatedAt: 2, turns: [firstTurn] },
+        });
+        const hydrated = createSession({
+            rollbackEligibleTurnStarts: [1, 4],
+            sessionTurns: {
+                v: 1,
+                sessionId: 's1',
+                latestTurnId: 'turn-2',
+                updatedAt: 4,
+                turns: [firstTurn, {
+                    ...firstTurn,
+                    turnId: 'turn-2',
+                    updatedAt: 4,
+                    terminalAt: 4,
+                    transcriptAnchors: { startUserMessageSeq: 4, userMessageSeqs: [4], startSeqInclusive: 3, endSeqInclusive: 5 },
+                    rollback: { state: 'eligible', updatedAt: 4 },
+                }],
+            },
+        });
+
+        expect(buildSessionViewShellSessionSignature(hydrated)).not.toBe(
+            buildSessionViewShellSessionSignature(projected),
+        );
+    });
+
     it('changes when pending request details hydrate at the same agent state version', () => {
         const projectedOnly = createSession({
             agentState: null,

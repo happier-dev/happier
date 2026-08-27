@@ -90,6 +90,7 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         pendingUserActionRequestCount: session.pendingUserActionRequestCount ?? null,
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
         rollbackEligibleTurnStarts: session.rollbackEligibleTurnStarts ?? null,
+        sessionTurns: session.sessionTurns ?? null,
         agentStateRequests: buildShellVisibleAgentStateRequestSignatureValue(session.agentState),
         metadata: buildShellVisibleMetadataSignatureValue(session.metadata),
     });
