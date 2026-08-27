@@ -145,6 +145,26 @@ async function withPersistentFakeServer<T>(
 }
 
 describe('fake Codex app-server harness', () => {
+  it('models native thread forks used by shared UI and runtime scenarios', async () => {
+    await withFakeServer({}, async ({ request, requestLogPath }) => {
+      await expect(request('thread/fork', { threadId: 'thread-started' })).resolves.toMatchObject({
+        result: {
+          threadId: 'thread-forked',
+          model: 'gpt-5.4',
+          serviceTier: null,
+        },
+      });
+
+      const requests = await readFakeCodexAppServerRequestLog(requestLogPath);
+      expect(requests).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          method: 'thread/fork',
+          params: { threadId: 'thread-started' },
+        }),
+      ]));
+    });
+  });
+
   it('rejects a resume request for the wrong native thread when the test requires an exact identity', async () => {
     await withFakeServer(
       { expectedResumeThreadId: 'thread-started' },

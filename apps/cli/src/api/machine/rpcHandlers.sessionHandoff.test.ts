@@ -6881,7 +6881,27 @@ function createLoopbackMachineTransferChannels() {
       },
     });
 
-	    await expect(preparePromise).rejects.toThrow();
+	    // The asynchronous prepare owner may either surface a fast-path validation error or
+	    // acknowledge the job before validation settles. Both must converge on fail-closed state.
+	    let prepared: any | null = null;
+	    let prepareError: unknown = null;
+	    try {
+	      prepared = await preparePromise;
+	    } catch (error) {
+	      prepareError = error;
+	    }
+
+	    if (prepareError) {
+	      expect(String((prepareError as any)?.message ?? prepareError)).toMatch(/provider bundle/i);
+	    } else {
+	      expect(prepared?.status?.status).toBe('pending');
+	    }
+
+	    await vi.waitFor(async () => {
+	      const latest = await statusGet!({ handoffId });
+	      expect(latest?.status?.status).toBe('awaiting_recovery');
+	    }, { timeout: 2000 });
+
 	    expect(importSessionBundle).not.toHaveBeenCalled();
 	  });
 
