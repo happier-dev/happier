@@ -120,6 +120,21 @@ describe('buildSessionViewShellSessionSignature', () => {
         );
     });
 
+    it('changes when server-owned rollback eligibility changes without a transcript seq change', () => {
+        const unavailable = createSession({
+            seq: 5,
+            rollbackEligibleTurnStarts: [],
+        });
+        const eligible = createSession({
+            seq: 5,
+            rollbackEligibleTurnStarts: [4],
+        });
+
+        expect(buildSessionViewShellSessionSignature(eligible)).not.toBe(
+            buildSessionViewShellSessionSignature(unavailable),
+        );
+    });
+
     it('changes when pending request details hydrate at the same agent state version', () => {
         const projectedOnly = createSession({
             agentState: null,

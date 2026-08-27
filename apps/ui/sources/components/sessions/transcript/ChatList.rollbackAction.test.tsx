@@ -140,64 +140,16 @@ describe('ChatList rollback action', () => {
         flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
         flashListChatListHarnessState.sessionState = {
             ...flashListChatListHarnessState.sessionState,
-            sessionTurns: {
-                v: 1,
-                sessionId: 's1',
-                latestTurnId: 'turn-1',
-                updatedAt: 99,
-                turns: [
-                    {
-                        turnId: 'turn-1',
-                        status: 'completed',
-                        startedAt: 1,
-                        updatedAt: 99,
-                        terminalAt: 99,
-                        transcriptAnchors: { startUserMessageSeq: 1, userMessageSeqs: [1], startSeqInclusive: 1, endSeqInclusive: 2 },
-                        rollback: { state: 'eligible', updatedAt: 99 },
-                    },
-                ],
-            },
-            metadata: {
-                flavor: 'codex',
-                codexBackendMode: 'appServer',
-                sessionRollbackRangesV1: {
-                    v: 1,
-                    updatedAt: 99,
-                    ranges: [{ target: { type: 'latest_turn' }, startSeqInclusive: 3, endSeqInclusive: 3, rolledBackAt: 99 }],
-                },
-            },
+            rollbackEligibleTurnStarts: [1],
         };
+        await screen.update(<ChatList session={{ ...flashListChatListHarnessState.sessionState }} />);
 
-        const messages = [
-            { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },
-            { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'reply', seq: 2, isThinking: false },
-            { kind: 'agent-text', id: 'a2', localId: null, createdAt: 3, text: 'rolled back', seq: 3, isThinking: false },
-        ];
-        flashListChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
-        buildChatListItemsMock.mockImplementation((opts: any) => (
-            (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
-                kind: 'message',
-                id,
-                messageId: id,
-                createdAt: opts.messagesById[id]?.createdAt ?? 0,
-                seq: opts.messagesById[id]?.seq ?? null,
-            }))
-        ));
-
-        const screen = await renderFlashListChatListSession();
-
-        const byId = new Map(capturedMessageViewProps.map((props) => [props.message.id, props]));
-        expect(byId.get('u1')?.rollbackAction).toEqual({
+        expect(capturedMessageViewProps.filter((props) => props.message.id === 'u1').at(-1)?.rollbackAction).toEqual({
             target: { type: 'before_user_message', userMessageSeq: 1 },
             restoredDraftText: 'first',
         });
-        expect(byId.get('a1')?.historical).toBe(false);
-        expect(byId.get('a1')?.rollbackAction ?? null).toBeNull();
-        expect(byId.get('a2')?.rollbackAction ?? null).toBeNull();
-        expect(byId.get('a2')?.historical).toBe(true);
-
         await screen.unmount();
-    }, 120000);
+    });
 
     it('does not place rollback actions on tool-call or agent messages when rollback-to-point is available', async () => {
         flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';

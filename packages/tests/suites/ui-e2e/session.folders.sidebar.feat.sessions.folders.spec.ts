@@ -7,18 +7,21 @@ import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
-import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { createTestAuthMtls } from '../../src/testkit/auth';
+import { upsertPlainAccountSettingsV2 } from '../../src/testkit/accountSettings';
 import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import {
-  ensureSessionFolderTreeView,
   createPlainSession,
   expectFolderAssignment,
   resolveCanonicalServerIdForUi,
-  setSessionFolderDragSettings,
 } from '../../src/testkit/uiE2e/sessionFoldersDrag';
+
+import {
+  buildSessionOrganizationImportRequestFromFolderSettings,
+  importSessionOrganization,
+} from '../../src/testkit/uiE2e/sessionOrganization';
 
 const run = createRunDirs({ runLabel: 'ui-e2e-session-folders-sidebar' });
 
@@ -52,7 +55,8 @@ test.describe('ui e2e: session folders sidebar', () => {
   let uiBaseUrl: string | null = null;
   let proxyStop: (() => Promise<void>) | null = null;
   let token: string | null = null;
-  let uiServerUrl: string | null = null;
+  let seededServerId: string | null = null;
+  let seededSessionId: string | null = null;
 
   test.beforeAll(async () => {
     test.setTimeout(resolveUiWebBeforeAllTimeoutMs(process.env));
@@ -96,7 +100,6 @@ test.describe('ui e2e: session folders sidebar', () => {
       },
     });
     proxyStop = proxy.stop;
-    uiServerUrl = proxy.baseUrl;
 
     const auth = await createTestAuthMtls(server.baseUrl, {
       email: IDENTITY_HEADERS.email,
@@ -104,6 +107,58 @@ test.describe('ui e2e: session folders sidebar', () => {
       fingerprint: IDENTITY_HEADERS.fingerprint,
     });
     token = auth.token;
+    await upsertPlainAccountSettingsV2({
+      baseUrl: server.baseUrl,
+      token,
+      settings: {
+        experiments: true,
+        featureToggles: { 'sessions.folders': true },
+        sessionFolderViewModeV1: 'tree',
+        sessionListActiveGroupingV1: 'project',
+        sessionListInactiveGroupingV1: 'project',
+        sessionListOrderingModeV1: 'custom',
+      },
+    });
+
+    const rootPath = repoRootDir();
+    seededServerId = await resolveCanonicalServerIdForUi(proxy.baseUrl);
+    await registerMachineIdentity({
+      baseUrl: server.baseUrl,
+      token,
+      machineId: SEEDED_MACHINE_ID,
+      metadata: 'session-folders-machine',
+    });
+    seededSessionId = await createPlainSession({
+      baseUrl: server.baseUrl,
+      token,
+      title: 'folder move target ' + run.runId,
+      rootPath,
+      machineId: SEEDED_MACHINE_ID,
+      tagPrefix: 'session-folders',
+    });
+    await importSessionOrganization({
+      baseUrl: server.baseUrl,
+      token,
+      request: buildSessionOrganizationImportRequestFromFolderSettings({
+        serverId: seededServerId,
+        sessionFoldersV1: {
+          v: 1,
+          folders: [{
+            id: FOLDER_ID,
+            workspace: {
+              t: 'workspaceScope',
+              serverId: seededServerId,
+              machineId: SEEDED_MACHINE_ID,
+              rootPath,
+            },
+            parentId: null,
+            name: FOLDER_NAME,
+            createdAt: 1,
+            updatedAt: 1,
+          }],
+        },
+      }),
+    });
 
     ui = await startUiWeb({
       testDir: suiteDir,
@@ -128,64 +183,16 @@ test.describe('ui e2e: session folders sidebar', () => {
 
   test('moves a synced session into a seeded folder', async ({ page }) => {
     test.setTimeout(720_000);
-    if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
+    if (!server || !uiBaseUrl || !token || !seededServerId || !seededSessionId) {
+      throw new Error('missing server/ui fixtures');
+    }
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
 
-    const rootPath = repoRootDir();
-    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
-    await registerMachineIdentity({
-      baseUrl: server.baseUrl,
-      token,
-      machineId: SEEDED_MACHINE_ID,
-      metadata: 'session-folders-machine',
-    });
-    const firstSessionId = await createPlainSession({
-      baseUrl: server.baseUrl,
-      token,
-      title: `folder move target ${run.runId}`,
-      rootPath,
-      machineId: SEEDED_MACHINE_ID,
-      tagPrefix: 'session-folders',
-    });
-
-    await setSessionFolderDragSettings({
-      page,
-      baseUrl: uiBaseUrl,
-      apiBaseUrl: server.baseUrl,
-      token,
-      serverId,
-      folderViewMode: 'off',
-      sessionFoldersV1: {
-        v: 1,
-        folders: [{
-          id: FOLDER_ID,
-          workspace: {
-            t: 'workspaceScope',
-            serverId,
-            machineId: SEEDED_MACHINE_ID,
-            rootPath,
-          },
-          parentId: null,
-          name: FOLDER_NAME,
-          createdAt: 1,
-          updatedAt: 1,
-        }],
-      },
-    });
-
-    await setUiFeatureToggle({
-      page,
-      baseUrl: uiBaseUrl,
-      featureId: 'sessions.folders',
-      enabled: true,
-    });
-
-    await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
-
-    await ensureSessionFolderTreeView(page);
+    const firstSessionId = seededSessionId;
+    await expect(page.getByTestId('session-list-item-' + firstSessionId)).toHaveCount(1, { timeout: 120_000 });
 
     await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(1, { timeout: 120_000 });
 

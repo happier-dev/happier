@@ -67,9 +67,12 @@ describe('createCodexAppServerSessionTurnTracker', () => {
         expect(session.updateMetadata).not.toHaveBeenCalled();
     });
 
-    it('allows the committed user message to cross a loaded server boundary before giving up rollback anchors', async () => {
+    it('starts the provider turn without waiting on the provider-acceptance commit, then backfills rollback anchors', async () => {
         const { lifecycle, session } = createLifecycleHarness();
-        const waitForCommittedUserMessageSeq = vi.fn(async () => 10);
+        let resolveCommittedSeq!: (seq: number | null) => void;
+        const waitForCommittedUserMessageSeq = vi.fn(async () => await new Promise<number | null>((resolve) => {
+            resolveCommittedSeq = resolve;
+        }));
         const tracker = createCodexAppServerSessionTurnTracker({
             session: {
                 ...session,
@@ -80,17 +83,29 @@ describe('createCodexAppServerSessionTurnTracker', () => {
             now: () => 100,
         });
 
-        await tracker.beginTurn({
+        const beginPromise = tracker.beginTurn({
             turnId: null,
             startUserMessageLocalId: 'prompt-local-slow',
             startSeqInclusive: null,
         });
+        await expect(beginPromise).resolves.toBeUndefined();
 
         expect(waitForCommittedUserMessageSeq).toHaveBeenCalledWith('prompt-local-slow', {
             timeoutMs: 10_000,
         });
-        expect(lifecycle.beginTurn).toHaveBeenCalledWith(expect.objectContaining({
+        expect(lifecycle.beginTurn).toHaveBeenCalledWith({ provider: 'codex' });
+        expect(lifecycle.appendTranscriptAnchors).not.toHaveBeenCalled();
+
+        resolveCommittedSeq(10);
+        await tracker.completeActiveTurn({ endSeqInclusive: 15 });
+
+        expect(lifecycle.appendTranscriptAnchors).toHaveBeenCalledWith({
+            provider: 'codex',
             transcriptAnchors: expect.objectContaining({ startUserMessageSeq: 10 }),
+        });
+        expect(lifecycle.markRollbackEligible).toHaveBeenCalledWith(expect.objectContaining({
+            turnId: 'session-turn-1',
+            transcriptAnchors: expect.objectContaining({ startUserMessageSeq: 10, endSeqInclusive: 15 }),
         }));
     });
 

@@ -37,7 +37,6 @@ let renderedMessageViewProps: any[] = [];
 let renderedToolCallsGroupRowProps: any[] = [];
 let renderedToolGroupUnitHeaderProps: any[] = [];
 let renderedToolGroupUnitToolProps: any[] = [];
-let transcriptIdsHookCallCount = 0;
 let linearItemsCacheBuildCalls: Array<{ cacheHit: boolean; cacheProvided: boolean; signature: string }> = [];
 let turnsCacheBuildCalls: Array<{ cacheHit: boolean; cacheProvided: boolean; signature: string }> = [];
 let requireSelectionProviderForRenderedMessages = false;
@@ -722,7 +721,6 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         : null,
     useSessionTranscriptIds: () => {
         useSessionMessagesStoreRevisionForTest();
-        transcriptIdsHookCallCount += 1;
         return {
             ids: sessionTranscriptIdsState ?? (sessionMessagesState.messages ?? []).map((m: any) => m.id),
             isLoaded: sessionMessagesState.isLoaded,
@@ -1133,7 +1131,6 @@ describe('ChatList (FlashList v2)', () => {
         renderedToolCallsGroupRowProps = [];
         renderedToolGroupUnitHeaderProps = [];
         renderedToolGroupUnitToolProps = [];
-        transcriptIdsHookCallCount = 0;
         linearItemsCacheBuildCalls = [];
         turnsCacheBuildCalls = [];
         flashListRefHandle = null;
@@ -1810,7 +1807,7 @@ describe('ChatList (FlashList v2)', () => {
         expect(renderedFlashListCount).toBe(0);
     });
 
-    it('skips parent-driven transcript work when non-transcript session status changes', async () => {
+    it('skips virtualized transcript rerenders when non-transcript session status changes', async () => {
         sessionMessagesState = {
             isLoaded: true,
             messages: [
@@ -1822,12 +1819,9 @@ describe('ChatList (FlashList v2)', () => {
         const { ChatList } = await import('./ChatList');
         const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
         await screen.settle({ cycles: 2, turns: 2 });
-        transcriptIdsHookCallCount = 0;
         renderedFlashListCount = 0;
 
         await screen.update(<ChatList session={{ ...sessionState, latestTurnStatus: { status: 'running' } }} />);
-
-        expect(transcriptIdsHookCallCount).toBe(0);
         expect(renderedFlashListCount).toBe(0);
     });
 

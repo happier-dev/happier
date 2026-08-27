@@ -100,7 +100,7 @@ async function waitForEligibleServerTurn(params: Readonly<{
   baseUrl: string;
   token: string;
   sessionId: string;
-  turnId: string;
+  providerTurnId: string;
 }>): Promise<void> {
   await waitFor(async () => {
     const response = await fetchJson<Record<string, unknown>>(
@@ -110,12 +110,13 @@ async function waitForEligibleServerTurn(params: Readonly<{
         timeoutMs: 15_000,
       },
     );
-    if (response.status !== 200 || response.data.latestTurnId !== params.turnId) return false;
+    if (response.status !== 200) return false;
     const turns = Array.isArray(response.data.turns) ? response.data.turns.filter(isRecord) : [];
     return turns.some((turn) => {
       const rollback = isRecord(turn.rollback) ? turn.rollback : null;
       const transcriptAnchors = isRecord(turn.transcriptAnchors) ? turn.transcriptAnchors : null;
-      return turn.turnId === params.turnId
+      return turn.providerTurnId === params.providerTurnId
+        && response.data.latestTurnId === turn.turnId
         && turn.status === 'completed'
         && rollback?.state === 'eligible'
         && typeof transcriptAnchors?.startUserMessageSeq === 'number';
@@ -123,7 +124,7 @@ async function waitForEligibleServerTurn(params: Readonly<{
   }, {
     timeoutMs: 60_000,
     intervalMs: 250,
-    context: `server rollback eligibility for ${params.turnId}`,
+    context: `server rollback eligibility for provider turn ${params.providerTurnId}`,
   });
 }
 
@@ -313,7 +314,10 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
 
     await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByText(`reply:${parentPrompt}:done`)).toHaveCount(1, { timeout: 180_000 });
+    // The first app-server turn includes runtime-owned session instructions before the
+    // user prompt. Assert the unique user-prompt suffix rather than pretending the
+    // fake server received the bare composer value as its complete input.
+    await expect(page.getByText(`${parentPrompt}:done`, { exact: false })).toHaveCount(1, { timeout: 180_000 });
 
     await page.getByLabel('Open session actions').click();
     await expect(page.getByRole('button', { name: /Fork session/i })).toHaveCount(1, { timeout: 60_000 });
@@ -331,7 +335,7 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
       baseUrl: server.baseUrl,
       token: accessKey.token,
       sessionId: parentSessionId,
-      turnId: 'turn-2',
+      providerTurnId: 'turn-2',
     });
 
     const secondPromptMessage = await readMessageActionHandle(page, secondPrompt);

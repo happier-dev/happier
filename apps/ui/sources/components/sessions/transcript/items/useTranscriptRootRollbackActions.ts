@@ -40,6 +40,7 @@ export function useTranscriptRootRollbackActions(params: Readonly<{
             session.accessLevel,
             session.active,
             session.sessionTurns,
+            session.rollbackEligibleTurnStarts,
             sessionMetadataSignature,
             rollbackActionsInputSignature,
             rollbackRanges,
