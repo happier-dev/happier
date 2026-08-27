@@ -47,7 +47,7 @@ describe('useTranscriptRootRollbackActions', () => {
                 updatedAt: 4,
                 turns: [completedTurn('turn-1', 1), completedTurn('turn-2', 4)],
             },
-        } as Session;
+        } as unknown as Session;
 
         const hook = await renderHook(
             ({ revision }: { revision: number }) => {
