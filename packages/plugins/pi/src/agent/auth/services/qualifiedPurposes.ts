@@ -14,6 +14,7 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
       localId: 'claude-subscription',
     }),
     materializationKinds: Object.freeze(['httpHeaders', 'environment'] as const),
+    credentialKinds: Object.freeze(['oauth', 'token'] as const),
   }),
   Object.freeze({
     purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
@@ -22,6 +23,7 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
       localId: 'openai-codex',
     }),
     materializationKinds: Object.freeze(['httpHeaders'] as const),
+    credentialKinds: Object.freeze(['oauth'] as const),
   }),
   Object.freeze({
     purpose: PI_OPENAI_API_KEY_PURPOSE_ID,
@@ -30,6 +32,7 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
       localId: 'openai',
     }),
     materializationKinds: Object.freeze(['environment'] as const),
+    credentialKinds: Object.freeze(['token'] as const),
   }),
   Object.freeze({
     purpose: PI_ANTHROPIC_API_KEY_PURPOSE_ID,
@@ -38,5 +41,6 @@ export const PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES = Object.freeze([
       localId: 'anthropic',
     }),
     materializationKinds: Object.freeze(['environment'] as const),
+    credentialKinds: Object.freeze(['token'] as const),
   }),
 ] as const);

@@ -332,11 +332,13 @@ export const CLAUDE_PLUGIN = definePlugin({
           service: 'claude-subscription',
           required: false,
           materializationKinds: ['environment', 'files', 'httpHeaders'],
+          credentialKinds: ['oauth', 'token'],
         }, {
           purpose: 'model_upstream_api_key',
           service: 'anthropic',
           required: false,
           materializationKinds: ['environment'],
+          credentialKinds: ['token'],
         }],
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           surfaces: ['externalSessions'],

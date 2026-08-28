@@ -33,7 +33,7 @@ type Deferred<T> = Readonly<{
 type ExecutionRunStreamReadInput = PublicActionInputById['execution.run.stream.read'];
 type ExecutionRunStreamReadResult = PublicActionResultById['execution.run.stream.read'];
 
-const EXECUTION_RUN_EMPTY_PAGE_POLL_INTERVAL_MS = 25;
+const DEFAULT_STREAM_POLL_INTERVAL_MS = 250;
 
 export async function startExecutionRunStream(params: Readonly<{
   runId: string;
@@ -118,7 +118,7 @@ export async function startExecutionRunStream(params: Readonly<{
         events = page.events;
         terminal = page.done;
         if (!terminal && events.length === 0) {
-          await waitForPoll(EXECUTION_RUN_EMPTY_PAGE_POLL_INTERVAL_MS, signal);
+          await waitForPoll(DEFAULT_STREAM_POLL_INTERVAL_MS, signal);
         }
       } catch (error) {
         await cancel().catch(() => undefined);
@@ -254,7 +254,10 @@ export function createTranscriptIterable(params: Readonly<{
         { sessionId: params.sessionId },
         { signal },
       )),
-      waitForNextPoll: async () => waitForPoll(params.options?.pollIntervalMs ?? 250, signal),
+      waitForNextPoll: async () => waitForPoll(
+        params.options?.pollIntervalMs ?? DEFAULT_STREAM_POLL_INTERVAL_MS,
+        signal,
+      ),
       shouldContinue: () => !signal.aborted,
       onItems: async ({ items }) => {
         for (const item of items) emit(item);

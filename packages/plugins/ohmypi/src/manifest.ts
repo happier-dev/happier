@@ -97,11 +97,12 @@ export const OH_MY_PI_PLUGIN = definePlugin({
         catalog: {
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
-        connectedAccounts: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(({ purpose, service }) => ({
+        connectedAccounts: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(({ purpose, service, credentialKinds }) => ({
           purpose,
           service,
           required: false,
           materializationKinds: ['environment'] as const,
+          credentialKinds,
         })),
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           surfaces: ['externalSessions'],

@@ -23,7 +23,7 @@ describe('execution-run subscriptions', () => {
   it('serializes concurrent next calls through one cursor read', async () => {
     const firstPage = deferred<Readonly<{
       streamId: string;
-      events: readonly StreamEvent[];
+      events: StreamEvent[];
       nextCursor: number;
       done: boolean;
     }>>();
@@ -136,7 +136,7 @@ describe('execution-run subscriptions', () => {
   it('returns while concurrent next calls share one pending read', async () => {
     const page = deferred<Readonly<{
       streamId: string;
-      events: readonly StreamEvent[];
+      events: StreamEvent[];
       nextCursor: number;
       done: boolean;
     }>>();

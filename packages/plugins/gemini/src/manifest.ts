@@ -121,6 +121,7 @@ export const GEMINI_PLUGIN = definePlugin({
           service: 'gemini-account',
           required: false,
           materializationKinds: ['files', 'environment'],
+          credentialKinds: ['token'],
         }],
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           sessions: { open: ['create', 'resume'], delivery: ['newTurn', 'steer', 'followUp'], cancel: true },

@@ -32,7 +32,7 @@ test('composed typecheck reuses the governance build and checks only the test pr
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(
     packageJson.scripts['typecheck:local'],
-    'yarn -s check:api-governance && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json',
+    'yarn -s check:api-governance && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json && yarn -s test:external-consumer',
   );
 });
 

@@ -106,6 +106,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
           },
           required: false,
           materializationKinds: ['environment'],
+          credentialKinds: ['token'],
         }],
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           surfaces: ['externalSessions'],

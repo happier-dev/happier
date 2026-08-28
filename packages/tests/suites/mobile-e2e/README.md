@@ -159,8 +159,7 @@ New Session, observes the assistant transcript sentinel, and asserts the
 immutable attachment fallback after acceptance. It never opens or charges a
 human backend. Owner-level RN geometry tests remain the exact
 44pt/48dp measurement while the loaded row proves adjacent controls are
-independently tappable. The retained exploratory `lifecycle.yaml` receives no
-completion credit.
+independently tappable.
 
 VoiceOver/TalkBack cursor traversal, Dynamic Type/font scaling, a deliberate
 daemon process restart, and a real Account switch remain separate manual loaded

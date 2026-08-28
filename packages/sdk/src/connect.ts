@@ -241,7 +241,11 @@ function createClientLifecycle(): ClientLifecycle {
   };
 }
 
-function assertMachineBoundTarget(target: unknown, boundTarget: MachineActionTarget): void {
+function assertMachineBoundTarget(
+  target: unknown,
+  boundTarget: MachineActionTarget,
+  requestId?: string,
+): void {
   if (target === undefined) return;
   if (target !== null && typeof target === 'object') {
     const candidate = target as Readonly<{ kind?: unknown; machineId?: unknown }>;
@@ -252,6 +256,7 @@ function assertMachineBoundTarget(target: unknown, boundTarget: MachineActionTar
     {
       code: 'machine_target_conflict',
       details: { requestedTarget: target, boundTarget },
+      requestId,
     },
   );
 }
@@ -486,7 +491,7 @@ function createClient(
   });
   if (defaultTarget !== undefined) {
     const machineExecute: ActionExecute = async (actionId, input, options) => {
-      assertMachineBoundTarget(options?.target, defaultTarget);
+      assertMachineBoundTarget(options?.target, defaultTarget, options?.requestId);
       return await executeRequest(actionId, input, { ...(options ?? {}), target: defaultTarget });
     };
     const sessions = createMachineSessions({

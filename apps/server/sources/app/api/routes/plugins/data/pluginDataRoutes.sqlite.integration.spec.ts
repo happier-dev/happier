@@ -4525,6 +4525,109 @@ describe("plugin collection UI query route", () => {
         })).resolves.toBe(0);
     });
 
+    it("atomically swaps two live unique relation targets in one batch", async () => {
+        const accountId = "account-collection-unique-relation-swap";
+        const { projectRef, taskRef } = await seedReadyRelationCollectionAccount(accountId);
+        const headers = {
+            "content-type": "application/json",
+            "x-test-user-id": accountId,
+            ...V3_HEADERS,
+        };
+
+        await withPluginDataApp(async (app) => {
+            await expect(app.inject({
+                method: "POST",
+                url: "/v1/plugins/data/mutate",
+                headers,
+                payload: {
+                    pluginId: RELATION_COLLECTION_MANIFEST.id,
+                    collectionId: "projects",
+                    writerContext: {
+                        schemaVersion: projectRef.schemaVersion,
+                        contractDigest: projectRef.contractDigest,
+                    },
+                    operations: ["project-a", "project-b"].map((rowId) => ({
+                        kind: "put" as const,
+                        rowId,
+                        expectedRevision: "absent" as const,
+                        content: { t: "plain" as const, v: {} },
+                        projection: { id: rowId, title: `Project ${rowId}` },
+                    })),
+                },
+            })).resolves.toMatchObject({ statusCode: 200 });
+
+            await expect(app.inject({
+                method: "POST",
+                url: "/v1/plugins/data/mutate",
+                headers,
+                payload: {
+                    pluginId: RELATION_COLLECTION_MANIFEST.id,
+                    collectionId: "tasks",
+                    writerContext: {
+                        schemaVersion: taskRef.schemaVersion,
+                        contractDigest: taskRef.contractDigest,
+                    },
+                    operations: [
+                        {
+                            kind: "put",
+                            rowId: "task-a",
+                            expectedRevision: "absent",
+                            content: { t: "plain", v: {} },
+                            projection: { id: "task-a", title: "Task A", "project-id": "project-a" },
+                        },
+                        {
+                            kind: "put",
+                            rowId: "task-b",
+                            expectedRevision: "absent",
+                            content: { t: "plain", v: {} },
+                            projection: { id: "task-b", title: "Task B", "project-id": "project-b" },
+                        },
+                    ],
+                },
+            })).resolves.toMatchObject({ statusCode: 200 });
+
+            const swapped = await app.inject({
+                method: "POST",
+                url: "/v1/plugins/data/mutate",
+                headers,
+                payload: {
+                    pluginId: RELATION_COLLECTION_MANIFEST.id,
+                    collectionId: "tasks",
+                    writerContext: {
+                        schemaVersion: taskRef.schemaVersion,
+                        contractDigest: taskRef.contractDigest,
+                    },
+                    operations: [
+                        {
+                            kind: "put",
+                            rowId: "task-a",
+                            expectedRevision: 1,
+                            content: { t: "plain", v: {} },
+                            projection: { id: "task-a", title: "Task A", "project-id": "project-b" },
+                        },
+                        {
+                            kind: "put",
+                            rowId: "task-b",
+                            expectedRevision: 1,
+                            content: { t: "plain", v: {} },
+                            projection: { id: "task-b", title: "Task B", "project-id": "project-a" },
+                        },
+                    ],
+                },
+            });
+            expect(swapped.statusCode).toBe(200);
+        });
+
+        await expect(db.pluginCollectionRelation.findMany({
+            where: { accountId, sourceCollectionId: "tasks", deletedAt: null },
+            orderBy: { sourceRowId: "asc" },
+            select: { sourceRowId: true, targetRowId: true },
+        })).resolves.toEqual([
+            { sourceRowId: "task-a", targetRowId: "project-b" },
+            { sourceRowId: "task-b", targetRowId: "project-a" },
+        ]);
+    });
+
     it("nullifies an optional same-plugin relation through the dependent projection before deleting its target", async () => {
         const accountId = "account-collection-nullify-relation";
         const { projectRef, taskRef, taskIndexState } = await seedReadyNullifyRelationCollectionAccount(accountId);

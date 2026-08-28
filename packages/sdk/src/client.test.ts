@@ -352,7 +352,11 @@ describe('Happier SDK client', () => {
     await expect(machine.actions.execute('machines.list', {}, {
       // @ts-expect-error Runtime callers cannot redirect a machine-bound client either.
       target: otherMachine,
-    })).rejects.toMatchObject({ code: 'machine_target_conflict' });
+      requestId: 'conflicting-request',
+    })).rejects.toMatchObject({
+      code: 'machine_target_conflict',
+      requestId: 'conflicting-request',
+    });
     await expect(machine.actions.machines.list({}, {
       // @ts-expect-error Generated methods also reject an attempted runtime redirect.
       target: otherMachine,

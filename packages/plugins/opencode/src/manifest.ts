@@ -139,6 +139,7 @@ export const OPENCODE_PLUGIN = definePlugin({
             localId: 'claude-subscription',
           },
           materializationKinds: ['environment', 'httpHeaders'],
+          credentialKinds: ['oauth', 'token'],
         }, {
           purpose: OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
           service: {
@@ -146,6 +147,7 @@ export const OPENCODE_PLUGIN = definePlugin({
             localId: 'openai-codex',
           },
           materializationKinds: ['httpHeaders'],
+          credentialKinds: ['oauth'],
         }, {
           purpose: OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
           service: {
@@ -153,6 +155,7 @@ export const OPENCODE_PLUGIN = definePlugin({
             localId: 'openai',
           },
           materializationKinds: ['environment'],
+          credentialKinds: ['token'],
         }, {
           purpose: OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
           service: {
@@ -160,6 +163,7 @@ export const OPENCODE_PLUGIN = definePlugin({
             localId: 'anthropic',
           },
           materializationKinds: ['environment'],
+          credentialKinds: ['token'],
         }],
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           surfaces: ['externalSessions'],

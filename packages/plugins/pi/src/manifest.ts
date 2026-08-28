@@ -103,6 +103,7 @@ export const PI_PLUGIN = definePlugin({
           ...declaration,
           service: { ...declaration.service },
           materializationKinds: [...declaration.materializationKinds],
+          credentialKinds: [...declaration.credentialKinds],
         })),
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           surfaces: ['externalSessions'],

@@ -656,7 +656,7 @@ describe('current-source Plugin UI mobile QA row cleanup', () => {
 
 describe('current-source lifecycle ownership', () => {
   it('keeps granular split flows as the sole lifecycle owner: no competing monolith flow and no executable reference', () => {
-    const testsRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+    const testsRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
     const flowsDir = join(testsRoot, 'suites', 'mobile-e2e', 'flows', 'plugin-platform-current-source');
     const retiredMonolithFlow = 'lifecycle.yaml';
     // The retired exploratory monolith flow must not exist alongside the

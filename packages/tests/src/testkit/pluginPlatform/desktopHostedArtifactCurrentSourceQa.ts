@@ -12,7 +12,24 @@ import {
   attestCurrentManagedStackSourcePluginGeneration,
   resolveCurrentManagedStackPluginUiContext,
 } from './currentManagedStackPluginUiQa';
-import { runHostedArtifactPluginUiMcpQa } from '../../../../../apps/ui/scripts/qa/tauriHostedArtifactPluginUiMcpQa.mjs';
+import {
+  assertHostedArtifactNativeChildProofComplete,
+  runHostedArtifactPluginUiMcpQa,
+} from '../../../../../apps/ui/scripts/qa/tauriHostedArtifactPluginUiMcpQa.mjs';
+
+type DesktopHostedArtifactCurrentSourceQaDeps = Readonly<{
+  resolvePluginUiContext: typeof resolveCurrentManagedStackPluginUiContext;
+  attestPluginUi: typeof attestCurrentManagedStackPluginUi;
+  attestSourcePluginGeneration: typeof attestCurrentManagedStackSourcePluginGeneration;
+  runHostedArtifactPluginUiMcpQa: typeof runHostedArtifactPluginUiMcpQa;
+}>;
+
+const defaultDeps: DesktopHostedArtifactCurrentSourceQaDeps = {
+  resolvePluginUiContext: resolveCurrentManagedStackPluginUiContext,
+  attestPluginUi: attestCurrentManagedStackPluginUi,
+  attestSourcePluginGeneration: attestCurrentManagedStackSourcePluginGeneration,
+  runHostedArtifactPluginUiMcpQa,
+};
 
 function required(value: string | undefined, code: string): string {
   const normalized = value?.trim() ?? '';
@@ -22,6 +39,7 @@ function required(value: string | undefined, code: string): string {
 
 export async function runDesktopHostedArtifactCurrentSourceQa(
   env: NodeJS.ProcessEnv = process.env,
+  deps: DesktopHostedArtifactCurrentSourceQaDeps = defaultDeps,
 ): Promise<Readonly<{ artifactRoot: string }>> {
   const pluginRoot = resolve(required(
     env.HAPPIER_TAURI_HOSTED_PLUGIN_ROOT,
@@ -32,9 +50,9 @@ export async function runDesktopHostedArtifactCurrentSourceQa(
     env.HAPPIER_TAURI_HOSTED_ARTIFACT_ID,
     'desktop_hosted_artifact_id_missing',
   );
-  const context = await resolveCurrentManagedStackPluginUiContext({ env });
-  const runtimeAttestation = await attestCurrentManagedStackPluginUi({ context });
-  const generation = await attestCurrentManagedStackSourcePluginGeneration({ context, pluginId });
+  const context = await deps.resolvePluginUiContext({ env });
+  const runtimeAttestation = await deps.attestPluginUi({ context });
+  const generation = await deps.attestSourcePluginGeneration({ context, pluginId });
   const graph = PluginUiArtifactsManifestV1Schema.parse(JSON.parse(await readFile(
     resolve(pluginRoot, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'),
     'utf8',
@@ -57,7 +75,7 @@ export async function runDesktopHostedArtifactCurrentSourceQa(
     throw new Error(`desktop_hosted_artifact_source_graph_digest_mismatch:${artifact.digest}:${emittedDigest}`);
   }
 
-  const result = await runHostedArtifactPluginUiMcpQa({
+  const result = await deps.runHostedArtifactPluginUiMcpQa({
     env: {
       ...env,
       HAPPIER_STACK_TAURI_IDENTIFIER: `com.happier.stack.${context.stackName}`,
@@ -84,14 +102,34 @@ export async function runDesktopHostedArtifactCurrentSourceQa(
       sourcePluginGeneration: generation,
     }),
   });
+  assertHostedArtifactNativeChildProofComplete({
+    artifactRoot: result.artifactRoot,
+    proof: result.proof,
+  });
   return Object.freeze({ artifactRoot: result.artifactRoot });
 }
 
+export async function runDesktopHostedArtifactCurrentSourceCli(input: Readonly<{
+  env?: NodeJS.ProcessEnv;
+  deps?: DesktopHostedArtifactCurrentSourceQaDeps;
+  stdout?: NodeJS.WritableStream;
+  stderr?: NodeJS.WritableStream;
+}> = {}): Promise<number> {
+  const stdout = input.stdout ?? process.stdout;
+  const stderr = input.stderr ?? process.stderr;
+  try {
+    const { artifactRoot } = await runDesktopHostedArtifactCurrentSourceQa(
+      input.env ?? process.env,
+      input.deps ?? defaultDeps,
+    );
+    stdout.write(`${artifactRoot}\n`);
+    return 0;
+  } catch (error) {
+    stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runDesktopHostedArtifactCurrentSourceQa()
-    .then(({ artifactRoot }) => process.stdout.write(`${artifactRoot}\n`))
-    .catch((error) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exitCode = 1;
-    });
+  runDesktopHostedArtifactCurrentSourceCli().then((exitCode) => { process.exitCode = exitCode; });
 }

@@ -234,6 +234,7 @@ export const CODEX_PLUGIN = definePlugin({
           service: 'openai-codex',
           required: false,
           materializationKinds: ['files'],
+          credentialKinds: ['oauth'],
         }],
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           surfaces: ['externalSessions'],
