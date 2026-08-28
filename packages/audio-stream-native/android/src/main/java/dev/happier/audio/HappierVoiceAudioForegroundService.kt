@@ -23,29 +23,37 @@ internal class HappierVoiceAudioForegroundService : Service() {
       stopSelf()
       return START_NOT_STICKY
     }
-    ensureNotificationChannel()
-    val notificationBuilder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      Notification.Builder(this, CHANNEL_ID)
-    } else {
-      @Suppress("DEPRECATION")
-      Notification.Builder(this)
-    }
-    val notification = notificationBuilder
-      .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-      .setContentTitle(applicationInfo.loadLabel(packageManager))
-      .setContentText(getString(R.string.happier_voice_foreground_notification_text))
-      .setCategory(Notification.CATEGORY_SERVICE)
-      .setOngoing(true)
-      .build()
-    val foregroundServiceType = foregroundServiceTypeForSdk(Build.VERSION.SDK_INT)
-    if (foregroundServiceType != null) {
-      startForeground(
-        NOTIFICATION_ID,
-        notification,
-        foregroundServiceType,
-      )
-    } else {
-      startForeground(NOTIFICATION_ID, notification)
+    val requestId = intent.getStringExtra(EXTRA_START_REQUEST_ID)
+    try {
+      ensureNotificationChannel()
+      val notificationBuilder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        Notification.Builder(this, CHANNEL_ID)
+      } else {
+        @Suppress("DEPRECATION")
+        Notification.Builder(this)
+      }
+      val notification = notificationBuilder
+        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+        .setContentTitle(applicationInfo.loadLabel(packageManager))
+        .setContentText(getString(R.string.happier_voice_foreground_notification_text))
+        .setCategory(Notification.CATEGORY_SERVICE)
+        .setOngoing(true)
+        .build()
+      val foregroundServiceType = foregroundServiceTypeForSdk(Build.VERSION.SDK_INT)
+      if (foregroundServiceType != null) {
+        startForeground(
+          NOTIFICATION_ID,
+          notification,
+          foregroundServiceType,
+        )
+      } else {
+        startForeground(NOTIFICATION_ID, notification)
+      }
+      settleStart(requestId, Result.success(Unit))
+    } catch (error: Throwable) {
+      settleStart(requestId, Result.failure(error))
+      stopSelf(startId)
+      return START_NOT_STICKY
     }
     return START_NOT_STICKY
   }
@@ -67,18 +75,47 @@ internal class HappierVoiceAudioForegroundService : Service() {
   companion object {
     private const val CHANNEL_ID = "happier_voice_conversation"
     private const val NOTIFICATION_ID = 42017
+    private const val EXTRA_START_REQUEST_ID = "happier_voice_start_request_id"
+    private val startLock = Any()
+    private var pendingStart: Pair<String, (Result<Unit>) -> Unit>? = null
 
-    fun start(context: Context) {
+    fun start(context: Context, requestId: String, onStarted: (Result<Unit>) -> Unit) {
+      synchronized(startLock) {
+        check(pendingStart == null) { "foreground_service_start_pending" }
+        pendingStart = requestId to onStarted
+      }
       val intent = Intent(context, HappierVoiceAudioForegroundService::class.java)
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        context.startForegroundService(intent)
-      } else {
-        context.startService(intent)
+        .putExtra(EXTRA_START_REQUEST_ID, requestId)
+      try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          context.startForegroundService(intent)
+        } else {
+          context.startService(intent)
+        }
+      } catch (error: Throwable) {
+        settleStart(requestId, Result.failure(error))
+      }
+    }
+
+    fun cancelPendingStart(requestId: String) {
+      synchronized(startLock) {
+        if (pendingStart?.first == requestId) pendingStart = null
       }
     }
 
     fun stop(context: Context) {
       context.stopService(Intent(context, HappierVoiceAudioForegroundService::class.java))
+    }
+
+    private fun settleStart(requestId: String?, result: Result<Unit>) {
+      if (requestId == null) return
+      val callback = synchronized(startLock) {
+        val pending = pendingStart
+        if (pending?.first != requestId) return@synchronized null
+        pendingStart = null
+        pending.second
+      }
+      callback?.invoke(result)
     }
   }
 }

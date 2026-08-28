@@ -131,4 +131,13 @@ describe('native audio-session ownership', () => {
       /if \(output\) \{[\s\S]*?requestAudioFocus\(manager, generation\)[\s\S]*?\} else \{[\s\S]*?playbackFocus\.clear\(\)[\s\S]*?emitAudioSessionEvent\("focus_changed", mapOf\("state" to "not_required"\), generation\)/,
     );
   });
+
+  it('owns iOS file recording and encoded playback without another audio-session policy writer', () => {
+    const iosSource = readPackageFile('ios/HappierAudioStreamNativeModule.swift');
+
+    expect(iosSource).toContain('AVAudioRecorder(url: url');
+    expect(iosSource).toContain('AVAudioPlayer(contentsOf: url)');
+    expect(iosSource).toContain('AsyncFunction("startFileRecording")');
+    expect(iosSource).toContain('AsyncFunction("startEncodedAudioPlayback")');
+  });
 });

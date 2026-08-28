@@ -12,6 +12,11 @@ native `start`/`stop` methods independently.
 Raw native discovery and module types are package-internal through `src/internal.ts` and
 are intentionally absent from the package root.
 
+On iOS, `createVoiceFileRecording()` and `createVoiceEncodedAudioPlayback()` keep recorded
+turns and encoded TTS bytes inside this same native owner. They require an already-acquired
+shared audio-session lease and never configure or deactivate `AVAudioSession` themselves.
+Android and web continue to use their existing Expo/browser recording and playback paths.
+
 The native `start`/`stop` methods are implementation details behind the shared capture
 service. Native `start` fails closed unless the coordinator has configured the audio
 session; it never self-acquires a legacy dictation session.

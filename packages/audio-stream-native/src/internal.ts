@@ -3,10 +3,16 @@ export {
   getOptionalHappierAudioStreamNativeModule,
   HAPPIER_AUDIO_STREAM_NATIVE_MODULE_NAME,
   supportsVoiceAudioSessionCoordination,
+  supportsVoiceEncodedAudioPlayback,
+  supportsVoiceFileRecording,
   supportsVoicePcmPlayback,
 } from './HappierAudioStreamNative';
 export type {
   HappierAudioStreamNativeEventMap,
   HappierAudioStreamNativeModule,
   HappierAudioStreamNativePlaybackModule,
+  HappierAudioStreamNativeFileRecordingModule,
+  HappierAudioStreamNativeEncodedPlaybackModule,
+  VoiceEncodedAudioPlaybackEvent,
+  VoiceFileRecordingStopResult,
 } from './HappierAudioStreamNative.types';

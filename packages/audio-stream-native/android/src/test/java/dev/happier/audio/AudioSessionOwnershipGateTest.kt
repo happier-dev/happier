@@ -119,6 +119,22 @@ class AudioSessionOwnershipGateTest {
   }
 
   @Test
+  fun preferredAecActivationExceptionStartsCaptureWithDegradedCapabilities() {
+    val gate = AudioSessionOwnershipGate()
+    gate.markConfigured()
+    val admission = AudioCaptureStartAdmission(gate)
+
+    val result = admission.run(
+      aec = AudioCaptureAecRequest.PREFERRED,
+      startCapture = { "capture-started" },
+      activateAec = { throw IllegalStateException("vendor_audio_effect_failure") }
+    )
+
+    assertEquals("capture-started", result.capture)
+    assertFalse(result.aecActive)
+  }
+
+  @Test
   fun offDoesNotAttemptAecActivation() {
     val gate = AudioSessionOwnershipGate()
     gate.markConfigured()
@@ -154,6 +170,24 @@ class AudioSessionOwnershipGateTest {
     }
 
     assertEquals("aec_unavailable", error.message)
+  }
+
+  @Test
+  fun requiredAecActivationExceptionRemainsFailClosedWithCanonicalError() {
+    val gate = AudioSessionOwnershipGate()
+    gate.markConfigured()
+    val admission = AudioCaptureStartAdmission(gate)
+
+    val error = assertThrows(IllegalStateException::class.java) {
+      admission.run(
+        aec = AudioCaptureAecRequest.REQUIRED,
+        startCapture = { "capture-started" },
+        activateAec = { throw IllegalStateException("vendor_audio_effect_failure") }
+      )
+    }
+
+    assertEquals("aec_unavailable", error.message)
+    assertEquals("vendor_audio_effect_failure", error.cause?.message)
   }
 
   @Test

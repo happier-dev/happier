@@ -177,7 +177,22 @@ internal class AudioCaptureStartAdmission(
   ): AudioCaptureStartResult<T> {
     audioSessionOwnership.requireCaptureConfigured()
     val capture = startCapture()
-    val aecActive = if (aec == AudioCaptureAecRequest.OFF) false else activateAec()
+    val aecActive = when (aec) {
+      AudioCaptureAecRequest.OFF -> false
+      AudioCaptureAecRequest.PREFERRED -> try {
+        activateAec()
+      } catch (_: Throwable) {
+        // Preferred processing is a capability enhancement, not capture
+        // admission authority. Device/vendor AudioEffect failures must leave
+        // the already-started capture usable with truthful degraded state.
+        false
+      }
+      AudioCaptureAecRequest.REQUIRED -> try {
+        activateAec()
+      } catch (error: Throwable) {
+        throw IllegalStateException("aec_unavailable", error)
+      }
+    }
     if (aec == AudioCaptureAecRequest.REQUIRED && !aecActive) {
       throw IllegalStateException("aec_unavailable")
     }
@@ -202,6 +217,8 @@ class HappierAudioStreamNativeModule : Module() {
   private var audioManager: AudioManager? = null
   private var audioSessionGeneration: Int = 0
   private var foregroundServiceContext: Context? = null
+  private var foregroundServiceStartRequestId: String? = null
+  private var foregroundServiceStartGeneration: Int = 0
   private var voiceForegroundServiceActive = false
   private val audioSessionOwnership = AudioSessionOwnershipGate()
   private val captureStartAdmission = AudioCaptureStartAdmission(audioSessionOwnership)
@@ -372,25 +389,59 @@ class HappierAudioStreamNativeModule : Module() {
    * configuration. The foreground service provides Android background delivery;
    * it does not own conversation state, provider choice, or session teardown.
    */
-  private fun synchronizeVoiceForegroundService(context: Context, mode: String, input: Boolean) {
+  @Synchronized
+  private fun synchronizeVoiceForegroundService(context: Context, mode: String, input: Boolean, generation: Int) {
     if (requiresVoiceForegroundService(mode, input)) {
-      if (!voiceForegroundServiceActive) {
+      // A service start is aggregate process state. If the coordinator applies
+      // a newer generation while Android is still starting it, any failure
+      // belongs to that newest configuration rather than the retired request.
+      foregroundServiceStartGeneration = generation
+      if (!voiceForegroundServiceActive && foregroundServiceStartRequestId == null) {
         requireMicrophonePermission(context)
-        HappierVoiceAudioForegroundService.start(context)
-        voiceForegroundServiceActive = true
+        val requestId = UUID.randomUUID().toString()
+        foregroundServiceStartRequestId = requestId
         foregroundServiceContext = context
+        HappierVoiceAudioForegroundService.start(context, requestId) { result ->
+          synchronized(this@HappierAudioStreamNativeModule) {
+            if (foregroundServiceStartRequestId != requestId) return@synchronized
+            val settledGeneration = foregroundServiceStartGeneration
+            foregroundServiceStartRequestId = null
+            foregroundServiceStartGeneration = 0
+            if (result.isSuccess) {
+              voiceForegroundServiceActive = true
+            } else {
+              voiceForegroundServiceActive = false
+              foregroundServiceContext = null
+              // The aggregate session was admitted only provisionally. If
+              // Android cannot establish foreground microphone delivery,
+              // retire this exact audio graph instead of claiming background
+              // safety.
+              emitAudioSessionEvent(
+                "audio_graph_terminal",
+                mapOf("reason" to "configuration_unrecoverable"),
+                settledGeneration,
+              )
+            }
+          }
+        }
       }
       return
     }
     stopVoiceForegroundService()
   }
 
+  @Synchronized
   private fun stopVoiceForegroundService() {
-    if (voiceForegroundServiceActive) {
+    foregroundServiceStartRequestId?.let { requestId ->
+      HappierVoiceAudioForegroundService.cancelPendingStart(requestId)
+    }
+    if (voiceForegroundServiceActive || foregroundServiceStartRequestId != null) {
       foregroundServiceContext?.let { context ->
         HappierVoiceAudioForegroundService.stop(context)
       }
     }
+    foregroundServiceStartRequestId = null
+    foregroundServiceStartGeneration = 0
     voiceForegroundServiceActive = false
     foregroundServiceContext = null
   }
@@ -414,7 +465,7 @@ class HappierAudioStreamNativeModule : Module() {
     audioManager = manager
     audioSessionGeneration = generation
     audioSessionOwnership.markConfigured()
-    synchronizeVoiceForegroundService(context, mode, input)
+    synchronizeVoiceForegroundService(context, mode, input, generation)
     manager.mode = if (mode == "conversation") AudioManager.MODE_IN_COMMUNICATION else AudioManager.MODE_NORMAL
     if (output) {
       requestAudioFocus(manager, generation)
@@ -441,6 +492,49 @@ class HappierAudioStreamNativeModule : Module() {
       "aecActive" to false,
       "route" to routeName(manager)
     )
+  }
+
+  /**
+   * Android audio effects are vendor implementations and may throw while they
+   * are created or enabled. Keep each effect's resource custody local so a
+   * failed optional effect cannot leak or terminate an otherwise valid
+   * preferred capture. The admission owner above remains responsible for
+   * turning an AEC failure into a fail-closed result when AEC is required.
+   */
+  private fun activateCaptureAudioEffects(audioRecord: AudioRecord): Boolean {
+    val aec = try {
+      AcousticEchoCanceler.create(audioRecord.audioSessionId)?.let { effect ->
+        try {
+          effect.enabled = true
+          effect
+        } catch (error: Throwable) {
+          effect.release()
+          throw error
+        }
+      }
+    } catch (error: Throwable) {
+      activeAec = null
+      throw error
+    }
+    activeAec = aec
+
+    // Noise suppression is not part of the required-AEC admission contract.
+    // A broken implementation degrades only that optional enhancement.
+    activeNoiseSuppressor = try {
+      NoiseSuppressor.create(audioRecord.audioSessionId)?.let { effect ->
+        try {
+          effect.enabled = true
+          effect
+        } catch (_: Throwable) {
+          effect.release()
+          null
+        }
+      }
+    } catch (_: Throwable) {
+      null
+    }
+
+    return aec?.enabled == true
   }
 
   private fun restoreAudioSession(generation: Int) {
@@ -920,11 +1014,7 @@ class HappierAudioStreamNativeModule : Module() {
             stopSignal = captureStopSignal
             audioRecord.startRecording()
           },
-          activateAec = {
-            activeAec = AcousticEchoCanceler.create(audioRecord.audioSessionId)?.also { it.enabled = true }
-            activeNoiseSuppressor = NoiseSuppressor.create(audioRecord.audioSessionId)?.also { it.enabled = true }
-            activeAec?.enabled == true
-          },
+          activateAec = { activateCaptureAudioEffects(audioRecord) },
         ).aecActive
         emitAudioSessionEvent(
           "capabilities_changed",
@@ -1070,12 +1160,25 @@ class HappierAudioStreamNativeModule : Module() {
     }
     thread = null
 
-    activeAec?.release()
-    activeNoiseSuppressor?.release()
+    val aec = activeAec
+    val noiseSuppressor = activeNoiseSuppressor
     activeAec = null
     activeNoiseSuppressor = null
-
     activeStreamId = null
     activeCaptureGeneration = 0
+
+    // Vendor AudioEffect implementations are fallible even during release.
+    // Clear authority first, then dispose each effect independently so one
+    // broken release cannot leak the other or leave a stale capture identity.
+    try {
+      aec?.release()
+    } catch (_: Throwable) {
+      // Best-effort native resource release after authority is retired.
+    }
+    try {
+      noiseSuppressor?.release()
+    } catch (_: Throwable) {
+      // Best-effort native resource release after authority is retired.
+    }
   }
 }

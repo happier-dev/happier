@@ -3,6 +3,8 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 import type {
   HappierAudioStreamNativeModule,
   HappierAudioStreamNativePlaybackModule,
+  HappierAudioStreamNativeFileRecordingModule,
+  HappierAudioStreamNativeEncodedPlaybackModule,
 } from './HappierAudioStreamNative.types';
 import type {
   VoiceAudioSessionPlatform,
@@ -18,6 +20,24 @@ export function getOptionalHappierAudioStreamNativeModule(): HappierAudioStreamN
   } catch {
     return null;
   }
+}
+
+export function supportsVoiceFileRecording(
+  module: HappierAudioStreamNativeModule | null,
+): module is HappierAudioStreamNativeFileRecordingModule {
+  return supportsVoiceAudioSessionCoordination(module)
+    && typeof module.startFileRecording === 'function'
+    && typeof module.setFileRecordingMuted === 'function'
+    && typeof module.stopFileRecording === 'function';
+}
+
+export function supportsVoiceEncodedAudioPlayback(
+  module: HappierAudioStreamNativeModule | null,
+): module is HappierAudioStreamNativeEncodedPlaybackModule {
+  return supportsVoiceAudioSessionCoordination(module)
+    && typeof module.startEncodedAudioPlayback === 'function'
+    && typeof module.setEncodedAudioPlaybackPaused === 'function'
+    && typeof module.stopEncodedAudioPlayback === 'function';
 }
 
 export function supportsVoiceAudioSessionCoordination(

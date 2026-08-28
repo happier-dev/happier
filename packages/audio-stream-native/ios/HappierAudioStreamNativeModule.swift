@@ -416,9 +416,69 @@ private struct PreviousAudioSessionState {
   let preferredSampleRate: Double
 }
 
+private final class EncodedAudioPlaybackSession: NSObject, AVAudioPlayerDelegate {
+  let playbackId: String
+  private let player: AVAudioPlayer
+  private let emit: (_ status: String, _ reason: String?) -> Void
+
+  init(
+    playbackId: String,
+    url: URL,
+    emit: @escaping (_ status: String, _ reason: String?) -> Void
+  ) throws {
+    self.playbackId = playbackId
+    self.player = try AVAudioPlayer(contentsOf: url)
+    self.emit = emit
+    super.init()
+    self.player.delegate = self
+    guard self.player.prepareToPlay() else {
+      throw NSError(
+        domain: "HappierAudioStreamNative",
+        code: 401,
+        userInfo: [NSLocalizedDescriptionKey: "encoded_audio_prepare_failed"]
+      )
+    }
+  }
+
+  func start() throws {
+    guard player.play() else {
+      throw NSError(
+        domain: "HappierAudioStreamNative",
+        code: 402,
+        userInfo: [NSLocalizedDescriptionKey: "encoded_audio_start_failed"]
+      )
+    }
+    emit("started", nil)
+  }
+
+  func setPaused(_ paused: Bool) {
+    if paused {
+      player.pause()
+    } else if !player.isPlaying {
+      _ = player.play()
+    }
+  }
+
+  func stop() {
+    player.stop()
+    player.delegate = nil
+  }
+
+  func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    emit(flag ? "finished" : "failed", flag ? nil : "encoded_audio_decode_failed")
+  }
+
+  func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+    emit("failed", error?.localizedDescription ?? "encoded_audio_decode_failed")
+  }
+}
+
 public final class HappierAudioStreamNativeModule: Module {
   private let queue = DispatchQueue(label: "dev.happier.audioStream", qos: .userInitiated)
   private var active: AudioStreamSession? = nil
+  private var fileRecorder: AVAudioRecorder? = nil
+  private var fileRecordingId: String? = nil
+  private var encodedPlayback: EncodedAudioPlaybackSession? = nil
   private var audioSessionGeneration: Int = 0
   private var audioSessionConfigured = false
   private var captureAecRequest: AudioCaptureAecRequest = .off
@@ -617,6 +677,11 @@ public final class HappierAudioStreamNativeModule: Module {
     let wasConfigured = audioSessionConfigured
     active?.stop()
     active = nil
+    fileRecorder?.stop()
+    fileRecorder = nil
+    fileRecordingId = nil
+    encodedPlayback?.stop()
+    encodedPlayback = nil
     let session = AVAudioSession.sharedInstance()
     if let previous = previousAudioSessionState {
       try session.setCategory(previous.category, mode: previous.mode, options: previous.options)
@@ -643,6 +708,7 @@ public final class HappierAudioStreamNativeModule: Module {
       "playbackDrained",
       "playbackLevel",
       "playbackTerminal",
+      "encodedAudioPlayback",
       "voiceAudioSessionEvent"
     )
 
@@ -650,6 +716,11 @@ public final class HappierAudioStreamNativeModule: Module {
       self.queue.sync {
         self.active?.stop()
         self.active = nil
+        self.fileRecorder?.stop()
+        self.fileRecorder = nil
+        self.fileRecordingId = nil
+        self.encodedPlayback?.stop()
+        self.encodedPlayback = nil
         try? self.restoreAudioSession(self.audioSessionGeneration + 1)
       }
     }
@@ -661,6 +732,112 @@ public final class HappierAudioStreamNativeModule: Module {
     AsyncFunction("restoreAudioSession") { (params: [String: Any]) -> Void in
       let generation = (params["generation"] as? Int) ?? 0
       try self.queue.sync { try self.restoreAudioSession(generation) }
+    }
+
+    AsyncFunction("startFileRecording") { (params: [String: Any]) -> [String: String] in
+      return try self.queue.sync {
+        guard self.audioSessionConfigured else {
+          throw NSError(domain: "HappierAudioStreamNative", code: 403, userInfo: [NSLocalizedDescriptionKey: "audio_session_not_configured"])
+        }
+        guard self.fileRecorder == nil else {
+          throw NSError(domain: "HappierAudioStreamNative", code: 404, userInfo: [NSLocalizedDescriptionKey: "file_recording_already_active"])
+        }
+        guard (params["format"] as? String) == "m4a" else {
+          throw NSError(domain: "HappierAudioStreamNative", code: 405, userInfo: [NSLocalizedDescriptionKey: "unsupported_recording_format"])
+        }
+        let recordingId = UUID().uuidString
+        let url = FileManager.default.temporaryDirectory
+          .appendingPathComponent("happier-voice-\(recordingId)")
+          .appendingPathExtension("m4a")
+        let recorder = try AVAudioRecorder(url: url, settings: [
+          AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+          AVSampleRateKey: 44_100,
+          AVNumberOfChannelsKey: 2,
+          AVEncoderBitRateKey: 128_000,
+          AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+        ])
+        guard recorder.prepareToRecord(), recorder.record() else {
+          throw NSError(domain: "HappierAudioStreamNative", code: 406, userInfo: [NSLocalizedDescriptionKey: "file_recording_start_failed"])
+        }
+        self.fileRecorder = recorder
+        self.fileRecordingId = recordingId
+        return ["recordingId": recordingId]
+      }
+    }
+
+    AsyncFunction("setFileRecordingMuted") { (params: [String: Any]) -> Void in
+      let recordingId = (params["recordingId"] as? String) ?? ""
+      let muted = (params["muted"] as? Bool) ?? false
+      self.queue.sync {
+        guard recordingId == self.fileRecordingId, let recorder = self.fileRecorder else { return }
+        if muted { recorder.pause() } else { recorder.record() }
+      }
+    }
+
+    AsyncFunction("stopFileRecording") { (params: [String: Any]) -> [String: String] in
+      let recordingId = (params["recordingId"] as? String) ?? ""
+      return try self.queue.sync {
+        guard recordingId == self.fileRecordingId, let recorder = self.fileRecorder else {
+          throw NSError(domain: "HappierAudioStreamNative", code: 407, userInfo: [NSLocalizedDescriptionKey: "file_recording_not_active"])
+        }
+        self.fileRecorder = nil
+        self.fileRecordingId = nil
+        recorder.stop()
+        return ["uri": recorder.url.absoluteString]
+      }
+    }
+
+    AsyncFunction("startEncodedAudioPlayback") { (params: [String: Any]) -> Void in
+      let playbackId = (params["playbackId"] as? String) ?? ""
+      let uri = (params["uri"] as? String) ?? ""
+      try self.queue.sync {
+        guard self.audioSessionConfigured else {
+          throw NSError(domain: "HappierAudioStreamNative", code: 408, userInfo: [NSLocalizedDescriptionKey: "audio_session_not_configured"])
+        }
+        guard !playbackId.isEmpty, let url = URL(string: uri), url.isFileURL else {
+          throw NSError(domain: "HappierAudioStreamNative", code: 409, userInfo: [NSLocalizedDescriptionKey: "invalid_encoded_audio_uri"])
+        }
+        self.encodedPlayback?.stop()
+        let playback = try EncodedAudioPlaybackSession(
+          playbackId: playbackId,
+          url: url,
+          emit: { [weak self] status, reason in
+            self?.queue.async { [weak self] in
+              guard let self, self.encodedPlayback?.playbackId == playbackId else { return }
+              var event: [String: Any] = ["playbackId": playbackId, "status": status]
+              if let reason { event["reason"] = reason }
+              self.sendEvent("encodedAudioPlayback", event)
+              if status != "started" { self.encodedPlayback = nil }
+            }
+          }
+        )
+        self.encodedPlayback = playback
+        do {
+          try playback.start()
+        } catch {
+          playback.stop()
+          self.encodedPlayback = nil
+          throw error
+        }
+      }
+    }
+
+    AsyncFunction("setEncodedAudioPlaybackPaused") { (params: [String: Any]) -> Void in
+      let playbackId = (params["playbackId"] as? String) ?? ""
+      let paused = (params["paused"] as? Bool) ?? false
+      self.queue.sync {
+        guard self.encodedPlayback?.playbackId == playbackId else { return }
+        self.encodedPlayback?.setPaused(paused)
+      }
+    }
+
+    AsyncFunction("stopEncodedAudioPlayback") { (params: [String: Any]) -> Void in
+      let playbackId = (params["playbackId"] as? String) ?? ""
+      self.queue.sync {
+        guard self.encodedPlayback?.playbackId == playbackId else { return }
+        self.encodedPlayback?.stop()
+        self.encodedPlayback = nil
+      }
     }
 
     AsyncFunction("start") { (params: [String: Any]) -> [String: String] in

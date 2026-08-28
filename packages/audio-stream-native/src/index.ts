@@ -45,3 +45,8 @@ export {
   getSharedVoicePcmCapture,
   getSharedVoicePcmPlayback,
 } from './sharedVoicePcmCapture';
+
+export { createVoiceFileRecording } from './voiceFileRecording';
+export type { VoiceFileRecording } from './voiceFileRecording';
+export { createVoiceEncodedAudioPlayback } from './voiceEncodedAudioPlayback';
+export type { VoiceEncodedAudioPlayback } from './voiceEncodedAudioPlayback';

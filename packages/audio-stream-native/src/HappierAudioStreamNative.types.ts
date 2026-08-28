@@ -32,6 +32,16 @@ export type AudioStreamPlaybackTerminalEvent = Readonly<{
   reason: 'write_error' | 'player_error';
 }>;
 
+export type VoiceFileRecordingStopResult = Readonly<{
+  uri: string;
+}>;
+
+export type VoiceEncodedAudioPlaybackEvent = Readonly<{
+  playbackId: string;
+  status: 'started' | 'finished' | 'failed';
+  reason?: string;
+}>;
+
 import type {
   VoiceAudioSessionApplyRequest,
   VoiceAudioSessionApplyResult,
@@ -44,6 +54,7 @@ export type HappierAudioStreamNativeEventMap = Readonly<{
   playbackDrained: AudioStreamPlaybackDrainedEvent;
   playbackLevel: AudioStreamPlaybackLevelEvent;
   playbackTerminal: AudioStreamPlaybackTerminalEvent;
+  encodedAudioPlayback: VoiceEncodedAudioPlaybackEvent;
   voiceAudioSessionEvent: VoiceAudioSessionPlatformEvent;
 }>;
 
@@ -71,6 +82,14 @@ export type HappierAudioStreamNativeModule = Readonly<{
   getPlaybackCursorMs?: (params: { streamId: string; generation: number }) => number;
   configureAudioSession: (request: VoiceAudioSessionApplyRequest) => Promise<VoiceAudioSessionApplyResult>;
   restoreAudioSession: (request: Readonly<{ generation: number }>) => Promise<void>;
+  /** Optional while an older installed native module is paired with current JS. */
+  startFileRecording?: (params: Readonly<{ format: 'm4a' }>) => Promise<Readonly<{ recordingId: string }>>;
+  setFileRecordingMuted?: (params: Readonly<{ recordingId: string; muted: boolean }>) => Promise<void>;
+  stopFileRecording?: (params: Readonly<{ recordingId: string }>) => Promise<VoiceFileRecordingStopResult>;
+  /** Optional while an older installed native module is paired with current JS. */
+  startEncodedAudioPlayback?: (params: Readonly<{ playbackId: string; uri: string }>) => Promise<void>;
+  setEncodedAudioPlaybackPaused?: (params: Readonly<{ playbackId: string; paused: boolean }>) => Promise<void>;
+  stopEncodedAudioPlayback?: (params: Readonly<{ playbackId: string }>) => Promise<void>;
   addListener: <EventName extends keyof HappierAudioStreamNativeEventMap>(
     eventName: EventName,
     cb: (event: HappierAudioStreamNativeEventMap[EventName]) => void,
@@ -80,4 +99,14 @@ export type HappierAudioStreamNativeModule = Readonly<{
 export type HappierAudioStreamNativePlaybackModule = HappierAudioStreamNativeModule & Required<Pick<
   HappierAudioStreamNativeModule,
   'startPlayback' | 'enqueuePlayback' | 'clearPlayback' | 'stopPlayback' | 'setPlaybackGain' | 'getPlaybackCursorMs'
+>>;
+
+export type HappierAudioStreamNativeFileRecordingModule = HappierAudioStreamNativeModule & Required<Pick<
+  HappierAudioStreamNativeModule,
+  'startFileRecording' | 'setFileRecordingMuted' | 'stopFileRecording'
+>>;
+
+export type HappierAudioStreamNativeEncodedPlaybackModule = HappierAudioStreamNativeModule & Required<Pick<
+  HappierAudioStreamNativeModule,
+  'startEncodedAudioPlayback' | 'setEncodedAudioPlaybackPaused' | 'stopEncodedAudioPlayback'
 >>;
