@@ -660,7 +660,10 @@ describe("pendingMessageService", () => {
         expect(res.ok).toBe(true);
         expect(currentTx.sessionPendingMessage.update).toHaveBeenCalledWith(
             expect.objectContaining({
-                data: { content: { t: "plain", v: { type: "user", text: "hi" } }, messageRole: "user" },
+                data: expect.objectContaining({
+                    content: { t: "plain", v: { type: "user", text: "hi" } },
+                    messageRole: "user",
+                }),
             }),
         );
     });
@@ -687,10 +690,10 @@ describe("pendingMessageService", () => {
         expect(currentTx.sessionPendingMessage.update).toHaveBeenCalledWith(
             expect.objectContaining({
                 where: { sessionId_localId: { sessionId: "s1", localId: "p2" } },
-                data: {
+                data: expect.objectContaining({
                     content: { t: "plain", v: { type: "user", text: "edited middle row" } },
                     messageRole: "user",
-                },
+                }),
             }),
         );
         expect(currentTx.sessionPendingMessage.create).not.toHaveBeenCalled();

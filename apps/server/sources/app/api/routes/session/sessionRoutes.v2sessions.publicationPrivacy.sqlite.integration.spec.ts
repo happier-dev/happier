@@ -84,6 +84,7 @@ describe("v2 session list publication privacy (SQLite integration)", () => {
                     metadata: SHARED_METADATA,
                     ownerMetadata: PLAIN_OWNER_METADATA,
                     agentState: null,
+                    seq: 1,
                     currentStorageState: "snapshot_complete",
                     acceptedThroughServerSeq: 1,
                     materializationPublicationId: "publication-v1",
@@ -196,6 +197,7 @@ describe("v2 session list publication privacy (SQLite integration)", () => {
             materializationPublicationId?: string | null;
             materializedThroughSourceAt?: bigint | null;
             publishedThroughServerSeq?: number | null;
+            seq?: number;
         }>) => await db.session.create({
             data: {
                 tag: params.tag,
@@ -208,6 +210,7 @@ describe("v2 session list publication privacy (SQLite integration)", () => {
                 createdAt: new Date(params.createdAt),
                 meaningfulActivityAt: new Date(params.meaningfulActivityAt),
                 lastActiveAt: new Date(params.meaningfulActivityAt),
+                seq: params.seq ?? 0,
                 currentStorageState: params.currentStorageState,
                 acceptedThroughServerSeq: params.acceptedThroughServerSeq ?? null,
                 materializationPublicationId: params.materializationPublicationId ?? null,
@@ -229,6 +232,7 @@ describe("v2 session list publication privacy (SQLite integration)", () => {
                 createdAt: 4_500,
                 meaningfulActivityAt: 12_000,
                 currentStorageState: "snapshot_complete",
+                seq: 9,
                 acceptedThroughServerSeq: 9,
                 materializationPublicationId: "publication-five-state",
                 materializedThroughSourceAt: 4_000n,

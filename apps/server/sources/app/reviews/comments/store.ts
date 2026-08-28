@@ -23,7 +23,12 @@ import {
 } from "@/app/encryption/accountEncryptionTransition";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
-import { isPrismaErrorCode, isPrismaUniqueConstraintError, prismaRuntime as Prisma } from "@/storage/prisma";
+import {
+    getDbProviderFromEnv,
+    isPrismaErrorCode,
+    isPrismaUniqueConstraintError,
+    prismaRuntime as Prisma,
+} from "@/storage/prisma";
 import { ReviewCommentOperationError } from "./errors";
 import {
     bindReviewCommentEventSensitiveForStorage,
@@ -69,16 +74,21 @@ export type ReviewCommentStoreCreateResult = Readonly<{
 
 export type ReviewCommentStorePublicationClaimParams = Readonly<{
     accountId: string;
-    commentId: string;
+    entries: readonly Readonly<{
+        commentId: string;
+        serverRevision: number;
+        publicationCorrelationId: string;
+    }>[];
+    verdictPublicationCorrelationId: string | null;
     targetKey: string;
     target: ReviewCommentPublicationTargetV1;
-    publicationCorrelationId: string;
+    publicationPlanId: string;
     createdAt: number;
 }>;
 
 export type ReviewCommentStorePublicationClaimResult = Readonly<{
     claimed: boolean;
-    publicationCorrelationId: string;
+    publicationPlanId: string;
 }>;
 
 export interface ReviewCommentStore {
@@ -476,18 +486,43 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
             events.set(key, [...current, ReviewCommentEventV1Schema.parse(params.event)]);
         },
         async claimPublicationDispatch(params) {
-            const commentKey = `${params.accountId}:${params.commentId}`;
-            if (!comments.has(commentKey)) {
+            for (const expected of params.entries) {
+                const comment = comments.get(`${params.accountId}:${expected.commentId}`);
+                if (!comment) {
+                    throw new ReviewCommentOperationError(
+                        "review_comment_conflict",
+                        `Review comment changed before publication: ${expected.commentId}`,
+                    );
+                }
+                if (comment.serverRevision !== expected.serverRevision) {
+                    throw new ReviewCommentOperationError(
+                        "review_comment_conflict",
+                        `Review comment changed before publication: ${expected.commentId}`,
+                    );
+                }
+            }
+            const claimKeys = [
+                ...params.entries.map((entry) => `${params.accountId}:${entry.commentId}:${params.targetKey}`),
+                ...(params.verdictPublicationCorrelationId === null
+                    ? []
+                    : [`${params.accountId}:verdict:${params.verdictPublicationCorrelationId}`]),
+            ];
+            const existingPlanIds = new Set(claimKeys
+                .map((claimKey) => publicationClaims.get(claimKey))
+                .filter((value): value is string => typeof value === "string"));
+            if (existingPlanIds.size > 0) {
+                if (existingPlanIds.size === 1
+                    && existingPlanIds.has(params.publicationPlanId)
+                    && claimKeys.every((claimKey) => publicationClaims.has(claimKey))) {
+                    return { claimed: false, publicationPlanId: params.publicationPlanId };
+                }
                 throw new ReviewCommentOperationError(
-                    "review_comment_not_found",
-                    `Review comment not found: ${params.commentId}`,
+                    "review_comment_idempotency_conflict",
+                    "A review comment is already claimed by a different publication plan",
                 );
             }
-            const claimKey = `${commentKey}:${params.targetKey}`;
-            const existing = publicationClaims.get(claimKey);
-            if (existing) return { claimed: false, publicationCorrelationId: existing };
-            publicationClaims.set(claimKey, params.publicationCorrelationId);
-            return { claimed: true, publicationCorrelationId: params.publicationCorrelationId };
+            claimKeys.forEach((claimKey) => publicationClaims.set(claimKey, params.publicationPlanId));
+            return { claimed: true, publicationPlanId: params.publicationPlanId };
         },
     };
 }
@@ -769,34 +804,88 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
         },
         async claimPublicationDispatch(params) {
             try {
-                await db.$executeRaw(Prisma.sql`
-                    INSERT INTO review_comment_publication_correlations (
-                        publication_correlation_id, account_id, comment_id, target_key,
-                        target_json, created_at
-                    ) VALUES (
-                        ${params.publicationCorrelationId}, ${params.accountId}, ${params.commentId},
-                        ${params.targetKey}, ${stringifyJson(params.target)}, ${params.createdAt}
-                    )
-                `);
+                await inTx(async (tx) => {
+                    if (params.entries.length > 0) {
+                        const expectedRows = Prisma.join(params.entries.map((entry) => Prisma.sql`
+                            (id = ${entry.commentId} AND server_revision = ${entry.serverRevision})
+                        `), " OR ");
+                        const provider = getDbProviderFromEnv(process.env, "postgres");
+                        const lockClause = provider === "sqlite" ? Prisma.empty : Prisma.sql`FOR UPDATE`;
+                        const matched = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                            SELECT id
+                            FROM review_comments
+                            WHERE account_id = ${params.accountId}
+                                AND (${expectedRows})
+                            ${lockClause}
+                        `);
+                        if (matched.length !== params.entries.length) {
+                            throw new ReviewCommentOperationError(
+                                "review_comment_conflict",
+                                "One or more review comments changed before publication",
+                            );
+                        }
+                    }
+                    const storedClaim = stringifyJson({
+                        target: params.target,
+                        publicationPlanId: params.publicationPlanId,
+                    });
+                    const claimRows = Prisma.join([
+                        ...params.entries.map((entry) => Prisma.sql`
+                            (
+                                ${entry.publicationCorrelationId}, ${params.accountId}, ${entry.commentId},
+                                ${params.targetKey}, ${storedClaim}, ${params.createdAt}
+                            )
+                        `),
+                        ...(params.verdictPublicationCorrelationId === null
+                            ? []
+                            : [Prisma.sql`
+                                (
+                                    ${params.verdictPublicationCorrelationId}, ${params.accountId}, ${null},
+                                    ${params.targetKey}, ${storedClaim}, ${params.createdAt}
+                                )
+                            `]),
+                    ]);
+                    await tx.$executeRaw(Prisma.sql`
+                        INSERT INTO review_comment_publication_correlations (
+                            publication_correlation_id, account_id, comment_id, target_key,
+                            target_json, created_at
+                        ) VALUES ${claimRows}
+                    `);
+                });
                 return {
                     claimed: true,
-                    publicationCorrelationId: params.publicationCorrelationId,
+                    publicationPlanId: params.publicationPlanId,
                 };
             } catch (error) {
                 if (!isPrismaUniqueConstraintError(error)) throw error;
-                const rows = await db.$queryRaw<Array<{ publication_correlation_id: string }>>(Prisma.sql`
-                    SELECT publication_correlation_id
+                const expectedCorrelations = [
+                    ...params.entries.map((entry) => entry.publicationCorrelationId),
+                    ...(params.verdictPublicationCorrelationId === null ? [] : [params.verdictPublicationCorrelationId]),
+                ];
+                const rows = await db.$queryRaw<Array<{ target_json: string }>>(Prisma.sql`
+                    SELECT target_json
                     FROM review_comment_publication_correlations
                     WHERE account_id = ${params.accountId}
-                        AND comment_id = ${params.commentId}
-                        AND target_key = ${params.targetKey}
-                    LIMIT 1
+                        AND publication_correlation_id IN (${Prisma.join(expectedCorrelations)})
                 `);
-                const existing = rows[0];
-                if (!existing) throw error;
+                const existingPlanIds = new Set(rows.map((row) => {
+                    const stored = parseJson(row.target_json);
+                    return stored && typeof stored === "object" && !Array.isArray(stored)
+                        && typeof (stored as { publicationPlanId?: unknown }).publicationPlanId === "string"
+                        ? (stored as { publicationPlanId: string }).publicationPlanId
+                        : null;
+                }));
+                if (rows.length !== expectedCorrelations.length
+                    || existingPlanIds.size !== 1
+                    || !existingPlanIds.has(params.publicationPlanId)) {
+                    throw new ReviewCommentOperationError(
+                        "review_comment_idempotency_conflict",
+                        "A review comment is already claimed by a different publication plan",
+                    );
+                }
                 return {
                     claimed: false,
-                    publicationCorrelationId: existing.publication_correlation_id,
+                    publicationPlanId: params.publicationPlanId,
                 };
             }
         },

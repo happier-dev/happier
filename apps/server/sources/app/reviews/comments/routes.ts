@@ -620,24 +620,20 @@ export function registerReviewCommentRoutes(app: Fastify, options: ReviewComment
         }
     });
 
-    app.post("/v1/reviews/comments/:commentId/publication/claim", {
+    app.post("/v1/reviews/comments/publication/claim", {
         preHandler: app.authenticate,
     }, async (request, reply) => {
         try {
-            const params = request.params as { commentId: string };
             const principal = await resolvePrincipal(withPrincipalRouteBinding(
                 request,
                 "POST",
-                `/v1/reviews/comments/${encodeReviewCommentPathSegment(params.commentId)}/publication/claim`,
+                "/v1/reviews/comments/publication/claim",
             ));
             return await operations.claimPublicationDispatch({
                 ...principal,
                 input: parseReviewCommentRouteInput(
                     ReviewCommentClaimPublicationDispatchRequestV1Schema,
-                    {
-                        commentId: params.commentId,
-                        ...(request.body as Record<string, unknown>),
-                    },
+                    request.body,
                     "review_comment_invalid_request",
                 ),
             });

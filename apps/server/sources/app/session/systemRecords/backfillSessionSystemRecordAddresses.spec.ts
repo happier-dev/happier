@@ -42,16 +42,22 @@ describe("auditSessionSystemRecordAddressesPage", () => {
 
 describe("backfillSessionSystemRecordAddressesPage", () => {
     it.each([
-        ["postgres", '"SessionSystemRecord"', '"ownerKind"'],
-        ["mysql", "`SessionSystemRecord`", "`ownerKind`"],
+        ["postgres", '"SessionSystemRecord"', '"ownerKind"', "$1", "$2"],
+        ["pglite", '"SessionSystemRecord"', '"ownerKind"', "$1", "$2"],
+        ["sqlite", '"SessionSystemRecord"', '"ownerKind"', "?", "?"],
+        ["mysql", "`SessionSystemRecord`", "`ownerKind`", "?", "?"],
     ] as const)("uses parameterized %s SQL with provider-correct identifiers", async (
         provider,
         expectedTable,
         expectedOwnerKind,
+        expectedAfterPlaceholder,
+        expectedLimitPlaceholder,
     ) => {
-        let capturedQuery: unknown;
-        const queryRaw = vi.fn(async (query: unknown) => {
+        let capturedQuery: string | undefined;
+        let capturedValues: readonly unknown[] | undefined;
+        const queryRawUnsafe = vi.fn(async (query: string, ...values: readonly unknown[]) => {
             capturedQuery = query;
+            capturedValues = values;
             return [{
                 id: "record-one",
                 namespace: "memory",
@@ -61,7 +67,7 @@ describe("backfillSessionSystemRecordAddressesPage", () => {
         const updateMany = vi.fn(async () => ({ count: 1 }));
         // Prisma is the system boundary; this fixture records the generated statement and result write.
         const db = {
-            $queryRaw: queryRaw,
+            $queryRawUnsafe: queryRawUnsafe,
             sessionSystemRecord: { updateMany },
         } as unknown as Parameters<typeof backfillSessionSystemRecordAddressesPage>[0]["db"];
 
@@ -76,18 +82,39 @@ describe("backfillSessionSystemRecordAddressesPage", () => {
             nextAfterId: null,
         });
 
-        const statement = capturedQuery as Readonly<{
-            sql: string;
-            values: readonly unknown[];
-        }>;
-        const sql = statement.sql;
+        const sql = capturedQuery ?? "";
         expect(sql).toContain(`FROM ${expectedTable}`);
         expect(sql).toContain(`${expectedOwnerKind} IS NULL`);
+        expect(sql).toContain(`AND ${provider === "mysql" ? "`id`" : '"id"'} > ${expectedAfterPlaceholder}`);
+        expect(sql).toContain(`LIMIT ${expectedLimitPlaceholder}`);
         expect(sql).not.toContain("record-zero");
         expect(sql).not.toContain("LIMIT 25");
-        expect(statement.values).toEqual(["record-zero", 25]);
+        expect(capturedValues).toEqual(["record-zero", 25]);
         expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: { id: "record-one" },
         }));
+    });
+
+    it("numbers the PostgreSQL limit placeholder from the first bound value when no cursor exists", async () => {
+        const queryRawUnsafe = vi.fn(async () => []);
+        const db = {
+            $queryRawUnsafe: queryRawUnsafe,
+            sessionSystemRecord: { updateMany: vi.fn() },
+        } as unknown as Parameters<typeof backfillSessionSystemRecordAddressesPage>[0]["db"];
+
+        await expect(backfillSessionSystemRecordAddressesPage({
+            db,
+            provider: "postgres",
+            limit: 25,
+        })).resolves.toEqual({
+            processed: 0,
+            updated: 0,
+            nextAfterId: null,
+        });
+
+        expect(queryRawUnsafe).toHaveBeenCalledWith(
+            expect.stringContaining("LIMIT $1"),
+            25,
+        );
     });
 });

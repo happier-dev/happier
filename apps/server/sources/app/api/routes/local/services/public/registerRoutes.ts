@@ -439,7 +439,7 @@ async function readOptionalBearerUserId(request: RouteRequest): Promise<string |
     }
     try {
         const verified = await auth.verifyToken(authorization.slice("Bearer ".length));
-        return verified?.userId ?? null;
+        return verified?.authTokenKind === "api_token" ? null : verified?.userId ?? null;
     } catch {
         return null;
     }

@@ -83,6 +83,22 @@ vi.mock("@/storage/inTx", () => ({
     inTx: async <T>(fn: (tx: SessionWriteTxMock) => T | Promise<T>) => await fn(transactionQueue.shift() ?? currentTx),
 }));
 
+const acquireAccountEncryptionTransitionFenceInTx = vi.fn<
+    (...args: unknown[]) => Promise<{ status: "ready" }>
+>();
+vi.mock("@/app/encryption/accountEncryptionTransition", () => ({
+    acquireAccountEncryptionTransitionFenceInTx: (...args: unknown[]) =>
+        acquireAccountEncryptionTransitionFenceInTx(...args),
+}));
+
+const admitCompletedParentTurnAutomationRunsTx = vi.fn<
+    (...args: unknown[]) => Promise<readonly unknown[]>
+>();
+vi.mock("@/app/automations/automationSessionLifecycleAdmission", () => ({
+    admitCompletedParentTurnAutomationRunsTx: (...args: unknown[]) =>
+        admitCompletedParentTurnAutomationRunsTx(...args),
+}));
+
 const getSessionParticipantUserIds = vi.fn<(...args: unknown[]) => Promise<string[]>>();
 vi.mock("@/app/share/sessionParticipants", () => ({
     getSessionParticipantUserIds: (...args: unknown[]) => getSessionParticipantUserIds(...args),
@@ -149,6 +165,10 @@ describe("sessionWriteService", () => {
         markAccountChanged.mockReset();
         observeCreateSessionMessageStage.mockReset();
         sessionMessageRoleMismatchCounter.inc.mockReset();
+        acquireAccountEncryptionTransitionFenceInTx.mockReset();
+        acquireAccountEncryptionTransitionFenceInTx.mockResolvedValue({ status: "ready" });
+        admitCompletedParentTurnAutomationRunsTx.mockReset();
+        admitCompletedParentTurnAutomationRunsTx.mockResolvedValue([]);
         dbMocks.reset();
         storagePolicyEnv.restore();
         transactionQueue = [];
@@ -159,7 +179,7 @@ describe("sessionWriteService", () => {
             },
             session: {
                 findUnique: vi.fn(),
-                findFirst: vi.fn().mockResolvedValue({ id: "s1" }),
+                findFirst: vi.fn().mockResolvedValue({ id: "s1", accountId: "u1" }),
                 update: vi.fn(),
                 updateMany: vi.fn(),
             },
@@ -4859,6 +4879,21 @@ describe("sessionWriteService", () => {
                     thinkingAt: new Date(200),
                 }),
             });
+            expect(admitCompletedParentTurnAutomationRunsTx).toHaveBeenCalledTimes(1);
+            expect(admitCompletedParentTurnAutomationRunsTx).toHaveBeenCalledWith({
+                tx: currentTx,
+                accountId: "u1",
+                sourceSessionId: "s1",
+                sourceTurnId: "turn-1",
+                occurredAt: 200,
+            });
+            expect(acquireAccountEncryptionTransitionFenceInTx).toHaveBeenCalledWith(
+                currentTx,
+                "u1",
+            );
+            expect(
+                acquireAccountEncryptionTransitionFenceInTx.mock.invocationCallOrder[0]!,
+            ).toBeLessThan(currentTx.sessionTurn.update.mock.invocationCallOrder[0]!);
         });
 
         it("does not let stale in-progress evidence overwrite a terminal turn", async () => {

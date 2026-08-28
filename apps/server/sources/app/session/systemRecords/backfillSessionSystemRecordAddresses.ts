@@ -7,13 +7,12 @@ import {
 import { deriveSessionSystemRecordAddressKeys } from "./sessionSystemRecordAddressKeys";
 import {
     getDbProviderFromEnv,
-    prismaRuntime,
     type DbProvider,
 } from "@/storage/prisma";
 
 export const SESSION_SYSTEM_RECORD_BACKFILL_PAGE_MAX = 500;
 
-type BackfillClient = Pick<Prisma.TransactionClient, "sessionSystemRecord" | "$queryRaw">;
+type BackfillClient = Pick<Prisma.TransactionClient, "sessionSystemRecord" | "$queryRawUnsafe">;
 type SessionSystemRecordAuditClient = Pick<Prisma.TransactionClient, "sessionSystemRecord">;
 
 type ExpandedAddressRow = Readonly<{
@@ -22,39 +21,36 @@ type ExpandedAddressRow = Readonly<{
     localId: string;
 }>;
 
-function quotedIdentifier(provider: DbProvider, identifier: string): Prisma.Sql {
-    const quote = provider === "mysql" ? "`" : '"';
-    return prismaRuntime.raw(`${quote}${identifier}${quote}`);
-}
-
 async function readExpandedAddressRows(params: Readonly<{
     db: BackfillClient;
     provider: DbProvider;
     afterId?: string;
     limit: number;
 }>): Promise<readonly ExpandedAddressRow[]> {
-    const table = quotedIdentifier(params.provider, "SessionSystemRecord");
-    const id = quotedIdentifier(params.provider, "id");
-    const namespace = quotedIdentifier(params.provider, "namespace");
-    const localId = quotedIdentifier(params.provider, "localId");
-    const ownerKind = quotedIdentifier(params.provider, "ownerKind");
-    const namespaceAddressKey = quotedIdentifier(params.provider, "namespaceAddressKey");
-    const recordAddressKey = quotedIdentifier(params.provider, "recordAddressKey");
-    const after = params.afterId === undefined
-        ? prismaRuntime.empty
-        : prismaRuntime.sql`AND ${id} > ${params.afterId}`;
-    return await params.db.$queryRaw<ExpandedAddressRow[]>(prismaRuntime.sql`
-        SELECT ${id}, ${namespace}, ${localId}
-        FROM ${table}
+    const quote = params.provider === "mysql" ? "`" : '"';
+    const bind = params.provider === "postgres" || params.provider === "pglite"
+        ? (index: number) => `$${index}`
+        : () => "?";
+    const afterClause = params.afterId === undefined
+        ? ""
+        : `AND ${quote}id${quote} > ${bind(1)}`;
+    const values = params.afterId === undefined
+        ? [params.limit]
+        : [params.afterId, params.limit];
+    const limitPlaceholder = bind(values.length);
+    const query = `
+        SELECT ${quote}id${quote}, ${quote}namespace${quote}, ${quote}localId${quote}
+        FROM ${quote}SessionSystemRecord${quote}
         WHERE (
-            ${ownerKind} IS NULL
-            OR ${namespaceAddressKey} IS NULL
-            OR ${recordAddressKey} IS NULL
+            ${quote}ownerKind${quote} IS NULL
+            OR ${quote}namespaceAddressKey${quote} IS NULL
+            OR ${quote}recordAddressKey${quote} IS NULL
         )
-        ${after}
-        ORDER BY ${id} ASC
-        LIMIT ${params.limit}
-    `);
+        ${afterClause}
+        ORDER BY ${quote}id${quote} ASC
+        LIMIT ${limitPlaceholder}
+    `;
+    return await params.db.$queryRawUnsafe<ExpandedAddressRow[]>(query, ...values);
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {

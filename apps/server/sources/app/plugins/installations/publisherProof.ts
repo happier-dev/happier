@@ -81,17 +81,24 @@ function createPublisherBodyHash(body: unknown): string {
         .digest("base64url");
 }
 
-function assertPublisherProofFresh(proof: PluginInstallationManifestPublisherHeaderV1["proof"]): void {
-    const now = Date.now();
+export function resolvePluginInstallationPublisherProofExpiresAt(
+    proof: PluginInstallationManifestPublisherHeaderV1["proof"],
+): Date {
     const maxAgeMs = readPositiveIntegerEnv(
         "HAPPIER_PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_PROOF_MAX_AGE_MS",
         DEFAULT_PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_PROOF_MAX_AGE_MS,
     );
+    return new Date(proof.issuedAt + maxAgeMs);
+}
+
+function assertPublisherProofFresh(proof: PluginInstallationManifestPublisherHeaderV1["proof"]): void {
+    const now = Date.now();
+    const expiresAt = resolvePluginInstallationPublisherProofExpiresAt(proof);
     const clockSkewMs = readPositiveIntegerEnv(
         "HAPPIER_PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_PROOF_CLOCK_SKEW_MS",
         DEFAULT_PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_PROOF_CLOCK_SKEW_MS,
     );
-    if (proof.issuedAt > now + clockSkewMs || now - proof.issuedAt > maxAgeMs) {
+    if (proof.issuedAt > now + clockSkewMs || now > expiresAt.getTime()) {
         throw new PluginInstallationPublisherProofError(
             "expired",
             "Plugin installation publisher proof is expired",

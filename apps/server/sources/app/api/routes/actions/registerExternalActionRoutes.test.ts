@@ -24,11 +24,13 @@ function dispatchedResponse(response: unknown) {
 function createApp(params: Readonly<{
     dispatch?: RegisterExternalActionRoutesDependencies["dispatch"];
     withGlobalCors?: boolean;
+    beforeRegister?: (app: ReturnType<typeof createAuthenticatedTestApp>) => void;
 }> = {}) {
     const app = createAuthenticatedTestApp();
     if (params.withGlobalCors) {
         app.register(import("@fastify/cors"), { origin: "*" });
     }
+    params.beforeRegister?.(app);
     registerExternalActionRoutes(app, {
         dispatch: params.dispatch ?? vi.fn(async (request) => dispatchedResponse({
             v: 1 as const,
@@ -291,6 +293,44 @@ describe("registerExternalActionRoutes", () => {
             expect(signedAccountResponse.json()).toEqual({ error: "invalid_token" });
             expect(daemonTokenResponse.statusCode).toBe(401);
             expect(daemonTokenResponse.json()).toEqual({ error: "invalid_token" });
+            expect(dispatch).not.toHaveBeenCalled();
+        } finally {
+            await app.close();
+        }
+    });
+
+    it("rejects missing authentication before the JSON parser or placement relay", async () => {
+        const dispatch = vi.fn();
+        const parse = vi.fn();
+        const app = createApp({
+            dispatch,
+            beforeRegister: (instance) => {
+                instance.removeContentTypeParser("application/json");
+                instance.addContentTypeParser(
+                    "application/json",
+                    { parseAs: "string" },
+                    (
+                        _request: unknown,
+                        body: string,
+                        done: (error: Error | null, value?: unknown) => void,
+                    ) => {
+                        parse();
+                        done(null, { received: body });
+                    },
+                );
+            },
+        });
+        await app.ready();
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/actions/session.spawn_new",
+                headers: { "content-type": "application/json" },
+                payload: "{not-json",
+            });
+
+            expect(response.statusCode).toBe(401);
+            expect(parse).not.toHaveBeenCalled();
             expect(dispatch).not.toHaveBeenCalled();
         } finally {
             await app.close();

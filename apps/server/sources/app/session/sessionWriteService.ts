@@ -82,11 +82,14 @@ import {
 } from "./sessionTranscriptPublicationPolicy";
 import { resolveMessageAttentionImpact } from "./messageAttentionImpact";
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
+import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import {
     parsePersistedSessionOwnerMetadataEnvelopeV1,
 } from "@/app/session/metadata/sessionOwnerMetadataPersistence";
+import { admitCompletedParentTurnAutomationRunsTx } from "@/app/automations/automationSessionLifecycleAdmission";
+import { rejoinAutomationOccurrenceInsertRace } from "@/app/automations/automationOccurrencePersistence";
 
 export {
     writeHistoricalSessionMessageBatch,
@@ -3119,7 +3122,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                 id: params.turnMutation.sessionId,
                 currentStorageState: "hosted",
             },
-            select: { id: true },
+            select: { id: true, accountId: true },
         });
         if (!writeAuthority) {
             return {
@@ -3145,6 +3148,21 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                 state,
                 receipt: storedSessionTurnMutationReceipt({ row: existingReceipt, mutation: params.turnMutation }),
             });
+        }
+
+        // Completion is also the canonical exact-turn Automation admission
+        // transaction. Take the existing Account transition fence before a
+        // new mutation receipt or SessionTurn can be changed so a non-current
+        // Account cannot commit the turn without its eligible Run. A committed
+        // mutation receipt remains independently replayable above.
+        if (params.turnMutation.action === "complete") {
+            const accountFence = await acquireAccountEncryptionTransitionFenceInTx(
+                tx,
+                writeAuthority.accountId,
+            );
+            if (accountFence.status !== "ready") {
+                return { ok: false, error: "internal" };
+            }
         }
 
         const reservationResult = await createSessionTurnMutationReceipt(tx, params.turnMutation, "stale-in-progress");
@@ -3404,6 +3422,16 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             }) as SessionTurnApplicationRow;
         }
 
+        if (currentTurn?.status === "in_progress" && appliedTurn.status === "completed") {
+            await admitCompletedParentTurnAutomationRunsTx({
+                tx,
+                accountId: writeAuthority.accountId,
+                sourceSessionId: params.turnMutation.sessionId,
+                sourceTurnId: targetTurnId,
+                occurredAt: params.turnMutation.observedAt,
+            });
+        }
+
         const nextLatestTurnId = params.turnMutation.action === "begin" ? targetTurnId : session.latestTurnId ?? targetTurnId;
         const shouldMaterialize = nextLatestTurnId === targetTurnId
             && (params.turnMutation.action === "begin" || params.turnMutation.action === "touch_active" || terminalStatus !== null);
@@ -3464,11 +3492,16 @@ async function applySessionTurnMutationWithOwnerAccess(params: {
     actorUserId: string;
     turnMutation: SessionTurnMutationV1;
 }): Promise<ApplySessionTurnMutationResult> {
-    return await inTx(async (tx) => await applySessionTurnMutationWithOwnerAccessInTx({
-        tx,
-        ...params,
-        markParticipants: true,
-    }));
+    const operation = async () => await inTx(
+        async (tx) => await applySessionTurnMutationWithOwnerAccessInTx({
+            tx,
+            ...params,
+            markParticipants: true,
+        }),
+    );
+    return params.turnMutation.action === "complete"
+        ? await rejoinAutomationOccurrenceInsertRace(operation)
+        : await operation();
 }
 
 export async function applyLatestSessionTurnEndInTx(params: Readonly<{

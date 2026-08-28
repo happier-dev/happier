@@ -72,7 +72,7 @@ async function getOptionalAuthenticatedUserId(request: any): Promise<string | nu
     try {
         const token = authHeader.substring(7);
         const verified = await auth.verifyToken(token);
-        return verified?.userId ?? null;
+        return verified?.authTokenKind === "api_token" ? null : verified?.userId ?? null;
     } catch {
         return null;
     }

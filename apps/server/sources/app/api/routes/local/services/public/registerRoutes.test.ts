@@ -1070,6 +1070,71 @@ describe("local service public exposure routes", () => {
         expect(app.authenticate).not.toHaveBeenCalled();
     });
 
+    it("does not treat an API token as authenticated on public preview HTTP or WebSocket data planes", async () => {
+        const mod = await loadPublicRoutesModule();
+        expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
+        if (!mod?.registerLocalServicePublicRoutes) return;
+
+        const verifyToken = vi.spyOn(auth, "verifyToken").mockResolvedValue({
+            userId: "user_1",
+            authTokenKind: "api_token",
+            authority: "account_automation",
+            apiTokenPrincipal: {
+                accountId: "user_1",
+                principalId: "user_1",
+                credentialId: "pat_1",
+                authority: "account_automation",
+                expiresAt: null,
+            },
+        });
+        const app = createUpgradeRouteApp();
+        const validateAccess = vi.fn(() => ({ ok: true as const, preview }));
+        const authorizeSessionAccess = allowSessionAccess();
+        mod.registerLocalServicePublicRoutes(app as never, {
+            resolvePreview: vi.fn(() => preview),
+            resolveExposure: vi.fn(() => exposure),
+            createExposure: vi.fn(() => ({ ok: true as const, exposure })),
+            revokeExposure: vi.fn(() => ({ ok: true as const })),
+            validateAccess,
+            authorizeSessionAccess,
+            proxyHttp: vi.fn(async () => ({ ok: true as const })),
+            proxyWebSocket: vi.fn(async () => ({ ok: true as const })),
+        });
+
+        try {
+            const handler = getRouteHandler(app, "GET", "/v1/local-services/public/:exposureId/*");
+            await handler({
+                params: { exposureId: "public_preview_1", "*": "" },
+                query: {},
+                headers: { authorization: "Bearer hap_v1_test" },
+                method: "GET",
+            }, createReplyStub());
+
+            await app.upgradeHandlers[0]?.({
+                url: "/v1/local-services/public/public_preview_1/socket",
+                headers: {
+                    host: "preview.happier.test",
+                    upgrade: "websocket",
+                    connection: "Upgrade",
+                    authorization: "Bearer hap_v1_test",
+                },
+                rawHeaders: [],
+            }, createUpgradeSocket(), new Uint8Array());
+        } finally {
+            verifyToken.mockRestore();
+        }
+
+        expect(validateAccess).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            authenticated: false,
+            sessionAuthorized: false,
+        }));
+        expect(validateAccess).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            authenticated: false,
+            sessionAuthorized: false,
+        }));
+        expect(authorizeSessionAccess).not.toHaveBeenCalled();
+    });
+
     it("routes exchanged-cookie public WebSocket upgrades through the shared preview adapter", async () => {
         const mod = await loadPublicRoutesModule();
         expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");

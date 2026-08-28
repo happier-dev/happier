@@ -89,9 +89,9 @@ function directWriteCreate(input: ReviewCommentCreateRequestV1) {
 }
 
 describe("review comment operations", () => {
-    it("allows only one provider dispatch for simultaneous publication requests of one review comment target", async () => {
+    it("allows only one provider dispatch for simultaneous publication requests of one frozen review plan", async () => {
         const { operations } = createHarness();
-        const created = await operations.create({
+        const firstComment = await operations.create({
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" },
             grants: [],
@@ -104,11 +104,23 @@ describe("review comment operations", () => {
                 clientMutationId: "mutation-publication-comment",
             },
         });
+        const secondComment = await operations.create({
+            accountId: "account-1",
+            actor: { kind: "user", userId: "user-1" },
+            grants: [],
+            input: {
+                projectId: "project-1",
+                anchor: { kind: "range", filePath: "src/example.ts", startLine: 8, endLine: 10 },
+                snapshot: textSnapshot(["if (!value) return null;"]),
+                body: "Preserve the explicit failure instead.",
+                authorIntent: "open",
+                clientMutationId: "mutation-publication-comment-2",
+            },
+        });
         const request = {
             accountId: "account-1",
             actor: { kind: "user", userId: "user-1" } as const,
             input: {
-                commentId: created.comment.id,
                 target: {
                     providerId: "github",
                     configuredAccountId: "github-account-1",
@@ -118,7 +130,27 @@ describe("review comment operations", () => {
                         collisionScope: "github:repository-1",
                         entryId: "42",
                     },
+                    subtarget: null,
                 },
+                baseRevision: "base-1",
+                headRevision: "head-1",
+                entries: [
+                    {
+                        happierCommentId: firstComment.comment.id,
+                        expectedServerRevision: firstComment.comment.serverRevision,
+                        anchor: { kind: "line" as const, filePath: "src/example.ts", line: 3 },
+                        snapshot: textSnapshot(["return value.name;"]),
+                        body: "Null-check this value.",
+                    },
+                    {
+                        happierCommentId: secondComment.comment.id,
+                        expectedServerRevision: secondComment.comment.serverRevision,
+                        anchor: { kind: "range" as const, filePath: "src/example.ts", startLine: 8, endLine: 10 },
+                        snapshot: textSnapshot(["if (!value) return null;"]),
+                        body: "Preserve the explicit failure instead.",
+                    },
+                ],
+                verdict: { kind: "requestChanges", body: "Please address both findings." },
             },
         };
 
@@ -128,9 +160,123 @@ describe("review comment operations", () => {
         ]);
 
         expect([first.disposition, second.disposition].sort()).toEqual(["dispatch", "reconcile"]);
-        expect(first.publicationCorrelationId).toBe(second.publicationCorrelationId);
-        expect(first.publicationCorrelationId).not.toContain("account-1");
-        expect(first.publicationCorrelationId).not.toContain("repository-1");
+        expect(first.publicationPlanId).toBe(second.publicationPlanId);
+        expect(first.entries).toEqual(second.entries);
+        expect(first.entries.map(({ happierCommentId }) => happierCommentId)).toEqual([
+            firstComment.comment.id,
+            secondComment.comment.id,
+        ]);
+        expect(new Set(first.entries.map(({ publicationCorrelationId }) => publicationCorrelationId)).size).toBe(2);
+        expect(first.verdict).toEqual(second.verdict);
+        expect(first.publicationPlanId).not.toContain("account-1");
+        expect(first.publicationPlanId).not.toContain("repository-1");
+
+        await expect(operations.claimPublicationDispatch({
+            ...request,
+            input: {
+                ...request.input,
+                verdict: { kind: "requestChanges" as const, body: "A different frozen plan." },
+            },
+        })).rejects.toMatchObject({ code: "review_comment_idempotency_conflict" });
+
+        const threadPlan = {
+            ...request,
+            input: {
+                ...request.input,
+                target: {
+                    ...request.input.target,
+                    subtarget: { kindId: "review-thread" as const, targetId: "thread-a" },
+                },
+                entries: request.input.entries.slice(0, 1),
+                verdict: null,
+            },
+        };
+        const threadA = await operations.claimPublicationDispatch(threadPlan);
+        const threadB = await operations.claimPublicationDispatch({
+            ...threadPlan,
+            input: {
+                ...threadPlan.input,
+                target: {
+                    ...threadPlan.input.target,
+                    subtarget: { kindId: "review-thread" as const, targetId: "thread-b" },
+                },
+            },
+        });
+        expect(threadA.disposition).toBe("dispatch");
+        expect(threadB.disposition).toBe("dispatch");
+        expect(threadA.publicationPlanId).not.toBe(threadB.publicationPlanId);
+        expect(threadA.entries[0]?.publicationCorrelationId)
+            .not.toBe(threadB.entries[0]?.publicationCorrelationId);
+
+        await expect(operations.claimPublicationDispatch({
+            ...threadPlan,
+            input: {
+                ...threadPlan.input,
+                target: {
+                    ...threadPlan.input.target,
+                    subtarget: { kindId: "review-thread" as const, targetId: "thread-stale" },
+                },
+                entries: [{
+                    ...threadPlan.input.entries[0]!,
+                    expectedServerRevision: threadPlan.input.entries[0]!.expectedServerRevision + 1,
+                }],
+            },
+        })).rejects.toMatchObject({ code: "review_comment_conflict" });
+    });
+
+    it("allows only one provider dispatch for simultaneous verdict-only publication requests", async () => {
+        const { operations } = createHarness();
+        const request = {
+            accountId: "account-1",
+            actor: { kind: "user", userId: "user-1" } as const,
+            input: {
+                target: {
+                    providerId: "github",
+                    configuredAccountId: "github-account-1",
+                    entryRef: {
+                        sourceId: "github",
+                        kindId: "pull-request",
+                        collisionScope: "github:repository-1",
+                        entryId: "42",
+                    },
+                    subtarget: null,
+                },
+                baseRevision: "base-1",
+                headRevision: "head-1",
+                entries: [],
+                verdict: { kind: "approve" as const, body: "Looks good." },
+            },
+        };
+
+        const [first, second] = await Promise.all([
+            operations.claimPublicationDispatch(request),
+            operations.claimPublicationDispatch(request),
+        ]);
+
+        expect([first.disposition, second.disposition].sort()).toEqual(["dispatch", "reconcile"]);
+        expect(first.publicationPlanId).toBe(second.publicationPlanId);
+        expect(first.entries).toEqual([]);
+        expect(first.verdict).toEqual(second.verdict);
+
+        const laterVerdict = await operations.claimPublicationDispatch({
+            ...request,
+            input: {
+                ...request.input,
+                verdict: { kind: "requestChanges" as const, body: "This is a different frozen verdict." },
+            },
+        });
+        expect(laterVerdict.disposition).toBe("dispatch");
+        expect(laterVerdict.publicationPlanId).not.toBe(first.publicationPlanId);
+
+        const otherAccount = await operations.claimPublicationDispatch({
+            ...request,
+            accountId: "account-2",
+            actor: { kind: "user", userId: "user-2" },
+        });
+        expect(otherAccount.disposition).toBe("dispatch");
+        expect(otherAccount.publicationPlanId).not.toBe(first.publicationPlanId);
+        expect(otherAccount.verdict?.publicationCorrelationId)
+            .not.toBe(first.verdict?.publicationCorrelationId);
     });
 
     it("replays an equivalent create exactly once for the same account and client mutation", async () => {

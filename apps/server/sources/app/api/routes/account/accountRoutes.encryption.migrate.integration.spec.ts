@@ -115,13 +115,15 @@ function encodePlainStoredJson(value: unknown): string {
 
 function encodePluginEventTriggerDefinitionEnvelope(params: Readonly<{
     automationId: string;
-    templateVersion: number;
+    triggerId: string;
+    triggerRevision: number;
     mode: "plain" | "e2ee";
 }>): string {
     const binding = {
         v: 1 as const,
         automationId: params.automationId,
-        templateVersion: params.templateVersion,
+        triggerId: params.triggerId,
+        triggerRevision: params.triggerRevision,
         triggerKind: "pluginEvent" as const,
         eventRef: {
             pluginId: "com.example.github",
@@ -838,6 +840,7 @@ function installAccountTransitionCommitFailure(params: Readonly<{
     serviceId: string;
     profileId: string;
     automationId: string;
+    automationTriggerId: string;
     reviewCommentId: string;
     organizationFolderId: string;
 }>): Readonly<{
@@ -908,6 +911,7 @@ function installAccountTransitionCommitFailure(params: Readonly<{
                             const [
                                 credential,
                                 automation,
+                                automationTrigger,
                                 reviewComment,
                                 organizationFolder,
                             ] = await Promise.all([
@@ -931,8 +935,11 @@ function installAccountTransitionCommitFailure(params: Readonly<{
                                     },
                                     select: {
                                         templateCiphertext: true,
-                                        triggerDefinitionEnvelope: true,
                                     },
+                                }),
+                                tx.automationTrigger.findUniqueOrThrow({
+                                    where: { id: params.automationTriggerId },
+                                    select: { definitionEnvelope: true },
                                 }),
                                 tx.reviewComment.findUniqueOrThrow({
                                     where: {
@@ -960,7 +967,7 @@ function installAccountTransitionCommitFailure(params: Readonly<{
                                 automationTemplate:
                                     automation.templateCiphertext,
                                 automationTriggerDefinition:
-                                    automation.triggerDefinitionEnvelope,
+                                    automationTrigger.definitionEnvelope,
                                 reviewCommentBodyEnvelopeJson:
                                     reviewComment.bodyEnvelopeJson,
                                 organizationFolderDisplayDbValue:
@@ -1670,10 +1677,13 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                 name: "Conversation Run receipt migration",
                 enabled: false,
                 // Conversation remains a Run origin; this definition is scheduled.
-                triggerKind: "schedule",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                triggerDefinitionEnvelope: null,
+                triggers: {
+                    create: {
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: sourceTemplate,
                 templateVersion: 3,
@@ -1706,15 +1716,18 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             runId,
             handoffId,
         };
+        const sourceOccurrenceKey = deriveAutomationOccurrenceKeyV1(sourceEvidence);
         const sourceRun = await db.automationRun.create({
             data: {
                 id: runId,
                 accountId: account.id,
                 automationId: automation.id,
                 state: "succeeded",
-                originKind: "conversation",
-                originOccurredAt: new Date(sourceEvidence.occurredAt),
-                occurrenceKey: deriveAutomationOccurrenceKeyV1(sourceEvidence),
+                triggerId: null,
+                causeKind: "conversation",
+                causeOccurredAt: new Date(sourceEvidence.occurredAt),
+                occurrenceKey: sourceOccurrenceKey,
+                legacyManualIdempotencyKey: null,
                 occurrenceEvidenceEqualityTag:
                     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 triggerEvidenceEnvelope: JSON.stringify({
@@ -1814,6 +1827,7 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                 t: "encrypted",
                 c: "wrong-target-account-mode",
             }),
+            failureDetailEnvelope: null,
         };
         const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(
             account,
@@ -1960,6 +1974,7 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                 mutation: {
                     group: groupRef,
                     connectedAccountId: ref.accountId,
+                    expectedGeneration: createdGroup.group.generation,
                     priority: 1,
                     enabled: true,
                 },
@@ -2073,6 +2088,7 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                 mutation: {
                     group: unrelatedGroupRef,
                     connectedAccountId: unrelatedRef.accountId,
+                    expectedGeneration: unrelatedGroup.group.generation,
                     priority: 1,
                     enabled: true,
                 },
@@ -3386,12 +3402,21 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                 accountId: account.id,
                 name: "oversized Automation Run migration",
                 enabled: false,
-                scheduleKind: "interval",
-                everyMs: 60_000,
+                triggers: {
+                    create: {
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 60_000,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: originalTemplateCiphertext,
             },
-            select: { id: true, templateVersion: true },
+            select: {
+                id: true,
+                templateVersion: true,
+                triggers: { select: { id: true, revision: true } },
+            },
         });
         await db.automationRun.createMany({
             data: Array.from({
@@ -3401,7 +3426,13 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                 automationId: automation.id,
                 accountId: account.id,
                 state: "queued" as const,
-                originKind: "scheduled" as const,
+                triggerId: automation.triggers[0]!.id,
+                causeKind: "trigger" as const,
+                causeTriggerKind: "schedule" as const,
+                causeTriggerRevision: automation.triggers[0]!.revision,
+                causeOccurredAt: new Date(index),
+                causeScheduledFor: new Date(index),
+                occurrenceKey: `route-account-encryption-too-large-${index}`,
                 executionInputEnvelope: JSON.stringify({ index }),
                 scheduledAt: new Date(index),
                 dueAt: new Date(index),
@@ -3700,8 +3731,7 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
         });
         const automation = await db.automation.create({
             data: {
-                accountId: account.id, name: "rollback automation", scheduleKind: "interval", everyMs: 60_000,
-                timezone: null, scheduleExpr: null, targetType: "new_session",
+                accountId: account.id, name: "rollback automation", targetType: "new_session",
                 templateCiphertext: JSON.stringify({ kind: "happier_automation_template_encrypted_v1", payloadCiphertext: "before" }),
             },
             select: { id: true },
@@ -6062,16 +6092,20 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
         });
         const automationId = "automation-account-encryption-commit-last";
         const automationTemplateVersion = 1;
+        const automationTriggerId = "trigger-account-encryption-commit-last";
+        const automationTriggerRevision = 0;
         const automationDefinitionBefore =
             encodePluginEventTriggerDefinitionEnvelope({
                 automationId,
-                templateVersion: automationTemplateVersion,
+                triggerId: automationTriggerId,
+                triggerRevision: automationTriggerRevision,
                 mode: "e2ee",
             });
         const automationDefinitionAfter =
             encodePluginEventTriggerDefinitionEnvelope({
                 automationId,
-                templateVersion: automationTemplateVersion + 1,
+                triggerId: automationTriggerId,
+                triggerRevision: automationTriggerRevision,
                 mode: "plain",
             });
         const automation = await db.automation.create({
@@ -6080,14 +6114,19 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                 accountId: account.id,
                 name: "commit-last automation",
                 enabled: false,
-                triggerKind: "pluginEvent",
-                triggerEventPluginId: "com.example.github",
-                triggerEventLocalId: "repository-event",
-                triggerSourceSelectorId:
-                    ROUTE_PLUGIN_EVENT_SOURCE_SELECTOR_ID,
-                triggerSourceContractVersion: 1,
-                triggerObservationTransport: "checkpointedPull",
-                triggerDefinitionEnvelope: automationDefinitionBefore,
+                triggers: {
+                    create: {
+                        id: automationTriggerId,
+                        revision: automationTriggerRevision,
+                        kind: "pluginEvent",
+                        eventPluginId: "com.example.github",
+                        eventLocalId: "repository-event",
+                        sourceSelectorId: ROUTE_PLUGIN_EVENT_SOURCE_SELECTOR_ID,
+                        sourceContractVersion: 1,
+                        observationTransport: "checkpointedPull",
+                        definitionEnvelope: automationDefinitionBefore,
+                    },
+                },
                 targetType: "new_session",
                 templateCiphertext: automationBefore,
                 templateVersion: automationTemplateVersion,
@@ -6109,6 +6148,7 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             serviceId: "anthropic",
             profileId: "work",
             automationId: automation.id,
+            automationTriggerId,
             reviewCommentId: amendment9Fixture.comment.id,
             organizationFolderId:
                 amendment9Fixture.folder.id,
@@ -6168,8 +6208,11 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                                 automation.templateVersion,
                             templateCiphertext:
                                 automationAfter,
-                            triggerDefinitionEnvelope:
-                                automationDefinitionAfter,
+                            triggerDefinitionEnvelopes: [{
+                                triggerId: automationTriggerId,
+                                triggerRevision: automationTriggerRevision,
+                                envelope: automationDefinitionAfter,
+                            }],
                         }],
                     },
                     machines: { action: "assert_empty" },
@@ -6243,12 +6286,17 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             select: {
                 templateCiphertext: true,
                 templateVersion: true,
-                triggerDefinitionEnvelope: true,
             },
         })).resolves.toEqual({
             templateCiphertext: automationBefore,
             templateVersion: automationTemplateVersion,
-            triggerDefinitionEnvelope: automationDefinitionBefore,
+        });
+        await expect(db.automationTrigger.findUniqueOrThrow({
+            where: { id: automationTriggerId },
+            select: { revision: true, definitionEnvelope: true },
+        })).resolves.toEqual({
+            revision: automationTriggerRevision,
+            definitionEnvelope: automationDefinitionBefore,
         });
         await expect(db.reviewComment.findUniqueOrThrow({
             where: {

@@ -618,8 +618,30 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         expect(dbMocks.db.session.findUnique).not.toHaveBeenCalled();
     });
 
-    it("treats the public token as the only per-viewer authority for an authenticated reader", async () => {
-        verifyToken.mockResolvedValueOnce({ userId: "viewer-1" });
+    it.each([
+        {
+            label: "a signed-session bearer",
+            verified: { userId: "viewer-1", authTokenKind: "account" },
+            expectedLoggedUserId: "viewer-1",
+        },
+        {
+            label: "an API token bearer",
+            verified: {
+                userId: "viewer-1",
+                authTokenKind: "api_token",
+                authority: "account_automation",
+                apiTokenPrincipal: {
+                    accountId: "viewer-1",
+                    principalId: "viewer-1",
+                    credentialId: "pat-1",
+                    authority: "account_automation",
+                    expiresAt: null,
+                },
+            },
+            expectedLoggedUserId: null,
+        },
+    ])("treats the public token as the only per-viewer authority for $label", async ({ verified, expectedLoggedUserId }) => {
+        verifyToken.mockResolvedValueOnce(verified);
         txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue({
             id: "ps1",
             sessionId: "s1",
@@ -694,6 +716,7 @@ describe("publicShareRoutes optional auth (no reply-already-sent)", () => {
         expect(txDbMocks.db.publicSessionShare.findUnique).toHaveBeenCalledWith(expect.objectContaining({
             select: expect.not.objectContaining({ blockedUsers: expect.anything() }),
         }));
+        expect(logPublicShareAccess.mock.calls.at(-1)?.[1]).toBe(expectedLoggedUserId);
     });
 
     it("does not call app.authenticate() for /v1/public-share/:token/messages and succeeds even with invalid bearer", async () => {

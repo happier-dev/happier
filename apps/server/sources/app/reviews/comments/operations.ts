@@ -19,6 +19,7 @@ import {
     type ReviewCommentGetResponseV1,
     type ReviewCommentListRequestV1,
     type ReviewCommentListResponseV1,
+    type ReviewCommentPublicationPlanV1,
     type ReviewCommentRedactRequestV1,
     type ReviewCommentRedactResponseV1,
     type ReviewCommentReplyRequestV1,
@@ -97,6 +98,16 @@ async function requireComment(store: ReviewCommentStore, accountId: string, comm
         throw new ReviewCommentOperationError("review_comment_not_found", `Review comment not found: ${commentId}`);
     }
     return comment;
+}
+
+function reviewCommentPublicationDigest(label: string, ...parts: readonly string[]): string {
+    const digest = createHash("sha256").update(`happier.reviewCommentPublication.${label}.v1\0`);
+    parts.forEach((part) => digest.update(part).update("\0"));
+    return digest.digest("base64url");
+}
+
+function reviewCommentPublicationTargetJson(plan: ReviewCommentPublicationPlanV1): string {
+    return stringifyReviewCommentPrincipalCanonicalJsonV1(plan.target);
 }
 
 function assertReviewCommentEditActorAllowed(params: Readonly<{
@@ -717,29 +728,47 @@ export function createReviewCommentOperations(
             return { bulkActionId, updated, failed };
         },
         async claimPublicationDispatch(params) {
-            await requireComment(store, params.accountId, params.input.commentId);
-            const canonicalTarget = stringifyReviewCommentPrincipalCanonicalJsonV1(params.input.target);
-            const targetKey = createHash("sha256")
-                .update("happier.reviewCommentPublicationTarget.v1\0")
-                .update(canonicalTarget)
-                .digest("base64url");
-            const publicationCorrelationId = createHash("sha256")
-                .update("happier.reviewCommentPublicationCorrelation.v1\0")
-                .update(params.input.commentId)
-                .update("\0")
-                .update(targetKey)
-                .digest("base64url");
+            const canonicalTarget = reviewCommentPublicationTargetJson(params.input);
+            const canonicalPlan = stringifyReviewCommentPrincipalCanonicalJsonV1(params.input);
+            const publicationPlanId = reviewCommentPublicationDigest("plan", params.accountId, canonicalPlan);
+            const targetKey = reviewCommentPublicationDigest("target", params.accountId, canonicalTarget);
+            const entries = params.input.entries.map((entry) => ({
+                happierCommentId: entry.happierCommentId,
+                publicationCorrelationId: reviewCommentPublicationDigest(
+                    "entry",
+                    params.accountId,
+                    canonicalTarget,
+                    entry.happierCommentId,
+                ),
+            }));
+            const verdict = params.input.verdict === null
+                ? null
+                : {
+                    publicationCorrelationId: reviewCommentPublicationDigest(
+                        "verdict",
+                        params.accountId,
+                        canonicalTarget,
+                        publicationPlanId,
+                    ),
+                };
             const claim = await store.claimPublicationDispatch({
                 accountId: params.accountId,
-                commentId: params.input.commentId,
+                entries: params.input.entries.map((entry, index) => ({
+                    commentId: entry.happierCommentId,
+                    serverRevision: entry.expectedServerRevision,
+                    publicationCorrelationId: entries[index]!.publicationCorrelationId,
+                })),
+                verdictPublicationCorrelationId: verdict?.publicationCorrelationId ?? null,
                 targetKey,
                 target: params.input.target,
-                publicationCorrelationId,
+                publicationPlanId,
                 createdAt: runtime.now(),
             });
             return {
                 disposition: claim.claimed ? "dispatch" : "reconcile",
-                publicationCorrelationId: claim.publicationCorrelationId,
+                publicationPlanId: claim.publicationPlanId,
+                entries,
+                verdict,
             };
         },
     };

@@ -52,6 +52,7 @@ describe("markSessionParticipantsChanged publication privacy (SQLite integration
                 encryptionMode: "plain",
                 metadata: "{}",
                 agentState: null,
+                seq: 2,
                 currentStorageState: "snapshot_complete",
                 acceptedThroughServerSeq: 2,
                 materializationPublicationId: "change-publication-v1",

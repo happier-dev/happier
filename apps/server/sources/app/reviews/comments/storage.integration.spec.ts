@@ -306,7 +306,6 @@ describe("review comment durable storage", () => {
             accountId: account.id,
             actor: { kind: "user", userId: account.id } as const,
             input: {
-                commentId: created.comment.id,
                 target: {
                     providerId: "github",
                     configuredAccountId: "github-account-1",
@@ -316,7 +315,18 @@ describe("review comment durable storage", () => {
                         collisionScope: "github:repository-1",
                         entryId: "42",
                     },
+                    subtarget: null,
                 },
+                baseRevision: "base-1",
+                headRevision: "head-1",
+                entries: [{
+                    happierCommentId: created.comment.id,
+                    expectedServerRevision: created.comment.serverRevision,
+                    anchor: created.comment.anchor,
+                    snapshot: textSnapshot(),
+                    body: "Null-check this value.",
+                }],
+                verdict: { kind: "comment", body: "Review summary" },
             },
         };
 
@@ -327,13 +337,71 @@ describe("review comment durable storage", () => {
 
         expect(outcomes.map(({ disposition }) => disposition).sort())
             .toEqual(["dispatch", "reconcile"]);
-        expect(new Set(outcomes.map(({ publicationCorrelationId }) => publicationCorrelationId)).size)
+        expect(new Set(outcomes.map(({ publicationPlanId }) => publicationPlanId)).size)
             .toBe(1);
         const [row] = await db.$queryRaw<Array<{ count: bigint }>>`
             SELECT COUNT(*) AS count FROM review_comment_publication_correlations
             WHERE account_id = ${account.id} AND comment_id = ${created.comment.id}
         `;
         expect(Number(row?.count ?? 0)).toBe(1);
+    });
+
+    it("coalesces one frozen verdict plan while allowing a later verdict on the same head", async () => {
+        const account = await db.account.create({
+            data: {
+                id: "account-review-verdict-publication",
+                publicKey: "pk-review-verdict-publication",
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const operations = createReviewCommentOperations(createSqlReviewCommentStore(), {
+            now: () => 1234,
+            createId: (prefix) => `${prefix}-unused`,
+        });
+        const request = {
+            accountId: account.id,
+            actor: { kind: "user", userId: account.id } as const,
+            input: {
+                target: {
+                    providerId: "github",
+                    configuredAccountId: "github-account-1",
+                    entryRef: {
+                        sourceId: "github",
+                        kindId: "pull-request",
+                        collisionScope: "github:repository-1",
+                        entryId: "42",
+                    },
+                    subtarget: null,
+                },
+                baseRevision: "base-1",
+                headRevision: "head-1",
+                entries: [],
+                verdict: { kind: "approve" as const, body: "Looks good." },
+            },
+        };
+
+        const outcomes = await Promise.all([
+            operations.claimPublicationDispatch(request),
+            operations.claimPublicationDispatch(request),
+        ]);
+
+        expect(outcomes.map(({ disposition }) => disposition).sort())
+            .toEqual(["dispatch", "reconcile"]);
+        const laterVerdict = await operations.claimPublicationDispatch({
+            ...request,
+            input: {
+                ...request.input,
+                verdict: { kind: "requestChanges" as const, body: "Please revise this." },
+            },
+        });
+        expect(laterVerdict.disposition).toBe("dispatch");
+        expect(laterVerdict.publicationPlanId).not.toBe(outcomes[0]!.publicationPlanId);
+        const [row] = await db.$queryRaw<Array<{ count: bigint }>>`
+            SELECT COUNT(*) AS count FROM review_comment_publication_correlations
+            WHERE account_id = ${account.id} AND comment_id IS NULL
+        `;
+        expect(Number(row?.count ?? 0)).toBe(2);
     });
 
     it("atomically replays concurrent and restarted creates by account-scoped client mutation", async () => {
