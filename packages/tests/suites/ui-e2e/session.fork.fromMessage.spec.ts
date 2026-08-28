@@ -16,6 +16,7 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
+import { ensureSessionReplayForkEnabled } from '../../src/testkit/uiE2e/ensureSessionReplayForkEnabled';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -167,20 +168,7 @@ test.describe('ui e2e: session fork from message', () => {
       const forkButton = page.getByTestId(`transcript-message-fork:${messageId}`);
       if (await forkButton.count()) break;
 
-      await page.goto(`${uiBaseUrl}/settings/session`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByTestId('settings-session-replay-enabled-item')).toHaveCount(1, { timeout: 60_000 });
-      const replayItem = page.getByTestId('settings-session-replay-enabled-item');
-      const replaySwitch = replayItem.locator('input[type="checkbox"]').first();
-      const hasSwitch = (await replaySwitch.count()) > 0;
-      if (hasSwitch) {
-        const checked = await replaySwitch.isChecked().catch(() => false);
-        if (!checked) {
-          await replayItem.click();
-          await expect(replaySwitch).toBeChecked({ timeout: 60_000 });
-        }
-      } else {
-        await replayItem.click();
-      }
+      await ensureSessionReplayForkEnabled({ page, uiBaseUrl });
       await reloadCreatedSessionFromNewSessionComposer({ page, session: parentSession });
     }
 

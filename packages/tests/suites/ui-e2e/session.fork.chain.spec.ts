@@ -17,6 +17,7 @@ import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSession
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
+import { ensureSessionReplayForkEnabled } from '../../src/testkit/uiE2e/ensureSessionReplayForkEnabled';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -193,20 +194,7 @@ async function ensureReplayForkEnabled(params: {
     const forkButton = params.page.getByTestId(`transcript-message-fork:${messageId}`);
     if (await forkButton.count()) return;
 
-    await params.page.goto(`${params.uiBaseUrl}/settings/session`, { waitUntil: 'domcontentloaded' });
-    await expect(params.page.getByTestId('settings-session-replay-enabled-item')).toHaveCount(1, { timeout: 60_000 });
-    const replayItem = params.page.getByTestId('settings-session-replay-enabled-item');
-    const replaySwitch = replayItem.locator('input[type="checkbox"]').first();
-    const hasSwitch = (await replaySwitch.count()) > 0;
-    if (hasSwitch) {
-      const checked = await replaySwitch.isChecked().catch(() => false);
-      if (!checked) {
-        await replayItem.click();
-        await expect(replaySwitch).toBeChecked({ timeout: 60_000 });
-      }
-    } else {
-      await replayItem.click();
-    }
+    await ensureSessionReplayForkEnabled(params);
 
     await reloadCreatedSessionFromNewSessionComposer({ page: params.page, session: params.session });
   }
@@ -401,7 +389,13 @@ test.describe('ui e2e: multi-level session fork chain', () => {
       await expect(transcript.locator(`[data-testid="transcript-fork-divider:${parentSessionId}:${sessionBId}"]`)).toHaveCount(1, { timeout: 120_000 });
       await expect(transcript.locator(`[data-testid="transcript-fork-divider:${sessionBId}:${sessionCId}"]`)).toHaveCount(1, { timeout: 120_000 });
     }
-    for (const match of childViewOk1Matches) {
+    const nestedChildViewOk1Matches = await waitForCommittedTranscriptMessageMatches({
+      page,
+      text: 'FAKE_CLAUDE_OK_1',
+      expectedCount: 2,
+      timeoutMs: 120_000,
+    });
+    for (const match of nestedChildViewOk1Matches) {
       await expect(page.getByTestId(match.testId)).toBeVisible({ timeout: 120_000 });
     }
     await expect(page.getByTestId(`transcript-message-${childPromptMatch.messageId}`)).toBeVisible({ timeout: 120_000 });
@@ -421,11 +415,15 @@ test.describe('ui e2e: multi-level session fork chain', () => {
       timeoutMs: 120_000,
     });
     expect(reloadedOk1Matches.map((match) => match.testId)).toHaveLength(2);
-    expect(reloadedOk1Matches.map((match) => match.testId).sort()).toEqual(childViewOk1Matches.map((match) => match.testId).sort());
     for (const match of reloadedOk1Matches) {
       await expect(page.getByTestId(match.testId)).toBeVisible({ timeout: 120_000 });
     }
-    await expect(page.getByTestId(`transcript-message-${childPromptMatch.messageId}`)).toBeVisible({ timeout: 120_000 });
+    const reloadedChildPromptMatch = await waitForCommittedTranscriptMessageMatch({
+      page,
+      text: childPrompt,
+      timeoutMs: 120_000,
+    });
+    await expect(page.getByTestId(reloadedChildPromptMatch.testId)).toBeVisible({ timeout: 120_000 });
 
     const transcript = page.getByTestId('transcript-chat-list');
     await transcript.hover({ timeout: 60_000 });

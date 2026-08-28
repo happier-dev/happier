@@ -17,6 +17,7 @@ import { selectSessionForkStrategy } from '../../src/testkit/uiE2e/selectSession
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
+import { ensureSessionReplayForkEnabled } from '../../src/testkit/uiE2e/ensureSessionReplayForkEnabled';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -67,21 +68,7 @@ async function ensureReplayForkEnabled(params: {
   uiBaseUrl: string;
   session: CreatedSessionFromNewSessionComposer;
 }): Promise<void> {
-  await params.page.goto(`${params.uiBaseUrl}/settings/session`, { waitUntil: 'domcontentloaded' });
-  await expect(params.page.getByTestId('settings-session-replay-enabled-item')).toHaveCount(1, { timeout: 60_000 });
-  const replayItem = params.page.getByTestId('settings-session-replay-enabled-item');
-  const replaySwitch = replayItem.locator('input[type="checkbox"]').first();
-  const hasSwitch = (await replaySwitch.count()) > 0;
-  if (hasSwitch) {
-    const checked = await replaySwitch.isChecked().catch(() => false);
-    if (!checked) {
-      await replayItem.click();
-      await expect(replaySwitch).toBeChecked({ timeout: 60_000 });
-    }
-  } else {
-    await replayItem.click();
-  }
-
+  await ensureSessionReplayForkEnabled(params);
   await reloadCreatedSessionFromNewSessionComposer({ page: params.page, session: params.session });
 }
 
