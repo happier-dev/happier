@@ -7,6 +7,7 @@ import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
+import { PathSelectionList } from '@/components/ui/pathPicker/PathSelectionList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
@@ -29,6 +30,8 @@ import { sync } from '@/sync/sync';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecentPathsForMachine';
+import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
 
 import type { SessionHandoffPickerResult } from './openSessionHandoffPicker';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -58,6 +61,9 @@ const stylesheet = StyleSheet.create(() => ({
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
 }
+
+const EMPTY_PATH_SELECTION_FAVORITES = [] as const;
+const ignorePathSelectionRequestClose = () => {};
 
 function mergeMachinesById(machineGroups: readonly (readonly any[] | null | undefined)[]): any[] {
     const merged = new Map<string, any>();
@@ -89,6 +95,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     const machineListByServerId = useMachineListByServerId();
     const activeServerMachines = useMachineRecordValues() ?? [];
     const [favoriteMachinesRaw, setFavoriteMachinesRaw] = useSettingMutable('favoriteMachines');
+    const [recentMachinePaths] = useSettingMutable('recentMachinePaths');
     const [sessionHandoffDefaultsRaw] = useSettingMutable('sessionHandoffDefaultsV1');
     const sessionHandoffDefaults = React.useMemo(
         () => normalizeSessionHandoffDefaults(sessionHandoffDefaultsRaw),
@@ -204,6 +211,20 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         () => canAttemptMachineSpawn({ selectedMachineId, machine: selectedMachine }),
         [selectedMachine, selectedMachineId],
     );
+    const recentTargetPaths = useStableRecentPathsForMachine({
+        machineId: selectedMachineId,
+        recentMachinePaths,
+        sessions,
+        cacheScopeKey: normalizeId(serverId) || null,
+    });
+    const targetMachineHomeDir = String(selectedMachine?.metadata?.homeDir ?? '').trim() || '/home';
+    const recentTargetPathOptions = React.useMemo(
+        () => recentTargetPaths.map((path, index) => ({ path, lastUsedAt: index })),
+        [recentTargetPaths],
+    );
+    const handleTargetPathChange = React.useCallback((path: string) => {
+        setTargetPath(path.trim() || null);
+    }, []);
     const [workspaceTransferEnabled, setWorkspaceTransferEnabled] = React.useState(sessionHandoffDefaults.workspaceTransferEnabled);
     const [workspaceTransferStrategy, setWorkspaceTransferStrategy] = React.useState<'transfer_snapshot' | 'sync_changes'>(
         sessionHandoffDefaults.workspaceTransferStrategy,
@@ -294,27 +315,19 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             setFavoriteMachinesRaw(exists ? favoriteMachineIds.filter((id: string) => id !== machineId) : [machineId, ...favoriteMachineIds]);
                         }}
                     />
-                    <ItemGroup title={t('machine.launchNewSessionInDirectory')}>
-                        <Item
-                            testID="session-handoff-target-path"
-                            title={t('machine.launchNewSessionInDirectory')}
-                            subtitle={targetPath ?? t('common.default')}
-                            icon={<Icon name="folder" size={16} color={theme.colors.text.secondary} />}
-                            disabled={!selectedMachineId}
-                            onPress={async () => {
-                                const machineId = normalizeId(selectedMachineId);
-                                if (!machineId) return;
-                                const { openMachinePathBrowserModal } = await import('@/components/ui/pathBrowser/openMachinePathBrowserModal');
-                                const selectedPath = await openMachinePathBrowserModal({
-                                    machineId,
-                                    serverId: normalizeId(serverId) || null,
-                                    initialPath: targetPath ?? undefined,
-                                    selectionMode: 'directory',
-                                    title: t('machine.launchNewSessionInDirectory'),
-                                });
-                                const normalizedPath = String(selectedPath ?? '').trim();
-                                if (normalizedPath) setTargetPath(normalizedPath);
-                            }}
+                    <ItemGroup title={t('machine.launchNewSessionInDirectory')} clipContent>
+                        <PathSelectionList
+                            machineHomeDir={targetMachineHomeDir}
+                            initialValue={targetPath ?? ''}
+                            initialSuggestionMode="history"
+                            favorites={EMPTY_PATH_SELECTION_FAVORITES}
+                            recents={recentTargetPathOptions}
+                            machineId={selectedMachineId}
+                            serverId={normalizeId(serverId) || null}
+                            machinePlatform={machineMetadataPlatformToTarget(selectedMachine?.metadata?.platform)}
+                            onCommit={handleTargetPathChange}
+                            onChangeDraftPath={handleTargetPathChange}
+                            onRequestClose={ignorePathSelectionRequestClose}
                         />
                     </ItemGroup>
                     <ItemGroup

@@ -39,6 +39,11 @@ export interface ItemGroupProps {
     containerStyle?: StyleProp<ViewStyle>;
     constrainToContentWidth?: boolean;
     /**
+     * Clip edge-to-edge child surfaces to this card's rounded inner boundary.
+     * The outer chrome remains overflow-visible so shadows and anchored overlays are unaffected.
+     */
+    clipContent?: boolean;
+    /**
      * Lay the rows out as a grid of standalone cards instead of one shared card,
      * up to this many columns. Collapses back to the single shared card whenever
      * the available width cannot give every column a usable minimum width, so
@@ -100,6 +105,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => {
         contentContainerInner: {
             borderRadius: Platform.select({ ios: 10, default: 16 }),
         },
+        contentContainerInnerClipped: {
+            overflow: 'hidden',
+        },
         // NOTE: no `marginHorizontal` here. The columns root is `width: '100%'`,
         // and margin sits OUTSIDE a resolved width — the grid would occupy
         // 100% + 2*margin and overrun the single card's box. The matching inset
@@ -131,11 +139,12 @@ const stylesheet = StyleSheet.create((theme, runtime) => {
 const ItemGroupSharedCardBody = React.memo(function ItemGroupSharedCardBody(props: Readonly<{
     children: React.ReactNode;
     containerStyle?: StyleProp<ViewStyle>;
+    clipContent?: boolean;
 }>) {
     const styles = stylesheet;
     return (
         <View style={[styles.contentContainerOuter, props.containerStyle]}>
-            <View style={styles.contentContainerInner}>
+            <View style={[styles.contentContainerInner, props.clipContent ? styles.contentContainerInnerClipped : undefined]}>
                 {withItemGroupDividers(props.children)}
             </View>
         </View>
@@ -155,6 +164,7 @@ const ItemGroupColumnedBody = React.memo(function ItemGroupColumnedBody(props: R
     columns: number;
     maxWidth: number;
     containerStyle?: StyleProp<ViewStyle>;
+    clipContent?: boolean;
 }>) {
     const styles = stylesheet;
     const { width: windowWidth } = useWindowDimensions();
@@ -182,7 +192,7 @@ const ItemGroupColumnedBody = React.memo(function ItemGroupColumnedBody(props: R
 
     if (!columnStacks) {
         return (
-            <ItemGroupSharedCardBody containerStyle={props.containerStyle}>
+            <ItemGroupSharedCardBody containerStyle={props.containerStyle} clipContent={props.clipContent}>
                 {props.children}
             </ItemGroupSharedCardBody>
         );
@@ -205,7 +215,7 @@ const ItemGroupColumnedBody = React.memo(function ItemGroupColumnedBody(props: R
                                 key={row.key ?? `item-group-card-${columnIndex}-${rowIndex}`}
                                 style={styles.columnCardOuter}
                             >
-                                <View style={styles.contentContainerInner}>
+                                <View style={[styles.contentContainerInner, props.clipContent ? styles.contentContainerInnerClipped : undefined]}>
                                     {row}
                                 </View>
                             </View>
@@ -233,6 +243,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         footerTextStyle,
         containerStyle,
         constrainToContentWidth = true,
+        clipContent = false,
         selectableItemCountOverride
     } = props;
 
@@ -273,11 +284,12 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                             columns={props.columns ?? 1}
                             maxWidth={constrainToContentWidth ? maxWidth : Number.POSITIVE_INFINITY}
                             containerStyle={containerStyle}
+                            clipContent={clipContent}
                         >
                             {children}
                         </ItemGroupColumnedBody>
                     ) : (
-                        <ItemGroupSharedCardBody containerStyle={containerStyle}>
+                        <ItemGroupSharedCardBody containerStyle={containerStyle} clipContent={clipContent}>
                             {children}
                         </ItemGroupSharedCardBody>
                     )}
