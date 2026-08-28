@@ -65,14 +65,10 @@ export {
   resolveSessionHandoffProgressTimeline,
 } from './handoffStatus.js';
 export {
-  SessionHandoffCodexAffinitySchema,
-  SessionHandoffCodexBackendModeSchema,
   SessionHandoffConflictPolicySchema,
   SessionHandoffRecoveryActionSchema,
   SessionHandoffStorageModeSchema,
   SessionHandoffTransportStrategySchema,
-  type SessionHandoffCodexAffinity,
-  type SessionHandoffCodexBackendMode,
   type SessionHandoffConflictPolicy,
   type SessionHandoffRecoveryAction,
   type SessionHandoffStorageMode,

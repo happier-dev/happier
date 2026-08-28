@@ -1,9 +1,20 @@
 import { z } from 'zod';
 
-import {
-  CODEX_BACKEND_MODES,
-  type CodexBackendMode,
-} from '../../agents/generated/runtime/descriptors/codex.js';
+export const CODEX_BACKEND_MODES = ['acp', 'appServer'] as const;
+export type CodexBackendMode = (typeof CODEX_BACKEND_MODES)[number];
+
+/**
+ * Released `cli-v0.2.1` Session metadata/RPC compatibility. Current Agent
+ * descriptors are interpreted by the Codex plugin. Remove these aliases when
+ * predecessor Session metadata and RPC ingress are no longer supported.
+ */
+export function normalizeCodexBackendMode(value: unknown): CodexBackendMode | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed === 'mcp' || trimmed === 'appServer') return 'appServer';
+  if (trimmed === 'acp' || trimmed === 'mcp_resume') return 'acp';
+  return null;
+}
 
 /**
  * Session metadata override payloads (V1).
@@ -82,30 +93,4 @@ export function buildAcpConfigOptionOverridesV1(params: Readonly<{
     updatedAt: params.updatedAt,
     overrides: params.overrides,
   };
-}
-
-export function createCodexRuntimeDescriptorV1Schema(zod: typeof z) {
-  return zod
-    .object({
-      v: zod.literal(1),
-      backendMode: zod.enum(CODEX_BACKEND_MODES),
-    })
-    .passthrough();
-}
-
-export const CodexRuntimeDescriptorV1Schema = createCodexRuntimeDescriptorV1Schema(z);
-export type CodexRuntimeDescriptorV1 = z.infer<typeof CodexRuntimeDescriptorV1Schema>;
-
-export function buildCodexRuntimeDescriptorV1(params: Readonly<{
-  backendMode: CodexBackendMode;
-}>): CodexRuntimeDescriptorV1 {
-  return {
-    v: 1,
-    backendMode: params.backendMode,
-  };
-}
-
-export function readCodexRuntimeDescriptorV1BackendMode(value: unknown): CodexBackendMode | null {
-  const parsed = CodexRuntimeDescriptorV1Schema.safeParse(value);
-  return parsed.success ? parsed.data.backendMode : null;
 }

@@ -59,7 +59,10 @@ function jsonValuesEqual(left: unknown, right: unknown): boolean {
 
 function normalizeReleasedExternalSessionRequest(
   value: unknown,
-  options: Readonly<{ runtimeDescriptor?: boolean }> = {},
+  options: Readonly<{
+    runtimeDescriptor?: boolean;
+    codexBackendMode?: boolean;
+  }> = {},
 ): unknown {
   const record = asRequestRecord(value);
   if (!record) return value;
@@ -67,6 +70,8 @@ function normalizeReleasedExternalSessionRequest(
   const hasAgentId = Object.hasOwn(record, 'agentId');
   const hasReleasedRuntimeDescriptor = Object.hasOwn(record, 'runtimeDescriptor');
   const hasCanonicalRuntimeDescriptor = Object.hasOwn(record, 'runtimeDescriptorV1');
+  const hasReleasedCodexBackendMode = Object.hasOwn(record, 'codexBackendMode');
+  if (hasReleasedCodexBackendMode && !options.codexBackendMode) return undefined;
   if (hasProviderId && hasAgentId) return undefined;
   // The released descriptor spelling existed only on provider-only link-ensure
   // requests; admitting it elsewhere would make strict current requests lossy.
@@ -91,6 +96,23 @@ function normalizeReleasedExternalSessionRequest(
     ...canonical,
     ...(releasedAgentId?.success ? { agentId: releasedAgentId.data } : {}),
   };
+  if (hasReleasedCodexBackendMode) {
+    const normalizedAgentId = releasedAgentId?.success ? releasedAgentId.data : record.agentId;
+    const mode = typeof record.codexBackendMode === 'string' ? record.codexBackendMode.trim() : '';
+    if (normalizedAgentId !== 'codex' || !mode) return undefined;
+    const existingLinkData = asRequestRecord(record.linkData);
+    if (record.linkData !== undefined && !existingLinkData) return undefined;
+    if (
+      existingLinkData
+      && Object.hasOwn(existingLinkData, 'codexBackendMode')
+      && existingLinkData.codexBackendMode !== mode
+    ) return undefined;
+    delete normalized.codexBackendMode;
+    normalized.linkData = {
+      ...(existingLinkData ?? {}),
+      codexBackendMode: mode,
+    };
+  }
   if (!hasReleasedRuntimeDescriptor) return normalized;
 
   const releasedDescriptor = RuntimeDescriptorV1Schema.safeParse(record.runtimeDescriptor);
@@ -192,8 +214,6 @@ const ExternalSessionLinkEnsureCanonicalRequestSchema = z.object({
   remoteSessionId: z.string().min(1).max(2000),
   titleHint: z.string().min(1).max(10_000).optional(),
   directoryHint: z.string().min(1).max(10_000).optional(),
-  // Shared wire parsing stays forward-compatible; the Codex plugin validates this in resolveLinkIdentity.
-  codexBackendMode: z.string().optional(),
   runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
   linkData: PluginAgentExternalSessionLinkDataSchema.optional(),
   source: ExternalSessionsSourceSchema,
@@ -204,7 +224,10 @@ export const ExternalSessionLinkEnsureRequestSchema = z.preprocess<
   typeof ExternalSessionLinkEnsureCanonicalRequestSchema,
   z.input<typeof ExternalSessionLinkEnsureCanonicalRequestSchema>
 >(
-  (value) => normalizeReleasedExternalSessionRequest(value, { runtimeDescriptor: true }),
+  (value) => normalizeReleasedExternalSessionRequest(value, {
+    runtimeDescriptor: true,
+    codexBackendMode: true,
+  }),
   ExternalSessionLinkEnsureCanonicalRequestSchema,
 );
 export type ExternalSessionLinkEnsureRequest = z.infer<typeof ExternalSessionLinkEnsureRequestSchema>;
@@ -255,7 +278,6 @@ const ExternalSessionStatusGetCanonicalRequestSchema = z.object({
   agentId: ExternalSessionsAgentIdSchema,
   remoteSessionId: z.string().min(1).max(2000),
   source: ExternalSessionsSourceSchema,
-  takeoverReadiness: z.literal('fresh').optional(),
 }).strict();
 
 export const ExternalSessionStatusGetRequestSchema = z.preprocess<
@@ -414,7 +436,6 @@ const ExternalSessionActionLeaseIdSchema = z.string()
   .refine((value) => value === value.trim(), 'Lease id must already be trimmed.');
 export const ExternalSessionStatusActionInputV1Schema = z.object({
   sessionId: ExternalSessionActionSessionIdSchema,
-  takeoverReadiness: z.literal('fresh').optional(),
 }).strict();
 
 export const ExternalSessionViewerFollowActionInputV1Schema = z.object({

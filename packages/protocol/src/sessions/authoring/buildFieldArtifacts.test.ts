@@ -19,11 +19,11 @@ describe('sessionAuthoring field artifacts', () => {
       )),
     );
     expect(SYNCED_SESSION_AUTHORING_FIELD_IDS_V1).toEqual(expect.arrayContaining([
-      'machineId',
-      'serverId',
+      'executionTarget',
       'directory',
       'checkoutCreationDraft',
-      'backendTarget',
+      'organizationPlacement',
+      'agentTarget',
       'modelSelection',
       'connectedServices',
       'terminal',
@@ -43,13 +43,26 @@ describe('sessionAuthoring field artifacts', () => {
   });
   it('derives stable field ids and descriptors from one catalog', () => {
     expect(SESSION_AUTHORING_FIELD_IDS).toContain('targetType');
+    expect(SESSION_AUTHORING_FIELD_IDS.slice(0, 5)).toEqual([
+      'targetType',
+      'executionTarget',
+      'directory',
+      'checkoutCreationDraft',
+      'organizationPlacement',
+    ]);
     expect(SESSION_AUTHORING_FIELD_IDS).toContain('directory');
-    expect(SESSION_AUTHORING_FIELD_IDS).toContain('backendTarget');
+    expect(SESSION_AUTHORING_FIELD_IDS).toContain('agentTarget');
     expect(SESSION_AUTHORING_FIELD_IDS).toContain('modelSelection');
     expect(SESSION_AUTHORING_FIELD_IDS).toContain('automation');
     expect(SESSION_AUTHORING_FIELD_IDS).not.toContain('workspaceId');
     expect(SESSION_AUTHORING_FIELD_IDS).not.toContain('workspaceLocationId');
     expect(SESSION_AUTHORING_FIELD_IDS).not.toContain('workspaceCheckoutId');
+    expect(SESSION_AUTHORING_FIELD_IDS).not.toEqual(expect.arrayContaining([
+      'machineId',
+      'serverId',
+      'agentId',
+      'backendTarget',
+    ]));
 
     expect(SESSION_AUTHORING_FIELD_DESCRIPTORS.targetType.storageClass).toBe('template');
     expect(SESSION_AUTHORING_FIELD_DESCRIPTORS.existingSessionId.defaultEditabilityByContext.automationExistingSession).toBe('inherited');
@@ -60,18 +73,19 @@ describe('sessionAuthoring field artifacts', () => {
   it('parses the shared authored value shape', () => {
     const parsed = SessionAuthoringValueV1Schema.parse({
       targetType: 'new_session',
+      executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
       directory: '/tmp/project',
       checkoutCreationDraft: {
         kind: 'git_worktree',
         displayName: 'feature/auth',
         baseRef: 'main',
       },
+      organizationPlacement: { folderId: 'folder-1', tagIds: ['tag-1', 'tag-2'] },
       prompt: 'ship it',
       displayText: 'ship it',
-      agentId: 'codex',
-      backendTarget: {
-        kind: 'configuredAcpBackend',
-        backendId: 'review-bot',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'example.agents', localId: 'review-bot' },
       },
       transcriptStorage: 'direct',
       profileId: 'profile-1',
@@ -112,7 +126,11 @@ describe('sessionAuthoring field artifacts', () => {
       windowsRemoteSessionLaunchMode: null,
       windowsRemoteSessionConsole: null,
       windowsTerminalWindowName: null,
-      codexBackendMode: 'appServer',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
       acpSessionModeId: 'plan',
       sessionConfigOptionOverrides: {
         v: 1,
@@ -132,16 +150,24 @@ describe('sessionAuthoring field artifacts', () => {
         enabled: true,
         name: 'Daily summary',
         description: 'Ship the summary',
-        scheduleKind: 'interval',
-        everyMinutes: 60,
-        cronExpr: '0 * * * *',
-        timezone: 'Europe/Zurich',
+        triggers: [{
+          clientId: 'schedule-1',
+          kind: 'schedule',
+          persisted: null,
+          enabled: true,
+          definition: {
+            kind: 'schedule',
+            schedule: { kind: 'interval', everyMs: 3_600_000, scheduleExpr: null, timezone: 'Europe/Zurich' },
+          },
+        }],
       },
     });
 
-    expect(parsed.backendTarget).toEqual({
-      kind: 'configuredAcpBackend',
-      backendId: 'review-bot',
+    expect(parsed.executionTarget).toEqual({ serverId: 'server-1', machineId: 'machine-1' });
+    expect(parsed.organizationPlacement).toEqual({ folderId: 'folder-1', tagIds: ['tag-1', 'tag-2'] });
+    expect(parsed.agentTarget).toEqual({
+      kind: 'agent',
+      identity: { pluginId: 'example.agents', localId: 'review-bot' },
     });
     expect(parsed.automation?.enabled).toBe(true);
     expect(parsed.modelSelection?.ref).toEqual({
@@ -155,9 +181,10 @@ describe('sessionAuthoring field artifacts', () => {
   it('preserves additive authored envelopes without persisting opaque Session-create leaves', () => {
     const parsed = SessionAuthoringValueV1Schema.parse({
       targetType: 'new_session',
+      executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
       directory: '/tmp/project',
+      organizationPlacement: { folderId: null, tagIds: [] },
       displayText: 'ship it',
-      agentId: 'codex',
       prompt: 'ship it',
       transcriptStorage: 'direct',
       profileId: null,
@@ -169,9 +196,9 @@ describe('sessionAuthoring field artifacts', () => {
       modelUpdatedAt: null,
       mcpSelection: null,
       connectedServices: null,
-      backendTarget: {
-        kind: 'configuredAcpBackend',
-        backendId: 'review-bot',
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'example.agents', localId: 'review-bot' },
       },
       checkoutCreationDraft: {
         kind: 'git_worktree',
@@ -187,7 +214,7 @@ describe('sessionAuthoring field artifacts', () => {
       windowsRemoteSessionLaunchMode: null,
       windowsRemoteSessionConsole: null,
       windowsTerminalWindowName: null,
-      codexBackendMode: null,
+      runtimeDescriptorV1: null,
       acpSessionModeId: null,
       sessionConfigOptionOverrides: null,
       existingSessionId: null,
@@ -198,11 +225,7 @@ describe('sessionAuthoring field artifacts', () => {
         enabled: true,
         name: 'Daily summary',
         description: 'Ship the summary',
-        scheduleKind: 'interval',
-        everyMinutes: 60,
-        cronExpr: '0 * * * *',
-        timezone: 'Europe/Zurich',
-        futureAutomationField: 123,
+        triggers: [],
       },
       futureTopLevelField: {
         kind: 'session_authoring.v2',
@@ -214,7 +237,10 @@ describe('sessionAuthoring field artifacts', () => {
       kind: 'session_authoring.v2',
       extra: true,
     });
-    expect((parsed.automation as any)?.futureAutomationField).toBe(123);
+    expect(SessionAuthoringValueV1Schema.safeParse({
+      ...parsed,
+      automation: { ...parsed.automation!, futureAutomationField: 123 },
+    }).success).toBe(false);
 
     expect(SessionAuthoringValueV1Schema.safeParse({
       ...parsed,
@@ -257,12 +283,13 @@ describe('sessionAuthoring field artifacts', () => {
   it('normalizes Windows launch semantics through the existing terminal owner', () => {
     const baseAuthoringValue = {
       targetType: 'new_session',
+      executionTarget: null,
       directory: '/tmp/project',
       checkoutCreationDraft: null,
+      organizationPlacement: { folderId: null, tagIds: [] },
       prompt: '',
       displayText: '',
-      agentId: null,
-      backendTarget: null,
+      agentTarget: null,
       transcriptStorage: null,
       profileId: null,
       environmentVariables: null,
@@ -275,7 +302,7 @@ describe('sessionAuthoring field artifacts', () => {
       windowsRemoteSessionLaunchMode: null,
       windowsRemoteSessionConsole: null,
       windowsTerminalWindowName: null,
-      codexBackendMode: null,
+      runtimeDescriptorV1: null,
       acpSessionModeId: null,
       sessionConfigOptionOverrides: null,
       existingSessionId: null,
@@ -316,6 +343,23 @@ describe('sessionAuthoring field artifacts', () => {
   });
 
   it('rejects invalid authored values', () => {
+    for (const fieldId of ['machineId', 'serverId', 'agentId', 'backendTarget']) {
+      expect(SyncedSessionAuthoringFieldIdV1Schema.safeParse(fieldId).success).toBe(false);
+      expect(SyncedSessionAuthoringValueV1Schema.safeParse({
+        [fieldId]: null,
+      }).success).toBe(false);
+    }
+
+    expect(SessionAuthoringValueV1Schema.shape.executionTarget.parse({
+      serverId: ' server-1 ',
+      machineId: ' machine-1 ',
+    })).toEqual({ serverId: 'server-1', machineId: 'machine-1' });
+
+    expect(SESSION_AUTHORING_FIELD_DESCRIPTORS.organizationPlacement.schema.safeParse({
+      folderId: null,
+      tagIds: ['tag-1', 'tag-1'],
+    }).success).toBe(false);
+
     expect(() => SessionAuthoringValueV1Schema.parse({
       targetType: 'unknown',
       directory: '/tmp/project',
@@ -329,7 +373,11 @@ describe('sessionAuthoring field artifacts', () => {
     expect(() => SessionAuthoringValueV1Schema.parse({
       targetType: 'new_session',
       directory: '/tmp/project',
-      codexBackendMode: 'bad-mode',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: '',
+        agent: {},
+      },
     })).toThrow();
   });
 });

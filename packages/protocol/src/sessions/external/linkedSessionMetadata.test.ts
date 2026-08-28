@@ -572,7 +572,7 @@ describe('direct session linked metadata helpers', () => {
     })).toBeNull();
   });
 
-  it('round-trips unknown future Codex backend modes for leaf-owned validation', () => {
+  it('reads released Codex selectors through the generic runtime descriptor', () => {
     const externalSessionV1 = {
       v: 1,
       agentId: 'codex',
@@ -583,9 +583,53 @@ describe('direct session linked metadata helpers', () => {
     };
     const metadata = { externalSessionV1 };
 
-    expect((protocol as any).readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toEqual(externalSessionV1);
-    expect((protocol as any).normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual({
+    const expected = {
+      v: 1,
+      agentId: 'codex',
+      machineId: 'machine-canonical',
+      remoteSessionId: 'remote-canonical',
+      source: { kind: 'codexHome', home: 'user' },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          backendMode: 'future-codex-mode',
+          providerSessionId: 'remote-canonical',
+        },
+      },
+    };
+    expect((protocol as any).readNonAuthoritativeLinkedExternalSessionV1FromMetadata(metadata)).toEqual(expected);
+    expect((protocol as any).normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual({ externalSessionV1: expected });
+  });
+
+  it('normalizes released Codex selector aliases at the persisted compatibility seam', () => {
+    const externalSessionV1 = {
+      v: 1,
+      agentId: 'codex',
+      machineId: 'machine-canonical',
+      remoteSessionId: 'remote-canonical',
+      source: { kind: 'codexHome', home: 'user' },
+      codexBackendMode: 'mcp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
+    };
+
+    expect((protocol as any).readNonAuthoritativeLinkedExternalSessionV1FromMetadata({
       externalSessionV1,
+    })).toEqual({
+      v: 1,
+      agentId: 'codex',
+      machineId: 'machine-canonical',
+      remoteSessionId: 'remote-canonical',
+      source: { kind: 'codexHome', home: 'user' },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'appServer' },
+      },
     });
   });
 

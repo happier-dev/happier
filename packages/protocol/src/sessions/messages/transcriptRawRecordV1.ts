@@ -2,9 +2,12 @@ import { z } from 'zod';
 
 import {
   ConnectedServiceAuthGroupIdSchema,
-  ConnectedServiceIdSchema,
   ConnectedServiceProfileIdSchema,
 } from '../../connect/connectedServiceSchemas.js';
+import {
+  ConnectedAccountServiceKeyIngressSchema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
+} from '../../connect/connectedServiceBindings.js';
 import { ConnectedServiceUxDiagnosticV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
 import {
   SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
@@ -391,13 +394,32 @@ export const ConnectedServiceSwitchAttemptSessionAdoptionV1Schema = z.enum([
 export type ConnectedServiceSwitchAttemptSessionAdoptionV1 =
   z.infer<typeof ConnectedServiceSwitchAttemptSessionAdoptionV1Schema>;
 
-const ConnectedServiceSwitchAttemptVerificationByServiceIdV1Schema = z.partialRecord(
-  ConnectedServiceIdSchema,
-  z.object({
-    status: z.enum(['verified', 'weakly_verified']),
-    reason: z.string().trim().min(1).optional(),
-  }),
-);
+const ConnectedServiceSwitchAttemptVerificationV1Schema = z.object({
+  status: z.enum(['verified', 'weakly_verified']),
+  reason: z.string().trim().min(1).optional(),
+});
+
+// Keys are Connected Account service keys. Released bundled scalar keys
+// normalize through the sole legacy normalizer; malformed or unknown keys are
+// rejected instead of acquiring verification meaning.
+const ConnectedServiceSwitchAttemptVerificationByServiceIdV1Schema = z
+  .record(z.string(), ConnectedServiceSwitchAttemptVerificationV1Schema)
+  .transform((value, context) => {
+    const canonical: Record<string, z.infer<typeof ConnectedServiceSwitchAttemptVerificationV1Schema>> = {};
+    for (const [serviceId, verification] of Object.entries(value)) {
+      const canonicalKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+      if (!canonicalKey) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Invalid Connected Account service key',
+          path: [serviceId],
+        });
+        continue;
+      }
+      canonical[canonicalKey] = verification;
+    }
+    return canonical;
+  });
 
 export const ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1Schema = z.enum([
   'retry_scheduled',
@@ -684,7 +706,7 @@ const AgentEventSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('connected-service-account-switch'),
-      serviceId: ConnectedServiceIdSchema,
+      serviceId: ConnectedAccountServiceKeyIngressSchema,
       groupId: ConnectedServiceAuthGroupIdSchema.nullable(),
       groupLabel: z.string().trim().min(1).nullable().optional(),
       fromProfileId: ConnectedServiceProfileIdSchema.nullable(),
@@ -701,7 +723,7 @@ const AgentEventSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('agent-quota-wait'),
-      serviceId: ConnectedServiceIdSchema,
+      serviceId: ConnectedAccountServiceKeyIngressSchema,
       resetAtMs: z.number(),
       reason: z.string(),
       profileId: ConnectedServiceProfileIdSchema.nullable().optional(),
@@ -711,7 +733,7 @@ const AgentEventSchema = z.discriminatedUnion('type', [
   z
     .object({
       type: z.literal('agent-quota-recovered'),
-      serviceId: ConnectedServiceIdSchema,
+      serviceId: ConnectedAccountServiceKeyIngressSchema,
       reason: z.string(),
       profileId: ConnectedServiceProfileIdSchema.nullable().optional(),
       groupId: ConnectedServiceAuthGroupIdSchema.nullable().optional(),
@@ -742,7 +764,7 @@ const AgentEventSchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('connected-service-runtime-auth-recovery'),
       status: ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1Schema,
-      serviceId: ConnectedServiceIdSchema,
+      serviceId: ConnectedAccountServiceKeyIngressSchema,
       profileId: ConnectedServiceProfileIdSchema.optional(),
       groupId: ConnectedServiceAuthGroupIdSchema.optional(),
       attempt: z.number().int().positive().optional(),

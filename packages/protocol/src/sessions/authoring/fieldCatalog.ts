@@ -1,18 +1,23 @@
 import { z } from 'zod';
 
-import { BackendTargetRefSchema } from '../../backends/targets/backendTargetRef.js';
+import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 import { SessionMcpSelectionV1Schema } from '../../mcp/servers/sessionSelectionV1.js';
-import { CODEX_BACKEND_MODES } from '../../agents/generated/runtime/descriptors/codex.js';
+import { RuntimeDescriptorV1Schema } from '../metadata/runtimeDescriptorV1.js';
 import { AcpConfigOptionOverridesV1Schema } from '../metadata/metadataOverridesV1.js';
 import { WindowsRemoteSessionLaunchModeSchema } from '../metadata/windowsRemoteSessionLaunchMode.js';
 import { WindowsTerminalWindowNameSchema } from '../metadata/windowsTerminalWindowName.js';
 import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
 import {
-  ConnectedServiceAuthGroupIdSchema,
-  ConnectedServiceIdSchema,
-  ConnectedServiceProfileIdSchema,
+  ConnectedServiceBindingsV1Schema,
 } from '../../connect/connectedServiceBindings.js';
 import { defineSessionAuthoringFields } from './fieldDefinition.js';
+import { AutomationTriggerDefinitionSchema } from '../../automations/automationTriggerDefinition.js';
+import {
+  SessionAuthoringCheckoutCreationDraftV1Schema,
+  SessionAuthoringTerminalV1Schema,
+} from './creationFieldsV1.js';
+import { SessionExecutionTargetV1Schema } from '../creation/sessionExecutionTargetV1.js';
+import { SessionOrganizationPlacementV1Schema } from '../creation/sessionSpawnNewResultV1.js';
 
 type SessionAuthoringJsonPrimitive = null | string | number | boolean;
 export interface SessionAuthoringJsonObject {
@@ -35,29 +40,6 @@ const SessionAuthoringJsonValueSchema: z.ZodType<SessionAuthoringJsonValue> = z.
   ]),
 );
 
-export const SessionAuthoringCheckoutCreationDraftV1Schema = z.object({
-  kind: z.literal('git_worktree'),
-  displayName: z.string().trim().min(1),
-  baseRef: z.string().trim().min(1).nullable(),
-  branchMode: z.enum(['new', 'existing']).optional(),
-}).strict();
-
-const SessionAuthoringWindowsTerminalV1Schema = z.object({
-  launchMode: WindowsRemoteSessionLaunchModeSchema.optional(),
-  console: z.enum(['hidden', 'visible']).optional(),
-  windowName: WindowsTerminalWindowNameSchema.optional(),
-}).strict();
-
-export const SessionAuthoringTerminalV1Schema = z.object({
-  mode: z.enum(['integrated', 'plain', 'tmux', 'windows_terminal', 'windows_console']).optional(),
-  tmux: z.object({
-    sessionName: z.string().optional(),
-    isolated: z.boolean().optional(),
-    tmpDir: z.union([z.string(), z.null()]).optional(),
-  }).strict().optional(),
-  windows: SessionAuthoringWindowsTerminalV1Schema.optional(),
-}).strict();
-
 export const SyncedSessionAuthoringTerminalV1Schema = z.object({
   mode: z.enum(['integrated', 'plain', 'tmux', 'windows_terminal', 'windows_console']).optional(),
   tmux: z.object({
@@ -66,33 +48,42 @@ export const SyncedSessionAuthoringTerminalV1Schema = z.object({
   }).strict().optional(),
 }).strict();
 
-export const SyncedSessionAuthoringConnectedServicesV1Schema = z.object({
-  v: z.literal(1),
-  bindingsByServiceId: z.partialRecord(ConnectedServiceIdSchema, z.union([
-    z.object({ source: z.literal('native') }).strict(),
-    z.object({
-      source: z.literal('connected'),
-      selection: z.literal('profile').optional().default('profile'),
-      profileId: ConnectedServiceProfileIdSchema,
-    }).strict(),
-    z.object({
-      source: z.literal('connected'),
-      selection: z.literal('group'),
-      groupId: ConnectedServiceAuthGroupIdSchema,
-      profileId: ConnectedServiceProfileIdSchema.optional(),
-    }).strict(),
-  ])).default({}),
-}).strict();
+export const SyncedSessionAuthoringConnectedServicesV1Schema = ConnectedServiceBindingsV1Schema;
+
+export const SessionAuthoringAutomationTriggerDraftV1Schema = z.object({
+  clientId: z.string().trim().min(1),
+  kind: z.enum(['schedule', 'pluginEvent', 'sessionLifecycle']),
+  persisted: z.null(),
+  enabled: z.boolean(),
+  definition: AutomationTriggerDefinitionSchema.nullable(),
+}).strict().superRefine((trigger, context) => {
+  if (trigger.definition !== null && trigger.definition.kind !== trigger.kind) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['definition', 'kind'],
+      message: 'Automation trigger row kind must match its definition',
+    });
+  }
+});
 
 export const SessionAuthoringAutomationV1Schema = z.object({
   enabled: z.boolean(),
   name: z.string(),
   description: z.string(),
-  scheduleKind: z.enum(['interval', 'cron']),
-  everyMinutes: z.number().int().min(1).max(24 * 60),
-  cronExpr: z.string(),
-  timezone: z.string().nullable(),
-}).passthrough();
+  triggers: z.array(SessionAuthoringAutomationTriggerDraftV1Schema),
+}).strict().superRefine((automation, context) => {
+  const clientIds = new Set<string>();
+  automation.triggers.forEach((trigger, index) => {
+    if (clientIds.has(trigger.clientId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['triggers', index, 'clientId'],
+        message: 'Automation trigger client identities must be unique',
+      });
+    }
+    clientIds.add(trigger.clientId);
+  });
+});
 
 /**
  * Reader-only values emitted by the current `remote-dev` predecessor's synced
@@ -102,18 +93,6 @@ export const SessionAuthoringAutomationV1Schema = z.object({
  * a supported input to dev readers.
  */
 export const PredecessorSessionDraftModelIdV1Schema = z.string().trim().min(1).nullable();
-export const PredecessorSessionDraftManualAutomationV1Schema = z.object({
-  enabled: z.boolean(),
-  name: z.string(),
-  description: z.string(),
-  scheduleKind: z.literal('manual'),
-  everyMinutes: z.number().int().min(1).max(24 * 60),
-  cronExpr: z.string(),
-  timezone: z.string().nullable(),
-}).strict();
-
-export const SessionAuthoringCodexBackendModeSchema = z.enum(CODEX_BACKEND_MODES);
-
 const ALL_AUTHORING_CONTEXTS = [
   'newSession',
   'liveSession',
@@ -133,32 +112,6 @@ const LIVE_ONLY_CONTEXTS = [
 ] as const;
 
 export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
-  machineId: {
-    schema: z.string().trim().min(1).nullable().optional(),
-    description: 'Selected execution machine for a not-yet-created session.',
-    storageClass: 'template',
-    draftStorage: 'sync',
-    contexts: ['newSession', 'automationNewSession'],
-    defaultSurface: 'section',
-    defaultEditabilityByContext: {
-      newSession: 'editable',
-      automationNewSession: 'editable',
-    },
-    default: null,
-  },
-  serverId: {
-    schema: z.string().trim().min(1).nullable().optional(),
-    description: 'Selected server scope for a not-yet-created session.',
-    storageClass: 'template',
-    draftStorage: 'sync',
-    contexts: ['newSession', 'automationNewSession'],
-    defaultSurface: 'hidden',
-    defaultEditabilityByContext: {
-      newSession: 'editable',
-      automationNewSession: 'editable',
-    },
-    default: null,
-  },
   targetType: {
     schema: z.enum(['new_session', 'existing_session']),
     description: 'Whether authored intent launches a new session or targets an existing session.',
@@ -171,6 +124,20 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
       automationNewSession: 'editable',
       automationExistingSession: 'inherited',
     },
+  },
+  executionTarget: {
+    schema: SessionExecutionTargetV1Schema.nullable(),
+    description: 'Exact server-qualified execution target for a not-yet-created session.',
+    storageClass: 'template',
+    draftStorage: 'sync',
+    contexts: ['newSession', 'automationNewSession', 'automationExistingSession'],
+    defaultSurface: 'hidden',
+    defaultEditabilityByContext: {
+      newSession: 'editable',
+      automationNewSession: 'editable',
+      automationExistingSession: 'inherited',
+    },
+    default: null,
   },
   directory: {
     schema: z.string().trim().min(1),
@@ -198,6 +165,19 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
       automationExistingSession: 'hidden',
     },
     default: null,
+  },
+  organizationPlacement: {
+    schema: SessionOrganizationPlacementV1Schema,
+    description: 'Creation-time Account folder and tag placement for a new session.',
+    storageClass: 'template',
+    draftStorage: 'sync',
+    contexts: ['newSession', 'automationNewSession'],
+    defaultSurface: 'chip+section',
+    defaultEditabilityByContext: {
+      newSession: 'editable',
+      automationNewSession: 'editable',
+    },
+    default: { folderId: null, tagIds: [] },
   },
   prompt: {
     schema: z.string(),
@@ -229,24 +209,9 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     },
     default: '',
   },
-  agentId: {
-    schema: z.string().trim().min(1).nullable(),
-    description: 'Selected built-in agent id when targeting a built-in backend.',
-    storageClass: 'template',
-    draftStorage: 'sync',
-    contexts: [...ALL_AUTHORING_CONTEXTS],
-    defaultSurface: 'chip',
-    defaultEditabilityByContext: {
-      newSession: 'editable',
-      liveSession: 'editable',
-      automationNewSession: 'editable',
-      automationExistingSession: 'hidden',
-    },
-    default: null,
-  },
-  backendTarget: {
-    schema: BackendTargetRefSchema.nullable(),
-    description: 'Canonical backend target reference for built-in and configured backends.',
+  agentTarget: {
+    schema: AgentExecutionTargetV1Schema.nullable(),
+    description: 'Canonical executable Agent contribution selected for the authored session.',
     storageClass: 'template',
     draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],
@@ -476,9 +441,9 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     },
     default: null,
   },
-  codexBackendMode: {
-    schema: SessionAuthoringCodexBackendModeSchema.nullable(),
-    description: 'Transitional Codex-specific runtime mode. Keep in compatibility/adapters, not as a permanent generic runtime abstraction.',
+  runtimeDescriptorV1: {
+    schema: RuntimeDescriptorV1Schema.nullable(),
+    description: 'Opaque Agent-owned runtime selection bound to the selected Agent.',
     storageClass: 'template',
     draftStorage: 'sync',
     contexts: [...ALL_AUTHORING_CONTEXTS],

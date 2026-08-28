@@ -91,7 +91,7 @@ describe('SessionServerStartSpawnDraftV1Schema', () => {
         runId: 'run-1',
         attempt: 3,
         claimedByMachineId: 'machine-source',
-        origin: 'event',
+        cause: { kind: 'manual', invokedAt: 1 },
         accountCurrentness: { mode: 'plain', version: 7, contentKeyFingerprint: null },
         // The server validates only the bounded envelope framing. The target
         // owns exact Session V2 parsing after it revalidates this handoff.

@@ -298,6 +298,35 @@ const RemoteDevMetadataReaderAtFae505Schema = z.object({
 }).passthrough();
 
 describe('session metadata privacy envelopes v1', () => {
+  it('normalizes released bundled short Connected Account keys at Session metadata ingress', () => {
+    const parsed = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      connectedServices: {
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'profile',
+              profileId: 'work',
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed.connectedServices?.connectedServices).toEqual({
+      v: 1,
+      bindingsByServiceId: {
+        'happier.agent.codex/openai-codex': {
+          source: 'connected',
+          selection: 'profile',
+          profileId: 'work',
+        },
+      },
+    });
+  });
+
   it('reserves the owner-metadata ciphertext byte apart from predecessor Account drafts', () => {
     const ciphertext = sealSessionOwnerMetadataV1({
       material: material(6),
@@ -314,7 +343,7 @@ describe('session metadata privacy envelopes v1', () => {
     )).toBe(false);
   });
 
-  it('normalizes deployed Antigravity runtime identity through the host owner projection', () => {
+  it('re-envelopes deployed Antigravity runtime identity without host interpretation', () => {
     const created = createSessionOwnerMetadataV1({
       metadata: {
         agentRuntimeDescriptorV1: {
@@ -345,9 +374,20 @@ describe('session metadata privacy envelopes v1', () => {
           runtimeDescriptorV1: {
             v: 1,
             agentId: 'antigravity',
-            runtimeMode: 'sdk',
-            providerSessionId: 'localharness-session-1',
-            localharnessSessionId: 'localharness-session-1',
+            agent: {
+              runtimeMode: 'cliPrint',
+              providerSessionId: 'stale-cli-conversation',
+              agentExtra: {
+                owner: 'antigravity',
+                schemaId: 'antigravity.agentRuntimeDescriptorExtra',
+                v: 1,
+                runtimeHandle: {
+                  runtimeMode: 'sdk',
+                  providerSessionId: 'localharness-session-1',
+                  localharnessSessionId: 'localharness-session-1',
+                },
+              },
+            },
           },
         },
       },
@@ -361,9 +401,8 @@ describe('session metadata privacy envelopes v1', () => {
         v: 1,
         agentId: 'antigravity',
         agent: {
-          runtimeMode: 'sdk',
-          providerSessionId: 'localharness-session-1',
-          localharnessSessionId: 'localharness-session-1',
+          runtimeMode: 'cliPrint',
+          providerSessionId: 'stale-cli-conversation',
         },
       },
     });
@@ -478,6 +517,61 @@ describe('session metadata privacy envelopes v1', () => {
     }).success).toBe(false);
     expect(SessionOwnerMetadataEnvelopeV1Schema.safeParse({
       ciphertext: encrypted.c,
+    }).success).toBe(false);
+  });
+
+  it('strictly admits the public Agent runtime capability vocabulary', () => {
+    const ownerMetadata = {
+      v: 1 as const,
+      agentRuntimeCapabilitiesV1: {
+        localControl: {
+          supported: true,
+          topology: 'shared' as const,
+          attachStrategy: 'provider_attach' as const,
+          remoteWritable: true,
+        },
+        sessionStorage: { direct: true, persisted: true },
+        sessionCapabilities: {
+          sessionListing: 'supported' as const,
+          sessionFork: {
+            conversation: 'supported' as const,
+            fromMessage: 'unsupported' as const,
+            protocol: 'acp' as const,
+          },
+          sessionRollback: { conversation: 'unsupported' as const },
+        },
+        tools: { delivery: 'native_mcp' as const, support: 'supported' as const },
+        handoff: {
+          vendorStateTransfer: 'unsupported' as const,
+          requiresExplicitSessionId: true,
+        },
+        executionRun: { supported: true },
+      },
+    };
+
+    expect(SessionOwnerMetadataV1Schema.parse(ownerMetadata)).toEqual(ownerMetadata);
+    expect(SessionOwnerMetadataV1Schema.safeParse({
+      ...ownerMetadata,
+      agentRuntimeCapabilitiesV1: {
+        ...ownerMetadata.agentRuntimeCapabilitiesV1,
+        sessionCapabilities: {
+          ...ownerMetadata.agentRuntimeCapabilitiesV1.sessionCapabilities,
+          sessionFork: {
+            ...ownerMetadata.agentRuntimeCapabilitiesV1.sessionCapabilities.sessionFork,
+            providerBackendMode: 'acp',
+          },
+        },
+      },
+    }).success).toBe(false);
+    expect(SessionOwnerMetadataV1Schema.safeParse({
+      ...ownerMetadata,
+      agentRuntimeCapabilitiesV1: {
+        ...ownerMetadata.agentRuntimeCapabilitiesV1,
+        sessionCapabilities: {
+          ...ownerMetadata.agentRuntimeCapabilitiesV1.sessionCapabilities,
+          usageLimitRecovery: { checkNow: 'supported' },
+        },
+      },
     }).success).toBe(false);
   });
 
@@ -1161,8 +1255,10 @@ describe('session metadata privacy envelopes v1', () => {
         runtimeDescriptorV1: {
           v: 1,
           agentId: 'codex',
-          backendMode: 'appServer',
-          providerSessionId: 'private-native-session',
+          agent: {
+            backendMode: 'appServer',
+            providerSessionId: 'private-native-session',
+          },
         },
       },
       runtime: {
@@ -1472,8 +1568,10 @@ describe('session metadata privacy envelopes v1', () => {
           runtimeDescriptorV1: {
             v: 1,
             agentId: 'codex',
-            backendMode: 'appServer',
-            providerSessionId: 'native-1',
+            agent: {
+              backendMode: 'appServer',
+              providerSessionId: 'native-1',
+            },
           },
         },
       },
@@ -1481,7 +1579,7 @@ describe('session metadata privacy envelopes v1', () => {
     expect(JSON.stringify(created)).not.toContain('metadataJson');
   });
 
-  it('uses generated strict descriptor readers for every current and predecessor carrier', () => {
+  it('carries every current and predecessor descriptor without bundled dispatch', () => {
     const descriptors = [
       {
         expectedAgentId: 'codex',
@@ -1605,25 +1703,25 @@ describe('session metadata privacy envelopes v1', () => {
       });
     }
 
+    const externallyAuthored = {
+      v: 1 as const,
+      agentId: 'codex',
+      agent: {
+        backendMode: 'appServer',
+        futurePrivateAuthority: 'must-not-drop',
+      },
+    };
     expect(createSessionOwnerMetadataV1({
       metadata: {
-        runtimeDescriptorV1: {
-          v: 1,
-          agentId: 'codex',
-          agent: {
-            backendMode: 'appServer',
-            futurePrivateAuthority: 'must-not-drop',
-          },
-        },
+        runtimeDescriptorV1: externallyAuthored,
       },
-    })).toEqual({
-      ok: false,
-      error: 'unsupported_owner_metadata',
-      unsupportedFields: ['runtimeDescriptorV1'],
+    })).toMatchObject({
+      ok: true,
+      ownerMetadata: { nativeSession: { runtimeDescriptorV1: externallyAuthored } },
     });
   });
 
-  it('projects the canonical generic plugin runtime descriptor without carrying its source envelope', () => {
+  it('carries a trusted plugin runtime descriptor without interpreting its payload', () => {
     const descriptor = genericPluginRuntimeDescriptor();
 
     expect(createSessionOwnerMetadataV1({
@@ -1633,65 +1731,55 @@ describe('session metadata privacy envelopes v1', () => {
       ownerMetadata: {
         v: 1,
         nativeSession: {
-          runtimeDescriptorV1: {
-            v: 1,
-            agentId: 'claude',
-            backendMode: 'native',
-            providerSessionId: 'claude-session-private',
-            backendId: 'claude',
-            provenance: 'first_party',
-          },
+          runtimeDescriptorV1: descriptor,
         },
       },
     });
-    expect(createSessionOwnerMetadataV1({
-      metadata: {
-        runtimeDescriptorV1: {
-          ...descriptor,
-          agent: {
-            ...descriptor.agent,
-            agentExtra: {
-              ...descriptor.agent.agentExtra,
-              runtimeHandle: {
-                ...descriptor.agent.agentExtra.runtimeHandle,
-                futurePrivateAuthority: 'must-not-drop',
-              },
-            },
-          },
-        },
+    const widened = {
+      ...descriptor,
+      agent: {
+        ...descriptor.agent,
+        futureAgentField: { nested: ['preserve-me'] },
       },
-    })).toEqual({
-      ok: false,
-      error: 'unsupported_owner_metadata',
-      unsupportedFields: ['runtimeDescriptorV1'],
-    });
+    } as const;
     expect(createSessionOwnerMetadataV1({
-      metadata: {
-        runtimeDescriptorV1: {
-          ...descriptor,
-          agent: {
-            ...descriptor.agent,
-            agentExtra: {
-              ...descriptor.agent.agentExtra,
-              runtimeHandle: {
-                ...descriptor.agent.agentExtra.runtimeHandle,
-                source: {
-                  ...descriptor.agent.agentExtra.runtimeHandle.source,
-                  futurePrivateAuthority: 'must-not-drop',
-                },
-              },
-            },
-          },
-        },
-      },
-    })).toEqual({
-      ok: false,
-      error: 'unsupported_owner_metadata',
-      unsupportedFields: ['runtimeDescriptorV1'],
+      metadata: { runtimeDescriptorV1: widened },
+    })).toMatchObject({
+      ok: true,
+      ownerMetadata: { nativeSession: { runtimeDescriptorV1: widened } },
     });
   });
 
-  it('projects the exact host-session runtime identity envelope and rejects widened host authority', () => {
+  it('carries generic native-resume identity beside an opaque Agent descriptor', () => {
+    const runtimeDescriptorV1 = {
+      v: 1 as const,
+      agentId: 'acme.agent',
+      agent: {
+        providerSessionId: 'private-do-not-interpret',
+        nested: { preserve: true },
+      },
+    };
+    const nativeResumeIdentityV1 = {
+      v: 1 as const,
+      vendorResumeId: 'canonical-native-session',
+    };
+    const created = createSessionOwnerMetadataV1({
+      metadata: { runtimeDescriptorV1, nativeResumeIdentityV1 },
+    });
+
+    expect(created).toMatchObject({
+      ok: true,
+      ownerMetadata: {
+        nativeSession: { runtimeDescriptorV1, nativeResumeIdentityV1 },
+      },
+    });
+    expect(projectSessionOwnerCompatibilityViewV1({
+      sharedMetadata: { v: 1 },
+      ownerMetadata: created.ok ? created.ownerMetadata : {},
+    })).toMatchObject({ runtimeDescriptorV1, nativeResumeIdentityV1 });
+  });
+
+  it('carries the exact host-session runtime identity envelope opaquely', () => {
     const descriptor = genericHostSessionRuntimeDescriptor();
 
     const created = createSessionOwnerMetadataV1({
@@ -1702,14 +1790,7 @@ describe('session metadata privacy envelopes v1', () => {
       ownerMetadata: {
         v: 1,
         nativeSession: {
-          runtimeDescriptorV1: {
-            v: 1,
-            agentId: 'claude',
-            backendMode: 'native',
-            providerSessionId: 'claude-session-private',
-            backendId: 'claude',
-            provenance: 'first_party',
-          },
+          runtimeDescriptorV1: descriptor,
         },
       },
     });
@@ -1725,42 +1806,30 @@ describe('session metadata privacy envelopes v1', () => {
     if (!reparsed.ok) throw new Error('expected reparsed host-session owner metadata');
     expect(reparsed.ownerMetadata.nativeSession?.runtimeDescriptorV1)
       .toEqual(created.ownerMetadata.nativeSession?.runtimeDescriptorV1);
-    expect(createSessionOwnerMetadataV1({
-      metadata: {
-        runtimeDescriptorV1: {
-          ...descriptor,
-          agent: {
-            ...descriptor.agent,
-            agentExtra: {
-              ...descriptor.agent.agentExtra,
-              runtimeHandle: {
-                ...descriptor.agent.agentExtra.runtimeHandle,
-                futurePrivateAuthority: 'must-not-drop',
-              },
-            },
+    const widened = {
+      ...descriptor,
+      agent: {
+        ...descriptor.agent,
+        agentExtra: {
+          ...descriptor.agent.agentExtra,
+          runtimeHandle: {
+            ...descriptor.agent.agentExtra.runtimeHandle,
+            futurePrivateAuthority: 'must-not-drop',
           },
         },
       },
-    })).toEqual({
-      ok: false,
-      error: 'unsupported_owner_metadata',
-      unsupportedFields: ['runtimeDescriptorV1'],
-    });
+    } as const;
     expect(createSessionOwnerMetadataV1({
       metadata: {
-        runtimeDescriptorV1: {
-          ...descriptor,
-          agentId: 'codex',
-        },
+        runtimeDescriptorV1: widened,
       },
-    })).toEqual({
-      ok: false,
-      error: 'unsupported_owner_metadata',
-      unsupportedFields: ['runtimeDescriptorV1'],
+    })).toMatchObject({
+      ok: true,
+      ownerMetadata: { nativeSession: { runtimeDescriptorV1: widened } },
     });
   });
 
-  it('projects host-session runtime identity before generated Agent-native descriptor dispatch', () => {
+  it('carries host-session runtime identity for bundled Agents without dispatch', () => {
     for (const agentId of ['codex', 'opencode', 'pi'] as const) {
       const descriptor = genericHostSessionRuntimeDescriptor({ agentId });
 
@@ -1771,21 +1840,14 @@ describe('session metadata privacy envelopes v1', () => {
         ownerMetadata: {
           v: 1,
           nativeSession: {
-            runtimeDescriptorV1: {
-              v: 1,
-              agentId,
-              backendMode: 'native',
-              providerSessionId: 'claude-session-private',
-              backendId: agentId,
-              provenance: 'first_party',
-            },
+            runtimeDescriptorV1: descriptor,
           },
         },
       });
     }
   });
 
-  it('reparses the projected Codex host-session runtime identity idempotently', () => {
+  it('reparses a Codex-owned custom runtime mode idempotently', () => {
     expect(createSessionOwnerMetadataV1({
       metadata: {
         runtimeDescriptorV1: {
@@ -1794,11 +1856,7 @@ describe('session metadata privacy envelopes v1', () => {
           agent: { backendMode: 'custom' },
         },
       },
-    })).toEqual({
-      ok: false,
-      error: 'unsupported_owner_metadata',
-      unsupportedFields: ['runtimeDescriptorV1'],
-    });
+    })).toMatchObject({ ok: true });
 
     const genericHostDescriptor = genericHostSessionRuntimeDescriptor({
       agentId: 'codex',
@@ -1854,14 +1912,7 @@ describe('session metadata privacy envelopes v1', () => {
       ownerMetadata: {
         v: 1,
         nativeSession: {
-          runtimeDescriptorV1: {
-            v: 1,
-            agentId: 'acp:account-configured-acp',
-            backendMode: 'native',
-            providerSessionId: 'claude-session-private',
-            backendId: 'account-configured-acp',
-            provenance: 'configured',
-          },
+          runtimeDescriptorV1: descriptor,
         },
       },
     });
@@ -1879,26 +1930,26 @@ describe('session metadata privacy envelopes v1', () => {
       .toEqual(created.ownerMetadata.nativeSession?.runtimeDescriptorV1);
 
     const pluginDescriptor = genericPluginRuntimeDescriptor();
-    expect(createSessionOwnerMetadataV1({
-      metadata: {
-        runtimeDescriptorV1: {
-          ...pluginDescriptor,
-          agent: {
-            ...pluginDescriptor.agent,
-            agentExtra: {
-              ...pluginDescriptor.agent.agentExtra,
-              runtimeHandle: {
-                ...pluginDescriptor.agent.agentExtra.runtimeHandle,
-                provenance: 'configured',
-              },
-            },
+    const configuredPluginDescriptor = {
+      ...pluginDescriptor,
+      agent: {
+        ...pluginDescriptor.agent,
+        agentExtra: {
+          ...pluginDescriptor.agent.agentExtra,
+          runtimeHandle: {
+            ...pluginDescriptor.agent.agentExtra.runtimeHandle,
+            provenance: 'configured',
           },
         },
       },
-    })).toEqual({
-      ok: false,
-      error: 'unsupported_owner_metadata',
-      unsupportedFields: ['runtimeDescriptorV1'],
+    } as const;
+    expect(createSessionOwnerMetadataV1({
+      metadata: {
+        runtimeDescriptorV1: configuredPluginDescriptor,
+      },
+    })).toMatchObject({
+      ok: true,
+      ownerMetadata: { nativeSession: { runtimeDescriptorV1: configuredPluginDescriptor } },
     });
   });
 
@@ -1942,49 +1993,36 @@ describe('session metadata privacy envelopes v1', () => {
       .toEqual(first.ownerMetadata.nativeSession?.runtimeDescriptorV1);
   });
 
-  it('rejects independently mismatched generic runtime descriptor owners and schemas', () => {
+  it('preserves Agent-owned descriptor payloads without host forensics', () => {
     const descriptor = genericPluginRuntimeDescriptor();
 
-    for (const agentExtra of [
-      {
-        ...descriptor.agent.agentExtra,
-        owner: 'foreign-owner',
-      },
-      {
-        ...descriptor.agent.agentExtra,
-        schemaId: 'foreign.runtimeDescriptorExtra',
-      },
-    ]) {
-      expect(createSessionOwnerMetadataV1({
-        metadata: {
-          runtimeDescriptorV1: {
-            ...descriptor,
-            agent: {
-              ...descriptor.agent,
-              agentExtra,
-            },
-          },
+    const authored = {
+      ...descriptor,
+      agent: {
+        ...descriptor.agent,
+        backendId: 'agent-owned-backend',
+        provenance: 'future-provenance',
+        agentExtra: {
+          owner: 'foreign-owner',
+          schemaId: 'foreign.runtimeDescriptorExtra',
+          v: 7,
+          runtimeHandle: { source: { kind: 'future-source-kind' } },
         },
-      })).toEqual({
-        ok: false,
-        error: 'unsupported_owner_metadata',
-        unsupportedFields: ['runtimeDescriptorV1'],
-      });
-    }
-  });
-
-  it('rejects mixed generic runtime descriptor envelope and projected fields', () => {
-    const descriptor = genericPluginRuntimeDescriptor();
+      },
+    } as const;
+    expect(createSessionOwnerMetadataV1({
+      metadata: { runtimeDescriptorV1: authored },
+    })).toMatchObject({
+      ok: true,
+      ownerMetadata: { nativeSession: { runtimeDescriptorV1: authored } },
+    });
 
     expect(createSessionOwnerMetadataV1({
       metadata: {
         runtimeDescriptorV1: {
-          ...descriptor,
-          agent: {
-            ...descriptor.agent,
-            backendId: 'claude',
-            provenance: 'first_party',
-          },
+          v: 1,
+          agentId: 'external-agent',
+          agent: { callback: () => undefined },
         },
       },
     })).toEqual({
@@ -1992,41 +2030,6 @@ describe('session metadata privacy envelopes v1', () => {
       error: 'unsupported_owner_metadata',
       unsupportedFields: ['runtimeDescriptorV1'],
     });
-  });
-
-  it('rejects incomplete or unknown-source generic runtime descriptor envelopes', () => {
-    const descriptor = genericPluginRuntimeDescriptor();
-    const {
-      source: _missingSource,
-      ...runtimeHandleWithoutSource
-    } = descriptor.agent.agentExtra.runtimeHandle;
-
-    for (const runtimeHandle of [
-      runtimeHandleWithoutSource,
-      {
-        ...descriptor.agent.agentExtra.runtimeHandle,
-        source: { kind: 'future-source-kind' },
-      },
-    ]) {
-      expect(createSessionOwnerMetadataV1({
-        metadata: {
-          runtimeDescriptorV1: {
-            ...descriptor,
-            agent: {
-              ...descriptor.agent,
-              agentExtra: {
-                ...descriptor.agent.agentExtra,
-                runtimeHandle,
-              },
-            },
-          },
-        },
-      })).toEqual({
-        ok: false,
-        error: 'unsupported_owner_metadata',
-        unsupportedFields: ['runtimeDescriptorV1'],
-      });
-    }
   });
 
   it('fails closed with a typed error for unknown or unmodeled owner authority', () => {
@@ -2041,19 +2044,19 @@ describe('session metadata privacy envelopes v1', () => {
       unsupportedFields: ['futurePrivateAuthority'],
     });
 
+    const futureDescriptor = {
+      v: 1 as const,
+      agentId: 'future-agent',
+      agent: { providerSessionId: 'cannot-drop-this-authority' },
+    };
     expect(createSessionOwnerMetadataV1({
       metadata: {
         path: '/private/workspace',
-        runtimeDescriptorV1: {
-          v: 1,
-          agentId: 'future-agent',
-          agent: { providerSessionId: 'cannot-drop-this-authority' },
-        },
+        runtimeDescriptorV1: futureDescriptor,
       },
-    })).toEqual({
-      ok: false,
-      error: 'unsupported_owner_metadata',
-      unsupportedFields: ['runtimeDescriptorV1'],
+    })).toMatchObject({
+      ok: true,
+      ownerMetadata: { nativeSession: { runtimeDescriptorV1: futureDescriptor } },
     });
 
     expect(createSessionOwnerMetadataV1({
@@ -2825,8 +2828,11 @@ describe('session metadata privacy envelopes v1', () => {
     );
     expect(created.ownerMetadata.nativeSession?.runtimeDescriptorV1).toMatchObject({
       agentId: 'pi',
-      providerSessionId: 'pi-native-private',
-      sessionFile: '/private/pi-session.jsonl',
+      agent: {
+        resumeStrategy: 'sessionFileBySessionId',
+        vendorSessionId: 'pi-native-private',
+        sessionFile: '/private/pi-session.jsonl',
+      },
     });
     expect(created.ownerMetadata.runtime?.sessionModelsV1).toMatchObject({
       agentId: 'pi',
@@ -3348,5 +3354,55 @@ describe('extended-context model ids survive owner metadata projection', () => {
         ],
       },
     });
+  });
+});
+
+describe('released Codex runtime metadata compatibility', () => {
+  it('normalizes the released top-level selector into the neutral runtime descriptor', () => {
+    const created = createSessionOwnerMetadataV1({
+      metadata: {
+        codexSessionId: 'thread-1',
+        codexBackendMode: 'mcp',
+      },
+    });
+
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.ownerMetadata.nativeSession).toEqual({
+      codexSessionId: 'thread-1',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          backendMode: 'appServer',
+          providerSessionId: 'thread-1',
+        },
+      },
+    });
+    expect(created.ownerMetadata.nativeSession).not.toHaveProperty('codexBackendMode');
+  });
+
+  it('rejects conflicting released and descriptor runtime selectors', () => {
+    expect(createSessionOwnerMetadataV1({
+      metadata: {
+        codexBackendMode: 'mcp',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: { backendMode: 'acp' },
+        },
+      },
+    })).toEqual({
+      ok: false,
+      error: 'unsupported_owner_metadata',
+      unsupportedFields: ['codexBackendMode'],
+    });
+  });
+
+  it('does not admit the released selector into current owner envelopes', () => {
+    expect(SessionOwnerMetadataV1Schema.safeParse({
+      v: 1,
+      nativeSession: { codexBackendMode: 'appServer' },
+    }).success).toBe(false);
   });
 });

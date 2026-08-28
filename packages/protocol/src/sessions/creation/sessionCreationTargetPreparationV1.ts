@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/fieldCatalog.js';
+import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/creationFieldsV1.js';
 import { SessionExecutionTargetV1Schema } from './sessionExecutionTargetV1.js';
 
 /**

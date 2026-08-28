@@ -10,6 +10,7 @@ import {
   ExternalSessionsCandidatesListResponseSchema,
   ExternalSessionStatusGetResponseSchema,
   ExternalSessionStatusGetRequestSchema,
+  ExternalSessionStatusActionInputV1Schema,
   ExternalSessionsCandidatesListRequestSchema,
   ExternalSessionTranscriptPageRequestSchema,
   ExternalSessionTranscriptReadAfterRequestSchema,
@@ -215,7 +216,7 @@ describe('ExternalSessionsSourceSchema', () => {
     }
   });
 
-  it('admits only the explicit fresh takeover-readiness intent', () => {
+  it('rejects the retired takeover-readiness request knob', () => {
     const request = {
       machineId: 'machine-1',
       sessionId: 'session-1',
@@ -224,15 +225,13 @@ describe('ExternalSessionsSourceSchema', () => {
       source: { kind: 'codexHome', home: 'user' },
     } as const;
 
-    expect(ExternalSessionStatusGetRequestSchema.parse({
-      ...request,
-      takeoverReadiness: 'fresh',
-    })).toMatchObject({
-      takeoverReadiness: 'fresh',
-    });
     expect(ExternalSessionStatusGetRequestSchema.safeParse({
       ...request,
-      takeoverReadiness: 'stale',
+      takeoverReadiness: 'fresh',
+    }).success).toBe(false);
+    expect(ExternalSessionStatusActionInputV1Schema.safeParse({
+      sessionId: request.sessionId,
+      takeoverReadiness: 'fresh',
     }).success).toBe(false);
   });
 
@@ -415,7 +414,7 @@ describe('ExternalSessionsSourceSchema', () => {
     expect(((parsed as any).runtimeDescriptorV1 as any).futureRuntimeDescriptorField).toBe('keep-me');
   });
 
-  it('preserves unknown future Codex backend modes for the Codex leaf to validate', () => {
+  it('normalizes the released Codex selector into plugin-owned link data', () => {
     const parsed = ExternalSessionLinkEnsureRequestSchema.parse({
       machineId: 'machine-1',
       agentId: 'codex',
@@ -427,7 +426,19 @@ describe('ExternalSessionsSourceSchema', () => {
       codexBackendMode: 'future-codex-mode',
     });
 
-    expect(parsed.codexBackendMode).toBe('future-codex-mode');
+    expect(parsed).not.toHaveProperty('codexBackendMode');
+    expect(parsed.linkData).toEqual({ codexBackendMode: 'future-codex-mode' });
+  });
+
+  it('scopes the released Codex selector adapter to link ensure', () => {
+    expect(ExternalSessionStatusGetRequestSchema.safeParse({
+      machineId: 'machine-1',
+      sessionId: 'session-1',
+      agentId: 'codex',
+      remoteSessionId: 'remote-1',
+      source: { kind: 'codexHome', home: 'user' },
+      codexBackendMode: 'appServer',
+    }).success).toBe(false);
   });
 
   it('rejects invalid runtimeDescriptorV1 shapes', () => {

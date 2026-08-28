@@ -291,7 +291,7 @@ function sanitizeComposerAttachmentInputs(value: unknown): ComposerAttachmentInp
 
   const attachments: ComposerAttachmentInputV1[] = [];
   for (const entry of value) {
-    if (attachments.length >= 64) break;
+    if (attachments.length >= MAX_COMPOSER_ATTACHMENT_INSTANCES_V1) break;
     const parsed = ComposerAttachmentInputV1Schema.safeParse(entry);
     if (parsed.success) attachments.push(parsed.data);
   }

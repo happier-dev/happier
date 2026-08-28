@@ -8,10 +8,7 @@ import {
 import { ParticipantRecipientV1Schema } from '../messages/structured/participantMessageV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionIdSchema } from '../sessions/idsV1.js';
-import {
-  PredecessorSessionDraftManualAutomationV1Schema,
-  PredecessorSessionDraftModelIdV1Schema,
-} from '../sessions/authoring/fieldCatalog.js';
+import { PredecessorSessionDraftModelIdV1Schema } from '../sessions/authoring/fieldCatalog.js';
 import {
   SyncedSessionAuthoringFieldIdV1Schema,
   SyncedSessionAuthoringValueV1Schema,
@@ -120,20 +117,13 @@ const SessionDraftAcceptedSyncedAuthoringFieldIdV1Schema = z.union([
   SyncedSessionAuthoringFieldIdV1Schema,
   z.literal('modelId'),
 ]);
-const PredecessorSessionDraftAutomationV1Schema = z.union([
-  SyncedSessionAuthoringValueV1Schema.shape.automation,
-  PredecessorSessionDraftManualAutomationV1Schema,
-]);
-
 const SyncedAuthoringFieldsSchema = z
   .partialRecord(SessionDraftAcceptedSyncedAuthoringFieldIdV1Schema, DraftFieldV1Schema)
   .superRefine((fields, context) => {
     for (const [fieldId, field] of Object.entries(fields as Record<string, { value: unknown }>)) {
       const fieldSchema = fieldId === 'modelId'
         ? PredecessorSessionDraftModelIdV1Schema
-        : fieldId === 'automation'
-          ? PredecessorSessionDraftAutomationV1Schema
-          : (SyncedSessionAuthoringValueV1Schema.shape as Record<string, z.ZodTypeAny>)[fieldId];
+        : (SyncedSessionAuthoringValueV1Schema.shape as Record<string, z.ZodTypeAny>)[fieldId];
       if (fieldSchema && !fieldSchema.safeParse(field.value).success) {
         context.addIssue({
           code: z.ZodIssueCode.custom,

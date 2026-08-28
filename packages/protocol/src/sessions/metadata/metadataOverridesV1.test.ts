@@ -44,10 +44,11 @@ describe('sessionMetadata overrides v1', () => {
     expect(Object.keys((parsed as any).overrides ?? {})).toEqual(['opt_a', 'opt_b', 'opt_c', 'opt_d']);
   });
 
-  it('builds and parses codexRuntimeDescriptorV1', () => {
-    const built = (protocol as any).buildCodexRuntimeDescriptorV1({ backendMode: 'appServer' });
-    expect(built).toMatchObject({ v: 1, backendMode: 'appServer' });
-    const parsed = (protocol as any).CodexRuntimeDescriptorV1Schema.parse({ ...built, extra: 'x' });
-    expect((parsed as any).extra).toBe('x');
+  it('retains only released Codex backend-mode aliases at the compatibility seam', () => {
+    expect(protocol.normalizeCodexBackendMode('mcp')).toBe('appServer');
+    expect(protocol.normalizeCodexBackendMode('mcp_resume')).toBe('acp');
+    expect(protocol.normalizeCodexBackendMode('appServer')).toBe('appServer');
+    expect(protocol.normalizeCodexBackendMode('acp')).toBe('acp');
+    expect(protocol.normalizeCodexBackendMode('future-mode')).toBeNull();
   });
 });

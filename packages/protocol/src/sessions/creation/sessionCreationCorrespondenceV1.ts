@@ -7,7 +7,7 @@ import { SessionMcpSelectionV1Schema } from '../../mcp/servers/sessionSelectionV
 import { SessionModelSelectionV1Schema } from '../../providers/selection/v1.js';
 import { AgentSessionConfigurationSnapshotV1Schema } from '../../runtime/agentSessionV1.js';
 import { AgentSessionStartupInstructionsMarkerV1Schema } from '../../runtime/agentSessionStartupInstructionsV1.js';
-import { SessionAuthoringTerminalV1Schema } from '../authoring/fieldCatalog.js';
+import { SessionAuthoringTerminalV1Schema } from '../authoring/creationFieldsV1.js';
 import { SessionCreationTagV1Schema } from './sessionCreationIdentityV1.js';
 import { SessionOrganizationPlacementV1Schema } from './sessionSpawnNewResultV1.js';
 

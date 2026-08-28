@@ -13,11 +13,15 @@ import {
   AgentSessionStartupInstructionsV1Schema,
 } from '../../runtime/agentSessionStartupInstructionsV1.js';
 import {
+  PluginSessionInputAttachmentsV1Schema,
+  requireSessionInputContent,
+} from '../messages/sessionInputAuthoringV1.js';
+import {
   SessionAuthoringCheckoutCreationDraftV1Schema,
   SessionAuthoringTerminalV1Schema,
-} from '../authoring/fieldCatalog.js';
-export { SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/fieldCatalog.js';
-export type { SessionAuthoringCheckoutCreationDraftV1 } from '../authoring/index.js';
+} from '../authoring/creationFieldsV1.js';
+export { SessionAuthoringCheckoutCreationDraftV1Schema } from '../authoring/creationFieldsV1.js';
+export type { SessionAuthoringCheckoutCreationDraftV1 } from '../authoring/creationFieldsV1.js';
 import { SessionCreationKeyV1Schema } from './sessionCreationIdentityV1.js';
 import { SessionSpawnSourceContextV1Schema } from './sessionSpawnSourceContextV1.js';
 import { SessionExecutionTargetV1Schema } from './sessionExecutionTargetV1.js';
@@ -56,6 +60,17 @@ const SessionSpawnEnvironmentVariablesV1Schema = z.record(
 });
 
 /**
+ * One Message-owned input admitted before the new Session runtime may start.
+ * The creation key owns retry identity, so this shape carries content only;
+ * callers cannot establish a second Message idempotency owner.
+ */
+export const SessionSpawnNewInitialInputV1Schema = z.object({
+  text: z.string().optional(),
+  attachments: PluginSessionInputAttachmentsV1Schema.optional(),
+}).strict().superRefine(requireSessionInputContent);
+export type SessionSpawnNewInitialInputV1 = z.infer<typeof SessionSpawnNewInitialInputV1Schema>;
+
+/**
  * The sole public request for an ordinary authored hosted Session. Legacy flat
  * spawn fields are normalized before this boundary and are never accepted as a
  * second canonical creation vocabulary.
@@ -77,7 +92,7 @@ export const SessionSpawnNewInputV2Schema = z.object({
   terminal: SessionAuthoringTerminalV1Schema.optional(),
   checkoutCreationDraft: SessionAuthoringCheckoutCreationDraftV1Schema.nullable().optional(),
   title: z.string().trim().min(1).optional(),
-  initialMessage: z.string().trim().min(1).optional(),
+  initialInput: SessionSpawnNewInitialInputV1Schema.optional(),
   environmentVariables: SessionSpawnEnvironmentVariablesV1Schema.optional(),
   agentSessionStartupInstructionsV1: AgentSessionStartupInstructionsV1Schema.optional(),
   /**
@@ -98,11 +113,11 @@ export type SessionSpawnNewInputV2 = z.infer<typeof SessionSpawnNewInputV2Schema
  */
 export const SessionServerStartSpawnDraftV1Schema = SessionSpawnNewInputV2Schema.omit({
   creationKey: true,
-  initialMessage: true,
+  initialInput: true,
   environmentVariables: true,
 }).strict();
 
 export type SessionServerStartSpawnDraftV1 = Omit<
   SessionSpawnNewInputV2,
-  'creationKey' | 'initialMessage' | 'environmentVariables'
+  'creationKey' | 'initialInput' | 'environmentVariables'
 >;

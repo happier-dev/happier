@@ -4,10 +4,9 @@ import {
   ExternalSessionsSourceSchema,
 } from '../../external/sourceCatalog.js';
 import { RuntimeDescriptorV1Schema } from '../../metadata/runtimeDescriptorV1.js';
+import { AgentExecutionTargetV1Schema } from '../../../agents/executionTargetV1.js';
 
 import {
-  SessionHandoffCodexAffinitySchema,
-  SessionHandoffCodexBackendModeSchema,
   SessionHandoffConflictPolicySchema,
   SessionHandoffStorageModeSchema,
   SessionHandoffTransportStrategySchema,
@@ -226,11 +225,12 @@ const SessionHandoffResumePlanSchema = z
   .object({
     directory: z.string().min(1).max(MAX_PATH_LENGTH),
     agent: ExternalSessionAgentIdSchema,
+    /** Canonical current target; absent only on supported predecessor responses. */
+    agentTarget: AgentExecutionTargetV1Schema.optional(),
     resume: z.string().min(1).max(4096),
     environmentVariables: z.record(z.string().min(1).max(128), z.string().max(16 * 1024)).optional(),
     transcriptStorage: z.enum(['direct', 'persisted']),
     approvedNewDirectoryCreation: z.literal(true),
-    codexBackendMode: SessionHandoffCodexBackendModeSchema.optional(),
   })
   .passthrough()
   .superRefine((value, context) => {

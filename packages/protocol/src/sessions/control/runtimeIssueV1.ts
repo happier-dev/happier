@@ -3,9 +3,9 @@ import { z } from 'zod';
 import { isUnsafeTelemetryDataKey } from '../../common/sensitiveKeys.js';
 import {
   ConnectedServiceAuthGroupIdSchema,
-  ConnectedServiceIdSchema,
   ConnectedServiceProfileIdSchema,
 } from '../../connect/connectedServiceSchemas.js';
+import { ConnectedAccountServiceKeyIngressSchema } from '../../connect/connectedServiceBindings.js';
 import { ConnectedServiceLimitCategoryV1Schema } from '../../connect/connectedServiceLimitCategory.js';
 
 export const TurnTerminalStatusV1Schema = z.enum(['completed', 'cancelled', 'failed']);
@@ -111,7 +111,7 @@ const SessionRuntimeUsageLimitActionV1Schema = z.discriminatedUnion('kind', [
 
 const SessionRuntimeQuotaSnapshotRefV1Schema = z
   .object({
-    serviceId: ConnectedServiceIdSchema,
+    serviceId: ConnectedAccountServiceKeyIngressSchema,
     profileId: ConnectedServiceProfileIdSchema.optional(),
     groupId: ConnectedServiceAuthGroupIdSchema.optional(),
     fetchedAtMs: z.number().int().nonnegative().optional(),
@@ -158,7 +158,7 @@ export const SessionRuntimeUsageLimitDetailsV1Schema = z
     action: SessionRuntimeUsageLimitActionV1Schema.nullable().optional(),
     connectedService: z
       .object({
-        serviceId: ConnectedServiceIdSchema,
+        serviceId: ConnectedAccountServiceKeyIngressSchema,
         profileId: ConnectedServiceProfileIdSchema.nullable(),
         groupId: ConnectedServiceAuthGroupIdSchema.nullable(),
         groupExhausted: z.boolean().optional(),

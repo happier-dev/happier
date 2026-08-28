@@ -8,15 +8,15 @@ import {
   type AccountScopedCryptoMaterial,
 } from '../../crypto/accountScopedCipher.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
-import { getGeneratedRuntimeDescriptorContributionV1 } from '../../agents/runtimeDescriptorContributionsV1.js';
 import { AgentModelOptionOverrideRuleSchema } from '../../models/descriptor.js';
+import { AgentNativeResumeIdentityV1Schema } from '../../agents/nativeResumeIdentityV1.js';
 import { resolveGeneratedSessionPresentationAgentIdV1 } from '../../agents/generated/sessionPresentationCompatV1.js';
 import {
   ConnectedServiceIdSchema,
-  PersistedConnectedServiceBindingsV1Schema,
+  BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
 } from '../../connect/connectedServiceBindings.js';
 import { ConnectedServiceCredentialRevisionV1Schema } from '../../connect/connectedServiceSchemas.js';
-import { PluginSourceKindV1Schema } from '../../plugins/sourceSpecV1.js';
+import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import {
   SessionActiveModelSelectionV1Schema,
   SessionAppliedModelV1Schema,
@@ -37,6 +37,7 @@ import {
   resolveExternalHistoryImportV1FromMetadata,
   resolveLinkedExternalSessionMetadataV1,
 } from '../external/linkedSessionMetadata.js';
+import { readRuntimeDescriptorV1 } from './runtimeDescriptorV1.js';
 import { SessionRunnerRuntimeStateV1Schema } from '../control/sessionRunnerRuntimeV1.js';
 import {
   SessionRuntimeActivityProjectionSchema,
@@ -418,81 +419,18 @@ const SessionOwnerWorkspaceV1Schema = z.object({
 export const SessionOwnerRuntimeDescriptorV1Schema = z.object({
   v: z.literal(1),
   agentId: BoundedIdentifierSchema,
-  backendMode: BoundedIdentifierSchema.nullable().optional(),
-  runtimeMode: BoundedIdentifierSchema.nullable().optional(),
-  providerSessionId: OptionalOwnerIdentifierSchema.optional(),
-  agyConversationId: OptionalOwnerIdentifierSchema.optional(),
-  localharnessSessionId: OptionalOwnerIdentifierSchema.optional(),
-  backendId: OptionalOwnerIdentifierSchema.optional(),
-  provenance: OptionalOwnerIdentifierSchema.optional(),
-  home: z.enum(['user', 'connectedService']).nullable().optional(),
-  connectedServiceId: OptionalOwnerIdentifierSchema.optional(),
-  connectedServiceProfileId: OptionalOwnerIdentifierSchema.optional(),
-  connectedServiceGroupId: OptionalOwnerIdentifierSchema.optional(),
-  homePath: OptionalOwnerStringSchema.optional(),
-  serverBaseUrl: OptionalOwnerStringSchema.optional(),
-  serverBaseUrlExplicit: z.boolean().optional(),
-  resumeStrategy: z.enum([
-    'sessionFileBySessionId',
-    'sessionFileAbsolutePreferred',
-  ]).nullable().optional(),
-  sessionFile: OptionalOwnerStringSchema.optional(),
+  agent: z.record(z.string(), PluginJsonValueV2Schema),
 }).strict();
 export type SessionOwnerRuntimeDescriptorV1 = z.infer<
   typeof SessionOwnerRuntimeDescriptorV1Schema
 >;
-
-const GenericPluginRuntimeDescriptorSourceV1Schema = z.object({
-  kind: PluginSourceKindV1Schema,
-}).strict();
-
-const GenericRuntimeDescriptorHandleIdentityV1Schema = z.object({
-  backendId: BoundedIdentifierSchema,
-  agentId: BoundedIdentifierSchema,
-}).strict();
-
-const GenericPluginRuntimeDescriptorEnvelopeAgentV1Schema = z.object({
-  backendMode: BoundedIdentifierSchema,
-  providerSessionId: OptionalOwnerIdentifierSchema.optional(),
-  agentExtra: z.object({
-    owner: z.literal('happier'),
-    schemaId: z.literal('happier.pluginRuntimeDescriptorExtra'),
-    v: z.literal(1),
-    runtimeHandle: GenericRuntimeDescriptorHandleIdentityV1Schema.extend({
-      provenance: z.enum(['first_party', 'external']),
-      source: GenericPluginRuntimeDescriptorSourceV1Schema,
-    }).strict(),
-  }).strict(),
-}).strict();
-
-const GenericHostSessionRuntimeDescriptorEnvelopeAgentV1Schema = z.object({
-  backendMode: BoundedIdentifierSchema,
-  providerSessionId: OptionalOwnerIdentifierSchema.optional(),
-  agentExtra: z.object({
-    owner: z.literal('happier'),
-    schemaId: z.literal('happier.hostSessionRuntimeIdentity'),
-    v: z.literal(1),
-    runtimeHandle: GenericRuntimeDescriptorHandleIdentityV1Schema.extend({
-      provenance: z.enum(['first_party', 'external', 'configured']),
-    }).strict(),
-  }).strict(),
-}).strict();
-
-const GenericPluginProjectedRuntimeDescriptorAgentV1Schema =
-  z.object({
-    backendMode: BoundedIdentifierSchema,
-    providerSessionId: OptionalOwnerIdentifierSchema.optional(),
-    backendId: BoundedIdentifierSchema,
-    provenance: z.enum(['first_party', 'external', 'configured']),
-  }).strict();
 
 function expandOwnerRuntimeDescriptorForLinkedSession(
   value: unknown,
 ): unknown {
   const ownerDescriptor = SessionOwnerRuntimeDescriptorV1Schema.safeParse(value);
   if (!ownerDescriptor.success) return value;
-  const { v, agentId, ...agent } = ownerDescriptor.data;
-  return { v, agentId, agent };
+  return ownerDescriptor.data;
 }
 
 function expandOwnerLinkedSessionVariant(
@@ -615,6 +553,7 @@ const SessionOwnerCompatibilityDirectSessionLinkV1Schema =
 
 const SessionOwnerNativeSessionV1Schema = z.object({
   runtimeDescriptorV1: SessionOwnerRuntimeDescriptorV1Schema.optional(),
+  nativeResumeIdentityV1: AgentNativeResumeIdentityV1Schema.optional(),
   claudeSessionId: OptionalOwnerIdentifierSchema.optional(),
   codexSessionId: OptionalOwnerIdentifierSchema.optional(),
   geminiSessionId: OptionalOwnerIdentifierSchema.optional(),
@@ -633,7 +572,6 @@ const SessionOwnerNativeSessionV1Schema = z.object({
   claudeTranscriptPath: OptionalOwnerStringSchema.optional(),
   claudeLastCheckpointId: OptionalOwnerIdentifierSchema.optional(),
   claudeLastAssistantUuid: OptionalOwnerIdentifierSchema.optional(),
-  codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   opencodeBackendMode: z.enum(['server', 'acp']).optional(),
   opencodeServerBaseUrl: OptionalOwnerStringSchema.optional(),
   opencodeServerBaseUrlExplicit: z.literal(true).optional(),
@@ -679,6 +617,16 @@ const SessionOwnerNativeSessionV1Schema = z.object({
     message: `Conflicting linked-session owner metadata: ${resolved.reason}`,
   });
 });
+
+// Stable cli-v0.2.1 and preview cli-v0.2.2 flattened metadata exposed this
+// Codex selector directly. Current owner envelopes are Agent-neutral and carry
+// it only in runtimeDescriptorV1. Retain the old field solely in the local
+// compatibility view until those readers and their stored flat rows are no
+// longer supported.
+const SessionOwnerCompatibilityNativeSessionV1Schema =
+  SessionOwnerNativeSessionV1Schema.safeExtend({
+    codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
+  });
 
 const SessionOwnerSlashCommandDetailV1Schema = z.object({
   command: z.string().trim().min(1).max(2_000),
@@ -833,7 +781,50 @@ const SessionOwnerAgentRuntimeFacetsV1Schema = z.object({
 const SessionOwnerCapabilitySupportV1Schema = z.object({
   supported: z.boolean(),
 }).strict();
+const SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema = z.enum([
+  'supported',
+  'experimental',
+  'unsupported',
+]);
 const SessionOwnerAgentRuntimeCapabilitiesV1Schema = z.object({
+  localControl: z.object({
+    supported: z.boolean(),
+    topology: z.enum(['exclusive', 'shared']).optional(),
+    attachStrategy: z.enum([
+      'terminal_host',
+      'provider_attach',
+      'unsupported',
+    ]).optional(),
+    remoteWritable: z.boolean().optional(),
+  }).strict().nullable().optional(),
+  sessionStorage: z.object({
+    direct: z.boolean(),
+    persisted: z.boolean(),
+  }).strict().nullable().optional(),
+  sessionCapabilities: z.object({
+    sessionListing: SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema,
+    sessionFork: z.object({
+      conversation: SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema,
+      fromMessage: SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema,
+      protocol: z.literal('acp').optional(),
+    }).strict(),
+    sessionRollback: z.object({
+      conversation: SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema,
+    }).strict(),
+  }).strict().nullable().optional(),
+  tools: z.object({
+    delivery: z.enum([
+      'native_mcp',
+      'native_extension',
+      'shell_bridge',
+      'unsupported',
+    ]),
+    support: SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema,
+  }).strict().nullable().optional(),
+  handoff: z.object({
+    vendorStateTransfer: SessionOwnerAgentRuntimeCapabilitySupportLevelV1Schema,
+    requiresExplicitSessionId: z.boolean().optional(),
+  }).strict().nullable().optional(),
   executionRun: z.object({
     supported: z.boolean(),
     structuredOutputRecovery: z.object({
@@ -976,7 +967,7 @@ const SessionOwnerRuntimeV1Schema = z.object({
 }).strict();
 
 const SessionOwnerConnectedServicesV1Schema = z.object({
-  connectedServices: PersistedConnectedServiceBindingsV1Schema.optional(),
+  connectedServices: BuiltInLegacyConnectedServiceBindingsV1IngressSchema.optional(),
   connectedServicesUpdatedAt: TimestampSchema.optional(),
   connectedServiceMaterializationIdentityV1: z.object({
     v: z.literal(1),
@@ -1334,16 +1325,8 @@ const {
   ...SessionOwnerCompatibilityRuntimeShapeV1
 } = SessionOwnerRuntimeV1Schema.shape;
 
-const {
-  v: _sessionOwnerRuntimeDescriptorVersion,
-  agentId: _sessionOwnerRuntimeDescriptorAgentId,
-  ...SessionOwnerCompatibilityRuntimeDescriptorAgentShapeV1
-} = SessionOwnerRuntimeDescriptorV1Schema.shape;
-const SessionOwnerCompatibilityRuntimeDescriptorV1Schema = z.object({
-  v: z.literal(1),
-  agentId: BoundedIdentifierSchema,
-  agent: z.object(SessionOwnerCompatibilityRuntimeDescriptorAgentShapeV1).strict(),
-}).strict();
+const SessionOwnerCompatibilityRuntimeDescriptorV1Schema =
+  SessionOwnerRuntimeDescriptorV1Schema;
 
 /**
  * Local-only compatibility metadata consumed by current owner workflows.
@@ -1362,7 +1345,7 @@ export const SessionOwnerCompatibilityViewV1Schema = z.object({
   happyHomeDir: z.string().max(100_000),
   happyLibDir: z.string().max(100_000),
   happyToolsDir: z.string().max(100_000),
-  ...SessionOwnerNativeSessionV1Schema.shape,
+  ...SessionOwnerCompatibilityNativeSessionV1Schema.shape,
   externalSessionV1:
     SessionOwnerCompatibilityExternalSessionLinkV1Schema.optional(),
   directSessionV1:
@@ -1649,63 +1632,7 @@ export function projectSessionOwnerCompatibilityViewV1(
     params.ownerMetadata,
   );
   const descriptor = ownerMetadata.nativeSession?.runtimeDescriptorV1;
-  const runtimeDescriptorV1 = descriptor
-    ? {
-        v: descriptor.v,
-        agentId: descriptor.agentId,
-        agent: {
-          ...(descriptor.backendMode !== undefined
-            ? { backendMode: descriptor.backendMode }
-            : {}),
-          ...(descriptor.runtimeMode !== undefined
-            ? { runtimeMode: descriptor.runtimeMode }
-            : {}),
-          ...(descriptor.providerSessionId !== undefined
-            ? { providerSessionId: descriptor.providerSessionId }
-            : {}),
-          ...(descriptor.agyConversationId !== undefined
-            ? { agyConversationId: descriptor.agyConversationId }
-            : {}),
-          ...(descriptor.localharnessSessionId !== undefined
-            ? { localharnessSessionId: descriptor.localharnessSessionId }
-            : {}),
-          ...(descriptor.backendId !== undefined
-            ? { backendId: descriptor.backendId }
-            : {}),
-          ...(descriptor.provenance !== undefined
-            ? { provenance: descriptor.provenance }
-            : {}),
-          ...(descriptor.home !== undefined ? { home: descriptor.home } : {}),
-          ...(descriptor.connectedServiceId !== undefined
-            ? { connectedServiceId: descriptor.connectedServiceId }
-            : {}),
-          ...(descriptor.connectedServiceProfileId !== undefined
-            ? {
-                connectedServiceProfileId:
-                  descriptor.connectedServiceProfileId,
-              }
-            : {}),
-          ...(descriptor.connectedServiceGroupId !== undefined
-            ? { connectedServiceGroupId: descriptor.connectedServiceGroupId }
-            : {}),
-          ...(descriptor.homePath !== undefined
-            ? { homePath: descriptor.homePath }
-            : {}),
-          ...(descriptor.serverBaseUrl !== undefined
-            ? { serverBaseUrl: descriptor.serverBaseUrl }
-            : {}),
-          ...(descriptor.serverBaseUrlExplicit !== undefined
-            ? { serverBaseUrlExplicit: descriptor.serverBaseUrlExplicit }
-            : {}),
-          ...(descriptor.resumeStrategy !== undefined
-            ? { resumeStrategy: descriptor.resumeStrategy }
-            : {}),
-          ...(descriptor.sessionFile !== undefined
-            ? { sessionFile: descriptor.sessionFile }
-            : {}),
-        },
-      }
-    : undefined;
+  const runtimeDescriptorV1 = descriptor;
   const {
     runtimeDescriptorV1: _ownerRuntimeDescriptorV1,
     externalSessionV1: _ownerExternalSessionV1,
@@ -1817,6 +1744,7 @@ const WORKSPACE_OWNER_KEYS = [
   'sessionWorkspaceLocationV1',
 ] as const;
 const NATIVE_SESSION_SCALAR_OWNER_KEYS = [
+  'nativeResumeIdentityV1',
   'claudeSessionId',
   'codexSessionId',
   'geminiSessionId',
@@ -1835,7 +1763,6 @@ const NATIVE_SESSION_SCALAR_OWNER_KEYS = [
   'claudeTranscriptPath',
   'claudeLastCheckpointId',
   'claudeLastAssistantUuid',
-  'codexBackendMode',
   'opencodeBackendMode',
   'opencodeServerBaseUrl',
   'opencodeServerBaseUrlExplicit',
@@ -1859,6 +1786,10 @@ export const AGENT_OWNED_SESSION_METADATA_KEYS_V1: readonly string[] =
   Object.freeze(
     NATIVE_SESSION_SCALAR_OWNER_KEYS.filter((key) => key !== 'tag'),
   );
+
+const RELEASED_NATIVE_SESSION_COMPATIBILITY_KEYS = [
+  'codexBackendMode',
+] as const;
 
 const RUNTIME_OWNER_KEYS = [
   EXTERNAL_SESSION_OPERATION_METADATA_KEY,
@@ -1968,123 +1899,10 @@ function hasOnlyKeys(record: UnknownRecord, allowed: ReadonlySet<string>): boole
 function normalizeOwnerRuntimeDescriptorV1(
   input: unknown,
 ): SessionOwnerRuntimeDescriptorV1 | null {
-  const descriptor = readRecord(input);
-  if (!descriptor || descriptor.v !== 1) return null;
-  const canonicalAgentId = typeof descriptor.agentId === 'string'
-    ? descriptor.agentId.trim()
-    : '';
-  const legacyAgentId = typeof descriptor.providerId === 'string'
-    ? descriptor.providerId.trim()
-    : '';
-  if (canonicalAgentId && legacyAgentId && canonicalAgentId !== legacyAgentId) {
-    return null;
-  }
-  const agentId = canonicalAgentId || legacyAgentId;
-  if (!agentId) return null;
-
-  const outerKeys = new Set(['v', 'agentId', 'providerId', 'agent', 'provider']);
-  const agent = readRecord(descriptor.agent) ?? readRecord(descriptor.provider);
-  const parsedHostEnvelopeAgent =
-    GenericHostSessionRuntimeDescriptorEnvelopeAgentV1Schema.safeParse(agent);
-  if (parsedHostEnvelopeAgent.success) {
-    if (!hasOnlyKeys(descriptor, outerKeys)) return null;
-    const runtimeHandle =
-      parsedHostEnvelopeAgent.data.agentExtra.runtimeHandle;
-    if (runtimeHandle.agentId !== agentId) return null;
-    const parsedHost = SessionOwnerRuntimeDescriptorV1Schema.safeParse({
-      v: 1,
-      agentId,
-      backendMode: parsedHostEnvelopeAgent.data.backendMode,
-      providerSessionId: parsedHostEnvelopeAgent.data.providerSessionId,
-      backendId: runtimeHandle.backendId,
-      provenance: runtimeHandle.provenance,
-    });
-    return parsedHost.success ? parsedHost.data : null;
-  }
-
-  const contribution = getGeneratedRuntimeDescriptorContributionV1(agentId);
-  if (contribution) {
-    // The owner compatibility view strips the generic host envelope. Its host
-    // identity anchors must be re-ingested before generated Agent-native
-    // dispatch; ordinary generated descriptors still use the strict reader.
-    const parsedCompatibilityDescriptor =
-      SessionOwnerCompatibilityRuntimeDescriptorV1Schema.safeParse(input);
-    if (
-      parsedCompatibilityDescriptor.success
-      && parsedCompatibilityDescriptor.data.agent.backendId !== undefined
-      && parsedCompatibilityDescriptor.data.agent.provenance !== undefined
-    ) {
-      const parsedCompatibility =
-        SessionOwnerRuntimeDescriptorV1Schema.safeParse({
-          v: 1,
-          agentId: parsedCompatibilityDescriptor.data.agentId,
-          ...parsedCompatibilityDescriptor.data.agent,
-        });
-      return parsedCompatibility.success ? parsedCompatibility.data : null;
-    }
-
-    // The generated contribution owns both deployed alias compatibility and
-    // strict unknown-field rejection. This envelope only narrows its canonical
-    // output into the encrypted owner schema.
-    if (!hasOnlyKeys(descriptor, outerKeys) || !agent) return null;
-    const {
-      providerExtra: legacyAgentExtra,
-      ...agentWithoutLegacyExtra
-    } = agent;
-    const canonicalAgent = Object.hasOwn(agent, 'agentExtra')
-      ? agentWithoutLegacyExtra
-      : legacyAgentExtra === undefined
-        ? agent
-        : { ...agentWithoutLegacyExtra, agentExtra: legacyAgentExtra };
-    const canonical = readRecord(
-      contribution.readStrictCanonicalDescriptor({
-        v: 1,
-        agentId,
-        agent: canonicalAgent,
-      }),
-    );
-    if (!canonical) return null;
-    const presentCanonical = Object.fromEntries(
-      Object.entries(canonical).filter(
-        ([, value]) => value !== null && value !== undefined,
-      ),
-    );
-    const parsed = SessionOwnerRuntimeDescriptorV1Schema.safeParse({
-      v: 1,
-      ...presentCanonical,
-    });
-    return parsed.success ? parsed.data : null;
-  }
-
-  if (!hasOnlyKeys(descriptor, outerKeys)) return null;
-  if (!agent) return null;
-  if (agent.agentExtra !== undefined) {
-    const parsedEnvelopeAgent =
-      GenericPluginRuntimeDescriptorEnvelopeAgentV1Schema.safeParse(agent);
-    if (!parsedEnvelopeAgent.success) return null;
-    const runtimeHandle =
-      parsedEnvelopeAgent.data.agentExtra.runtimeHandle;
-    if (runtimeHandle.agentId !== agentId) return null;
-    const parsedGeneric = SessionOwnerRuntimeDescriptorV1Schema.safeParse({
-      v: 1,
-      agentId,
-      backendMode: parsedEnvelopeAgent.data.backendMode,
-      providerSessionId: parsedEnvelopeAgent.data.providerSessionId,
-      backendId: runtimeHandle.backendId,
-      provenance: runtimeHandle.provenance,
-    });
-    return parsedGeneric.success ? parsedGeneric.data : null;
-  }
-
-  const parsedProjectedAgent =
-    GenericPluginProjectedRuntimeDescriptorAgentV1Schema.safeParse(agent);
-  if (!parsedProjectedAgent.success) return null;
-  const parsedProjected = SessionOwnerRuntimeDescriptorV1Schema.safeParse({
-    v: 1,
-    agentId,
-    ...parsedProjectedAgent.data,
-  });
-  return parsedProjected.success ? parsedProjected.data : null;
+  const descriptor = readRuntimeDescriptorV1(input);
+  if (!descriptor) return null;
+  const parsed = SessionOwnerRuntimeDescriptorV1Schema.safeParse(descriptor);
+  return parsed.success ? parsed.data : null;
 }
 
 function normalizeLinkedSessionVariants(
@@ -2216,6 +2034,31 @@ export type CreateSessionOwnerMetadataV1Result =
       unsupportedFields: readonly string[];
     }>;
 
+function buildReleasedCodexRuntimeDescriptorV1(
+  metadata: UnknownRecord,
+): SessionOwnerRuntimeDescriptorV1 | null {
+  if (!Object.hasOwn(metadata, 'codexBackendMode')) return null;
+  const releasedMode = typeof metadata.codexBackendMode === 'string'
+    ? metadata.codexBackendMode.trim()
+    : '';
+  const backendMode = releasedMode === 'mcp'
+    ? 'appServer'
+    : releasedMode === 'mcp_resume'
+      ? 'acp'
+      : releasedMode;
+  if (backendMode !== 'appServer' && backendMode !== 'acp') return null;
+  return normalizeOwnerRuntimeDescriptorV1({
+    v: 1,
+    agentId: 'codex',
+    agent: {
+      backendMode,
+      ...(typeof metadata.codexSessionId === 'string' && metadata.codexSessionId.trim()
+        ? { providerSessionId: metadata.codexSessionId.trim() }
+        : {}),
+    },
+  });
+}
+
 export function createSessionOwnerMetadataV1(params: Readonly<{
   metadata: unknown;
 }>): CreateSessionOwnerMetadataV1Result {
@@ -2232,6 +2075,7 @@ export function createSessionOwnerMetadataV1(params: Readonly<{
     ...SHARED_ONLY_METADATA_KEYS,
     ...WORKSPACE_OWNER_KEYS,
     ...NATIVE_SESSION_SCALAR_OWNER_KEYS,
+    ...RELEASED_NATIVE_SESSION_COMPATIBILITY_KEYS,
     ...RUNTIME_OWNER_KEYS,
     ...CONNECTED_SERVICE_OWNER_KEYS,
     ...HISTORY_OWNER_KEYS,
@@ -2249,8 +2093,16 @@ export function createSessionOwnerMetadataV1(params: Readonly<{
   const unsupportedFields = Object.keys(metadata)
     .filter((key) => !supportedKeys.has(key));
 
-  const runtimeDescriptorInput = metadata.runtimeDescriptorV1
+  const hasReleasedCodexBackendMode = Object.hasOwn(metadata, 'codexBackendMode');
+  const releasedCodexRuntimeDescriptorV1 = buildReleasedCodexRuntimeDescriptorV1(metadata);
+  if (hasReleasedCodexBackendMode && !releasedCodexRuntimeDescriptorV1) {
+    unsupportedFields.push('codexBackendMode');
+  }
+  const explicitRuntimeDescriptorInput = metadata.runtimeDescriptorV1
     ?? metadata.agentRuntimeDescriptorV1;
+  const runtimeDescriptorInput = explicitRuntimeDescriptorInput
+    ?? releasedCodexRuntimeDescriptorV1
+    ?? undefined;
   const runtimeDescriptorV1 = runtimeDescriptorInput === undefined
     ? undefined
     : normalizeOwnerRuntimeDescriptorV1(runtimeDescriptorInput);
@@ -2258,8 +2110,21 @@ export function createSessionOwnerMetadataV1(params: Readonly<{
     unsupportedFields.push(
       metadata.runtimeDescriptorV1 !== undefined
         ? 'runtimeDescriptorV1'
-        : 'agentRuntimeDescriptorV1',
+        : metadata.agentRuntimeDescriptorV1 !== undefined
+          ? 'agentRuntimeDescriptorV1'
+          : 'codexBackendMode',
     );
+  }
+  if (
+    runtimeDescriptorV1
+    && releasedCodexRuntimeDescriptorV1
+    && (
+      runtimeDescriptorV1.agentId !== releasedCodexRuntimeDescriptorV1.agentId
+      || runtimeDescriptorV1.agent.backendMode
+        !== releasedCodexRuntimeDescriptorV1.agent.backendMode
+    )
+  ) {
+    unsupportedFields.push('codexBackendMode');
   }
   const linkedSessionVariants = normalizeLinkedSessionVariants(metadata);
   if (!linkedSessionVariants) {

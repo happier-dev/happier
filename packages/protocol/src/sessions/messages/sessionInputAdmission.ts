@@ -8,14 +8,21 @@ import { SubagentLaunchV1Schema } from '../../messages/structured/subagentLaunch
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.js';
-import {
-  ComposerAttachmentAuthorValueV1Schema,
-  MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
-} from '../../runtime/input/composerAttachmentV1.js';
 import { SessionIdSchema, TurnIdSchema } from '../idsV1.js';
 import { PendingLocalIdSchema, readPendingLocalId } from '../pending/pendingLocalId.js';
 import { PendingRequestedActionV1Schema, type PendingRequestedActionV1 } from '../pending/pendingRequestedActionV1.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
+import {
+  PluginSessionInputAttachmentsV1Schema,
+  requireSessionInputContent,
+} from './sessionInputAuthoringV1.js';
+export {
+  PluginSessionInputAttachmentV1Schema,
+  PluginSessionInputAttachmentsV1Schema,
+  hasSessionInputContentV1,
+  requireSessionInputContent,
+} from './sessionInputAuthoringV1.js';
+export type { PluginSessionInputAttachmentV1 } from './sessionInputAuthoringV1.js';
 
 export const SESSION_MESSAGE_PROVENANCE_META_KEY = 'happierProvenanceV1' as const;
 export const SESSION_INPUT_REQUEST_META_KEY = 'happierInputRequestV1' as const;
@@ -174,74 +181,6 @@ export const PluginSessionInputSourceV1Schema = z.object({
   contentProvenance: ContentProvenanceV1Schema.optional(),
 }).strict().superRefine(requireCoPresentExternalProvenance);
 export type PluginSessionInputSourceV1 = z.infer<typeof PluginSessionInputSourceV1Schema>;
-
-/**
- * One authored Composer attachment declared directly on a Session input.
- *
- * It is the same author half the Composer's `attachment.add` operation already
- * carries: the caller names its own declared attachment and supplies the key,
- * value and presentation. The host qualifies the plugin id from the
- * authenticated caller and stamps `v`, the instance identity and the declared
- * type label, so an author never asserts attachment identity here.
- */
-export const PluginSessionInputAttachmentV1Schema = z.object({
-  attachmentLocalId: asProtocolZod(PluginContributionLocalIdSchema),
-  value: ComposerAttachmentAuthorValueV1Schema,
-}).strict();
-export type PluginSessionInputAttachmentV1 = z.infer<typeof PluginSessionInputAttachmentV1Schema>;
-
-/**
- * The one bounded attachment list every Session-input surface reuses.
- *
- * The instance ceiling is the incumbent per-Message Composer attachment cap,
- * because the persisted structured-input envelope enforces exactly that bound:
- * a seam admitting more would build a Message the canonical envelope rejects
- * whole. The aggregate encoded-attachment budget stays with that envelope,
- * which is the one owner that can see every attachment on the Message.
- */
-export const PluginSessionInputAttachmentsV1Schema = z.array(PluginSessionInputAttachmentV1Schema)
-  .min(1)
-  .max(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1);
-
-/**
- * The one rule for "this input has something to deliver", shared by every
- * Session-input seam.
- *
- * A composer submission has always been admissible with blank text as long as
- * one attachment is staged — an attached entry, image or file IS the message.
- * The plugin seam required non-empty text, so a configured action whose whole
- * payload was its attachment delivered nothing at all. The two are now one
- * predicate rather than two nearly identical checks that already disagreed.
- *
- * Whitespace is not content: the composer trims before deciding, so this does
- * too, and neither seam admits an input carrying neither.
- */
-export function hasSessionInputContentV1(input: Readonly<{
-  text: string;
-  attachmentCount: number;
-}>): boolean {
-  return input.text.trim().length > 0 || input.attachmentCount > 0;
-}
-
-/**
- * Applies `hasSessionInputContentV1` to a parsed Session-input shape, so the
- * plugin request schema and the Action surface binding refuse exactly the same
- * empty input with exactly the same message.
- */
-export function requireSessionInputContent(
-  value: Readonly<{ text?: unknown; message?: unknown; attachments?: unknown }>,
-  context: z.RefinementCtx,
-): void {
-  const raw = typeof value.text === 'string' ? value.text : value.message;
-  const text = typeof raw === 'string' ? raw : '';
-  const attachmentCount = Array.isArray(value.attachments) ? value.attachments.length : 0;
-  if (hasSessionInputContentV1({ text, attachmentCount })) return;
-  context.addIssue({
-    code: 'custom',
-    path: [typeof value.text === 'string' || value.message === undefined ? 'text' : 'message'],
-    message: 'A Session input must carry non-empty text or at least one attachment',
-  });
-}
 
 /** Public plugin-authored intent. Caller identity and admitted authority are host-owned. */
 const PluginSessionUserTextInputRequestV1Schema = z.object({

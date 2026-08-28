@@ -5,12 +5,13 @@ import { SESSION_AUTHORING_CONTEXT_KINDS } from './contextKinds.js';
 import {
   SESSION_AUTHORING_FIELD_CATALOG,
   SessionAuthoringAutomationV1Schema,
-  SessionAuthoringCheckoutCreationDraftV1Schema,
-  SessionAuthoringCodexBackendModeSchema,
-  SessionAuthoringTerminalV1Schema,
   SyncedSessionAuthoringConnectedServicesV1Schema,
   SyncedSessionAuthoringTerminalV1Schema,
 } from './fieldCatalog.js';
+import {
+  SessionAuthoringCheckoutCreationDraftV1Schema,
+  SessionAuthoringTerminalV1Schema,
+} from './creationFieldsV1.js';
 
 export type {
   SessionAuthoringContextKind,
@@ -38,12 +39,13 @@ export {
 export {
   SESSION_AUTHORING_FIELD_CATALOG,
   SessionAuthoringAutomationV1Schema,
-  SessionAuthoringCheckoutCreationDraftV1Schema,
-  SessionAuthoringCodexBackendModeSchema,
-  SessionAuthoringTerminalV1Schema,
   SyncedSessionAuthoringConnectedServicesV1Schema,
   SyncedSessionAuthoringTerminalV1Schema,
 } from './fieldCatalog.js';
+export {
+  SessionAuthoringCheckoutCreationDraftV1Schema,
+  SessionAuthoringTerminalV1Schema,
+} from './creationFieldsV1.js';
 
 const SESSION_AUTHORING_FIELD_ARTIFACTS = buildSessionAuthoringFieldArtifacts(SESSION_AUTHORING_FIELD_CATALOG);
 
@@ -68,7 +70,6 @@ export type SessionAuthoringValueV1 = typeof SessionAuthoringValueV1Schema['_out
 export type SessionAuthoringAutomationV1 = typeof SessionAuthoringAutomationV1Schema['_output'];
 export type SessionAuthoringCheckoutCreationDraftV1 = typeof SessionAuthoringCheckoutCreationDraftV1Schema['_output'];
 export type SessionAuthoringTerminalV1 = typeof SessionAuthoringTerminalV1Schema['_output'];
-export type SessionAuthoringCodexBackendMode = typeof SessionAuthoringCodexBackendModeSchema['_output'];
 
 if (SESSION_AUTHORING_CONTEXT_KINDS.length < 1 || SESSION_AUTHORING_FIELD_IDS.length < 1) {
   throw new Error('sessionAuthoring catalogs must not be empty');

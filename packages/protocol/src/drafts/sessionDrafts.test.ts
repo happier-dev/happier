@@ -19,14 +19,34 @@ import {
 
 const mutationId = '00000000-0000-4000-8000-000000000001';
 const draftId = '00000000-0000-4000-8000-000000000002';
-const predecessorManualAutomation = {
+const pluralAutomation = {
   enabled: true,
-  name: 'On demand review',
-  description: 'Run only when invoked',
-  scheduleKind: 'manual',
-  everyMinutes: 60,
-  cronExpr: '0 * * * *',
-  timezone: null,
+  name: 'Review',
+  description: 'Run from either occurrence',
+  triggers: [
+    {
+      clientId: 'schedule-1',
+      kind: 'schedule',
+      persisted: null,
+      enabled: true,
+      definition: {
+        kind: 'schedule',
+        schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null },
+      },
+    },
+    {
+      clientId: 'turn-1',
+      kind: 'sessionLifecycle',
+      persisted: null,
+      enabled: true,
+      definition: {
+        kind: 'sessionLifecycle',
+        event: 'parentTurnCompleted',
+        scope: { kind: 'exactTurn', sourceSessionId: 'session-1', sourceTurnId: 'turn-1' },
+        consumption: 'once',
+      },
+    },
+  ],
 };
 
 function newSessionDocument() {
@@ -40,7 +60,22 @@ function newSessionDocument() {
     target: {
       kind: 'newSession' as const,
       authoring: {
+        executionTarget: {
+          mutationId,
+          value: { serverId: 'server-1', machineId: 'machine-1' },
+        },
         directory: { mutationId, value: '/tmp/project' },
+        organizationPlacement: {
+          mutationId,
+          value: { folderId: null, tagIds: [] },
+        },
+        agentTarget: {
+          mutationId,
+          value: {
+            kind: 'agent',
+            identity: { pluginId: 'example.agents', localId: 'codex' },
+          },
+        },
         modelSelection: { mutationId, value: null },
       },
     },
@@ -100,6 +135,15 @@ describe('session draft protocol', () => {
         authoring: { environmentVariables: { mutationId, value: { SECRET: 'no' } } },
       },
     })).toThrow();
+    for (const retiredField of ['machineId', 'serverId', 'agentId', 'backendTarget']) {
+      expect(() => SessionDraftDocumentV1Schema.parse({
+        ...newSessionDocument(),
+        target: {
+          kind: 'newSession',
+          authoring: { [retiredField]: { mutationId, value: null } },
+        },
+      })).toThrow();
+    }
   });
 
   it('reads and preserves the remote-dev predecessor model id without restoring it as a canonical write', () => {
@@ -125,7 +169,7 @@ describe('session draft protocol', () => {
     expect(SyncedSessionAuthoringFieldIdV1Schema.safeParse('modelId').success).toBe(false);
   });
 
-  it('reads and preserves the remote-dev predecessor manual automation schedule without restoring it as a canonical write', () => {
+  it('reads and preserves a plural Automation authoring draft', () => {
     const parsed = SessionDraftPrivatePayloadV1Schema.parse({
       v: 1,
       address: { kind: 'newSession', draftId },
@@ -135,7 +179,7 @@ describe('session draft protocol', () => {
           kind: 'newSession',
           authoring: {
             directory: { mutationId, value: '/tmp/project' },
-            automation: { mutationId, value: predecessorManualAutomation },
+            automation: { mutationId, value: pluralAutomation },
           },
         },
       },
@@ -144,10 +188,10 @@ describe('session draft protocol', () => {
     expect(parsed.document.target).toMatchObject({
       kind: 'newSession',
       authoring: {
-        automation: { mutationId, value: predecessorManualAutomation },
+        automation: { mutationId, value: pluralAutomation },
       },
     });
-    expect(SyncedSessionAuthoringValueV1Schema.shape.automation.safeParse(predecessorManualAutomation).success).toBe(false);
+    expect(SyncedSessionAuthoringValueV1Schema.shape.automation.safeParse(pluralAutomation).success).toBe(true);
   });
 
   it('limits predecessor draft compatibility to the published reader shapes', () => {
@@ -174,7 +218,7 @@ describe('session draft protocol', () => {
           authoring: {
             automation: {
               mutationId,
-              value: { ...predecessorManualAutomation, unexpected: true },
+              value: { ...pluralAutomation, unexpected: true },
             },
           },
         },

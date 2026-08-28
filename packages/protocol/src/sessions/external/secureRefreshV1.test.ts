@@ -111,6 +111,7 @@ describe('External Sessions secure refresh contract', () => {
       items: [transcriptItem],
       nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
       boundary: 'boundary-2',
+      hasMore: false,
     },
     { outcome: 'gap_or_cursor_expired' },
     { outcome: 'source_replaced' },
@@ -155,8 +156,10 @@ describe('External Sessions secure refresh contract', () => {
         items: [],
         nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
         boundary: 'record:17',
+        hasMore: false,
         diagnostics: [{
           code: 'malformed_record_skipped',
+          severity: 'required',
           count: 1,
           positions: [17],
         }],
@@ -170,6 +173,7 @@ describe('External Sessions secure refresh contract', () => {
         items: [],
         nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
         boundary: 'boundary-2',
+        hasMore: false,
       },
     }).success).toBe(false);
   });
@@ -186,6 +190,7 @@ describe('External Sessions secure refresh contract', () => {
         }],
         nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
         boundary: 'boundary-2',
+        hasMore: false,
       },
     }).success).toBe(false);
   });
@@ -202,6 +207,7 @@ describe('External Sessions secure refresh contract', () => {
         }],
         nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
         boundary: 'boundary-2',
+        hasMore: false,
       },
     }).success).toBe(false);
 
@@ -216,6 +222,7 @@ describe('External Sessions secure refresh contract', () => {
         }],
         nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
         boundary: 'boundary-2',
+        hasMore: false,
       },
     }).success).toBe(false);
   });
@@ -229,6 +236,7 @@ describe('External Sessions secure refresh contract', () => {
         items: [transcriptItem],
         nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
         boundary: 'boundary-2',
+        hasMore: false,
       },
     });
 
@@ -264,6 +272,7 @@ describe('External Sessions secure refresh contract', () => {
         items: [rootUserItem, sidechainItem],
         nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
         boundary: 'boundary-2',
+        hasMore: false,
       },
     });
 
@@ -272,6 +281,56 @@ describe('External Sessions secure refresh contract', () => {
       items: [rootUserItem, sidechainItem],
       nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
       boundary: 'boundary-2',
+    });
+  });
+
+  it.each([
+    [[transcriptItem], 'unsupported_record_skipped'],
+    [[], 'malformed_record_skipped'],
+  ] as const)('applies zero items when an advanced result has a required diagnostic (%#)', (items, code) => {
+    const response = ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
+      v: 1,
+      binding,
+      result: {
+        outcome: 'advanced',
+        items,
+        nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
+        boundary: 'boundary-2',
+        hasMore: false,
+        diagnostics: [{ code, severity: 'required', count: 1, positions: [17] }],
+      },
+    });
+
+    expect(decideExternalSessionTranscriptRefreshApplicationV1(binding, requestCursor, response)).toEqual({
+      kind: 'no_apply',
+      reason: 'resync_required',
+      items: [],
+    });
+  });
+
+  it('allows a benign skipped non-transcript record to advance', () => {
+    const response = ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
+      v: 1,
+      binding,
+      result: {
+        outcome: 'advanced',
+        items: [],
+        nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
+        boundary: 'boundary-2',
+        hasMore: false,
+        diagnostics: [{
+          code: 'non_transcript_record_skipped',
+          severity: 'benign',
+          count: 1,
+          positions: [17],
+        }],
+      },
+    });
+
+    expect(decideExternalSessionTranscriptRefreshApplicationV1(binding, requestCursor, response)).toMatchObject({
+      kind: 'apply',
+      items: [],
+      nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
     });
   });
 
@@ -284,6 +343,27 @@ describe('External Sessions secure refresh contract', () => {
         items: [transcriptItem],
         nextCursor: requestCursor,
         boundary: 'boundary-2',
+        hasMore: false,
+      },
+    });
+
+    expect(decideExternalSessionTranscriptRefreshApplicationV1(binding, requestCursor, response)).toEqual({
+      kind: 'no_apply',
+      reason: 'resync_required',
+      items: [],
+    });
+  });
+
+  it('applies zero items and requires resync for a bounded partial advanced result', () => {
+    const response = ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
+      v: 1,
+      binding,
+      result: {
+        outcome: 'advanced',
+        items: [transcriptItem],
+        nextCursor: 'happier_external_cursor_v1:partial-next-cursor',
+        boundary: 'boundary-partial',
+        hasMore: true,
       },
     });
 
@@ -350,6 +430,7 @@ describe('External Sessions secure refresh contract', () => {
         items: [transcriptItem],
         nextCursor: 'happier_external_cursor_v1:opaque-next-cursor',
         boundary: 'boundary-2',
+        hasMore: false,
       },
     });
 

@@ -37,6 +37,7 @@ export type ExternalSessionRefreshCursorIdentityV1 = z.infer<
 const ExternalSessionRefreshBoundaryV1Schema = z.string().trim().min(1).max(2_000);
 const ExternalSessionRefreshReadDiagnosticV1Schema = z.object({
   code: z.string().trim().min(1).max(128),
+  severity: z.enum(['benign', 'required']),
   count: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   positions: z.array(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)).max(200),
 }).strict().refine(
@@ -115,6 +116,7 @@ const ExternalSessionTranscriptAdvancedV1Schema = z.object({
   items: z.array(ExternalSessionTranscriptRefreshItemV1Schema).max(200),
   nextCursor: ExternalSessionRefreshCursorV1Schema,
   boundary: ExternalSessionRefreshBoundaryV1Schema,
+  hasMore: z.boolean(),
   diagnostics: z.array(ExternalSessionRefreshReadDiagnosticV1Schema).min(1).max(32).optional(),
 }).strict().refine(
   (result) => result.items.length > 0 || (result.diagnostics?.length ?? 0) > 0,
@@ -233,7 +235,13 @@ export function decideExternalSessionTranscriptRefreshApplicationV1(
 
   switch (response.result.outcome) {
     case 'advanced':
-      if (response.result.nextCursor === requestCursor) {
+      if (
+        response.result.nextCursor === requestCursor
+        || response.result.hasMore
+        || response.result.diagnostics?.some(
+          (diagnostic) => diagnostic.severity === 'required',
+        )
+      ) {
         return Object.freeze({
           kind: 'no_apply',
           reason: 'resync_required',

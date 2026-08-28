@@ -126,6 +126,46 @@ function normalizeLegacyLinkedExternalSessionIdentity(value: unknown): unknown {
   };
 }
 
+// Stable/preview CLI writers could persist Codex's runtime selector directly
+// on the generic linked-session envelope. Current writers use the opaque
+// runtime descriptor/linkData instead. Keep this read-only seam until those
+// persisted rows are migrated or the originating releases are unsupported.
+function normalizeReleasedCodexRuntimeMode(value: unknown): string {
+  const mode = typeof value === 'string' ? value.trim() : '';
+  if (mode === 'mcp') return 'appServer';
+  if (mode === 'mcp_resume') return 'acp';
+  return mode;
+}
+
+function normalizeReleasedLinkedExternalSessionRuntime(value: unknown): unknown {
+  const record = asRecord(value);
+  if (!record || !Object.hasOwn(record, 'codexBackendMode')) return value;
+  const mode = normalizeReleasedCodexRuntimeMode(record.codexBackendMode);
+  if (record.agentId !== 'codex' || !mode) return undefined;
+  const existingDescriptor = RuntimeDescriptorV1Schema.safeParse(record.runtimeDescriptorV1);
+  if (record.runtimeDescriptorV1 !== undefined && !existingDescriptor.success) return undefined;
+  if (existingDescriptor.success) {
+    const descriptorAgent = asRecord(existingDescriptor.data.agent);
+    if (normalizeReleasedCodexRuntimeMode(descriptorAgent?.backendMode) !== mode) return undefined;
+  }
+  const { codexBackendMode: _releasedCodexBackendMode, ...canonical } = record;
+  return {
+    ...canonical,
+    runtimeDescriptorV1: existingDescriptor.success
+      ? existingDescriptor.data
+      : {
+          v: 1,
+          agentId: 'codex',
+          agent: {
+            backendMode: mode,
+            ...(typeof record.remoteSessionId === 'string' && record.remoteSessionId.trim()
+              ? { providerSessionId: record.remoteSessionId.trim() }
+              : {}),
+          },
+        },
+  };
+}
+
 const LinkedExternalSessionV1Schema = z
   .object({
     v: z.literal(1),
@@ -140,9 +180,6 @@ const LinkedExternalSessionV1Schema = z
     followPolicyV1: ExternalSessionFollowPolicyV1Schema.optional(),
     followStatusV1: ExternalSessionFollowStatusV1Schema.optional(),
     lastFollowIssueV1: ExternalSessionFollowIssueV1Schema.optional(),
-    // This explicitly declared Codex leaf remains extensible; the Codex plugin
-    // validates its value in resolveLinkIdentity.
-    codexBackendMode: z.string().optional(),
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
   })
   .strict()
@@ -163,7 +200,14 @@ const LinkedExternalSessionV1Schema = z
   });
 
 const ReleasedLinkedExternalSessionV1Schema = z.preprocess(
-  normalizeLegacyLinkedExternalSessionIdentity,
+  (value) => normalizeReleasedLinkedExternalSessionRuntime(
+    normalizeLegacyLinkedExternalSessionIdentity(value),
+  ),
+  LinkedExternalSessionV1Schema,
+);
+
+const CompatibleLinkedExternalSessionV1Schema = z.preprocess(
+  normalizeReleasedLinkedExternalSessionRuntime,
   LinkedExternalSessionV1Schema,
 );
 
@@ -272,7 +316,7 @@ function projectReleasedProjectIdLinkData(
 }
 
 function readCanonicalLinkedExternalSessionV1(value: unknown): LinkedExternalSessionV1 | null {
-  const parsed = LinkedExternalSessionV1Schema.safeParse(value);
+  const parsed = CompatibleLinkedExternalSessionV1Schema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
 
@@ -426,7 +470,6 @@ export function resolveLinkedExternalSessionMetadataV1(
       canonical.runtimeDescriptorV1,
       legacy.runtimeDescriptorV1,
     )
-    || canonical.codexBackendMode !== legacy.codexBackendMode
   ) {
     return reconciliationRequired('runtime_conflict');
   }

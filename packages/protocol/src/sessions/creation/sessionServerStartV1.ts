@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   AutomationAccountCurrentnessWitnessV1Schema,
 } from '../../automations/automationAccountCurrentnessV1.js';
+import { AutomationRunCauseSchema } from '../../automations/automationRunCause.js';
 import {
   AutomationSessionStartRequestEnvelopeV1Schema,
   validateAutomationSessionStartRequestEnvelopeOuterForModeV1,
@@ -67,7 +68,7 @@ export const SessionServerStartClaimV1Schema = z.object({
   runId: SessionServerStartHostIdV1Schema,
   attempt: z.number().int().positive().safe(),
   claimedByMachineId: SessionServerStartHostIdV1Schema,
-  origin: z.enum(['schedule', 'manual', 'event', 'conversation']),
+  cause: AutomationRunCauseSchema,
   accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema,
   requestEnvelope: AutomationSessionStartRequestEnvelopeV1Schema,
 }).strict().superRefine((value, context) => {
@@ -87,7 +88,7 @@ export type SessionServerStartClaimV1 = z.infer<typeof SessionServerStartClaimV1
 
 /**
  * Closed server-to-daemon framing for the authorized plain or E2EE path.
- * The target performs exact V2 parsing only after closed-origin, target,
+ * The target performs exact V2 parsing only after server-authored cause, target,
  * currentness, and cancellation revalidation.
  */
 export const SessionServerStartDispatchRequestV1Schema = z.object({
@@ -106,7 +107,7 @@ export type SessionServerStartDispatchResultV1 = SessionSpawnNewResultV1;
 
 /**
  * The untrusted machine request deliberately excludes Account, Automation,
- * origin, target, installation, and currentness facts. The server reconstructs
+ * cause, target, installation, and currentness facts. The server reconstructs
  * those from the authenticated source socket and the active durable Run.
  */
 export const SessionServerStartIngressRequestV1Schema = z.object({
@@ -143,7 +144,7 @@ export type SessionServerStartIngressResponseV1 = z.infer<
 
 /**
  * The target daemon's canonical create-or-rejoin entrypoint contract. Closed
- * server-origin authorization and opaque transport remain outside this
+ * server-authored authorization and opaque transport remain outside this
  * plaintext owner boundary; implementations delegate to Session creation.
  */
 export type SessionServerStartHandlerV1 = (

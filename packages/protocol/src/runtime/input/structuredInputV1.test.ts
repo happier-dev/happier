@@ -8,6 +8,7 @@ import {
   readSessionAttachmentEnvelopeRecordsV1,
   sanitizeHappierStructuredInputV1,
 } from './structuredInputV1.js';
+import { MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 } from './composerAttachmentV1.js';
 
 const validComposerAttachment = {
   v: 1,
@@ -100,6 +101,24 @@ describe('readSessionAttachmentEnvelopeRecordsV1', () => {
       v: 1,
       resolvedComposerAttachments: [validComposerAttachment],
     }).success).toBe(true);
+  });
+});
+
+describe('sanitizeHappierStructuredInputV1 composer attachment cardinality', () => {
+  it('derives the retained attachment boundary from the canonical Composer limit', () => {
+    const composerAttachments = Array.from(
+      { length: MAX_COMPOSER_ATTACHMENT_INSTANCES_V1 + 1 },
+      (_, index) => ({
+        ...validComposerAttachment,
+        instanceId: `attachment-${index}`,
+        key: `issue-${index}`,
+      }),
+    );
+
+    expect(sanitizeHappierStructuredInputV1({
+      v: 1,
+      composerAttachments,
+    }).composerAttachments).toHaveLength(MAX_COMPOSER_ATTACHMENT_INSTANCES_V1);
   });
 });
 

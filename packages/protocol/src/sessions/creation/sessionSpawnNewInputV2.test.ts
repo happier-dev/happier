@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SessionAuthoringCheckoutCreationDraftV1Schema as canonicalCheckoutCreationDraftSchema,
-} from '../authoring/fieldCatalog.js';
+} from '../authoring/creationFieldsV1.js';
 import * as sessionSpawnInput from './sessionSpawnNewInputV2.js';
 
 const { SessionSpawnNewInputV2Schema } = sessionSpawnInput;
@@ -17,6 +17,39 @@ const input = {
 } as const;
 
 describe('SessionSpawnNewInputV2Schema', () => {
+  it('admits one structured initial input atomically and rejects the retired text-only field', () => {
+    const initialInput = {
+      text: 'Review the selected pull request.',
+      attachments: [{
+        attachmentLocalId: 'entry',
+        value: {
+          key: 'github:pull:42',
+          value: { sourceId: 'github', entryId: '42' },
+          presentation: { label: 'PR #42' },
+        },
+      }],
+    } as const;
+
+    expect(SessionSpawnNewInputV2Schema.parse({ ...input, initialInput }).initialInput)
+      .toEqual(initialInput);
+    expect(SessionSpawnNewInputV2Schema.safeParse({
+      ...input,
+      initialMessage: initialInput.text,
+    }).success).toBe(false);
+    expect(SessionSpawnNewInputV2Schema.safeParse({
+      ...input,
+      initialInput: { text: '' },
+    }).success).toBe(false);
+    expect(SessionSpawnNewInputV2Schema.safeParse({
+      ...input,
+      initialInput: { text: '', attachments: initialInput.attachments },
+    }).success).toBe(true);
+    expect(SessionSpawnNewInputV2Schema.safeParse({
+      ...input,
+      initialInput: { attachments: initialInput.attachments },
+    }).success).toBe(true);
+  });
+
   it('publishes the one bounded checkout authoring draft used by spawn', () => {
     expect('SessionAuthoringCheckoutCreationDraftV1Schema' in sessionSpawnInput).toBe(true);
     expect(sessionSpawnInput.SessionAuthoringCheckoutCreationDraftV1Schema)

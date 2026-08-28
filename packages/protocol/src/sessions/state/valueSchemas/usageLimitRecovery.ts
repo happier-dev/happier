@@ -2,10 +2,10 @@ import { z } from 'zod';
 
 import {
   ConnectedServiceAuthGroupIdSchema,
-  ConnectedServiceIdSchema,
   ConnectedServiceProfileIdSchema,
   ConnectedServiceQuotaRecoveryCreditsV1Schema,
 } from '../../../connect/connectedServiceSchemas.js';
+import { ConnectedAccountServiceKeyIngressSchema } from '../../../connect/connectedServiceBindings.js';
 
 export const SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID = 'runtime.usageLimitRecovery' as const;
 export const SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY = 'sessionUsageLimitRecoveryV1' as const;
@@ -13,14 +13,14 @@ export const SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY = 'sessionUsageLimitRecov
 const SessionUsageLimitRecoveryNativeAuthSelectionV1Schema = z
   .object({
     kind: z.literal('native'),
-    serviceId: ConnectedServiceIdSchema.nullable().optional(),
+    serviceId: ConnectedAccountServiceKeyIngressSchema.nullable().optional(),
   })
   .strict();
 
 const SessionUsageLimitRecoveryProfileAuthSelectionV1Schema = z
   .object({
     kind: z.literal('profile'),
-    serviceId: ConnectedServiceIdSchema,
+    serviceId: ConnectedAccountServiceKeyIngressSchema,
     profileId: ConnectedServiceProfileIdSchema,
   })
   .strict();
@@ -28,7 +28,7 @@ const SessionUsageLimitRecoveryProfileAuthSelectionV1Schema = z
 const SessionUsageLimitRecoveryGroupAuthSelectionV1Schema = z
   .object({
     kind: z.literal('group'),
-    serviceId: ConnectedServiceIdSchema,
+    serviceId: ConnectedAccountServiceKeyIngressSchema,
     groupId: ConnectedServiceAuthGroupIdSchema,
     profileId: ConnectedServiceProfileIdSchema.nullable(),
   })

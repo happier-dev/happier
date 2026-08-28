@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { getGeneratedRuntimeDescriptorContributionV1 } from '../../agents/runtimeDescriptorContributionsV1.js';
 import {
   PluginContributionIdentityV1Schema,
   resolveAgentIdFromPersistedContributionIdentityV1,
@@ -156,18 +155,4 @@ export function readRuntimeDescriptorV1ForAgent<TAgentId extends string>(
 ): RuntimeDescriptorEnvelopeV1<TAgentId> | null {
   const parsed = readRuntimeDescriptorV1(value);
   return parsed?.agentId === agentId ? parsed as RuntimeDescriptorEnvelopeV1<TAgentId> : null;
-}
-
-export function readCanonicalRuntimeDescriptorV1ForAgent(
-  value: unknown,
-  agentId: string,
-): Readonly<Record<string, unknown>> | null;
-export function readCanonicalRuntimeDescriptorV1ForAgent(
-  value: unknown,
-  agentId: string,
-) {
-  const contribution = getGeneratedRuntimeDescriptorContributionV1(agentId);
-  if (!contribution) return null;
-  const descriptor = readRuntimeDescriptorV1ForAgent(value, agentId);
-  return contribution.readCanonicalDescriptor(descriptor) as Readonly<Record<string, unknown>> | null;
 }

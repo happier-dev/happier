@@ -2,7 +2,6 @@ import { sha256 } from '@noble/hashes/sha2';
 
 import { encodeBase64 } from '../../crypto/base64.js';
 import { SessionCreationTagV1Schema } from '../creation/sessionCreationIdentityV1.js';
-import { SessionIdSchema } from '../idsV1.js';
 import { readPendingLocalId } from '../pending/pendingLocalId.js';
 
 const textEncoder = new TextEncoder();
@@ -18,22 +17,20 @@ export function buildSpawnedFirstTurnLocalId(spawnNonce: unknown): string | null
 }
 
 /**
- * The Message-owned first-input identity for a canonical Session creation.
- * It deliberately follows the durable creation tag rather than the transport
- * retry nonce, while retaining the exact target Session namespace.
+ * Derives the one Message-owned identity shared by canonical Session-create
+ * initial input and the post-create Composer attachment journey. The durable
+ * creation tag, rather than a process-attempt nonce, keeps retry identity
+ * stable across daemon and UI restarts.
  */
 export function buildSessionSpawnInitialInputLocalIdV1(params: Readonly<{
-  sessionId: string;
   sessionCreationTag: string;
 }>): string {
-  const sessionId = SessionIdSchema.parse(params.sessionId);
   const sessionCreationTag = SessionCreationTagV1Schema.parse(params.sessionCreationTag);
   const idempotencyKey = `session-create-initial:v1:${sessionCreationTag}`;
   const canonicalIdentity = JSON.stringify([
     SESSION_INPUT_LOCAL_ID_DOMAIN_V1,
     1,
     `${SESSION_SPAWN_INITIAL_NAMESPACE_PREFIX_V1}${sessionCreationTag}`,
-    sessionId,
     idempotencyKey,
   ]);
   const localId = readPendingLocalId(
